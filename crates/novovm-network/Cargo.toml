@@ -8,6 +8,8 @@ description = "NOVOVM network abstraction (transport traits + in-memory impl)."
 
 [dependencies]
 aes = "0.8"
+anyhow = "1"
+base64 = "=0.22.1"
 chacha20poly1305 = "0.10"
 ctr = "0.9"
 dashmap = "6.1"
@@ -15,13 +17,21 @@ ed25519-dalek = "2"
 hkdf = "0.12"
 hmac = "0.12"
 k256 = { version = "0.13", features = ["ecdsa", "ecdh", "arithmetic"] }
+mio = { version = "=1.1.1", default-features = false, features = ["os-poll", "net"] }
 novovm-protocol = { path = "../novovm-protocol" }
 rand = "0.8"
+rustls = "=0.23.45"
+rustls-native-certs = "=0.8.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "=0.10.6"
 sha2 = "0.10"
 sha3 = "0.10"
 snap = "1"
 thiserror = "1"
-tokio = { version = "1", features = ["sync", "time", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "macros"] }
 zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+rcgen = "=0.12.1"
+socket2 = "0.6"

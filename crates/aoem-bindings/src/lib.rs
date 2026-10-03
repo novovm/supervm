@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 mod portable_receipt;
+pub mod resident;
 
 pub type AoemAbiVersion = unsafe extern "C" fn() -> u32;
 pub type AoemVersionString = unsafe extern "C" fn() -> *const c_char;

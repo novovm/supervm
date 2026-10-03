@@ -186,7 +186,7 @@ pub struct Context {
 }
 
 impl Context {
-    pub(crate) fn validate_shape(&self) -> Result<()> {
+    pub fn validate_shape(&self) -> Result<()> {
         ensure!(
             self.chain_id != 0 && self.epoch != 0 && self.height != 0,
             "consensus context scalar domain is zero"
@@ -339,7 +339,7 @@ pub struct VerifiedProposal {
 impl VerifiedProposal {
     /// Move already-verified historical bytes to the transport owner without
     /// cloning them or granting a new signing permission.
-    pub(crate) fn into_proposal(self) -> Proposal {
+    pub fn into_proposal(self) -> Proposal {
         self.proposal
     }
     pub fn proposal(&self) -> &Proposal {
@@ -439,7 +439,7 @@ pub struct VerifiedQuorum {
 }
 impl VerifiedQuorum {
     /// Consume an immutable verified certificate without copying its vote set.
-    pub(crate) fn into_quorum(self) -> Quorum {
+    pub fn into_quorum(self) -> Quorum {
         self.quorum
     }
     pub fn context(&self) -> &Context {

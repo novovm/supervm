@@ -32,3 +32,6 @@ criterion = "0.5"
 [features]
 default = []
 async-runtime = ["tokio"]
+# Explicit fixture construction for downstream dev-dependencies only.
+# Normal product dependencies must not enable this feature.
+test-vectors = []

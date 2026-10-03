@@ -44265,6 +44265,9 @@ mod native_candidate_node_mode;
 
 fn main() -> Result<()> {
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
+    if node_mode.eq_ignore_ascii_case("native_resident") {
+        return novovm_node::native_pipeline::service::rpc::run_from_env();
+    }
     let candidate_mode = native_candidate_node_mode::selected(
         &node_mode,
         mainline_query_method_from_env().is_some(),

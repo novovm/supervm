@@ -4,6 +4,7 @@ pub mod adaptive_overlay;
 pub mod availability;
 pub mod capability;
 pub mod control_plane;
+pub mod duplex;
 pub mod eth_chain_config;
 pub mod eth_fullnode;
 pub mod eth_rlpx;

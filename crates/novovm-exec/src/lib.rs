@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod ingress_codec;
+pub mod resident;
 mod semantic_compute;
 mod semantic_graph_v3;
 mod semantic_integer;

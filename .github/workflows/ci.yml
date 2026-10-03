@@ -289,6 +289,25 @@ jobs:
       - name: Reject legacy Host writes by default during product restoration
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib restoration_host_guard --locked -- --test-threads=1
 
+      - name: Integrated resident core and actual original-node RPC
+        # This functional gate is not a throughput/GPU/ZK or multi-machine claim.
+        # Long load fixtures remain explicit, ignored tests with retained reports.
+        timeout-minutes: 15
+        env:
+          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"
+          cargo test -p aoem-bindings --lib resident --locked -- --include-ignored --test-threads=1
+          cargo test -p novovm-exec --lib resident --locked -- --test-threads=1
+          cargo test -p novovm-network --lib duplex --locked -- --test-threads=1
+          cargo test -p novovm-node --lib native_pipeline --locked -- --test-threads=1
+          cargo build -p novovm-node --bin novovm-node --locked
+          target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+          export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
+          cargo test -p novovm-node --lib actual_product_rpc_signed_batches_failures_quorum_and_restart --locked -- --ignored --test-threads=1
+
       - name: Original AOEM Transfer and recovery without Host compatibility permission
         timeout-minutes: 10
         env:

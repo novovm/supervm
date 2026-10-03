@@ -22,9 +22,15 @@ struct Connection {
 pub struct FreshRpcServer {
     listener: TcpListener,
     connections: Vec<Connection>,
+    max_request: usize,
 }
 
+#[cfg(test)]
 fn body(bytes: &[u8]) -> Result<Option<&[u8]>> {
+    body_bounded(bytes, MAX_REQUEST)
+}
+
+fn body_bounded(bytes: &[u8], max_request: usize) -> Result<Option<&[u8]>> {
     let Some(end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
         if bytes.len() > 4096 {
             bail!("HTTP header limit");
@@ -63,7 +69,7 @@ fn body(bytes: &[u8]) -> Result<Option<&[u8]>> {
         }
     }
     let length = length.context("content length required")?;
-    if length == 0 || length > MAX_REQUEST - 4096 {
+    if length == 0 || length > max_request - 4096 {
         bail!("HTTP body limit");
     }
     let expected = end + 4 + length;
@@ -255,6 +261,16 @@ fn http_response(response: &Value) -> Vec<u8> {
 
 impl FreshRpcServer {
     pub fn bind(address: SocketAddr) -> Result<Self> {
+        Self::bind_with_max_request(address, MAX_REQUEST)
+    }
+
+    /// Explicit bounded request envelope for a selected batch-capable profile.
+    /// The original profile retains MAX_REQUEST; connection count/deadlines
+    /// and strict HTTP framing are unchanged.
+    pub(crate) fn bind_with_max_request(address: SocketAddr, max_request: usize) -> Result<Self> {
+        if !(MAX_REQUEST..=4 * 1024 * 1024).contains(&max_request) {
+            bail!("RPC request envelope outside supported bounded range");
+        }
         if !address.ip().is_loopback() {
             bail!(
                 "fresh RPC requires loopback; remote access requires an authenticated TLS gateway"
@@ -265,6 +281,7 @@ impl FreshRpcServer {
         Ok(Self {
             listener,
             connections: Vec::new(),
+            max_request,
         })
     }
 
@@ -298,12 +315,12 @@ impl FreshRpcServer {
         )
     }
 
-    #[cfg(test)]
-    fn poll_with(&mut self, mut handle: impl FnMut(Value) -> Value) -> Result<()> {
+    /// Reuse the product HTTP transport with an explicitly selected execution
+    /// lifecycle. This does not select a signer, database, or execution policy.
+    pub(crate) fn poll_with(&mut self, mut handle: impl FnMut(Value) -> Value) -> Result<()> {
         self.poll_batch_with(|requests| requests.into_iter().map(&mut handle).collect())
     }
 
-    #[cfg(test)]
     fn poll_batch_with(&mut self, handle: impl FnMut(Vec<Value>) -> Vec<Value>) -> Result<()> {
         self.poll_batch_when(true, handle)
     }
@@ -341,8 +358,8 @@ impl FreshRpcServer {
                     Err(error) if error.kind() == ErrorKind::WouldBlock => return true,
                     Err(_) => return false,
                 }
-                if connection.input.len() > MAX_REQUEST { return false; }
-                let request = match body(&connection.input) {
+                if connection.input.len() > self.max_request { return false; }
+                let request = match body_bounded(&connection.input, self.max_request) {
                     Ok(Some(bytes)) => serde_json::from_slice(bytes),
                     Ok(None) => return true,
                     Err(_) => return false,
@@ -427,6 +444,32 @@ fn poll_during_idle_with(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn explicit_batch_envelope_keeps_original_http_limit_and_framing() {
+        let payload = vec![b' '; MAX_REQUEST];
+        let mut request = format!(
+            "POST / HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            payload.len()
+        )
+        .into_bytes();
+        request.extend_from_slice(&payload);
+        assert!(body(&request).is_err());
+        assert_eq!(
+            body_bounded(&request, 4 * 1024 * 1024)
+                .unwrap()
+                .unwrap()
+                .len(),
+            payload.len()
+        );
+        request.push(b'x');
+        assert!(body_bounded(&request, 4 * 1024 * 1024).is_err());
+        assert!(FreshRpcServer::bind_with_max_request(
+            "127.0.0.1:0".parse().unwrap(),
+            8 * 1024 * 1024
+        )
+        .is_err());
+    }
 
     #[test]
     fn finalized_balance_params_reuse_public_nov_method_without_store_override() {

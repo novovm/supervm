@@ -2,17 +2,23 @@
 //! runtime consensus implementation at `2da3583c`.
 //!
 //! This is not native V3 and does not reinterpret its signatures or certificates.
-//! The public entry point verifies decision evidence only. It does not authorize
-//! a local signature, storage mutation, candidate publication, or finality.
-//! Local execution/DA and the exact durable parent must still be established by
-//! the node. Journal/pacemaker and publication integration remain separate.
+//! The journal owns durable signing preparation and release after a trusted
+//! node adapter acknowledges the exact atomic transition. Decision-only checking
+//! still grants no signature or publication authority. Local execution/DA and
+//! complete durable parent recovery remain the product adapter's responsibility.
 
 pub mod collector;
-// Preserve all reviewed transitions for their original tests and the later
-// durable-journal integration. Only decision checking is used by this slice.
-#[allow(dead_code)]
+pub mod journal;
+pub mod pacemaker;
+// Raw transitions and signing remain private to the consensus safety boundary.
 pub(crate) mod round;
 pub mod wire;
+
+/// Independent peer/adversarial signatures for downstream test fixtures only.
+/// Never enable this feature on a normal product dependency or use these
+/// helpers as a durable local signer. They confer no execution/publication ACK.
+#[cfg(feature = "test-vectors")]
+pub mod test_vectors;
 
 use anyhow::{ensure, Result};
 

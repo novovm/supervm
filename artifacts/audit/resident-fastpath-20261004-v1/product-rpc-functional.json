@@ -1,0 +1,251 @@
+{
+  "schema": "novovm/resident-product-rpc-functional/v1",
+  "product_binary_sha256": "0x1d3ba5d3bcef4a7c67f80198d815047790755bd7c84297da24e75baaf84c364a",
+  "aoem_sha256": "0x4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+  "topology": "one host; four real novovm-node executables; HTTP RPC and WSS/E2E relay",
+  "input_distribution": "explicit identical signed RPC fanout, not mempool gossip",
+  "legacy_host_permission": false,
+  "live_pids": [
+    22108,
+    9420,
+    6916,
+    4600
+  ],
+  "restarted_pids": [
+    25184,
+    27104,
+    3576,
+    3592
+  ],
+  "unique_finalized_transactions": 8,
+  "successful_transactions": 7,
+  "business_failed_transactions": 1,
+  "cold_receipts_equal": true,
+  "receipts": [
+    {
+      "tx_hash": "0x2891db0d79e34f79354654ce85402a9b9b4e12b21c3bcdada052af47cce74ba0",
+      "state": "finalized_success",
+      "executed": true,
+      "success": true,
+      "nonce_after": 1,
+      "charged_fee": "45",
+      "block_height": 1,
+      "block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    },
+    {
+      "tx_hash": "0xd9ef3e1d15ab6511f7756ff7975f4c4cf25406f3f770ea4943eb15af95a1f4e8",
+      "state": "finalized_success",
+      "executed": true,
+      "success": true,
+      "nonce_after": 1,
+      "charged_fee": "45",
+      "block_height": 1,
+      "block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    },
+    {
+      "tx_hash": "0xea8aae890659194478c9f404b475e5f8c68864b026b564dbb48c1d5259422b17",
+      "state": "finalized_business_failure",
+      "executed": true,
+      "success": false,
+      "nonce_after": 2,
+      "charged_fee": "46",
+      "block_height": 2,
+      "block_hash": "0xb38e962317819d8825d5dbbde46521c3615d04fe7f5c09ab19af8cfb2a3e00b7",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    },
+    {
+      "tx_hash": "0x1cd072de442626a9b1d09ce26094d0c1ffe88af5b9de3d71270cd76a8f2503fd",
+      "state": "finalized_success",
+      "executed": true,
+      "success": true,
+      "nonce_after": 2,
+      "charged_fee": "45",
+      "block_height": 2,
+      "block_hash": "0xb38e962317819d8825d5dbbde46521c3615d04fe7f5c09ab19af8cfb2a3e00b7",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    },
+    {
+      "tx_hash": "0x0452ec7b576522704d26eabdba803be386b25cd2d3ff236ce0a2a7c08427678c",
+      "state": "finalized_success",
+      "executed": true,
+      "success": true,
+      "nonce_after": 3,
+      "charged_fee": "45",
+      "block_height": 3,
+      "block_hash": "0x6d44f82f7c2eb97650f32d5b83eb852a0d0314c175ff3c28db98081cac202d0f",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    },
+    {
+      "tx_hash": "0x80daf3152fe3d467ace268b8c68fbdc5302cdcac9be28f89744d88ae723e845b",
+      "state": "finalized_success",
+      "executed": true,
+      "success": true,
+      "nonce_after": 3,
+      "charged_fee": "45",
+      "block_height": 3,
+      "block_hash": "0x6d44f82f7c2eb97650f32d5b83eb852a0d0314c175ff3c28db98081cac202d0f",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    },
+    {
+      "tx_hash": "0x891ebfa40a4de25dd5200783da1e254125355b7fdbe9ae0772f4c90076c7fa34",
+      "state": "finalized_success",
+      "executed": true,
+      "success": true,
+      "nonce_after": 4,
+      "charged_fee": "45",
+      "block_height": 4,
+      "block_hash": "0x9097aae9a08dd0edd3dd01847d19f1b38acca70d8509c970ac5edcf6c66b2086",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    },
+    {
+      "tx_hash": "0xd273f5fd864aa5a4c6fd3ae676b07f847c94cc9be32c7dfe3ec6c8ffdaf1cca2",
+      "state": "finalized_success",
+      "executed": true,
+      "success": true,
+      "nonce_after": 4,
+      "charged_fee": "45",
+      "block_height": 4,
+      "block_hash": "0x9097aae9a08dd0edd3dd01847d19f1b38acca70d8509c970ac5edcf6c66b2086",
+      "finalized": true,
+      "finality_kind": "BFT_durable",
+      "proof_verified": false
+    }
+  ],
+  "final_balances": [
+    [
+      {
+        "account": "0xaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "asset": "NOV",
+        "balance": "999519",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x9ba4729212f7caac08634cc3ae76b27529f03827",
+        "asset": "NOV",
+        "balance": "500",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x642e1621d543307846b2a57b897e710919b76709",
+        "asset": "NOV",
+        "balance": "999620",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      }
+    ],
+    [
+      {
+        "account": "0xaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "asset": "NOV",
+        "balance": "999519",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x9ba4729212f7caac08634cc3ae76b27529f03827",
+        "asset": "NOV",
+        "balance": "500",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x642e1621d543307846b2a57b897e710919b76709",
+        "asset": "NOV",
+        "balance": "999620",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      }
+    ],
+    [
+      {
+        "account": "0xaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "asset": "NOV",
+        "balance": "999519",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x9ba4729212f7caac08634cc3ae76b27529f03827",
+        "asset": "NOV",
+        "balance": "500",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x642e1621d543307846b2a57b897e710919b76709",
+        "asset": "NOV",
+        "balance": "999620",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      }
+    ],
+    [
+      {
+        "account": "0xaabe933be154a4b5094e1c4abf42866505f3c97e",
+        "asset": "NOV",
+        "balance": "999519",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x9ba4729212f7caac08634cc3ae76b27529f03827",
+        "asset": "NOV",
+        "balance": "500",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      },
+      {
+        "account": "0x642e1621d543307846b2a57b897e710919b76709",
+        "asset": "NOV",
+        "balance": "999620",
+        "state_root": "0x78aa8761bcee4a84d9551ce365ae9606ee2648544af5362de8c7a16a93d511d9",
+        "block_height": 4,
+        "finalized": true,
+        "query_complete": true
+      }
+    ]
+  ],
+  "performance_measured": false,
+  "four_machine_test": false,
+  "raw_report": "target/resident-rpc-tests/6204-1791053183095584500/result.json"
+}
