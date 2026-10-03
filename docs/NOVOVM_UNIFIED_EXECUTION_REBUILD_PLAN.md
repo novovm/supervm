@@ -8,6 +8,14 @@
 
 ## 最新短交接
 
+- **2026-10-03 R2单图经济归并：** 从`269c7b9a`继续原node/exec路径，复用
+  已有runtime的末到回调锁外归并结构，不迁其新状态/回执格式。原组件并行后，
+  同一AOEM图按实际前缀结算费用、修正失效预测并计算nonce/失败结果；不再
+  每笔修正新增graph。输入只捕获声明账户/nonce/费用及固定policy/quote，
+  不带DB；输出费用journal只带至多一条新增记录，摘要流式计算。Host仍用
+  原finalizer提交已核对nonce、逐笔树根/prev-seal和持久化发布；不是完整R2、
+  GPU或TPS签收。实际验证见台账，下一处沿同路径处理根收尾与批量成本。
+
 - **2026-10-03 R2候选槽回收：** 基线`e64a524`加本节所在提交，在原node
   workspace/ledger与常驻owner上接回陈旧未注册输出回收、启动孤儿与部分清理恢复。
   临时journal不取代永久退役规则；slot/journal同一原子写集合释放，registered/

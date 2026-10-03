@@ -9065,6 +9065,31 @@ fn settle_fee_quote_into_treasury_v1(
 ) -> Result<NovSettledFeeV1> {
     refresh_clearing_daily_window_v1(store, now_ms);
     let settlement_policy = resolve_treasury_settlement_policy_v1(store);
+    settle_fee_quote_with_policy_v1(
+        store,
+        quote,
+        tx_hash,
+        subject_meta,
+        now_ms,
+        &settlement_policy,
+    )
+}
+
+// A captured policy lets the AOEM batch reducer use the same settlement rules
+// without reading process environment from its callbacks. Mutable day/usage
+// remain part of the actual ordered prefix, not the captured policy snapshot.
+fn settle_fee_quote_with_policy_v1(
+    store: &mut NovNativeExecutionStoreV1,
+    quote: &NovFeeQuoteV1,
+    tx_hash: &str,
+    subject_meta: &NovExecutionSubjectMetaV1,
+    now_ms: u128,
+    policy: &NovTreasurySettlementPolicyV1,
+) -> Result<NovSettledFeeV1> {
+    refresh_clearing_daily_window_v1(store, now_ms);
+    let mut settlement_policy = policy.clone();
+    settlement_policy.clearing_daily_nov_used = store.module_state.clearing_daily_nov_used;
+    settlement_policy.clearing_daily_window_day = store.module_state.clearing_daily_window_day;
     let settlement_policy_contract_id = treasury_policy_contract_id_v1(&settlement_policy);
     let settlement_gate_snapshot = clearing_policy_gate_snapshot_v1(store, &settlement_policy);
     let settlement_threshold_state = settlement_gate_snapshot

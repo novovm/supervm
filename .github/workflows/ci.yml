@@ -293,6 +293,17 @@ jobs:
         timeout-minutes: 20
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_block_seal --locked -- --test-threads=2
 
+      - name: Original Transfer single-graph business effects and serial parity
+        # Include real packaged SDK tests; a pure helper pass is insufficient.
+        timeout-minutes: 10
+        env:
+          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p novovm-node --lib native_transfer_executor --locked -- --include-ignored --test-threads=1
+          cargo test -p novovm-node --lib native_transfer_dispatch --locked -- --include-ignored --test-threads=1
+
       - name: Durable ledger and isolated candidate evidence regressions
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_block_ledger --locked -- --test-threads=2
 

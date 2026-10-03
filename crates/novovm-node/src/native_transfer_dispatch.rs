@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 //! Fresh-candidate NOV transfers: AOEM computes small immutable account views;
-//! the Host merges outcomes and the existing unified fee settlement in order.
+//! the final AOEM callback settles complete business effects in original order.
 //! Receipt finalization is supplied by the candidate's state codec. The default
 //! entry point retains the existing full candidate store/root codec.
 
@@ -10,8 +10,13 @@ use crate::native_transfer_delta::{
     Account, TransferExecutionFailureV1, TransferExecutionOutcomeV1, TransferIntent,
     TransferSnapshot,
 };
-use crate::native_transfer_executor::{execute_transfer_components_v1, TransferWorkV1};
+use crate::native_transfer_executor::{
+    execute_transfer_components_with_reducer_v1, TransferWorkV1,
+};
 use novovm_exec::AoemComputeSessionV1;
+
+#[path = "native_transfer_business.rs"]
+mod business;
 
 pub(super) const FEE_PROJECTION_V1: &str =
     "nov-transfer-fee/v1:native_asset.transfer:json(asset,to_hex,amount_decimal):gas21000";
@@ -335,189 +340,55 @@ pub(super) fn execute_with_finalizer_v1(
     // sessions for callers without one, while reusing its resident computation
     // owner across batches. This call still waits for each graph to drain.
     let mut session = AoemComputeSessionV1::open_scoped(&runtime)?;
-    let computed = execute_transfer_components_v1(&mut session, work, Duration::from_secs(30))?;
-    let mut observation = ComponentObservationV1 {
+    let owned_items = items
+        .iter()
+        .map(business::OwnedItem::capture)
+        .collect::<Result<Vec<_>>>()?;
+    let captured = business::capture_store(store, &owned_items)?;
+    let policy = resolve_treasury_settlement_policy_v1(&captured);
+    let reduce_intents = intents.clone();
+    let (computed, peak_inflight) = execute_transfer_components_with_reducer_v1(
+        &mut session,
+        work,
+        Duration::from_secs(30),
+        move |outcomes, components, count| {
+            business::reduce(
+                captured,
+                owned_items,
+                reduce_intents,
+                quotes,
+                policy,
+                outcomes,
+                components,
+                count,
+                now_ms,
+            )
+        },
+    )?;
+    let observation = ComponentObservationV1 {
         transactions: items.len(),
-        components: computed.component_count,
-        recomputed_transactions: 0,
+        components: computed.components,
+        recomputed_transactions: computed.recomputed,
         graphs: 1,
-        peak_inflight: computed.peak_inflight,
+        peak_inflight,
     };
-    let mut invalidated = vec![false; computed.component_count];
-    for (index, mut outcome) in computed.outcomes.into_iter().enumerate() {
+    for (index, step) in computed.steps.into_iter().enumerate() {
         let item = &items[index];
-        let intent = &intents[index];
-        let payer = intent.from.to_hex_prefixed();
-        let recipient = intent.to.to_hex_prefixed();
         if check_nov_native_durable_auth_reservation_v1(store, item.reservation)?.is_some() {
             bail!("candidate transfer unexpectedly replays a committed transaction");
         }
-        outcome_binding_v1(&outcome, intent)?;
-        let snapshot = snapshot_v1(store, intent);
-        let component = computed.component_by_index[index];
-        if invalidated[component] || !outcome_matches_snapshot_v1(&outcome, snapshot) {
-            // A global fee rejection can invalidate this component's
-            // predicted suffix. Never recompute that suffix repeatedly:
-            // from now on each affected transaction is computed just once
-            // more, from the actual ordered prefix, on the SAME session.
-            // Other disjoint components retain their valid predictions.
-            invalidated[component] = true;
-            let mut repaired = execute_transfer_components_v1(
-                &mut session,
-                vec![TransferWorkV1 {
-                    intent: intent.clone(),
-                    snapshot,
-                    fee_rejection: quotes[index].as_ref().err().cloned(),
-                }],
-                Duration::from_secs(30),
-            )?;
-            observation.recomputed_transactions += 1;
-            observation.graphs += 1;
-            observation.peak_inflight = observation.peak_inflight.max(repaired.peak_inflight);
-            outcome = repaired
-                .outcomes
-                .pop()
-                .context("missing repaired transfer outcome")?;
-            outcome_binding_v1(&outcome, intent)?;
-            if !outcome_matches_snapshot_v1(&outcome, snapshot) {
-                bail!("AOEM repaired transfer outcome does not match its ordered pre-fee state");
-            }
-        }
-        let computed_digest = to_hex(&sha256_bytes_v1(&[
-            b"novovm-native-transfer-compute-output-v1\0",
-            &serde_json::to_vec(&outcome)?,
-        ]));
         finalizer.begin(store)?;
-        let subject = enforce_requested_execution_behavior_with_observability_v1(
-            item.subject,
-            None,
-            Some(UcaKeyAlgo::Ed25519),
-            None,
-            false,
-        )
-        .map_err(|_| anyhow::anyhow!("standard transfer policy unexpectedly rejected"))?;
-        // Reuse the existing wrapper for exact quote observability. Its
-        // pure result must equal the quote used by the AOEM computation.
-        let quote = quote_fee_policy_from_execution_request_v1(item.request, store, now_ms);
-        if quote.as_ref().map_err(|error| error.to_string())
-            != quotes[index].as_ref().map_err(Clone::clone)
-        {
-            bail!("transfer pure quote differs from ordered unified quote");
-        }
-        let settled = match quote {
-            Ok(quote) => settle_fee_quote_into_treasury_v1(
-                store,
-                &quote,
-                &item.reservation.tx_hash,
-                &subject,
-                now_ms,
-            ),
-            Err(error) => Err(error),
-        };
-        let (settled_fee, mut receipt) = match settled {
-            Err(error) => {
-                let reason = error.to_string();
-                outcome = outcome.reject_fee(reason.clone());
-                if native_account_asset_balance_v1(store, &payer, "NOV")
-                    != outcome.delta().payer.before
-                    || native_account_asset_balance_v1(store, &recipient, "NOV")
-                        != outcome.delta().recipient.before
-                {
-                    bail!("rejected direct NOV fee changed a monetary balance");
-                }
-                let fee = unresolved_settled_fee_v1(item.request);
-                let method = if is_fee_quote_reason_v1(&reason) {
-                    "quote"
-                } else {
-                    "settlement"
-                };
-                let receipt = build_failed_native_receipt_v1(
-                    item.request,
-                    &fee,
-                    &subject,
-                    "fee".into(),
-                    method.into(),
-                    reason,
-                );
-                (fee, receipt)
-            }
-            Ok(fee) => {
-                if matches!(outcome.failure(), Some(TransferExecutionFailureV1::Fee(_)))
-                    || outcome.delta().fee_funding_delta != fee.nov_amount
-                    || fee.source_amount != fee.nov_amount
-                    || fee.source_asset != "NOV"
-                    || native_account_asset_balance_v1(store, &payer, "NOV")
-                        != outcome
-                            .delta()
-                            .payer
-                            .before
-                            .checked_sub(fee.nov_amount)
-                            .context("settled fee exceeds input balance")?
-                {
-                    bail!("AOEM transfer fee outcome differs from unified settlement");
-                }
-                // Settlement already debited the fee. These are absolute
-                // AOEM-computed after values, NOT another debit operation.
-                store
-                    .module_state
-                    .account_asset_balances
-                    .entry(payer.clone())
-                    .or_default()
-                    .insert("NOV".into(), outcome.delta().payer.after);
-                if payer != recipient && outcome.is_success() {
-                    store
-                        .module_state
-                        .account_asset_balances
-                        .entry(recipient.clone())
-                        .or_default()
-                        .insert("NOV".into(), outcome.delta().recipient.after);
-                }
-                let receipt = match outcome.failure() {
-                    Some(TransferExecutionFailureV1::Business(error)) => {
-                        build_failed_native_receipt_v1(
-                            item.request,
-                            &fee,
-                            &subject,
-                            "native_asset".into(),
-                            "transfer".into(),
-                            format!("native.transfer.{error}"),
-                        )
-                    }
-                    None => build_success_native_receipt_v1(
-                        item.request,
-                        &fee,
-                        &subject,
-                        "native_asset",
-                        "transfer",
-                        vec![NovNativeExecutionLogV1 {
-                            module: "native_asset".into(),
-                            method: "transfer".into(),
-                            event: "native_asset.transferred".into(),
-                            data: serde_json::json!({"asset":"NOV", "from":payer, "to":recipient, "amount":intent.amount.to_string()}),
-                        }],
-                    ),
-                    Some(TransferExecutionFailureV1::Fee(_)) => {
-                        unreachable!("checked fee outcome")
-                    }
-                };
-                (fee, receipt)
-            }
-        };
-        receipt.logs.push(NovNativeExecutionLogV1 {
-                module: "aoem".into(), method: "native_transfer_compute".into(), event: "aoem.native_transfer.computed".into(),
-                data: serde_json::json!({"scheduler":"aoem_generic_compute_v2", "tx_hash":item.reservation.tx_hash, "output_digest":computed_digest,
-                    "phase":"pre_global_fee_reduction", "authorizes_state_publication":false}),
-            });
+        step.apply(store, &intents[index])?;
         finalizer.finish(
             store,
             item.transaction,
             item.request,
-            &settled_fee,
-            &subject,
+            &step.fee,
+            &step.subject,
             item.reservation,
             item.ingress.clone(),
             now_ms,
-            receipt,
+            step.receipt,
         )?;
     }
     record_component_observation_v1(observation);

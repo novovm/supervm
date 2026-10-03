@@ -452,7 +452,13 @@ fn exercise_transfer_candidate_global_fee_pause() {
             let ready = workspace::create_v1(&plan, params).unwrap();
             let authority =
                 candidate_workspace_authority_fingerprint(path, params, chain, &plan.tx_hashes);
+            native_transfer_dispatch::take_component_observation_for_test_v1();
             let result = workspace::execute_v1(chain, ready.workspace_id, params).unwrap();
+            let observation = native_transfer_dispatch::take_component_observation_for_test_v1()
+                .expect("paused candidate must execute a real Transfer graph");
+            assert_eq!(observation.transactions, plan.raw_txs.len());
+            assert_eq!(observation.graphs, 1);
+            assert!(observation.recomputed_transactions > 0);
             assert_candidate_workspace_execution_complete(&result);
             assert!(result
                 .batch_result
@@ -611,7 +617,13 @@ fn exercise_transfer_candidate_global_capacity_refusal() {
         let ready = workspace::create_v1(&plan, params).unwrap();
         let authority =
             candidate_workspace_authority_fingerprint(path, params, chain, &plan.tx_hashes);
+        native_transfer_dispatch::take_component_observation_for_test_v1();
         let result = workspace::execute_v1(chain, ready.workspace_id, params).unwrap();
+        let observation = native_transfer_dispatch::take_component_observation_for_test_v1()
+            .expect("capacity-refused candidate must execute a real Transfer graph");
+        assert_eq!(observation.transactions, plan.raw_txs.len());
+        assert_eq!(observation.graphs, 1);
+        assert!(observation.recomputed_transactions > 0);
         assert_candidate_workspace_execution_complete(&result);
         assert!(result
             .batch_result

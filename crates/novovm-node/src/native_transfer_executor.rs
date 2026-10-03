@@ -16,6 +16,8 @@ use anyhow::{bail, Context, Result};
 #[cfg(test)]
 use novovm_exec::{execute_aoem_compute_tasks_v1, AoemRuntimeConfig};
 use novovm_exec::{AoemComputeSessionV1, AoemComputeTaskV1};
+#[cfg(test)]
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -40,6 +42,7 @@ pub(crate) struct TransferWorkV1 {
     pub fee_rejection: Option<String>,
 }
 
+#[cfg(test)]
 pub(crate) struct TransferComponentResultV1 {
     /// One result per original transaction, not per component or callback.
     pub outcomes: Vec<TransferExecutionOutcomeV1>,
@@ -50,11 +53,53 @@ pub(crate) struct TransferComponentResultV1 {
 
 /// All snapshots refer to the SAME parent prefix. Arithmetic and subsequent
 /// component snapshots are evaluated inside the AOEM callback, not on Host.
+#[cfg(test)]
 pub(crate) fn execute_transfer_components_v1(
     session: &mut AoemComputeSessionV1,
     work: Vec<TransferWorkV1>,
     timeout: Duration,
 ) -> Result<TransferComponentResultV1> {
+    let (mut result, peak_inflight) = execute_transfer_components_with_reducer_v1(
+        session,
+        work,
+        timeout,
+        |outcomes, component_by_index, component_count| {
+            let commitment = Sha256::digest(
+                serde_json::to_vec(&outcomes).context("encode AOEM transfer component result")?,
+            )
+            .into();
+            Ok((
+                TransferComponentResultV1 {
+                    outcomes,
+                    component_by_index,
+                    component_count,
+                    peak_inflight: 0,
+                },
+                commitment,
+            ))
+        },
+    )?;
+    result.peak_inflight = peak_inflight;
+    Ok(result)
+}
+
+/// Execute disjoint components and a single deterministic continuation in the
+/// SAME AOEM graph. The continuation receives only complete, original-order
+/// outcomes, after the existing checked shared-credit reduction. It runs on
+/// the last arriving AOEM callback, outside the short-lived join lock.
+///
+/// The caller supplies domain rules and a bounded owned input capture through
+/// `reducer`; neither this module nor AOEM introduces a NOV-specific ABI. The
+/// typed result stays private until every callback has completed successfully
+/// and its commitment matches the sole non-empty AOEM completion output.
+pub(crate) fn execute_transfer_components_with_reducer_v1<R: Send + 'static>(
+    session: &mut AoemComputeSessionV1,
+    work: Vec<TransferWorkV1>,
+    timeout: Duration,
+    reducer: impl FnOnce(Vec<TransferExecutionOutcomeV1>, Vec<usize>, usize) -> Result<(R, [u8; 32])>
+        + Send
+        + 'static,
+) -> Result<(R, usize)> {
     let _timing = crate::native_fresh_timing::Span::start("candidate.transfer_components");
     validate_work(&work)?;
     let count = work.len();
@@ -62,42 +107,61 @@ pub(crate) fn execute_transfer_components_v1(
     let snapshots: Vec<_> = work.iter().map(|item| item.snapshot).collect();
     let plan = Arc::new(TransferEffectPlanV1::build(&intents, &snapshots)?);
     let components = &plan.components;
-    let reduction = plan.has_credit_reduction().then(|| {
-        Arc::new(Mutex::new(CreditReductionJoinV1 {
-            remaining: components.len(),
-            outcomes: vec![None; count],
-        }))
-    });
+    let component_count = components.len();
     let mut component_by_index = vec![0; count];
-    let mut owned: Vec<_> = work.into_iter().map(Some).collect();
-    let mut tasks: Vec<AoemComputeTaskV1> = Vec::with_capacity(components.len());
     for (component, indices) in components.iter().enumerate() {
-        let mut inputs = Vec::with_capacity(indices.len());
         for &index in indices {
             component_by_index[index] = component;
+        }
+    }
+    let join = Arc::new(Mutex::new(ComponentReductionJoinV1 {
+        remaining: component_count,
+        outcomes: vec![None; count],
+        component_by_index: Some(component_by_index),
+        reducer: Some(reducer),
+    }));
+    let completed = Arc::new(Mutex::new(None::<(R, [u8; 32])>));
+    let mut owned: Vec<_> = work.into_iter().map(Some).collect();
+    let mut tasks: Vec<AoemComputeTaskV1> = Vec::with_capacity(components.len());
+    for indices in components {
+        let mut inputs = Vec::with_capacity(indices.len());
+        for &index in indices {
             inputs.push(
                 owned[index]
                     .take()
                     .context("duplicate transfer component index")?,
             );
         }
-        let reduction = reduction.clone();
+        let join = Arc::clone(&join);
+        let completed = Arc::clone(&completed);
         let plan = Arc::clone(&plan);
         let indices = indices.clone();
         tasks.push(Box::new(move || {
             let outcomes = compute_component_v1(inputs)?;
-            if let Some(join) = reduction {
+            let ready = {
                 // No callback waits for another callback. The last arrival
-                // performs checked reduction ON THE AOEM WORKER, in this same
-                // graph. Other callbacks return no payload. This is a data
-                // join, not a second Host executor or a spinning barrier.
+                // takes ownership of the complete set, then releases the
+                // lock before credit reduction and the business continuation.
                 let mut joined = join
                     .lock()
-                    .map_err(|_| anyhow::anyhow!("credit reduction join poisoned"))?;
-                joined.arrive(&indices, outcomes, &plan)
-            } else {
-                serde_json::to_vec(&outcomes).context("encode native transfer component outcomes")
+                    .map_err(|_| anyhow::anyhow!("transfer component join poisoned"))?;
+                joined.arrive(&indices, outcomes)?
+            };
+            let Some(mut ready) = ready else {
+                return Ok(Vec::new());
+            };
+            if plan.has_credit_reduction() {
+                plan.reduce_ordered(&mut ready.outcomes)?;
             }
+            let (result, commitment) =
+                (ready.reducer)(ready.outcomes, ready.component_by_index, component_count)?;
+            let mut output = completed
+                .lock()
+                .map_err(|_| anyhow::anyhow!("transfer reduction result poisoned"))?;
+            if output.replace((result, commitment)).is_some() {
+                bail!("transfer reduction published more than one typed result");
+            }
+            Ok(commitment.to_vec())
         }));
     }
     let report = session.execute(tasks, timeout)?;
@@ -108,58 +172,45 @@ pub(crate) fn execute_transfer_components_v1(
     {
         bail!("native transfer component graph did not complete all callbacks");
     }
-    if reduction.is_some() {
-        let mut outputs = report.outputs.iter().filter(|bytes| !bytes.is_empty());
-        let outcomes: Vec<TransferExecutionOutcomeV1> = serde_json::from_slice(
-            outputs
-                .next()
-                .context("missing AOEM credit reduction result")?,
-        )
-        .context("decode AOEM credit reduction result")?;
-        if outcomes.len() != count || outputs.next().is_some() {
-            bail!("AOEM credit reduction must publish exactly one complete result");
-        }
-        return Ok(TransferComponentResultV1 {
-            outcomes,
-            component_by_index,
-            component_count: components.len(),
-            peak_inflight: report.peak_inflight,
-        });
-    }
-    let mut ordered = vec![None; count];
-    for (indices, bytes) in components.iter().zip(&report.outputs) {
-        let outcomes: Vec<TransferExecutionOutcomeV1> =
-            serde_json::from_slice(bytes).context("decode native transfer component outcomes")?;
-        if outcomes.len() != indices.len() {
-            bail!("native transfer component returned an incorrect outcome count");
-        }
-        for (&index, outcome) in indices.iter().zip(outcomes) {
-            ordered[index] = Some(outcome);
-        }
-    }
-    Ok(TransferComponentResultV1 {
-        outcomes: ordered
-            .into_iter()
-            .map(|outcome| outcome.context("missing component outcome"))
-            .collect::<Result<_>>()?,
-        component_by_index,
-        component_count: components.len(),
-        peak_inflight: report.peak_inflight,
-    })
+    let (result, commitment) = completed
+        .lock()
+        .map_err(|_| anyhow::anyhow!("transfer reduction result poisoned"))?
+        .take()
+        .context("missing AOEM transfer reduction typed result")?;
+    validate_reduction_completion_v1(&report.outputs, commitment)?;
+    Ok((result, report.peak_inflight))
 }
 
-struct CreditReductionJoinV1 {
+fn validate_reduction_completion_v1(outputs: &[Vec<u8>], commitment: [u8; 32]) -> Result<()> {
+    let mut nonempty = outputs.iter().filter(|bytes| !bytes.is_empty());
+    let output = nonempty
+        .next()
+        .context("missing AOEM transfer reduction commitment")?;
+    if nonempty.next().is_some() || output.as_slice() != commitment {
+        bail!("AOEM transfer reduction must publish exactly one matching commitment");
+    }
+    Ok(())
+}
+
+struct ComponentReductionReadyV1<F> {
+    outcomes: Vec<TransferExecutionOutcomeV1>,
+    component_by_index: Vec<usize>,
+    reducer: F,
+}
+
+struct ComponentReductionJoinV1<F> {
     remaining: usize,
     outcomes: Vec<Option<TransferExecutionOutcomeV1>>,
+    component_by_index: Option<Vec<usize>>,
+    reducer: Option<F>,
 }
 
-impl CreditReductionJoinV1 {
+impl<F> ComponentReductionJoinV1<F> {
     fn arrive(
         &mut self,
         indices: &[usize],
         outcomes: Vec<TransferExecutionOutcomeV1>,
-        plan: &TransferEffectPlanV1,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<Option<ComponentReductionReadyV1<F>>> {
         if indices.len() != outcomes.len() || self.remaining == 0 {
             bail!("invalid credit reduction component completion");
         }
@@ -174,9 +225,9 @@ impl CreditReductionJoinV1 {
         }
         self.remaining -= 1;
         if self.remaining != 0 {
-            return Ok(Vec::new());
+            return Ok(None);
         }
-        let mut ordered = self
+        let outcomes = self
             .outcomes
             .iter_mut()
             .map(|slot| {
@@ -184,15 +235,22 @@ impl CreditReductionJoinV1 {
                     .context("missing credit reduction component outcome")
             })
             .collect::<Result<Vec<_>>>()?;
-        plan.reduce_ordered(&mut ordered)?;
-        serde_json::to_vec(&ordered).context("encode AOEM checked credit reduction")
+        Ok(Some(ComponentReductionReadyV1 {
+            outcomes,
+            component_by_index: self
+                .component_by_index
+                .take()
+                .context("missing transfer component index mapping")?,
+            reducer: self.reducer.take().context("missing transfer reducer")?,
+        }))
     }
 }
 
 /// Callback-only component evaluator. The private maps contain only touched
 /// balances/nonces, never a whole Store or an authoritative ledger. Global fee
-/// settlement is intentionally not predicted here; Host validates these results
-/// against its original-order prefix and invalidates stale component suffixes.
+/// settlement is intentionally not predicted here; the graph's final reducer
+/// validates these results against its original-order prefix and handles stale
+/// component suffixes before handing a complete result back to Host.
 fn compute_component_v1(work: Vec<TransferWorkV1>) -> Result<Vec<TransferExecutionOutcomeV1>> {
     let mut balances = BTreeMap::<Account, u128>::new();
     let mut nonces = BTreeMap::<String, u64>::new();
@@ -418,6 +476,126 @@ mod tests {
         second.intent.nonce = 2;
         assert!(compute_component_v1(vec![first, second]).is_err());
         assert!(validate_work(&vec![work(1); 1025]).is_err());
+    }
+
+    #[test]
+    fn component_join_releases_only_complete_ordered_inputs_and_reducer_once() {
+        let first = compute_component_v1(vec![work(1)]).unwrap().remove(0);
+        let second = compute_component_v1(vec![work(3)]).unwrap().remove(0);
+        let mut join = ComponentReductionJoinV1 {
+            remaining: 2,
+            outcomes: vec![None; 2],
+            component_by_index: Some(vec![0, 1]),
+            reducer: Some(()),
+        };
+        assert!(join.arrive(&[1], vec![second.clone()]).unwrap().is_none());
+        assert!(join.reducer.is_some());
+        let ready = join
+            .arrive(&[0], vec![first.clone()])
+            .unwrap()
+            .expect("all components arrived");
+        assert_eq!(ready.outcomes, vec![first.clone(), second]);
+        assert_eq!(ready.component_by_index, vec![0, 1]);
+        assert!(join.reducer.is_none());
+        assert!(join.arrive(&[0], vec![first.clone()]).is_err());
+
+        let mut duplicate = ComponentReductionJoinV1 {
+            remaining: 2,
+            outcomes: vec![None; 2],
+            component_by_index: Some(vec![0, 1]),
+            reducer: Some(()),
+        };
+        assert!(duplicate
+            .arrive(&[0], vec![first.clone()])
+            .unwrap()
+            .is_none());
+        assert!(duplicate.arrive(&[0], vec![first]).is_err());
+        assert!(duplicate.reducer.is_some());
+    }
+
+    #[test]
+    fn reducer_completion_requires_one_exact_commitment() {
+        let commitment = [7; 32];
+        assert!(validate_reduction_completion_v1(
+            &[vec![], commitment.to_vec(), vec![]],
+            commitment
+        )
+        .is_ok());
+        for invalid in [
+            vec![],
+            vec![vec![]],
+            vec![vec![7; 31]],
+            vec![vec![8; 32]],
+            vec![commitment.to_vec(), commitment.to_vec()],
+        ] {
+            assert!(validate_reduction_completion_v1(&invalid, commitment).is_err());
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the packaged AOEM runtime; run explicitly for integration evidence"]
+    fn real_aoem_transfer_reducer_stays_in_graph_and_fails_closed() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mut runtime = AoemRuntimeConfig::from_env().unwrap();
+        runtime.ingress_workers = Some(4);
+        let mut session = AoemComputeSessionV1::open(&runtime).unwrap();
+        let submitting_thread = std::thread::current().id();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&calls);
+        let inputs = vec![work(1), work(3), work(5)];
+        let expected = compute_component_v1(inputs.clone()).unwrap();
+        let (observed, peak) = execute_transfer_components_with_reducer_v1(
+            &mut session,
+            inputs,
+            Duration::from_secs(30),
+            move |outcomes, mapping, count| {
+                assert_eq!(callback_calls.fetch_add(1, Ordering::SeqCst), 0);
+                assert_ne!(std::thread::current().id(), submitting_thread);
+                assert_eq!(count, 3);
+                assert_eq!(mapping, vec![0, 1, 2]);
+                assert_eq!(outcomes, expected);
+                Ok((outcomes, [73; 32]))
+            },
+        )
+        .unwrap();
+        assert_eq!(observed.len(), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(peak >= 1);
+        // A successful graph leaves the same resident session usable.
+        execute_transfer_components_v1(&mut session, vec![work(9)], Duration::from_secs(30))
+            .unwrap();
+        let error = execute_transfer_components_with_reducer_v1(
+            &mut session,
+            vec![work(11)],
+            Duration::from_secs(30),
+            |_, _, _| -> Result<((), [u8; 32])> {
+                bail!("test deterministic business reducer rejected")
+            },
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("test deterministic business reducer rejected"));
+
+        // A component failure must not expose partial results to the reducer.
+        let mut failed_session = AoemComputeSessionV1::open(&runtime).unwrap();
+        let failed_calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = Arc::clone(&failed_calls);
+        let mut invalid = work(1);
+        invalid.intent.nonce = 9;
+        let error = execute_transfer_components_with_reducer_v1(
+            &mut failed_session,
+            vec![invalid, work(3)],
+            Duration::from_secs(30),
+            move |_, _, _| {
+                callback_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(((), [74; 32]))
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("input invariant failed"));
+        assert_eq!(failed_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

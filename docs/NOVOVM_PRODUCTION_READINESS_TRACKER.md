@@ -8,6 +8,58 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## R2 第四片：原 Transfer 同一 AOEM 图内经济归并
+
+日期2026-10-03；基线`main@269c7b9a1d022818e7877bb035f453dcd07555c3`
+加本节所在提交。本机Windows / Rust 1.94.0 / 原随仓core AOEM DLL，SHA256仍为
+`4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`。
+本片不改AOEM仓、SDK、交易/状态/回执格式、共识或收费政策。
+
+**原RPC签名转账现在保留分量并行计算，并在同一AOEM图的最后完成回调中执行
+有序费用结算、业务失败处理和受失败影响的后续计算修正。** 不再回到Host逐笔
+决定费用结果，也不再为每笔失效预测另提交计算图。全批图成功和结果承诺匹配后，
+原node才应用隔离候选效应，走原持久化、父/轮次验证、3/4 QC及发布路径。
+这不是新API、另一条转账链，亦不把排队/计算/落盘当作最终确认。
+
+复用原`native_transfer_executor`的冲突分量/checked credit reduction、统一收费
+与nonce函数，以及已有最后回调归并模式；新增`native_transfer_business`只捕获
+本批涉及的NOV账户、nonce和有界费用输入，不复制完整Store/历史，不携带数据库
+或权威写句柄。费用政策、纯报价在提交前固定，动态日限额按真实有序前缀更新。
+输出带前态检查的业务效应；费用日志使用最多一条追加的紧凑delta、结果采用流式
+摘要，不为每笔结果保留一份512条日志。Host应用前验证余额/nonce/费用前缀及日志
+长度/序号；原finalizer错误顺序保持，失败不静默跳过。
+
+**所有权与并发边界：** AOEM回调计算余额、费用、失败结果与下一nonce，但nonce
+安装、逐笔root/receipt收尾仍由原finalizer执行。全局费用归并仍按协议顺序进行，
+未宣称其已经并行化；无冲突分量仍并行。失败后的共享收款预测目前可在同一回调
+重算，不宣称已迁完runtime的免重算credit rebasing。V2 CPU回调和局部承诺不是
+统一CPU/GPU完成或业务有效性ZK证明；没有更换原三树/根、发布和共识协议。
+
+| 本机检查 | 真实结果和范围 |
+| --- | --- |
+| 原四个真实node进程、RPC、QC与实际重启，Host许可0 | 1/1；6笔真实签名交易5成功/1余额不足，费用守恒、失败消耗nonce、串行经济oracle及四节点块/回执/余额一致；错签名、错链域、Execute准入拒绝、nonce冲突和重放检查通过；原3/4门槛不降 |
+| 显式真实AOEM回归，Host许可0 | 12/12、零忽略；同图回调线程/单次归并、分量或归并失败关闭、会话复用、1024笔共享收款原并行检查、typed/fullencode/逐笔前缀等价；新增容量拒绝后较小费用仍可成功的同付款方/共享收款反例 |
+| 原纯Transfer精确父/候选/恢复夹具，Host许可0 | 1/1；保留原候选持久化、恢复、错父与34候选回收检查，257.39秒是整项夹具耗时，不是出块时间 |
+| native_transfer普通回归，Host许可0 | 74通过、10忽略；新增有界捕获、账户缺失与零值、前缀篡改拒绝、紧凑日志及流式摘要；忽略项不计通过，真库检查见显式真实AOEM行 |
+| 既有候选经济 / 费用兼容回归 | 5/5及53通过/2忽略；历史初始化显式Host许可1，只用于原规则对照，不替代许可0的产品验收；与其他过滤器重叠，不累计成独立用例总数 |
+| 原封印、轮次与Overlay回归，Host许可0 | 211/211；无降低票数、删除反例或放宽默认Host许可 |
+| 产品构建 | 全workspace/all-targets check、Clippy `-D warnings`、fmt通过；原同源多bin提示保留 |
+
+四进程报告：本机
+`artifacts/audit/candidate-node-processes/seal-relay-19496-1791007021161842000/mixed-transfer-acceptance.json`；
+`accepted=true`、`legacy_host_execution="0"`，四节点worker均submitted/completed=1、
+failed=0；重启无历史重算。`parallel_overlap_measured=false`、`production_signoff=false`。
+该夹具76.07秒包含启动、网络、检查和重启，不用来计算TPS。收尾时有连接关闭日志，
+不称日志全无异常。测试日志`artifacts/recovery/r2-business-*-v3.log`，fmt最终为v4。
+首次real-v1两项失败来自新增u128容量夹具误放旧JSON根格式；移到原RecordTree
+等价夹具后12/12通过，未放宽协议或原断言。早期失败日志保留。CI新增显式原
+Transfer executor/dispatch真库检查；本机通过不替代推送后该提交的Linux/Windows CI。
+
+原49项草稿逐文件SHA256一致，runtime/legacy及AOEM源码未修改。未签收完整R2、
+主链TPS、GPU/ZK、隐私/PQ、Linux实机、多机公网或生产部署。下一处继续原真实
+node路径的逐笔根/回执收尾与批量成本，先定位测量再接回已有批处理成果；不另造
+节点、执行器或权威账本，不再扩大清理工程。
+
 ## R2 第三片：陈旧未注册候选回收与启动恢复
 
 日期2026-10-03；基线`main@e64a52477c1df282d0921c0d9c59b227b8f45796`

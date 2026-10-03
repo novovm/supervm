@@ -432,6 +432,8 @@ fn real_aoem_typed_record_effects_match_fullencode_batch_and_each_serial_prefix(
         "self",
         "zero",
         "day_window",
+        "capacity_samepayer",
+        "capacity_shared_credit",
     ] {
         let first = if case == "quote" {
             FinalizerFixture::new(0, 10, 1)
@@ -443,6 +445,7 @@ fn real_aoem_typed_record_effects_match_fullencode_batch_and_each_serial_prefix(
                 match case {
                     "business" => u128::MAX,
                     "zero" => 0,
+                    "capacity_samepayer" | "capacity_shared_credit" => 1_000_000_000_000,
                     _ => 10,
                 },
             )
@@ -452,16 +455,28 @@ fn real_aoem_typed_record_effects_match_fullencode_batch_and_each_serial_prefix(
         } else {
             component_fixture(81, 90, 1, 1)
         };
-        let fixtures = [first, component_fixture(82, 90, 0, 3), second];
+        let mut fixtures = [first, component_fixture(82, 90, 0, 3), second];
+        if case == "capacity_samepayer" {
+            fixtures.swap(1, 2);
+        }
         let mut initial = NovNativeExecutionStoreV1::default();
-        for fixture in &fixtures[..2] {
-            initial.module_state.account_asset_balances.insert(
-                fixture.subject.account_id.clone(),
-                BTreeMap::from([
-                    ("NOV".into(), if case == "balance" { 0 } else { 1_000 }),
-                    ("USDT".into(), u128::MAX),
-                ]),
-            );
+        for fixture in &fixtures {
+            let balance = if case == "balance" {
+                0
+            } else if case.starts_with("capacity_")
+                && fixture.subject.account_id == fixtures[0].subject.account_id
+            {
+                1_000_000_001_000
+            } else {
+                1_000
+            };
+            initial
+                .module_state
+                .account_asset_balances
+                .entry(fixture.subject.account_id.clone())
+                .or_insert_with(|| {
+                    BTreeMap::from([("NOV".into(), balance), ("USDT".into(), u128::MAX)])
+                });
         }
         match case {
             "paused" => initial.module_state.treasury_settlement_paused = true,
@@ -476,6 +491,14 @@ fn real_aoem_typed_record_effects_match_fullencode_batch_and_each_serial_prefix(
                 initial.module_state.clearing_daily_window_day = 0;
                 initial.module_state.clearing_daily_nov_used = 900;
             }
+            "capacity_samepayer" | "capacity_shared_credit" => {
+                let available = estimate_execution_fee_nov_v1(&fixtures[1].request);
+                assert!(estimate_execution_fee_nov_v1(&fixtures[0].request) > available);
+                // Real policy capacity rejects the larger fee but permits the
+                // next smaller one. Only the record codec supports this u128
+                // boundary; do not push it through the old JSON state codec.
+                initial.module_state.treasury_settled_nov_total = u128::MAX - available;
+            }
             _ => {}
         }
         let now = 86_400_123;
@@ -485,7 +508,11 @@ fn real_aoem_typed_record_effects_match_fullencode_batch_and_each_serial_prefix(
             .collect::<Vec<_>>();
         let mut actual = initial.clone();
         let mut old_batch = initial.clone();
+        take_component_observation_for_test_v1();
         record::execute_segment_v1(&mut actual, &items, now).unwrap();
+        let observation = take_component_observation_for_test_v1().unwrap();
+        assert_eq!(observation.graphs, 1, "{case}: only one actual AOEM graph");
+        assert_eq!(observation.transactions, fixtures.len());
         record::execute_segment_fullencode_oracle_for_test_v1(&mut old_batch, &items, now).unwrap();
         assert_eq!(
             actual, old_batch,
@@ -504,6 +531,63 @@ fn real_aoem_typed_record_effects_match_fullencode_batch_and_each_serial_prefix(
             assert_eq!(typed_prefix, old_prefix, "{case}: full prefix {index}");
         }
         assert_eq!(actual, old_prefix, "{case}: batch versus old serial prefix");
+        if case.starts_with("capacity_") {
+            assert!(observation.recomputed_transactions > 0);
+            let NovTxKindV1::Transfer(accepted) = &fixtures[1].transaction.kind else {
+                unreachable!();
+            };
+            assert_eq!(
+                native_account_asset_balance_v1(&actual, &to_hex_prefixed_v1(&accepted.to), "NOV"),
+                accepted.amount,
+                "rejected speculative trillion-unit credit must not survive reduction"
+            );
+            let fee = estimate_execution_fee_nov_v1(&fixtures[1].request);
+            for (index, fixture) in fixtures.iter().enumerate() {
+                let receipt = &actual.receipts[&fixture.reservation.tx_hash];
+                assert_eq!(receipt.status, index == 1);
+                assert_eq!(receipt.settled_fee_nov, if index == 1 { fee } else { 0 });
+                assert_eq!(receipt.paid_amount, receipt.settled_fee_nov);
+                if index != 1 {
+                    assert!(receipt
+                        .failure_reason
+                        .as_deref()
+                        .unwrap()
+                        .starts_with("fee.settlement.amount_overflow"));
+                }
+            }
+            let first_identity = &fixtures[0].reservation.identity_key;
+            let other_identity = &fixtures
+                .iter()
+                .find(|fixture| fixture.reservation.identity_key != *first_identity)
+                .unwrap()
+                .reservation
+                .identity_key;
+            assert_eq!(
+                actual.module_state.native_auth_next_nonces[first_identity],
+                2
+            );
+            assert_eq!(
+                actual.module_state.native_auth_next_nonces[other_identity],
+                1
+            );
+            assert_eq!(
+                actual.module_state.native_auth_nonce_reservations.len(),
+                fixtures.len()
+            );
+            assert_eq!(actual.module_state.treasury_settlements, 1);
+            assert_eq!(actual.module_state.treasury_settled_nov_total, u128::MAX);
+            let remaining: u128 = actual
+                .module_state
+                .account_asset_balances
+                .values()
+                .map(|assets| assets.get("NOV").copied().unwrap_or(0))
+                .sum();
+            assert_eq!(
+                remaining + fee,
+                1_000_000_002_000,
+                "the only charged fee must equal the total account debit"
+            );
+        }
         eprintln!("typed transfer record effects fullencode parity case={case} transactions=3");
     }
 }
@@ -599,7 +683,10 @@ fn real_aoem_components_preserve_serial_receipts_and_repair_global_fee_rejection
         assert_eq!(observation.components, 2);
         assert!(observation.peak_inflight >= 1);
         assert!(observation.recomputed_transactions <= fixtures.len());
-        assert_eq!(observation.graphs, 1 + observation.recomputed_transactions);
+        assert_eq!(
+            observation.graphs, 1,
+            "fee repair must stay in the admitted graph"
+        );
         if matches!(case, "success" | "business") {
             assert_eq!(observation.recomputed_transactions, 0);
             assert_eq!(observation.graphs, 1);
@@ -682,7 +769,10 @@ fn real_aoem_checked_credit_preserves_serial_store_and_global_fee_repairs() {
         .unwrap();
         let observation = take_component_observation_for_test_v1().unwrap();
         assert_eq!(observation.components, 3);
-        assert_eq!(observation.graphs, 1 + observation.recomputed_transactions);
+        assert_eq!(
+            observation.graphs, 1,
+            "shared-credit repair must stay in the admitted graph"
+        );
         if matches!(case, "paused" | "overflow") {
             // The first rejected credit also invalidates predictions in OTHER
             // components, not only the rejected payer's later nonce.
