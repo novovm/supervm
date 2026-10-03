@@ -307,6 +307,16 @@ fn exercise_fresh_sequence(
                 .unwrap()
             })
             .collect::<Vec<_>>();
+        if record_profile && height == 4 {
+            let catalog_before = workspace::list_v1(chain, params).unwrap();
+            let outbox_before = stores[0].load_pending_outbox(chain, set.validators[0].validator_id, 128).unwrap();
+            assert!(workspace::reclaim_unregistered_workspaces_v1(
+                chain, parent, pin, &[candidate, parent], params,
+            ).unwrap().is_empty());
+            assert_eq!(workspace::list_v1(chain, params).unwrap(), catalog_before);
+            assert_eq!(workspace::load_block_artifact_v1(chain, candidate, params).unwrap().unwrap(), artifact);
+            assert_eq!(stores[0].load_pending_outbox(chain, set.validators[0].validator_id, 128).unwrap(), outbox_before);
+        }
         assert!(Qc::from_votes(proposal.subject.clone(), set, votes[..2].to_vec()).is_err());
         let qc = Qc::from_votes(proposal.subject.clone(), set, votes).unwrap();
         let decisions = (0..3)

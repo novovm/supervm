@@ -283,6 +283,7 @@ jobs:
           cargo test -p novovm-exec --lib graph_owner --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-exec --lib graph_scope --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-node --lib candidate_worker --locked -- --test-threads=1
+          cargo test -p novovm-node --lib unregistered_reclaim_journal_codec --locked -- --test-threads=1
           cargo test -p novovm-node --lib record_auth_ --locked -- --test-threads=1
           cargo test -p novovm-node --lib fresh_pool_tests --locked -- --test-threads=1
           cargo test -p novovm-node --lib finalized_nov_balance --locked -- --test-threads=1

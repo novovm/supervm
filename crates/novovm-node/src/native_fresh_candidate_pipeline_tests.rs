@@ -182,6 +182,28 @@ impl FreshChainLifecycleV1 {
                     timestamp_unix_ms: timestamp,
                 };
                 let original_catalog = workspace::list_v1(chain, params)?;
+                let registered = workspace::with_verified_finalized_parent_round_v1(
+                    chain,
+                    parent_id,
+                    pin,
+                    params,
+                    |view| view.load_candidate_records_by_height(chain, 4),
+                )?;
+                let registered_artifacts = registered
+                    .iter()
+                    .map(|record| {
+                        let id = record
+                            .isolated_execution_binding
+                            .as_ref()
+                            .context("pipeline registered successor binding missing")?
+                            .workspace_id;
+                        workspace::load_block_artifact_v1(chain, id, params)?
+                            .context("pipeline registered successor artifact missing")
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                if registered_artifacts.is_empty() {
+                    bail!("pipeline reclaim fixture requires a registered unfinalized successor");
+                }
                 // More than the entire durable slot budget may be captured and
                 // discarded: unaccepted work must never consume those slots.
                 for offset in 0..workspace::MAX_WORKSPACES_V1 + 2 {
@@ -537,6 +559,7 @@ impl FreshChainLifecycleV1 {
                             .recv_timeout(Duration::from_secs(10))
                             .context("durability fixture release deadline")?;
                         workspace::finish_execution_v1(computed)
+                            .map(|info| DurabilityResult::Executed(Box::new(info)))
                     }))),
                 });
                 lifecycle.poll_candidate_durability()?;
@@ -662,6 +685,11 @@ impl FreshChainLifecycleV1 {
                 if seal.load_pending_outbox(chain, leader_id, 128)? != outbox_before {
                     bail!("durable-only stage produced a new vote");
                 }
+                let durable = workspace::load_block_artifact_v1(chain, candidate, params)?
+                    .context("recaptured accepted output missing")?;
+                if current.successor_seal_subject(&durable, 0)? != preview {
+                    bail!("unstaged computed preview differs from the durable artifact subject");
+                }
                 // Inject a stale scheduler token only after the true durable
                 // result is ready. The next normal poll must reject it after
                 // its real pacemaker/live-parent work, without registration.
@@ -675,21 +703,37 @@ impl FreshChainLifecycleV1 {
                     now + Duration::from_millis(5),
                     timestamp,
                 )?;
+                let reclaim_wait = Instant::now();
+                while lifecycle.preparing.is_some() {
+                    if reclaim_wait.elapsed() > Duration::from_secs(30) {
+                        bail!("stale durable workspace reclaim deadline");
+                    }
+                    lifecycle.poll_with_wall_time(
+                        runtime,
+                        now + Duration::from_millis(5),
+                        timestamp,
+                    )?;
+                    std::thread::park_timeout(Duration::from_millis(2));
+                }
                 if lifecycle.preparing.is_some()
                     || lifecycle.service.is_some()
                     || lifecycle.status_json()["candidate_stale_completions"] != 2
                     || lifecycle.status_json()["proposed_successors"] != 0
                     || lifecycle.status_json()["durable_pending_transactions"] != 3
                     || seal.load_pending_outbox(chain, leader_id, 128)? != outbox_before
+                    || lifecycle.status_json()["candidate_reclaimed_workspaces"] != 1
+                    || workspace::list_v1(chain, params)? != original_catalog
+                    || workspace::load_block_artifact_v1(chain, candidate, params)?.is_some()
+                    || rpc_params(
+                        &mut lifecycle,
+                        "nov_getAssetBalance",
+                        balance_params.clone(),
+                    )? != balance_before
                 {
-                    bail!("stale durable output registered, voted or removed pending transactions");
+                    bail!("stale durable output was not privately reclaimed or changed authority/pool/votes");
                 }
-                drop(lifecycle); // joins the compute worker before its storage owner.
-                let durable = workspace::load_block_artifact_v1(chain, candidate, params)?
-                    .context("recaptured accepted output missing")?;
-                if current.successor_seal_subject(&durable, 0)? != preview {
-                    bail!("unstaged computed preview differs from the durable artifact subject");
-                }
+                // Join the compute worker before its storage owner.
+                drop(lifecycle);
                 // Reserved fresh ledgers intentionally reject ordinary open,
                 // even while a retained session exists. Inspect registration
                 // only through the existing verified live-parent read scope.
@@ -706,16 +750,81 @@ impl FreshChainLifecycleV1 {
                 if stale_record.is_some() {
                     bail!("stale durable output was registered in the block ledger");
                 }
-                // This isolated complete output intentionally remains in the
-                // fixture. The test does NOT claim unregistered stale outputs
-                // are reclaimed by the production retirement implementation.
+                // Recreate the same deterministic plan, then simulate a process
+                // ending after durability but before the stale fence. Startup
+                // must find this orphan without an in-memory continuation.
+                let workspace::ExecutionStartV1::Job(job) =
+                    workspace::capture_execution_from_finalized_v1(&plan, parent_id, pin, params)?
+                else {
+                    bail!("reclaimed same-plan input was not reconstructible");
+                };
+                workspace::finish_execution_v1(job.run()?)?;
+                let rebuilt = workspace::load_block_artifact_v1(chain, candidate, params)?
+                    .context("same-plan durable reconstruction missing")?;
+                if rebuilt != durable {
+                    bail!("same-plan reconstruction changed execution artifact");
+                }
+                let mut restarted = Self::open(config.clone(), &ledger, params, runtime, now)?;
+                restarted.enable_candidate_pipeline(client.clone())?;
+                if restarted.status_json()["candidate_reclaimed_workspaces"] != 1
+                    || workspace::list_v1(chain, params)? != original_catalog
+                    || workspace::load_block_artifact_v1(chain, candidate, params)?.is_some()
+                    || seal.load_pending_outbox(chain, leader_id, 128)? != outbox_before
+                {
+                    bail!("startup orphan recovery changed signed state or failed to release slot");
+                }
+                for artifact in &registered_artifacts {
+                    if workspace::load_block_artifact_v1(chain, artifact.workspace_id, params)?
+                        .as_ref()
+                        != Some(artifact)
+                    {
+                        bail!("startup orphan recovery removed a registered unfinalized successor");
+                    }
+                }
+                drop(restarted);
+                let workspace::ExecutionStartV1::Job(job) =
+                    workspace::capture_execution_from_finalized_v1(&plan, parent_id, pin, params)?
+                else {
+                    bail!("startup-reclaimed plan was not reconstructible");
+                };
+                workspace::finish_execution_v1(job.run()?)?;
+                let interrupted = workspace::reclaim_unregistered_with_checkpoint_v1(
+                    chain,
+                    parent_id,
+                    pin,
+                    &[candidate],
+                    params,
+                    |point| {
+                        if point == workspace::UnregisteredReclaimCheckpointV1::PartialReclaim {
+                            bail!("pipeline startup partial reclaim interruption");
+                        }
+                        Ok(())
+                    },
+                )
+                .unwrap_err();
+                if !format!("{interrupted:#}")
+                    .contains("pipeline startup partial reclaim interruption")
+                    || workspace::load_v1(chain, candidate, params)?
+                        .is_none_or(|info| info.status != workspace::WorkspaceStatusV1::Retiring)
+                {
+                    bail!("pipeline startup interruption did not retain a discoverable journal");
+                }
+                let mut restarted = Self::open(config.clone(), &ledger, params, runtime, now)?;
+                restarted.enable_candidate_pipeline(client.clone())?;
+                if restarted.status_json()["candidate_reclaimed_workspaces"] != 1
+                    || workspace::list_v1(chain, params)? != original_catalog
+                    || seal.load_pending_outbox(chain, leader_id, 128)? != outbox_before
+                {
+                    bail!("lifecycle startup failed to finish partial private reclamation");
+                }
+                drop(restarted);
                 let recovered = FreshTransactionPool::open(&pool_path, chain, pin, params)?;
                 if recovered.len() != 3
                     || entries.iter().any(|entry| !recovered.contains(&entry.hash))
                 {
                     bail!("worker completion fence lost durable pending transactions after reopen");
                 }
-                eprintln!("real candidate worker: in-flight RPC dispatch/query, WSS ingress and verified remote timeout vote progressed; timeout signer record reopened exactly, no quorum claimed; AOEM completed; stale-round computation dropped with no slot; 34 captures dropped without catalog growth; false subject rejected before stage; same plan owner-local durability kept HTTP chainStatus/main poll responsive and state RPC backpressured; ready durable output crossed no signing boundary; injected stale round rejected registration; exact preview and 3 durable pool entries recovered");
+                eprintln!("real candidate worker: in-flight RPC/WSS/signed timeout progressed; 34 captures allocated no slot; false subject rejected; owner-local durability retained backpressure; stale durable completion reclaimed without registration/vote/authority/pool change; same plan durably rebuilt identically; lifecycle reopen reclaimed unregistered orphan; 3 durable pending entries recovered (no process-kill or TPS claim)");
                 Ok(())
             },
         )

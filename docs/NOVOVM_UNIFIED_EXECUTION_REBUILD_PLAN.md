@@ -8,6 +8,13 @@
 
 ## 最新短交接
 
+- **2026-10-03 R2候选槽回收：** 基线`e64a524`加本节所在提交，在原node
+  workspace/ledger与常驻owner上接回陈旧未注册输出回收、启动孤儿与部分清理恢复。
+  临时journal不取代永久退役规则；slot/journal同一原子写集合释放，registered/
+  signed/published保护，共享树不删，同plan可重算落盘。不是进程强杀、共享树GC、
+  TPS或生产签收；本机真库/原节点验证结果见台账。下一处回到完整Transfer业务
+  效应与AOEM批执行/归并，不再扩大恢复目录或外围工程；49草稿/AOEM仓不动。
+
 - **2026-10-03 R2后台候选接回原节点：** 基线`09486e3e`加本节所在提交，
   原node/exec常驻compute worker与AOEM存储owner已接线；四真实进程Transfer
   RPC/费用/失败/nonce/余额/重启通过，Host许可0。计算与控制推进分离，落盘时

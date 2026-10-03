@@ -181,6 +181,53 @@ fn candidate_keys(
 }
 
 impl NovNativeBlockLedgerV1 {
+    /// Negative membership is usable only under the complete fresh-ledger
+    /// validation and the same write lock that registration takes. The caller
+    /// holds the workspace and AOEM authority locks across this callback; it
+    /// must not re-enter ledger APIs from the callback.
+    pub(crate) fn with_unregistered_fresh_workspaces_v1<T>(
+        path: &Path,
+        genesis: [u8; 32],
+        namespace: [u8; 32],
+        current: [u8; 32],
+        requested: &[[u8; 32]],
+        action: impl FnOnce(&HashSet<[u8; 32]>) -> Result<T>,
+    ) -> Result<T> {
+        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
+            .context("unregistered reclaim requires an existing fresh ledger")?;
+        let _guard = ledger
+            .write_lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("unregistered reclaim ledger lock poisoned"))?;
+        let config = load_verified(&ledger, genesis, namespace)?;
+        if !ledger.db.get(KEY_SCHEMA_V1)?.is_some_and(|schema| {
+            schema == FINALIZED_SCHEMA.as_bytes() || schema == SUCCESSOR_FINALIZED_SCHEMA.as_bytes()
+        }) {
+            bail!("unregistered reclaim requires completed finality with no pending promotion");
+        }
+        let height = tip_height(&ledger)?;
+        if record_at(&ledger, height)?.execution.workspace_id != current {
+            bail!("unregistered reclaim parent is not the current finalized tip");
+        }
+        let mut unregistered: HashSet<_> = requested.iter().copied().collect();
+        // Complete validation above proves that no record/pin can hide outside
+        // these height/children indexes. Match workspace identity, not merely a
+        // caller-provided output hash or height. Any registered fork is kept,
+        // even if not locally selected, signed, or finalized yet.
+        let successor = height.checked_add(1).context("reclaim height overflow")?;
+        for candidate_height in 1..=successor {
+            for record in ledger
+                .load_candidate_records_by_height_inner_v1(config.chain_id, candidate_height)?
+            {
+                if let Some(binding) = record.isolated_execution_binding {
+                    unregistered.remove(&binding.workspace_id);
+                }
+            }
+        }
+        unregistered.remove(&current);
+        action(&unregistered)
+    }
+
     pub(crate) fn finalized_service_tip_v1(
         path: &Path,
         genesis: [u8; 32],

@@ -8,6 +8,55 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## R2 第三片：陈旧未注册候选回收与启动恢复
+
+日期2026-10-03；基线`main@e64a52477c1df282d0921c0d9c59b227b8f45796`
+加本节所在提交。本机Windows / Rust 1.94.0 / 原随仓core AOEM DLL，SHA256仍为
+`4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463`。
+只修改原node的候选生命周期及配套测试，不改AOEM、业务规则或共识协议。
+
+**新增能力：原节点不再因反复出现“已落盘、换轮后未注册”的候选而持续占满32槽。**
+陈旧完成进入同一常驻AOEM storage owner的清理阶段，交易池不删除；启动在发布
+恢复完成后、计算worker开启前清理完整孤儿输出，并续做中断的私有快照回收。
+未完成的执行reservation仍走原恢复流程；本片不擅自判废不完整执行或旧abort。
+
+复用原workspace目录、artifact读回、AOEM原子写集合与ledger注册边界。持锁顺序
+保持workspace→authority→ledger，验证当前finalized父/唯一AOEM head，并在注册
+写锁内按workspace ID检查完整候选集合；任何已注册分叉都保留，不因没选中就删除。
+正常产品签票必须先注册，因此保护已签票候选；这不是外部签名不存在的证明。
+发布证据与注册关系交叉检查，异常数据拒绝。临时`q/NCU1`日志绑定scope、输入/
+输出描述符及槽并检测损坏；私有c/o/v/e/r清理并读回后，slot与q在**同一原子写集合**
+释放，不把整张graph误称单一事务。永久g/abort策略不变，同一合法plan可以重建。
+共享内容寻址记录/状态树、h发布证据、账本/QC及用户pending均不清理。
+
+| 本机检查 | 真实结果和范围 |
+| --- | --- |
+| 原纯Transfer真库夹具，Host许可0 | 1/1；34个不同候选实际计算/落盘/回收，catalog不增长；相同plan实际重算落盘两次；3个checkpoint返回错误后重开恢复；错父/创世/损坏日志拒绝；原5笔后继经济与读回保持一致，登记后禁止回收 |
+| 原连续record-genesis夹具 | 1/1；该历史fixture初始化显式Host许可1。真实worker陈旧完成进入owner回收，3笔pending、余额、出站票保持；同plan重建一致；lifecycle重新打开回收完整孤儿及部分清理日志，已注册未finalized候选保留；后续原链正常推进，真实签票后也不可回收 |
+| 四个真实原node进程、原RPC和重启，Host许可0 | 1/1；6笔真实签名交易5成功/1余额不足，费用/nonce/资产守恒、完整块/BFT证明和重启回执/余额一致，原3/4门槛不降；不是4台设备或吞吐验收 |
+| journal codec / 原账本 / Host默认限制 / RPC / pool | 1/1、40/40、5/5、12/12、10/10；codec覆盖合法范围字段位翻转、截断、加字节与跨scope；检查未跳过 |
+| 原封印、轮次与Overlay回归 | 211/211，含6个既有worker检查；没有降低QC或取消原检查 |
+| 产品构建 | 全workspace/all-targets check与Clippy `-D warnings`、fmt通过；既有同源多bin提示保留 |
+
+真实路径：`原node后台候选完成 → 原父/轮次fence拒绝 → 同一AOEM owner清理stage →`
+`原workspace/authority/ledger锁内验证 → 私有快照回收 → 原RPC/候选调度继续`。
+清理期间复用既有storage_busy/有界RPC等待，不在主线程拿锁等同一owner；启动清理
+同样送owner执行，不嵌套主线程已持有的remote scope。新增状态计数
+`candidate_reclaimed_workspaces`仅反映本进程实际完成的回收，不是最终确认计数。
+
+证据：本机`artifacts/recovery/r2-reclaim-*`；最终纯Transfer为`transfer-v2.log`，
+连续夹具为`lifecycle-v1.log`，四进程为`product-rpc.log`。四进程机器可读报告：
+`artifacts/audit/candidate-node-processes/seal-relay-24644-1791004964826289000/mixed-transfer-acceptance.json`，
+`accepted=true`、`legacy_host_execution="0"`、`production_signoff=false`。
+首次Clippy仅manual_contains提示，修正后v2通过；保留早期日志，不覆盖证据。
+本轮GitHub CI在推送后另核，不把本机通过或前提交CI状态写成新提交全绿。
+
+边界：34次存储循环不是34次网络换轮；陈旧轮次由原fixture注入，中断为checkpoint
+返回错误/进程内重开，不冒充真实断电或强杀。四进程测试实际重启但不注入清理中断。
+本片解决候选**槽和私有快照**泄漏，不是共享状态树GC；没有性能测量，不签收TPS、
+统一CPU/GPU、ZK、隐私/PQ、Linux实机、多机公网或生产部署。既有49项草稿保留。
+下一处回到完整Transfer业务效应与AOEM批执行/确定性归并及批量成本，不再扩清理工程。
+
 ## R2 第二片：原节点常驻后台候选流水线
 
 日期 2026-10-03；代码基线 `main@09486e3e7326202837e22b401e01be6da4e90bc2`

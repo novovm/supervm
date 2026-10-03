@@ -1016,6 +1016,14 @@ fn exercise_record_profile_fresh_transfers() {
                 params,
             )
             .unwrap();
+        workspace::exercise_unregistered_reclaim_for_test_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &next_plan,
+            params,
+        )
+        .unwrap();
         // The previous block left b with 150 - 20 - both settled fees.
         // Fund both following fees and the final successful amount; otherwise
         // the intended business-failure case would be a fee rejection instead.
@@ -1293,6 +1301,34 @@ fn exercise_record_profile_fresh_transfers() {
             load_nov_native_execution_store_v1(path).unwrap(),
             host_before
         );
+        // Ledger membership protects the same real successor after its full
+        // economic/readback checks; registration alone is not finalization.
+        workspace::register_finalized_successor_v1(
+            chain,
+            input.workspace_id,
+            next_input.workspace_id,
+            pin,
+            params,
+        )
+        .unwrap();
+        let registered_catalog = workspace::list_v1(chain, params).unwrap();
+        let protected = workspace::reclaim_unregistered_workspaces_v1(
+            chain,
+            input.workspace_id,
+            pin,
+            &[next_input.workspace_id],
+            params,
+        )
+        .unwrap();
+        assert!(protected.is_empty());
+        assert_eq!(workspace::list_v1(chain, params).unwrap(), registered_catalog);
+        assert_eq!(
+            workspace::load_block_artifact_v1(chain, next_input.workspace_id, params)
+                .unwrap()
+                .as_ref(),
+            Some(&next_block)
+        );
+        assert_eq!(read_head(), final_head);
     });
 }
 

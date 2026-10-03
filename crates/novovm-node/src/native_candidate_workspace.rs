@@ -29,6 +29,8 @@ pub(crate) use publication_verify_tests::exercise_publication_verify_corruption_
 mod rooted_parent;
 #[path = "native_candidate_state_records.rs"]
 mod state_records;
+#[path = "native_candidate_unregistered_reclaim.rs"]
+mod unregistered_reclaim;
 pub(crate) use execution::{
     capture_execution_from_finalized_v1, finish_execution_v1, ExecutionJobV1, ExecutionStartV1,
     PreparedExecutionV1,
@@ -64,6 +66,12 @@ use finalized_parent::FinalizedParentSnapshot;
 pub(super) use state_records::assert_materialization_allowed_for_test;
 #[cfg(test)]
 pub(super) use state_records::without_materialization_for_test;
+pub(crate) use unregistered_reclaim::reclaim_unregistered_workspaces_v1;
+#[cfg(test)]
+pub(crate) use unregistered_reclaim::{
+    exercise_unregistered_reclaim_for_test_v1, reclaim_unregistered_with_checkpoint_v1,
+    UnregisteredReclaimCheckpointV1,
+};
 #[cfg(test)]
 #[path = "native_candidate_live_parent_tests.rs"]
 mod live_parent_tests;
@@ -507,7 +515,9 @@ impl WorkspaceStore {
     }
 
     fn status(&self, slot: usize, descriptor: &Descriptor) -> Result<WorkspaceStatusV1> {
-        if self.graph.get(&self.key(b'g', &descriptor.id))?.is_some() {
+        if self.graph.get(&self.key(b'g', &descriptor.id))?.is_some()
+            || self.graph.get(&self.key(b'q', &descriptor.id))?.is_some()
+        {
             return Ok(WorkspaceStatusV1::Retiring);
         }
         // Independent, immutable tombstone wins even over a late completion.

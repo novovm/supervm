@@ -24,6 +24,7 @@ mod rooted_compute_tests;
 pub(crate) use publication_readback_tests::exercise_publication_readback_for_test_v1;
 #[path = "native_candidate_rooted_output.rs"]
 mod rooted_output;
+pub(super) use block_artifact::load_block_artifact_inner_v1;
 pub use block_artifact::{
     load_block_artifact_v1, prepare_genesis_promotion_v1, register_block_candidate_v1,
     register_genesis_block_candidate_v1, with_verified_block_candidate_v1,
@@ -189,14 +190,14 @@ struct Output {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct OutputDescriptor {
-    len: usize,
-    digest: [u8; 32],
+pub(super) struct OutputDescriptor {
+    pub(super) len: usize,
+    pub(super) digest: [u8; 32],
     input_digest: [u8; 32],
 }
 
 impl OutputDescriptor {
-    fn encode(&self) -> Vec<u8> {
+    pub(super) fn encode(&self) -> Vec<u8> {
         let mut bytes = b"NCE1".to_vec();
         bytes.extend_from_slice(&(self.len as u64).to_be_bytes());
         bytes.extend_from_slice(&self.digest);
@@ -204,7 +205,7 @@ impl OutputDescriptor {
         bytes
     }
 
-    fn decode(bytes: &[u8], input: &Descriptor) -> Result<Self> {
+    pub(super) fn decode(bytes: &[u8], input: &Descriptor) -> Result<Self> {
         if bytes.len() != 76 || &bytes[..4] != b"NCE1" {
             bail!("invalid candidate output descriptor codec");
         }
@@ -227,7 +228,7 @@ pub(super) fn output_digest(bytes: &[u8]) -> [u8; 32] {
     sha256_bytes_v1(&[b"novovm-candidate-output-v1\0", bytes])
 }
 
-fn output_chunk_key(workspace: &WorkspaceStore, id: &[u8; 32], index: usize) -> Vec<u8> {
+pub(super) fn output_chunk_key(workspace: &WorkspaceStore, id: &[u8; 32], index: usize) -> Vec<u8> {
     let mut suffix = id.to_vec();
     suffix.extend_from_slice(&(index as u32).to_be_bytes());
     workspace.key(b'o', &suffix)
@@ -874,7 +875,7 @@ fn read_output(
     Ok(Some(output))
 }
 
-fn is_complete(
+pub(super) fn is_complete(
     workspace: &WorkspaceStore,
     input: &Descriptor,
     output: &OutputDescriptor,

@@ -30,11 +30,19 @@ pub(super) struct PreparingCandidate {
     durability: Option<DurabilityStage>,
 }
 
-type DurabilityTask = Box<dyn FnOnce() -> Result<workspace::ExecutionInfoV1> + Send>;
+enum DurabilityResult {
+    Executed(Box<workspace::ExecutionInfoV1>),
+    Reclaimed {
+        workspace_id: [u8; 32],
+        reclaimed: bool,
+    },
+}
+
+type DurabilityTask = Box<dyn FnOnce() -> Result<DurabilityResult> + Send>;
 
 enum DurabilityStage {
     Waiting(DurabilityTask),
-    Running(novovm_exec::AoemSemanticGraphStageHandleV1<workspace::ExecutionInfoV1>),
+    Running(novovm_exec::AoemSemanticGraphStageHandleV1<DurabilityResult>),
 }
 
 impl PreparingCandidate {
@@ -131,10 +139,37 @@ impl FreshChainLifecycleV1 {
                 .is_some_and(|p| p.permits_prepared_round(pending.round))
         {
             // Before durability this discards owned data without a new slot.
-            // After durability the isolated workspace remains recoverable,
-            // but is never registered/promoted by this stale continuation.
+            // After durability reclaim only if the original ledger still proves
+            // this workspace is unregistered. The owner holds the same ordered
+            // locks as registration/publication, and never deletes shared trees.
             // In both cases the original durable transaction pool remains.
             self.candidate_stale_completions = self.candidate_stale_completions.saturating_add(1);
+            if pending.execution_ready {
+                let chain = pending.preparation.chain_id();
+                let id = pending.preparation.workspace_id();
+                let parent = current
+                    .isolated_workspace_id
+                    .context("reclaim parent missing")?;
+                let genesis = current
+                    .fresh_genesis_config_commitment
+                    .context("reclaim genesis missing")?;
+                let params = self.params.clone();
+                pending.durability = Some(DurabilityStage::Waiting(Box::new(move || {
+                    let reclaimed = workspace::reclaim_unregistered_workspaces_v1(
+                        chain,
+                        parent,
+                        genesis,
+                        &[id],
+                        &params,
+                    )?;
+                    Ok(DurabilityResult::Reclaimed {
+                        workspace_id: id,
+                        reclaimed: reclaimed.contains(&id),
+                    })
+                })));
+                self.preparing = Some(pending);
+                return self.poll_candidate_durability();
+            }
             return Ok(());
         }
         if let Some(completion) = completed {
@@ -157,6 +192,7 @@ impl FreshChainLifecycleV1 {
             // A ready output is still not registration or permission to vote.
             pending.durability = Some(DurabilityStage::Waiting(Box::new(move || {
                 workspace::finish_execution_v1(completion)
+                    .map(|info| DurabilityResult::Executed(Box::new(info)))
             })));
             self.preparing = Some(pending);
             return self.poll_candidate_durability();
@@ -244,18 +280,34 @@ impl FreshChainLifecycleV1 {
             },
             DurabilityStage::Running(handle) => handle,
         };
-        let Some(info) = handle.try_complete()? else {
+        let Some(result) = handle.try_complete()? else {
             pending.durability = Some(DurabilityStage::Running(handle));
             return Ok(());
         };
-        if info.workspace_id != pending.preparation.workspace_id() {
-            bail!("durable candidate completion identity differs from admitted job");
+        match result {
+            DurabilityResult::Executed(info) => {
+                if info.workspace_id != pending.preparation.workspace_id() {
+                    bail!("durable candidate completion identity differs from admitted job");
+                }
+                pending.execution_ready = true;
+            }
+            DurabilityResult::Reclaimed {
+                workspace_id,
+                reclaimed,
+            } => {
+                if workspace_id != pending.preparation.workspace_id() {
+                    bail!("reclaimed candidate identity differs from stale continuation");
+                }
+                self.candidate_reclaimed_workspaces = self
+                    .candidate_reclaimed_workspaces
+                    .saturating_add(u64::from(reclaimed));
+                self.preparing = None;
+            }
         }
-        pending.execution_ready = true;
         // Do not register here. The next normal lifecycle pass first applies
         // pending timeout/new-view work, then repeats the parent/round fence.
-        // If that fence rejects, the isolated durable candidate is retained
-        // for the original bounded retirement/recovery protocol, never promoted.
+        // If that fence rejects, its unregistered private output is reclaimed
+        // in an owner-local stage, never promoted. Startup recovers interruption.
         Ok(())
     }
 }

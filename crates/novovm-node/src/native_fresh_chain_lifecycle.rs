@@ -37,6 +37,7 @@ pub struct FreshChainLifecycleV1 {
     candidate_worker: Option<candidate_worker::CandidateWorker>,
     preparing: Option<candidate_pipeline::PreparingCandidate>,
     candidate_stale_completions: u64,
+    candidate_reclaimed_workspaces: u64,
     clock_waiting: bool,
     future_timestamp_rejected: u64,
     pool: Option<FreshTransactionPool>,
@@ -114,6 +115,7 @@ impl FreshChainLifecycleV1 {
             candidate_worker: None,
             preparing: None,
             candidate_stale_completions: 0,
+            candidate_reclaimed_workspaces: 0,
             clock_waiting: false,
             future_timestamp_rejected: 0,
             pool: config
@@ -197,6 +199,48 @@ impl FreshChainLifecycleV1 {
     ) -> Result<()> {
         if self.candidate_worker.is_some() || self.preparing.is_some() || self.halted {
             bail!("candidate pipeline can only be installed once on an active lifecycle");
+        }
+        // Startup has already recovered any pending publication and resolved
+        // the finalized parent. No local candidate job exists yet. Recover
+        // interrupted cleanup and completed-but-unregistered results left by a
+        // previous process, before a new worker can race its own registration.
+        // Registered candidates (including the service's pinned candidate) are
+        // excluded under the ledger lock. Incomplete outputs retain the existing
+        // execution recovery path; this is not a general state-tree GC.
+        if let Some(parent) = &self.finalized_parent {
+            let genesis = self
+                .config
+                .as_ref()
+                .and_then(|config| config.fresh_genesis_config_commitment)
+                .context("candidate recovery genesis missing")?;
+            let chain = self.chain;
+            let current = parent.workspace_id();
+            let params = self.params.clone();
+            // Run on the owner itself, without nesting the main thread's remote
+            // client scope. No workspace/authority/ledger lock is held while
+            // startup waits, and no RPC or worker has been enabled yet.
+            let stage = client.try_stage(move || {
+                use crate::tx_ingress::candidate_workspace as workspace;
+                let ids = workspace::list_v1(chain, &params)?
+                    .into_iter()
+                    .map(|info| info.workspace_id)
+                    .collect::<Vec<_>>();
+                workspace::reclaim_unregistered_workspaces_v1(
+                    chain, current, genesis, &ids, &params,
+                )
+            })?;
+            let novovm_exec::AoemSemanticGraphStageAdmissionV1::Accepted(mut handle) = stage else {
+                bail!("candidate startup recovery storage queue is busy; retry startup");
+            };
+            let reclaimed = loop {
+                if let Some(reclaimed) = handle.try_complete()? {
+                    break reclaimed;
+                }
+                std::thread::park_timeout(Duration::from_millis(10));
+            };
+            self.candidate_reclaimed_workspaces = self
+                .candidate_reclaimed_workspaces
+                .saturating_add(reclaimed.len() as u64);
         }
         self.candidate_worker = Some(candidate_worker::CandidateWorker::start(client)?);
         Ok(())
@@ -598,6 +642,7 @@ impl FreshChainLifecycleV1 {
         value["candidate_preparation_inflight"] = self.preparing.is_some().into();
         value["candidate_durability_inflight"] = self.candidate_storage_busy().into();
         value["candidate_stale_completions"] = self.candidate_stale_completions.into();
+        value["candidate_reclaimed_workspaces"] = self.candidate_reclaimed_workspaces.into();
         value["clock_waiting"] = self.clock_waiting.into();
         value["future_timestamp_rejected"] = self.future_timestamp_rejected.into();
         value["max_future_block_time_ms"] = clock::MAX_FUTURE_BLOCK_TIME_MS.into();
