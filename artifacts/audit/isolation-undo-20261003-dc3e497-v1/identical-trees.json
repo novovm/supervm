@@ -1,0 +1,38 @@
+[
+  {
+    "path": "crates",
+    "before_tree": "73310a68203d878e87c8f3992587b247ea425042",
+    "archive_tree": "73310a68203d878e87c8f3992587b247ea425042",
+    "identical": true
+  },
+  {
+    "path": "scripts",
+    "before_tree": "b88563940bbf09d982287dbb84faa6e37b61fd43",
+    "archive_tree": "b88563940bbf09d982287dbb84faa6e37b61fd43",
+    "identical": true
+  },
+  {
+    "path": "proofs",
+    "before_tree": "9485cc215dccf0687bab333e1244bb8ffec8d68a",
+    "archive_tree": "9485cc215dccf0687bab333e1244bb8ffec8d68a",
+    "identical": true
+  },
+  {
+    "path": "config",
+    "before_tree": "2153730adb8e48950bb97e1b8e6c4e2d89d79b84",
+    "archive_tree": "2153730adb8e48950bb97e1b8e6c4e2d89d79b84",
+    "identical": true
+  },
+  {
+    "path": "configs",
+    "before_tree": "c78513ce90ed42c78d0a95f522d2711bd8df42ad",
+    "archive_tree": "c78513ce90ed42c78d0a95f522d2711bd8df42ad",
+    "identical": true
+  },
+  {
+    "path": "vendor",
+    "before_tree": "ab2b8dea84644eef307bddac823dcd67a24aa72e",
+    "archive_tree": "ab2b8dea84644eef307bddac823dcd67a24aa72e",
+    "identical": true
+  }
+]

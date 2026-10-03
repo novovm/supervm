@@ -34,10 +34,16 @@ Shared product and multi-device development contract:
   entire original product. Follow
   `docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md` for scope and acceptance.
   The archive and uncommitted drafts remain protected: do not develop in,
-  overwrite, or directly link unreviewed legacy sources. Restore reviewed code
-  to the product layout and integrate useful runtime components; do not roll
+  overwrite, or directly link unreviewed legacy sources. Restore original assets
+  by complete Git-tree mapping, not by screening individual modules for value.
+  Preserve all post-isolation code, tests, evidence and drafts before integration;
+  review their product wiring separately. Do not roll
   back all later fixes or create a second product chain. The current Cargo/CI
   still build runtime libraries only; documentation does not restore the node.
+  The complete restoration checklist is
+  `docs/NOVOVM_ISOLATION_UNDO_CHECKLIST.md`; obtain the user's checklist approval
+  before moving files or changing product assembly. Do not block that restoration
+  on completing the whole historical execution-ownership audit.
 
 - Before starting or resuming NOVOVM work, read
   `docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md` first, then

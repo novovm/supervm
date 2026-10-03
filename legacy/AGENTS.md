@@ -8,8 +8,9 @@ Preserve its bytes, including uncommitted experiments; do not format, clean,
 or stage those drafts as part of documentation or layout recovery.
 
 Read/reference only except for explicitly scoped recovery operations. Restore
-reviewed product modules and useful implementations into the approved product
-layout; runtime is not the only permitted destination. Do not directly depend
+the complete original product assets using the approved Git-tree checklist,
+not a subjective selection of modules. Review behavioral acceptance and later
+integration separately; runtime is not the only permitted destination. Do not directly depend
 on a legacy crate or include archived source by path to bypass review. Preserve
 originals and drafts until restoration is verified. Existing test data is not
 production genesis. The current documentation task does not relocate code.

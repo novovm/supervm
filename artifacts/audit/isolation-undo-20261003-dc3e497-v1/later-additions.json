@@ -1,0 +1,2018 @@
+[
+  {
+    "path": "docs/NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "8f36b90d147a5bdad3ea207a03269a8c8c93a8df"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "legacy/AGENTS.md",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "214ce2eaa89b9c17f6d905285e3e35d68544dadb"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "legacy/README.md",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "4752b4bdcc411d93b9c6215eb2d594e506459c3f"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/AGENTS.md",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "2e0c1edc89a66d8a09ccf89ff0224674cfb04a9d"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/check-isolation.ps1",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "dcebcc53dc2e84e79c6642b748bfd174801b42d3"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/Cargo.toml",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "73339cf3a8df024e1d76364742bd698a10066b72"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/abi.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f8e61a69dc78ebbc698b1de1d251d3da729a0516"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/compute_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "dacf9b0361e7ba7943a67c2ad7cce5f235a2510c"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/compute.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e93ba5bb9b3b8b9b4fcfa54c851e6894a4b08a94"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/lib.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "96d261c0f23cea43a5667a4fb980dce5fa1f2c6a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/library.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b29cdfff40d26960fb47e6be76ce62a95a88fe63"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/receipt.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "c59f914965ebf34d2c58c7107fe234b86d8821a6"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/receipt/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "88c7b587f896dfdcadad5085d6069232d9f7c538"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/storage_wire.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "6fdaf41f0427644b9f35deddd7d59591a4f7ea43"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/storage.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "c36c6df37f11b0db1555e19677c710f9decb0469"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-aoem/src/storage/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "46b9e244dfb55f0506b6a63e831902ac7083bd10"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/Cargo.toml",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "d3c49558f32f29458885a329025a21c553dcfc14"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/direct_nov_fee.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "51c768266ce807ab0251c5d67bb19bab832ee310"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/direct_nov_fee/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "9c95fbf3b123b164d97c19c1a9054ee52268f87f"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/mod.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "193d62af7e7f6912cf28959e83bbd29e7afde37a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/nov_transfer_batch.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "4e77d44ddbd8559d05a480a9147f27ab1e50dc9b"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/nov_transfer_batch/body_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b5587e2fc245e4a0bb098e3230d81c3e5967f922"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/nov_transfer_batch/execution.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "4ad928d8891934d6c0ff9e819cb9d6caa257bd79"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/nov_transfer_batch/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e156b71ea9c85c11e4ca1051cd2c5571f664318b"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/quoted_transfer.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f511eb37446e0f5f1f6844cfa3e0c2f742954e65"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/quoted_transfer/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "5cf7fd37923024f988cbdf2f53d473e26fab908a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/business/record_pages.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "0477344c3fb8789387f8cb23398adb000cf3ee71"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/chain_integration.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e6cc6d17ebafae7992c893ef33d42d7a0cf33c7e"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/chain.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "1e9bb8dad85f309147ba1d94a2cde395265b68e4"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/chain/replay_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "1ebfc1b5602e492f468afaa502dfe916d791fc49"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/chain/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b38fd7abd4d00c57f4d25cf9d1681a9a3eb760f5"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/channel.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "d0d83b1ac56556c8448a787283387bb37f7084f8"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/channel/early_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "999ee4248832aab4a3aa2befca8b8019dded3ec1"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/channel/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "46c8f4b703a33c84625962d04dd3191707dabf16"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/collector.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "4be160c33f592f576b70bf7f702f65132aa19c35"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/collector/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e3e6d56dac83652f71b98c92394efe020756f815"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_crash.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "90b4e3961669bc9dc52ecb32726f978204c56770"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_integration.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "cc09ffe982497c5b951e02a87637284f0ae206a6"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_load_recovery.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "2cfc994094bd8842a52d8f734a1f3519a6b023ef"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_load.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "c024396948952830118beb932bff3e81c4067bfb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_recovery_multiroot.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "3715be52dbdc2b0fbb094b1b009d7a2f8435e112"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_recovery.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "990d4ab536b63ff3854eb85c23343f6a16a8335e"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_workload_tree_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "929ef5a696bf5cf1a1326be6ec2dd51298685096"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller_workload.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "3bb7e9dcbcec8c92da9ef2f32684b24453e0981e"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "975e265e36af96eb5aa338a68ed681e08b86619f"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller/early_body.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "d3d356ea05283d9a2fbaa98daa5e816068a0ac15"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller/regressions.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "2a396c4cd6824a2fff481ffbdfb66017746157c9"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller/successor.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "1630cccf55f55bc3fd2c6971b07bef25bd348d9e"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller/successor/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "eacd7ec740cc31b0f888d5ecb6b355cee9239b55"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller/successor/tests/early_limits.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "13f5c64feb5d2aa0b0ce8e5c18b7477399e558c4"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller/successor/tests/early.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "8e718b8470ede8ae5f60a05602f09565e7bd2bdf"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/controller/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "24e181a0780573a512ec87fefe2d4f328056414d"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/journal_recovery_integration.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "73de6c3cab79f4486f4f5cc88060d2c43ae1d974"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/journal.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "a596f7bcdb2fd60b4df9870e0fff778d06658277"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/journal/codec.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "403365cdc02205b5d426f9a6c755d1b5e322f862"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/journal/codec/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "8d7cde2985ea3631a91c69c41055b808f9cb1277"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/journal/opening.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "84057a52c4d4f5e58f6a13e5fe6a3ac0d6489008"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/mod.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "fccb3cfb88c5afdfcc3672376b09b5c56e1aafc9"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/network_integration.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "9a49a8992193e364692924f3b8caf3728d7e69a5"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/pacemaker_integration.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "1563cf2f4f8c855f24d113e73791f4fc13413c85"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/pacemaker.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "07ddb9b4061a9b57fd06517696c3abfd0ea454f4"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/pacemaker/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e92326539a434deaca0a65311b57c418205ee2d9"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/round.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "a7852c4854adfbf88e735ade603ae8973021e99d"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/round/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "5a9536de814e1bf1d908fa00f987086ad2f4874c"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/statement.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "19d4ac29433dbc6f440d5ab348f6067055fc7fc9"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/statement/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "9f13ee06d95f1cffe9cf30a2445e7df67df927fb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "7792481be7270c19cbf56ec3d048004f77e44c8c"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/transport.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "0dfb88a09d263da0ab0d0467932ca25b4741f03c"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/transport/early_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "342f33696d1337df6085ab37cb953da21e792a78"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/transport/early.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "ca01b916c9298e746a1106ac16fd10cdccd124a7"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/transport/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "ebe5f326237969d40d17d0014df61e17d2c62b44"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/wire.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "1ec670122c9b41bf3474c47e3e9a99f1a08ee4e7"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/consensus/wire/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "675c1a3ffb22c547548382a36392f0e1c7d030cb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/execution/mod.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "35f861715d0855755ff6d8800178c7980a7d1ff3"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/execution/plan.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "0f4876a09a9f0c2b992eaf523f5fb3de5e57ef32"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/execution/plan/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "22a88cc698e6e3a35a8aef529ba6374c6dddaac8"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/ingress/authentication.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "689d4c34b7ac90400c89d754cba70c27cc2409ad"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/ingress/authentication/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "1f61f29f5ecd5aa3fd250a2673a465e7270ec441"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/ingress/batch.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f30ba503b0582c8b14e7502ad42a9dc686aa0978"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/ingress/mod.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f8506dee69994355aa1b3acc0e88b0896bb4fe4a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/ingress/wire.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "460d36f75fdc37daa53b80a11abb91f00cf6d038"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/ingress/wire/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "a18eaadfbf15b50fb6f461e2d3d0abf4804abb33"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/lib.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "6f7a2eb685303f4abf24bf871823687613a948f1"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/io.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "a39bed2727d69284a8ad55fa9fb33d23248351ea"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/io/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b09f1b280814ca2f49fa684c3c7f65707b128bbb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/metadata.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "6792c3092d795336990c67f7f6558c6e4455b7ac"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/metadata/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "2ee2267f4a1e895db38b1933549a2b8175afd396"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/mod.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b7d0ce1a9cf07eb218ae5b05af87b167079e7225"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/packet.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "beb23e7884ff2b539bdccd47407da678ebf3f352"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/packet/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "5a9d4a78f6eb5c6466845caaeb2491d96df221ae"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/persistence/store.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e2c94e083ed5393905bb25cd37f5fb5442513212"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/authentication.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e204613d4a4b60a593744f63bb06c0c693d53530"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/authentication/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "2f4be721ee69455f28d992a270f48dfc18da6195"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/compute.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "423536792058f14f734980149c4a24659a7234e8"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": true
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/compute/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "05e0311e949dab5f65adc8ca6423d53b50c45035"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/driver.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "febf7053713c4d8fab74444c2ddb77f9d0e9ba84"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/driver/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f8923bb6e98308dc91756a62961902aa62281462"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/mod.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "4104a57d36fe542f319ee8e2ab961369646b49ab"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/seed.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b8420ab2a775ffa2820251fe8127a33ea567c24a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/seed/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e4e21ca0e0526321ad9e61460166ff4c2bb8181b"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/pipeline/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "a03e4d71636532fdc885af89d5e63b294838a1bb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/proof.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b6ca700ed2b681220159d84b9bd5f4c173cb1a51"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/proof/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "d26b30ef4afa019e07a15884edae0647d5906820"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/proof/wire.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "06a49df623bdd23f009d27617e3a13b19b3fea5f"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "ef894a30480772a541f88088015836969f157e9a"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier/capture.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "52c43d4eb60754c630c63c57612bdbc0a4e0e0fc"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier/capture/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "8d83b08b8eacff792a70d7a0f7ade82d7049a58e"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier/seed.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f707ff94b0dd654bc30cdc912b1be66733056653"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier/seed/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "702e5881a490f4a807c5e6cb3f3ac044ab04c23d"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f77f4f9ed9beb275e9ce1df942694dc5a606045f"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier/witness.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b048ac74efbb6f9bc4ef1c8c0c7906e45d0b3256"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/frontier/witness/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "cd9bd42b065e631fc2bd78d92ee60a925aad6c04"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/mod.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "aa68986a7edf335c10b8397404f6c54a47aa1b99"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/tree.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "eb5559c6871b8a45c0d2a43913027f31f19e945e"
+    },
+    "added_by_isolation": true,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/tree/batch_conformance.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "28f6582d312101a0177c3b2eaab11c85a45ed2a4"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/tree/batch.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "645fa2f44b284af7dd39a65f00a592c7eb775fab"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/tree/batch/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "3cb2c0089ee1211de873d2526ddc2b6d7d6c28ae"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/tree/read_batch.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "2da953030dfcbdbcf8b6b3fb418bf8c1a81dccb1"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/src/state/tree/read_batch/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "23b029ec36775f01a4751fdc9c75ad5842154fa8"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/tests/aoem_batch.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "d3c96be67dbc868c4f93dbf0a09fe3884c732cc9"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/tests/candidate_pipeline.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "7e519fb248f2c55e85daceb6f25f3c6448bb0042"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/tests/durable_candidate.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b308fb244c2b2b407f46ff16d5b43c2ddf0d8adb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/tests/nov_transfer_batch.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "d2e712e0ad4803f3eb2503d1356cd5e2d1cf02aa"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-host/tests/signed_ingress.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "2504676ebc6f05bb9037b3000f4cd6d9f8d5ee7d"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/Cargo.toml",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "ac98cbc6e77b39aa54b536bdc4644ae0d884cab0"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/fragments.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "84ea3a06eeec945fd9b415b958136eab3a24494b"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/fragments/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "a8ce79ddb900406684d95da4dfcb0dbdde1de148"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/lib.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "fdc4bf60fa3df4baa5f49a1f54e75ae89aec3def"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/novorudp_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "507a1fe36d2bbe1de1b3ea3e25ed6628ca4dcb54"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/novorudp.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "f6817a0586092f147921cc7f026e1faec5789c50"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_overlay_security_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "98c639f81f9f4ae61ff93824fe17661e823974f8"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_overlay.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "975de1cf3c91e99157430bfd801fc14e5bc0b67a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_client_failure_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "ea4ffba98d6904c01f8f68e5b42207ae6429e3a9"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_client.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "e38bfe81feda8d0ebe2dc81aaf363d3f337b331f"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_client/pipeline.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b03c5e1e619cad38efe36b5e5c7c5952ad6d7351"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_client/pipeline/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "0bb8a83c110ac634244f662d986691de2344c8a5"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_daemon_duplex_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "295a3334834e442a8a131c6b3905328fbb6c25da"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_daemon_encoded_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "0f820e0deb98cb836bf5ec5f91aa5e1cbc4225e3"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_daemon_io_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "345d81026c9f75069d7c96a4d1b4553fb4af7040"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_daemon.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "17b2eaa9791131105e420e14fc5c8b6b93d0c14e"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_daemon/connection.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "efbec278764ef0ecca1ea8e7e7df02c0caf6efbe"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_daemon/pump.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "dbf59ccf04bfaa2fa1fb3f685c1ec67e90e47840"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_daemon/pump/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "c38432f07f22d874dc13145347f66558bfa1af55"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_io.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "afc0aee9d7f55bf56ddd602142f58c2d2ff93fc3"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_wire.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "db5d3e4516b74a4aca4ea5485472a37089b79cfb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay_wire/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "fe1022c5804e6444ceb75ed1024bfc3325e400db"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "b2517ef1ba6d55d67de3903621fe542844a036bc"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay/encoded_tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "452ada6fa771917cb6ff2f02abdc74c1dd6b270f"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/product_relay/encoded.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "4e43e788857278fcda892d10d0e017b612d97632"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/worker.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "d383e1b76a4b8a6c95de945ec22451830f9aac75"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/worker/outbound.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "ff0c59b49c8effdab069350694dee8bddd8f097a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/worker/session.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "7e9b03733215b1a8e6d9e11fe90a846df1242247"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/worker/session/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "74e00a513f7df042d0ca276aaf46835cacc16a49"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/novovm-network/src/worker/tests.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "399b9834c131803278570f74f2cf59ffa09d91a3"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/Cargo.lock",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "df24957687e4fdce77b14673c26e17a7912c528c"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/Cargo.toml",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "a610d9df63184340da9241c102d5223ddefad50a"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/methods/build.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "08a8a4eb72e5ae99c9647680707f0f4c461238cf"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/methods/Cargo.toml",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "8339ae140a05cece61688c5467c9e6351b7e3782"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/methods/guest/Cargo.lock",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "6b1b393e2c98861c27cc0fb5bc638ce0d1976dee"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/methods/guest/Cargo.toml",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "6906c3a142b51b2a150344dda7589d0ce45aeddb"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/methods/guest/src/bin/novovm-auth-conformance-guest.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "4e378e2e68bb6e8d757d2dd7da11ed5198ae2b58"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/methods/guest/src/main.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "0d153adb3becab443e56d448b136e1ab686a0324"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/methods/src/lib.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "1bdb3085fa164c7151a1128bcc4ea78dd3a96657"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/probe/Cargo.toml",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "9dccc1f847c02ce16152d04cfc1305bd364b7627"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/probe/src/auth_conformance.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "7756a050f039f2a5f47c35abf7a1ac5964c5bcc1"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/probe/src/fixture.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "50f9f79aadfe676eef198cc425f6ec9519fd8496"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/probe/src/main.rs",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "0d12b9f38b0508e706da6fa00771d4d033284a4d"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  },
+  {
+    "path": "runtime/proofs/nov-transfer/README.md",
+    "entry": {
+      "mode": "100644",
+      "type": "blob",
+      "oid": "246504f0da8379b499986016fcf1663d8deebae8"
+    },
+    "added_by_isolation": false,
+    "disposition": "PRESERVE_CURRENT_CONTENT_AND_HISTORY",
+    "merge_into_product": "NOT_AUTOMATIC",
+    "has_local_draft": false
+  }
+]
