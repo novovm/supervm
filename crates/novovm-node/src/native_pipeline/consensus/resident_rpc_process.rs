@@ -1,10 +1,17 @@
 //! Actual product executable and HTTP RPC, not the controller test worker.
 //! Fresh loopback fixtures distinguish explicit client fanout from one fixed
 //! HTTP ingress. Neither claims production activation, TPS or four machines.
-//! The parent never manufactures a proposal, vote, QC or publication permission.
+//! Normal fixtures never manufacture proposals, votes, QCs or publication
+//! permission. The explicit A/A/B fixture adds a Byzantine peer signing ONLY
+//! its own conflicting proposals; all honest votes and QCs still come from nodes.
 
 #[path = "resident_rpc_process/load.rs"]
 mod load;
+
+#[path = "resident_rpc_process/aab.rs"]
+mod aab;
+#[path = "resident_rpc_process/offline.rs"]
+mod offline;
 
 use super::network_integration::Relay;
 use super::*;

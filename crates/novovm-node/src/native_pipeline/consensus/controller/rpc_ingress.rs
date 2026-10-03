@@ -12,6 +12,11 @@ const REPLAY_HINTS_PER_PEER: usize = 64;
 pub struct TransactionsStats {
     /// Local channel queue admission only, not remote delivery/pool/durability.
     pub outbound_batches_accepted: u64,
+    /// Recipient obligations reserved at local preparation admission.
+    pub outbound_recipient_reservations: u64,
+    /// A full peer gets no NEW best-effort obligation. Not an ACK, discard of
+    /// an accepted wallet transaction, or removal of an already queued send.
+    pub outbound_recipient_skips: u64,
     pub outbound_peer_enqueued: u64,
     /// Remote bounded consumer took the complete bytes; no validation implied.
     pub peer_credits_returned: u64,
@@ -28,6 +33,11 @@ pub struct TransactionsStats {
     pub channel_expired_sends: u64,
     pub channel_dropped_received: u64,
     pub outbound_pending: usize,
+    pub outbound_retained_bytes: usize,
+    pub outbound_capacity: usize,
+    pub outbound_peer_capacity: usize,
+    /// Bounded by the configured peer list; counts unprepared obligations too.
+    pub outbound_peer_pending: BTreeMap<String, usize>,
     pub inbound_pending: usize,
     pub credit_pending: usize,
 }
@@ -46,6 +56,13 @@ struct PendingSend {
     next_peer: usize,
     pending: Vec<bool>,
     queued: Vec<bool>,
+}
+
+impl PendingSend {
+    fn expired(&self, now: Instant, ttl: Duration) -> bool {
+        // Never forget an owner-accepted preparation token before its reply.
+        self.prepared.is_some() && now.saturating_duration_since(self.created) >= ttl
+    }
 }
 
 struct PendingCredit {
@@ -111,10 +128,64 @@ impl Transactions {
     pub(super) fn has_peer_capacity(&self) -> bool {
         self.peer_capacity() > 0
     }
+    fn pending_for_peer(&self, peer: usize) -> usize {
+        self.outbox
+            .iter()
+            .filter(|entry| entry.pending[peer])
+            .count()
+    }
+    /// Reserve recipients before accepting the preparation, not by evicting
+    /// old obligations later. A silent peer cannot accumulate every shared
+    /// body: its obligations are capped by its share of the existing budget.
+    /// The source wallet pool and canonical body/archive recovery remain the
+    /// owners of transaction lifetime; this is only best-effort propagation.
+    fn recipient_mask(&self) -> Option<Vec<bool>> {
+        if self.outbox.len() >= self.capacity() {
+            return None;
+        }
+        let limit = self.peer_capacity();
+        let mask: Vec<_> = (0..self.peers.len())
+            .map(|peer| self.pending_for_peer(peer) < limit)
+            .collect();
+        // Preserve the existing empty-peer local-only behavior. Otherwise no
+        // available recipient means NO acceptance; the caller keeps its input.
+        (self.peers.is_empty() || mask.iter().any(|pending| *pending)).then_some(mask)
+    }
+    fn prepared_admission(&mut self, token: u64, pending: Vec<bool>, created: Instant) {
+        let reserved = pending.iter().filter(|pending| **pending).count();
+        self.stats.outbound_recipient_reservations += reserved as u64;
+        self.stats.outbound_recipient_skips += (self.peers.len() - reserved) as u64;
+        self.outbox.push_back(PendingSend {
+            token,
+            prepared: None,
+            created,
+            next_peer: 0,
+            pending,
+            queued: vec![false; self.peers.len()],
+        });
+        self.stats.outbound_batches_accepted += 1;
+        self.sync_usage();
+    }
     fn sync_usage(&mut self) {
         self.stats.outbound_pending = self.outbox.len();
         self.stats.inbound_pending = self.inbox.values().map(VecDeque::len).sum();
         self.stats.credit_pending = self.credits.len();
+    }
+    /// Detailed flow diagnostics are calculated only when queried. In
+    /// particular, the polling path must not clone configured peer strings or
+    /// repeatedly scan the outbox just to replace unchanged map entries.
+    fn stats_snapshot(&self) -> TransactionsStats {
+        let mut snapshot = self.stats.clone();
+        snapshot.outbound_retained_bytes = self.outbox.len() * self.charge;
+        snapshot.outbound_capacity = self.capacity();
+        snapshot.outbound_peer_capacity = self.peer_capacity();
+        snapshot.outbound_peer_pending = self
+            .peers
+            .iter()
+            .enumerate()
+            .map(|(index, peer)| (peer.clone(), self.pending_for_peer(index)))
+            .collect();
+        snapshot
     }
     fn check_replay(
         &mut self,
@@ -246,12 +317,13 @@ impl Controller {
         })
     }
 
-    pub fn transactions_stats(&self) -> &TransactionsStats {
-        &self.transactions.stats
+    pub fn transactions_stats(&self) -> TransactionsStats {
+        self.transactions.stats_snapshot()
     }
 
     /// Accepted means a bounded LOCAL preparation slot, never remote or durable
-    /// receipt. Backpressure leaves the caller's original Arc untouched.
+    /// receipt. Full peers are excluded from this NEW best-effort fanout, not
+    /// acknowledged. All-full backpressure leaves the original Arc untouched.
     pub fn try_submit_transactions(&mut self, message: &Arc<Message>) -> Result<bool> {
         let (Message::Transactions { scope, .. } | Message::ApflTransactions { scope, .. }) =
             message.as_ref()
@@ -264,25 +336,20 @@ impl Controller {
                 && scope.sequence <= self.transactions.sequence,
             "input gossip is not from this controller process"
         );
-        if self.is_recovering() || self.transactions.outbox.len() >= self.transactions.capacity() {
+        if self.is_recovering() {
             return Ok(false);
         }
+        let Some(recipients) = self.transactions.recipient_mask() else {
+            return Ok(false);
+        };
         let token = self.allocate_token()?;
         match self.channel.try_prepare(PrepareRequest {
             token,
             input: PrepareInput::New(message.clone()),
         })? {
             PrepareAdmission::Accepted => {
-                self.transactions.outbox.push_back(PendingSend {
-                    token,
-                    prepared: None,
-                    created: Instant::now(),
-                    next_peer: 0,
-                    pending: vec![true; self.transactions.peers.len()],
-                    queued: vec![false; self.transactions.peers.len()],
-                });
-                self.transactions.stats.outbound_batches_accepted += 1;
-                self.transactions.sync_usage();
+                self.transactions
+                    .prepared_admission(token, recipients, Instant::now());
                 Ok(true)
             }
             PrepareAdmission::Backpressure(_) => Ok(false),
@@ -553,7 +620,8 @@ impl Controller {
         self.poll_transactions_credits()?;
         // A separate finite queue, never the consensus retransmission cache.
         // Each poll visits at most sends_per_poll entries and only one peer per
-        // entry. A slow/offline peer cannot pin the cursor on healthy peers.
+        // entry. Per-recipient admission bounds also stop a slow peer from
+        // retaining every global slot, not merely from pinning the cursor.
         for _ in 0..self
             .config
             .limits
@@ -569,7 +637,7 @@ impl Controller {
                 self.transactions.outbox.push_back(pending);
                 continue;
             };
-            if pending.created.elapsed() >= self.transactions.ttl {
+            if pending.expired(Instant::now(), self.transactions.ttl) {
                 self.transactions.stats.expired_batches += 1;
                 self.retire(Retirement::Prepared(pending.prepared.take().unwrap()));
                 continue;

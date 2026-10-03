@@ -1,0 +1,17 @@
+
+running 1 test
+offline original RPC artifacts=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-offline\26144-1791068276205937000
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay stopped: reason=external_request elapsed_ms=126192
+offline original RPC report=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-offline\26144-1791068276205937000\result.json
+test native_pipeline::consensus::tests::resident_rpc_process::offline::actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1535 filtered out; finished in 126.21s
+

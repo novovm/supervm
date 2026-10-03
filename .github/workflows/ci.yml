@@ -308,6 +308,8 @@ jobs:
           export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
           cargo test -p novovm-node --lib actual_product_rpc_signed_batches_failures_quorum_and_restart --locked -- --ignored --test-threads=1
           cargo test -p novovm-node --lib actual_product_rpc_single_ingress_gossip_failures_and_restart --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers --locked -- --ignored --test-threads=1
 
       - name: Original AOEM Transfer and recovery without Host compatibility permission
         timeout-minutes: 10

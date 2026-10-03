@@ -1,0 +1,17 @@
+
+running 1 test
+actual product RPC artifacts=D:\WorksArea\SUPERVM\crates\novovm-node\../../target/resident-rpc-tests\20188-1791068413557833500
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay stopped: reason=external_request elapsed_ms=1673
+actual product RPC: 8 unique finalized (7 success, 1 business failure), 2/4 no head, actual partition [ReceiptBlockPartition { height: 1, block_hash: "0xca4048a0f42f2843de6b8042752f077a42adec8918325fce3faffeb903b615d8", transactions: 1, transaction_hashes: ["0x2891db0d79e34f79354654ce85402a9b9b4e12b21c3bcdada052af47cce74ba0"] }, ReceiptBlockPartition { height: 2, block_hash: "0xcc9b792b7bd0d50a007f8adbfd0aa37c3183107d62a117ce164a6f6e5480eda9", transactions: 1, transaction_hashes: ["0xd9ef3e1d15ab6511f7756ff7975f4c4cf25406f3f770ea4943eb15af95a1f4e8"] }, ReceiptBlockPartition { height: 3, block_hash: "0x13edf0f4c7800d7b992ccbacda728ac406b58a00f800fb8b07532290dd236265", transactions: 2, transaction_hashes: ["0xea8aae890659194478c9f404b475e5f8c68864b026b564dbb48c1d5259422b17", "0x1cd072de442626a9b1d09ce26094d0c1ffe88af5b9de3d71270cd76a8f2503fd"] }, ReceiptBlockPartition { height: 4, block_hash: "0x9739fd9c30dcc780d1cc215ae51f9ab6f2418137e266c3fd56c131991e6f0138", transactions: 2, transaction_hashes: ["0x0452ec7b576522704d26eabdba803be386b25cd2d3ff236ce0a2a7c08427678c", "0x80daf3152fe3d467ace268b8c68fbdc5302cdcac9be28f89744d88ae723e845b"] }, ReceiptBlockPartition { height: 5, block_hash: "0x2839ef442c5fab5e92209c082b4e1d7962ec9ba2d718db96ff8b9890860df389", transactions: 2, transaction_hashes: ["0x891ebfa40a4de25dd5200783da1e254125355b7fdbe9ae0772f4c90076c7fa34", "0xd273f5fd864aa5a4c6fd3ae676b07f847c94cc9be32c7dfe3ec6c8ffdaf1cca2"] }], one full-block continuation after four-process cold restart PASS; D:\WorksArea\SUPERVM\crates\novovm-node\../../target/resident-rpc-tests\20188-1791068413557833500
+test native_pipeline::consensus::tests::resident_rpc_process::actual_product_rpc_signed_batches_failures_quorum_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1535 filtered out; finished in 1.68s
+

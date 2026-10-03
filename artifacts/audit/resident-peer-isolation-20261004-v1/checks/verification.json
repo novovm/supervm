@@ -1,0 +1,30 @@
+{
+  "baseline_commit": "bc00ace18bfce2d8789356e380f3afc9bc35cd11",
+  "source": "baseline plus the correction commit containing this record",
+  "environment": "Windows x86_64; release product/test executables; one host",
+  "node_sha256": "0dc4830a76f9ae96429154ba418e50c1f16422b9b3ce6d492e9fe02baa942399",
+  "test_sha256": "a352de11e74febd08b630a253f07676d1ef7f783ef579ef3858fb01ed677a978",
+  "commands_passed": [
+    "cargo fmt --all -- --check",
+    "cargo clippy --workspace --all-targets --locked --offline -- -D warnings",
+    "cargo build -p novovm-node --bin novovm-node --release --locked --offline",
+    "cargo test -p novovm-node --lib --release --no-run --locked --offline",
+    "runtime/check-isolation.ps1"
+  ],
+  "test_counts": {
+    "native_pipeline_pure_passed": 362,
+    "native_pipeline_explicitly_ignored_not_in_pure_count": 56,
+    "real_aoem_native_pipeline_passed": 47,
+    "native_fresh_rpc_passed": 18,
+    "original_process_functional_and_fault_tests_passed": 4
+  },
+  "real_aoem_filter": "native_pipeline:: --ignored --test-threads=1 --skip four_process_continuous_signed_load --skip four_process_early_body_signed_load --skip four_process_successor_signed_load --skip actual_product_rpc --skip current_state_larger_than_eight_mib",
+  "boundary": {"product_members": 21, "preserved_component_members": 3, "legacy_dependency": false},
+  "protected_drafts": {"inventory": "../../isolation-undo-20261003-dc3e497-v1/local-drafts.json", "count": 49, "sha256_and_bytes_unchanged": true},
+  "limitations": [
+    "Not all ignored workloads or the entire historical product suite were rerun.",
+    "The assembly check is not execution-ownership or mainnet acceptance.",
+    "Linux CI outcome for the resulting commit is separate from these local results.",
+    "Existing duplicate binary-target Cargo warning remains; no clippy warning was suppressed."
+  ]
+}

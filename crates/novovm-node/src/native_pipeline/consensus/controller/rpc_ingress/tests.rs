@@ -281,3 +281,271 @@ fn blocked_receiver_window_does_not_stop_healthy_peer_or_resend_taken_peer() {
         "retired TTL slot permanently blocked the peer"
     );
 }
+
+fn accept_prepared(
+    state: &mut Transactions,
+    channel: &HostChannel,
+    config: &super::super::super::channel::ChannelConfig,
+    sequence: u64,
+    now: Instant,
+) -> Result<(TransactionsScope, Hash)> {
+    use crate::native_pipeline::consensus::channel::tests::prepared;
+    let mask = state.recipient_mask().context("no available recipient")?;
+    let queued: Vec<_> = mask
+        .iter()
+        .enumerate()
+        .map(|(peer, selected)| *selected && !state.earlier_pending(sequence, peer))
+        .collect();
+    let scope = TransactionsScope {
+        chain_id: config.chain_id,
+        genesis: config.genesis,
+        protocol: config.protocol,
+        epoch: config.validators.epoch(),
+        validator_set_hash: config.validators.hash(),
+        session: state.session,
+        sequence,
+    };
+    let ready = prepared(
+        channel,
+        config,
+        Arc::new(Message::Transactions {
+            scope,
+            raw_transactions: vec![sequence.to_le_bytes().to_vec()],
+        }),
+    );
+    let fragment = ready.prepared.fragment_id();
+    state.prepared_admission(sequence, mask, now);
+    let entry = state.outbox.back_mut().unwrap();
+    entry.prepared = Some(ready.prepared);
+    entry.queued = queued;
+    Ok((scope, fragment))
+}
+
+fn release_completed(state: &mut Transactions) {
+    // The same completion predicate used by poll_transactions; this pure
+    // fixture has no native/network owner or retirement-thread claim.
+    state
+        .outbox
+        .retain(|entry| entry.pending.iter().any(|pending| *pending));
+    state.sync_usage();
+}
+
+fn assert_bounded(state: &Transactions) {
+    assert!(state.outbox.len() <= state.capacity());
+    assert!(state.outbox.len() * state.charge <= state.budget.bytes);
+    for peer in 0..state.peers.len() {
+        assert!(state.pending_for_peer(peer) <= state.peer_capacity());
+    }
+    assert_eq!(
+        state.stats_snapshot().outbound_retained_bytes,
+        state.outbox.len() * state.charge
+    );
+}
+
+#[test]
+fn one_silent_peer_cannot_pin_global_outbox_across_many_healthy_batches_without_ttl() -> Result<()>
+{
+    use crate::native_pipeline::consensus::channel::tests::{config, unstarted};
+    let config = config(0);
+    let channel = unstarted(&config);
+    let mut state = Transactions::new(&channel, config.peers.clone());
+    // Exercise the actual 4-validator shape: three remote reservations share
+    // the unchanged eight-body ceiling; this extra ID is a flow-only fixture.
+    state.peers.push("silent-fixture-peer".into());
+    let now = Instant::now();
+    let silent = 2;
+    let healthy = state.peers[..2].to_vec();
+    assert_eq!((state.capacity(), state.peer_capacity()), (8, 2));
+    let iterations = state.capacity() * 16;
+    for sequence in 1..=iterations as u64 {
+        let (scope, fragment) = accept_prepared(&mut state, &channel, &config, sequence, now)?;
+        for peer in &healthy {
+            assert!(state.return_credit(peer, &scope, fragment, now)?);
+        }
+        release_completed(&mut state);
+        assert_eq!(state.pending_for_peer(silent), (sequence as usize).min(2));
+        assert_eq!(state.outbox.len(), (sequence as usize).min(2));
+        assert_bounded(&state);
+        assert!(state.outbox.iter().all(|entry| entry.created == now));
+    }
+    assert_eq!(state.stats.outbound_batches_accepted, iterations as u64);
+    assert_eq!(
+        state.stats.outbound_recipient_skips,
+        (iterations - 2) as u64
+    );
+    assert_eq!(
+        state.stats.outbound_recipient_reservations,
+        (2 * iterations + 2) as u64
+    );
+    assert_eq!(state.stats.expired_batches, 0);
+    assert_eq!(
+        state.stats.peer_credits_returned, 0,
+        "pure helper is not a receive/controller ACK observation"
+    );
+    assert_eq!(
+        state.stats_snapshot().outbound_peer_pending[&state.peers[silent]],
+        2
+    );
+    Ok(())
+}
+
+#[test]
+fn all_recipients_full_refuse_new_obligations_without_changing_existing_slots_or_counters(
+) -> Result<()> {
+    use crate::native_pipeline::consensus::channel::tests::{config, unstarted};
+    let config = config(0);
+    let channel = unstarted(&config);
+    let mut state = Transactions::new(&channel, config.peers.clone());
+    let now = Instant::now();
+    for sequence in 1..=state.peer_capacity() as u64 {
+        accept_prepared(&mut state, &channel, &config, sequence, now)?;
+    }
+    assert!(
+        state.outbox.len() < state.capacity(),
+        "peer quota must apply before global full"
+    );
+    let before = serde_json::to_value(&state.stats)?;
+    let tokens: Vec<_> = state.outbox.iter().map(|entry| entry.token).collect();
+    for _ in 0..32 {
+        assert!(state.recipient_mask().is_none());
+    }
+    assert_eq!(serde_json::to_value(&state.stats)?, before);
+    assert_eq!(
+        state
+            .outbox
+            .iter()
+            .map(|entry| entry.token)
+            .collect::<Vec<_>>(),
+        tokens
+    );
+    assert_bounded(&state);
+    Ok(())
+}
+
+#[test]
+fn real_credit_reopens_only_its_peer_and_wrong_duplicate_or_late_credit_cannot_reopen_it(
+) -> Result<()> {
+    use crate::native_pipeline::consensus::channel::tests::{config, unstarted};
+    let config = config(0);
+    let channel = unstarted(&config);
+    let mut state = Transactions::new(&channel, config.peers.clone());
+    state.budget.messages = 2; // Tighten, never enlarge the existing budget.
+    let now = Instant::now();
+    let peers = state.peers.clone();
+    let (first, fragment) = accept_prepared(&mut state, &channel, &config, 1, now)?;
+    assert!(state.recipient_mask().is_none());
+    assert!(!state.return_credit(&peers[0], &first, [0; 32], now)?);
+    let mut wrong = first;
+    wrong.session[0] ^= 1;
+    assert!(!state.return_credit(&peers[0], &wrong, fragment, now)?);
+    assert!(!state.return_credit(&peers[0], &first, fragment, now + state.ttl)?);
+    assert!(state.recipient_mask().is_none());
+    assert!(state.return_credit(&peers[0], &first, fragment, now)?);
+    assert_eq!(state.recipient_mask(), Some(vec![true, false]));
+    let (second, second_fragment) = accept_prepared(&mut state, &channel, &config, 2, now)?;
+    assert!(state.recipient_mask().is_none());
+    assert!(!state.return_credit(&peers[0], &first, fragment, now)?);
+    assert!(
+        !state.return_credit(&peers[1], &second, second_fragment, now)?,
+        "skipped recipient had no obligation to release"
+    );
+    assert!(state.recipient_mask().is_none());
+    assert!(state.return_credit(&peers[0], &second, second_fragment, now)?);
+    release_completed(&mut state);
+    assert_eq!(state.recipient_mask(), Some(vec![true, false]));
+    assert!(state.return_credit(&peers[1], &first, fragment, now)?);
+    release_completed(&mut state);
+    assert_eq!(state.recipient_mask(), Some(vec![true, true]));
+    assert_bounded(&state);
+    Ok(())
+}
+
+#[test]
+fn byte_ceiling_and_owner_pending_preparations_are_charged_before_any_peer_send() {
+    let mut state = state();
+    state.budget.bytes = state.charge * 4;
+    let now = Instant::now();
+    assert_eq!((state.capacity(), state.peer_capacity()), (4, 2));
+    for token in 1..=2 {
+        let recipients = state.recipient_mask().unwrap();
+        state.prepared_admission(token, recipients, now);
+        assert_bounded(&state);
+    }
+    assert!(state.recipient_mask().is_none());
+    assert!(state
+        .outbox
+        .iter()
+        .all(|entry| !entry.expired(now + state.ttl, state.ttl)));
+    assert_eq!(
+        state.stats_snapshot().outbound_retained_bytes,
+        2 * state.charge
+    );
+}
+
+#[test]
+fn detailed_peer_usage_is_query_only_and_does_not_materialize_in_the_poll_counters() -> Result<()> {
+    use crate::native_pipeline::consensus::channel::tests::{config, unstarted};
+    let config = config(0);
+    let channel = unstarted(&config);
+    let mut state = Transactions::new(&channel, config.peers.clone());
+    let now = Instant::now();
+    let (scope, fragment) = accept_prepared(&mut state, &channel, &config, 1, now)?;
+    let first_peer = state.peers[0].clone();
+    assert!(state.return_credit(&first_peer, &scope, fragment, now)?);
+    for _ in 0..128 {
+        state.sync_usage();
+        assert!(state.stats.outbound_peer_pending.is_empty());
+        assert_eq!(state.stats.outbound_retained_bytes, 0);
+        assert_eq!(state.stats.outbound_capacity, 0);
+        assert_eq!(state.stats.outbound_peer_capacity, 0);
+    }
+    let snapshot = state.stats_snapshot();
+    assert_eq!(snapshot.outbound_batches_accepted, 1);
+    assert_eq!(snapshot.outbound_pending, 1);
+    assert_eq!(snapshot.outbound_retained_bytes, state.charge);
+    assert_eq!(snapshot.outbound_capacity, state.capacity());
+    assert_eq!(snapshot.outbound_peer_capacity, state.peer_capacity());
+    assert_eq!(snapshot.outbound_peer_pending[&first_peer], 0);
+    assert_eq!(snapshot.outbound_peer_pending[&state.peers[1]], 1);
+    assert!(state.stats.outbound_peer_pending.is_empty());
+
+    let ttl = state.ttl;
+    state.outbox.retain(|entry| !entry.expired(now + ttl, ttl));
+    state.sync_usage();
+    let after_expiry = state.stats_snapshot();
+    assert_eq!(after_expiry.outbound_batches_accepted, 1);
+    assert_eq!(after_expiry.outbound_pending, 0);
+    assert_eq!(after_expiry.outbound_retained_bytes, 0);
+    assert!(after_expiry.outbound_peer_pending.values().all(|n| *n == 0));
+    assert_eq!(
+        snapshot.outbound_pending, 1,
+        "returned snapshot is detached"
+    );
+    assert!(state.stats.outbound_peer_pending.is_empty());
+    Ok(())
+}
+
+#[test]
+fn ttl_retires_only_prepared_obligations_and_late_credit_cannot_release_replacement() -> Result<()>
+{
+    use crate::native_pipeline::consensus::channel::tests::{config, unstarted};
+    let config = config(0);
+    let channel = unstarted(&config);
+    let mut state = Transactions::new(&channel, config.peers.clone());
+    state.budget.messages = 2;
+    let now = Instant::now();
+    let (old, fragment) = accept_prepared(&mut state, &channel, &config, 1, now)?;
+    assert!(state.recipient_mask().is_none());
+    let expired = now + state.ttl;
+    let ttl = state.ttl;
+    assert!(!state.outbox[0].expired(expired - Duration::from_nanos(1), ttl));
+    state.outbox.retain(|entry| !entry.expired(expired, ttl));
+    state.sync_usage();
+    assert_eq!(state.recipient_mask(), Some(vec![true, true]));
+    accept_prepared(&mut state, &channel, &config, 2, expired)?;
+    let peer = state.peers[0].clone();
+    assert!(!state.return_credit(&peer, &old, fragment, expired)?);
+    assert!(state.recipient_mask().is_none());
+    assert_bounded(&state);
+    Ok(())
+}

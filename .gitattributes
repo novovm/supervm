@@ -7,3 +7,5 @@ aoem/bin/** -text
 aoem/**/*.dll filter=lfs diff=lfs merge=lfs -text
 aoem/**/*.so filter=lfs diff=lfs merge=lfs -text
 aoem/**/*.dylib filter=lfs diff=lfs merge=lfs -text
+# Preserve measured evidence bytes/hashes across Windows and Linux checkouts.
+artifacts/audit/resident-peer-isolation-20261004-v1/** -text

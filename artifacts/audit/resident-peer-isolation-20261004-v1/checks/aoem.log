@@ -1,0 +1,52 @@
+
+running 47 tests
+test native_pipeline::business::nov_transfer_batch::body_tests::native_apfl_views_match_raw_execution_failures_fees_nonce_and_proof_input ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::native_body_capture_matches_original_compiler_for_each_exact_parent ... ok
+test native_pipeline::consensus::controller::successor::tests::early::real_apfl_auth_before_parent_rejects_wrong_source_and_sticky_rebinding_then_closes ... ok
+test native_pipeline::consensus::controller::successor::tests::early::real_auth_before_parent_rejects_wrong_source_and_sticky_rebinding_then_closes ... ok
+test native_pipeline::consensus::controller::successor::tests::early::real_early_static_gate_and_failed_scope_tombstone_preserve_full_fallback_and_cold_state ... ok
+test native_pipeline::consensus::controller::successor::tests::early::real_parent_ack_during_auth_or_canonical_delivery_keeps_one_authenticated_execution ... ok
+test native_pipeline::consensus::controller::successor::tests::early::real_round_retirement_drains_auth_and_late_generation_does_not_revive ... ok
+test native_pipeline::consensus::controller::successor::tests::early_limits::real_current_body_preempts_early_successor_caches_without_losing_native_ticket ... ok
+test native_pipeline::consensus::controller::successor::tests::early_limits::real_promoted_early_body_progresses_under_continuous_control_ready ... ok
+test native_pipeline::consensus::controller::successor::tests::early_limits::real_single_batch_pipeline_releases_early_target_then_full_current_executes ... ok
+test native_pipeline::consensus::controller::successor::tests::early_limits::real_single_inflight_controller_refuses_early_and_full_current_still_executes ... ok
+test native_pipeline::consensus::controller::successor::tests::real_body_preparation_reply_after_parent_advance_uses_current_path_once ... ok
+test native_pipeline::consensus::controller::successor::tests::real_current_body_preempts_successor_and_shared_cache_at_valid_byte_ceiling ... ok
+test native_pipeline::consensus::controller::successor::tests::real_different_parent_winner_discards_completed_and_late_successor ... ok
+test native_pipeline::consensus::controller::successor::tests::real_early_completion_has_no_future_authority_then_exact_parent_promotes ... ok
+test native_pipeline::consensus::controller::successor::tests::real_orphan_survives_database_reopen_but_not_execution_or_signing_authority ... ok
+test native_pipeline::consensus::controller::successor::tests::real_round_discard_drain_does_not_block_requester_or_revive_same_id ... ok
+test native_pipeline::consensus::tests::chain_integration::real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_rejection ... ok
+test native_pipeline::consensus::tests::controller_integration::crash::real_undecided_process_kill_recovers_original_body_and_finalizes_without_wallet_reinjection ... ok
+test native_pipeline::consensus::tests::controller_integration::real_four_process_controllers_finalize_and_late_join_from_archive ... ok
+test native_pipeline::consensus::tests::controller_integration::recovery_multiroot::real_cold_controller_recovers_distinct_locked_and_late_valid_candidates ... ok
+test native_pipeline::consensus::tests::controller_tests::real_apfl_controller_executes_and_signs_but_cannot_self_finalize ... ok
+test native_pipeline::consensus::tests::controller_tests::real_cold_recovery_progresses_with_control_retirement_on_every_poll ... ok
+test native_pipeline::consensus::tests::controller_tests::real_controller_executes_and_signs_without_external_protocol_driver_but_cannot_self_finalize ... ok
+test native_pipeline::consensus::tests::controller_tests::real_controller_recovers_initial_and_direct_body_loss_before_remote_execution_and_vote ... ok
+test native_pipeline::consensus::tests::controller_tests::real_controller_rejects_wrong_signer_and_unreserved_body_budget ... ok
+test native_pipeline::consensus::tests::controller_tests::real_warm_execution_progresses_with_control_retirement_on_every_poll ... ok
+test native_pipeline::consensus::tests::controller_tests::real_warm_execution_progresses_with_one_event_per_poll ... ok
+test native_pipeline::consensus::tests::controller_workload::tree_batch_tests::real_nov_fee_page_deletes_do_not_disable_batched_account_updates ... ok
+test native_pipeline::consensus::tests::journal_recovery_integration::real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_candidate ... ok
+test native_pipeline::consensus::tests::network_integration::real_wss_four_local_validators_execute_received_body_collect_own_votes_and_reopen ... ok
+test native_pipeline::consensus::tests::pacemaker_integration::real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery ... ok
+test native_pipeline::consensus::tests::real_four_validator_journals_persist_before_emit_recover_and_reject_stale ... ok
+test native_pipeline::consensus::tests::real_lost_signing_ack_recovers_exact_vote_without_second_prevote ... ok
+test native_pipeline::persistence::io::tests::real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdown ... ok
+test native_pipeline::persistence::metadata::tests::real_guards_do_not_write_absent_keys_and_empty_is_not_absent ... ok
+test native_pipeline::persistence::metadata::tests::real_head_guard_rejects_stale_votes_including_exact_replay_and_blocks_are_append_only ... ok
+test native_pipeline::persistence::metadata::tests::real_metadata_same_database_atomic_compare_replay_and_append_only_outbox ... ok
+test native_pipeline::persistence::metadata::tests::real_oversized_metadata_is_rejected_and_cannot_be_repaired_by_transition ... ok
+test native_pipeline::persistence::metadata::tests::real_partial_replay_never_completes_missing_outbox_or_mutates_other_keys ... ok
+test native_pipeline::pipeline::admission::tests::real_resident_admission_keeps_good_bad_duplicate_rows_and_reuses_same_owner ... ok
+test native_pipeline::pipeline::authentication::tests::real_background_bind_keeps_original_permit_through_shutdown_and_unconsumed_success ... ok
+test native_pipeline::pipeline::authentication::tests::real_parent_independent_authentication_rebinds_only_through_fresh_capture_and_recovers ... ok
+test native_pipeline::pipeline::compute::tests::real_resident_owner_authenticates_and_executes_repeated_owned_captures ... ok
+test native_pipeline::pipeline::seed::tests::real_two_height_seed_matches_full_capture_and_reopens_with_original_budgets ... ok
+test native_pipeline::pipeline::tests::real_paused_compute_does_not_block_control_or_aoem_storage_queries ... ok
+test native_pipeline::service::config::tests::real_resident_startup_reopen_preserves_genesis_and_refuses_recreate ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 1489 filtered out; finished in 19.07s
+

@@ -1,0 +1,18 @@
+
+running 1 test
+offline original RPC artifacts=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-offline\23488-1791066959168710900
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay stopped: reason=external_request elapsed_ms=8239
+offline original RPC report=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-offline\23488-1791066959168710900\result.json
+Error: offline recipient pinned global propagation capacity before TTL: {"outbound_batches_accepted":8,"outbound_peer_enqueued":17,"peer_credits_returned":16,"rejected_credits":0,"taken_credits_queued":0,"taken_credits_enqueued":0,"inbound_batches":0,"inbound_dropped":0,"duplicate_batches":0,"conflicting_sequences":0,"expired_batches":0,"preparation_failures":0,"channel_expired_sends":0,"channel_dropped_received":0,"outbound_pending":8,"inbound_pending":0,"credit_pending":0}
+test native_pipeline::consensus::tests::resident_rpc_process::offline::actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::resident_rpc_process::offline::actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1534 filtered out; finished in 8.25s
+

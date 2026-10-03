@@ -1,0 +1,33 @@
+{
+  "schema": "novovm-resident-rpc-frozen-baseline-v1",
+  "source_commit": "bc00ace18bfce2d8789356e380f3afc9bc35cd11",
+  "provenance": "artifacts/audit/resident-async-auth-20261004-v1/comparison.json",
+  "node": {
+    "source": "target/release/novovm-node.exe",
+    "frozen": "target/resident-rpc-bc00ace1-baseline/novovm-node.exe",
+    "sha256": "7b06d334e98742862677b20caa22d091a7aed9b0c6c19a44c870d5c12394979b",
+    "provenance_field": "binary.modified_node_sha256"
+  },
+  "test": {
+    "source": "target/release/deps/novovm_node-f6abee0fe86d4c64.exe",
+    "frozen": "target/resident-rpc-bc00ace1-baseline/novovm_node-tests.exe",
+    "sha256": "134cd41eccc1876fb5b7d23cde04393c38c910c966a7d992fa338f70ec5f6bac",
+    "provenance_field": "binary.final_functional_test_binary_sha256",
+    "note": "Final validated test binary. Prior performance test binary differed only in small mixed functional block-partition assertions; node, load workload and load timing were unchanged."
+  },
+  "aoem": {
+    "source": "aoem/windows/core/bin/aoem_ffi.dll",
+    "sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+    "copied": false
+  },
+  "test_filter": "native_pipeline::consensus::tests::resident_rpc_process::load::actual_product_rpc_65536_signed_transfers_finality_and_cold_economics",
+  "environment": {
+    "NOVOVM_RESIDENT_RPC_LOAD_MODE": "single_ingress",
+    "NOVOVM_RESIDENT_RPC_LOAD_INGRESS_NODE": "0",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_APFL": "1",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_EARLY_REUSE": "1",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH": "1",
+    "NOVOVM_RESIDENT_RPC_LOAD_TIMEOUT_SECS": "600"
+  },
+  "scope": "Frozen binaries only; no rebuild. One Windows local four-node single-ingress 65536 transaction baseline."
+}
