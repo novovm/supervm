@@ -134,6 +134,11 @@ fn isolated_pipeline_case(name: &str) -> bool {
             command.env_remove(key);
         }
     }
+    // This binary-test helper exercises historical Host comparison paths.
+    // Preserve only the caller's explicit permission, never supply a default.
+    if let Some(permit) = std::env::var_os("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION") {
+        command.env("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION", permit);
+    }
     let mut child = command
         .arg(format!("native_execution_pipeline_tests::{name}"))
         .args(["--exact", "--test-threads=1", "--nocapture"])
