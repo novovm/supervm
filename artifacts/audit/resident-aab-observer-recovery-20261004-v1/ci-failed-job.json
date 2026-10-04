@@ -1,0 +1,55 @@
+{
+  "schema": "novovm/resident-aab-ci-observer-failure/v1",
+  "source": {
+    "commit": "4e971c8c2f8cd34b222915695cebb47ed3b1d562",
+    "run_id": 37163386705,
+    "job_id": 111321325493,
+    "url": "https://github.com/novovm/supervm/actions/runs/37163386705/job/111321325493",
+    "command": "gh run view 37163386705 --repo novovm/supervm --job 111321325493 --log-failed",
+    "log": "ci-failed-job.log",
+    "sha256": "6B0320A3F01CA8DD59DCC765DDF5C54AFA34FA656DA881D92C4FE39A1E6E02AB",
+    "format": "gh-readable failed-step log; LF normalized by patch, not original GitHub ZIP bytes"
+  },
+  "observed": {
+    "fixture": "actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers",
+    "elapsed_seconds": 90.9,
+    "error": "honest product decision 1 timeout",
+    "reported_node_count": 3,
+    "head_heights": [
+      1,
+      1,
+      1
+    ],
+    "current_heights": [
+      2,
+      2,
+      2
+    ],
+    "durable_decisions": [
+      1,
+      1,
+      1
+    ],
+    "reported_block_hashes_identical": true,
+    "preceding_offline_fixture_pass_seconds": 68.23
+  },
+  "evidence_limitations": [
+    "GitHub run artifacts endpoint returned total_count=0; original AAB result, signatures and databases from this Linux run cannot be recovered or independently re-audited here.",
+    "Heads and durable-decision counters are observations of the reported live product state, not substitutes for inspecting archived signatures/QC.",
+    "Exact lost or retired broadcast packet is not known from the retained log.",
+    "The existing test observer only passively waited for Decision; original controller retires old broadcast cache after height advancement but already supports exact-context RequestDecision archive replay."
+  ],
+  "bounded_fix": {
+    "scope": [
+      "aab.rs test observer",
+      "ci.yml evidence allowlist"
+    ],
+    "production_code_changed": false,
+    "deadline_seconds": 90,
+    "request_interval_ms": 250,
+    "request_strategy": "one nonblocking single-frame attempt per tick, rotating three honest sources; queued admission is not receipt",
+    "lost_observation_regression": "drop only first cryptographically verified Decision at each height while retaining value fingerprint to reject any subsequent conflicting decision",
+    "acceptance": "original A/A/B prevotes, three nil precommits, three real honest QC signatures, exact context and published value, stopped archive/QC audit, cold restart and successor all remain mandatory",
+    "wire_limitation": "Decision has no request/reply correlation ID, so do not attribute every observed retry specifically to an archive response"
+  }
+}

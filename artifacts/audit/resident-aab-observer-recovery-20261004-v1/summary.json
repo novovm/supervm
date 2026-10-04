@@ -1,0 +1,429 @@
+{
+  "schema": "novovm/resident-aab-observer-recovery/v1",
+  "baseline_commit": "4e971c8c2f8cd34b222915695cebb47ed3b1d562",
+  "repair_scope": "test observer and CI evidence retention only; no production consensus/network change",
+  "original_failure": {
+    "report": "ci-failed-job.json",
+    "log": "ci-failed-job.log",
+    "run_id": 37163386705,
+    "job_id": 111321325493,
+    "observed": "three honest nodes reported identical height-1 heads and one durable decision, while passive observer timed out",
+    "cause_boundary": "observer had no RequestDecision fallback; exact omitted/retired packet cannot be established because original CI did not retain its archive or wire artifacts"
+  },
+  "preserved_acceptance": [
+    "actual A/A/B honest prevotes and three round-zero nil precommits",
+    "genuine three-honest-signer precommit QC; no fault-peer votes or external QC",
+    "full expected parent/domain context and matching published value",
+    "stopped original AOEM archives checked at heights 1 and 2",
+    "three honest processes cold-restarted without journal reset and completed successor"
+  ],
+  "verification_scope": "These original fixture runs performed proposal/vote/QC signature verification and read-only archived QC validation. This archival operation only cross-checked their public structured evidence and file hashes; it did not rerun cryptographic tests or open databases.",
+  "runs": [
+    {
+      "environment": "windows",
+      "source": "target/resident-rpc-aab-tests/10244-1791078115626758400",
+      "passed": true,
+      "phase": "passed",
+      "elapsed_seconds_reported_by_runner": 11.21,
+      "product_binary_sha256": "0x23a104b92384d0fa15fe58459166d296cda163c0cf17b41ffa9ccbfb178305e1",
+      "aoem_sha256": "0x4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+      "original_honest_processes": 3,
+      "required_signatures": 3,
+      "fault_peer_votes": 0,
+      "external_qc_manufactured": false,
+      "honest_signer_reset": false,
+      "honest_indices": [
+        0,
+        2,
+        3
+      ],
+      "faulty_validator_id": "0x0becdc2bad0c6badb0bb45bc13bf8ab44d6575fb6c0a2c3faa9025a5025531eb",
+      "a_a_b_values": [
+        "0xd9da8e9d1c113ff6f60cb7a5ce52babe769b4ff0154bafa89745b1f0bea2cf8c",
+        "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+        "0xd9da8e9d1c113ff6f60cb7a5ce52babe769b4ff0154bafa89745b1f0bea2cf8c"
+      ],
+      "three_round_zero_nil_precommits": true,
+      "observed_decisions": [
+        {
+          "height": 1,
+          "round": 1,
+          "value": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+          "signature_count": 3,
+          "unique_signer_count": 3,
+          "original_signature_byte_lengths": [
+            64,
+            64,
+            64
+          ],
+          "parent_block_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "height": 2,
+          "round": 0,
+          "value": "0x629126edf41630457d5501babb1b51b43cdf56c7c27a6788a2a65f3dbbfde288",
+          "signature_count": 3,
+          "unique_signer_count": 3,
+          "original_signature_byte_lengths": [
+            64,
+            64,
+            64
+          ],
+          "parent_block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94"
+        }
+      ],
+      "final_archive": {
+        "node_indices": [
+          0,
+          2,
+          3
+        ],
+        "height": 2,
+        "state_version": 4,
+        "all_three_readonly_existing_archives_verified_by_fixture": true,
+        "blocks_identical_across_nodes": true,
+        "blocks": [
+          {
+            "height": 1,
+            "round": 1,
+            "block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+            "transaction_count": 2,
+            "qc_signers": [
+              "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+              "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+              "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+            ],
+            "qc_signature_count": 3
+          },
+          {
+            "height": 2,
+            "round": 0,
+            "block_hash": "0x629126edf41630457d5501babb1b51b43cdf56c7c27a6788a2a65f3dbbfde288",
+            "transaction_count": 2,
+            "qc_signers": [
+              "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+              "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+              "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+            ],
+            "qc_signature_count": 3
+          }
+        ]
+      },
+      "final_heads_identical": true,
+      "live_pids": [
+        23312,
+        20568,
+        25956
+      ],
+      "cold_pids": [
+        21648,
+        3592,
+        24696
+      ],
+      "all_processes_restarted": true,
+      "final_receipt_counts": [
+        4,
+        4,
+        4
+      ],
+      "decision_observation": {
+        "dropped_first_decision_heights": [
+          1,
+          2
+        ],
+        "request_admissions_by_height": {
+          "1": 41,
+          "2": 1
+        },
+        "request_backpressure": 0,
+        "deadline_seconds": 90,
+        "request_interval_ms": 250
+      },
+      "file_hashes": [
+        {
+          "file": "windows/a-a-b-before-recovery.json",
+          "bytes": 33674,
+          "sha256": "51231AF043376E668BEF97F78F27353A3C2305E6CDBCE70662CA25AD2707D219"
+        },
+        {
+          "file": "windows/byzantine-signed-proposals.json",
+          "bytes": 1849,
+          "sha256": "20AA53F459C251178EF609F8A41E357CEA05934E957465FD8011EB00CEF038E2"
+        },
+        {
+          "file": "windows/create-0.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "windows/create-0.stdout.log",
+          "bytes": 39,
+          "sha256": "728BE94B45D55E1A9C4A55E4E6A4E236D11942D8B2341EA10D0B534F6DDD1B82"
+        },
+        {
+          "file": "windows/create-2.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "windows/create-2.stdout.log",
+          "bytes": 39,
+          "sha256": "B35B760F7D0F3D16B2CB4F2A210E48362A94194A27AE83797223F6B304DE7A38"
+        },
+        {
+          "file": "windows/create-3.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "windows/create-3.stdout.log",
+          "bytes": 39,
+          "sha256": "047D9913E1852DCBB90B10AEDD3AA5615A195190D2F8B09F4A3EB1FA78B0C26F"
+        },
+        {
+          "file": "windows/existing-0.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "windows/existing-0.stdout.log",
+          "bytes": 39,
+          "sha256": "728BE94B45D55E1A9C4A55E4E6A4E236D11942D8B2341EA10D0B534F6DDD1B82"
+        },
+        {
+          "file": "windows/existing-2.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "windows/existing-2.stdout.log",
+          "bytes": 39,
+          "sha256": "B35B760F7D0F3D16B2CB4F2A210E48362A94194A27AE83797223F6B304DE7A38"
+        },
+        {
+          "file": "windows/existing-3.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "windows/existing-3.stdout.log",
+          "bytes": 39,
+          "sha256": "047D9913E1852DCBB90B10AEDD3AA5615A195190D2F8B09F4A3EB1FA78B0C26F"
+        },
+        {
+          "file": "windows/result.json",
+          "bytes": 279112,
+          "sha256": "1E8ECA041961AB06F0ED14E8C2288F99990C8D0CE837033B6EA76AB9368CCFDF"
+        }
+      ]
+    },
+    {
+      "environment": "linux",
+      "source": "target/resident-rpc-aab-tests/402-1791078166399255087",
+      "passed": true,
+      "phase": "passed",
+      "elapsed_seconds_reported_by_runner": 12.3,
+      "product_binary_sha256": "0xc311e1de963ae925e5de98284f8f44a4e0461fceb05d3f740f27f927ae629e6f",
+      "aoem_sha256": "0x88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675",
+      "original_honest_processes": 3,
+      "required_signatures": 3,
+      "fault_peer_votes": 0,
+      "external_qc_manufactured": false,
+      "honest_signer_reset": false,
+      "honest_indices": [
+        0,
+        2,
+        3
+      ],
+      "faulty_validator_id": "0x0becdc2bad0c6badb0bb45bc13bf8ab44d6575fb6c0a2c3faa9025a5025531eb",
+      "a_a_b_values": [
+        "0xd9da8e9d1c113ff6f60cb7a5ce52babe769b4ff0154bafa89745b1f0bea2cf8c",
+        "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+        "0xd9da8e9d1c113ff6f60cb7a5ce52babe769b4ff0154bafa89745b1f0bea2cf8c"
+      ],
+      "three_round_zero_nil_precommits": true,
+      "observed_decisions": [
+        {
+          "height": 1,
+          "round": 1,
+          "value": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+          "signature_count": 3,
+          "unique_signer_count": 3,
+          "original_signature_byte_lengths": [
+            64,
+            64,
+            64
+          ],
+          "parent_block_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "height": 2,
+          "round": 0,
+          "value": "0x629126edf41630457d5501babb1b51b43cdf56c7c27a6788a2a65f3dbbfde288",
+          "signature_count": 3,
+          "unique_signer_count": 3,
+          "original_signature_byte_lengths": [
+            64,
+            64,
+            64
+          ],
+          "parent_block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94"
+        }
+      ],
+      "final_archive": {
+        "node_indices": [
+          0,
+          2,
+          3
+        ],
+        "height": 2,
+        "state_version": 4,
+        "all_three_readonly_existing_archives_verified_by_fixture": true,
+        "blocks_identical_across_nodes": true,
+        "blocks": [
+          {
+            "height": 1,
+            "round": 1,
+            "block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+            "transaction_count": 2,
+            "qc_signers": [
+              "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+              "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+              "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+            ],
+            "qc_signature_count": 3
+          },
+          {
+            "height": 2,
+            "round": 0,
+            "block_hash": "0x629126edf41630457d5501babb1b51b43cdf56c7c27a6788a2a65f3dbbfde288",
+            "transaction_count": 2,
+            "qc_signers": [
+              "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+              "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+              "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+            ],
+            "qc_signature_count": 3
+          }
+        ]
+      },
+      "final_heads_identical": true,
+      "live_pids": [
+        547,
+        548,
+        550
+      ],
+      "cold_pids": [
+        1040,
+        1041,
+        1042
+      ],
+      "all_processes_restarted": true,
+      "final_receipt_counts": [
+        4,
+        4,
+        4
+      ],
+      "decision_observation": {
+        "dropped_first_decision_heights": [
+          1,
+          2
+        ],
+        "request_admissions_by_height": {
+          "1": 41,
+          "2": 1
+        },
+        "request_backpressure": 0,
+        "deadline_seconds": 90,
+        "request_interval_ms": 250
+      },
+      "file_hashes": [
+        {
+          "file": "linux/a-a-b-before-recovery.json",
+          "bytes": 33324,
+          "sha256": "E43943C255A829CB31836B14B4C7DE62B559883D82290067004F58C8C9982F85"
+        },
+        {
+          "file": "linux/byzantine-signed-proposals.json",
+          "bytes": 1849,
+          "sha256": "20AA53F459C251178EF609F8A41E357CEA05934E957465FD8011EB00CEF038E2"
+        },
+        {
+          "file": "linux/create-0.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "linux/create-0.stdout.log",
+          "bytes": 39,
+          "sha256": "8E4EE5EED5B70DF32BC77BF5565ACFDBCDF6409B695518D2EDD08E1C66DA169F"
+        },
+        {
+          "file": "linux/create-2.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "linux/create-2.stdout.log",
+          "bytes": 39,
+          "sha256": "783416A9BA43A44D9B4D09AC32935870C7FA34BA6ED96ACC89B2589C2F11A2CC"
+        },
+        {
+          "file": "linux/create-3.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "linux/create-3.stdout.log",
+          "bytes": 39,
+          "sha256": "6EC288F8905FAE25DFB6B698E57972A9EED0A15E660A714F95C456CEE072F2A0"
+        },
+        {
+          "file": "linux/existing-0.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "linux/existing-0.stdout.log",
+          "bytes": 39,
+          "sha256": "8E4EE5EED5B70DF32BC77BF5565ACFDBCDF6409B695518D2EDD08E1C66DA169F"
+        },
+        {
+          "file": "linux/existing-2.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "linux/existing-2.stdout.log",
+          "bytes": 39,
+          "sha256": "783416A9BA43A44D9B4D09AC32935870C7FA34BA6ED96ACC89B2589C2F11A2CC"
+        },
+        {
+          "file": "linux/existing-3.stderr.log",
+          "bytes": 0,
+          "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        },
+        {
+          "file": "linux/existing-3.stdout.log",
+          "bytes": 39,
+          "sha256": "6EC288F8905FAE25DFB6B698E57972A9EED0A15E660A714F95C456CEE072F2A0"
+        },
+        {
+          "file": "linux/result.json",
+          "bytes": 278846,
+          "sha256": "A5AC5C7F5C17113DA55982E1786F4CA674296F41D238542740898658BD5E05BC"
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Windows native and Linux WSL on one machine, not remote Linux runner replay or four physical machines.",
+    "Exactly three original node executables plus one test-only Byzantine peer; not four unchanged honest nodes generating equivocation.",
+    "Only first already-verified Decision observation at each height is intentionally dropped; conflicting subsequent values still fail.",
+    "A queued RequestDecision is not remote receipt; Decision has no request/reply correlation ID, so the report does not attribute every observed retry specifically to an archive response.",
+    "The 90-second decision timeout and consensus timers are unchanged; runner elapsed times are functional durations, not TPS or finality latency benchmarks.",
+    "Cold restarts follow confirmed publication; no power loss or injected failure during journal/storage writes was tested here.",
+    "BFT certificate verification is not a ZK business validity proof, privacy or post-quantum acceptance.",
+    "No keys, deployment configs, databases or relay private material were archived."
+  ]
+}
