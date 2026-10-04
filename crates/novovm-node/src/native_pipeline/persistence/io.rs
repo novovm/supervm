@@ -8,6 +8,7 @@
 //! the node control loop. This is not yet a node scheduler or measured TPS.
 
 use super::metadata::{MetaKey, MetaOutcome, MetaTransition, MetadataSnapshot};
+use super::proof::{validate_blob, validate_identity, MAX_PROOF_BLOB_BYTES};
 use super::store::{PersistProgress, BULK_KEYS};
 use super::{
     CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig, StoredCandidate,
@@ -42,6 +43,7 @@ struct Usage {
     requests: usize,
     bytes: usize,
     notify: Option<thread::Thread>,
+    proof_client_claimed: bool,
 }
 
 struct Permit {
@@ -96,6 +98,17 @@ impl<T> IoTicket<T> {
 }
 
 enum Operation {
+    ProofRead {
+        candidate: NodeHash,
+        image: [u32; 8],
+        reply: mpsc::Sender<Result<Option<Vec<u8>>>>,
+    },
+    ProofWrite {
+        candidate: NodeHash,
+        image: [u32; 8],
+        blob: Arc<Vec<u8>>,
+        reply: mpsc::Sender<Result<bool>>,
+    },
     Recover {
         candidate: NodeHash,
         reply: mpsc::Sender<Result<Option<StoredCandidate>>>,
@@ -160,6 +173,83 @@ pub(crate) struct IoMetadataClient {
     usage: Arc<Mutex<Usage>>,
     budget: IoBudget,
     recovery_bytes: usize,
+}
+
+// Covers retained input, native-write chunk copies, complete readback and a
+// bounded bulk-read buffer. Not a prover working-memory or native allocator cap.
+const PROOF_IO_BYTES: usize = 4 * MAX_PROOF_BLOB_BYTES + 64 * 1024;
+
+/// One independently accounted request on the SAME I/O owner/database. Only
+/// the pipeline can obtain this once; it is neither Clone nor a generic KV API.
+/// Drop before draining IoService. A lost accepted reply is not cancellation.
+pub(crate) struct IoProofClient {
+    sender: mpsc::SyncSender<Command>,
+    usage: Arc<Mutex<Usage>>,
+}
+
+impl IoProofClient {
+    fn enqueue<T>(
+        &self,
+        operation: impl FnOnce(mpsc::Sender<Result<T>>) -> Operation,
+    ) -> Result<Option<IoTicket<T>>> {
+        enqueue(
+            &self.sender,
+            reserve(
+                &self.usage,
+                IoBudget {
+                    requests: 1,
+                    bytes: PROOF_IO_BYTES,
+                },
+                PROOF_IO_BYTES,
+            )?,
+            operation,
+        )
+    }
+
+    pub(crate) fn try_read_nodes(
+        &self,
+        hashes: Vec<NodeHash>,
+    ) -> Result<Option<IoTicket<NodeReadReply>>> {
+        ensure!(
+            !hashes.is_empty() && hashes.len() <= BULK_KEYS,
+            "proof node request must contain 1..=64 hashes"
+        );
+        self.enqueue(|reply| Operation::Nodes { hashes, reply })
+    }
+
+    /// Bytes are untrusted until independently verified against the requested
+    /// candidate's expected journal and configured image by the proof owner.
+    pub(crate) fn try_read_proof(
+        &self,
+        candidate: NodeHash,
+        image: [u32; 8],
+    ) -> Result<Option<IoTicket<Option<Vec<u8>>>>> {
+        validate_identity(candidate, image)?;
+        self.enqueue(|reply| Operation::ProofRead {
+            candidate,
+            image,
+            reply,
+        })
+    }
+
+    /// true means an identical immutable attachment already existed. Caller
+    /// retains its Arc on None (backpressure); Err after acceptance is never
+    /// authority to retry an uncertain write or open another storage session.
+    pub(crate) fn try_write_proof(
+        &self,
+        candidate: NodeHash,
+        image: [u32; 8],
+        blob: Arc<Vec<u8>>,
+    ) -> Result<Option<IoTicket<bool>>> {
+        validate_identity(candidate, image)?;
+        validate_blob(&blob)?;
+        self.enqueue(|reply| Operation::ProofWrite {
+            candidate,
+            image,
+            blob,
+            reply,
+        })
+    }
 }
 
 impl IoMetadataClient {
@@ -381,6 +471,28 @@ impl IoService {
         })
     }
 
+    /// Exactly one optional proof lane, with no share of the execution-capture,
+    /// public-query or consensus-metadata admission accounts. The native owner
+    /// and bounded command channel remain the original ones.
+    pub(crate) fn proof_client(&self) -> Result<IoProofClient> {
+        let mut owner = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("I/O accounting poisoned"))?;
+        ensure!(
+            !owner.proof_client_claimed,
+            "proof I/O client already taken"
+        );
+        owner.proof_client_claimed = true;
+        Ok(IoProofClient {
+            sender: self.sender.clone(),
+            usage: Arc::new(Mutex::new(Usage {
+                notify: owner.notify.clone(),
+                ..Usage::default()
+            })),
+        })
+    }
+
     /// None is backpressure, NOT acceptance. The caller retains its Arc and can
     /// submit later. Once accepted, a lost reply never authorizes blind retry.
     pub fn try_persist(
@@ -459,6 +571,23 @@ fn run_owner(
         };
         if let Some(command) = command {
             match command.operation {
+                Operation::ProofRead {
+                    candidate,
+                    image,
+                    reply,
+                } => {
+                    let _ = reply.send(store.read_proof(candidate, image));
+                    completed = true;
+                }
+                Operation::ProofWrite {
+                    candidate,
+                    image,
+                    blob,
+                    reply,
+                } => {
+                    let _ = reply.send(store.write_proof(candidate, image, &blob));
+                    completed = true;
+                }
                 Operation::Recover { candidate, reply } => {
                     let _ = reply.send(store.recover(candidate));
                     completed = true;
@@ -538,3 +667,123 @@ fn run_owner(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod proof_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn service(capacity: usize) -> (IoService, mpsc::Receiver<Command>) {
+        let (sender, receiver) = mpsc::sync_channel(capacity);
+        (
+            IoService {
+                sender,
+                worker: thread::spawn(|| {}),
+                usage: Arc::new(Mutex::new(Usage::default())),
+                budget: IoBudget {
+                    requests: 1,
+                    bytes: 1024,
+                },
+                recovery_bytes: 1024,
+            },
+            receiver,
+        )
+    }
+
+    #[test]
+    fn proof_lane_is_single_take_single_request_and_independent_of_capture_account() {
+        let (service, receiver) = service(3);
+        let proof = service.proof_client().unwrap();
+        assert!(service.proof_client().is_err());
+        let mut ticket = proof.try_read_proof([3; 32], [4; 8]).unwrap().unwrap();
+        assert!(proof.try_read_nodes(vec![[7; 32]]).unwrap().is_none());
+        assert_eq!(service.usage.lock().unwrap().requests, 0);
+        let capture = service.try_read_nodes(vec![[8; 32]]).unwrap().unwrap();
+        assert_eq!(service.usage.lock().unwrap().requests, 1);
+        let Command { operation, permit } = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        let Operation::ProofRead {
+            candidate,
+            image,
+            reply,
+        } = operation
+        else {
+            panic!("wrong proof operation")
+        };
+        assert_eq!(candidate, [3; 32]);
+        assert_eq!(image, [4; 8]);
+        reply.send(Ok(Some(vec![9]))).unwrap();
+        drop(permit);
+        assert!(proof.try_read_nodes(vec![[7; 32]]).unwrap().is_none());
+        assert_eq!(ticket.try_take().unwrap(), Some(Some(vec![9])));
+        assert!(ticket.try_take().is_err());
+        assert!(proof.try_read_nodes(vec![[7; 32]]).unwrap().is_some());
+        drop(capture);
+        drop(proof);
+        drop(receiver);
+        service.shutdown().unwrap();
+    }
+
+    #[test]
+    fn proof_lane_rejects_oversize_bad_identity_and_node_counts_before_admission() {
+        let (service, receiver) = service(1);
+        let proof = service.proof_client().unwrap();
+        assert!(proof.try_read_nodes(Vec::new()).is_err());
+        assert!(proof.try_read_nodes(vec![[7; 32]; 65]).is_err());
+        assert!(proof.try_read_proof([0; 32], [4; 8]).is_err());
+        assert!(proof.try_read_proof([3; 32], [0; 8]).is_err());
+        assert!(proof
+            .try_write_proof([3; 32], [4; 8], Arc::new(Vec::new()))
+            .is_err());
+        assert!(proof
+            .try_write_proof([3; 32], [4; 8], Arc::new(vec![0; MAX_PROOF_BLOB_BYTES + 1]))
+            .is_err());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        assert_eq!(proof.usage.lock().unwrap().requests, 0);
+        drop(proof);
+        drop(receiver);
+        service.shutdown().unwrap();
+    }
+
+    #[test]
+    fn proof_lane_drop_does_not_cancel_write_and_queue_backpressure_releases_permit() {
+        let (service, receiver) = service(1);
+        let proof = service.proof_client().unwrap();
+        let capture = service.try_read_nodes(vec![[8; 32]]).unwrap().unwrap();
+        let blob = Arc::new(vec![9]);
+        assert!(proof
+            .try_write_proof([3; 32], [4; 8], blob.clone())
+            .unwrap()
+            .is_none());
+        assert_eq!(proof.usage.lock().unwrap().requests, 0);
+        drop(receiver.recv_timeout(Duration::from_secs(1)).unwrap());
+        drop(capture);
+        let ticket = proof
+            .try_write_proof([3; 32], [4; 8], blob.clone())
+            .unwrap()
+            .unwrap();
+        drop(ticket);
+        assert_eq!(proof.usage.lock().unwrap().requests, 1);
+        let Command { operation, permit } = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+        let Operation::ProofWrite {
+            candidate,
+            image,
+            blob: accepted,
+            reply,
+        } = operation
+        else {
+            panic!("accepted write lost")
+        };
+        assert_eq!(candidate, [3; 32]);
+        assert_eq!(image, [4; 8]);
+        assert!(Arc::ptr_eq(&blob, &accepted));
+        assert!(reply.send(Ok(false)).is_err());
+        drop(permit);
+        assert_eq!(proof.usage.lock().unwrap().requests, 0);
+        drop(proof);
+        drop(receiver);
+        service.shutdown().unwrap();
+    }
+}

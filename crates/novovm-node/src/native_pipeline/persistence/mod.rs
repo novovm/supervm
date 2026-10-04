@@ -5,6 +5,7 @@
 pub mod io;
 pub(crate) mod metadata;
 pub mod packet;
+pub(crate) mod proof;
 mod store;
 
 pub use packet::{PacketBudget, PreparedCandidate, StoredCandidate};

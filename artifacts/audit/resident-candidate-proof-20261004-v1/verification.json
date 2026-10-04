@@ -1,0 +1,67 @@
+{
+  "schema": "novovm/resident-candidate-proof-verification/v1",
+  "base_commit": "d44779b237a0de766eee48e20f24fe7da468aa81",
+  "source": "base commit plus the enclosing proof integration commit; binaries built before commit",
+  "binaries": [
+    {
+      "path": "target/release/novovm-node.exe",
+      "bytes": 38059520,
+      "sha256": "22ae17542efb55ec30abeebca6ba1f071c6995c98849ffc53df52b69c2a2c806"
+    },
+    {
+      "path": "target/release/deps/novovm_node-f6abee0fe86d4c64.exe",
+      "bytes": 63740416,
+      "sha256": "7c64b6efb9d9210b3d0566912dfa4da29fa7798292c1f618aac5cb788f77867d"
+    },
+    {
+      "path": "target/runtime-rebuild/linux/release/novovm-node",
+      "bytes": 43521128,
+      "sha256": "c311e1de963ae925e5de98284f8f44a4e0461fceb05d3f740f27f927ae629e6f"
+    },
+    {
+      "path": "target/runtime-rebuild/linux/release/deps/novovm_node-53973930eef66f8f",
+      "bytes": 64371416,
+      "sha256": "c9b104e956f338492e1095685397408de6dc8d3721305615636251a4a1fa8658"
+    }
+  ],
+  "checks": {
+    "windows": {
+      "release_build": true,
+      "release_lib_test_build": true,
+      "pure_passed": 379,
+      "pure_ignored": 58,
+      "opaque_proof_storage_passed": true,
+      "single_ingress_mixed_failure_and_restart_passed": true,
+      "strict_node_all_targets_clippy": true
+    },
+    "wsl_ubuntu_24_04": {
+      "release_build": true,
+      "release_lib_test_build": true,
+      "pure_passed": 378,
+      "pure_ignored": 58,
+      "opaque_proof_storage_passed": true,
+      "single_ingress_mixed_failure_and_restart_passed": true,
+      "aab_passed": true,
+      "real_rpc_candidate_proof_and_cold_recovery_passed": true
+    },
+    "fmt": true,
+    "assembly_boundary": true,
+    "protected_drafts_sha_and_size_unchanged": 49
+  },
+  "limits": {
+    "performance_remeasured": false,
+    "business_gpu_enabled": false,
+    "proof_gpu_enabled": false,
+    "mandatory_proof_finality": false,
+    "proof_receipt_only_on_node0": true,
+    "full_proof_ci_automated": false,
+    "four_physical_machines": false
+  },
+  "evidence": {
+    "full_proof": "linux/result.json",
+    "proof_summary": "linux/summary.json",
+    "ci_aab": "github-aab/summary.json",
+    "final_aab": "linux-final-aab-result.json"
+  },
+  "retained_launch_failure": "linux-test-launch-failed.log: command quoting failed before test start; rerun with explicit executable succeeded"
+}

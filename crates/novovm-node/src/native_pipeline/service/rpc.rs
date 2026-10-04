@@ -99,6 +99,7 @@ pub struct RpcLifecycle {
     projection_error: Option<String>,
     balances: VecDeque<BalanceQuery>,
     admission: admission::AdmissionState,
+    proof: Option<crate::native_pipeline::proof::service::ProofService>,
 }
 
 impl RpcLifecycle {
@@ -131,11 +132,15 @@ impl RpcLifecycle {
             projection_error: None,
             balances: VecDeque::new(),
             admission: admission::AdmissionState::default(),
+            proof: None,
         })
     }
 
     pub fn poll(&mut self, now: Instant) -> Result<()> {
         self.node.poll(now)?;
+        if let Some(proof) = &mut self.proof {
+            proof.poll(&self.node);
+        }
         self.poll_balances()?;
         if self.projection_error.is_none() {
             if let Err(error) = self.poll_projection() {
@@ -580,6 +585,8 @@ impl RpcLifecycle {
             "execution_failures":stats.execution_failures,"last_error":stats.last_error,
             "execution_backend":"aoem_semantic_v2_cpu_callbacks",
             "business_gpu_active":false,"business_proof_required":false,"business_proof_verified":false,
+            "business_proof":self.proof.as_ref().map(|owner|owner.status())
+                .unwrap_or_else(||json!({"configured":false,"verified":false})),
             "mempool_gossip":true,"gossip_delivery":"best_effort_not_durable",
             "transaction_gossip":self.node.controller.transactions_stats(),
             "input_availability":controller.input_availability(),
@@ -614,6 +621,19 @@ impl RpcLifecycle {
             );
             match request["method"].as_str() {
                 Some("nov_chainStatus") => Ok(self.status()),
+                Some(method @ ("nov_proveBlock" | "nov_getBlockProof")) => {
+                    let params = request["params"]
+                        .as_array()
+                        .context("proof params must be [height]")?;
+                    ensure!(params.len() == 1, "proof params must be [height]");
+                    let height = params[0]
+                        .as_u64()
+                        .context("proof height must be unsigned integer")?;
+                    self.proof
+                        .as_mut()
+                        .context("proof owner not configured; no implicit backend/image")?
+                        .request(&self.node, height, method == "nov_proveBlock")
+                }
                 Some("nov_sendRawTransaction") => {
                     anyhow::bail!("signed admission requires deferred resident RPC")
                 }
@@ -825,7 +845,22 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
     // Reserve the actual product endpoint before opening any signer/storage.
     let mut rpc = FreshRpcServer::bind_with_max_request(config.rpc_addr, 4 * 1024 * 1024)?;
     let batch_size = config.batch_size;
+    let proof_config = config.proof.clone();
+    let policy = config.genesis.policy.clone();
     let mut lifecycle = RpcLifecycle::new(ResidentNode::start(config, mode)?, batch_size)?;
+    if let Some(config) = proof_config {
+        match crate::native_pipeline::proof::service::ProofService::start(
+            config,
+            &lifecycle.node,
+            policy,
+        ) {
+            Ok(owner) => lifecycle.proof = Some(owner),
+            Err(error) => {
+                let _ = lifecycle.node.shutdown();
+                return Err(error.context("start explicitly configured proof owner"));
+            }
+        }
+    }
     let started = Instant::now();
     println!("resident_rpc_listening={}", rpc.local_addr()?);
     let result = (|| -> Result<()> {
@@ -844,8 +879,13 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
         }
         Ok(())
     })();
+    let proof_drain = lifecycle
+        .proof
+        .take()
+        .map(|owner| owner.shutdown())
+        .transpose();
     let drain = lifecycle.node.shutdown();
-    result.and(drain)
+    result.and(proof_drain.map(|_| ())).and(drain)
 }
 
 /// Explicit mode selection in the original novovm-node executable. No flag

@@ -8,7 +8,106 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
-## 2026-10-04 CI状态纠正与同候选证明接线（进行中）
+## 2026-10-04 原RPC候选完整证明、同库耐久保存与冷恢复
+
+基线 `main@d44779b237a0de766eee48e20f24fe7da468aa81` 加本节所在提交。
+原 `novovm-node/native-resident-v1` 新增显式、可选的同候选证明服务；不是
+另建节点、执行器、链头或签者。**用户现在可以为原RPC已确认块请求完整NOV
+业务关系证明、查询其验真/保存状态，重启后重新读取并验真同一份证明。**
+当前BFT最终性没有改变，不能把可选证明成功扩展成全链已由证明最终确认。
+
+### 实际路径与复用
+
+`nov_sendRawTransaction` 仍进入原APFL传播/常驻CPU执行/耐久round-bft核心。
+`nov_proveBlock [height]` 从同节点的 `ArchiveRead` 取得已发布、QC/父链/正文
+绑定已验证的候选；后台单一证明owner复用原认证、`NovTransferPlan`、父状态
+批读取与 `execution_proof_input()`，生成已有完整 `NVEXIN01` 关系输入。
+guest重新检查签名、nonce、完整业务/费用关系，不信任Host提供的最终写集。
+预期 `NVEXEC01` journal 独立取自已发布候选的计划/状态/回执/statement承诺。
+经 `novovm-exec::resident::ReceiptSession → aoem-bindings → AOEM` 生成
+`AORCP002` 后，再按操作员固定image和预期journal验真；不增加另一套prover。
+
+只在验真成功后，经**原唯一AOEM I/O owner、原CandidateStore数据库**写入
+独立候选附件命名空间：64KiB分片及完整标记在同一次同步WAL原子批中写入，
+随后完整读回核对。附件绑定candidate/document/image/journal，不能更新链头
+或授权签票；同值可重读，不同值不可覆盖。未知原生写结果冻结原存储会话，
+RPC以 `persisted=null/outcome=unknown_or_unverified` 报告，不谎称未落盘。
+冷启动后的查询重新读取归档和附件并调用密码验证，不仅检查哈希或保存标志。
+
+### 本机真实结果（同机WSL Ubuntu 24.04，release）
+
+四个真实原节点、一个钱包入口，node0显式配置证明；两个连续高度各一笔真实
+签名NOV交易、四库费用/nonce/余额及回执一致。仅第一块生成完整证明。
+未启用 `NOVOVM_ALLOW_LEGACY_HOST_EXECUTION`，`RISC0_PROVER=local`，
+清除 `RISC0_DEV_MODE`；没有修改/构建兄弟AOEM仓库。该轮证明为CPU后端。
+
+| 实际观察 | 结果 |
+| --- | ---: |
+| 生成＋独立固定承诺验证 | 281,958 ms |
+| 请求至已验真耐久附件的HTTP观察墙时 | 281,990 ms |
+| AORCP002证明大小（不含256B候选绑定头） | 1,687,932 B |
+| 证明仍pending时，第二笔至四节点最终回执 | 58 ms |
+| 四库冷重启后，对旧证明重新密码验证 | 85 ms |
+| 冷恢复服务总耗时 / 重新生成耗时 | 96 ms / 0 ms |
+| 独立测试进程另开AOEM会话验证正例 | 78 ms |
+
+独立测试进程从原node0数据库读回证明，以可信image和归档承诺验证；错image、
+**真实第二块journal**、篡改证明、截断证明四项均被真实后端拒绝（status=-4），
+不是因缺少库而拒绝；随后原正例再验通过。非法高度、未配置后端、忙时另一
+高度请求拒绝，重复同高度不会启动第二份证明。完整测试284.43秒通过。
+原始结果、程序/库/guest哈希和公开节点日志见
+[同候选证明证据](../artifacts/audit/resident-candidate-proof-20261004-v1/linux/result.json)。
+日志中的迟到旧高度消息诊断、关闭时TLS close_notify提示保留，不称零错误日志。
+
+真实后端SHA256为 `cfdd4469ec588e5e274d647fad143fa8de129077d125805289e6ec8b2b5201ee`，
+既有完整NOV guest SHA256为 `316be9300d357cfad9372a13118f048e0830c1b67b7cc72fb36baf653a9d1515`。
+未从本地未审查runtime草稿重建guest，也未把普通SDK/AORCP001改标签冒充此后端。
+
+### 使用边界及尚未接通项
+
+在原resident配置增加可选字段，路径相对**配置文件目录**解析，未配置则关闭：
+
+```json
+"proof": {
+  "library": "reviewed-proof/libaoem_ffi.so",
+  "guest": "reviewed-proof/novovm-transfer-guest.bin",
+  "image_id": [1144495143, 3612026493, 4005071765, 1634377336, 1879036010, 4171784104, 1710951644, 1407711336]
+}
+```
+
+这里只演示已验证guest的pins，须部署对应真实资产并核对哈希；配置不下载资产，
+普通随仓SDK不自动变成证明SDK。`nov_proveBlock [1]` 异步申请，
+`nov_getBlockProof [1]` 只读已保存证明或查询任务，当前返回摘要/状态，**不是
+证明字节下载API**。`nov_chainStatus.business_proof`显示本机owner状态；交易
+回执仍 `finality_kind=BFT_durable/proof_verified=false`，不自动改变原语义。
+
+- 单owner最多一个任务，准入/输入/附件有界，没有自动跟随每块生成或隐藏队列。
+  未完成任务非耐久，崩溃后可重投；完成附件耐久。原生证明不可取消，正常退出
+  等待其完成；并发上限不等于CPU时间或native工作内存硬上限。应限制此显式
+  实验RPC的访问，尚不是可向不可信公网开放的付费证明服务。
+- 批捕获及密码计算在证明owner；共享I/O上的有界完整附件读写不可抢占，仍可能
+  与签票ACK争用。58ms后继样本只证明没有同步把长证明塞入控制循环，**不证明
+  满载无争用、批量证明容量或证明加速**。不复制数据库，不另立存储owner。
+- 本轮完整关系是已复用的direct-NOV V3关系，不是Execute/所有资产，也不是隐匿
+  资产或抗量子证明签收。证明仅保存在配置节点，自动跨节点传播/下载尚未接入。
+- **APFL到业务GPU尚未完成**：产品计算仍明确报告AOEM语义V2 CPU callback。
+  已核对AOEM opcode113/AOIP0v5的checked整数GPU能力；当前FFI执行逐次创建
+  device/operator，内部resident整数对象的复用生命周期未见可用公开ABI，输出
+  key还需明确有界复用/释放契约。opcode114旧32B签名固定链域参考不能代替当前
+  96B签名V3业务。下一片应沿同一候选补通用常驻契约并按依赖波次接实际业务，
+  保留费用/nonce/失败/归并和证明绑定；不在SUPERVM另写CUDA或GPU执行器。
+- 未重跑65,536笔负载，本节**没有新的TPS/P95/P99结论**；沿用下节历史测量边界，
+  不以单笔证明/两笔功能结果签收吞吐。后续须分别测GPU业务、证明及联合满载。
+
+本机补充回归：WSL native_pipeline纯回归378通过/58 ignored，真实AOEM附件
+多片写入/重开/冲突与损坏拒绝通过，原单入口混合失败及冷重启回归2.01秒通过。
+同版WSL A/A/B再验12.51秒通过。Windows最终release构建/测试构建、纯回归
+379通过/58 ignored、真实附件存储及原单入口混合失败/恢复1.48秒通过；严格
+node/all-targets Clippy、fmt及装配边界检查通过。首次WSL补充检查因命令行
+变量转义启动失败，未运行测试，修正后重跑通过；原启动错误日志保留。
+不以本机结果代替GitHub最终CI。旧49草稿和历史性能/失败证据继续保全。
+
+## 2026-10-04 CI状态纠正与A/A/B观察交接
 
 当前基线 `4e971c8c2f8cd34b222915695cebb47ed3b1d562`。
 GitHub CI `37163386705` 已 completed/failure，Rust作业 `111321325493`
@@ -24,8 +123,14 @@ GitHub CI `37163386705` 已 completed/failure，Rust作业 `111321325493`
 12.30秒通过，不是GitHub hosted同环境结果或多机验收。CI增加失败证据
 白名单上传，排除配置/密钥/数据库。有限补传不回退。
 
-后续主线为同RPC候选AOEM完整证明接入，当前进行中；GPU业务能力另按实际
-接口验收，不以本节文档或测试观察修复作为证明/异构执行完成。
+本节修复提交 `cb883bd7`，原始失败/本机复验归档提交 `d44779b2`。
+后续同候选完整证明交付见上节；GPU业务能力另按实际接口验收，不以测试
+观察修复作为证明/异构执行完成。`d44779b2` 的GitHub运行 `37169117806`、
+Rust作业 `111338311221` 中原节点集成步骤于2026-10-04 02:01:08 UTC通过，
+A/A/B证据上传步骤也成功；这关闭该提交的hosted A/A/B观察缺口，**不是整轮CI
+全绿或后续证明代码的CI结论**。本记录核对时该运行其余步骤仍进行中。
+该hosted运行的原始公开附件及逐文件哈希已保全为
+[GitHub A/A/B复验证据](../artifacts/audit/resident-candidate-proof-20261004-v1/github-aab/summary.json)。
 
 ## 2026-10-04 健康 peer 遗漏输入补传与故障等待交接
 

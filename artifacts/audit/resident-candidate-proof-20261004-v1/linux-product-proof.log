@@ -1,0 +1,16 @@
+
+running 1 test
+test native_pipeline::consensus::tests::resident_rpc_process::proof::real_resident_rpc_candidate_proof_and_recovery ... actual product RPC proof artifacts=/mnt/d/WorksArea/SUPERVM/crates/novovm-node/../../target/resident-rpc-proof-tests/403-1791078442080543532
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay stopped: reason=external_request elapsed_ms=283556
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1547 filtered out; finished in 284.43s
+

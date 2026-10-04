@@ -1,0 +1,16 @@
+
+running 1 test
+test native_pipeline::consensus::tests::resident_rpc_process::aab::actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers ... actual product A/A/B artifacts=/mnt/d/WorksArea/SUPERVM/crates/novovm-node/../../target/resident-rpc-aab-tests/410-1791079172567835411
+product relay connection closed: Connection reset by peer (os error 104)
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay stopped: reason=external_request elapsed_ms=12464
+actual product A/A/B report=/mnt/d/WorksArea/SUPERVM/crates/novovm-node/../../target/resident-rpc-aab-tests/410-1791079172567835411/result.json
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1547 filtered out; finished in 12.51s
+

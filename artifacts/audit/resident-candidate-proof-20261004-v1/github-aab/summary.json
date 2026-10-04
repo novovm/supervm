@@ -1,0 +1,236 @@
+{
+  "schema": "novovm/resident-aab-ci-recovery/v1",
+  "source": {
+    "repository": "novovm/supervm",
+    "commit": "d44779b237a0de766eee48e20f24fe7da468aa81",
+    "run_id": 37169117806,
+    "job_id": 111338311221,
+    "url": "https://github.com/novovm/supervm/actions/runs/37169117806/job/111338311221",
+    "artifact": {
+      "name": "resident-rpc-aab-evidence",
+      "id": 11290288577,
+      "size_in_bytes": 25037
+    },
+    "downloaded_directory": "target/ci-aab-d44779b2/13778-1791079254986053580",
+    "observed_status": "in_progress",
+    "observed_job_conclusion": null,
+    "accepted_step": {
+      "name": "Integrated resident core and actual original-node RPC",
+      "conclusion": "success",
+      "completed_at": "2026-10-04T02:01:08Z"
+    },
+    "artifact_upload": {
+      "conclusion": "success",
+      "completed_at": "2026-10-04T02:01:10Z"
+    },
+    "whole_ci_signed_off": false
+  },
+  "fixture": {
+    "passed": true,
+    "phase": "passed",
+    "topology": "one host; three unchanged original novovm-node processes + one test-only Byzantine WSS/E2E peer",
+    "product_binary_sha256": "0xd4ea20bda1f4e29fc8b1b59dac03578b2aad425c4faa663a3d35725633a1637a",
+    "aoem_sha256": "0x88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675",
+    "original_honest_processes": 3,
+    "validator_count": 4,
+    "qc_required": 3,
+    "fault_peer_votes": 0,
+    "externally_constructed_qcs": 0,
+    "honest_signer_reset": false,
+    "actual_a_a_b_prevote_values": [
+      "0xd9da8e9d1c113ff6f60cb7a5ce52babe769b4ff0154bafa89745b1f0bea2cf8c",
+      "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+      "0xd9da8e9d1c113ff6f60cb7a5ce52babe769b4ff0154bafa89745b1f0bea2cf8c"
+    ],
+    "round_zero_nil_precommits": 3,
+    "observed_decisions": [
+      {
+        "height": 1,
+        "round": 1,
+        "value": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+        "parent_block_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "signature_count": 3,
+        "signers": [
+          "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+          "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+          "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+        ],
+        "signature_byte_lengths": [
+          64,
+          64,
+          64
+        ]
+      },
+      {
+        "height": 2,
+        "round": 0,
+        "value": "0x629126edf41630457d5501babb1b51b43cdf56c7c27a6788a2a65f3dbbfde288",
+        "parent_block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+        "signature_count": 3,
+        "signers": [
+          "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+          "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+          "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+        ],
+        "signature_byte_lengths": [
+          64,
+          64,
+          64
+        ]
+      }
+    ],
+    "archives": {
+      "nodes": [
+        0,
+        2,
+        3
+      ],
+      "all_readonly_existing_archives_verified_by_fixture": true,
+      "all_heads_identical": true,
+      "final_height": 2,
+      "final_state_version": 4,
+      "blocks": [
+        {
+          "height": 1,
+          "round": 1,
+          "block_hash": "0xce8ae4ebac69c737937beb21e9edc23b38fb0d70160bc503836a71ff00d7ca94",
+          "transaction_count": 2,
+          "qc_signers": [
+            "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+            "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+            "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+          ],
+          "qc_signature_count": 3
+        },
+        {
+          "height": 2,
+          "round": 0,
+          "block_hash": "0x629126edf41630457d5501babb1b51b43cdf56c7c27a6788a2a65f3dbbfde288",
+          "transaction_count": 2,
+          "qc_signers": [
+            "0x7d8cb76396b076e178fac5b1be6303d4aabe20f562b7507bff69c1b155f0f2ba",
+            "0xbec679c5e723261658a2acb8541d380dff7e418b627a0310772c748920830c62",
+            "0xdf12382fc73a5dd40ddad58bb3dcf2622e85c1699ef1e19335291209c178973c"
+          ],
+          "qc_signature_count": 3
+        }
+      ]
+    },
+    "final_successful_receipts_per_node": [
+      4,
+      4,
+      4
+    ],
+    "live_pids": [
+      13843,
+      13844,
+      13845
+    ],
+    "cold_pids": [
+      14093,
+      14094,
+      14095
+    ],
+    "all_three_processes_restarted": true,
+    "decision_observation": {
+      "dropped_heights": [
+        1,
+        2
+      ],
+      "requests": {
+        "1": 45,
+        "2": 4
+      },
+      "request_backpressure": 0,
+      "interval_ms": 250,
+      "timeout_seconds": 90
+    }
+  },
+  "verification_scope": "Downloaded fixture itself performed cryptographic proposal/vote/QC verification and stopped archive validation. This preservation step cross-checked its public report fields and SHA256 copies, not a new cryptographic execution.",
+  "scope_limits": [
+    "Only the named completed integrated resident step and uploaded AAB evidence are accepted here; the whole GitHub run/job was still in_progress when observed and could later complete, fail or be cancelled.",
+    "This confirms the prior Linux CI observer timeout no longer occurs in this retained run without increasing the 90-second timeout.",
+    "RequestDecision is exact-context pull; local queue admission is not delivery, and Decision has no request/reply correlation ID.",
+    "Three original executables plus one test-only Byzantine own-proposal peer on one GitHub runner; not four physical machines, no externally manufactured honest votes/QC.",
+    "Restart occurs after confirmed publication; no power loss or journal write interruption is covered.",
+    "Functional BFT recovery, not performance, GPU business execution, ZK or mainnet acceptance.",
+    "Only JSON evidence and stdout/stderr allowlist was archived; no keys, configs, databases or relay private material."
+  ],
+  "file_hashes": [
+    {
+      "file": "a-a-b-before-recovery.json",
+      "bytes": 33412,
+      "sha256": "5047A6E86E6556B73F5139B8E299FFB6990F76D5A81DE6E8BAF61C031CFFC529"
+    },
+    {
+      "file": "byzantine-signed-proposals.json",
+      "bytes": 1849,
+      "sha256": "20AA53F459C251178EF609F8A41E357CEA05934E957465FD8011EB00CEF038E2"
+    },
+    {
+      "file": "create-0.stderr.log",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "file": "create-0.stdout.log",
+      "bytes": 39,
+      "sha256": "24F0C8F269A4B3F9A03E9484921EB808B996D989A12D223866955504CF1590A3"
+    },
+    {
+      "file": "create-2.stderr.log",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "file": "create-2.stdout.log",
+      "bytes": 39,
+      "sha256": "929CB3CE77A492C10F1F229EEF5728DD739F888D04760BF5A561B768F3B99D09"
+    },
+    {
+      "file": "create-3.stderr.log",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "file": "create-3.stdout.log",
+      "bytes": 39,
+      "sha256": "21CD0249A22309CD75E52FE913469A3A627702DD89174EE4951598B12AD0EBEA"
+    },
+    {
+      "file": "existing-0.stderr.log",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "file": "existing-0.stdout.log",
+      "bytes": 39,
+      "sha256": "24F0C8F269A4B3F9A03E9484921EB808B996D989A12D223866955504CF1590A3"
+    },
+    {
+      "file": "existing-2.stderr.log",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "file": "existing-2.stdout.log",
+      "bytes": 39,
+      "sha256": "929CB3CE77A492C10F1F229EEF5728DD739F888D04760BF5A561B768F3B99D09"
+    },
+    {
+      "file": "existing-3.stderr.log",
+      "bytes": 0,
+      "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+    },
+    {
+      "file": "existing-3.stdout.log",
+      "bytes": 39,
+      "sha256": "21CD0249A22309CD75E52FE913469A3A627702DD89174EE4951598B12AD0EBEA"
+    },
+    {
+      "file": "result.json",
+      "bytes": 278386,
+      "sha256": "4CD15CCB9E9E8A4CB69B67A737F7C45ED453E6C2722DFB78578560CB2B9131E8"
+    }
+  ]
+}

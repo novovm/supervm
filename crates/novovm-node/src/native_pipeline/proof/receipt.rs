@@ -99,7 +99,7 @@ impl ExecutionProofPins {
         )
     }
 
-    fn prove(
+    pub(super) fn prove(
         &self,
         session: &mut impl Backend,
         elf: &[u8],
@@ -114,7 +114,7 @@ impl ExecutionProofPins {
         self.verify(session, &receipt, expected)
     }
 
-    fn verify(
+    pub(super) fn verify(
         &self,
         session: &mut impl Backend,
         receipt: &[u8],
@@ -144,7 +144,7 @@ fn frame_input(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 // Private test seam; product callers can only use the actual AOEM session.
-trait Backend {
+pub(super) trait Backend {
     fn prove(&mut self, elf: &[u8], input: &[u8], image: &[u32; 8]) -> Result<Vec<u8>>;
     fn verify(&mut self, receipt: &[u8], image: &[u32; 8], expected: &[u8]) -> Result<()>;
 }

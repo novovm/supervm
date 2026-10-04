@@ -1,0 +1,145 @@
+{
+  "schema": "novovm/resident-candidate-proof-summary/v1",
+  "raw_result": "result.json",
+  "passed": true,
+  "environment": "Linux/WSL; one host; four real original novovm-node processes; node0 proof owner",
+  "integration": "signed RPC -> published candidate -> complete NOV relation -> real AOEM AORCP002 -> independently pinned verification -> same candidate database immutable attachment -> cold restart reverification",
+  "proof_scope": "one published direct-NOV candidate; optional attachment",
+  "signed_single_ingress_transactions": 2,
+  "proved_height": 1,
+  "proved_transactions": 1,
+  "receipt_bytes": 1687932,
+  "receipt_sha256": "65ba8abf81b8e642fbd3e5d5db74b74adc1af72762cf604d16fbf9b9f7a42116",
+  "journal_sha256": "daff69756916356734ada1295ed27eda037237fd75afe4f718e6b2ebd771151c",
+  "metrics_ms": {
+    "fixture_total_from_test_log": 284430,
+    "proof_request_admission": 0,
+    "prove_and_verify": 281958,
+    "proof_owner_total": 281974,
+    "proof_request_to_observed_result": 281990,
+    "successor_submit_to_four_node_finality": 58,
+    "cold_recovery_prove": 0,
+    "cold_recovery_verify": 85,
+    "cold_recovery_total": 96,
+    "independent_positive_verify": 78,
+    "independent_positive_recheck": 70
+  },
+  "overlap": {
+    "proof_state_after_successor_finality": "proof_owner_pending",
+    "proof_verified_after_successor_finality": false,
+    "second_height_busy_request_rejected": true,
+    "note": "Shows successor confirmation while proof job was pending; not a throughput or zero-interference measurement."
+  },
+  "cold_recovery": {
+    "all_four_processes_restarted": true,
+    "live_pids": [
+      430,
+      431,
+      432,
+      433
+    ],
+    "restarted_pids": [
+      1083,
+      1084,
+      1085,
+      1086
+    ],
+    "recovered": true,
+    "verified": true,
+    "persisted": true,
+    "receipt_and_journal_hash_unchanged": true,
+    "fixture_asserted_cold_user_receipts_and_balances_unchanged": true,
+    "receipt_count_per_node": [
+      2,
+      2,
+      2,
+      2
+    ],
+    "final_height_per_node": [
+      2,
+      2,
+      2,
+      2
+    ]
+  },
+  "independent_verifier": {
+    "process_id": 403,
+    "positive_verified": true,
+    "positive_recheck_verified": true,
+    "negative_count": 4,
+    "negatives": [
+      {
+        "case": "wrong_trusted_image",
+        "rejected": true,
+        "verify_ms": 71,
+        "error": "AOEM receipt verify failed: status=-4"
+      },
+      {
+        "case": "successor_block_journal",
+        "rejected": true,
+        "verify_ms": 70,
+        "error": "AOEM receipt verify failed: status=-4"
+      },
+      {
+        "case": "modified_receipt",
+        "rejected": true,
+        "verify_ms": 36,
+        "error": "AOEM receipt verify failed: status=-4"
+      },
+      {
+        "case": "truncated_receipt",
+        "rejected": true,
+        "verify_ms": 0,
+        "error": "AOEM receipt verify failed: status=-4"
+      }
+    ],
+    "source": "node0 original AOEM database; independent trusted image and stored candidate journal"
+  },
+  "invalid_rpc_requests_rejected": 5,
+  "artifact_pins": {
+    "product_binary_sha256": "0xc311e1de963ae925e5de98284f8f44a4e0461fceb05d3f740f27f927ae629e6f",
+    "execution_library_sha256": "0x88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675",
+    "proof_library_sha256": "0xcfdd4469ec588e5e274d647fad143fa8de129077d125805289e6ec8b2b5201ee",
+    "guest_sha256": "0x316be9300d357cfad9372a13118f048e0830c1b67b7cc72fb36baf653a9d1515",
+    "trusted_image": [
+      1144495143,
+      3612026493,
+      4005071765,
+      1634377336,
+      1879036010,
+      4171784104,
+      1710951644,
+      1407711336
+    ]
+  },
+  "retained_diagnostics": {
+    "successor_last_error": [
+      "decision not for exact current parent",
+      "decision not for exact current parent",
+      "decision not for exact current parent",
+      "decision not for exact current parent"
+    ],
+    "test_log": "../linux-product-proof.log",
+    "test_log_tls_close_notify_messages": 8,
+    "note": "The PASS does not mean no recorded protocol/reconnect diagnostics. Original result and logs remain unedited."
+  },
+  "limitations": {
+    "changes_finality": false,
+    "proof_required_for_finality": false,
+    "performance_measured": false,
+    "four_machine_test": false,
+    "gpu_proof_claimed": false,
+    "production_acceptance": false,
+    "privacy_or_post_quantum_proof": false
+  },
+  "protected_drafts": {
+    "manifest": "artifacts/audit/isolation-undo-20261003-dc3e497-v1/local-drafts.json",
+    "manifest_sha256": "d46fc68e1caf330250809a3916386ecdb456755fe0ed3c82ed8bc8893aa9c42f",
+    "checked_utc": "2026-10-04T01:56:50.2814416Z",
+    "expected": 49,
+    "present": 49,
+    "length_match": 49,
+    "sha256_match": 49,
+    "mismatches": []
+  }
+}

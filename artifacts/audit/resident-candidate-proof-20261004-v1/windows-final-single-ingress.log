@@ -1,0 +1,17 @@
+
+running 1 test
+single-ingress product RPC artifacts=D:\WorksArea\SUPERVM\crates\novovm-node\../../target/resident-rpc-single-ingress-tests\17464-1791079164764057400
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay stopped: reason=external_request elapsed_ms=1432
+single-ingress product RPC report=D:\WorksArea\SUPERVM\crates\novovm-node\../../target/resident-rpc-single-ingress-tests\17464-1791079164764057400\result.json
+test native_pipeline::consensus::tests::resident_rpc_process::actual_product_rpc_single_ingress_gossip_failures_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1554 filtered out; finished in 1.48s
+

@@ -12,6 +12,8 @@ mod load;
 mod aab;
 #[path = "resident_rpc_process/offline.rs"]
 mod offline;
+#[path = "resident_rpc_process/proof.rs"]
+mod proof;
 
 use super::network_integration::Relay;
 use super::*;

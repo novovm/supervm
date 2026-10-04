@@ -34,6 +34,9 @@ pub struct ResidentConfig {
     pub genesis: GenesisConfig,
     pub workers: u32,
     pub batch_size: usize,
+    /// Optional asynchronous complete-NOV proof owner. No finality-policy change.
+    #[serde(default)]
+    pub proof: Option<crate::native_pipeline::proof::service::ProofConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,12 +101,20 @@ impl ResidentConfig {
         {
             resolve_relative(base, certificate_path);
         }
+        if let Some(proof) = &mut config.proof {
+            resolve_relative(base, &mut proof.library);
+            resolve_relative(base, &mut proof.guest);
+        }
         config.normalize_native_paths();
         config.validate()?;
         Ok(config)
     }
 
     pub(super) fn normalize_native_paths(&mut self) {
+        if let Some(proof) = &mut self.proof {
+            proof.library = native_path(&proof.library);
+            proof.guest = native_path(&proof.guest);
+        }
         for target in [
             &mut self.library,
             &mut self.database,
@@ -158,6 +169,9 @@ impl ResidentConfig {
             );
         }
         self.genesis.validate()?;
+        if let Some(proof) = &self.proof {
+            proof.validate()?;
+        }
         Ok(())
     }
 }
@@ -493,6 +507,7 @@ mod tests {
             genesis,
             workers: 2,
             batch_size: 2,
+            proof: None,
         };
         let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;
         let parent = first.controller.parent();
