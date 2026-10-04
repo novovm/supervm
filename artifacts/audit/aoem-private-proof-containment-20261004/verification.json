@@ -1,0 +1,150 @@
+{
+  "schema": "novovm/aoem-private-proof-containment-evidence/v1",
+  "date": "2026-10-04",
+  "scope": "containment_not_restored_private_zk",
+  "source": {
+    "aoem_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+    "supervm_base_commit": "da95316cda502783d296d4922af5ee4352591b36",
+    "supervm_working_tree": "AOEM SDK and host-consumer containment changes; unrelated protected drafts retained; not a clean committed SUPERVM package",
+    "source_changes_by_regression_agent": false,
+    "node_sha256": "ff1d5ff0f7b48556f4b6d234b464711ac9b22932394d0aa334b4bf764896cd28",
+    "windows_core_sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
+    "linux_core_sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309"
+  },
+  "environment": {
+    "platform": "Windows x86_64",
+    "product_topology": "one host, four real novovm-node processes, HTTP RPC and WSS/E2E relay",
+    "legacy_host_permission": false,
+    "gpu_diagnostic_device": "NVIDIA GeForce RTX 5090 Laptop GPU",
+    "gpu_diagnostic_selector": "5090",
+    "gpu_diagnostic_vendor_selector": "0x10de",
+    "product_execution_backend": "aoem_semantic_v2_cpu_callbacks"
+  },
+  "windows_results": {
+    "c_adversarial": {
+      "passed": true,
+      "private_envelopes_rejected": 12,
+      "private_envelopes_tested": 12,
+      "with_and_without_witness": true,
+      "profile_relabel_rejected": true,
+      "public_diagnostics_preserved": true,
+      "log": "adversarial.log"
+    },
+    "c_smoke_verify_service": {
+      "passed": true,
+      "service_iterations": 2,
+      "service_batch_count": 4,
+      "verification_scope": "envelope_integrity_only_not_zk",
+      "cryptographic_proof_verified": false,
+      "logs": ["smoke.log", "verify.log", "service.log"]
+    },
+    "worker": {
+      "public_jobs_succeeded": 4,
+      "public_malformed_rejected": true,
+      "private_jobs_rejected_as_unsupported": 5,
+      "private_proof_written": false,
+      "private_expected_process_exit_code": 1,
+      "asset_setup_list_select_release_and_post_release_rejection_passed": true,
+      "logs": ["worker-public.log", "worker-private.log", "worker-asset-lifecycle.log", "result-contract-check.log"]
+    },
+    "product_rpc_mixed": {
+      "test": "actual_product_rpc_signed_batches_failures_quorum_and_restart",
+      "passed": true,
+      "test_seconds": 1.84,
+      "unique_finalized_transactions": 8,
+      "successful_transactions": 7,
+      "business_failed_transactions": 1,
+      "two_of_four_no_head": true,
+      "cold_receipts_equal": true,
+      "restart_and_successor": "passed",
+      "input_distribution": "identical signed RPC fanout, not single-ingress evidence",
+      "report": "product-rpc-mixed-result.json",
+      "report_sha256": "60a98c93102ffc98dafd3f46269092e07f5f87a8bc93de9ab56592c6924c162a"
+    },
+    "product_rpc_single_ingress": {
+      "test": "actual_product_rpc_single_ingress_gossip_failures_and_restart",
+      "passed": true,
+      "test_seconds": 1.37,
+      "unique_finalized_transactions": 8,
+      "successful_transactions": 7,
+      "business_failed_transactions": 1,
+      "ingress_node": 0,
+      "initial_scheduled_proposer": 1,
+      "input_distribution": "one fixed non-proposer HTTP ingress, peer raw transaction propagation, all four queried",
+      "restart_and_successor": "passed",
+      "report": "product-rpc-single-ingress-result.json",
+      "report_sha256": "63738499018b193e778c8b246041b683cc67b456aa4dfa9076fc3f0b99862a96"
+    },
+    "pq_signature_runtime": {
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "test_seconds": 0.11,
+      "parameter_sets": [44, 65, 87],
+      "log": "pq-signature-runtime.log",
+      "scope": "packaged runtime official-positive requirements, signer/verifier pairs and negative tamper/context/framing checks; not a rerun of the older full ACVP and interop campaign"
+    }
+  },
+  "linux": {
+    "status": "scoped_new_core_regressions_passed",
+    "new_core_build_and_regression_completed": true,
+    "fullmax_bundle_rebuilt_and_synchronized": true,
+    "bundle_sync_report": "linux-fullmax-sync.json",
+    "environment": "Ubuntu 24.04 under WSL2 on the same Windows device",
+    "real_ffi_private_rejection": {
+      "passed": true,
+      "requests": ["op98 wire v4 profile 3", "op99 setup profile 3"],
+      "required_rc": -4,
+      "exact_retirement_error_checked": true,
+      "processed_success_and_write_counters_zero": true,
+      "all_19_output_keys_absent_before_and_after": true,
+      "log": "linux-private-profile-ffi.log"
+    },
+    "worker_private": {
+      "jobs_rejected_as_unsupported": 5,
+      "proof_written": false,
+      "expected_process_exit_code": 1,
+      "log": "linux-worker-private.log",
+      "results": "linux-worker-private-results.jsonl"
+    },
+    "external_forgery_rejection": {"passed": 12, "failed": 0, "log": "linux-adversarial.log"},
+    "rust_core_regression": {
+      "bindings_resident_passed": 32,
+      "exec_resident_facade_passed": 3,
+      "exec_actual_compute_scope_passed": 2,
+      "pq_passed": 3,
+      "total": 40,
+      "actual_core_tests": 13,
+      "pure_or_mock_tests": 27,
+      "failed": 0,
+      "report": "linux-rust-core-regression.json"
+    },
+    "gpu_runtime_validation": "NOT EXECUTED: only llvmpipe exposed to WSL, not the target GPU",
+    "new_linux_node_build_or_product_rpc_run": false,
+    "full_sidecar_capability_qualification": false,
+    "build_context": "linux-build-context.json"
+  },
+  "boundaries": {
+    "cryptographic_private_proof_restored": false,
+    "business_gpu_active_in_product_rpc_tests": false,
+    "business_proof_verified_in_product_rpc_tests": false,
+    "performance_measured": false,
+    "tps_claim": false,
+    "four_machine_test": false,
+    "public_network_acceptance": false,
+    "whole_product_production_acceptance": false,
+    "pending_admission_durable": false,
+    "public_profile_2_checks_a_disclosed_merkle_path": true,
+    "bft_durable_finality_is_not_zk": true
+  },
+  "evidence": {
+    "original_product_summary": "product-regression.json",
+    "original_product_summary_sha256": "3d90cae844556357ee6953a7c87a51205feb0d3dc238bde005bf359e0adf6843",
+    "product_build_and_test_logs": ["node-build.log", "product-rpc-mixed.log", "product-rpc-single-ingress.log", "pq-signature-runtime.log"],
+    "aoem_source_directory": "../AOEM/artifacts/proof-fail-closed-1377cd1e-windows-20261004 (relative to SUPERVM repository root)",
+    "product_source_directory": "artifacts/audit/aoem1377cd1e-product-regression-windows (relative to SUPERVM repository root)",
+    "copies_match_source_sha256": true,
+    "binaries_not_copied_here": true,
+    "raw_error_and_shutdown_diagnostics_retained": true
+  }
+}

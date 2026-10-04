@@ -1,0 +1,2 @@
+C_HOST_RESIDENT_PROOF_VERIFY|profiles=1,2|verification_scope=envelope_integrity_only_not_zk|envelope_checks=ok|retired_private_profile=unsupported|private_proof_written=false|cryptographic_proof_verified=false
+verify_exit_code=0

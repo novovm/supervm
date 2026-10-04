@@ -299,6 +299,13 @@ jobs:
         run: |
           set -euo pipefail
           export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"
+          # Publicly recomputable envelopes must never authorize a private proof.
+          # This adversarial verifier test requires neither a GPU nor a prover.
+          mkdir -p target/proof-envelope-smoke
+          cc -std=c11 -Wall -Wextra -Werror -I aoem/linux/include aoem/examples/resident_private_profile_fail_closed.c -ldl -o target/proof-envelope-smoke/adversarial
+          target/proof-envelope-smoke/adversarial
+          cc -std=c11 -Wall -Wextra -Werror -I aoem/linux/include artifacts/audit/aoem-private-proof-containment-20261004/linux_private_profile_ffi_rejection.c -ldl -o target/proof-envelope-smoke/private-profile-ffi
+          target/proof-envelope-smoke/private-profile-ffi "$NOVOVM_AOEM_TEST_LIBRARY"
           cargo test -p aoem-bindings --lib resident --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-exec --lib resident --locked -- --test-threads=1
           cargo test -p novovm-network --lib duplex --locked -- --test-threads=1

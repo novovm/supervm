@@ -1,0 +1,2 @@
+C_HOST_RESIDENT_PROOF_SMOKE|real_input=ok|envelope=ok|envelope_integrity=ok|status=ok|metadata=ok|malformed=ok|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false
+smoke_exit_code=0

@@ -23,8 +23,7 @@
       "type": "string",
       "enum": [
         "fixed_profile_v1",
-        "merkle_membership_v1",
-        "zk_merkle_membership_v1"
+        "merkle_membership_v1"
       ]
     },
     "successResult": {
@@ -35,6 +34,11 @@
         "profile_id",
         "proof",
         "verify_status",
+        "accepted",
+        "verification_scope",
+        "proof_verified",
+        "envelope_integrity_verified",
+        "cryptographic_proof_verified",
         "public_outputs",
         "metadata"
       ],
@@ -43,7 +47,12 @@
         "status": { "const": "ok" },
         "profile_id": { "$ref": "#/$defs/profileId" },
         "proof": { "$ref": "#/$defs/hex" },
-        "verify_status": { "const": "ok" },
+        "verify_status": { "const": "envelope_integrity_only_not_zk" },
+        "accepted": { "const": false },
+        "verification_scope": { "const": "envelope_integrity_only_not_zk" },
+        "proof_verified": { "const": false },
+        "envelope_integrity_verified": { "const": true },
+        "cryptographic_proof_verified": { "const": false },
         "public_outputs": {
           "type": "string",
           "description": "AOEM state JSON encoded as a JSON string by the current worker."
@@ -69,6 +78,7 @@
           "type": "string",
           "enum": [
             "malformed_payload",
+            "unsupported_private_membership_proof",
             "wire_execution_failed",
             "proof_verification_failed",
             "state_key_overflow"

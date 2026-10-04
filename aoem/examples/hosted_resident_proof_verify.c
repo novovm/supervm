@@ -1,8 +1,10 @@
-// Standalone verifier smoke for the fixed-profile resident proof workload.
+// Standalone envelope/relationship diagnostic for the resident proof workload.
 //
 // This external host example first obtains proof bytes through the existing
 // wire_v1 product path, then verifies the proof envelope without consulting
-// AOEM's internal verify_status.
+// AOEM's internal verify_status. Profiles 1/2 are diagnostics, not independent
+// zero-knowledge proofs. Retired profile 3 is unsupported even with a witness:
+// public checksums cannot attest to a hidden membership relation.
 
 #define main aoem_resident_proof_smoke_main
 #include "hosted_resident_proof_smoke.c"
@@ -11,6 +13,7 @@
 #define AOEM_PROOF_CONTRACT_V3_PREFIX_LEN (5u + 2u + 4u + 32u * 4u + 4u)
 #define AOEM_PROOF_CONTRACT_PAYLOAD_WORDS 13u
 #define AOEM_PROOF_CONTRACT_PAYLOAD_LEN (AOEM_PROOF_CONTRACT_PAYLOAD_WORDS * 4u)
+#define AOEM_PROOF_VERIFY_UNSUPPORTED_PRIVATE_PROFILE (-2)
 
 typedef struct aoem_proof_contract_v3 {
   uint32_t profile_id;
@@ -190,6 +193,14 @@ static int parse_proof_contract_v3(
     return -1;
   }
   parsed->profile_id = read_u32_le_at(proof + 7u);
+  if (parsed->profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
+    return AOEM_PROOF_VERIFY_UNSUPPORTED_PRIVATE_PROFILE;
+  }
+  if ((parsed->profile_id != AOEM_FIXED_PROFILE_RESIDENT_PROOF_V1_ID &&
+       parsed->profile_id != AOEM_MERKLE_MEMBERSHIP_PROOF_V1_ID) ||
+      read_u32_le_at(proof + AOEM_PROOF_CONTRACT_V3_PREFIX_LEN) != parsed->profile_id) {
+    return -1;
+  }
   parsed->public_input_digest = proof + 11u;
   parsed->witness_digest = proof + 43u;
   parsed->pipeline_digest = proof + 75u;
@@ -329,94 +340,6 @@ static int compute_merkle_public_outputs_digest_from_payload(
   return 0;
 }
 
-static int compute_zk_merkle_public_outputs_digest_from_payload(
-    const aoem_proof_contract_v3* proof,
-    const uint8_t* public_input,
-    size_t public_input_len,
-    const char* public_outputs_json,
-    uint8_t out[32]) {
-  if (public_input_len != 32u + 32u + 32u + 4u + 4u || !public_outputs_json ||
-      strstr(public_outputs_json, "\"leaf_hash\"") != NULL ||
-      strstr(public_outputs_json, "\"leaf_index\"") != NULL ||
-      strstr(public_outputs_json, "\"sibling_path\"") != NULL ||
-      strstr(public_outputs_json, "\"path_digest\"") != NULL ||
-      strstr(public_outputs_json, "\"computed_root\"") != NULL ||
-      strstr(public_outputs_json, "\"private_witness_hidden\":true") == NULL) {
-    return -1;
-  }
-
-  char* root_hex = NULL;
-  char* commitment_hex = NULL;
-  char* nullifier_hex = NULL;
-  char* witness_commitment_hex = NULL;
-  uint8_t* root = NULL;
-  uint8_t* commitment = NULL;
-  uint8_t* nullifier = NULL;
-  uint8_t* witness_commitment = NULL;
-  size_t root_len = 0;
-  size_t commitment_len = 0;
-  size_t nullifier_len = 0;
-  size_t witness_commitment_len = 0;
-  int rc = -1;
-
-  if (json_dup_string_field(public_outputs_json, "root", &root_hex) != 0 ||
-      json_dup_string_field(public_outputs_json, "leaf_commitment", &commitment_hex) != 0 ||
-      json_dup_string_field(public_outputs_json, "nullifier", &nullifier_hex) != 0 ||
-      json_dup_string_field(public_outputs_json, "witness_commitment", &witness_commitment_hex) != 0 ||
-      hex_to_bytes(root_hex, &root, &root_len) != 0 || root_len != 32u ||
-      hex_to_bytes(commitment_hex, &commitment, &commitment_len) != 0 ||
-      commitment_len != 32u ||
-      hex_to_bytes(nullifier_hex, &nullifier, &nullifier_len) != 0 || nullifier_len != 32u ||
-      hex_to_bytes(witness_commitment_hex, &witness_commitment, &witness_commitment_len) != 0 ||
-      witness_commitment_len != 32u) {
-    goto done;
-  }
-  if (memcmp(root, public_input, 32u) != 0 ||
-      memcmp(commitment, public_input + 32u, 32u) != 0 ||
-      memcmp(nullifier, public_input + 64u, 32u) != 0) {
-    goto done;
-  }
-
-  const uint8_t* payload = proof->payload;
-  byte_buf generic = {0};
-  byte_buf zk = {0};
-  write_u32_le_to(&generic, read_u32_le_at(payload + 0u));
-  write_u32_le_to(&generic, read_u32_le_at(payload + 4u));
-  write_u32_le_to(&generic, read_u32_le_at(payload + 36u));
-  write_u32_le_to(&generic, read_u32_le_at(payload + 40u));
-  (void)buf_append(&generic, proof->public_input_digest, 32u);
-  (void)buf_append(&generic, proof->witness_digest, 32u);
-  (void)buf_append(&generic, proof->pipeline_digest, 32u);
-  write_u32_le_to(&generic, read_u32_le_at(payload + 24u));
-  write_u32_le_to(&generic, read_u32_le_at(payload + 28u));
-  write_u32_le_to(&generic, read_u32_le_at(payload + 32u));
-
-  (void)buf_append(&zk, public_input, 32u);
-  (void)buf_append(&zk, public_input + 32u, 32u);
-  (void)buf_append(&zk, public_input + 64u, 32u);
-  (void)buf_append(&zk, public_input + 96u, 4u);
-  (void)buf_append(&zk, public_input + 100u, 4u);
-  (void)buf_append(&zk, witness_commitment, 32u);
-
-  static const uint8_t label[] = "public_outputs";
-  const uint8_t* parts[2] = {generic.data, zk.data};
-  size_t part_lens[2] = {generic.len, zk.len};
-  contract_digest32(label, sizeof(label) - 1u, parts, part_lens, 2u, out);
-  buf_free(&generic);
-  buf_free(&zk);
-  rc = 0;
-
-done:
-  free(root_hex);
-  free(commitment_hex);
-  free(nullifier_hex);
-  free(witness_commitment_hex);
-  free(root);
-  free(commitment);
-  free(nullifier);
-  free(witness_commitment);
-  return rc;
-}
 
 static void bytes_to_hex_lower(const uint8_t* bytes, size_t len, char* out) {
   static const char hex[] = "0123456789abcdef";
@@ -436,6 +359,11 @@ static int verify_contract_against_inputs(
     size_t witness_len,
     uint32_t expected_profile_id,
     const char* public_outputs_json) {
+  // No witness fallback: supplying private material does not turn this legacy
+  // public envelope into an independently verifiable cryptographic proof.
+  if (expected_profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
+    return AOEM_PROOF_VERIFY_UNSUPPORTED_PRIVATE_PROFILE;
+  }
   aoem_proof_contract_v3 parsed;
   if (parse_proof_contract_v3(proof, proof_len, &parsed) != 0 ||
       parsed.profile_id != expected_profile_id) {
@@ -452,9 +380,6 @@ static int verify_contract_against_inputs(
   size_t public_part_lens[1] = {public_input_len};
   const uint8_t* witness_parts[1] = {witness};
   size_t witness_part_lens[1] = {witness_len};
-  const int zk_without_private_witness =
-      expected_profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID && witness == NULL &&
-      witness_len == 0u;
   contract_digest32(
       public_label,
       sizeof(public_label) - 1u,
@@ -462,15 +387,13 @@ static int verify_contract_against_inputs(
       public_part_lens,
       1,
       expected_public_input_digest);
-  if (!zk_without_private_witness) {
-    contract_digest32(
-        witness_label,
-        sizeof(witness_label) - 1u,
-        witness_parts,
-        witness_part_lens,
-        1,
-        expected_witness_digest);
-  }
+  contract_digest32(
+      witness_label,
+      sizeof(witness_label) - 1u,
+      witness_parts,
+      witness_part_lens,
+      1,
+      expected_witness_digest);
   compute_pipeline_digest_from_payload(parsed.payload, expected_pipeline_digest);
   if (expected_profile_id == AOEM_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
     if (compute_merkle_public_outputs_digest_from_payload(
@@ -482,22 +405,12 @@ static int verify_contract_against_inputs(
             expected_public_outputs_digest) != 0) {
       return -1;
     }
-  } else if (expected_profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
-    if (compute_zk_merkle_public_outputs_digest_from_payload(
-            &parsed,
-            public_input,
-            public_input_len,
-            public_outputs_json,
-            expected_public_outputs_digest) != 0) {
-      return -1;
-    }
   } else {
     compute_public_outputs_digest_from_payload(&parsed, expected_public_outputs_digest);
   }
 
   if (memcmp(parsed.public_input_digest, expected_public_input_digest, 32u) != 0 ||
-      (!zk_without_private_witness &&
-       memcmp(parsed.witness_digest, expected_witness_digest, 32u) != 0) ||
+      memcmp(parsed.witness_digest, expected_witness_digest, 32u) != 0 ||
       memcmp(parsed.pipeline_digest, expected_pipeline_digest, 32u) != 0 ||
       memcmp(parsed.public_outputs_digest, expected_public_outputs_digest, 32u) != 0) {
     return -1;
@@ -881,170 +794,38 @@ static int AOEM_MAYBE_UNUSED run_merkle_membership_verifier_smoke(
              : -1;
 }
 
-static int AOEM_MAYBE_UNUSED run_zk_merkle_membership_verifier_smoke(
+static int AOEM_MAYBE_UNUSED run_retired_private_profile_rejection_smoke(
     const aoem_host_api* api,
     void* handle) {
-  const char* request_id = "c-host-resident-proof-verify-zk-merkle";
-  const char* output_prefix = "aoem.compute.output/c-host-resident-proof-verify-zk-merkle";
-  const char* proof_key =
-      "aoem.compute.output/c-host-resident-proof-verify-zk-merkle/zk/proof/0/bytes";
-  const char* public_outputs_key =
-      "aoem.compute.output/c-host-resident-proof-verify-zk-merkle/zk/proof/0/public_outputs";
-
+  const char* request_id = "c-host-resident-proof-retired-private";
+  const char* output_prefix = "aoem.compute.output/c-host-resident-proof-retired-private";
   byte_buf wire = {0};
   if (build_proof_zk_merkle_membership_batch_wire(
-          &wire,
-          request_id,
-          output_prefix,
-          1u,
-          AOEM_FIXED_PROFILE_RESIDENT_ASSET_V1_ID) != 0) {
-    fprintf(stderr, "failed to build zk merkle membership verifier wire payload\n");
+          &wire, request_id, output_prefix, 1u, AOEM_FIXED_PROFILE_RESIDENT_ASSET_V1_ID) != 0) {
     buf_free(&wire);
     return -1;
   }
   aoem_exec_v2_result result = {0};
   int32_t rc = api->execute_ops_wire_v1(handle, wire.data, wire.len, &result);
   buf_free(&wire);
-  if (rc != 0 || result.processed != 1 || result.success != 1 || result.total_writes != 8) {
-    fprintf(stderr, "zk merkle membership verifier setup execute failed rc=%d\n", rc);
+  // The wire ABI exposes no error string here. Check the exact unsupported
+  // return code and the no-work/no-write result, not merely any failure.
+  if (rc != -4 || result.processed != 0 || result.success != 0 ||
+      result.failed_index != 0 || result.total_writes != 0) {
+    fprintf(stderr, "retired private profile was not rejected before work rc=%d\n", rc);
     return -1;
   }
-
-  char* proof_response = NULL;
-  char* public_outputs_response = NULL;
-  char* proof_hex = NULL;
-  uint8_t* proof_bytes = NULL;
-  size_t proof_len = 0;
-  byte_buf public_input = {0};
-  byte_buf witness = {0};
-  if (read_state_response(api, proof_key, &proof_response) != 0 ||
-      read_state_response(api, public_outputs_key, &public_outputs_response) != 0 ||
-      json_dup_string_field(proof_response, "proof_bytes_hex", &proof_hex) != 0 ||
-      hex_to_bytes(proof_hex, &proof_bytes, &proof_len) != 0 ||
-      aoem_build_zk_merkle_membership_fixture(2u, 4u, &public_input, &witness) != 0) {
-    free(proof_response);
-    free(public_outputs_response);
-    free(proof_hex);
-    free(proof_bytes);
-    buf_free(&public_input);
-    buf_free(&witness);
-    return -1;
-  }
-
-  int privacy_ok =
-      strstr(public_outputs_response, "\"private_witness_hidden\":true") != NULL &&
-      strstr(public_outputs_response, "\"leaf_hidden\":true") != NULL &&
-      strstr(public_outputs_response, "\"sibling_path_hidden\":true") != NULL &&
-      strstr(public_outputs_response, "\"leaf_index_hidden\":true") != NULL &&
-      strstr(public_outputs_response, "\"leaf_hash\"") == NULL &&
-      strstr(public_outputs_response, "\"leaf_index\"") == NULL &&
-      strstr(public_outputs_response, "\"sibling_path\"") == NULL &&
-      strstr(public_outputs_response, "\"path_digest\"") == NULL &&
-      strstr(public_outputs_response, "\"computed_root\"") == NULL;
-
-  int ok = verify_contract_against_inputs(
-      proof_bytes,
-      proof_len,
-      public_input.data,
-      public_input.len,
-      NULL,
-      0u,
-      AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID,
-      public_outputs_response);
-
-  byte_buf tampered_public = {0};
-  (void)buf_append(&tampered_public, public_input.data, public_input.len);
-  tampered_public.data[0] ^= 0x11u;
-  int root_rejected =
-      verify_contract_against_inputs(
-          proof_bytes,
-          proof_len,
-          tampered_public.data,
-          tampered_public.len,
-          NULL,
-          0u,
-          AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID,
-          public_outputs_response) != 0;
-  tampered_public.data[0] ^= 0x11u;
-  tampered_public.data[32] ^= 0x22u;
-  int commitment_rejected =
-      verify_contract_against_inputs(
-          proof_bytes,
-          proof_len,
-          tampered_public.data,
-          tampered_public.len,
-          NULL,
-          0u,
-          AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID,
-          public_outputs_response) != 0;
-  tampered_public.data[32] ^= 0x22u;
-  tampered_public.data[64] ^= 0x33u;
-  int nullifier_rejected =
-      verify_contract_against_inputs(
-          proof_bytes,
-          proof_len,
-          tampered_public.data,
-          tampered_public.len,
-          NULL,
-          0u,
-          AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID,
-          public_outputs_response) != 0;
-  tampered_public.data[64] ^= 0x33u;
-  tampered_public.data[96] ^= 0x01u;
-  int depth_rejected =
-      verify_contract_against_inputs(
-          proof_bytes,
-          proof_len,
-          tampered_public.data,
-          tampered_public.len,
-          NULL,
-          0u,
-          AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID,
-          public_outputs_response) != 0;
-  int profile_rejected =
-      verify_contract_against_inputs(
-          proof_bytes,
-          proof_len,
-          public_input.data,
-          public_input.len,
-          NULL,
-          0u,
-          AOEM_MERKLE_MEMBERSHIP_PROOF_V1_ID,
-          public_outputs_response) != 0;
-  uint8_t* tampered_proof = (uint8_t*)malloc(proof_len);
-  int proof_rejected = 0;
-  if (tampered_proof) {
-    memcpy(tampered_proof, proof_bytes, proof_len);
-    if (proof_len > AOEM_PROOF_CONTRACT_V3_PREFIX_LEN + 4u) {
-      tampered_proof[AOEM_PROOF_CONTRACT_V3_PREFIX_LEN + 9u] ^= 0x44u;
+  static const char* keys[] = {
+      "aoem.compute.output/c-host-resident-proof-retired-private/zk/proof/0/bytes",
+      "aoem.compute.output/c-host-resident-proof-retired-private/zk/proof/0/status",
+      "aoem.compute.output/c-host-resident-proof-retired-private/zk/proof/0/verify_status"};
+  for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+    if (read_state_found(api, keys[i]) != 0) {
+      return -1;
     }
-    proof_rejected =
-        verify_contract_against_inputs(
-            tampered_proof,
-            proof_len,
-            public_input.data,
-            public_input.len,
-            NULL,
-            0u,
-            AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID,
-            public_outputs_response) != 0;
-    free(tampered_proof);
   }
-
-  free(proof_response);
-  free(public_outputs_response);
-  free(proof_hex);
-  free(proof_bytes);
-  buf_free(&public_input);
-  buf_free(&witness);
-  buf_free(&tampered_public);
-
-  return ok == 0 && privacy_ok && root_rejected && commitment_rejected && nullifier_rejected &&
-                 depth_rejected && profile_rejected && proof_rejected
-             ? 0
-             : -1;
+  return 0;
 }
-
 #ifndef AOEM_RESIDENT_PROOF_VERIFY_NO_MAIN
 int main(int argc, char** argv) {
   const char* lib_path = NULL;
@@ -1081,14 +862,14 @@ int main(int argc, char** argv) {
     ok = run_merkle_membership_verifier_smoke(&api, handle);
   }
   if (ok == 0) {
-    ok = run_zk_merkle_membership_verifier_smoke(&api, handle);
+    ok = run_retired_private_profile_rejection_smoke(&api, handle);
   }
   api.destroy(handle);
   if (ok != 0) {
     return 1;
   }
   printf(
-      "C_HOST_RESIDENT_PROOF_VERIFY|profile=zk_merkle_membership_v1|proof_parse=ok|private_membership=ok|privacy=ok|public_input_binding=ok|public_outputs_binding=ok|verify=ok|resident_asset=ok|batch_verify=ok|tamper_root_rejected=ok|tamper_commitment_rejected=ok|tamper_nullifier_rejected=ok|tamper_depth_rejected=ok|tamper_rejected=ok\n");
+      "C_HOST_RESIDENT_PROOF_VERIFY|profiles=1,2|verification_scope=envelope_integrity_only_not_zk|envelope_checks=ok|retired_private_profile=unsupported|private_proof_written=false|cryptographic_proof_verified=false\n");
   return 0;
 }
 #endif

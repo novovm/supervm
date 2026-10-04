@@ -3,10 +3,16 @@
 This directory is a single AOEM FULLMAX package for SUPERVM. It is not a
 Proof-only sub-package and it is not a separate platform service.
 
+Security correction 2026-10-04: private resident profile 3 is withdrawn.
+Its old AORF envelope was publicly forgeable, not a ZK proof. Corrected
+producers and verifiers reject it; profiles 1/2 are public diagnostics only.
+See [the affected contract](docs/proof-engine-v1.0-contract.md#security-correction-2026-10-04)
+and [the exact packaged build and test scope](RUNTIME-BASELINE.md).
+
 ```text
 SUPERVM host process
-  -> aoem_ffi.dll
-  -> AOEM FFI ABI
+  -> original novovm-node / novovm-exec / aoem-bindings
+  -> AOEM dynamic library and FFI ABI
   -> aoem_execute_ops_wire_v1 and typed AOEM symbols
   -> AOEM state / proof / crypto / primitive outputs
 ```
@@ -40,38 +46,22 @@ manifest/
 macOS runtime directories are intentionally not bundled in this SUPERVM package
 until fresh AOEM FULLMAX artifacts are rebuilt and verified. Old `.dylib`
 artifacts were removed so users do not mistake stale platform binaries for
-current v1.2 FULLMAX output.
+current FULLMAX output.
 
 ## Current Platform State
 
-```text
-Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-10-01
-  source commit: 56e9da15010490ab54435ba6ab1c226f3d739176
-  Windows locally qualified: see RUNTIME-BASELINE.md
-  Linux/WSL locally qualified: see RUNTIME-BASELINE.md
-  macOS pending, not bundled, not advertised as available
-
-Windows:
-  included
-  canonical AOEM FULLMAX bundle
-  source: aoem/windows/manifest.json
-
-Linux:
-  included
-  canonical AOEM FULLMAX bundle
-  source: aoem/linux/manifest.json
-  core: aoem/linux/core/bin/libaoem_ffi.so
-
-macOS:
-  pending_rebuild_not_bundled
-  no macOS runtime files are shipped in this package
-```
+The current source, hashes, build availability and **actual per-platform test
+results** are recorded in [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md),
+[the Windows manifest](windows/manifest.json) and
+[the Linux manifest](linux/manifest.json). This update is scoped private-profile
+containment, not whole-product or performance requalification. A bundled file
+or a Windows pass does not establish Linux validation; pending results must not
+be counted as passed. macOS remains unbundled.
 
 ## FULLMAX Capability Domains
 
-The Windows and Linux FULLMAX runtimes keep the AOEM FULLMAX capability surface
-together:
+The FULLMAX package preserves these capability domains. Presence is not a new
+per-platform qualification or proof of NOVOVM business integration:
 
 ```text
 ABI lifecycle
@@ -83,8 +73,8 @@ tensor compute
 tensor graph / graph runtime internals
 primitive u32 graph: sort / scan / scatter / fft / merkle / ntt / gemm
 GPU generic primitive route
-ZK MSM and resident proof pipeline
-resident proof v1
+ZK MSM primitives and resident pipeline
+resident proof v1: profiles 1/2 diagnostics only; profile 3 withdrawn
 resident asset lifecycle
 classic hashes
 classic signature verification
@@ -137,29 +127,33 @@ docs/confidential-transfer-v1.md
 ```
 
 This profile is separate from the Proof Engine worker profiles. RingCT remains
-the FULLMAX confidential-transfer path; `compute.zk.resident_proof_v1` remains
-the proof engine path for membership/state proof profiles.
+the FULLMAX confidential-transfer capability; `compute.zk.resident_proof_v1`
+now exposes only public diagnostics for profiles 1/2 and rejects profile 3.
 
 This legacy profile requires same-process prove-cache admission. It does not
 authorize independently held assets, wallet respend, or historical double-spend
-protection. The later classical JSON v2 implementation is not included in this
-`56e9da15` SDK. ML-DSA support does not make the privacy proofs post-quantum.
+protection. Availability of later classical JSON v2 and its actual product
+integration are separate entries in [the SDK manifest](aoem-sdk-manifest.json)
+and [runtime baseline](RUNTIME-BASELINE.md), not implied by this legacy example.
+ML-DSA support does not make the privacy proofs post-quantum.
 
 ## ML-DSA Qualification
 
-ML-DSA-44/65/87 now use the standard-correct pinned `mldsa-native 2.0.0` source.
-Windows and Linux core libraries each pass the 90-case applicable NIST sigVer
-subset and independent bidirectional interoperability. This is not FIPS
-certification or main-chain transaction/seal integration. Raw/internal ABI
-framing is unchanged; the Host adds external-pure context framing exactly once.
-See `RUNTIME-BASELINE.md` for hashes, exclusions and other compatibility limits;
-upstream notices are in `licenses/mldsa-native/`.
+The retained ML-DSA implementation is pinned to `mldsa-native 2.0.0`.
+This update ran **3 Windows packaged regression tests** covering ML-DSA-44/65/87
+positive and negative cases. The 90-vector applicable NIST subset and 9-case
+independent interoperability results belong to the historical qualification;
+they were not rerun or transferred to the new artifacts by this update.
+This is not FIPS certification or a new main-chain authentication/seal sign-off.
+Raw/internal ABI framing is unchanged; the Host adds external-pure context
+framing exactly once. See [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md) for current
+platform results, exclusions and compatibility; notices are in `licenses/mldsa-native/`.
 
 ## Proof Engine Capability
 
-The current Windows and Linux FULLMAX core dynamic libraries include the AOEM
-Compute Native Proof Engine host integration. The proof path is part of the same
-FULLMAX package:
+The existing unified workload and host integration stay inside the same FULLMAX
+package. Their current scope is public diagnostics and private-profile rejection,
+not a restored private or complete NOV business proof:
 
 ```text
 aoem_execute_ops_wire_v1
@@ -167,19 +161,24 @@ aoem_execute_ops_wire_v1
   -> aoem_state_read_v1
 ```
 
-Included proof profiles:
+Current profile status:
 
 ```text
+fixed_profile_v1 (profile 1)
+  fixed-pipeline envelope diagnostic; not ZK
+
 merkle_membership_v1
-  public Merkle inclusion proof
-  fast public path
-  not a privacy proof
+  public Merkle path/envelope diagnostic; not ZK
 
 zk_merkle_membership_v1
-  private Merkle membership profile
-  hides leaf, sibling_path and leaf_index in public outputs
-  does not replace merkle_membership_v1
+  withdrawn; unsupported_private_membership_proof
+  rejection fixtures only; no successful private proof output
 ```
+
+Public results must report `verification_scope=envelope_integrity_only_not_zk`,
+`envelope_integrity_verified=true`, and `proof_verified=false`,
+`cryptographic_proof_verified=false`, `verify_status.accepted=false`.
+Neither GPU work nor a valid public envelope authorizes assets or finality.
 
 `aoem-proof-worker` is only an optional reference host / worker adapter. Hosts
 can embed AOEM directly and do not need to deploy the worker.
@@ -197,5 +196,7 @@ not a dedicated LR path
 macOS runtime artifacts are not bundled until a fresh build is verified
 ```
 
-Use `aoem-sdk-manifest.json`, `manifest/aoem-manifest.json` and
-`docs_CN/AOEM-FFI/SUPERVM-AOEM-CAPABILITY-AUDIT-V1-2026-05-23.md` for audit.
+Use [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md),
+[aoem-sdk-manifest.json](aoem-sdk-manifest.json) and
+[manifest/aoem-manifest.json](manifest/aoem-manifest.json) for the current scope.
+The 2026-05-23 capability audit is historical, not current private-proof acceptance.

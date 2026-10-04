@@ -8,34 +8,21 @@ layout:  single-layer fullmax host package
 entry:   aoem_execute_ops_wire_v1
 output:  aoem_state_read_v1
 host:    SUPERVM
-stage:   Windows + Linux FULLMAX included, macOS pending rebuild
+stage:   scoped private-profile containment; see per-platform baseline
 ```
 
 ## Platform Status
 
-```text
-Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-07-31
-  AOEM source commit a951273c
-  Windows included and verified
-  Linux included and verified
-  macOS pending, not bundled, not advertised as available
+Current source, hashes, build availability and executed tests are authoritative
+in [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md) and the
+[Windows](windows/manifest.json) / [Linux](linux/manifest.json) manifests.
+Do not reuse older artifact qualifications or infer Linux success from Windows.
+Pending platform work is not passed. macOS remains unbundled.
 
-Windows:
-  canonical AOEM FULLMAX installed
-  artifact: aoem/windows/manifest.json
-  core: aoem/windows/core/bin/aoem_ffi.dll
-
-Linux:
-  canonical AOEM FULLMAX installed
-  artifact: aoem/linux/manifest.json
-  core: aoem/linux/core/bin/libaoem_ffi.so
-  RISC0 recursion artifact: verified
-
-macOS:
-  pending_rebuild_not_bundled
-  old SUPERVM macOS runtime artifacts removed from this package
-```
+This release withdraws the publicly forgeable resident private profile 3;
+profiles 1/2 retain public diagnostics only. It does not restore private ZK or
+qualify the whole product. Other AOEM backends remain capabilities, not a newly
+enabled backend-specific NOVOVM proof service.
 
 ## Positioning
 
@@ -85,8 +72,8 @@ state read / write / snapshot
 tensor compute
 primitive operator graph: sort / scan / scatter / fft / merkle / ntt / gemm
 GPU-adaptive primitive route
-ZK MSM and resident proof pipeline
-resident proof v1
+ZK MSM primitives and resident pipeline
+resident proof v1: public diagnostics only; private profile 3 withdrawn
 resident asset lifecycle
 classic hashes
 classic signature verification
@@ -125,6 +112,17 @@ proof worker default task, and does not add a new ZK circuit.
 
 The confidential-transfer host example defaults to a fast wiring probe. Pass
 `--run-prove` to execute the full RingCT generation/verification path.
+That legacy sample requires same-process prove-cache admission; it does not
+deliver independently held/respendable assets or main-chain privacy. The current
+SDK manifest and baseline separately identify later classical privacy APIs.
+
+## ML-DSA Regression Scope
+
+This update ran 3 Windows packaged tests for ML-DSA-44/65/87 positives and
+negatives. The previous 90-vector NIST subset and 9 interoperability cases are
+historical qualification, not tests rerun for this release. Neither those records
+nor this scoped regression imply FIPS certification, new per-platform acceptance
+or main-chain PQ integration. See [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md).
 
 ## Proof Engine Capability
 
@@ -134,25 +132,33 @@ compute.zk.resident_asset_lifecycle_v1
 aoem_resident_proof_contract_v1_le_hex
 ```
 
-Included profiles:
+Current profile status:
 
 ```text
+fixed_profile_v1
+  fixed-pipeline envelope diagnostic; not ZK
+
 merkle_membership_v1
-  public inclusion fast path
+  public path/envelope diagnostic; not ZK
 
 zk_merkle_membership_v1
-  private membership profile
-  hides leaf, sibling_path, and leaf_index from public outputs
+  withdrawn; unsupported_private_membership_proof
+  no successful private proof output; negative fixtures only
 ```
 
-## Expected Acceptance
+## Expected Diagnostic / Rejection Result
 
 ```text
-SUPERVM_AOEM_PROOF_ENGINE_HOST_SMOKE|profile=fixed_profile_v1|proof=ok|verify=ok|state_read=ok|metadata=ok|failures=0
+SUPERVM_AOEM_PROOF_ENGINE_HOST_SMOKE|profile=fixed_profile_v1|scope=not_zk|envelope_integrity_verified=true|cryptographic_proof_verified=false|proof_verified=false|accepted=false|retired_profile3=rejected|retired_profile3_outputs=absent|state_read=ok|metadata=ok|failures=0
 ```
 
-Optional worker adapter acceptance is available for Windows and Linux. The
-worker remains a reference host adapter, not a required AOEM service.
+Default worker examples use public jobs. Their successful rows must report
+`verification_scope=envelope_integrity_only_not_zk`, integrity true and
+`accepted/proof_verified/cryptographic_proof_verified=false`.
+Private fixtures must return `unsupported_private_membership_proof` and
+`proof_written=false`, with nonzero worker exit. The worker remains an optional
+reference adapter, not a required service; actual platform results are recorded
+in the baseline. Historical private-positive acceptance is withdrawn.
 
 ## Non-Claims
 
@@ -163,6 +169,6 @@ not a performance-ready claim
 not a Graph OS path
 not a dedicated LR path
 additive public FFI ABI update for Semantic Graph V3
-no Runtime Canon change
+compatibility changes and unqualified capabilities are listed in the baseline
 macOS runtime availability is not claimed by this package
 ```

@@ -1,7 +1,7 @@
 {
-  "stamp": "20261001-065932",
-  "release_version": "1.0.0+56e9da15",
-  "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
+  "stamp": "20261004-120246",
+  "release_version": "1.5.0+1377cd1e-private-proof-containment",
+  "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
   "platform": "windows",
   "profile": "fullmax",
   "bundle_dir": ".",
@@ -73,7 +73,7 @@
     "runtime_canon_changed": true
   },
   "checksums": "CHECKSUMS.sha256",
-  "notes": "Canonical FULLMAX features from committed ML-DSA source; generic Host policies remain external. APFL AI requires sealed model-session assets; not a new validation of AI/GPU performance. Privacy JSON v2 from later source is not included.",
+  "notes": "Canonical FULLMAX source with retired unsound op98 private profile 3. Public envelope diagnostics are not ZK. Includes later generic privacy JSON v2 and AORCP002 support; neither enables NOV business proofs. No new GPU/TPS or whole-product qualification.",
   "semantic_batch": {
     "entry": "aoem_execute_semantic_batch_v1",
     "nonblocking_entry": "aoem_submit_semantic_batch_v1",
@@ -88,5 +88,10 @@
     "per_task_status": true,
     "host_neutral": true,
     "business_semantics": false
+  },
+  "proof_security": {
+    "private_profile_3": "rejected_before_work_and_writes",
+    "public_profiles": "envelope_integrity_only_not_zk",
+    "cryptographic_private_proof_restored": false
   }
 }

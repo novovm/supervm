@@ -1,7 +1,7 @@
 {
-  "stamp": "20261001-065932",
-  "release_version": "1.0.0+56e9da15",
-  "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
+  "stamp": "20261004-private-proof-1377cd1e",
+  "release_version": "1.5.0+1377cd1e-private-proof-containment",
+  "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
   "platform": "linux",
   "profile": "fullmax",
   "bundle_dir": ".",
@@ -52,7 +52,19 @@
     "global_production_ready": false
   },
   "checksums": "CHECKSUMS.sha256",
-  "notes": "Canonical FULLMAX features from committed ML-DSA source; generic Host policies remain external. APFL AI requires sealed model-session assets; not a new validation of AI/GPU performance. Privacy JSON v2 from later source is not included.",
+  "notes": "Canonical FULLMAX features with retired unsound private profile 3. Includes generic privacy JSON v2 and AORCP002 capabilities, not a new NOV proof service. No GPU/TPS or whole-product qualification.",
+  "build_environment": {
+    "platform": "Ubuntu 24.04 under WSL2",
+    "rustc": "1.94.1",
+    "cxx": "Clang 18.1.3",
+    "optimization": "release O3",
+    "feature_skips": false
+  },
+  "proof_security": {
+    "private_profile_3": "rejected_before_work_and_writes",
+    "public_profiles": "envelope_integrity_only_not_zk",
+    "cryptographic_private_proof_restored": false
+  },
   "semantic_batch": {
     "entry": "aoem_execute_semantic_batch_v1",
     "nonblocking_entry": "aoem_submit_semantic_batch_v1",

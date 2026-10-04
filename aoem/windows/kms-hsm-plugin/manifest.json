@@ -1,5 +1,5 @@
 {
-  "source_build": "AOEM canonical FULLMAX build",
+  "source_build": "aoem_kms_plugin.dll",
   "outputs": [
     "aoem_kms_plugin.dll",
     "aoem_ffi_kms.dll",

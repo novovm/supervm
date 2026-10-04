@@ -1,0 +1,440 @@
+warning: value assigned to `reduce_dispatch_gpu_us` is never read
+     --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      |
+17002 | ... = 0;
+      |       ^
+      |
+      = help: maybe it is overwritten before being read?
+      = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `dispatch_batch_oversized_item` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     |
+1122 ...ulkanRuntime {
+     ...------------ associated function in this implementation
+...
+4040 |     f...ersized_item(
+     |      ...^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `ntt` is never read
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     |
+5346 | struc...tionPackJson {
+     |      ...------------ field in this struct
+...
+5350 |     ntt: PrimitiveTransitionPackEntry...
+     |     ^^^
+     |
+     = note: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `parse` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     |
+5583 ...tionProvider {
+     ...------------ associated function in this implementation
+5584 |     fn parse(raw: &str) -> Option<Self> {
+     |        ^^^^^
+
+warning: function `parse_primitive_ntt_transition_provider_len_map` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     |
+5604 | f...ider_len_map(
+     |  ...^^^^^^^^^^^^
+
+warning: function `primitive_ntt_transition_provider_override` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     |
+5627 | f...der_override() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `primitive_ntt_transition_provider_len_map_override` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     |
+5633 | f...map_override(
+     |  ...^^^^^^^^^^^^
+
+warning: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     |
+ 365 ...lkanExecutor {
+     ...------------ methods in this implementation
+...
+4060 |     f..._worker_once(&mut self...
+     |      ...^^^^^^^^^^^^
+...
+4084 |     f..._worker_once(&m...
+     |      ...^^^^^^^^^^^^
+
+warning: `aoem-gpu-device` (lib) generated 8 warnings
+   Compiling aoem-gpu-kernels v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-kernels)
+warning: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used
+   --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    |
+430 | const...HED_SPV_OUT: &...
+    |      ...^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used
+   --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    |
+441 | const...IAL_SPV_OUT: &...
+    |      ...^^^^^^^^^^^
+
+warning: method `other` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     |
+2796 ...mbeddedRoute {
+     ...------------ method in this implementation
+...
+2804 |     fn other(self) -> Self {
+     |        ^^^^^
+
+warning: struct `MsmRadixRoutePerf` is never constructed
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     |
+2814 | ...ct...ixRoutePerf {
+     |      ...^^^^^^^^^^^
+
+warning: struct `MsmRadixRouteKey` is never constructed
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     |
+2822 | ...ct...dixRouteKey {
+     |      ...^^^^^^^^^^^
+
+warning: function `msm_radix_route_cache` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     |
+2830 | f..._route_cache() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_route_env_override` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     |
+2889 | f...env_override() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_enabled` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     |
+2900 | f...oute_enabled() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_min_samples` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     |
+2911 | f..._min_samples() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_fail_limit` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     |
+2920 | f...e_fail_limit() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_len_bucket` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     |
+2928 | f...x_len_bucket(le...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_route_key` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     |
+2940 | f...ix_route_key(
+     |  ...^^^^^^^^^^^^
+
+warning: function `route_idx` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     |
+2964 | fn route_idx(ro...
+     |    ^^^^^^^^^
+
+
+thread 'rustc' (450) panicked at /rustc-dev/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/alloc/src/vec/mod.rs:2873:36:
+slice index starts at 8 but ends at 7
+stack backtrace:
+   0:     0x781b5965b043 - <std::sys::backtrace::BacktraceLock::print::DisplayBacktrace as core::fmt::Display>::fmt::hdadc7c28d26d7ce3
+   1:     0x781b59c0e488 - core::fmt::write::h469843d235cc4241
+   2:     0x781b5b0dfdc2 - std::io::Write::write_fmt::h384251ddb7f1467c
+   3:     0x781b596285a5 - std::panicking::default_hook::{{closure}}::hd9d92b9a46805102
+   4:     0x781b596283d3 - std::panicking::default_hook::hedb2be0819bbe276
+   5:     0x781b586106ba - std[d3f1e08959ac5e62]::panicking::update_hook::<alloc[dd5b059a2bbb507d]::boxed::Box<rustc_driver_impl[96c8d24ddc94f5c5]::install_ice_hook::{closure#1}>>::{closure#0}
+   6:     0x781b596288d2 - std::panicking::panic_with_hook::h0fc23abecf35c6bd
+   7:     0x781b59628668 - std::panicking::panic_handler::{{closure}}::ha111c1a3ccf85d19
+   8:     0x781b59622509 - std::sys::backtrace::__rust_end_short_backtrace::h41d63216e1ba5fa4
+   9:     0x781b59602fbd - __rustc[16f1505adc47261a]::rust_begin_unwind
+  10:     0x781b561873bc - core::panicking::panic_fmt::hc13412975f563dde
+  11:     0x781b55e66b0d - core::slice::index::slice_index_fail::hf1918ccaba3e9ba3
+  12:     0x781b57f68965 - <annotate_snippets[e37ebffb75960118]::renderer::styled_buffer::StyledBuffer>::replace
+  13:     0x781b5afef427 - annotate_snippets[e37ebffb75960118]::renderer::render::render
+  14:     0x781b5afe27c0 - <rustc_errors[9dd702fe00760419]::annotate_snippet_emitter_writer::AnnotateSnippetEmitter>::emit_messages_default
+  15:     0x781b5b0e8121 - <rustc_errors[9dd702fe00760419]::annotate_snippet_emitter_writer::AnnotateSnippetEmitter as rustc_errors[9dd702fe00760419]::emitter::Emitter>::emit_diagnostic
+  16:     0x781b5b0ea940 - <rustc_errors[9dd702fe00760419]::json::Diagnostic>::from_errors_diagnostic
+  17:     0x781b5b0ea06a - <rustc_errors[9dd702fe00760419]::json::JsonEmitter as rustc_errors[9dd702fe00760419]::emitter::Emitter>::emit_diagnostic
+  18:     0x781b5b0e40ea - <rustc_errors[9dd702fe00760419]::DiagCtxtInner>::emit_diagnostic::{closure#3}
+  19:     0x781b5b0e1b33 - rustc_interface[bc8eb6767d3142e0]::callbacks::track_diagnostic::<core[61a85662de008515]::option::Option<rustc_span[5adcd8813d784319]::ErrorGuaranteed>>
+  20:     0x781b5b0e0bbc - <rustc_errors[9dd702fe00760419]::DiagCtxtInner>::emit_diagnostic
+  21:     0x781b5b0e0a6d - <rustc_errors[9dd702fe00760419]::DiagCtxtHandle>::emit_diagnostic
+  22:     0x781b5b0e092b - <() as rustc_errors[9dd702fe00760419]::diagnostic::EmissionGuarantee>::emit_producing_guarantee
+  23:     0x781b5ab6a7c0 - rustc_middle[e98470142a890996]::lint::lint_level::lint_level_impl
+  24:     0x781b5ab70683 - <rustc_passes[6410bdfeb52eb7ec]::dead::DeadVisitor>::lint_at_single_level
+  25:     0x781b5a21c383 - <rustc_passes[6410bdfeb52eb7ec]::dead::DeadVisitor>::warn_dead_code
+  26:     0x781b5a21d482 - rustc_passes[6410bdfeb52eb7ec]::dead::check_mod_deathness
+  27:     0x781b5a21c663 - rustc_query_impl[a5f5c4506bf77626]::plumbing::__rust_begin_short_backtrace::<rustc_query_impl[a5f5c4506bf77626]::query_impl::check_mod_deathness::dynamic_query::{closure#2}::{closure#0}, rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>
+  28:     0x781b5ab2652b - rustc_query_system[322f9f6cc75a823]::query::plumbing::try_execute_query::<rustc_query_impl[a5f5c4506bf77626]::DynamicConfig<rustc_query_system[322f9f6cc75a823]::query::caches::DefaultCache<rustc_span[5adcd8813d784319]::def_id::LocalModDefId, rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>, false, false, false>, rustc_query_impl[a5f5c4506bf77626]::plumbing::QueryCtxt, false>
+  29:     0x781b5ab25dcf - rustc_query_impl[a5f5c4506bf77626]::query_impl::check_mod_deathness::get_query_non_incr::__rust_end_short_backtrace
+  30:     0x781b5ab280b5 - rustc_interface[bc8eb6767d3142e0]::passes::analysis
+  31:     0x781b5ab27835 - rustc_query_impl[a5f5c4506bf77626]::plumbing::__rust_begin_short_backtrace::<rustc_query_impl[a5f5c4506bf77626]::query_impl::analysis::dynamic_query::{closure#2}::{closure#0}, rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>
+  32:     0x781b5ae0f323 - rustc_query_system[322f9f6cc75a823]::query::plumbing::try_execute_query::<rustc_query_impl[a5f5c4506bf77626]::DynamicConfig<rustc_query_system[322f9f6cc75a823]::query::caches::SingleCache<rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>, false, false, false>, rustc_query_impl[a5f5c4506bf77626]::plumbing::QueryCtxt, false>
+  33:     0x781b5ae0f10e - rustc_query_impl[a5f5c4506bf77626]::query_impl::analysis::get_query_non_incr::__rust_end_short_backtrace
+  34:     0x781b5af9f4d1 - <rustc_interface[bc8eb6767d3142e0]::passes::create_and_enter_global_ctxt<core[61a85662de008515]::option::Option<rustc_interface[bc8eb6767d3142e0]::queries::Linker>, rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}::{closure#2}>::{closure#2} as core[61a85662de008515]::ops::function::FnOnce<(&rustc_session[e0208b08f90ffce6]::session::Session, rustc_middle[e98470142a890996]::ty::context::CurrentGcx, alloc[dd5b059a2bbb507d]::sync::Arc<rustc_data_structures[6caa1ca4f5282206]::jobserver::Proxy>, &std[d3f1e08959ac5e62]::sync::once_lock::OnceLock<rustc_middle[e98470142a890996]::ty::context::GlobalCtxt>, &rustc_data_structures[6caa1ca4f5282206]::sync::worker_local::WorkerLocal<rustc_middle[e98470142a890996]::arena::Arena>, &rustc_data_structures[6caa1ca4f5282206]::sync::worker_local::WorkerLocal<rustc_hir[6e5c920e04c3da8]::Arena>, rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}::{closure#2})>>::call_once::{shim:vtable#0}
+  35:     0x781b5ade1e74 - rustc_interface[bc8eb6767d3142e0]::interface::run_compiler::<(), rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}>::{closure#1}
+  36:     0x781b5ad44e4e - std[d3f1e08959ac5e62]::sys::backtrace::__rust_begin_short_backtrace::<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_with_globals<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_pool_with_globals<rustc_interface[bc8eb6767d3142e0]::interface::run_compiler<(), rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}>::{closure#1}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>
+  37:     0x781b5ad44c20 - <std[d3f1e08959ac5e62]::thread::lifecycle::spawn_unchecked<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_with_globals<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_pool_with_globals<rustc_interface[bc8eb6767d3142e0]::interface::run_compiler<(), rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}>::{closure#1}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>::{closure#1} as core[61a85662de008515]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  38:     0x781b5ad46dc6 - std::sys::thread::unix::Thread::new::thread_start::h96f969bf98c6e59d
+  39:     0x781b5469cb84 - <unknown>
+  40:     0x781b54729ecc - <unknown>
+  41:                0x0 - <unknown>
+
+error: the compiler unexpectedly panicked. this is a bug.
+
+note: we would appreciate a bug report: https://github.com/rust-lang/rust/issues/new?labels=C-bug%2C+I-ICE%2C+T-compiler&template=ice.md
+
+note: rustc 1.94.1 (e408947bf 2026-03-25) running on x86_64-unknown-linux-gnu
+
+note: compiler flags: --crate-type lib -C opt-level=3 -C embed-bitcode=no -C strip=debuginfo
+
+note: some of the compiler flags provided by cargo are hidden
+
+query stack during panic:
+#0 [check_mod_deathness] checking deathness of variables in module `msm_bucket_accumulate`
+#1 [analysis] running analysis passes on crate `aoem_gpu_kernels`
+end of query stack
+warning: `aoem-gpu-kernels` (lib) generated 13 warnings
+error: could not compile `aoem-gpu-kernels` (lib); 13 warnings emitted
+
+Caused by:
+  process didn't exit successfully: `/home/aoem-a1/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name aoem_gpu_kernels --edition=2021 crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C opt-level=3 -C embed-bitcode=no --cfg 'feature="default"' --cfg 'feature="spirv-vulkan"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default", "spirv-vulkan"))' -C metadata=13a29a39e0be4e1b -C extra-filename=-63e385b449282463 --out-dir /mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps -C strip=debuginfo -L dependency=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps --extern aoem_gpu_device=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps/libaoem_gpu_device-bc7c57d75353272d.rmeta --extern aoem_gpu_primitives=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps/libaoem_gpu_primitives-bd4297df2cf3716f.rmeta --extern curve25519_dalek=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps/libcurve25519_dalek-98ce2e7aac274645.rmeta --check-cfg 'cfg(rust_analyzer)'` (exit status: 101)
+warning: value assigned to `reduce_dispatch_gpu_us` is never read
+     --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      |
+17002 | ... = 0;
+      |       ^
+      |
+      = help: maybe it is overwritten before being read?
+      = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `dispatch_batch_oversized_item` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     |
+1122 ...ulkanRuntime {
+     ...------------ associated function in this implementation
+...
+4040 |     f...ersized_item(
+     |      ...^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `ntt` is never read
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     |
+5346 | struc...tionPackJson {
+     |      ...------------ field in this struct
+...
+5350 |     ntt: PrimitiveTransitionPackEntry...
+     |     ^^^
+     |
+     = note: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `parse` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     |
+5583 ...tionProvider {
+     ...------------ associated function in this implementation
+5584 |     fn parse(raw: &str) -> Option<Self> {
+     |        ^^^^^
+
+warning: function `parse_primitive_ntt_transition_provider_len_map` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     |
+5604 | f...ider_len_map(
+     |  ...^^^^^^^^^^^^
+
+warning: function `primitive_ntt_transition_provider_override` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     |
+5627 | f...der_override() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `primitive_ntt_transition_provider_len_map_override` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     |
+5633 | f...map_override(
+     |  ...^^^^^^^^^^^^
+
+warning: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     |
+ 365 ...lkanExecutor {
+     ...------------ methods in this implementation
+...
+4060 |     f..._worker_once(&mut self...
+     |      ...^^^^^^^^^^^^
+...
+4084 |     f..._worker_once(&m...
+     |      ...^^^^^^^^^^^^
+
+warning: `aoem-gpu-device` (lib) generated 8 warnings
+   Compiling aoem-gpu-kernels v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-kernels)
+warning: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used
+   --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    |
+430 | const...HED_SPV_OUT: &...
+    |      ...^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used
+   --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    |
+441 | const...IAL_SPV_OUT: &...
+    |      ...^^^^^^^^^^^
+
+warning: method `other` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     |
+2796 ...mbeddedRoute {
+     ...------------ method in this implementation
+...
+2804 |     fn other(self) -> Self {
+     |        ^^^^^
+
+warning: struct `MsmRadixRoutePerf` is never constructed
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     |
+2814 | ...ct...ixRoutePerf {
+     |      ...^^^^^^^^^^^
+
+warning: struct `MsmRadixRouteKey` is never constructed
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     |
+2822 | ...ct...dixRouteKey {
+     |      ...^^^^^^^^^^^
+
+warning: function `msm_radix_route_cache` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     |
+2830 | f..._route_cache() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_route_env_override` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     |
+2889 | f...env_override() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_enabled` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     |
+2900 | f...oute_enabled() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_min_samples` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     |
+2911 | f..._min_samples() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_fail_limit` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     |
+2920 | f...e_fail_limit() ...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_len_bucket` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     |
+2928 | f...x_len_bucket(le...
+     |  ...^^^^^^^^^^^^
+
+warning: function `msm_radix_route_key` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     |
+2940 | f...ix_route_key(
+     |  ...^^^^^^^^^^^^
+
+warning: function `route_idx` is never used
+    --> crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     |
+2964 | fn route_idx(ro...
+     |    ^^^^^^^^^
+
+
+thread 'rustc' (484) panicked at /rustc-dev/e408947bfd200af42db322daf0fadfe7e26d3bd1/library/alloc/src/vec/mod.rs:2873:36:
+slice index starts at 8 but ends at 7
+stack backtrace:
+   0:     0x7891b645b043 - <std::sys::backtrace::BacktraceLock::print::DisplayBacktrace as core::fmt::Display>::fmt::hdadc7c28d26d7ce3
+   1:     0x7891b6a0e488 - core::fmt::write::h469843d235cc4241
+   2:     0x7891b7edfdc2 - std::io::Write::write_fmt::h384251ddb7f1467c
+   3:     0x7891b64285a5 - std::panicking::default_hook::{{closure}}::hd9d92b9a46805102
+   4:     0x7891b64283d3 - std::panicking::default_hook::hedb2be0819bbe276
+   5:     0x7891b54106ba - std[d3f1e08959ac5e62]::panicking::update_hook::<alloc[dd5b059a2bbb507d]::boxed::Box<rustc_driver_impl[96c8d24ddc94f5c5]::install_ice_hook::{closure#1}>>::{closure#0}
+   6:     0x7891b64288d2 - std::panicking::panic_with_hook::h0fc23abecf35c6bd
+   7:     0x7891b6428668 - std::panicking::panic_handler::{{closure}}::ha111c1a3ccf85d19
+   8:     0x7891b6422509 - std::sys::backtrace::__rust_end_short_backtrace::h41d63216e1ba5fa4
+   9:     0x7891b6402fbd - __rustc[16f1505adc47261a]::rust_begin_unwind
+  10:     0x7891b2f873bc - core::panicking::panic_fmt::hc13412975f563dde
+  11:     0x7891b2c66b0d - core::slice::index::slice_index_fail::hf1918ccaba3e9ba3
+  12:     0x7891b4d68965 - <annotate_snippets[e37ebffb75960118]::renderer::styled_buffer::StyledBuffer>::replace
+  13:     0x7891b7def427 - annotate_snippets[e37ebffb75960118]::renderer::render::render
+  14:     0x7891b7de27c0 - <rustc_errors[9dd702fe00760419]::annotate_snippet_emitter_writer::AnnotateSnippetEmitter>::emit_messages_default
+  15:     0x7891b7ee8121 - <rustc_errors[9dd702fe00760419]::annotate_snippet_emitter_writer::AnnotateSnippetEmitter as rustc_errors[9dd702fe00760419]::emitter::Emitter>::emit_diagnostic
+  16:     0x7891b7eea940 - <rustc_errors[9dd702fe00760419]::json::Diagnostic>::from_errors_diagnostic
+  17:     0x7891b7eea06a - <rustc_errors[9dd702fe00760419]::json::JsonEmitter as rustc_errors[9dd702fe00760419]::emitter::Emitter>::emit_diagnostic
+  18:     0x7891b7ee40ea - <rustc_errors[9dd702fe00760419]::DiagCtxtInner>::emit_diagnostic::{closure#3}
+  19:     0x7891b7ee1b33 - rustc_interface[bc8eb6767d3142e0]::callbacks::track_diagnostic::<core[61a85662de008515]::option::Option<rustc_span[5adcd8813d784319]::ErrorGuaranteed>>
+  20:     0x7891b7ee0bbc - <rustc_errors[9dd702fe00760419]::DiagCtxtInner>::emit_diagnostic
+  21:     0x7891b7ee0a6d - <rustc_errors[9dd702fe00760419]::DiagCtxtHandle>::emit_diagnostic
+  22:     0x7891b7ee092b - <() as rustc_errors[9dd702fe00760419]::diagnostic::EmissionGuarantee>::emit_producing_guarantee
+  23:     0x7891b796a7c0 - rustc_middle[e98470142a890996]::lint::lint_level::lint_level_impl
+  24:     0x7891b7970683 - <rustc_passes[6410bdfeb52eb7ec]::dead::DeadVisitor>::lint_at_single_level
+  25:     0x7891b701c383 - <rustc_passes[6410bdfeb52eb7ec]::dead::DeadVisitor>::warn_dead_code
+  26:     0x7891b701d482 - rustc_passes[6410bdfeb52eb7ec]::dead::check_mod_deathness
+  27:     0x7891b701c663 - rustc_query_impl[a5f5c4506bf77626]::plumbing::__rust_begin_short_backtrace::<rustc_query_impl[a5f5c4506bf77626]::query_impl::check_mod_deathness::dynamic_query::{closure#2}::{closure#0}, rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>
+  28:     0x7891b792652b - rustc_query_system[322f9f6cc75a823]::query::plumbing::try_execute_query::<rustc_query_impl[a5f5c4506bf77626]::DynamicConfig<rustc_query_system[322f9f6cc75a823]::query::caches::DefaultCache<rustc_span[5adcd8813d784319]::def_id::LocalModDefId, rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>, false, false, false>, rustc_query_impl[a5f5c4506bf77626]::plumbing::QueryCtxt, false>
+  29:     0x7891b7925dcf - rustc_query_impl[a5f5c4506bf77626]::query_impl::check_mod_deathness::get_query_non_incr::__rust_end_short_backtrace
+  30:     0x7891b79280b5 - rustc_interface[bc8eb6767d3142e0]::passes::analysis
+  31:     0x7891b7927835 - rustc_query_impl[a5f5c4506bf77626]::plumbing::__rust_begin_short_backtrace::<rustc_query_impl[a5f5c4506bf77626]::query_impl::analysis::dynamic_query::{closure#2}::{closure#0}, rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>
+  32:     0x7891b7c0f323 - rustc_query_system[322f9f6cc75a823]::query::plumbing::try_execute_query::<rustc_query_impl[a5f5c4506bf77626]::DynamicConfig<rustc_query_system[322f9f6cc75a823]::query::caches::SingleCache<rustc_middle[e98470142a890996]::query::erase::Erased<[u8; 0usize]>>, false, false, false>, rustc_query_impl[a5f5c4506bf77626]::plumbing::QueryCtxt, false>
+  33:     0x7891b7c0f10e - rustc_query_impl[a5f5c4506bf77626]::query_impl::analysis::get_query_non_incr::__rust_end_short_backtrace
+  34:     0x7891b7d9f4d1 - <rustc_interface[bc8eb6767d3142e0]::passes::create_and_enter_global_ctxt<core[61a85662de008515]::option::Option<rustc_interface[bc8eb6767d3142e0]::queries::Linker>, rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}::{closure#2}>::{closure#2} as core[61a85662de008515]::ops::function::FnOnce<(&rustc_session[e0208b08f90ffce6]::session::Session, rustc_middle[e98470142a890996]::ty::context::CurrentGcx, alloc[dd5b059a2bbb507d]::sync::Arc<rustc_data_structures[6caa1ca4f5282206]::jobserver::Proxy>, &std[d3f1e08959ac5e62]::sync::once_lock::OnceLock<rustc_middle[e98470142a890996]::ty::context::GlobalCtxt>, &rustc_data_structures[6caa1ca4f5282206]::sync::worker_local::WorkerLocal<rustc_middle[e98470142a890996]::arena::Arena>, &rustc_data_structures[6caa1ca4f5282206]::sync::worker_local::WorkerLocal<rustc_hir[6e5c920e04c3da8]::Arena>, rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}::{closure#2})>>::call_once::{shim:vtable#0}
+  35:     0x7891b7be1e74 - rustc_interface[bc8eb6767d3142e0]::interface::run_compiler::<(), rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}>::{closure#1}
+  36:     0x7891b7b44e4e - std[d3f1e08959ac5e62]::sys::backtrace::__rust_begin_short_backtrace::<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_with_globals<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_pool_with_globals<rustc_interface[bc8eb6767d3142e0]::interface::run_compiler<(), rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}>::{closure#1}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>
+  37:     0x7891b7b44c20 - <std[d3f1e08959ac5e62]::thread::lifecycle::spawn_unchecked<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_with_globals<rustc_interface[bc8eb6767d3142e0]::util::run_in_thread_pool_with_globals<rustc_interface[bc8eb6767d3142e0]::interface::run_compiler<(), rustc_driver_impl[96c8d24ddc94f5c5]::run_compiler::{closure#0}>::{closure#1}, ()>::{closure#0}, ()>::{closure#0}::{closure#0}, ()>::{closure#1} as core[61a85662de008515]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  38:     0x7891b7b46dc6 - std::sys::thread::unix::Thread::new::thread_start::h96f969bf98c6e59d
+  39:     0x7891b149cb84 - <unknown>
+  40:     0x7891b1529ecc - <unknown>
+  41:                0x0 - <unknown>
+
+error: the compiler unexpectedly panicked. this is a bug.
+
+note: we would appreciate a bug report: https://github.com/rust-lang/rust/issues/new?labels=C-bug%2C+I-ICE%2C+T-compiler&template=ice.md
+
+note: rustc 1.94.1 (e408947bf 2026-03-25) running on x86_64-unknown-linux-gnu
+
+note: compiler flags: --crate-type lib -C opt-level=3 -C embed-bitcode=no -C strip=debuginfo
+
+note: some of the compiler flags provided by cargo are hidden
+
+query stack during panic:
+#0 [check_mod_deathness] checking deathness of variables in module `msm_bucket_accumulate`
+#1 [analysis] running analysis passes on crate `aoem_gpu_kernels`
+end of query stack
+warning: `aoem-gpu-kernels` (lib) generated 13 warnings
+error: could not compile `aoem-gpu-kernels` (lib); 13 warnings emitted
+
+Caused by:
+  process didn't exit successfully: `/home/aoem-a1/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name aoem_gpu_kernels --edition=2021 crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C opt-level=3 -C embed-bitcode=no --cfg 'feature="default"' --cfg 'feature="spirv-vulkan"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default", "spirv-vulkan"))' -C metadata=13a29a39e0be4e1b -C extra-filename=-63e385b449282463 --out-dir /mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps -C strip=debuginfo -L dependency=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps --extern aoem_gpu_device=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps/libaoem_gpu_device-bc7c57d75353272d.rmeta --extern aoem_gpu_primitives=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps/libaoem_gpu_primitives-bd4297df2cf3716f.rmeta --extern curve25519_dalek=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux/release/deps/libcurve25519_dalek-98ce2e7aac274645.rmeta --check-cfg 'cfg(rust_analyzer)'` (exit status: 101)

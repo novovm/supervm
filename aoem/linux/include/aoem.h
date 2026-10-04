@@ -379,14 +379,16 @@ AOEM_API int32_t aoem_zkvm_prove_verify_v1(
   size_t witness_len,
   uint32_t* out_verified
 );
-// Portable RISC0 receipt v1 (AORCP001), not a trace or a business-specific proof.
+// Portable RISC0 C ABI v1, receipt envelope AORCP002; not a trace or business proof.
 // image_id points to 8 host-endian u32 RISC0 image-ID words, pinned by the host.
 // All input regions must remain readable and not overlap writable output slots.
-// ELF: 1..64 MiB; serialized stdin, receipt, expected journal: at most 16 MiB.
+// Program: 1..64 MiB; serialized stdin, receipt, expected journal: at most 16 MiB.
 // Null byte pointers are allowed only for zero lengths. Empty journal is exact,
 // never a wildcard. Receipt does not supply trusted program/output pins.
 // Prove is trusted local work; caller must isolate/budget arbitrary guest execution.
 // Output slots are reset on failure; success allocates a receipt freed by aoem_free.
+// RISC0 2.3.2 combined user+kernel program (not a bare ELF); receipt is AORCP002.
+// Old AORCP001 receipts are rejected. Function signatures/ownership are unchanged.
 // Built-in supported Linux risc0 or a compatible configured zkVM sidecar; no trace fallback.
 // Returns 0 on success, -2 invalid arguments/bounds, -4 proof/verification error,
 // -5 unavailable. Fake development receipts are rejected.
@@ -939,7 +941,40 @@ AOEM_API int32_t aoem_ringct_prove_batch_v1(
 //     { "accepted": bool, "error_code": null | string, "error_reason": null | string }
 //   ]
 // }
-// output memory is allocated by AOEM and must be released with aoem_free.
+// JSON v2 extends THIS SAME symbol; it does not use the historical prove cache.
+// Fixed classic profile (NOT post-quantum), exact Host-computed u64 fee:
+// {"version":2,"profile":"clsag_bpplus_edwards_u64_v1","backend":"Cpu",
+//  "transactions":[{"transaction_hex":"<canonical lower-case hex>","context":{
+//    "expected_domain":[/*32 bytes*/],"expected_exact_fee":7,
+//    "rings":[{"members":[{"output_index":0,"public_key":[/*32 bytes*/],
+//                           "commitment":[/*32 bytes*/]} /*16 members*/]}]}}]}
+// Domain, fee, rings and indices MUST be independently authenticated by the Host,
+// never copied untrusted from a submitting transaction. Rings are in serialized
+// transaction input order, with strictly increasing member indices. All points
+// are Edwards-curve canonical encodings, NOT the legacy Ristretto profile.
+// v2 rejects unknown/duplicate fields at every level. Limits: JSON <=16 MiB,
+// 1..32 transactions, binary tx <=128 KiB, 1..32 input rings, exactly 16 members.
+// Omitted backend defaults to Auto; Cpu/Auto verify on CPU. FullGpu is rejected
+// explicitly, never silently downgraded. No private wallet witness is accepted.
+// v2 responses set version=2, profile, accepted, proof_verified, status, errors,
+// backend_used, route_id and tx_results. Each accepted item includes verification:
+// {transaction_hash:[32 bytes],domain:[32 bytes],exact_fee:u64,key_images:[[32 bytes]],
+//  outputs:[{public_key:[32 bytes],commitment:[32 bytes],encrypted_amount:[8 bytes],
+//            view_tag:u8}]}. Rejected items have NO verification summary.
+// Batch accepted/proof_verified is true only if ALL items pass; all items sharing
+// a key image in that batch are rejected. Mixed-batch valid non-conflicting items
+// can retain their individual proof_verified summary. This never commits a batch.
+// ALWAYS false in v2: state_materialized, ledger_committed, post_quantum,
+// ring_ledger_authorization_verified, historical_double_spend_checked. Success
+// means only cryptographic verification against the supplied public context.
+// Host still enforces ledger membership, historical double-spend rejection and
+// atomic asset commit; independent requests do not maintain a spent-image set.
+// v1 request/response/cache behavior above remains unchanged. v2 schema/size
+// errors return -2 plus failure JSON; proof/backend/license rejection returns 0
+// plus a non-accepted response. Infrastructure failure (including unavailable
+// entropy) or a caught internal panic returns -4/status=Failed, fail-closed.
+// Inspect response.accepted, not only the C return code. Feature-not-built is -5.
+// Output memory is allocated by AOEM and must be released with aoem_free.
 AOEM_API int32_t aoem_privacy_execute_v1(
   const uint8_t* request_ptr,
   size_t request_len,

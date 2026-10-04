@@ -1,0 +1,10 @@
+cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+Copyright (C) 2023 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
++ for source in hosted_resident_proof_smoke hosted_resident_proof_verify hosted_resident_proof_service aoem_proof_worker resident_private_profile_fail_closed
++ cc -std=c11 -O2 -Wall -Wextra -I aoem/linux/include aoem/examples/.c -o target/proof-envelope-smoke/linux- -ldl
+cc1: fatal error: aoem/examples/.c: No such file or directory
+compilation terminated.
++ exit

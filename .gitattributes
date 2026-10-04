@@ -12,3 +12,4 @@ artifacts/audit/resident-peer-isolation-20261004-v1/** -text
 artifacts/audit/resident-input-repair-20261004-v1/** -text
 artifacts/audit/resident-aab-observer-recovery-20261004-v1/** -text
 artifacts/audit/resident-candidate-proof-20261004-v1/** -text
+artifacts/audit/aoem-private-proof-containment-20261004/** -text

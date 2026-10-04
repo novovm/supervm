@@ -1,5 +1,8 @@
 {
   "acceptance_version": "supervm-aoem-fullmax-host-2026-05-23",
+  "status": "withdrawn_private_proof_acceptance_2026_10_04",
+  "security_correction": "../docs/proof-engine-v1.0-contract.md",
+  "historical_record_only": true,
   "artifact_under_test": "aoem/",
   "entry": "aoem_execute_ops_wire_v1",
   "worker": "aoem_proof_worker",

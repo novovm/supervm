@@ -1,0 +1,91 @@
+{
+  "schema": "novovm/aoem-linux-core-functional-regression/v1",
+  "scope": "new_core_host_compatibility_not_full_sidecar_or_product_acceptance",
+  "supervm_source_commit": "da95316cda502783d296d4922af5ee4352591b36",
+  "aoem_source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+  "supervm_state": "working tree SDK containment update; tested Rust source and Cargo.lock unchanged from HEAD",
+  "environment": "same Windows device, WSL Ubuntu-24.04, rustc 1.94.0",
+  "core": {
+    "path": "aoem/linux/core/bin/libaoem_ffi.so",
+    "sha256_before_and_after": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
+    "bindings_selection": "explicit NOVOVM_AOEM_TEST_LIBRARY absolute path to this repository core",
+    "compute_scope_selection": "child clears AOEM environment and uses repository-root core variant with persistence disabled",
+    "pq_selection": "fixed CARGO_MANIFEST_DIR-relative repository Linux core; does not use NOVOVM_AOEM_TEST_LIBRARY",
+    "sidecar_dependency_assessment": "reviewed call paths and mode configuration: semantic compute and storage-provider wire are in core, ambient persistence delegation is disabled, fullmax ML-DSA APIs use built-in feature implementation",
+    "loader_trace_performed": false,
+    "full_sidecar_build_and_acceptance": "not part of this regression"
+  },
+  "test_process_environment": {
+    "AOEM_PERSISTENCE_PATH": "unset",
+    "AOEM_FFI_PERSIST_BACKEND": "none",
+    "AOEM_FFI_WASM_RUNTIME": "none",
+    "AOEM_FFI_ZKVM_MODE": "none",
+    "AOEM_FFI_MLDSA_MODE": "none",
+    "NOVOVM_ALLOW_LEGACY_HOST_EXECUTION": "0"
+  },
+  "results": {
+    "bindings_resident": {
+      "command": "cargo test --release --locked --target-dir target/runtime-rebuild/linux -p aoem-bindings --lib resident -- --include-ignored --test-threads=1 --nocapture",
+      "passed": 32,
+      "failed": 0,
+      "ignored": 0,
+      "test_seconds": 5.04,
+      "scope": "8 actual-core compute/storage tests plus 24 ABI, pure or mock tests; receipt mock tests are not actual proof generation",
+      "harness_sha256": "eccb0dbbc15246e6a9c1d88ae4fa38f45b53e65e5805246994d36bbd0c53e030",
+      "log": "linux-bindings-resident.log"
+    },
+    "exec_resident": {
+      "command": "cargo test --release --locked --target-dir target/runtime-rebuild/linux -p novovm-exec --lib resident -- --test-threads=1 --nocapture",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "test_seconds": 0.0,
+      "scope": "pure facade/type and explicit-selection tests, not actual-core execution",
+      "harness_sha256": "f809af78f7fb5f21d27f08f871637d2219bdf7812a8844e3dcf46dc78c1e088e",
+      "log": "linux-exec-resident.log"
+    },
+    "exec_compute_scope": {
+      "command": "cargo test --release --locked --target-dir target/runtime-rebuild/linux -p novovm-exec --lib compute_scope_real_aoem -- --ignored --test-threads=1 --nocapture",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "test_seconds": 2.26,
+      "scope": "actual bundled core in isolated child processes: session reuse and release, configuration drift and poisoned-owner rejection",
+      "log": "linux-exec-compute-scope.log"
+    },
+    "pq_signature_runtime": {
+      "command": "cargo test --locked --target-dir target/wsl-prover -p novovm-prover --test pq_signature_runtime -- --ignored --test-threads=1 --nocapture",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "test_seconds": 1.76,
+      "profile": "debug",
+      "parameters": [44, 65, 87],
+      "scope": "actual bundled core known-answer positives, signer/verifier pairs, tampering/context/framing negatives",
+      "harness_sha256": "de37c6c7e88d97d0df05ae9d07e7b1823e3465aa02119f9316e6432f725a2c65",
+      "log": "linux-pq-signature-runtime.log"
+    }
+  },
+  "boundaries": {
+    "all_selected_tests_passed": true,
+    "tests_total": 40,
+    "actual_core_tests": 13,
+    "pure_or_mock_tests": 27,
+    "new_node_build_or_product_rpc_run": false,
+    "full_linux_product_ci_pass": false,
+    "full_sidecar_acceptance": false,
+    "performance_measured": false,
+    "gpu_business_execution_qualified": false,
+    "cryptographic_private_proof_restored": false,
+    "mainchain_post_quantum_or_fips_certification": false,
+    "earlier_full_acvp_and_interop_campaign_repeated": false,
+    "physical_linux_installation_or_multidevice_acceptance": false,
+    "new_cache_created": false,
+    "source_modified": false
+  },
+  "notes": [
+    "Expected injected panic and Host-unwind diagnostics are preserved; passing means the tests contained the injected faults, not that logs contain no panics.",
+    "Existing repeated-bin-source and WSL localhost-proxy warnings are retained.",
+    "The existing target/runtime-rebuild/linux and target/wsl-prover caches were reused; no node or whole-workspace build was performed."
+  ]
+}

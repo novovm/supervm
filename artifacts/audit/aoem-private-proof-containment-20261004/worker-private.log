@@ -1,0 +1,2 @@
+AOEM_PROOF_WORKER_SUMMARY|profile=fixed_profile_v1|jobs=0|batch_count=4|resident_asset=ok|privacy=not_claimed|proof=fail|verify=fail|external_verify=fail|malformed=not_seen|failures=5|unsupported_profiles=5|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false
+worker_private_exit_code=1

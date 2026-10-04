@@ -8,6 +8,60 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-04 已授权AOEM私有profile安全封堵与原节点回归（非ZK恢复）
+
+SUPERVM基线 `da95316c` 加本节提交；用户明确授权修改AOEM通用密码/语义契约。
+AOEM先保留远端新增的AI等成果，基于 `2c154bc9` 修正；代码提交
+`1377cd1e7c1d43a4bf81cb16a169319772cf3e84` 已推送，后续仅补正SDK文档声明。
+**本次撤回不可靠能力，不将封堵冒充已经补齐真实私有ZK。**
+
+### 实际改变
+
+- AOEM op98私有成员profile3的wire v1–v4在GPU/资产使用和写输出之前拒绝；
+  op99也不允许注册该profile。外部验真拒绝AORF v1–v3的私有封装，有无见证
+  均拒绝；不能退成公开见证披露来假装保留隐私。
+- 公开profile1/2保留GPU公开管线/路径诊断，严格返回
+  `envelope_integrity_only_not_zk`，`proof_verified/accepted/cryptographic_proof_verified=false`。
+  校验公开Merkle路径有用，但不能授权私有资产、业务结果或最终性。
+- SUPERVM同步FULLMAX和严格消费者，4个重复C入口改为包含同一已修正源；
+  private成功样例、清单能力和验收说明改为撤回/反例，历史记录不删除。
+  CI加入无需GPU的公开伪造/改标签反例及真实SO精确拒绝检查，不移除原产品检查。
+- 原 `novovm-node → novovm-exec → bindings → AOEM`、常驻CPU快路径、
+  ZK专用类型/Vulkan图及其它密码实现保留；未恢复RISC0产品服务，没有新的
+  节点、账本、共识或NOV专属内核业务。主链最终性含义不变。
+
+### 已执行范围
+
+| 本机检查 | 实际结果与边界 |
+| --- | --- |
+| AOEM Rust安全反例 | 5通过；wire版本、资产注册/输出、重算摘要、改标签及公开对照 |
+| 外部C反例 | Windows/WSL各12个私有变体全拒绝；无需可信生成器或GPU |
+| Windows FULLMAX及公开GPU诊断 | 核心和全部sidecar构建；实际RTX5090 Laptop/Vulkan smoke、verify、重复service和asset生命周期通过，不是业务ZK |
+| Windows worker私有请求 | 5/5 unsupported、无proof写出；预期进程退出1，不当成成功证明 |
+| SUPERVM严格SDK消费 | Rust与worker smoke通过；bindings resident 32/32、exec resident 3/3；后者为门面回归，不单独算实库计算 |
+| 原节点真实RPC与恢复 | release构建；同机四原进程混合与单入口各通过，均7成功+1业务失败；2/4不能发布，四库经济/nonce/回执/冷恢复通过 |
+| ML-DSA真库 | Windows 3/3，44/65/87正反例；旧90向量/9互操作记录未重新签收 |
+| Linux/WSL FULLMAX | 核心、14个sidecar文件与6个KMS/HSM别名构建并同步，逐文件SHA256相同；未跳过feature，构建失败/重试原始日志保留 |
+| Linux新SO安全拒绝 | op98 wire-v4及op99 profile3注册返回精确退役错误、零处理/成功/写入，19个输出键调用前后均不存在；worker 5/5拒绝 |
+| Linux新core宿主回归 | bindings32、exec门面3、额外实库计算2、PQ3全通过；合计40中13真库、27纯/mock，不宣称全sidecar功能或Linux原节点已验收 |
+| 检查与保护 | fmt、修改示例严格Clippy通过；49项原草稿哈希不变，不混入提交 |
+
+Linux限定新core回归通过；本轮未新建Linux node/重跑其RPC或实体安装。
+WSL仅暴露llvmpipe，目标NVIDIA GPU验证NOT EXECUTED；macOS未打包。
+本轮GitHub CI尚未签收，不把本机结果等同于远端全绿。
+程序/库哈希、实际原始报告、scope与重试记录见
+[本轮证据](../artifacts/audit/aoem-private-proof-containment-20261004/verification.json)，
+随包来源与兼容范围见[SDK基线](../aoem/RUNTIME-BASELINE.md)。Linux规范打包
+使用原FULLMAX脚本，终端诊断器失败后采用正常尺寸PTY、以Clang保留release
+优化完成构建；不是改源码/降配置绕过。AOEM源码与已推送`1377cd1e`相同，
+当前`2331fb3c`只补正SDK文档/schema能力声明。
+旧统一package gate对ABI/canon必须为false的历史条件仍与V3基线冲突，未报全门通过。
+
+没有重测65,536笔，不报新TPS或“性能已恢复”；没有新私有收付、完整NOV业务
+证明或GPU业务签收。下一步仍须在原统一语义契约中接真正独立可验的密码关系，
+保留候选绑定与有界生命周期；须明确证明版本/关系/可信参数，不能将公开摘要
+修补或换标签作为修复，也不能用旧后端直连服务替代。现场数据与49草稿保留。
+
 ## 2026-10-04 ZK统一语义接线前复现独立验真缺口（接线未签收）
 
 基线 `main/origin/main@cb4d3c38`，本机 Windows/MSVC。用户要求继续将已有 ZK

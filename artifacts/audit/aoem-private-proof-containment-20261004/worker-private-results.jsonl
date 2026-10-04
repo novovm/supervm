@@ -1,0 +1,5 @@
+{"request_id":"zk-mm-000","status":"error","error":"unsupported_private_membership_proof","proof_written":false}
+{"request_id":"zk-mm-001","status":"error","error":"unsupported_private_membership_proof","proof_written":false}
+{"request_id":"zk-mm-002","status":"error","error":"unsupported_private_membership_proof","proof_written":false}
+{"request_id":"zk-mm-003","status":"error","error":"unsupported_private_membership_proof","proof_written":false}
+{"request_id":"bad-zk","status":"error","error":"unsupported_private_membership_proof","proof_written":false}

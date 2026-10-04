@@ -1,0 +1,13 @@
+{
+  "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+  "dll_path": "D:\\WorksArea\\AOEM\\artifacts\\ffi-bundles\\fullmax\\windows\\20261004-120246\\core\\bin\\aoem_ffi.dll",
+  "dll_sha256": "01779FE4FC77535749D265F9FFC233D9C1486E526D9F5D0DC34FC6D49A056674",
+  "device_selector": "5090",
+  "vendor_selector": "0x10de",
+  "gpu_hardware": [
+    "NVIDIA GeForce RTX 5090 Laptop GPU, 0x2C5810DE, 592.01"
+  ],
+  "test_scope": "functional diagnostic preservation and private-profile fail-closed, not throughput or restored cryptographic proving",
+  "private_worker_expected_exit_code": 1,
+  "source_tree_clean": true
+}

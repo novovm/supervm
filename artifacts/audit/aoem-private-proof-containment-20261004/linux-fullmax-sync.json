@@ -1,0 +1,122 @@
+{
+  "schema": "novovm/linux-fullmax-sync/v1",
+  "source_code_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+  "bundle_stamp": "20261004-private-proof-1377cd1e",
+  "build_status": "PASS",
+  "features": "rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "core_count": 1,
+  "core_sidecars": 14,
+  "kms_aliases": 6,
+  "all_copies_sha256_equal": true,
+  "header_matches_source_after_lf_normalization": true,
+  "deleted_files": 0,
+  "full_sidecar_capability_tests_claimed": false,
+  "files": [
+    {
+      "path": "aoem/linux/core/bin/libaoem_ffi.so",
+      "sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
+      "bytes": 153339776
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_crypto_hsm.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_crypto_kms.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_crypto_mldsa.so",
+      "sha256": "a7db42f7b3fe30c81034f82b66c38018ef3e70b8edc5266a21d2d3cb4fd88a2c",
+      "bytes": 25551824
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_hsm.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_kms.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_mldsa.so",
+      "sha256": "a7db42f7b3fe30c81034f82b66c38018ef3e70b8edc5266a21d2d3cb4fd88a2c",
+      "bytes": 25551824
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_persist.so",
+      "sha256": "de2ab2631c8446148b9eb2b5e48477a05a7900a82ece4a71e80e4a48f7506956",
+      "bytes": 31253152
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_persist_rocksdb.so",
+      "sha256": "de2ab2631c8446148b9eb2b5e48477a05a7900a82ece4a71e80e4a48f7506956",
+      "bytes": 31253152
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_runtime_wasm_wasmtime.so",
+      "sha256": "e05b34d43ce2a7b85ac384b58b118ea92acf7115ed59a357db74f7c22fa54ade",
+      "bytes": 22686872
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_wasm.so",
+      "sha256": "e05b34d43ce2a7b85ac384b58b118ea92acf7115ed59a357db74f7c22fa54ade",
+      "bytes": 22686872
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_zkvm.so",
+      "sha256": "8c9a5de8b6fa4fd0a39e3850d7c3f613555f2e4534ee579fbdceb397072871b0",
+      "bytes": 132710544
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_zkvm_executor.so",
+      "sha256": "8c9a5de8b6fa4fd0a39e3850d7c3f613555f2e4534ee579fbdceb397072871b0",
+      "bytes": 132710544
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_hsm_plugin.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_kms_plugin.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_crypto_hsm.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_crypto_kms.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_hsm.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_kms.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_hsm_plugin.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_kms_plugin.so",
+      "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c",
+      "bytes": 417944
+    }
+  ],
+  "build_log_sha256": "cc5f68fc84f7a33bc988b18f7d6475ec80670e4a20f70d97eecbb319fabd87e7"
+}

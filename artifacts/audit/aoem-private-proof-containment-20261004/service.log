@@ -1,0 +1,2 @@
+C_HOST_RESIDENT_PROOF_SERVICE|profiles=1,2|iterations=2|batch_count=4|resident_asset=ok|real_input=ok|batch=ok|public_membership=ok|private_profile_rejection=ok|envelope=ok|envelope_integrity=ok|tamper_rejected=ok|status=ok|metadata=ok|malformed=ok|failures=0|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false
+service_exit_code=0

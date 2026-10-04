@@ -1,4 +1,77 @@
-# AOEM FULLMAX Runtime Baseline 2026-10-01
+# AOEM FULLMAX Runtime Baseline
+
+## Current: 2026-10-04 private-profile containment
+
+The previous `56e9da15` qualification below is historical, not a qualification of
+this replacement binary. AOEM code source `1377cd1e7c1d43a4bf81cb16a169319772cf3e84`
+withdraws the publicly forgeable op98 private profile 3. Later documentation-only
+commits clarify this withdrawal without changing the built source. This is
+**containment, not a restored private proof system**.
+
+- Private profile 3: op98 wire versions 1-4 and op99 asset setup reject before
+  GPU execution and state outputs; external verification rejects old AORF
+  versions 1-3, including publicly recomputed digests and profile relabels.
+- Profiles 1/2 remain public envelope/path diagnostics. Outputs explicitly have
+  `verification_scope=envelope_integrity_only_not_zk`,
+  `envelope_integrity_verified=true`, and proof/cryptographic acceptance false.
+  Do not authorize assets, business execution or finality from these envelopes.
+- The bundled worker, external verifier and embedded examples share corrected
+  sources. Private fixtures are rejection cases, not successful proving demos.
+- Original node/exec/bindings, CPU transaction/BFT/persistence paths and AOEM's
+  other GPU and cryptographic capabilities are retained. No direct RISC0 product
+  service was added; backend presence is not product integration or validation.
+
+### Verified on Windows
+
+Core SHA256: `01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674`.
+Canonical FULLMAX core and all sidecars rebuilt; no feature/verification skip.
+
+- AOEM Rust security regression: 5 passed (all request/envelope versions,
+  asset setup/output absence, relabel and public-diagnostic control).
+- External C forged-envelope regression: 12 private variants rejected, with
+  relabel/scope guards and public controls. The same C regression passes in WSL.
+- Actual DLL C smoke, verifier, repeated service, worker and asset lifecycle
+  pass; private worker returns the required nonzero rejection with no proof.
+  Public GPU diagnostic preservation used NVIDIA RTX 5090 Laptop / Vulkan,
+  explicitly not GPU business execution, private ZK or performance acceptance.
+- Strict SUPERVM Rust/worker smoke passes; resident bindings 32/32 include real
+  storage and compute; exec resident 3/3 are facade-contract tests, not another
+  actual-backend qualification. Original node release builds.
+- Two actual four-node RPC/restart regressions pass: mixed RPC 1.84s and single
+  ingress 1.37s, each 7 successful and 1 business-failed finalized transaction.
+  Two votes cannot publish a head. Legacy Host execution is not enabled.
+- Packaged PQ regression: 3/3, ML-DSA 44/65/87 positives and negatives. This is
+  not a rerun of the historical 90-vector/9-interop qualification below.
+
+### Verified on Linux / WSL
+
+Core SHA256: `4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309`.
+Canonical FULLMAX core, 14 core sidecar files and 6 KMS/HSM aliases rebuilt and
+synchronized with source/destination hashes equal. Ubuntu 24.04 WSL2, Clang
+18.1.3 and release optimization; no features skipped. Terminal-renderer failure
+and build retries are preserved in the evidence, not presented as clean first runs.
+
+- Actual new SO rejects op98 wire-v4 profile 3 and op99 setup with the exact
+  retirement error, zero processed/success/write counters and all output keys
+  absent before/after. External forged-envelope regression rejects 12/12.
+- Linux worker rejects all 5 private jobs as unsupported, exit 1, no proof.
+- Rust core regressions: bindings resident 32/32, exec facade 3/3, additional
+  actual-core compute scope 2/2, ML-DSA 44/65/87 regression 3/3. Total 40 comprises
+  13 actual-core and 27 pure/mock tests; this is not all-sidecar qualification.
+- No new Linux node build/RPC test, physical Linux install or GPU test was run.
+  WSL exposed only llvmpipe, not the target NVIDIA GPU. No CPU fallback is counted
+  as GPU proof acceptance. GitHub CI has not yet qualified this package.
+
+macOS remains absent. See platform manifests for exact hashes; never infer a
+platform result from the other platform.
+
+Evidence: [containment and host regressions](../artifacts/audit/aoem-private-proof-containment-20261004/verification.json).
+No new TPS measurement, production sign-off, full feature requalification,
+private asset delivery or NOV business validity proof is claimed. Restoring
+private proving requires an independently verifiable, versioned cryptographic
+relation; public digests or a renamed profile cannot substitute for it.
+
+## Historical: 2026-10-01 qualification (superseded)
 
 ## Status
 

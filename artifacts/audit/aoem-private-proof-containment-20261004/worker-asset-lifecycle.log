@@ -1,0 +1,2 @@
+AOEM_PROOF_WORKER_ASSET_LIFECYCLE|setup=ok|list=ok|select=ok|proof_with_asset=ok|verify=ok|external_verify=ok|release=ok|proof_after_release=rejected|malformed=ok|failures=0|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false
+worker_asset_exit_code=0

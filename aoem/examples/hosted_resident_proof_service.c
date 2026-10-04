@@ -2,7 +2,8 @@
 //
 // This is an external host example, not an AOEM runtime extension. It repeatedly
 // calls the existing wire_v1 product entry and reads proof state back through
-// aoem_state_read_v1.
+// aoem_state_read_v1. Profiles 1/2 are diagnostics, not independent ZK proofs;
+// retired profile 3 must be rejected before execution and state publication.
 
 #define main aoem_resident_proof_smoke_main
 #include "hosted_resident_proof_smoke.c"
@@ -126,7 +127,7 @@ static int AOEM_MAYBE_UNUSED run_success_iteration(
           api,
           proof_key,
           "compute.zk.resident_proof_v1",
-          "\"fixed_profile_verifier_accepted\":true",
+          "\"fixed_profile_verifier_accepted\":false",
           "\"real_input_used\":true") != 0) {
     return -1;
   }
@@ -138,12 +139,9 @@ static int AOEM_MAYBE_UNUSED run_success_iteration(
           "\"runtime_canon_unchanged\":true") != 0) {
     return -1;
   }
-  if (read_state_contains_all(
-          api,
-          status_key,
-          "compute.zk.resident_proof_v1.status",
-          "\"proof_verified\":true",
-          "\"state_read\":\"aoem_state_read_v1\"") != 0) {
+  if (read_diagnostic_status(api, status_key) != 0 ||
+      read_diagnostic_bytes(api, proof_key) != 0 ||
+      read_diagnostic_verify_status(api, verify_status_key) != 0) {
     return -1;
   }
   if (read_state_contains_all(
@@ -158,7 +156,7 @@ static int AOEM_MAYBE_UNUSED run_success_iteration(
           api,
           verify_status_key,
           "compute.zk.resident_proof_v1.verify_status",
-          "\"accepted\":true",
+          "\"accepted\":false",
           "\"real_input_used\":true") != 0) {
     return -1;
   }
@@ -258,7 +256,7 @@ static int run_batch_iteration(
           batch_status_key,
           "compute.zk.resident_proof_v1.batch.status",
           "\"resident_asset_bound\":true",
-          "\"all_verify_status\":\"ok\"") != 0) {
+          "\"all_verify_status\":\"envelope_integrity_only_not_zk\"") != 0) {
     return -1;
   }
 
@@ -296,7 +294,7 @@ static int run_batch_iteration(
             api,
             proof_key,
             "compute.zk.resident_proof_v1",
-            "\"fixed_profile_verifier_accepted\":true",
+            "\"fixed_profile_verifier_accepted\":false",
             "\"resident_asset_bound\":true") != 0) {
       return -1;
     }
@@ -314,12 +312,9 @@ static int run_batch_iteration(
             "\"runtime_canon_unchanged\":true") != 0) {
       return -1;
     }
-    if (read_state_contains_all(
-            api,
-            status_key,
-            "compute.zk.resident_proof_v1.status",
-            "\"proof_verified\":true",
-            "\"state_read\":\"aoem_state_read_v1\"") != 0) {
+    if (read_diagnostic_status(api, status_key) != 0 ||
+        read_diagnostic_bytes(api, proof_key) != 0 ||
+        read_diagnostic_verify_status(api, verify_status_key) != 0) {
       return -1;
     }
     if (read_state_contains_all(
@@ -334,7 +329,7 @@ static int run_batch_iteration(
             api,
             verify_status_key,
             "compute.zk.resident_proof_v1.verify_status",
-            "\"accepted\":true",
+            "\"accepted\":false",
             "\"external_verifier_compatible\":true") != 0) {
       return -1;
     }
@@ -385,14 +380,17 @@ static int run_merkle_membership_iteration(
           batch_status_key,
           "compute.zk.resident_proof_v1.batch.status",
           "\"batch_status\":\"ok\"",
-          "\"all_verify_status\":\"ok\"") != 0) {
+          "\"all_verify_status\":\"envelope_integrity_only_not_zk\"") != 0) {
     return -1;
   }
   for (uint32_t batch_index = 0; batch_index < batch_count; ++batch_index) {
     char proof_key[256];
+    char status_key[256];
     char public_outputs_key[256];
     char verify_status_key[256];
     if (snprintf(proof_key, sizeof(proof_key), "%s/zk/proof/%u/bytes", output_prefix, batch_index) <=
+            0 ||
+        snprintf(status_key, sizeof(status_key), "%s/zk/proof/%u/status", output_prefix, batch_index) <=
             0 ||
         snprintf(
             public_outputs_key,
@@ -408,6 +406,9 @@ static int run_merkle_membership_iteration(
             batch_index) <= 0) {
       return -1;
     }
+    if (read_diagnostic_status(api, status_key) != 0 ||
+        read_diagnostic_bytes(api, proof_key) != 0 ||
+        read_diagnostic_verify_status(api, verify_status_key) != 0) return -1;
     if (read_state_contains_all(
             api,
             proof_key,
@@ -429,7 +430,7 @@ static int run_merkle_membership_iteration(
             verify_status_key,
             "\"verifier\":\"merkle_membership_v1\"",
             "\"membership_root\":\"ok\"",
-            "\"accepted\":true") != 0) {
+            "\"accepted\":false") != 0) {
       return -1;
     }
   }
@@ -486,116 +487,36 @@ static int run_merkle_membership_tamper_rejection(
   return read_state_found(api, batch_status_key) == 0 ? 0 : -1;
 }
 
-static int run_zk_merkle_membership_iteration(
+static int run_retired_private_profile_rejection(
     const aoem_host_api* api,
     void* handle,
     uint32_t iteration,
     uint32_t batch_count,
     uint32_t resident_asset_id) {
-  char request_id[128];
-  char output_prefix[192];
-  char batch_status_key[256];
-  if (snprintf(
-          request_id,
-          sizeof(request_id),
-          "c-host-resident-proof-service-zk-merkle-%u",
-          iteration) <= 0 ||
-      snprintf(output_prefix, sizeof(output_prefix), "aoem.compute.output/%s", request_id) <= 0 ||
-      snprintf(
-          batch_status_key,
-          sizeof(batch_status_key),
-          "%s/zk/proof/batch/status",
-          output_prefix) <= 0) {
+  char request_id[128], output_prefix[192], key[256];
+  if (snprintf(request_id, sizeof(request_id), "c-host-service-retired-private-%u", iteration) <= 0 ||
+      snprintf(output_prefix, sizeof(output_prefix), "aoem.compute.output/%s", request_id) <= 0)
     return -1;
-  }
-
   byte_buf wire = {0};
   if (build_proof_zk_merkle_membership_batch_wire(
-          &wire,
-          request_id,
-          output_prefix,
-          batch_count,
-          resident_asset_id) != 0) {
+          &wire, request_id, output_prefix, batch_count, resident_asset_id) != 0) {
     buf_free(&wire);
     return -1;
   }
   aoem_exec_v2_result result = {0};
   int32_t rc = api->execute_ops_wire_v1(handle, wire.data, wire.len, &result);
   buf_free(&wire);
-  const uint64_t expected_writes = 3u + 5u * (uint64_t)batch_count;
-  if (rc != 0 || result.processed != 1 || result.success != 1 ||
-      result.total_writes != expected_writes) {
-    return -1;
+  if (rc != -4 || result.processed != 0 || result.success != 0 ||
+      result.failed_index != 0 || result.total_writes != 0) return -1;
+  for (uint32_t i = 0; i < batch_count; ++i) {
+    int n = snprintf(key, sizeof(key), "%s/zk/proof/%u/bytes", output_prefix, i);
+    if (n <= 0 || (size_t)n >= sizeof(key) || read_state_found(api, key) != 0) return -1;
   }
-  if (read_state_contains_all(
-          api,
-          batch_status_key,
-          "compute.zk.resident_proof_v1.batch.status",
-          "\"batch_status\":\"ok\"",
-          "\"all_verify_status\":\"ok\"") != 0) {
-    return -1;
-  }
-  for (uint32_t batch_index = 0; batch_index < batch_count; ++batch_index) {
-    char proof_key[256];
-    char public_outputs_key[256];
-    char verify_status_key[256];
-    if (snprintf(proof_key, sizeof(proof_key), "%s/zk/proof/%u/bytes", output_prefix, batch_index) <=
-            0 ||
-        snprintf(
-            public_outputs_key,
-            sizeof(public_outputs_key),
-            "%s/zk/proof/%u/public_outputs",
-            output_prefix,
-            batch_index) <= 0 ||
-        snprintf(
-            verify_status_key,
-            sizeof(verify_status_key),
-            "%s/zk/proof/%u/verify_status",
-            output_prefix,
-            batch_index) <= 0) {
-      return -1;
-    }
-    if (read_state_contains_all(
-            api,
-            proof_key,
-            "\"proof_profile\":\"zk_merkle_membership_v1\"",
-            "\"private_membership_verifier_accepted\":true",
-            "\"private_witness_hidden\":true") != 0) {
-      return -1;
-    }
-    if (read_state_contains_all(
-            api,
-            public_outputs_key,
-            "\"zk_membership_profile\":true",
-            "\"hash_profile\":\"zk_merkle_style_v1\"",
-            "\"private_witness_hidden\":true") != 0) {
-      return -1;
-    }
-    char* public_outputs_response = NULL;
-    int privacy_ok =
-        read_state_response(api, public_outputs_key, &public_outputs_response) == 0 &&
-        strstr(public_outputs_response, "\"leaf_hash\"") == NULL &&
-        strstr(public_outputs_response, "\"leaf_index\"") == NULL &&
-        strstr(public_outputs_response, "\"sibling_path\"") == NULL &&
-        strstr(public_outputs_response, "\"path_digest\"") == NULL &&
-        strstr(public_outputs_response, "\"computed_root\"") == NULL;
-    free(public_outputs_response);
-    if (!privacy_ok) {
-      return -1;
-    }
-    if (read_state_contains_all(
-            api,
-            verify_status_key,
-            "\"verifier\":\"zk_merkle_membership_v1\"",
-            "\"private_witness_hidden\":true",
-            "\"accepted\":true") != 0) {
-      return -1;
-    }
-  }
-  return 0;
+  int n = snprintf(key, sizeof(key), "%s/zk/proof/batch/status", output_prefix);
+  return n > 0 && (size_t)n < sizeof(key) && read_state_found(api, key) == 0 ? 0 : -1;
 }
 
-static int run_zk_merkle_membership_tamper_rejection(
+static int run_retired_private_profile_tamper_rejection(
     const aoem_host_api* api,
     void* handle,
     uint32_t resident_asset_id) {
@@ -639,7 +560,8 @@ static int run_zk_merkle_membership_tamper_rejection(
   aoem_exec_v2_result result = {99, 99, 0, 99};
   int32_t rc = api->execute_ops_wire_v1(handle, wire.data, wire.len, &result);
   buf_free(&wire);
-  if (rc == 0 || result.success != 0 || result.total_writes != 0) {
+  if (rc != -4 || result.processed != 0 || result.success != 0 ||
+      result.failed_index != 0 || result.total_writes != 0) {
     return -1;
   }
   return read_state_found(api, batch_status_key) == 0 ? 0 : -1;
@@ -753,24 +675,24 @@ int main(int argc, char** argv) {
     }
   }
 
-  int zk_membership_ok = 0;
+  int private_profile_rejected_ok = 0;
   if (failures == 0) {
-    zk_membership_ok = 1;
+    private_profile_rejected_ok = 1;
     for (uint32_t i = 0; i < iterations; ++i) {
-      if (run_zk_merkle_membership_iteration(&api, handle, i, batch_count, resident_asset_id) !=
+      if (run_retired_private_profile_rejection(&api, handle, i, batch_count, resident_asset_id) !=
           0) {
-        zk_membership_ok = 0;
+        private_profile_rejected_ok = 0;
         ++failures;
         break;
       }
     }
   }
 
-  int zk_tamper_rejected_ok = 0;
+  int retired_tamper_rejected_ok = 0;
   if (failures == 0) {
-    zk_tamper_rejected_ok =
-        run_zk_merkle_membership_tamper_rejection(&api, handle, resident_asset_id) == 0;
-    if (!zk_tamper_rejected_ok) {
+    retired_tamper_rejected_ok =
+        run_retired_private_profile_tamper_rejection(&api, handle, resident_asset_id) == 0;
+    if (!retired_tamper_rejected_ok) {
       ++failures;
     }
   }
@@ -787,19 +709,17 @@ int main(int argc, char** argv) {
 
   const char* ok = failures == 0 ? "ok" : "fail";
   printf(
-      "C_HOST_RESIDENT_PROOF_SERVICE|profile=zk_merkle_membership_v1|iterations=%u|batch_count=%u|resident_asset=%s|real_input=%s|batch=%s|membership=%s|zk_membership=%s|privacy=%s|proof=%s|verify=%s|external_verify=%s|tamper_rejected=%s|status=%s|metadata=%s|malformed=%s|failures=%u\n",
+      "C_HOST_RESIDENT_PROOF_SERVICE|profiles=1,2|iterations=%u|batch_count=%u|resident_asset=%s|real_input=%s|batch=%s|public_membership=%s|private_profile_rejection=%s|envelope=%s|envelope_integrity=%s|tamper_rejected=%s|status=%s|metadata=%s|malformed=%s|failures=%u|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false\n",
       iterations,
       batch_count,
       ok,
       ok,
       ok,
       membership_ok ? "ok" : "fail",
-      zk_membership_ok ? "ok" : "fail",
-      zk_membership_ok ? "ok" : "fail",
+      private_profile_rejected_ok ? "ok" : "fail",
       ok,
       ok,
-      ok,
-      (tamper_rejected_ok && zk_tamper_rejected_ok) ? "ok" : "fail",
+      (tamper_rejected_ok && retired_tamper_rejected_ok) ? "ok" : "fail",
       ok,
       ok,
       malformed_ok ? "ok" : "fail",

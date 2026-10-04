@@ -1,15 +1,13 @@
 {
   "name": "aoem-fullmax-supervm-host",
-  "version": "1.4.0-supervm-fullmax-mldsa-standard",
-  "package_stage": "windows-linux-fullmax-mldsa-standard-host-package",
+  "version": "1.5.0-supervm-fullmax-private-proof-containment",
+  "package_stage": "scoped-private-proof-containment",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Runtime Baseline 2026-10-01",
-    "stage": "windows_linux_fullmax_local_qualified",
-    "windows_included_and_verified": true,
-    "linux_included_and_verified": true,
-    "macos_pending_not_bundled": true,
-    "document": "RUNTIME-BASELINE.md"
+    "id": "AOEM FULLMAX security correction 2026-10-04",
+    "stage": "scoped_containment_and_host_regression",
+    "document": "RUNTIME-BASELINE.md",
+    "macos_pending_not_bundled": true
   },
   "product_identity": {
     "engine": "AOEM FULLMAX Compute Native Engine",
@@ -51,10 +49,10 @@
       {
         "profile_id": "zk_merkle_membership_v1",
         "type": "private_membership_proof",
-        "hides_leaf": true,
-        "hides_sibling_path": true,
-        "hides_leaf_index": true,
-        "status": "included"
+        "status": "withdrawn_unsound_envelope",
+        "generation_supported": false,
+        "verification_supported": false,
+        "zero_knowledge_privacy": false
       }
     ],
     "host_integration": {
@@ -71,8 +69,8 @@
       "linux_binary": "bin/linux-x86_64/aoem-proof-worker",
       "examples": {
         "public_merkle_jobs": "worker-adapter/examples/jobs.merkle.jsonl",
-        "private_zk_merkle_jobs": "worker-adapter/examples/jobs.zk_merkle.jsonl",
-        "mixed_profile_jobs": "worker-adapter/examples/jobs.mixed.jsonl"
+        "retired_profile_rejection_jobs": "worker-adapter/examples/jobs.zk_merkle.jsonl",
+        "mixed_success_and_rejection_jobs": "worker-adapter/examples/jobs.mixed.jsonl"
       }
     },
     "schemas": {
@@ -101,7 +99,8 @@
     "performance_ready_claim": false,
     "independently_spendable_assets": false,
     "admission": "legacy same-process prove cache; not independent wallet authorization",
-    "classical_json_v2_included": false
+    "classical_json_v2_included": true,
+    "classical_json_v2_mainchain_integrated": false
   },
   "fullmax_capability_domains": [
     "abi_lifecycle",
@@ -143,18 +142,18 @@
     "windows-x86_64": {
       "status": "included",
       "library": "windows/core/bin/aoem_ffi.dll",
-      "library_sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+      "library_sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
       "fullmax_sidecars": "included",
-      "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
+      "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
       "source_bundle": "windows/manifest.json",
       "semantic_graph_v3_verified": true
     },
     "linux-x86_64": {
       "status": "included",
       "library": "linux/core/bin/libaoem_ffi.so",
-      "library_sha256": "88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675",
+      "library_sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
       "fullmax_sidecars": "included",
-      "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
+      "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
       "source_bundle": "linux/manifest.json",
       "semantic_graph_v3_verified": true,
       "risc0_guest_methods": "embedded_by_canonical_aoem_build"
@@ -186,7 +185,9 @@
     "main_chain_integrated": false,
     "fips_certified": false,
     "license": "licenses/mldsa-native/LICENSE",
-    "upstream": "licenses/mldsa-native/UPSTREAM.txt"
+    "upstream": "licenses/mldsa-native/UPSTREAM.txt",
+    "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
+    "historical_record_only": true
   },
   "compatibility": {
     "host_binding_symbols_retained": true,
@@ -194,5 +195,12 @@
     "opcode_114_distinct_from_removed_symbol": true,
     "ai_sgm_infer_payload": "versioned model-session; legacy AOAI v0 not supported",
     "whole_product_requalified": false
+  },
+  "proof_security": {
+    "affected_profile": "zk_merkle_membership_v1",
+    "status": "withdrawn_unsound_envelope",
+    "public_profiles": "envelope_integrity_only_not_zk",
+    "cryptographic_private_proof_restored": false,
+    "contract": "docs/proof-engine-v1.0-contract.md"
   }
 }

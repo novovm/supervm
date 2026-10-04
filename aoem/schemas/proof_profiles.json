@@ -33,9 +33,9 @@
     },
     {
       "profile_id": "zk_merkle_membership_v1",
-      "status": "included",
+      "status": "withdrawn_unsound_envelope",
       "type": "private_membership_proof",
-      "summary": "Private Merkle membership proof. Public verifier checks root, commitment, nullifier, and proof binding without seeing the private leaf, path, or index.",
+      "summary": "Historical request shape only. Generation, asset setup and verification are rejected: AORF public digests do not prove the private relation.",
       "public_input": {
         "merkle_root": "hex32",
         "leaf_commitment": "hex32",
@@ -65,11 +65,10 @@
         "leaf_index",
         "raw_private_witness"
       ],
-      "external_verifier_compatible": true,
-      "zero_knowledge_privacy": true,
-      "hides_leaf": true,
-      "hides_sibling_path": true,
-      "hides_leaf_index": true,
+      "external_verifier_compatible": false,
+      "zero_knowledge_privacy": false,
+      "generation_supported": false,
+      "verification_supported": false,
       "does_not_replace": "merkle_membership_v1"
     }
   ],

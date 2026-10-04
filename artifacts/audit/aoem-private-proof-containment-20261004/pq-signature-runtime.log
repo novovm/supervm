@@ -1,0 +1,40 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Blocking waiting for file lock on artifact directory
+   Compiling generic-array v0.14.7
+   Compiling syn v2.0.117
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling sha3 v0.10.8
+   Compiling aoem-bindings v0.1.0 (D:\WorksArea\SUPERVM\crates\aoem-bindings)
+   Compiling thiserror-impl v2.0.18
+   Compiling serde_derive v1.0.228
+   Compiling thiserror-impl v1.0.69
+   Compiling thiserror v1.0.69
+   Compiling thiserror v2.0.18
+   Compiling cobs v0.3.0
+   Compiling serde v1.0.228
+   Compiling postcard v1.1.3
+   Compiling novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+   Compiling novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+   Compiling novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+   Compiling novovm-prover v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-prover)
+    Finished `release` profile [optimized] target(s) in 58.84s
+     Running tests\pq_signature_runtime.rs (target\release\deps\pq_signature_runtime-feac9b89aebb2a72.exe)
+
+running 3 tests
+test packaged_runtime_requires_all_standard_mldsa_parameters ... level=44: self_roundtrip=true official_positive=true usable_for_standard_profile=true; not main-chain or FIPS certification
+level=65: self_roundtrip=true official_positive=true usable_for_standard_profile=true; not main-chain or FIPS certification
+level=87: self_roundtrip=true official_positive=true usable_for_standard_profile=true; not main-chain or FIPS certification
+ok
+test packaged_signer_pairs_with_standard_verifier_for_all_parameter_sets ... ok
+test standard_parameters_reject_tampering_wrong_context_and_legacy_raw_signatures ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+pq_signature_exit_code=0

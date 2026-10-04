@@ -1,10 +1,12 @@
 AOEM runtime in SUPERVM is packaged as one portable FULLMAX host bundle.
 
 Runtime baseline:
-  AOEM FULLMAX Runtime Baseline 2026-07-31
-  AOEM source commit a951273c.
-  Windows included and verified.
-  Linux included and verified.
+  Current source, runtime hashes, build availability and executed test scope:
+    aoem/RUNTIME-BASELINE.md
+    aoem/windows/manifest.json
+    aoem/linux/manifest.json
+  This update is scoped private-profile containment, not full qualification.
+  Do not infer Linux validation from Windows or count pending work as passed.
   macOS pending, not bundled, not advertised as available.
 
 Primary host model:
@@ -13,6 +15,23 @@ Primary host model:
     aoem/linux/core/bin/libaoem_ffi.so
 
   The checkout may live on any drive or under any workspace directory name.
+  Original novovm-node -> novovm-exec -> aoem-bindings remains the product path.
+  SDK examples are not a new standalone product proof service.
+
+Resident proof security scope:
+  Profile 3 (zk_merkle_membership_v1) is withdrawn and must be rejected.
+  Its fixtures are negative tests, not usable private-proof jobs.
+  Profiles 1/2 provide public diagnostics only: scope=not_zk.
+  verification_scope=envelope_integrity_only_not_zk
+  envelope_integrity_verified=true
+  proof_verified=false; cryptographic_proof_verified=false; accepted=false
+  No asset authorization or finality claim may rely on these envelopes.
+
+ML-DSA test scope:
+  This update ran 3 Windows packaged tests covering 44/65/87 positives/negatives.
+  The 90-vector NIST subset and 9-case interoperability results are historical;
+  they are not a rerun or new qualification of the replacement artifacts.
+  Consult the current baseline for platform-specific results and limitations.
 
 FULLMAX continuity:
   The package includes the generic AOEM core plus RocksDB persistence,

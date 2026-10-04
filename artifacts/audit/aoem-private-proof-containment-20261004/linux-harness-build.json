@@ -1,0 +1,30 @@
+{
+  "scope": "test_harness_build_only_not_runtime_acceptance",
+  "source_commit": "da95316cda502783d296d4922af5ee4352591b36",
+  "bindings_src_git_tree": "02ce71c744548e1018b11adf84efb03ffd7829e0",
+  "exec_src_git_tree": "9e27a6ff6c792f824a2bcb51b6b1072e69e1a1b9",
+  "bindings_and_exec_sources_and_lockfile_unchanged": true,
+  "existing_target_reused": "target/runtime-rebuild/linux",
+  "environment": "WSL Ubuntu-24.04, rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "bindings": {
+    "command": "cargo test --release --locked --target-dir target/runtime-rebuild/linux -p aoem-bindings --lib resident --no-run",
+    "exit_code": 0,
+    "build_seconds": 4.33,
+    "binary": "target/runtime-rebuild/linux/release/deps/aoem_bindings-91919570acac5d78",
+    "binary_sha256": "eccb0dbbc15246e6a9c1d88ae4fa38f45b53e65e5805246994d36bbd0c53e030",
+    "log": "linux-bindings-harness-build.log"
+  },
+  "exec": {
+    "command": "cargo test --release --locked --target-dir target/runtime-rebuild/linux -p novovm-exec --lib resident --no-run",
+    "exit_code": 0,
+    "build_seconds": 8.07,
+    "binary": "target/runtime-rebuild/linux/release/deps/novovm_exec-34510b355eb9a17c",
+    "binary_sha256": "f809af78f7fb5f21d27f08f871637d2219bdf7812a8844e3dcf46dc78c1e088e",
+    "log": "linux-exec-harness-build.log"
+  },
+  "tests_executed": false,
+  "new_linux_core_runtime_qualification": "pending_core_sync_and_explicit_tests",
+  "node_rebuilt": false,
+  "new_cache_created": false,
+  "source_files_modified": false
+}

@@ -1,9 +1,10 @@
 # AOEM Proof Engine Host Integration Guide
 
-AOEM Compute Native Proof is an engine library intended to be embedded into a
-host system. The host owns its API, queues, storage, authentication, scheduling,
-and deployment. AOEM provides the proof execution kernel and stable host-callable
-wire path.
+AOEM is an engine library intended to be embedded into a host system. These
+resident-workload references exercise public diagnostics through the existing
+wire path; they do not deliver a private or complete host-business ZK proof.
+The host owns its API, admission, application integration and deployment. AOEM
+retains its domain-neutral execution and persistence responsibilities.
 
 ```text
 host system
@@ -13,21 +14,24 @@ host system
   -> aoem_state_read_v1
 ```
 
-The current SUPERVM package bundles freshly rebuilt Windows and Linux FULLMAX
-runtimes. macOS runtime artifacts are pending fresh FULLMAX rebuild and are not
-included.
+Current source, hashes, platform availability and executed checks are recorded
+in [RUNTIME-BASELINE.md](../RUNTIME-BASELINE.md) and the
+[Windows](../windows/manifest.json) / [Linux](../linux/manifest.json) manifests.
+Bundled files do not imply completed validation; do not infer Linux acceptance
+from Windows. macOS is not included.
 
 ## Primary Mode: Embedded Host
 
-Use embedded mode when the host already has a service, chain worker, rollup
-prover, enterprise backend, or application runtime.
+Use embedded mode for these SDK diagnostics when the host already has an
+application runtime. NOVOVM remains on the original
+`novovm-node -> novovm-exec -> aoem-bindings -> AOEM` product path. These samples
+must not become another standalone node, proof service or authoritative state.
 
 ```text
 host process
-  -> business logic
-  -> job queue / database / network API owned by host
+  -> diagnostic job admission
   -> AOEM dynamic library
-  -> proof output returned to host state
+  -> public diagnostic output returned to caller
 ```
 
 Reference sources:
@@ -47,14 +51,14 @@ aoem_state_read_v1
 
 ## Optional Mode: Worker Adapter
 
-Use worker adapter mode when a team wants a file-based proof job adapter before
+Use worker adapter mode when a team wants a file-based diagnostic adapter before
 embedding AOEM directly.
 
 ```text
-jobs.jsonl
+public jobs.merkle.jsonl
   -> aoem-proof-worker
   -> AOEM dynamic library
-  -> proofs.jsonl
+  -> public-diagnostics.jsonl
 ```
 
 Reference files:
@@ -63,37 +67,51 @@ Reference files:
 worker-adapter/aoem_proof_worker.c
 worker-adapter/examples/jobs.merkle.jsonl
 worker-adapter/examples/jobs.zk_merkle.jsonl
+  retired profile 3 rejection fixtures only
 worker-adapter/examples/jobs.mixed.jsonl
+  public diagnostics plus private-profile rejection
 ```
 
 The worker adapter is a host sample. It is not the AOEM runtime itself and not a
 required standalone deployment.
 
-## Supported Profiles
+## Current Profile Status
 
 ```text
+fixed_profile_v1
+  fixed-pipeline envelope diagnostic; not ZK
+
 merkle_membership_v1
-  public inclusion proof
-  fast path
-  not a privacy proof
+  public path/envelope diagnostic; not ZK
 
 zk_merkle_membership_v1
-  private membership proof
-  hides leaf, sibling_path, and leaf_index from worker outputs
+  withdrawn; unsupported_private_membership_proof
+  no successful output; no witness-disclosure fallback
 ```
 
-Both profiles use:
+Profiles 1/2 retain the existing workload and envelope names:
 
 ```text
 compute.zk.resident_proof_v1
 aoem_resident_proof_contract_v1_le_hex
 ```
 
+Require `verification_scope=envelope_integrity_only_not_zk`,
+`envelope_integrity_verified=true`, `proof_verified=false`,
+`cryptographic_proof_verified=false` and `verify_status.accepted=false`.
+Private fixtures must fail with `proof_written=false` and a nonzero worker exit.
+Neither a public checksum, GPU execution nor successful SDK smoke is a private
+proof. See the [security correction](proof-engine-v1.0-contract.md#security-correction-2026-10-04).
+
+The current packaged ML-DSA check is a 3-test Windows regression for 44/65/87
+positives/negatives. Historical 90-vector/9-interoperability qualifications are
+not this update's results; actual platform scope belongs in the runtime baseline.
+
 ## Boundary
 
 ```text
-no new public FFI ABI
-no Runtime Canon change
+this guide introduces no new proof entry or separate product service
+existing compatibility changes are listed in the runtime baseline
 no new compute op
 no Graph OS path
 no dedicated LR path

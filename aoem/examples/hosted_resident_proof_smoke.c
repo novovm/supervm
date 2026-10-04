@@ -776,6 +776,58 @@ static int read_state_response(const aoem_host_api* api, const char* key, char**
   return 0;
 }
 
+static int resident_envelope_scope_is_valid(const char* response) {
+  return response &&
+      strstr(response, "\"envelope_integrity_verified\":true") != NULL &&
+      strstr(response, "\"cryptographic_proof_verified\":false") != NULL &&
+      strstr(response, "\"verification_scope\":\"envelope_integrity_only_not_zk\"") != NULL &&
+      strstr(response, "\"proof_verified\":true") == NULL &&
+      strstr(response, "\"cryptographic_proof_verified\":true") == NULL;
+}
+
+static int resident_diagnostic_status_is_valid(const char* response) {
+  return resident_envelope_scope_is_valid(response) &&
+      strstr(response, "compute.zk.resident_proof_v1.status") != NULL &&
+      strstr(response, "\"proof_verified\":false") != NULL;
+}
+
+static int resident_diagnostic_verify_status_is_valid(const char* response) {
+  return resident_envelope_scope_is_valid(response) &&
+      strstr(response, "compute.zk.resident_proof_v1.verify_status") != NULL &&
+      strstr(response, "\"accepted\":false") != NULL &&
+      strstr(response, "\"accepted\":true") == NULL;
+}
+
+static int resident_diagnostic_bytes_is_valid(const char* response) {
+  return resident_envelope_scope_is_valid(response) &&
+      strstr(response, "\"fixed_profile_verifier_accepted\":false") != NULL &&
+      strstr(response, "\"fixed_profile_verifier_accepted\":true") == NULL;
+}
+
+static int read_diagnostic_bytes(const aoem_host_api* api, const char* key) {
+  char* response = NULL;
+  if (read_state_response(api, key, &response) != 0) return -1;
+  int ok = resident_diagnostic_bytes_is_valid(response);
+  free(response);
+  return ok ? 0 : -1;
+}
+
+static int read_diagnostic_verify_status(const aoem_host_api* api, const char* key) {
+  char* response = NULL;
+  if (read_state_response(api, key, &response) != 0) return -1;
+  int ok = resident_diagnostic_verify_status_is_valid(response);
+  free(response);
+  return ok ? 0 : -1;
+}
+
+static int read_diagnostic_status(const aoem_host_api* api, const char* key) {
+  char* response = NULL;
+  if (read_state_response(api, key, &response) != 0) return -1;
+  int ok = resident_diagnostic_status_is_valid(response);
+  free(response);
+  return ok ? 0 : -1;
+}
+
 static int read_state_found(const aoem_host_api* api, const char* key) {
   char* response = NULL;
   if (read_state_response(api, key, &response) != 0) {
@@ -843,7 +895,7 @@ static int run_success_smoke(const aoem_host_api* api, void* handle) {
           api,
           proof_key,
           "compute.zk.resident_proof_v1",
-          "\"fixed_profile_verifier_accepted\":true",
+          "\"fixed_profile_verifier_accepted\":false",
           "\"real_input_used\":true") != 0) {
     return -1;
   }
@@ -855,12 +907,9 @@ static int run_success_smoke(const aoem_host_api* api, void* handle) {
           "\"runtime_canon_unchanged\":true") != 0) {
     return -1;
   }
-  if (read_state_contains_all(
-          api,
-          status_key,
-          "compute.zk.resident_proof_v1.status",
-          "\"proof_verified\":true",
-          "\"state_read\":\"aoem_state_read_v1\"") != 0) {
+  if (read_diagnostic_status(api, status_key) != 0 ||
+      read_diagnostic_bytes(api, proof_key) != 0 ||
+      read_diagnostic_verify_status(api, verify_status_key) != 0) {
     return -1;
   }
   if (read_state_contains_all(
@@ -875,7 +924,7 @@ static int run_success_smoke(const aoem_host_api* api, void* handle) {
           api,
           verify_status_key,
           "compute.zk.resident_proof_v1.verify_status",
-          "\"accepted\":true",
+          "\"accepted\":false",
           "\"real_input_used\":true") != 0) {
     return -1;
   }
@@ -965,6 +1014,6 @@ int main(int argc, char** argv) {
     return 1;
   }
   printf(
-      "C_HOST_RESIDENT_PROOF_SMOKE|real_input=ok|proof=ok|verify=ok|status=ok|metadata=ok|malformed=ok\n");
+      "C_HOST_RESIDENT_PROOF_SMOKE|real_input=ok|envelope=ok|envelope_integrity=ok|status=ok|metadata=ok|malformed=ok|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false\n");
   return 0;
 }

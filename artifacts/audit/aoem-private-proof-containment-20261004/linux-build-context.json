@@ -1,0 +1,24 @@
+{
+  "schema": "aoem/linux-fullmax-build-context/v1",
+  "runtime_code_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+  "checkout_commit": "2331fb3c477ebc2c41104f2aeda75c9067b274c6",
+  "later_commits": "Documentation and SDK declaration corrections only; no diff in crates, scripts, Cargo.toml or Cargo.lock from runtime_code_commit",
+  "environment": "Ubuntu 24.04 WSL2, rustc 1.94.1, Clang 18.1.3",
+  "build_script": "AOEM scripts/build_linux_fullmax_bundle.sh",
+  "bundle_relative_to_aoem": "artifacts/ffi-bundles/fullmax/linux/20261004-private-proof-1377cd1e",
+  "features": "rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "default_features_preserved": true,
+  "optimization": "release; no optimization or feature downgrade",
+  "retry_history": [
+    "Initial non-login WSL shell did not expose cargo; login shell used.",
+    "Rust diagnostic renderer panicked with a bogus one-column terminal. COLUMNS/LINES/TERM alone did not fix it; script pseudo-terminal with stty cols 120 rows 40 fixed rendering. Source and checks unchanged.",
+    "Slow GCC compilation of generated dependency sources was interrupted only in identified build process groups. Clang 18.1.3 retained the same release optimization. One failed guarded shell stop attempt stopped nothing.",
+    "Core built with four jobs, then canonical bundle script built its core and sidecars with its original one-job configuration. No step skipped."
+  ],
+  "failure_log": "linux-build-terminal-failure.log",
+  "failure_log_sha256": "69289ea1078990deab8ffbe571373de226edc218e77c032adba4b47a2dadb9f0",
+  "complete_build_log": "linux-fullmax-build.log",
+  "core_sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
+  "gpu_validation": "NOT EXECUTED: WSL Vulkan reports llvmpipe CPU, not the target NVIDIA 5090; no GPU fallback counted as GPU acceptance",
+  "scope": "Build and scoped containment/host regression, not full capability or performance requalification"
+}

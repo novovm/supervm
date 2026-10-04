@@ -1,0 +1,2 @@
+PRIVATE_PROFILE_FAIL_CLOSED|adversarial_rejected=12/12|with_and_without_witness=ok|diagnostic_profiles_1_2=ok|worker_no_proof=ok|profile_relabel_rejected=ok|replacement_crypto_proof=not_implemented
+adversarial_exit_code=0

@@ -1,8 +1,13 @@
 # SUPERVM AOEM FULLMAX Proof Quickstart
 
 This quickstart runs the in-place SUPERVM AOEM host package under `aoem/`.
-It currently includes freshly rebuilt Windows and Linux FULLMAX artifacts.
+Use the corrected artifacts identified by [the runtime baseline](../RUNTIME-BASELINE.md);
+platform availability alone does not establish security or performance acceptance.
 macOS remains pending.
+
+Profiles 1/2 are public diagnostics (`scope=not_zk`), not cryptographic ZK proofs.
+Profile 3 is retired and must be rejected. See the
+[security correction](proof-engine-v1.0-contract.md#security-correction-2026-10-04).
 
 ## Product Path
 
@@ -10,7 +15,7 @@ macOS remains pending.
 host / optional worker adapter
   -> aoem_execute_ops_wire_v1
   -> compute.zk.resident_proof_v1
-  -> profile_id selects proof semantics
+  -> supported profile_id selects public diagnostic semantics
   -> AOEM state
   -> aoem_state_read_v1
 ```
@@ -24,16 +29,17 @@ powershell -ExecutionPolicy Bypass -File scripts\aoem\run_proof_engine_host_smok
 Expected output:
 
 ```text
-SUPERVM_AOEM_PROOF_ENGINE_HOST_SMOKE|profile=fixed_profile_v1|proof=ok|verify=ok|state_read=ok|metadata=ok|failures=0
+SUPERVM_AOEM_PROOF_ENGINE_HOST_SMOKE|profile=fixed_profile_v1|scope=not_zk|envelope_integrity_verified=true|cryptographic_proof_verified=false|proof_verified=false|accepted=false|retired_profile3=rejected|retired_profile3_outputs=absent|state_read=ok|metadata=ok|failures=0
 ```
 
 ## Windows Worker Adapter
 
 ```powershell
+New-Item -ItemType Directory -Force tmp | Out-Null
 aoem\bin\windows-x86_64\aoem-proof-worker.exe `
   --library aoem\windows\core\bin\aoem_ffi.dll `
-  --input aoem\worker-adapter\examples\jobs.zk_merkle.jsonl `
-  --output tmp\proofs.zk_merkle.jsonl `
+  --input aoem\worker-adapter\examples\jobs.merkle.jsonl `
+  --output tmp\public-diagnostics.jsonl `
   --batch-count 4
 ```
 
@@ -46,10 +52,18 @@ dynamic library directly.
 LD_LIBRARY_PATH=aoem/linux/core/bin \
   aoem/bin/linux-x86_64/aoem-proof-worker \
   --library aoem/linux/core/bin/libaoem_ffi.so \
-  --input aoem/worker-adapter/examples/jobs.zk_merkle.jsonl \
-  --output /tmp/proofs.zk_merkle.jsonl \
+  --input aoem/worker-adapter/examples/jobs.merkle.jsonl \
+  --output /tmp/public-diagnostics.jsonl \
   --batch-count 4
 ```
+
+Successful public rows must report `verification_scope=envelope_integrity_only_not_zk`,
+`envelope_integrity_verified=true`, and `accepted=false`, `proof_verified=false`,
+`cryptographic_proof_verified=false`. These are diagnostics, not completed ZK.
+
+`jobs.zk_merkle.jsonl` is retained only as a rejection fixture. Running it must
+exit 1 and emit `unsupported_private_membership_proof` with `proof_written=false`.
+The full Windows smoke (without `-SkipWorkerAdapter`) checks both outcomes.
 
 ## Schemas
 

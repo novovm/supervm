@@ -1,0 +1,2 @@
+AOEM_PROOF_WORKER_SUMMARY|profile=merkle_membership_v1|jobs=4|batch_count=4|resident_asset=ok|privacy=not_claimed|proof=ok|verify=ok|external_verify=ok|malformed=ok|failures=0|unsupported_profiles=0|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false
+worker_public_exit_code=0

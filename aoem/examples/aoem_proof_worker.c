@@ -3,7 +3,8 @@
 // This is a deployable host-side example, not an AOEM runtime extension. It
 // reads JSONL jobs, batches them into compute.zk.resident_proof_v1 requests,
 // calls the existing wire_v1 product entry, reads proof state back through
-// aoem_state_read_v1, and verifies proof envelopes outside AOEM state.
+// aoem_state_read_v1, and checks diagnostic envelopes outside AOEM state.
+// Legacy profile 3 is unsupported, not a cryptographic private proof.
 
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -22,6 +23,7 @@
 #define AOEM_ZK_RESIDENT_ASSET_CMD_LIST 2u
 #define AOEM_ZK_RESIDENT_ASSET_CMD_SELECT 3u
 #define AOEM_ZK_RESIDENT_ASSET_CMD_RELEASE 4u
+#define AOEM_WORKER_UNSUPPORTED_PRIVATE_PROFILE "unsupported_private_membership_proof"
 
 typedef struct aoem_worker_job {
   char* request_id;
@@ -46,6 +48,7 @@ typedef struct aoem_worker_stats {
   uint64_t failures;
   uint64_t malformed_seen;
   uint64_t malformed_rejected;
+  uint64_t unsupported_profiles;
   uint32_t profile_id;
   int resident_asset_ok;
   int proof_ok;
@@ -236,81 +239,6 @@ done:
   return rc;
 }
 
-static int worker_parse_zk_merkle_membership_job(const char* line, aoem_worker_job* job) {
-  char* root_hex = NULL;
-  char* commitment_hex = NULL;
-  char* nullifier_hex = NULL;
-  char* leaf_hex = NULL;
-  char* secret_hex = NULL;
-  uint8_t* root = NULL;
-  uint8_t* commitment = NULL;
-  uint8_t* nullifier = NULL;
-  uint8_t* leaf = NULL;
-  uint8_t* secret = NULL;
-  size_t root_len = 0;
-  size_t commitment_len = 0;
-  size_t nullifier_len = 0;
-  size_t leaf_len = 0;
-  size_t secret_len = 0;
-  uint64_t leaf_index = 0;
-  uint64_t tree_depth_u64 = 0;
-  byte_buf public_input = {0};
-  byte_buf witness = {0};
-  int rc = -1;
-
-  if (worker_json_dup_string_field(line, "merkle_root", &root_hex) != 0 ||
-      worker_json_dup_string_field(line, "leaf_commitment", &commitment_hex) != 0 ||
-      worker_json_dup_string_field(line, "nullifier", &nullifier_hex) != 0 ||
-      worker_json_dup_string_field(line, "leaf", &leaf_hex) != 0 ||
-      worker_json_dup_string_field(line, "leaf_secret", &secret_hex) != 0 ||
-      hex_to_bytes(root_hex, &root, &root_len) != 0 || root_len != 32u ||
-      hex_to_bytes(commitment_hex, &commitment, &commitment_len) != 0 ||
-      commitment_len != 32u ||
-      hex_to_bytes(nullifier_hex, &nullifier, &nullifier_len) != 0 || nullifier_len != 32u ||
-      hex_to_bytes(leaf_hex, &leaf, &leaf_len) != 0 || leaf_len == 0u ||
-      hex_to_bytes(secret_hex, &secret, &secret_len) != 0 || secret_len == 0u ||
-      worker_parse_u64_json_field(line, "leaf_index", &leaf_index) != 0 ||
-      worker_parse_u64_json_field(line, "tree_depth", &tree_depth_u64) != 0 ||
-      tree_depth_u64 > AOEM_MERKLE_MEMBERSHIP_MAX_DEPTH ||
-      buf_u64(&witness, leaf_index) != 0 || buf_u32(&witness, (uint32_t)leaf_len) != 0 ||
-      buf_u32(&witness, (uint32_t)secret_len) != 0 ||
-      buf_append(&witness, leaf, leaf_len) != 0 ||
-      buf_append(&witness, secret, secret_len) != 0 ||
-      worker_parse_sibling_path_array(line, (uint32_t)tree_depth_u64, &witness) != 0) {
-    goto done;
-  }
-  if (buf_append(&public_input, root, 32u) != 0 ||
-      buf_append(&public_input, commitment, 32u) != 0 ||
-      buf_append(&public_input, nullifier, 32u) != 0 ||
-      buf_u32(&public_input, (uint32_t)tree_depth_u64) != 0 ||
-      buf_u32(&public_input, AOEM_ZK_MERKLE_STYLE_V1_HASH_PROFILE) != 0) {
-    goto done;
-  }
-  job->public_input = public_input.data;
-  job->public_input_len = public_input.len;
-  public_input.data = NULL;
-  public_input.len = public_input.cap = 0;
-  job->witness = witness.data;
-  job->witness_len = witness.len;
-  witness.data = NULL;
-  witness.len = witness.cap = 0;
-  rc = 0;
-
-done:
-  free(root_hex);
-  free(commitment_hex);
-  free(nullifier_hex);
-  free(leaf_hex);
-  free(secret_hex);
-  free(root);
-  free(commitment);
-  free(nullifier);
-  free(leaf);
-  free(secret);
-  buf_free(&public_input);
-  buf_free(&witness);
-  return rc;
-}
 
 static char* worker_dup_literal(const char* value) {
   size_t len = strlen(value);
@@ -372,6 +300,12 @@ static int worker_parse_job_line(const char* line, aoem_worker_job* job, char** 
     *error_out = worker_dup_literal("malformed_payload");
     return -1;
   }
+  if (job->profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
+    free(profile);
+    free(resident_asset);
+    *error_out = worker_dup_literal(AOEM_WORKER_UNSUPPORTED_PRIVATE_PROFILE);
+    return -1;
+  }
   if (job->profile_id == AOEM_FIXED_PROFILE_RESIDENT_PROOF_V1_ID) {
     if (worker_parse_hex_field(line, "public_input", &job->public_input, &job->public_input_len) != 0 ||
         worker_parse_hex_field(line, "witness", &job->witness, &job->witness_len) != 0) {
@@ -382,13 +316,6 @@ static int worker_parse_job_line(const char* line, aoem_worker_job* job, char** 
     }
   } else if (job->profile_id == AOEM_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
     if (worker_parse_merkle_membership_job(line, job) != 0) {
-      free(profile);
-      free(resident_asset);
-      *error_out = worker_dup_literal("malformed_payload");
-      return -1;
-    }
-  } else if (job->profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
-    if (worker_parse_zk_merkle_membership_job(line, job) != 0) {
       free(profile);
       free(resident_asset);
       *error_out = worker_dup_literal("malformed_payload");
@@ -543,6 +470,10 @@ static int worker_read_and_emit_job(
     const char* output_prefix,
     uint32_t batch_index,
     const aoem_worker_job* job) {
+  if (job->profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
+    worker_write_error(output, job->request_id, AOEM_WORKER_UNSUPPORTED_PRIVATE_PROFILE);
+    return -1;
+  }
   char proof_key[512];
   char metadata_key[512];
   char status_key[512];
@@ -597,16 +528,10 @@ static int worker_read_and_emit_job(
           job->witness_len,
           job->profile_id,
           public_outputs_response) == 0 &&
-      strstr(status_response, "\"proof_verified\":true") != NULL &&
-      strstr(verify_response, "\"accepted\":true") != NULL &&
-      strstr(metadata_response, "\"resident_asset_bound\":true") != NULL &&
-      (job->profile_id != AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID ||
-       (strstr(public_outputs_response, "\"private_witness_hidden\":true") != NULL &&
-        strstr(public_outputs_response, "\"leaf_hash\"") == NULL &&
-        strstr(public_outputs_response, "\"leaf_index\"") == NULL &&
-        strstr(public_outputs_response, "\"sibling_path\"") == NULL &&
-        strstr(public_outputs_response, "\"path_digest\"") == NULL &&
-        strstr(public_outputs_response, "\"computed_root\"") == NULL));
+      resident_diagnostic_status_is_valid(status_response) &&
+      resident_diagnostic_verify_status_is_valid(verify_response) &&
+      resident_diagnostic_bytes_is_valid(proof_response) &&
+      strstr(metadata_response, "\"resident_asset_bound\":true") != NULL;
 
   if (!ok) {
     worker_write_error(output, job->request_id, "proof_verification_failed");
@@ -618,12 +543,13 @@ static int worker_read_and_emit_job(
         output,
         job->profile_id == AOEM_MERKLE_MEMBERSHIP_PROOF_V1_ID
             ? "merkle_membership_v1"
-            : (job->profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID
-                   ? "zk_merkle_membership_v1"
-                   : "fixed_profile_v1"));
+            : "fixed_profile_v1");
     fputs(",\"proof\":", output);
     worker_json_write_escaped(output, proof_hex);
-    fputs(",\"verify_status\":\"ok\",\"public_outputs\":", output);
+    fputs(",\"verify_status\":\"envelope_integrity_only_not_zk\",\"accepted\":false,"
+          "\"verification_scope\":\"envelope_integrity_only_not_zk\","
+          "\"proof_verified\":false,\"envelope_integrity_verified\":true,"
+          "\"cryptographic_proof_verified\":false,\"public_outputs\":", output);
     worker_json_write_escaped(output, public_outputs_response);
     fputs(",\"metadata\":", output);
     worker_json_write_escaped(output, metadata_response);
@@ -650,6 +576,18 @@ static int worker_process_batch(
     aoem_worker_stats* stats) {
   if (job_count == 0u) {
     return 0;
+  }
+  // Defense in depth for callers other than the JSONL parser. Never dispatch
+  // or emit any part of a batch containing the retired private profile.
+  for (uint32_t i = 0; i < job_count; ++i) {
+    if (jobs[i].profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID) {
+      for (uint32_t j = 0; j < job_count; ++j) {
+        worker_write_error(output, jobs[j].request_id, AOEM_WORKER_UNSUPPORTED_PRIVATE_PROFILE);
+      }
+      stats->failures += job_count;
+      stats->unsupported_profiles += 1u;
+      return -1;
+    }
   }
 
   char request_id[128];
@@ -772,7 +710,7 @@ static int worker_execute_rejected_proof(
   return read_state_found(api, batch_status_key) == 0 ? 0 : -1;
 }
 
-static int worker_run_asset_lifecycle_mode(const aoem_host_api* api, void* handle, uint32_t batch_count) {
+static int AOEM_MAYBE_UNUSED worker_run_asset_lifecycle_mode(const aoem_host_api* api, void* handle, uint32_t batch_count) {
   static const uint8_t asset_metadata[] = {
       'a', 'o', 'e', 'm', '-', 'p', 'r', 'o', 'o', 'f', '-', 'v', '0', '7'};
   const uint32_t resident_asset_id = AOEM_WORKER_LIFECYCLE_ASSET_ID;
@@ -1012,7 +950,7 @@ lifecycle_done:
       !(setup_ok && list_ok && select_ok && proof_ok && verify_ok && external_verify_ok &&
         release_ok && proof_after_release_rejected && malformed_ok);
   printf(
-      "AOEM_PROOF_WORKER_ASSET_LIFECYCLE|setup=%s|list=%s|select=%s|proof_with_asset=%s|verify=%s|external_verify=%s|release=%s|proof_after_release=%s|malformed=%s|failures=%d\n",
+      "AOEM_PROOF_WORKER_ASSET_LIFECYCLE|setup=%s|list=%s|select=%s|proof_with_asset=%s|verify=%s|external_verify=%s|release=%s|proof_after_release=%s|malformed=%s|failures=%d|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false\n",
       setup_ok ? "ok" : "fail",
       list_ok ? "ok" : "fail",
       select_ok ? "ok" : "fail",
@@ -1026,7 +964,7 @@ lifecycle_done:
   return failures ? 1 : 0;
 }
 
-static void worker_usage(const char* argv0) {
+static void AOEM_MAYBE_UNUSED worker_usage(const char* argv0) {
   fprintf(
       stderr,
       "usage: %s --library PATH --input jobs.jsonl --output proofs.jsonl [--batch-count N]\n"
@@ -1035,7 +973,7 @@ static void worker_usage(const char* argv0) {
       argv0);
 }
 
-static int worker_parse_args(int argc, char** argv, aoem_worker_options* opts) {
+static int AOEM_MAYBE_UNUSED worker_parse_args(int argc, char** argv, aoem_worker_options* opts) {
   memset(opts, 0, sizeof(*opts));
   opts->batch_count = AOEM_WORKER_DEFAULT_BATCH_COUNT;
   for (int i = 1; i < argc; ++i) {
@@ -1066,6 +1004,7 @@ static int worker_parse_args(int argc, char** argv, aoem_worker_options* opts) {
   return opts->input_path && opts->output_path ? 0 : -1;
 }
 
+#ifndef AOEM_PROOF_WORKER_NO_MAIN
 int main(int argc, char** argv) {
   aoem_worker_options opts;
   if (worker_parse_args(argc, argv, &opts) != 0) {
@@ -1134,11 +1073,16 @@ int main(int argc, char** argv) {
       char* request_id = NULL;
       (void)worker_json_dup_string_field(line, "request_id", &request_id);
       worker_write_error(output, request_id, error ? error : "malformed_payload");
+      if (error && strcmp(error, AOEM_WORKER_UNSUPPORTED_PRIVATE_PROFILE) == 0) {
+        stats.unsupported_profiles += 1u;
+        stats.failures += 1u;
+      } else {
+        stats.malformed_seen += 1u;
+        stats.malformed_rejected += 1u;
+      }
       free(request_id);
       free(error);
       worker_job_free(&job);
-      stats.malformed_seen += 1u;
-      stats.malformed_rejected += 1u;
       continue;
     }
 
@@ -1175,7 +1119,7 @@ int main(int argc, char** argv) {
   }
   const int malformed_ok = stats.malformed_seen == stats.malformed_rejected;
   printf(
-      "AOEM_PROOF_WORKER_SUMMARY|profile=%s|jobs=%llu|batch_count=%u|resident_asset=%s|privacy=%s|proof=%s|verify=%s|external_verify=%s|malformed=%s|failures=%llu\n",
+      "AOEM_PROOF_WORKER_SUMMARY|profile=%s|jobs=%llu|batch_count=%u|resident_asset=%s|privacy=not_claimed|proof=%s|verify=%s|external_verify=%s|malformed=%s|failures=%llu|unsupported_profiles=%llu|verification_scope=envelope_integrity_only_not_zk|cryptographic_proof_verified=false\n",
       stats.profile_id == AOEM_ZK_MERKLE_MEMBERSHIP_PROOF_V1_ID
           ? "zk_merkle_membership_v1"
           : (stats.profile_id == AOEM_MERKLE_MEMBERSHIP_PROOF_V1_ID ? "merkle_membership_v1"
@@ -1183,12 +1127,13 @@ int main(int argc, char** argv) {
       (unsigned long long)stats.jobs_ok,
       opts.batch_count,
       stats.resident_asset_ok ? "ok" : "fail",
-      stats.failures == 0 ? "ok" : "fail",
       stats.proof_ok ? "ok" : "fail",
       stats.verify_ok ? "ok" : "fail",
       stats.external_verify_ok ? "ok" : "fail",
       stats.malformed_seen > 0u ? (malformed_ok ? "ok" : "fail") : "not_seen",
-      (unsigned long long)stats.failures);
+      (unsigned long long)stats.failures,
+      (unsigned long long)stats.unsupported_profiles);
 
   return stats.failures == 0u && malformed_ok ? 0 : 1;
 }
+#endif

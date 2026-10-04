@@ -2,19 +2,17 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Runtime Baseline 2026-10-01",
-    "stage": "windows_linux_fullmax_local_qualified",
-    "windows_included_and_verified": true,
-    "linux_included_and_verified": true,
-    "macos_pending_not_bundled": true,
-    "document": "RUNTIME-BASELINE.md"
+    "id": "AOEM FULLMAX security correction 2026-10-04",
+    "stage": "scoped_containment_and_host_regression",
+    "document": "RUNTIME-BASELINE.md",
+    "macos_pending_not_bundled": true
   },
   "entry": "aoem_execute_ops_wire_v1",
   "output": "aoem_state_read_v1",
   "runtime_canon_changed": true,
   "public_ffi_abi_changed": true,
   "source_artifacts": {
-    "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
+    "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "windows_fullmax_bundle": "windows/manifest.json",
     "linux_fullmax_bundle": "linux/manifest.json",
     "proof_engine_host_integration": "host-integration/",
@@ -26,7 +24,7 @@
       "name": "core",
       "platform": "linux-x86_64",
       "dll": "linux/core/bin/libaoem_ffi.so",
-      "sha256": "88c3e7888256c6c024b0bd2aa013a75e5b51463b41b314e412a66dc5b8043675",
+      "sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
@@ -38,7 +36,7 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+      "sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
@@ -118,7 +116,11 @@
     "workload": "compute.zk.resident_proof_v1",
     "resident_asset_lifecycle_workload": "compute.zk.resident_asset_lifecycle_v1",
     "profiles": [
-      "merkle_membership_v1",
+      "fixed_profile_v1",
+      "merkle_membership_v1"
+    ],
+    "verification_scope": "envelope_integrity_only_not_zk",
+    "withdrawn_profiles": [
       "zk_merkle_membership_v1"
     ],
     "host_integration": "host-integration/",
@@ -126,11 +128,11 @@
     "worker_binaries": {
       "windows-x86_64": {
         "path": "bin/windows-x86_64/aoem-proof-worker.exe",
-        "sha256": "bafe3a68ecc8189dae1ab4e6405ad56de285007f99f4e5fbeb6ed5aa94101479"
+        "sha256": "18d18fd01a9d855f847eb88f94ccaa836f05b34545db35494a060e1a59087177"
       },
       "linux-x86_64": {
         "path": "bin/linux-x86_64/aoem-proof-worker",
-        "sha256": "3ed735496daa803dad5ad4c909432116d80edfa9ae981177fef7e69119ca69dc"
+        "sha256": "5889c61e988965b7f3cfef9c7c3abe659e6a5fb6dea8b65d8381706846ea1cb6"
       }
     }
   },
@@ -148,7 +150,8 @@
     "proof_worker_default_changed": false,
     "independently_spendable_assets": false,
     "admission": "legacy same-process prove cache; not independent wallet authorization",
-    "classical_json_v2_included": false
+    "classical_json_v2_included": true,
+    "classical_json_v2_mainchain_integrated": false
   },
   "fullmax_capability_domains": [
     "semantic_graph_v3",
@@ -194,7 +197,9 @@
     "main_chain_integrated": false,
     "fips_certified": false,
     "license": "licenses/mldsa-native/LICENSE",
-    "upstream": "licenses/mldsa-native/UPSTREAM.txt"
+    "upstream": "licenses/mldsa-native/UPSTREAM.txt",
+    "source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176",
+    "historical_record_only": true
   },
   "compatibility": {
     "host_binding_symbols_retained": true,
@@ -202,5 +207,12 @@
     "opcode_114_distinct_from_removed_symbol": true,
     "ai_sgm_infer_payload": "versioned model-session; legacy AOAI v0 not supported",
     "whole_product_requalified": false
+  },
+  "proof_security": {
+    "affected_profile": "zk_merkle_membership_v1",
+    "status": "withdrawn_unsound_envelope",
+    "public_profiles": "envelope_integrity_only_not_zk",
+    "cryptographic_private_proof_restored": false,
+    "contract": "docs/proof-engine-v1.0-contract.md"
   }
 }

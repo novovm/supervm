@@ -1,0 +1,1509 @@
+Script started on 2026-10-04 12:40:50+08:00 [COMMAND="stty cols 120 rows 40; export CARGO_BUILD_JOBS=4 CXX=clang++ CARGO_TARGET_DIR=/mnt/d/WorksArea/AOEM/cargo-target-aoem-ffi-fullmax-linux LLVM_CONFIG_PATH=/usr/bin/llvm-config-18 LIBCLANG_PATH=/usr/lib/llvm-18/lib; cargo build --locked -p aoem-ffi --release --features rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2 && bash scripts/build_linux_fullmax_bundle.sh 20261004-private-proof-1377cd1e private-proof-containment" <not executed on terminal>]
+[1m[92m   Compiling[0m librocksdb-sys v0.17.3+10.4.2
+[1m[33mwarning[0m[1m: value assigned to `reduce_dispatch_gpu_us` is never read[0m
+     [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      [1m[94m|[0m
+[1m[94m17002[0m [1m[94m|[0m [1m[94m...[0m = 0;
+      [1m[94m|[0m       [1m[33m^[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: associated function `dispatch_batch_oversized_item` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     [1m[94m|[0m
+[1m[94m1122[0m [1m[94m...[0mulkanRuntime {
+     [1m[94m...------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m...[0m
+[1m[94m4040[0m [1m[94m|[0m     f[1m[94m...[0mersized_item(
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: field `ntt` is never read[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     [1m[94m|[0m
+[1m[94m5346[0m [1m[94m|[0m struc[1m[94m...[0mtionPackJson {
+     [1m[94m|[0m      [1m[94m...------------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m5350[0m [1m[94m|[0m     ntt: PrimitiveTransitionPackEntry[1m[94m...[0m
+     [1m[94m|[0m     [1m[33m^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[33mwarning[0m[1m: associated function `parse` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     [1m[94m|[0m
+[1m[94m5583[0m [1m[94m...[0mtionProvider {
+     [1m[94m...------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m5584[0m [1m[94m|[0m     fn parse(raw: &str) -> Option<Self> {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `parse_primitive_ntt_transition_provider_len_map` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     [1m[94m|[0m
+[1m[94m5604[0m [1m[94m|[0m f[1m[94m...[0mider_len_map(
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     [1m[94m|[0m
+[1m[94m5627[0m [1m[94m|[0m f[1m[94m...[0mder_override() [1m[94m...[0m
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_len_map_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     [1m[94m|[0m
+[1m[94m5633[0m [1m[94m|[0m f[1m[94m...[0mmap_override(
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     [1m[94m|[0m
+[1m[94m 365[0m [1m[94m...[0mlkanExecutor {
+     [1m[94m...------------[0m [1m[94mmethods in this implementation[0m
+[1m[94m...[0m
+[1m[94m4060[0m [1m[94m|[0m     f[1m[94m...[0m_worker_once(&mut self[1m[94m...[0m
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m4084[0m [1m[94m|[0m     f[1m[94m...[0m_worker_once(&m[1m[94m...[0m
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `aoem-gpu-device` (lib) generated 8 warnings
+[1m[92m   Compiling[0m risc0-circuit-recursion-sys v3.0.0
+[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    [1m[94m|[0m
+[1m[94m430[0m [1m[94m|[0m const AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    [1m[94m|[0m
+[1m[94m441[0m [1m[94m|[0m const AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: method `other` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     [1m[94m|[0m
+[1m[94m2796[0m [1m[94m|[0m impl MsmRadixEmbeddedRoute {
+     [1m[94m|[0m [1m[94m--------------------------[0m [1m[94mmethod in this implementation[0m
+[1m[94m...[0m
+[1m[94m2804[0m [1m[94m|[0m     fn other(self) -> Self {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[33mwarning[0m[1m: struct `MsmRadixRoutePerf` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     [1m[94m|[0m
+[1m[94m2814[0m [1m[94m|[0m struct MsmRadixRoutePerf {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: struct `MsmRadixRouteKey` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     [1m[94m|[0m
+[1m[94m2822[0m [1m[94m|[0m struct MsmRadixRouteKey {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_cache` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     [1m[94m|[0m
+[1m[94m2830[0m [1m[94m|[0m fn msm_radix_route_cache() -> &'static Mutex<HashMap<MsmRadixRouteKey, [MsmRadixRoutePerf; 2]>> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_env_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     [1m[94m|[0m
+[1m[94m2889[0m [1m[94m|[0m fn msm_radix_route_env_override() -> Option<MsmRadixEmbeddedRoute> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_enabled` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     [1m[94m|[0m
+[1m[94m2900[0m [1m[94m|[0m fn msm_radix_auto_route_enabled() -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_min_samples` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     [1m[94m|[0m
+[1m[94m2911[0m [1m[94m|[0m fn msm_radix_auto_route_min_samples() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_fail_limit` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     [1m[94m|[0m
+[1m[94m2920[0m [1m[94m|[0m fn msm_radix_auto_route_fail_limit() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     [1m[94m|[0m
+[1m[94m2928[0m [1m[94m|[0m fn msm_radix_len_bucket(len: usize) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_key` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     [1m[94m|[0m
+[1m[94m2940[0m [1m[94m|[0m fn msm_radix_route_key(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `route_idx` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     [1m[94m|[0m
+[1m[94m2964[0m [1m[94m|[0m fn route_idx(route: MsmRadixEmbeddedRoute) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `route_avg_ms` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2972:4
+     [1m[94m|[0m
+[1m[94m2972[0m [1m[94m|[0m fn route_avg_ms(perf: MsmRadixRoutePerf) -> f64 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_pick` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2981:4
+     [1m[94m|[0m
+[1m[94m2981[0m [1m[94m|[0m fn msm_radix_auto_route_pick(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_record` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3026:4
+     [1m[94m|[0m
+[1m[94m3026[0m [1m[94m|[0m fn msm_radix_auto_route_record(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: constant `MSM_SEALED_LEN_BUCKETS` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3954:7
+     [1m[94m|[0m
+[1m[94m3954[0m [1m[94m|[0m const MSM_SEALED_LEN_BUCKETS: [usize; 12] = [
+     [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_sealed_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3967:4
+     [1m[94m|[0m
+[1m[94m3967[0m [1m[94m|[0m fn msm_sealed_len_bucket(points: usize) -> Option<usize> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_gpu_quality_ok` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:4139:4
+     [1m[94m|[0m
+[1m[94m4139[0m [1m[94m|[0m fn msm_radix_route_gpu_quality_ok(run: &MsmRadixSortRun) -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `aoem-gpu-kernels` (lib) generated 19 warnings
+[1m[92m   Compiling[0m risc0-circuit-rv32im-sys v3.0.0
+[1m[92m   Compiling[0m risc0-circuit-keccak-sys v3.0.0
+[1m[96m    Building[0m [==================>    ] 1063/1254: risc0-circuit-recursion-sys(build), librocksdb-sys(build), risc0-ci…[1m[96m    Building[0m [===================>   ] 1137/1254: risc0-circuit-recursion-sys(build), librocksdb-sys(build), risc0-ci…[K[1m[92m   Compiling[0m risc0-circuit-rv32im v3.0.1
+[1m[96m    Building[0m [====================>  ] 1178/1254: risc0-circuit-recursion-sys(build), librocksdb-sys(build), risc0-ci…[1m[96m    Building[0m [====================>  ] 1179/1254: librocksdb-sys(build), risc0-circuit-keccak-sys(build), risc0-circu…[K[1m[92m   Compiling[0m risc0-circuit-recursion v3.0.1
+[1m[96m    Building[0m [====================>  ] 1180/1254: librocksdb-sys(build), risc0-circuit-keccak-sys(build), risc0-circu…[1m[96m    Building[0m [====================>  ] 1181/1254: risc0-circuit-recursion, librocksdb-sys(build), risc0-circuit-kecca…[K[1m[92m   Compiling[0m sp1-sdk v3.4.0
+[1m[96m    Building[0m [=====================> ] 1225/1254: risc0-circuit-recursion, sp1-sdk, librocksdb-sys(build), risc0-circ…[K[1m[92m   Compiling[0m zkvm-executor v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zkvm-executor)
+[1m[96m    Building[0m [=====================> ] 1226/1254: sp1-sdk, librocksdb-sys(build), zkvm-executor(build), risc0-circuit…l2-executor-methods-fibonacci: Starting build for riscv32im-risc0-zkvm-elf
+l2-executor-methods-fibonacci:    Compiling rustversion v1.0.23
+l2-executor-methods-fibonacci:    Compiling getrandom v0.3.4
+l2-executor-methods-fibonacci:    Compiling serde_core v1.0.228
+l2-executor-methods-fibonacci:    Compiling thiserror v2.0.21
+l2-executor-methods-fibonacci:    Compiling risc0-zkp v2.0.3
+l2-executor-methods-fibonacci:    Compiling syn v1.0.109
+l2-executor-methods-fibonacci:    Compiling risc0-circuit-recursion v3.0.1
+l2-executor-methods-fibonacci:    Compiling cobs v0.3.0
+l2-executor-methods-fibonacci:    Compiling num_enum v0.7.6
+l2-executor-methods-fibonacci:    Compiling risc0-zkvm-platform v2.2.3
+l2-executor-methods-fibonacci:    Compiling risc0-zkos-v1compat v2.2.3
+l2-executor-methods-fibonacci:    Compiling serde v1.0.228
+l2-executor-methods-fibonacci:    Compiling semver v1.0.27
+l2-executor-methods-fibonacci:    Compiling derivative v2.2.0
+l2-executor-methods-fibonacci:    Compiling postcard v1.1.3
+l2-executor-methods-fibonacci:    Compiling ark-crypto-primitives v0.5.0
+l2-executor-methods-fibonacci:    Compiling risc0-binfmt v2.0.3
+l2-executor-methods-fibonacci:    Compiling ark-groth16 v0.5.0
+l2-executor-methods-fibonacci:    Compiling risc0-circuit-keccak v3.0.1
+l2-executor-methods-fibonacci:    Compiling risc0-circuit-rv32im v3.0.1
+l2-executor-methods-fibonacci:    Compiling risc0-groth16 v2.0.3
+l2-executor-methods-fibonacci:    Compiling risc0-zkvm v2.3.2
+l2-executor-methods-fibonacci:    Compiling l2-executor-methods-fibonacci v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zkvm-executor/methods/fibonacci)
+l2-executor-methods-fibonacci:     Finished `release` profile [optimized] target(s) in 8.95s
+aggregator-guest: Starting build for riscv32im-risc0-zkvm-elf
+aggregator-guest:    Compiling rustversion v1.0.23
+aggregator-guest:    Compiling getrandom v0.3.4
+aggregator-guest:    Compiling serde_core v1.0.228
+aggregator-guest:    Compiling thiserror v2.0.21
+aggregator-guest:    Compiling risc0-zkp v2.0.3
+aggregator-guest:    Compiling risc0-circuit-recursion v3.0.1
+aggregator-guest:    Compiling cobs v0.3.0
+aggregator-guest:    Compiling num_enum v0.7.6
+aggregator-guest:    Compiling risc0-zkvm-platform v2.2.3
+aggregator-guest:    Compiling risc0-zkos-v1compat v2.2.3
+aggregator-guest:    Compiling serde v1.0.228
+aggregator-guest:    Compiling semver v1.0.27
+aggregator-guest:    Compiling postcard v1.1.3
+aggregator-guest:    Compiling risc0-binfmt v2.0.3
+aggregator-guest:    Compiling risc0-groth16 v2.0.3
+aggregator-guest:    Compiling risc0-circuit-keccak v3.0.1
+aggregator-guest:    Compiling risc0-circuit-rv32im v3.0.1
+aggregator-guest:    Compiling risc0-zkvm v2.3.2
+aggregator-guest:    Compiling aggregator-guest v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zkvm-executor/methods/aggregator)
+aggregator-guest: warning: unused variable: `i`
+aggregator-guest:   --> src/main.rs:43:9
+aggregator-guest:    |
+aggregator-guest: 43 |     for i in 0..proof_count {
+aggregator-guest:    |         ^ help: if this is intentional, prefix it with an underscore: `_i`
+aggregator-guest:    |
+aggregator-guest:    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+aggregator-guest: 
+aggregator-guest: warning: `aggregator-guest` (bin "aggregator-guest") generated 1 warning (run `cargo fix --bin "aggregator-guest" -p aggregator-guest` to apply 1 suggestion)
+aggregator-guest:     Finished `release` profile [optimized] target(s) in 10.35s
+[K[1m[92m   Compiling[0m aoem-adapter-crypto v0.1.0 (/mnt/d/WorksArea/AOEM/crates/adapter/aoem-adapter-crypto)
+[1m[96m    Building[0m [=====================> ] 1235/1254: sp1-sdk, librocksdb-sys(build), risc0-circuit-keccak-sys(build), ao…[1m[96m    Building[0m [=====================> ] 1237/1254: sp1-sdk, librocksdb-sys(build), risc0-circuit-keccak-sys(build)     [1m[96m    Building[0m [=====================> ] 1238/1254: sp1-sdk, librocksdb-sys(build), risc0-circuit-keccak-sys            [K[1m[92m   Compiling[0m risc0-circuit-keccak v3.0.1
+[1m[96m    Building[0m [=====================> ] 1239/1254: sp1-sdk, librocksdb-sys(build), risc0-circuit-keccak                [K[1m[92m   Compiling[0m risc0-zkvm v2.3.2
+[1m[96m    Building[0m [=====================> ] 1239/1254: sp1-sdk, librocksdb-sys(build), risc0-circuit-keccak, risc0-zkvm    [1m[96m    Building[0m [=====================> ] 1240/1254: librocksdb-sys(build), risc0-circuit-keccak, risc0-zkvm             [1m[96m    Building[0m [=====================> ] 1241/1254: librocksdb-sys(build), risc0-zkvm                                   [1m[96m    Building[0m [=====================> ] 1241/1254: librocksdb-sys(build), risc0-zkvm, zkvm-executor                    [1m[96m    Building[0m [=====================> ] 1242/1254: librocksdb-sys(build), zkvm-executor                                [1m[96m    Building[0m [=====================> ] 1243/1254: librocksdb-sys(build)                                               [1m[96m    Building[0m [=====================> ] 1244/1254: librocksdb-sys                                                      [K[1m[92m   Compiling[0m rocksdb v0.24.0
+[1m[96m    Building[0m [=====================> ] 1244/1254: librocksdb-sys, rocksdb                                             [1m[96m    Building[0m [=====================> ] 1245/1254: rocksdb                                                             [K[1m[92m   Compiling[0m storage-backend v0.1.0 (/mnt/d/WorksArea/AOEM/crates/storage-backend)
+[1m[96m    Building[0m [=====================> ] 1245/1254: storage-backend, rocksdb                                            [K[1m[92m   Compiling[0m aoem-state-kv v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-state-kv)
+[1m[96m    Building[0m [=====================> ] 1245/1254: storage-backend, rocksdb, aoem-state-kv                             [1m[96m    Building[0m [=====================> ] 1246/1254: storage-backend, aoem-state-kv                                      [K[1m[92m   Compiling[0m aoem-cc v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-cc)
+[1m[96m    Building[0m [=====================> ] 1246/1254: storage-backend, aoem-state-kv, aoem-cc                             [K[1m[92m   Compiling[0m zk-privacy v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zk-privacy)
+[1m[96m    Building[0m [=====================> ] 1246/1254: zk-privacy, storage-backend, aoem-state-kv, aoem-cc                 [K[1m[92m   Compiling[0m aoem-runtime-wasmtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/runtime/aoem-runtime-wasmtime)
+[1m[96m    Building[0m [=====================> ] 1247/1254: zk-privacy, aoem-runtime-wasmtime, aoem-state-kv, aoem-cc           [K[1m[92m   Compiling[0m aoem-backend-cpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-cpu)
+[1m[96m    Building[0m [=====================> ] 1248/1254: zk-privacy, aoem-runtime-wasmtime, aoem-backend-cpu, aoem-cc        [1m[96m    Building[0m [=====================> ] 1249/1254: zk-privacy, aoem-runtime-wasmtime, aoem-cc                          [K[1m[92m   Compiling[0m aoem-engine v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-engine)
+[1m[96m    Building[0m [=====================> ] 1250/1254: zk-privacy, aoem-runtime-wasmtime, aoem-engine                      [1m[96m    Building[0m [=====================> ] 1251/1254: zk-privacy, aoem-engine                                             [1m[96m    Building[0m [=====================> ] 1252/1254: zk-privacy                                                          [K[1m[92m   Compiling[0m aoem-ffi v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ffi/aoem-ffi)
+[1m[96m    Building[0m [=====================> ] 1253/1254: aoem-ffi                                                            [K[1m[92m    Finished[0m `release` profile [optimized] target(s) in 4m 27s
+[1m[33mwarning[0m[1m: value assigned to `reduce_dispatch_gpu_us` is never read[0m
+     [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      [1m[94m|[0m
+[1m[94m17002[0m [1m[94m|[0m [1m[94m...[0m = 0;
+      [1m[94m|[0m       [1m[33m^[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: associated function `dispatch_batch_oversized_item` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     [1m[94m|[0m
+[1m[94m1122[0m [1m[94m...[0mulkanRuntime {
+     [1m[94m...------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m...[0m
+[1m[94m4040[0m [1m[94m|[0m     f[1m[94m...[0mersized_item(
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: field `ntt` is never read[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     [1m[94m|[0m
+[1m[94m5346[0m [1m[94m|[0m struc[1m[94m...[0mtionPackJson {
+     [1m[94m|[0m      [1m[94m...------------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m5350[0m [1m[94m|[0m     ntt: PrimitiveTransitionPackEntry[1m[94m...[0m
+     [1m[94m|[0m     [1m[33m^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[33mwarning[0m[1m: associated function `parse` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     [1m[94m|[0m
+[1m[94m5583[0m [1m[94m...[0mtionProvider {
+     [1m[94m...------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m5584[0m [1m[94m|[0m     fn parse(raw: &str) -> Option<Self> {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `parse_primitive_ntt_transition_provider_len_map` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     [1m[94m|[0m
+[1m[94m5604[0m [1m[94m|[0m f[1m[94m...[0mider_len_map(
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     [1m[94m|[0m
+[1m[94m5627[0m [1m[94m|[0m f[1m[94m...[0mder_override() [1m[94m...[0m
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_len_map_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     [1m[94m|[0m
+[1m[94m5633[0m [1m[94m|[0m f[1m[94m...[0mmap_override(
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     [1m[94m|[0m
+[1m[94m 365[0m [1m[94m...[0mlkanExecutor {
+     [1m[94m...------------[0m [1m[94mmethods in this implementation[0m
+[1m[94m...[0m
+[1m[94m4060[0m [1m[94m|[0m     f[1m[94m...[0m_worker_once(&mut self[1m[94m...[0m
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m4084[0m [1m[94m|[0m     f[1m[94m...[0m_worker_once(&m[1m[94m...[0m
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `aoem-gpu-device` (lib) generated 8 warnings
+[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    [1m[94m|[0m
+[1m[94m430[0m [1m[94m|[0m const AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    [1m[94m|[0m
+[1m[94m441[0m [1m[94m|[0m const AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: method `other` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     [1m[94m|[0m
+[1m[94m2796[0m [1m[94m|[0m impl MsmRadixEmbeddedRoute {
+     [1m[94m|[0m [1m[94m--------------------------[0m [1m[94mmethod in this implementation[0m
+[1m[94m...[0m
+[1m[94m2804[0m [1m[94m|[0m     fn other(self) -> Self {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[33mwarning[0m[1m: struct `MsmRadixRoutePerf` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     [1m[94m|[0m
+[1m[94m2814[0m [1m[94m|[0m struct MsmRadixRoutePerf {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: struct `MsmRadixRouteKey` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     [1m[94m|[0m
+[1m[94m2822[0m [1m[94m|[0m struct MsmRadixRouteKey {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_cache` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     [1m[94m|[0m
+[1m[94m2830[0m [1m[94m|[0m fn msm_radix_route_cache() -> &'static Mutex<HashMap<MsmRadixRouteKey, [MsmRadixRoutePerf; 2]>> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_env_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     [1m[94m|[0m
+[1m[94m2889[0m [1m[94m|[0m fn msm_radix_route_env_override() -> Option<MsmRadixEmbeddedRoute> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_enabled` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     [1m[94m|[0m
+[1m[94m2900[0m [1m[94m|[0m fn msm_radix_auto_route_enabled() -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_min_samples` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     [1m[94m|[0m
+[1m[94m2911[0m [1m[94m|[0m fn msm_radix_auto_route_min_samples() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_fail_limit` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     [1m[94m|[0m
+[1m[94m2920[0m [1m[94m|[0m fn msm_radix_auto_route_fail_limit() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     [1m[94m|[0m
+[1m[94m2928[0m [1m[94m|[0m fn msm_radix_len_bucket(len: usize) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_key` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     [1m[94m|[0m
+[1m[94m2940[0m [1m[94m|[0m fn msm_radix_route_key(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `route_idx` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     [1m[94m|[0m
+[1m[94m2964[0m [1m[94m|[0m fn route_idx(route: MsmRadixEmbeddedRoute) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `route_avg_ms` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2972:4
+     [1m[94m|[0m
+[1m[94m2972[0m [1m[94m|[0m fn route_avg_ms(perf: MsmRadixRoutePerf) -> f64 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_pick` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2981:4
+     [1m[94m|[0m
+[1m[94m2981[0m [1m[94m|[0m fn msm_radix_auto_route_pick(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_record` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3026:4
+     [1m[94m|[0m
+[1m[94m3026[0m [1m[94m|[0m fn msm_radix_auto_route_record(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: constant `MSM_SEALED_LEN_BUCKETS` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3954:7
+     [1m[94m|[0m
+[1m[94m3954[0m [1m[94m|[0m const MSM_SEALED_LEN_BUCKETS: [usize; 12] = [
+     [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_sealed_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3967:4
+     [1m[94m|[0m
+[1m[94m3967[0m [1m[94m|[0m fn msm_sealed_len_bucket(points: usize) -> Option<usize> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_gpu_quality_ok` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:4139:4
+     [1m[94m|[0m
+[1m[94m4139[0m [1m[94m|[0m fn msm_radix_route_gpu_quality_ok(run: &MsmRadixSortRun) -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `aoem-gpu-kernels` (lib) generated 19 warnings
+[1m[92m   Compiling[0m zkvm-executor v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zkvm-executor)
+[1m[96m    Building[0m [=====================> ] 1239/1254: zkvm-executor(build)                                                l2-executor-methods-fibonacci: Starting build for riscv32im-risc0-zkvm-elf
+l2-executor-methods-fibonacci:    Compiling rustversion v1.0.23
+l2-executor-methods-fibonacci:    Compiling thiserror v2.0.21
+l2-executor-methods-fibonacci:    Compiling cobs v0.3.0
+l2-executor-methods-fibonacci:    Compiling postcard v1.1.3
+l2-executor-methods-fibonacci:    Compiling num_enum v0.7.6
+l2-executor-methods-fibonacci:    Compiling risc0-zkvm-platform v2.2.3
+l2-executor-methods-fibonacci:    Compiling risc0-zkp v2.0.3
+l2-executor-methods-fibonacci:    Compiling risc0-zkos-v1compat v2.2.3
+l2-executor-methods-fibonacci:    Compiling risc0-binfmt v2.0.3
+l2-executor-methods-fibonacci:    Compiling risc0-circuit-recursion v3.0.1
+l2-executor-methods-fibonacci:    Compiling risc0-circuit-keccak v3.0.1
+l2-executor-methods-fibonacci:    Compiling risc0-circuit-rv32im v3.0.1
+l2-executor-methods-fibonacci:    Compiling risc0-groth16 v2.0.3
+l2-executor-methods-fibonacci:    Compiling risc0-zkvm v2.3.2
+l2-executor-methods-fibonacci:    Compiling l2-executor-methods-fibonacci v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zkvm-executor/methods/fibonacci)
+l2-executor-methods-fibonacci:     Finished `release` profile [optimized] target(s) in 7.13s
+aggregator-guest: Starting build for riscv32im-risc0-zkvm-elf
+aggregator-guest:    Compiling rustversion v1.0.23
+aggregator-guest:    Compiling thiserror v2.0.21
+aggregator-guest:    Compiling cobs v0.3.0
+aggregator-guest:    Compiling postcard v1.1.3
+aggregator-guest:    Compiling num_enum v0.7.6
+aggregator-guest:    Compiling risc0-zkvm-platform v2.2.3
+aggregator-guest:    Compiling risc0-zkp v2.0.3
+aggregator-guest:    Compiling risc0-zkos-v1compat v2.2.3
+aggregator-guest:    Compiling risc0-binfmt v2.0.3
+aggregator-guest:    Compiling risc0-circuit-recursion v3.0.1
+aggregator-guest:    Compiling risc0-circuit-rv32im v3.0.1
+aggregator-guest:    Compiling risc0-circuit-keccak v3.0.1
+aggregator-guest:    Compiling risc0-groth16 v2.0.3
+aggregator-guest:    Compiling risc0-zkvm v2.3.2
+aggregator-guest:    Compiling aggregator-guest v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zkvm-executor/methods/aggregator)
+aggregator-guest: warning: unused variable: `i`
+aggregator-guest:   --> src/main.rs:43:9
+aggregator-guest:    |
+aggregator-guest: 43 |     for i in 0..proof_count {
+aggregator-guest:    |         ^ help: if this is intentional, prefix it with an underscore: `_i`
+aggregator-guest:    |
+aggregator-guest:    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+aggregator-guest: 
+aggregator-guest: warning: `aggregator-guest` (bin "aggregator-guest") generated 1 warning (run `cargo fix --bin "aggregator-guest" -p aggregator-guest` to apply 1 suggestion)
+aggregator-guest:     Finished `release` profile [optimized] target(s) in 8.03s
+[1m[96m    Building[0m [=====================> ] 1250/1254: zkvm-executor                                                       [K[1m[92m   Compiling[0m aoem-ffi v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ffi/aoem-ffi)
+[1m[96m    Building[0m [=====================> ] 1253/1254: aoem-ffi                                                            [K[1m[92m    Finished[0m `release` profile [optimized] target(s) in 1m 33s
+[1m[92m   Compiling[0m zeroize v1.8.2
+[1m[96m    Building[0m [>                         ] 17/319: zeroize                                                             [K[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[96m    Building[0m [>                         ] 20/319: generic-array                                                       [K[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[96m    Building[0m [=>                        ] 25/319: block-buffer                                                        [K[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[96m    Building[0m [=>                        ] 26/319: crypto-common                                                       [K[1m[92m   Compiling[0m digest v0.10.7
+[1m[96m    Building[0m [=>                        ] 27/319: digest                                                              [K[1m[92m   Compiling[0m curve25519-dalek v4.1.3
+[1m[96m    Building[0m [====>                     ] 63/319: curve25519-dalek                                                    [K[1m[92m   Compiling[0m crypto-bigint v0.5.5
+[1m[96m    Building[0m [====>                     ] 72/319: crypto-bigint                                                       [K[1m[92m   Compiling[0m thiserror v2.0.17
+[1m[96m    Building[0m [=====>                    ] 82/319: thiserror                                                           [K[1m[92m   Compiling[0m sha3 v0.10.8
+[1m[96m    Building[0m [======>                   ] 86/319: sha3                                                                [K[1m[92m   Compiling[0m sha2 v0.10.9
+[1m[96m    Building[0m [======>                   ] 96/319: sha2                                                                [K[1m[92m   Compiling[0m ark-serialize v0.4.2
+[1m[96m    Building[0m [==========>              ] 150/319: ark-serialize                                                       [K[1m[92m   Compiling[0m monero-ed25519 v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [==========>              ] 151/319: monero-ed25519                                                      [1m[96m    Building[0m [===========>             ] 160/319: zeroize                                                             [1m[96m    Building[0m [============>            ] 169/319: curve25519-dalek                                                    [K[1m[92m   Compiling[0m ark-ff v0.4.2
+[1m[96m    Building[0m [============>            ] 172/319: ark-ff                                                              [1m[96m    Building[0m [=============>           ] 184/319: monero-ed25519                                                      [K[1m[92m   Compiling[0m der v0.7.10
+[1m[96m    Building[0m [=============>           ] 187/319: der                                                                 [K[1m[92m   Compiling[0m monero-primitives v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [==============>          ] 192/319: monero-primitives                                                   [K[1m[92m   Compiling[0m monero-bulletproofs-generators v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [==============>          ] 202/319: monero-bulletproofs-generators                                      [K[1m[92m   Compiling[0m librocksdb-sys v0.17.3+10.4.2
+[1m[96m    Building[0m [==============>          ] 203/319: librocksdb-sys(build)                                               [K[1m[92m   Compiling[0m spki v0.7.3
+[1m[96m    Building[0m [==============>          ] 204/319: spki                                                                [K[1m[92m   Compiling[0m cobs v0.3.0
+[1m[96m    Building[0m [===============>         ] 208/319: cobs                                                                [K[1m[92m   Compiling[0m postcard v1.1.3
+[1m[96m    Building[0m [===============>         ] 214/319: postcard                                                            [K[1m[92m   Compiling[0m ark-poly v0.4.2
+[1m[96m    Building[0m [===============>         ] 216/319: ark-poly                                                            [K[1m[92m   Compiling[0m pkcs8 v0.10.2
+[1m[96m    Building[0m [================>        ] 217/319: pkcs8                                                               [1m[96m    Building[0m [================>        ] 218/319: librocksdb-sys                                                      [K[1m[92m   Compiling[0m monero-bulletproofs v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [================>        ] 219/319: monero-bulletproofs(build.rs)                                       [K[1m[92m   Compiling[0m bytemuck_derive v1.8.1
+[1m[96m    Building[0m [================>        ] 223/319: bytemuck_derive                                                     [K[1m[92m   Compiling[0m sec1 v0.7.3
+[1m[96m    Building[0m [================>        ] 227/319: sec1                                                                [K[1m[92m   Compiling[0m bytemuck v1.23.1
+[1m[96m    Building[0m [=================>       ] 230/319: bytemuck                                                            [1m[96m    Building[0m [=================>       ] 234/319: monero-bulletproofs(build)                                          [K[1m[92m   Compiling[0m rocksdb v0.24.0
+[1m[96m    Building[0m [=================>       ] 235/319: rocksdb                                                             [K[1m[92m   Compiling[0m ark-ec v0.4.2
+[1m[96m    Building[0m [=================>       ] 236/319: ark-ec                                                              [K[1m[92m   Compiling[0m aoem-exec-runtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-exec-runtime)
+[1m[96m    Building[0m [=================>       ] 237/319: aoem-exec-runtime                                                   [1m[96m    Building[0m [=================>       ] 239/319: monero-bulletproofs-generators                                      [K[1m[92m   Compiling[0m signature v2.2.0
+[1m[96m    Building[0m [=================>       ] 241/319: signature                                                           [K[1m[92m   Compiling[0m aoem-gpu-device v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-device)
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: value assigned to `reduce_dispatch_gpu_us` is never read[0m
+     [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      [1m[94m|[0m
+[1m[94m17002[0m [1m[94m|[0m     let mut reduce_dispatch_gpu_us: u64 = 0;
+      [1m[94m|[0m                                           [1m[33m^[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: associated function `dispatch_batch_oversized_item` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     [1m[94m|[0m
+[1m[94m1122[0m [1m[94m|[0m impl AshVulkanRuntime {
+     [1m[94m|[0m [1m[94m---------------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m...[0m
+[1m[94m4040[0m [1m[94m|[0m     fn dispatch_batch_oversized_item(
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: field `ntt` is never read[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     [1m[94m|[0m
+[1m[94m5346[0m [1m[94m|[0m struct PrimitiveTransitionPackJson {
+     [1m[94m|[0m        [1m[94m---------------------------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m5350[0m [1m[94m|[0m     ntt: PrimitiveTransitionPackEntryJson,
+     [1m[94m|[0m     [1m[33m^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: associated function `parse` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     [1m[94m|[0m
+[1m[94m5583[0m [1m[94m|[0m impl PrimitiveNttTransitionProvider {
+     [1m[94m|[0m [1m[94m-----------------------------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m5584[0m [1m[94m|[0m     fn parse(raw: &str) -> Option<Self> {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `parse_primitive_ntt_transition_provider_len_map` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     [1m[94m|[0m
+[1m[94m5604[0m [1m[94m|[0m fn parse_primitive_ntt_transition_provider_len_map(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     [1m[94m|[0m
+[1m[94m5627[0m [1m[94m|[0m fn primitive_ntt_transition_provider_override() -> Option<PrimitiveNttTransitionProvider> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_len_map_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     [1m[94m|[0m
+[1m[94m5633[0m [1m[94m|[0m fn primitive_ntt_transition_provider_len_map_override(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     [1m[94m|[0m
+[1m[94m 365[0m [1m[94m|[0m impl PersistentVulkanExecutor {
+     [1m[94m|[0m [1m[94m-----------------------------[0m [1m[94mmethods in this implementation[0m
+[1m[94m...[0m
+[1m[94m4060[0m [1m[94m|[0m     fn pump_hash_worker_once(&mut self) -> Result<(), String> {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m4084[0m [1m[94m|[0m     fn pump_ntt_to_done_worker_once(&mut self) -> Result<(), String> {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [==================>      ] 246/319: aoem-gpu-device                                                     [K[1m[33mwarning[0m: `aoem-gpu-device` (lib) generated 8 warnings
+[1m[96m    Building[0m [==================>      ] 248/319: monero-bulletproofs                                                 [K[1m[92m   Compiling[0m ark-relations v0.4.0
+[1m[96m    Building[0m [==================>      ] 249/319: ark-relations                                                       [K[1m[92m   Compiling[0m storage-backend v0.1.0 (/mnt/d/WorksArea/AOEM/crates/storage-backend)
+[1m[96m    Building[0m [==================>      ] 250/319: storage-backend                                                     [K[1m[92m   Compiling[0m elliptic-curve v0.13.8
+[1m[96m    Building[0m [==================>      ] 252/319: elliptic-curve                                                      [K[1m[92m   Compiling[0m monero-mlsag v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [==================>      ] 253/319: monero-mlsag                                                        [K[1m[92m   Compiling[0m monero-borromean v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [==================>      ] 254/319: monero-borromean                                                    [K[1m[92m   Compiling[0m monero-clsag v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [==================>      ] 255/319: monero-clsag                                                        [K[1m[92m   Compiling[0m merlin v3.0.0
+[1m[96m    Building[0m [===================>     ] 256/319: merlin                                                              [K[1m[92m   Compiling[0m hmac v0.12.1
+[1m[96m    Building[0m [===================>     ] 259/319: hmac                                                                [K[1m[92m   Compiling[0m monero-oxide v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [===================>     ] 262/319: monero-oxide                                                        [K[1m[92m   Compiling[0m aoem-state-kv v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-state-kv)
+[1m[96m    Building[0m [===================>     ] 263/319: aoem-state-kv                                                       [K[1m[92m   Compiling[0m rfc6979 v0.4.0
+[1m[96m    Building[0m [===================>     ] 264/319: rfc6979                                                             [K[1m[92m   Compiling[0m ark-snark v0.4.0
+[1m[96m    Building[0m [===================>     ] 266/319: ark-snark                                                           [K[1m[92m   Compiling[0m aoem-gpu-kernels v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-kernels)
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    [1m[94m|[0m
+[1m[94m430[0m [1m[94m|[0m const AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    [1m[94m|[0m
+[1m[94m441[0m [1m[94m|[0m const AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: method `other` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     [1m[94m|[0m
+[1m[94m2796[0m [1m[94m|[0m impl MsmRadixEmbeddedRoute {
+     [1m[94m|[0m [1m[94m--------------------------[0m [1m[94mmethod in this implementation[0m
+[1m[94m...[0m
+[1m[94m2804[0m [1m[94m|[0m     fn other(self) -> Self {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: struct `MsmRadixRoutePerf` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     [1m[94m|[0m
+[1m[94m2814[0m [1m[94m|[0m struct MsmRadixRoutePerf {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: struct `MsmRadixRouteKey` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     [1m[94m|[0m
+[1m[94m2822[0m [1m[94m|[0m struct MsmRadixRouteKey {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_cache` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     [1m[94m|[0m
+[1m[94m2830[0m [1m[94m|[0m fn msm_radix_route_cache() -> &'static Mutex<HashMap<MsmRadixRouteKey, [MsmRadixRoutePerf; 2]>> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_env_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     [1m[94m|[0m
+[1m[94m2889[0m [1m[94m|[0m fn msm_radix_route_env_override() -> Option<MsmRadixEmbeddedRoute> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_enabled` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     [1m[94m|[0m
+[1m[94m2900[0m [1m[94m|[0m fn msm_radix_auto_route_enabled() -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_min_samples` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     [1m[94m|[0m
+[1m[94m2911[0m [1m[94m|[0m fn msm_radix_auto_route_min_samples() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_fail_limit` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     [1m[94m|[0m
+[1m[94m2920[0m [1m[94m|[0m fn msm_radix_auto_route_fail_limit() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     [1m[94m|[0m
+[1m[94m2928[0m [1m[94m|[0m fn msm_radix_len_bucket(len: usize) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_key` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     [1m[94m|[0m
+[1m[94m2940[0m [1m[94m|[0m fn msm_radix_route_key(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `route_idx` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     [1m[94m|[0m
+[1m[94m2964[0m [1m[94m|[0m fn route_idx(route: MsmRadixEmbeddedRoute) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `route_avg_ms` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2972:4
+     [1m[94m|[0m
+[1m[94m2972[0m [1m[94m|[0m fn route_avg_ms(perf: MsmRadixRoutePerf) -> f64 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_pick` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2981:4
+     [1m[94m|[0m
+[1m[94m2981[0m [1m[94m|[0m fn msm_radix_auto_route_pick(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_record` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3026:4
+     [1m[94m|[0m
+[1m[94m3026[0m [1m[94m|[0m fn msm_radix_auto_route_record(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `MSM_SEALED_LEN_BUCKETS` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3954:7
+     [1m[94m|[0m
+[1m[94m3954[0m [1m[94m|[0m const MSM_SEALED_LEN_BUCKETS: [usize; 12] = [
+     [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_sealed_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3967:4
+     [1m[94m|[0m
+[1m[94m3967[0m [1m[94m|[0m fn msm_sealed_len_bucket(points: usize) -> Option<usize> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_gpu_quality_ok` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:4139:4
+     [1m[94m|[0m
+[1m[94m4139[0m [1m[94m|[0m fn msm_radix_route_gpu_quality_ok(run: &MsmRadixSortRun) -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 267/319: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m: `aoem-gpu-kernels` (lib) generated 19 warnings
+[1m[92m   Compiling[0m monero-base58 v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [====================>    ] 268/319: monero-base58                                                       [K[1m[92m   Compiling[0m blake2 v0.10.6
+[1m[96m    Building[0m [====================>    ] 270/319: blake2                                                              [K[1m[92m   Compiling[0m monero-interface v0.2.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [====================>    ] 272/319: monero-interface                                                    [K[1m[92m   Compiling[0m ark-crypto-primitives v0.4.0
+[1m[96m    Building[0m [====================>    ] 273/319: ark-crypto-primitives                                               [K[1m[92m   Compiling[0m monero-address v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [====================>    ] 275/319: monero-address                                                      [K[1m[92m   Compiling[0m ecdsa v0.16.9
+[1m[96m    Building[0m [====================>    ] 277/319: ecdsa                                                               [K[1m[92m   Compiling[0m monero-wallet v0.2.0 (/mnt/d/WorksArea/AOEM/crates/optional/zk-privacy/vendor/monero-wallet)
+[1m[96m    Building[0m [=====================>   ] 291/319: monero-wallet                                                       [K[1m[92m   Compiling[0m bulletproofs v5.0.0
+[1m[96m    Building[0m [=====================>   ] 292/319: bulletproofs                                                        [K[1m[92m   Compiling[0m ark-groth16 v0.4.0
+[1m[96m    Building[0m [=====================>   ] 293/319: ark-groth16                                                         [K[1m[92m   Compiling[0m aoem-cc v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-cc)
+[1m[96m    Building[0m [======================>  ] 294/319: aoem-cc                                                             [K[1m[92m   Compiling[0m ed25519 v2.2.3
+[1m[96m    Building[0m [======================>  ] 295/319: ed25519                                                             [K[1m[92m   Compiling[0m ark-bls12-381 v0.4.0
+[1m[96m    Building[0m [======================>  ] 296/319: ark-bls12-381                                                       [K[1m[92m   Compiling[0m ark-bn254 v0.4.0
+[1m[96m    Building[0m [======================>  ] 297/319: ark-bn254                                                           [K[1m[92m   Compiling[0m zk-privacy v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zk-privacy)
+[1m[96m    Building[0m [======================>  ] 301/319: zk-privacy                                                          [K[1m[92m   Compiling[0m ed25519-dalek v2.2.0
+[1m[96m    Building[0m [======================>  ] 303/319: ed25519-dalek                                                       [K[1m[92m   Compiling[0m aoem-backend-cpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-cpu)
+[1m[96m    Building[0m [======================>  ] 304/319: aoem-backend-cpu                                                    [K[1m[92m   Compiling[0m aoem-backend-gpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-backend-gpu)
+[1m[96m    Building[0m [=======================> ] 307/319: aoem-backend-gpu                                                    [K[1m[92m   Compiling[0m k256 v0.13.4
+[1m[96m    Building[0m [=======================> ] 308/319: k256                                                                [K[1m[92m   Compiling[0m primeorder v0.13.6
+[1m[96m    Building[0m [=======================> ] 309/319: primeorder                                                          [K[1m[92m   Compiling[0m aoem-engine v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-engine)
+[1m[96m    Building[0m [=======================> ] 313/319: aoem-engine                                                         [K[1m[92m   Compiling[0m aoem-apfl-model-runtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ai/aoem-apfl-model-runtime)
+[1m[96m    Building[0m [=======================> ] 314/319: aoem-apfl-model-runtime                                             [K[1m[92m   Compiling[0m p256 v0.13.2
+[1m[96m    Building[0m [=======================> ] 315/319: p256                                                                [K[1m[92m   Compiling[0m aoem-adapter-crypto v0.1.0 (/mnt/d/WorksArea/AOEM/crates/adapter/aoem-adapter-crypto)
+[1m[96m    Building[0m [=======================> ] 316/319: aoem-adapter-crypto                                                 [K[1m[92m   Compiling[0m aoem-ffi v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ffi/aoem-ffi)
+[1m[96m    Building[0m [=======================> ] 318/319: aoem-ffi                                                            [K[1m[92m    Finished[0m `release` profile [optimized] target(s) in 11m 28s
+[1m[92m   Compiling[0m indexmap v2.13.0
+[1m[96m    Building[0m [====>                    ] 108/475: indexmap                                                            [K[1m[92m   Compiling[0m gimli v0.32.3
+[1m[96m    Building[0m [==========>              ] 210/475: gimli                                                               [K[1m[92m   Compiling[0m crc32fast v1.5.0
+[1m[96m    Building[0m [==========>              ] 222/475: crc32fast(build)                                                    [K[1m[92m   Compiling[0m serde_core v1.0.228
+[1m[96m    Building[0m [==========>              ] 226/475: serde_core                                                          [K[1m[92m   Compiling[0m object v0.37.3
+[1m[96m    Building[0m [===========>             ] 243/475: object(build)                                                       [1m[96m    Building[0m [============>            ] 256/475: crc32fast                                                           [K[1m[92m   Compiling[0m cranelift-codegen v0.127.1
+[1m[96m    Building[0m [=============>           ] 270/475: cranelift-codegen                                                   [K[1m[92m   Compiling[0m serde_json v1.0.149
+[1m[96m    Building[0m [=============>           ] 273/475: serde_json(build)                                                   [1m[96m    Building[0m [=============>           ] 279/475: object                                                              [K[1m[92m   Compiling[0m aoem-exec-runtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-exec-runtime)
+[1m[96m    Building[0m [==============>          ] 287/475: aoem-exec-runtime                                                   [K[1m[92m   Compiling[0m aoem-gpu-device v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-device)
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: value assigned to `reduce_dispatch_gpu_us` is never read[0m
+     [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      [1m[94m|[0m
+[1m[94m17002[0m [1m[94m|[0m     let mut reduce_dispatch_gpu_us: u64 = 0;
+      [1m[94m|[0m                                           [1m[33m^[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: associated function `dispatch_batch_oversized_item` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     [1m[94m|[0m
+[1m[94m1122[0m [1m[94m|[0m impl AshVulkanRuntime {
+     [1m[94m|[0m [1m[94m---------------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m...[0m
+[1m[94m4040[0m [1m[94m|[0m     fn dispatch_batch_oversized_item(
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: field `ntt` is never read[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     [1m[94m|[0m
+[1m[94m5346[0m [1m[94m|[0m struct PrimitiveTransitionPackJson {
+     [1m[94m|[0m        [1m[94m---------------------------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m5350[0m [1m[94m|[0m     ntt: PrimitiveTransitionPackEntryJson,
+     [1m[94m|[0m     [1m[33m^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: associated function `parse` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     [1m[94m|[0m
+[1m[94m5583[0m [1m[94m|[0m impl PrimitiveNttTransitionProvider {
+     [1m[94m|[0m [1m[94m-----------------------------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m5584[0m [1m[94m|[0m     fn parse(raw: &str) -> Option<Self> {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `parse_primitive_ntt_transition_provider_len_map` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     [1m[94m|[0m
+[1m[94m5604[0m [1m[94m|[0m fn parse_primitive_ntt_transition_provider_len_map(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     [1m[94m|[0m
+[1m[94m5627[0m [1m[94m|[0m fn primitive_ntt_transition_provider_override() -> Option<PrimitiveNttTransitionProvider> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_len_map_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     [1m[94m|[0m
+[1m[94m5633[0m [1m[94m|[0m fn primitive_ntt_transition_provider_len_map_override(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     [1m[94m|[0m
+[1m[94m 365[0m [1m[94m|[0m impl PersistentVulkanExecutor {
+     [1m[94m|[0m [1m[94m-----------------------------[0m [1m[94mmethods in this implementation[0m
+[1m[94m...[0m
+[1m[94m4060[0m [1m[94m|[0m     fn pump_hash_worker_once(&mut self) -> Result<(), String> {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m4084[0m [1m[94m|[0m     fn pump_ntt_to_done_worker_once(&mut self) -> Result<(), String> {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===============>         ] 307/475: aoem-gpu-device                                                     [K[1m[33mwarning[0m: `aoem-gpu-device` (lib) generated 8 warnings
+[1m[96m    Building[0m [===============>         ] 309/475: serde_json                                                          [1m[96m    Building[0m [===============>         ] 310/475: indexmap                                                            [K[1m[92m   Compiling[0m monero-bulletproofs v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [===============>         ] 313/475: monero-bulletproofs                                                 [K[1m[92m   Compiling[0m serde v1.0.228
+[1m[96m    Building[0m [===============>         ] 318/475: serde                                                               [K[1m[92m   Compiling[0m monero-mlsag v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [===============>         ] 321/475: monero-mlsag                                                        [K[1m[92m   Compiling[0m monero-clsag v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [===============>         ] 322/475: monero-clsag                                                        [K[1m[92m   Compiling[0m wit-parser v0.243.0
+[1m[96m    Building[0m [=================>       ] 343/475: wit-parser                                                          [K[1m[92m   Compiling[0m monero-oxide v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [=================>       ] 348/475: monero-oxide                                                        [K[1m[92m   Compiling[0m aoem-gpu-kernels v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-kernels)
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    [1m[94m|[0m
+[1m[94m430[0m [1m[94m|[0m const AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    [1m[94m|[0m
+[1m[94m441[0m [1m[94m|[0m const AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: method `other` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     [1m[94m|[0m
+[1m[94m2796[0m [1m[94m|[0m impl MsmRadixEmbeddedRoute {
+     [1m[94m|[0m [1m[94m--------------------------[0m [1m[94mmethod in this implementation[0m
+[1m[94m...[0m
+[1m[94m2804[0m [1m[94m|[0m     fn other(self) -> Self {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: struct `MsmRadixRoutePerf` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     [1m[94m|[0m
+[1m[94m2814[0m [1m[94m|[0m struct MsmRadixRoutePerf {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: struct `MsmRadixRouteKey` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     [1m[94m|[0m
+[1m[94m2822[0m [1m[94m|[0m struct MsmRadixRouteKey {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_cache` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     [1m[94m|[0m
+[1m[94m2830[0m [1m[94m|[0m fn msm_radix_route_cache() -> &'static Mutex<HashMap<MsmRadixRouteKey, [MsmRadixRoutePerf; 2]>> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_env_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     [1m[94m|[0m
+[1m[94m2889[0m [1m[94m|[0m fn msm_radix_route_env_override() -> Option<MsmRadixEmbeddedRoute> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_enabled` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     [1m[94m|[0m
+[1m[94m2900[0m [1m[94m|[0m fn msm_radix_auto_route_enabled() -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_min_samples` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     [1m[94m|[0m
+[1m[94m2911[0m [1m[94m|[0m fn msm_radix_auto_route_min_samples() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_fail_limit` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     [1m[94m|[0m
+[1m[94m2920[0m [1m[94m|[0m fn msm_radix_auto_route_fail_limit() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     [1m[94m|[0m
+[1m[94m2928[0m [1m[94m|[0m fn msm_radix_len_bucket(len: usize) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_key` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     [1m[94m|[0m
+[1m[94m2940[0m [1m[94m|[0m fn msm_radix_route_key(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `route_idx` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     [1m[94m|[0m
+[1m[94m2964[0m [1m[94m|[0m fn route_idx(route: MsmRadixEmbeddedRoute) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `route_avg_ms` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2972:4
+     [1m[94m|[0m
+[1m[94m2972[0m [1m[94m|[0m fn route_avg_ms(perf: MsmRadixRoutePerf) -> f64 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_pick` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2981:4
+     [1m[94m|[0m
+[1m[94m2981[0m [1m[94m|[0m fn msm_radix_auto_route_pick(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_record` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3026:4
+     [1m[94m|[0m
+[1m[94m3026[0m [1m[94m|[0m fn msm_radix_auto_route_record(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `MSM_SEALED_LEN_BUCKETS` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3954:7
+     [1m[94m|[0m
+[1m[94m3954[0m [1m[94m|[0m const MSM_SEALED_LEN_BUCKETS: [usize; 12] = [
+     [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_sealed_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3967:4
+     [1m[94m|[0m
+[1m[94m3967[0m [1m[94m|[0m fn msm_sealed_len_bucket(points: usize) -> Option<usize> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_gpu_quality_ok` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:4139:4
+     [1m[94m|[0m
+[1m[94m4139[0m [1m[94m|[0m fn msm_radix_route_gpu_quality_ok(run: &MsmRadixSortRun) -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 356/475: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m: `aoem-gpu-kernels` (lib) generated 19 warnings
+[1m[92m   Compiling[0m monero-interface v0.2.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [===================>     ] 380/475: monero-interface                                                    [K[1m[92m   Compiling[0m serde_yaml v0.9.34+deprecated
+[1m[96m    Building[0m [===================>     ] 382/475: serde_yaml                                                          [K[1m[92m   Compiling[0m wasmtime-environ v40.0.1
+[1m[96m    Building[0m [===================>     ] 386/475: wasmtime-environ                                                    [K[1m[92m   Compiling[0m petgraph v0.6.5
+[1m[96m    Building[0m [===================>     ] 387/475: petgraph                                                            [K[1m[92m   Compiling[0m monero-address v0.1.0 (https://github.com/monero-oxide/monero-oxide?rev=9e11f5c0f2b18ab821192efa427c863086b51379#9e11f5c0)
+[1m[96m    Building[0m [===================>     ] 394/475: monero-address                                                      [K[1m[92m   Compiling[0m wasmtime-internal-unwinder v40.0.1
+[1m[96m    Building[0m [====================>    ] 402/475: wasmtime-internal-unwinder                                          [K[1m[92m   Compiling[0m wasmtime-internal-wit-bindgen v40.0.1
+[1m[96m    Building[0m [====================>    ] 403/475: wasmtime-internal-wit-bindgen                                       [K[1m[92m   Compiling[0m cranelift-frontend v0.127.1
+[1m[96m    Building[0m [====================>    ] 406/475: cranelift-frontend                                                  [K[1m[92m   Compiling[0m cranelift-native v0.127.1
+[1m[96m    Building[0m [====================>    ] 407/475: cranelift-native                                                    [K[1m[92m   Compiling[0m wasm-compose v0.243.0
+[1m[96m    Building[0m [=====================>   ] 422/475: wasm-compose                                                        [K[1m[92m   Compiling[0m wasmtime-internal-cache v40.0.1
+[1m[96m    Building[0m [=====================>   ] 423/475: wasmtime-internal-cache                                             [K[1m[92m   Compiling[0m wasmtime-internal-component-macro v40.0.1
+[1m[96m    Building[0m [=====================>   ] 425/475: wasmtime-internal-component-macro                                   [K[1m[92m   Compiling[0m wasmtime-internal-cranelift v40.0.1
+[1m[96m    Building[0m [=====================>   ] 428/475: wasmtime-internal-cranelift                                         [K[1m[92m   Compiling[0m monero-wallet v0.2.0 (/mnt/d/WorksArea/AOEM/crates/optional/zk-privacy/vendor/monero-wallet)
+[1m[96m    Building[0m [=====================>   ] 429/475: monero-wallet                                                       [K[1m[92m   Compiling[0m wasmtime-internal-jit-debug v40.0.1
+[1m[96m    Building[0m [=====================>   ] 435/475: wasmtime-internal-jit-debug                                         [K[1m[92m   Compiling[0m aoem-cc v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-cc)
+[1m[96m    Building[0m [======================>  ] 440/475: aoem-cc                                                             [K[1m[92m   Compiling[0m addr2line v0.25.1
+[1m[96m    Building[0m [======================>  ] 445/475: addr2line                                                           [K[1m[92m   Compiling[0m wasmtime v40.0.1
+[1m[96m    Building[0m [======================>  ] 453/475: wasmtime                                                            [K[1m[92m   Compiling[0m zk-privacy v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zk-privacy)
+[1m[96m    Building[0m [======================>  ] 454/475: zk-privacy                                                          [K[1m[92m   Compiling[0m aoem-backend-cpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-cpu)
+[1m[96m    Building[0m [=======================> ] 457/475: aoem-backend-cpu                                                    [K[1m[92m   Compiling[0m aoem-backend-gpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-backend-gpu)
+[1m[96m    Building[0m [=======================> ] 461/475: aoem-backend-gpu                                                    [K[1m[92m   Compiling[0m aoem-engine v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-engine)
+[1m[96m    Building[0m [=======================> ] 467/475: aoem-engine                                                         [K[1m[92m   Compiling[0m aoem-apfl-model-runtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ai/aoem-apfl-model-runtime)
+[1m[96m    Building[0m [=======================> ] 468/475: aoem-apfl-model-runtime                                             [K[1m[92m   Compiling[0m aoem-runtime-wasmtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/runtime/aoem-runtime-wasmtime)
+[1m[96m    Building[0m [=======================> ] 471/475: aoem-runtime-wasmtime                                               [K[1m[92m   Compiling[0m aoem-ffi v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ffi/aoem-ffi)
+[1m[96m    Building[0m [=======================> ] 474/475: aoem-ffi                                                            [K[1m[92m    Finished[0m `release` profile [optimized] target(s) in 4m 38s
+[1m[92m   Compiling[0m indexmap v2.13.0
+[1m[96m    Building[0m [>                        ] 82/1131: indexmap                                                            [K[1m[92m   Compiling[0m toml_edit v0.23.10+spec-1.0.0
+[1m[96m    Building[0m [=>                      ] 111/1131: toml_edit                                                           [K[1m[92m   Compiling[0m proc-macro-crate v3.4.0
+[1m[96m    Building[0m [=>                      ] 116/1131: proc-macro-crate                                                    [K[1m[92m   Compiling[0m parity-scale-codec-derive v3.7.5
+[1m[96m    Building[0m [==>                     ] 184/1131: parity-scale-codec-derive                                           [K[1m[92m   Compiling[0m object v0.37.3
+[1m[96m    Building[0m [===>                    ] 195/1131: object(build)                                                       [1m[96m    Building[0m [===>                    ] 204/1131: object                                                              [K[1m[92m   Compiling[0m backtrace v0.3.76
+[1m[96m    Building[0m [===>                    ] 208/1131: backtrace                                                           [K[1m[92m   Compiling[0m scale-info-derive v2.11.6
+[1m[96m    Building[0m [===>                    ] 210/1131: scale-info-derive                                                   [K[1m[92m   Compiling[0m num_enum_derive v0.7.5
+[1m[96m    Building[0m [===>                    ] 223/1131: num_enum_derive                                                     [K[1m[92m   Compiling[0m anyhow v1.0.100
+[1m[96m    Building[0m [===>                    ] 233/1131: anyhow                                                              [1m[96m    Building[0m [====>                   ] 242/1131: indexmap                                                            [K[1m[92m   Compiling[0m parity-scale-codec v3.7.5
+[1m[96m    Building[0m [====>                   ] 268/1131: parity-scale-codec                                                  [K[1m[92m   Compiling[0m scale-info v2.11.6
+[1m[96m    Building[0m [=====>                  ] 296/1131: scale-info                                                          [K[1m[92m   Compiling[0m num_enum v0.7.5
+[1m[96m    Building[0m [======>                 ] 339/1131: num_enum                                                            [K[1m[92m   Compiling[0m borsh-derive v1.6.0
+[1m[96m    Building[0m [=======>                ] 414/1131: borsh-derive                                                        [1m[96m    Building[0m [========>               ] 427/1131: parity-scale-codec                                                  [K[1m[92m   Compiling[0m impl-codec v0.6.0
+[1m[96m    Building[0m [========>               ] 445/1131: impl-codec                                                          [1m[96m    Building[0m [========>               ] 446/1131: num_enum                                                            [K[1m[92m   Compiling[0m toml_edit v0.19.15
+[1m[96m    Building[0m [=========>              ] 511/1131: toml_edit                                                           [1m[96m    Building[0m [=========>              ] 513/1131: scale-info                                                          [K[1m[92m   Compiling[0m primitive-types v0.12.2
+[1m[96m    Building[0m [=========>              ] 515/1131: primitive-types                                                     [K[1m[92m   Compiling[0m ethbloom v0.13.0
+[1m[96m    Building[0m [==========>             ] 523/1131: ethbloom                                                            [1m[96m    Building[0m [==========>             ] 526/1131: impl-codec                                                          [K[1m[92m   Compiling[0m puffin v0.19.1
+[1m[96m    Building[0m [==========>             ] 529/1131: puffin                                                              [K[1m[92m   Compiling[0m toml_edit v0.22.27
+[1m[96m    Building[0m [==========>             ] 549/1131: toml_edit                                                           [K[1m[92m   Compiling[0m risc0-core v2.0.0
+[1m[96m    Building[0m [==========>             ] 555/1131: risc0-core                                                          [K[1m[92m   Compiling[0m ethereum-types v0.14.1
+[1m[96m    Building[0m [==========>             ] 557/1131: ethereum-types                                                      [K[1m[92m   Compiling[0m proc-macro-crate v1.3.1
+[1m[96m    Building[0m [==========>             ] 558/1131: proc-macro-crate                                                    [K[1m[92m   Compiling[0m risc0-sys v1.5.0
+[1m[96m    Building[0m [===========>            ] 567/1131: risc0-sys                                                           [1m[96m    Building[0m [===========>            ] 603/1131: primitive-types                                                     [K[1m[92m   Compiling[0m num_enum_derive v0.5.11
+[1m[96m    Building[0m [===========>            ] 608/1131: num_enum_derive                                                     [K[1m[92m   Compiling[0m toml v0.8.23
+[1m[96m    Building[0m [============>           ] 613/1131: toml                                                                [1m[96m    Building[0m [============>           ] 615/1131: ethbloom                                                            [1m[96m    Building[0m [============>           ] 641/1131: toml_edit                                                           [K[1m[92m   Compiling[0m h2 v0.4.13
+[1m[96m    Building[0m [============>           ] 645/1131: h2                                                                  [1m[96m    Building[0m [============>           ] 654/1131: ethereum-types                                                      [K[1m[92m   Compiling[0m num_enum v0.5.11
+[1m[96m    Building[0m [============>           ] 656/1131: num_enum                                                            [K[1m[92m   Compiling[0m h2 v0.3.27
+[1m[96m    Building[0m [=============>          ] 664/1131: h2                                                                  [K[1m[92m   Compiling[0m ethabi v18.0.0
+[1m[96m    Building[0m [=============>          ] 666/1131: ethabi                                                              [K[1m[92m   Compiling[0m open-fastrlp v0.1.4
+[1m[96m    Building[0m [=============>          ] 667/1131: open-fastrlp                                                        [K[1m[92m   Compiling[0m risc0-zkvm-platform v2.2.3
+[1m[96m    Building[0m [=============>          ] 673/1131: risc0-zkvm-platform                                                 [K[1m[92m   Compiling[0m snowbridge-amcl v1.0.2
+[1m[96m    Building[0m [=============>          ] 676/1131: snowbridge-amcl                                                     [K[1m[92m   Compiling[0m ethers-core v2.0.14
+[1m[96m    Building[0m [=============>          ] 703/1131: ethers-core                                                         [K[1m[92m   Compiling[0m hyper v0.14.32
+[1m[96m    Building[0m [==============>         ] 707/1131: hyper                                                               [K[1m[92m   Compiling[0m sp1-curves v3.4.0
+[1m[96m    Building[0m [==============>         ] 708/1131: sp1-curves                                                          [K[1m[92m   Compiling[0m borsh v1.6.0
+[1m[96m    Building[0m [==============>         ] 712/1131: borsh                                                               [K[1m[92m   Compiling[0m rrs-succinct v0.1.0
+[1m[96m    Building[0m [==============>         ] 718/1131: rrs-succinct                                                        [K[1m[92m   Compiling[0m hyper v1.8.1
+[1m[96m    Building[0m [==============>         ] 721/1131: hyper                                                               [1m[96m    Building[0m [==============>         ] 724/1131: toml                                                                [K[1m[92m   Compiling[0m hyper-util v0.1.20
+[1m[96m    Building[0m [==============>         ] 752/1131: hyper-util                                                          [K[1m[92m   Compiling[0m sp1-core-executor v3.4.0
+[1m[96m    Building[0m [===============>        ] 755/1131: sp1-core-executor                                                   [K[1m[92m   Compiling[0m risc0-zkp v2.0.3
+[1m[96m    Building[0m [===============>        ] 761/1131: risc0-zkp                                                           [K[1m[92m   Compiling[0m hyper-tls v0.5.0
+[1m[96m    Building[0m [===============>        ] 768/1131: hyper-tls                                                           [1m[96m    Building[0m [===============>        ] 771/1131: ethabi                                                              [1m[96m    Building[0m [===============>        ] 772/1131: open-fastrlp                                                        [K[1m[92m   Compiling[0m sp1-core-machine v3.4.0
+[1m[96m    Building[0m [================>       ] 808/1131: sp1-core-machine                                                    [K[1m[92m   Compiling[0m reqwest v0.11.27
+[1m[96m    Building[0m [================>       ] 810/1131: reqwest                                                             [1m[96m    Building[0m [================>       ] 816/1131: ethers-core                                                         [K[1m[92m   Compiling[0m aoem-concurrency v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-concurrency)
+[1m[96m    Building[0m [================>       ] 825/1131: aoem-concurrency                                                    [1m[96m    Building[0m [================>       ] 838/1131: risc0-zkvm-platform                                                 [K[1m[33mwarning[0m[1m: value assigned to `reduce_dispatch_gpu_us` is never read[0m
+     [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      [1m[94m|[0m
+[1m[94m17002[0m [1m[94m|[0m [1m[94m...[0m = 0;
+      [1m[94m|[0m       [1m[33m^[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: associated function `dispatch_batch_oversized_item` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     [1m[94m|[0m
+[1m[94m1122[0m [1m[94m...[0mulkanRuntime {
+     [1m[94m...------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m...[0m
+[1m[94m4040[0m [1m[94m|[0m     f[1m[94m...[0mersized_item(
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: field `ntt` is never read[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     [1m[94m|[0m
+[1m[94m5346[0m [1m[94m|[0m struc[1m[94m...[0mtionPackJson {
+     [1m[94m|[0m      [1m[94m...------------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m5350[0m [1m[94m|[0m     ntt: PrimitiveTransitionPackEntry[1m[94m...[0m
+     [1m[94m|[0m     [1m[33m^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[33mwarning[0m[1m: associated function `parse` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     [1m[94m|[0m
+[1m[94m5583[0m [1m[94m...[0mtionProvider {
+     [1m[94m...------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m5584[0m [1m[94m|[0m     fn parse(raw: &str) -> Option<Self> {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `parse_primitive_ntt_transition_provider_len_map` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     [1m[94m|[0m
+[1m[94m5604[0m [1m[94m|[0m f[1m[94m...[0mider_len_map(
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     [1m[94m|[0m
+[1m[94m5627[0m [1m[94m|[0m f[1m[94m...[0mder_override() [1m[94m...[0m
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_len_map_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     [1m[94m|[0m
+[1m[94m5633[0m [1m[94m|[0m f[1m[94m...[0mmap_override(
+     [1m[94m|[0m  [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     [1m[94m|[0m
+[1m[94m 365[0m [1m[94m...[0mlkanExecutor {
+     [1m[94m...------------[0m [1m[94mmethods in this implementation[0m
+[1m[94m...[0m
+[1m[94m4060[0m [1m[94m|[0m     f[1m[94m...[0m_worker_once(&mut self[1m[94m...[0m
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m4084[0m [1m[94m|[0m     f[1m[94m...[0m_worker_once(&m[1m[94m...[0m
+     [1m[94m|[0m      [1m[94m...[0m[1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `aoem-gpu-device` (lib) generated 8 warnings
+[1m[96m    Building[0m [=================>      ] 872/1131: borsh                                                               [K[1m[92m   Compiling[0m sp1-recursion-core v3.4.0
+[1m[96m    Building[0m [=================>      ] 873/1131: sp1-recursion-core                                                  [K[1m[92m   Compiling[0m ethers-contract-abigen v2.0.14
+[1m[96m    Building[0m [=================>      ] 874/1131: ethers-contract-abigen                                              [K[1m[92m   Compiling[0m aoem-optimizations v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-optimizations)
+[1m[96m    Building[0m [=================>      ] 880/1131: aoem-optimizations                                                  [K[1m[92m   Compiling[0m tokio-rustls v0.26.4
+[1m[96m    Building[0m [=================>      ] 881/1131: tokio-rustls                                                        [K[1m[92m   Compiling[0m risc0-binfmt v2.0.3
+[1m[96m    Building[0m [=================>      ] 889/1131: risc0-binfmt                                                        [1m[96m    Building[0m [==================>     ] 924/1131: risc0-zkp                                                           [1m[96m    Building[0m [==================>     ] 927/1131: ethers-contract-abigen                                              [K[1m[92m   Compiling[0m ethers-providers v2.0.14
+[1m[96m    Building[0m [==================>     ] 932/1131: ethers-providers                                                    [K[1m[92m   Compiling[0m sp1-recursion-compiler v3.4.0
+[1m[96m    Building[0m [==================>     ] 936/1131: sp1-recursion-compiler                                              [K[1m[92m   Compiling[0m hyper-rustls v0.27.7
+[1m[96m    Building[0m [==================>     ] 942/1131: hyper-rustls                                                        [K[1m[92m   Compiling[0m aoem-runtime-api v1.0.0 (/mnt/d/WorksArea/AOEM/crates/runtime/aoem-runtime-api)
+[1m[96m    Building[0m [===================>    ] 949/1131: aoem-runtime-api                                                    [K[1m[92m   Compiling[0m ethers-contract-derive v2.0.14
+[1m[96m    Building[0m [===================>    ] 951/1131: ethers-contract-derive                                              [K[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    [1m[94m|[0m
+[1m[94m430[0m [1m[94m|[0m const AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    [1m[94m|[0m
+[1m[94m441[0m [1m[94m|[0m const AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: method `other` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     [1m[94m|[0m
+[1m[94m2796[0m [1m[94m|[0m impl MsmRadixEmbeddedRoute {
+     [1m[94m|[0m [1m[94m--------------------------[0m [1m[94mmethod in this implementation[0m
+[1m[94m...[0m
+[1m[94m2804[0m [1m[94m|[0m     fn other(self) -> Self {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[33mwarning[0m[1m: struct `MsmRadixRoutePerf` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     [1m[94m|[0m
+[1m[94m2814[0m [1m[94m|[0m struct MsmRadixRoutePerf {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: struct `MsmRadixRouteKey` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     [1m[94m|[0m
+[1m[94m2822[0m [1m[94m|[0m struct MsmRadixRouteKey {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_cache` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     [1m[94m|[0m
+[1m[94m2830[0m [1m[94m|[0m fn msm_radix_route_cache() -> &'static Mutex<HashMap<MsmRadixRouteKey, [MsmRadixRoutePerf; 2]>> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_env_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     [1m[94m|[0m
+[1m[94m2889[0m [1m[94m|[0m fn msm_radix_route_env_override() -> Option<MsmRadixEmbeddedRoute> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_enabled` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     [1m[94m|[0m
+[1m[94m2900[0m [1m[94m|[0m fn msm_radix_auto_route_enabled() -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_min_samples` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     [1m[94m|[0m
+[1m[94m2911[0m [1m[94m|[0m fn msm_radix_auto_route_min_samples() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_fail_limit` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     [1m[94m|[0m
+[1m[94m2920[0m [1m[94m|[0m fn msm_radix_auto_route_fail_limit() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     [1m[94m|[0m
+[1m[94m2928[0m [1m[94m|[0m fn msm_radix_len_bucket(len: usize) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_key` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     [1m[94m|[0m
+[1m[94m2940[0m [1m[94m|[0m fn msm_radix_route_key(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `route_idx` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     [1m[94m|[0m
+[1m[94m2964[0m [1m[94m|[0m fn route_idx(route: MsmRadixEmbeddedRoute) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `route_avg_ms` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2972:4
+     [1m[94m|[0m
+[1m[94m2972[0m [1m[94m|[0m fn route_avg_ms(perf: MsmRadixRoutePerf) -> f64 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_pick` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2981:4
+     [1m[94m|[0m
+[1m[94m2981[0m [1m[94m|[0m fn msm_radix_auto_route_pick(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_auto_route_record` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3026:4
+     [1m[94m|[0m
+[1m[94m3026[0m [1m[94m|[0m fn msm_radix_auto_route_record(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: constant `MSM_SEALED_LEN_BUCKETS` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3954:7
+     [1m[94m|[0m
+[1m[94m3954[0m [1m[94m|[0m const MSM_SEALED_LEN_BUCKETS: [usize; 12] = [
+     [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_sealed_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3967:4
+     [1m[94m|[0m
+[1m[94m3967[0m [1m[94m|[0m fn msm_sealed_len_bucket(points: usize) -> Option<usize> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `msm_radix_route_gpu_quality_ok` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:4139:4
+     [1m[94m|[0m
+[1m[94m4139[0m [1m[94m|[0m fn msm_radix_route_gpu_quality_ok(run: &MsmRadixSortRun) -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[33mwarning[0m: `aoem-gpu-kernels` (lib) generated 19 warnings
+[1m[92m   Compiling[0m hyper-tls v0.6.0
+[1m[96m    Building[0m [===================>    ] 954/1131: hyper-tls                                                           [K[1m[92m   Compiling[0m risc0-zkos-v1compat v2.2.3
+[1m[96m    Building[0m [===================>    ] 985/1131: risc0-zkos-v1compat                                                 [1m[96m    Building[0m [===================>    ] 988/1131: risc0-binfmt                                                        [K[1m[92m   Compiling[0m reqwest v0.12.28
+[1m[96m    Building[0m [===================>   ] 1000/1131: reqwest                                                             [K[1m[92m   Compiling[0m ethers-contract v2.0.14
+[1m[96m    Building[0m [===================>   ] 1001/1131: ethers-contract                                                     [K[1m[92m   Compiling[0m alloy-sol-macro-expander v0.7.7
+[1m[96m    Building[0m [===================>   ] 1005/1131: alloy-sol-macro-expander                                            [K[1m[92m   Compiling[0m sp1-recursion-gnark-ffi v3.4.0
+[1m[96m    Building[0m [===================>   ] 1006/1131: sp1-recursion-gnark-ffi                                             [K[1m[92m   Compiling[0m ethers-signers v2.0.14
+[1m[96m    Building[0m [===================>   ] 1007/1131: ethers-signers                                                      [K[1m[92m   Compiling[0m rzup v0.4.1
+[1m[96m    Building[0m [===================>   ] 1010/1131: rzup                                                                [K[1m[92m   Compiling[0m zip v2.4.2
+[1m[96m    Building[0m [===================>   ] 1012/1131: zip                                                                 [K[1m[92m   Compiling[0m risc0-circuit-recursion-sys v3.0.0
+[1m[96m    Building[0m [===================>   ] 1013/1131: risc0-circuit-recursion-sys                                         [K[1m[92m   Compiling[0m axum v0.7.9
+[1m[96m    Building[0m [===================>   ] 1030/1131: axum                                                                [1m[96m    Building[0m [===================>   ] 1032/1131: risc0-zkos-v1compat                                                 [K[1m[92m   Compiling[0m risc0-build v2.3.2
+[1m[96m    Building[0m [====================>  ] 1033/1131: risc0-build                                                         [K[1m[92m   Compiling[0m ethers-middleware v2.0.14
+[1m[96m    Building[0m [====================>  ] 1038/1131: ethers-middleware                                                   [K[1m[92m   Compiling[0m risc0-circuit-recursion v3.0.1
+[1m[96m    Building[0m [====================>  ] 1040/1131: risc0-circuit-recursion                                             [K[1m[92m   Compiling[0m sp1-recursion-circuit v3.4.0
+[1m[96m    Building[0m [====================>  ] 1043/1131: sp1-recursion-circuit                                               [K[1m[92m   Compiling[0m alloy-sol-macro v0.7.7
+[1m[96m    Building[0m [====================>  ] 1044/1131: alloy-sol-macro                                                     [K[1m[92m   Compiling[0m risc0-circuit-rv32im-sys v3.0.0
+[1m[96m    Building[0m [====================>  ] 1049/1131: risc0-circuit-rv32im-sys                                            [K[1m[92m   Compiling[0m risc0-circuit-keccak-sys v3.0.0
+[1m[96m    Building[0m [====================>  ] 1050/1131: risc0-circuit-keccak-sys                                            [1m[96m    Building[0m [====================>  ] 1054/1131: rzup                                                                [K[1m[92m   Compiling[0m aoem-backend-api v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-api)
+[1m[96m    Building[0m [====================>  ] 1058/1131: aoem-backend-api                                                    [K[1m[92m   Compiling[0m ethers-addressbook v2.0.14
+[1m[96m    Building[0m [====================>  ] 1062/1131: ethers-addressbook                                                  [1m[96m    Building[0m [====================>  ] 1081/1131: risc0-build                                                         [K[1m[92m   Compiling[0m risc0-circuit-rv32im v3.0.1
+[1m[96m    Building[0m [=====================> ] 1082/1131: risc0-circuit-rv32im                                                [K[1m[92m   Compiling[0m sp1-prover v3.4.0
+[1m[96m    Building[0m [=====================> ] 1087/1131: sp1-prover                                                          [K[1m[92m   Compiling[0m ethers v2.0.14
+[1m[96m    Building[0m [=====================> ] 1089/1131: ethers                                                              [K[1m[92m   Compiling[0m risc0-groth16 v2.0.3
+[1m[96m    Building[0m [=====================> ] 1090/1131: risc0-groth16                                                       [K[1m[92m   Compiling[0m twirp-rs v0.13.0-succinct
+[1m[96m    Building[0m [=====================> ] 1091/1131: twirp-rs                                                            [K[1m[92m   Compiling[0m alloy-sol-types v0.7.7
+[1m[96m    Building[0m [=====================> ] 1092/1131: alloy-sol-types                                                     [K[1m[92m   Compiling[0m risc0-circuit-keccak v3.0.1
+[1m[96m    Building[0m [=====================> ] 1094/1131: risc0-circuit-keccak                                                [K[1m[92m   Compiling[0m zkvm-executor v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zkvm-executor)
+[1m[96m    Building[0m [=====================> ] 1097/1131: zkvm-executor(build.rs)                                             [K[1m[92m   Compiling[0m reqwest-middleware v0.3.3
+[1m[96m    Building[0m [=====================> ] 1098/1131: reqwest-middleware                                                  [K[1m[92m   Compiling[0m aoem-cc v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-cc)
+[1m[96m    Building[0m [=====================> ] 1099/1131: aoem-cc                                                             [K[1m[92m   Compiling[0m risc0-zkvm v2.3.2
+[1m[96m    Building[0m [=====================> ] 1112/1131: risc0-zkvm                                                          [K[1m[92m   Compiling[0m zk-privacy v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zk-privacy)
+[1m[96m    Building[0m [=====================> ] 1113/1131: zk-privacy                                                          [K[1m[92m   Compiling[0m aoem-backend-cpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-cpu)
+[1m[96m    Building[0m [=====================> ] 1115/1131: aoem-backend-cpu                                                    [K[1m[92m   Compiling[0m sp1-sdk v3.4.0
+[1m[96m    Building[0m [=====================> ] 1116/1131: sp1-sdk                                                             [1m[96m    Building[0m [=====================> ] 1117/1131: zkvm-executor(build)                                                l2-executor-methods-fibonacci: Starting build for riscv32im-risc0-zkvm-elf
+l2-executor-methods-fibonacci:     Finished `release` profile [optimized] target(s) in 0.87s
+aggregator-guest: Starting build for riscv32im-risc0-zkvm-elf
+aggregator-guest: warning: unused variable: `i`
+aggregator-guest:   --> src/main.rs:43:9
+aggregator-guest:    |
+aggregator-guest: 43 |     for i in 0..proof_count {
+aggregator-guest:    |         ^ help: if this is intentional, prefix it with an underscore: `_i`
+aggregator-guest:    |
+aggregator-guest:    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+aggregator-guest: 
+aggregator-guest: warning: `aggregator-guest` (bin "aggregator-guest") generated 1 warning (run `cargo fix --bin "aggregator-guest" -p aggregator-guest` to apply 1 suggestion)
+aggregator-guest:     Finished `release` profile [optimized] target(s) in 0.84s
+[K[1m[92m   Compiling[0m aoem-backend-gpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-backend-gpu)
+[1m[96m    Building[0m [=====================> ] 1119/1131: aoem-backend-gpu                                                    [K[1m[92m   Compiling[0m aoem-engine v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-engine)
+[1m[96m    Building[0m [=====================> ] 1123/1131: aoem-engine                                                         [1m[96m    Building[0m [=====================> ] 1126/1131: zkvm-executor                                                       [K[1m[92m   Compiling[0m aoem-adapter-crypto v0.1.0 (/mnt/d/WorksArea/AOEM/crates/adapter/aoem-adapter-crypto)
+[1m[96m    Building[0m [=====================> ] 1127/1131: aoem-adapter-crypto                                                 [K[1m[92m   Compiling[0m storage-backend v0.1.0 (/mnt/d/WorksArea/AOEM/crates/storage-backend)
+[1m[96m    Building[0m [=====================> ] 1128/1131: storage-backend                                                     [K[1m[92m   Compiling[0m aoem-ffi v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ffi/aoem-ffi)
+[1m[96m    Building[0m [=====================> ] 1130/1131: aoem-ffi                                                            [K[1m[92m    Finished[0m `release` profile [optimized] target(s) in 7m 09s
+[1m[92m   Compiling[0m bytemuck_derive v1.8.1
+[1m[96m    Building[0m [===============>         ] 197/296: bytemuck_derive                                                     [K[1m[92m   Compiling[0m bytemuck v1.23.1
+[1m[96m    Building[0m [================>        ] 206/296: bytemuck                                                            [K[1m[92m   Compiling[0m aoem-exec-runtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-exec-runtime)
+[1m[96m    Building[0m [================>        ] 212/296: aoem-exec-runtime                                                   [K[1m[92m   Compiling[0m aoem-gpu-device v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-device)
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: value assigned to `reduce_dispatch_gpu_us` is never read[0m
+     [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:17002:43
+      [1m[94m|[0m
+[1m[94m17002[0m [1m[94m|[0m     let mut reduce_dispatch_gpu_us: u64 = 0;
+      [1m[94m|[0m                                           [1m[33m^[0m
+      [1m[94m|[0m
+      [1m[94m= [0m[1mhelp[0m: maybe it is overwritten before being read?
+      [1m[94m= [0m[1mnote[0m: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: associated function `dispatch_batch_oversized_item` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs:4040:8
+     [1m[94m|[0m
+[1m[94m1122[0m [1m[94m|[0m impl AshVulkanRuntime {
+     [1m[94m|[0m [1m[94m---------------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m...[0m
+[1m[94m4040[0m [1m[94m|[0m     fn dispatch_batch_oversized_item(
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: field `ntt` is never read[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5350:5
+     [1m[94m|[0m
+[1m[94m5346[0m [1m[94m|[0m struct PrimitiveTransitionPackJson {
+     [1m[94m|[0m        [1m[94m---------------------------[0m [1m[94mfield in this struct[0m
+[1m[94m...[0m
+[1m[94m5350[0m [1m[94m|[0m     ntt: PrimitiveTransitionPackEntryJson,
+     [1m[94m|[0m     [1m[33m^^^[0m
+     [1m[94m|[0m
+     [1m[94m= [0m[1mnote[0m: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: associated function `parse` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5584:8
+     [1m[94m|[0m
+[1m[94m5583[0m [1m[94m|[0m impl PrimitiveNttTransitionProvider {
+     [1m[94m|[0m [1m[94m-----------------------------------[0m [1m[94massociated function in this implementation[0m
+[1m[94m5584[0m [1m[94m|[0m     fn parse(raw: &str) -> Option<Self> {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `parse_primitive_ntt_transition_provider_len_map` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5604:4
+     [1m[94m|[0m
+[1m[94m5604[0m [1m[94m|[0m fn parse_primitive_ntt_transition_provider_len_map(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5627:4
+     [1m[94m|[0m
+[1m[94m5627[0m [1m[94m|[0m fn primitive_ntt_transition_provider_override() -> Option<PrimitiveNttTransitionProvider> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: function `primitive_ntt_transition_provider_len_map_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs:5633:4
+     [1m[94m|[0m
+[1m[94m5633[0m [1m[94m|[0m fn primitive_ntt_transition_provider_len_map_override(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m[1m: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs:4060:8
+     [1m[94m|[0m
+[1m[94m 365[0m [1m[94m|[0m impl PersistentVulkanExecutor {
+     [1m[94m|[0m [1m[94m-----------------------------[0m [1m[94mmethods in this implementation[0m
+[1m[94m...[0m
+[1m[94m4060[0m [1m[94m|[0m     fn pump_hash_worker_once(&mut self) -> Result<(), String> {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+[1m[94m...[0m
+[1m[94m4084[0m [1m[94m|[0m     fn pump_ntt_to_done_worker_once(&mut self) -> Result<(), String> {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [=================>       ] 221/296: aoem-gpu-device                                                     [K[1m[33mwarning[0m: `aoem-gpu-device` (lib) generated 8 warnings
+[1m[92m   Compiling[0m aoem-gpu-kernels v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-gpu-kernels)
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:430:7
+    [1m[94m|[0m
+[1m[94m430[0m [1m[94m|[0m const AOEM_MSM_BUCKET_ACCUM_LIST_PRECOMPUTE_BATCHED_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[94m|[0m
+    [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT` is never used[0m
+   [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:441:7
+    [1m[94m|[0m
+[1m[94m441[0m [1m[94m|[0m const AOEM_MSM_BUCKET_REDUCE_FIXED_PARTIAL_SPV_OUT: &[u8] =
+    [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: method `other` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2804:8
+     [1m[94m|[0m
+[1m[94m2796[0m [1m[94m|[0m impl MsmRadixEmbeddedRoute {
+     [1m[94m|[0m [1m[94m--------------------------[0m [1m[94mmethod in this implementation[0m
+[1m[94m...[0m
+[1m[94m2804[0m [1m[94m|[0m     fn other(self) -> Self {
+     [1m[94m|[0m        [1m[33m^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: struct `MsmRadixRoutePerf` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2814:8
+     [1m[94m|[0m
+[1m[94m2814[0m [1m[94m|[0m struct MsmRadixRoutePerf {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: struct `MsmRadixRouteKey` is never constructed[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2822:8
+     [1m[94m|[0m
+[1m[94m2822[0m [1m[94m|[0m struct MsmRadixRouteKey {
+     [1m[94m|[0m        [1m[33m^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_cache` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2830:4
+     [1m[94m|[0m
+[1m[94m2830[0m [1m[94m|[0m fn msm_radix_route_cache() -> &'static Mutex<HashMap<MsmRadixRouteKey, [MsmRadixRoutePerf; 2]>> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_env_override` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2889:4
+     [1m[94m|[0m
+[1m[94m2889[0m [1m[94m|[0m fn msm_radix_route_env_override() -> Option<MsmRadixEmbeddedRoute> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_enabled` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2900:4
+     [1m[94m|[0m
+[1m[94m2900[0m [1m[94m|[0m fn msm_radix_auto_route_enabled() -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_min_samples` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2911:4
+     [1m[94m|[0m
+[1m[94m2911[0m [1m[94m|[0m fn msm_radix_auto_route_min_samples() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_fail_limit` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2920:4
+     [1m[94m|[0m
+[1m[94m2920[0m [1m[94m|[0m fn msm_radix_auto_route_fail_limit() -> u32 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2928:4
+     [1m[94m|[0m
+[1m[94m2928[0m [1m[94m|[0m fn msm_radix_len_bucket(len: usize) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_key` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2940:4
+     [1m[94m|[0m
+[1m[94m2940[0m [1m[94m|[0m fn msm_radix_route_key(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `route_idx` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2964:4
+     [1m[94m|[0m
+[1m[94m2964[0m [1m[94m|[0m fn route_idx(route: MsmRadixEmbeddedRoute) -> usize {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `route_avg_ms` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2972:4
+     [1m[94m|[0m
+[1m[94m2972[0m [1m[94m|[0m fn route_avg_ms(perf: MsmRadixRoutePerf) -> f64 {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_pick` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:2981:4
+     [1m[94m|[0m
+[1m[94m2981[0m [1m[94m|[0m fn msm_radix_auto_route_pick(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_auto_route_record` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3026:4
+     [1m[94m|[0m
+[1m[94m3026[0m [1m[94m|[0m fn msm_radix_auto_route_record(
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: constant `MSM_SEALED_LEN_BUCKETS` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3954:7
+     [1m[94m|[0m
+[1m[94m3954[0m [1m[94m|[0m const MSM_SEALED_LEN_BUCKETS: [usize; 12] = [
+     [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_sealed_len_bucket` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:3967:4
+     [1m[94m|[0m
+[1m[94m3967[0m [1m[94m|[0m fn msm_sealed_len_bucket(points: usize) -> Option<usize> {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m[1m: function `msm_radix_route_gpu_quality_ok` is never used[0m
+    [1m[94m--> [0mcrates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/msm_bucket_accumulate.rs:4139:4
+     [1m[94m|[0m
+[1m[94m4139[0m [1m[94m|[0m fn msm_radix_route_gpu_quality_ok(run: &MsmRadixSortRun) -> bool {
+     [1m[94m|[0m    [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[96m    Building[0m [===================>     ] 243/296: aoem-gpu-kernels                                                    [K[1m[33mwarning[0m: `aoem-gpu-kernels` (lib) generated 19 warnings
+[1m[92m   Compiling[0m bulletproofs v5.0.0
+[1m[96m    Building[0m [=====================>   ] 268/296: bulletproofs                                                        [K[1m[92m   Compiling[0m aoem-cc v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-cc)
+[1m[96m    Building[0m [=====================>   ] 270/296: aoem-cc                                                             [K[1m[92m   Compiling[0m zk-privacy v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/zk-privacy)
+[1m[96m    Building[0m [======================>  ] 277/296: zk-privacy                                                          [K[1m[92m   Compiling[0m aoem-backend-cpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-cpu)
+[1m[96m    Building[0m [======================>  ] 280/296: aoem-backend-cpu                                                    [K[1m[92m   Compiling[0m aoem-backend-gpu v1.0.0 (/mnt/d/WorksArea/AOEM/crates/backend/aoem-backend-gpu/aoem-backend-gpu)
+[1m[96m    Building[0m [======================>  ] 283/296: aoem-backend-gpu                                                    [K[1m[92m   Compiling[0m aoem-engine v1.0.0 (/mnt/d/WorksArea/AOEM/crates/core/aoem-engine)
+[1m[96m    Building[0m [=======================> ] 289/296: aoem-engine                                                         [K[1m[92m   Compiling[0m aoem-apfl-model-runtime v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ai/aoem-apfl-model-runtime)
+[1m[96m    Building[0m [=======================> ] 290/296: aoem-apfl-model-runtime                                             [K[1m[92m   Compiling[0m aoem-adapter-crypto v0.1.0 (/mnt/d/WorksArea/AOEM/crates/adapter/aoem-adapter-crypto)
+[1m[96m    Building[0m [=======================> ] 292/296: aoem-adapter-crypto                                                 [K[1m[92m   Compiling[0m aoem-ffi v1.0.0 (/mnt/d/WorksArea/AOEM/crates/ffi/aoem-ffi)
+[1m[96m    Building[0m [=======================> ] 295/296: aoem-ffi                                                            [K[1m[92m    Finished[0m `release` profile [optimized] target(s) in 2m 04s
+[1m[92m   Compiling[0m typenum v1.19.0
+[1m[96m    Building[0m [===>                        ] 2/14: typenum(build)                                                      [K[1m[92m   Compiling[0m generic-array v0.14.7
+[1m[96m    Building[0m [=======>                    ] 4/14: generic-array(build)                                                [1m[96m    Building[0m [=========>                  ] 5/14: typenum                                                             [1m[96m    Building[0m [===========>                ] 6/14: generic-array                                                       [K[1m[92m   Compiling[0m crypto-common v0.1.7
+[1m[96m    Building[0m [=============>              ] 7/14: crypto-common                                                       [K[1m[92m   Compiling[0m block-buffer v0.10.4
+[1m[96m    Building[0m [===============>            ] 8/14: block-buffer                                                        [K[1m[92m   Compiling[0m digest v0.10.7
+[1m[96m    Building[0m [=================>          ] 9/14: digest                                                              [K[1m[92m   Compiling[0m sha2 v0.10.9
+[1m[96m    Building[0m [======================>    ] 12/14: sha2                                                                [K[1m[92m   Compiling[0m aoem_kms_hsm_plugin v0.1.0 (/mnt/d/WorksArea/AOEM/crates/optional/aoem-kms-hsm-plugin)
+[1m[96m    Building[0m [========================>  ] 13/14: aoem_kms_hsm_plugin                                                 [K[1m[92m    Finished[0m `release` profile [optimized] target(s) in 2.15s
+STATUS=PASS
+OUT=/mnt/d/WorksArea/AOEM/artifacts/ffi-bundles/fullmax/linux/20261004-private-proof-1377cd1e
+
+Script done on 2026-10-04 13:13:09+08:00 [COMMAND_EXIT_CODE="0"]

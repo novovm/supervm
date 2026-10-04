@@ -260,16 +260,17 @@ try {
       throw "proof engine host smoke failed: exit=$LASTEXITCODE output=$proofOutput"
     }
     $proofLine = ($proofOutput | Where-Object { $_ -like "SUPERVM_AOEM_PROOF_ENGINE_HOST_SMOKE|*" } | Select-Object -First 1)
-    if (-not $proofLine -or $proofLine -notmatch "proof=ok" -or $proofLine -notmatch "verify=ok" -or $proofLine -notmatch "failures=0") {
-      throw "proof engine host smoke did not emit acceptance: $proofOutput"
+    if (-not $proofLine -or $proofLine -notmatch "scope=not_zk" -or $proofLine -notmatch "cryptographic_proof_verified=false" -or $proofLine -notmatch "retired_profile3=rejected" -or $proofLine -notmatch "failures=0") {
+      throw "proof envelope smoke did not emit scoped diagnostic/rejection result: $proofOutput"
     }
     if (-not $SkipWorkerAdapter.IsPresent) {
       $workerLine = ($proofOutput | Where-Object { $_ -like "AOEM_PROOF_WORKER_SUMMARY|*" } | Select-Object -First 1)
-      if (-not $workerLine -or $workerLine -notmatch "proof=ok" -or $workerLine -notmatch "verify=ok" -or $workerLine -notmatch "failures=0") {
-        throw "worker adapter smoke did not emit acceptance: $proofOutput"
+      $privateLine = ($proofOutput | Where-Object { $_ -like "SUPERVM_AOEM_PRIVATE_PROFILE_REJECTION|*" } | Select-Object -First 1)
+      if (-not $workerLine -or $workerLine -notmatch "verification_scope=envelope_integrity_only_not_zk" -or $workerLine -notmatch "cryptographic_proof_verified=false" -or $workerLine -notmatch "failures=0" -or -not $privateLine -or $privateLine -notmatch "proof_written=false") {
+        throw "worker diagnostic/private rejection smoke did not emit scoped result: $proofOutput"
       }
     }
-    $proofEngineStatus = "ok"
+    $proofEngineStatus = "public_diagnostics_only_not_zk"
   }
 
   Write-Output (

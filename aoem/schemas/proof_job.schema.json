@@ -6,8 +6,7 @@
   "type": "object",
   "oneOf": [
     { "$ref": "#/$defs/fixedProfileJob" },
-    { "$ref": "#/$defs/merkleMembershipJob" },
-    { "$ref": "#/$defs/zkMerkleMembershipJob" }
+    { "$ref": "#/$defs/merkleMembershipJob" }
   ],
   "$defs": {
     "hex": {
@@ -98,6 +97,7 @@
       "additionalProperties": false
     },
     "zkMerkleMembershipJob": {
+      "$comment": "Withdrawn historical shape. Not referenced by the allowed job union.",
       "type": "object",
       "required": [
         "request_id",

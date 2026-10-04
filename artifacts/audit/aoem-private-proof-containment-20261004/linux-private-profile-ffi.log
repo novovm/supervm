@@ -1,0 +1,3 @@
+PRIVATE_PROFILE_REAL_FFI|opcode=98|rc=-4|processed=0|success=0|failed_index=0|writes=0|retired_error_exact=true|error=zk_merkle_membership_v1 retired: no independent cryptographic relation verifier
+PRIVATE_PROFILE_REAL_FFI|opcode=99|rc=-4|processed=0|success=0|failed_index=0|writes=0|retired_error_exact=true|error=zk_merkle_membership_v1 retired: no independent cryptographic relation verifier
+PRIVATE_PROFILE_REAL_FFI_SUMMARY|request_build=ok|op98_wire_v4=rejected|op99_setup=rejected|zero_work_and_output_absence=ok|replacement_crypto_proof=not_implemented

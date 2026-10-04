@@ -1,0 +1,5 @@
+In file included from artifacts/audit/aoem-private-proof-containment-20261004/linux_private_profile_ffi_rejection.c:6:
+artifacts/audit/aoem-private-proof-containment-20261004/../../../aoem/examples/aoem_proof_worker.c:282:12: error: ‘worker_parse_job_line’ defined but not used [-Werror=unused-function]
+  282 | static int worker_parse_job_line(const char* line, aoem_worker_job* job, char** error_out) {
+      |            ^~~~~~~~~~~~~~~~~~~~~
+cc1: all warnings being treated as errors

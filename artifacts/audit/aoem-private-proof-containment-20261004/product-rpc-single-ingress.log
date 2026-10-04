@@ -1,0 +1,25 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.22s
+     Running unittests src\lib.rs (target\release\deps\novovm_node-f6abee0fe86d4c64.exe)
+
+running 1 test
+single-ingress product RPC artifacts=D:\WorksArea\SUPERVM\crates\novovm-node\../../target/resident-rpc-single-ingress-tests\11908-1791087424428923100
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay stopped: reason=external_request elapsed_ms=1312
+single-ingress product RPC report=D:\WorksArea\SUPERVM\crates\novovm-node\../../target/resident-rpc-single-ingress-tests\11908-1791087424428923100\result.json
+test native_pipeline::consensus::tests::resident_rpc_process::actual_product_rpc_single_ingress_gossip_failures_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1550 filtered out; finished in 1.37s
+
+rpc_single_ingress_exit_code=0

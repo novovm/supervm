@@ -1,0 +1,19 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling ring v0.17.14
+   Compiling aws-lc-sys v0.45.0
+   Compiling librocksdb-sys v0.16.0+8.10.0
+   Compiling rcgen v0.12.1
+   Compiling aws-lc-rs v1.18.1
+   Compiling rustls v0.23.45
+   Compiling rustls-webpki v0.103.15
+   Compiling ureq v2.12.1
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling rocksdb v0.22.0
+   Compiling novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `release` profile [optimized] target(s) in 2m 41s
+build_exit_code=0

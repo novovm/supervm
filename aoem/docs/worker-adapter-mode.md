@@ -6,13 +6,20 @@ through JSONL jobs before embedding the dynamic library directly.
 It is not the AOEM runtime itself, not a standalone platform service, and not
 required for production hosts that call AOEM directly.
 
+Profiles 1/2 provide public diagnostics only (`scope=not_zk`, wire/JSON scope
+`envelope_integrity_only_not_zk`). Profile 3 (`zk_merkle_membership_v1`) is
+retired: its public envelope did not prove the private relation. It must return
+an error, never a successful private proof. See the
+[security correction](proof-engine-v1.0-contract.md#security-correction-2026-10-04).
+
 ## Windows
 
 ```powershell
+New-Item -ItemType Directory -Force tmp | Out-Null
 aoem\bin\windows-x86_64\aoem-proof-worker.exe `
   --library aoem\windows\core\bin\aoem_ffi.dll `
-  --input aoem\worker-adapter\examples\jobs.zk_merkle.jsonl `
-  --output tmp\proofs.zk_merkle.jsonl `
+  --input aoem\worker-adapter\examples\jobs.merkle.jsonl `
+  --output tmp\public-diagnostics.jsonl `
   --batch-count 4
 ```
 
@@ -22,8 +29,8 @@ aoem\bin\windows-x86_64\aoem-proof-worker.exe `
 LD_LIBRARY_PATH=aoem/linux/core/bin \
   aoem/bin/linux-x86_64/aoem-proof-worker \
   --library aoem/linux/core/bin/libaoem_ffi.so \
-  --input aoem/worker-adapter/examples/jobs.zk_merkle.jsonl \
-  --output /tmp/proofs.zk_merkle.jsonl \
+  --input aoem/worker-adapter/examples/jobs.merkle.jsonl \
+  --output /tmp/public-diagnostics.jsonl \
   --batch-count 4
 ```
 
@@ -38,20 +45,40 @@ are not bundled in this SUPERVM package.
 
 ```text
 worker-adapter/examples/jobs.merkle.jsonl
-  public Merkle inclusion jobs plus one malformed rejection case
+  public path/envelope diagnostics plus one malformed rejection case
 
 worker-adapter/examples/jobs.zk_merkle.jsonl
-  private ZK Merkle membership jobs plus one malformed rejection case
+  retired-profile rejection fixtures; no successful private proof output
 
 worker-adapter/examples/jobs.mixed.jsonl
-  mixed public/private profile jobs for host adapter trials
+  mixed diagnostics/rejections; private jobs remain errors
 ```
 
-## Expected Summary
+## Expected Diagnostic Result
 
-```text
-AOEM_PROOF_WORKER_SUMMARY|profile=zk_merkle_membership_v1|jobs=4|batch_count=4|resident_asset=ok|privacy=ok|proof=ok|verify=ok|external_verify=ok|malformed=ok|failures=0
+Every successful public result must contain these exact values:
+
+```json
+{
+  "status": "ok",
+  "profile_id": "merkle_membership_v1",
+  "verify_status": "envelope_integrity_only_not_zk",
+  "accepted": false,
+  "proof_verified": false,
+  "envelope_integrity_verified": true,
+  "cryptographic_proof_verified": false,
+  "verification_scope": "envelope_integrity_only_not_zk"
+}
 ```
+
+These are selected result fields, not a complete schema example. A zero worker
+exit code or the historical summary labels `proof=ok` / `verify=ok` only indicate
+that the public diagnostic ran; they do not certify ZK or business execution.
+
+To exercise retirement, use `jobs.zk_merkle.jsonl` instead: expect exit code 1
+and `status=error`, `error=unsupported_private_membership_proof`,
+`proof_written=false`. Do not treat that expected rejection as a private-proof
+success or replace it with a witness-disclosure fallback.
 
 The worker adapter writes JSONL results. Malformed jobs must fail
 deterministically with:
