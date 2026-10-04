@@ -311,6 +311,20 @@ jobs:
           cargo test -p novovm-node --lib actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart --locked -- --ignored --test-threads=1
           cargo test -p novovm-node --lib actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers --locked -- --ignored --test-threads=1
 
+      - name: Upload actual resident AAB evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resident-rpc-aab-evidence
+          if-no-files-found: ignore
+          # Explicit evidence allowlist: never upload configs, signing keys or DBs.
+          path: |
+            target/resident-rpc-aab-tests/**/result.json
+            target/resident-rpc-aab-tests/**/byzantine-signed-proposals.json
+            target/resident-rpc-aab-tests/**/a-a-b-before-recovery.json
+            target/resident-rpc-aab-tests/**/*.stdout.log
+            target/resident-rpc-aab-tests/**/*.stderr.log
+
       - name: Original AOEM Transfer and recovery without Host compatibility permission
         timeout-minutes: 10
         env:

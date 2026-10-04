@@ -8,6 +8,25 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-04 CI状态纠正与同候选证明接线（进行中）
+
+当前基线 `4e971c8c2f8cd34b222915695cebb47ed3b1d562`。
+GitHub CI `37163386705` 已 completed/failure，Rust作业 `111321325493`
+失败于实际原节点集成步骤。已独立读取失败日志及 artifacts API：A/A/B等
+故障peer的Decision观察表超时，三个诚实节点快照均高度1/耐久决定1，但该
+运行没有上传归档附件，不能凭快照补签收QC或其未执行的重启/后继步骤。
+原失败日志、限制及复验见[观察交接证据](../artifacts/audit/resident-aab-observer-recovery-20261004-v1/ci-failed-job.json)。
+
+修复仅在测试观察者：沿现有`RequestDecision`按精确父/域每250ms轮询一个
+诚实peer；不改生产网络/共识、90秒门限或三票要求。故意遗漏每高度首次
+已验真Decision但保留值指纹，仍拒绝冲突决定；后续原签名QC与三原节点
+实际归档/回执/后继冷恢复核对。Windows release 11.21秒、WSL Ubuntu release
+12.30秒通过，不是GitHub hosted同环境结果或多机验收。CI增加失败证据
+白名单上传，排除配置/密钥/数据库。有限补传不回退。
+
+后续主线为同RPC候选AOEM完整证明接入，当前进行中；GPU业务能力另按实际
+接口验收，不以本节文档或测试观察修复作为证明/异构执行完成。
+
 ## 2026-10-04 健康 peer 遗漏输入补传与故障等待交接
 
 基线 `main@b9c612c323440a06cdbfc28435c7b807803e7283` 加本节所在提交。

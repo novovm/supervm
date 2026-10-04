@@ -20,6 +20,75 @@ use novovm_network::duplex::worker::{
 };
 
 const FAULT_DEADLINE: Duration = Duration::from_secs(90);
+const DECISION_REQUEST_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Test-observer state, not a consensus decision or publication authority.
+/// Deliberately lose the first already-verified Decision at each height so this
+/// fixture cannot depend solely on catching a short-lived broadcast. A later
+/// observation still needs a real certificate and the exact requested parent.
+#[derive(Default)]
+struct DecisionObservation {
+    expected: BTreeMap<u64, ConsensusContext>,
+    checked_values: BTreeMap<u64, Hash>,
+    first_dropped: BTreeSet<u64>,
+    accepted_requests: BTreeMap<u64, u64>,
+    request_backpressure: u64,
+}
+
+impl DecisionObservation {
+    fn expect(&mut self, context: ConsensusContext) -> Result<()> {
+        if let Some(old) = self.expected.get(&context.height) {
+            ensure!(
+                *old == context,
+                "decision observer expected context changed"
+            );
+        } else {
+            ensure!(
+                self.expected.len() < 8,
+                "decision observer context budget exceeded"
+            );
+            self.expected.insert(context.height, context);
+        }
+        Ok(())
+    }
+
+    fn check_context(&self, context: ConsensusContext) -> Result<()> {
+        ensure!(
+            self.expected.get(&context.height) == Some(&context),
+            "decision observer missing or mismatched exact parent/domain context"
+        );
+        Ok(())
+    }
+
+    fn requested(&mut self, context: ConsensusContext) -> Result<()> {
+        self.check_context(context)?;
+        *self.accepted_requests.entry(context.height).or_default() += 1;
+        Ok(())
+    }
+
+    /// Called only AFTER verifying the original proposal and three honest votes.
+    fn retain_checked(&mut self, context: ConsensusContext, value: Hash) -> Result<bool> {
+        self.check_context(context)?;
+        if let Some(old) = self.checked_values.get(&context.height) {
+            ensure!(
+                *old == value,
+                "observed conflicting decided values at one height"
+            );
+        } else {
+            // Dropping the first payload must not hide conflicting certificates.
+            self.checked_values.insert(context.height, value);
+        }
+        if self.first_dropped.insert(context.height) {
+            return Ok(false);
+        }
+        Ok(self
+            .accepted_requests
+            .get(&context.height)
+            .copied()
+            .unwrap_or(0)
+            > 0)
+    }
+}
 
 fn codec() -> DecodeLimits {
     DecodeLimits {
@@ -43,6 +112,7 @@ struct FaultPeer {
     bodies: BTreeMap<Hash, Message>,
     votes: BTreeMap<String, Vote>,
     decisions: BTreeMap<u64, (Proposal, Quorum)>,
+    decision_observation: DecisionObservation,
     received: u64,
 }
 
@@ -111,6 +181,7 @@ impl FaultPeer {
             bodies: BTreeMap::new(),
             votes: BTreeMap::new(),
             decisions: BTreeMap::new(),
+            decision_observation: DecisionObservation::default(),
             received: 0,
         })
     }
@@ -209,6 +280,12 @@ impl FaultPeer {
                                 .any(|id| *id == vote.validator_id)),
                         "decision did not originate from three actual honest signers"
                     );
+                    if !self
+                        .decision_observation
+                        .retain_checked(proposal.context, proposal.value)?
+                    {
+                        continue;
+                    }
                     if let Some((old, _)) = self.decisions.get(&proposal.context.height) {
                         ensure!(
                             old.context == proposal.context && old.value == proposal.value,
@@ -236,6 +313,34 @@ impl FaultPeer {
         Ok(())
     }
 
+    /// One small request admission attempt per retry tick, with no send-wait
+    /// loop. Accepted means queued locally, not delivered or an archive ACK.
+    fn request_decision(&mut self, destination: &str, context: ConsensusContext) -> Result<()> {
+        self.decision_observation.check_context(context)?;
+        let request = transport::prepare_message(
+            self.domain,
+            &Message::RequestDecision { context },
+            codec(),
+        )?;
+        ensure!(
+            request.frame_count() == 1,
+            "decision request exceeded one frame"
+        );
+        match self
+            .worker
+            .try_send(destination.to_owned(), request.frame(0)?)?
+        {
+            SendAdmission::Accepted => self.decision_observation.requested(context)?,
+            SendAdmission::Backpressure(_) => {
+                self.decision_observation.request_backpressure += 1;
+            }
+            SendAdmission::Rejected { reason, .. } => {
+                bail!("decision request rejected: {reason:?}")
+            }
+        }
+        Ok(())
+    }
+
     fn phase_votes(&self, context: ConsensusContext, phase: Phase) -> Vec<&Vote> {
         self.votes
             .values()
@@ -246,6 +351,16 @@ impl FaultPeer {
     fn report(&self) -> Value {
         json!({"received_messages":self.received,"honest_signed_votes":self.votes.values().collect::<Vec<_>>(),
             "observed_decisions":self.decisions.values().collect::<Vec<_>>(),
+            "decision_observation":{
+                "exact_requested_contexts":self.decision_observation.expected.values().collect::<Vec<_>>(),
+                "deliberately_dropped_first_verified_decision_heights":self.decision_observation.first_dropped,
+                "verified_values_including_dropped_observations":self.decision_observation.checked_values,
+                "request_admissions_by_height":self.decision_observation.accepted_requests,
+                "request_backpressure":self.decision_observation.request_backpressure,
+                "request_interval_ms":DECISION_REQUEST_INTERVAL.as_millis(),
+                "deadline_seconds":FAULT_DEADLINE.as_secs(),
+                "scope":"exact-parent pull plus genuine signed Decision; queue admission is not delivery, and the wire has no request/reply correlation ID"
+            },
             "fault_peer_votes_signed":0,"externally_constructed_qcs":0,
             "lock_state_directly_exposed":false,"scope":"wire-verified real signer behavior, not an in-memory lock getter"})
     }
@@ -527,13 +642,22 @@ fn wait_decision(
     peer: &mut FaultPeer,
     nodes: &mut ProductNodes,
     honest: &[usize],
-    height: u64,
+    context: ConsensusContext,
 ) -> Result<()> {
+    ensure!(!honest.is_empty(), "decision request has no honest source");
+    peer.decision_observation.expect(context)?;
+    let height = context.height;
     let deadline = Instant::now() + FAULT_DEADLINE;
+    let mut request_due = Instant::now();
+    let mut request_peer = 0usize;
     loop {
         nodes.alive()?;
         peer.pump()?;
-        if peer.decisions.contains_key(&height) {
+        if let Some((proposal, _)) = peer.decisions.get(&height) {
+            ensure!(
+                proposal.context == context,
+                "observed decision context differs from requested parent"
+            );
             return Ok(());
         }
         ensure!(
@@ -541,7 +665,98 @@ fn wait_decision(
             "honest product decision {height} timeout; statuses={:?}",
             status_all(nodes, honest)?
         );
+        if Instant::now() >= request_due {
+            peer.request_decision(&self::peer(honest[request_peer]), context)?;
+            request_peer = (request_peer + 1) % honest.len();
+            request_due = Instant::now() + DECISION_REQUEST_INTERVAL;
+        }
         std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[test]
+fn decision_observer_recovers_only_after_lost_observation_and_exact_request() -> Result<()> {
+    let context = decision_observer_test_context();
+    let value = [9; 32];
+    let mut observation = DecisionObservation::default();
+    observation.expect(context)?;
+    // A valid first broadcast is intentionally unavailable to wait_decision.
+    assert!(!observation.retain_checked(context, value)?);
+    assert!(!observation.retain_checked(context, value)?);
+    assert!(observation.first_dropped.contains(&context.height));
+    // The request is not itself a decision. The caller must still receive and
+    // verify a real proposal and three honest precommit signatures before this.
+    observation.requested(context)?;
+    assert_eq!(observation.accepted_requests.get(&context.height), Some(&1));
+    assert!(observation.retain_checked(context, value)?);
+    assert!(observation.retain_checked(context, [10; 32]).is_err());
+    Ok(())
+}
+
+#[test]
+fn decision_observer_rejects_missing_or_wrong_exact_context() -> Result<()> {
+    let context = decision_observer_test_context();
+    let mut observation = DecisionObservation::default();
+    assert!(observation.requested(context).is_err());
+    assert!(observation.retain_checked(context, [9; 32]).is_err());
+    observation.expect(context)?;
+    observation.requested(context)?;
+    let wrong_contexts = [
+        ConsensusContext {
+            height: 2,
+            ..context
+        },
+        ConsensusContext {
+            chain_id: CHAIN + 1,
+            ..context
+        },
+        ConsensusContext {
+            epoch: context.epoch + 1,
+            ..context
+        },
+        ConsensusContext {
+            genesis_config_commitment: [10; 32],
+            ..context
+        },
+        ConsensusContext {
+            protocol_commitment: [10; 32],
+            ..context
+        },
+        ConsensusContext {
+            validator_set_hash: [10; 32],
+            ..context
+        },
+        ConsensusContext {
+            parent_block_hash: [10; 32],
+            ..context
+        },
+        ConsensusContext {
+            parent_decision_hash: [10; 32],
+            ..context
+        },
+    ];
+    for wrong in wrong_contexts {
+        assert!(observation.requested(wrong).is_err());
+        assert!(observation.retain_checked(wrong, [9; 32]).is_err());
+        if wrong.height == context.height {
+            assert!(observation.expect(wrong).is_err());
+        }
+    }
+    assert!(observation.first_dropped.is_empty());
+    assert!(observation.checked_values.is_empty());
+    Ok(())
+}
+
+fn decision_observer_test_context() -> ConsensusContext {
+    ConsensusContext {
+        chain_id: CHAIN,
+        genesis_config_commitment: [1; 32],
+        protocol_commitment: [2; 32],
+        epoch: 0,
+        validator_set_hash: [3; 32],
+        height: 1,
+        parent_block_hash: [4; 32],
+        parent_decision_hash: [5; 32],
     }
 }
 
@@ -610,6 +825,7 @@ fn actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers() ->
         serde_json::to_vec_pretty(&fault_artifact)?,
     )?;
     let mut fault = FaultPeer::start(faulty, &honest, &relay, &genesis, set.clone())?;
+    fault.decision_observation.expect(context)?;
     for (_, body_id, body) in &bodies {
         fault.bodies.insert(*body_id, body.clone());
     }
@@ -713,7 +929,7 @@ fn actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers() ->
             "split votes falsely published a head"
         );
         phase = "natural-pacemaker-and-three-honest-qc";
-        wait_decision(&mut fault, &mut nodes, &honest, 1)?;
+        wait_decision(&mut fault, &mut nodes, &honest, context)?;
         let nil_votes = fault.phase_votes(context, Phase::Precommit);
         ensure!(
             nil_votes.len() == 3 && nil_votes.iter().all(|vote| vote.value.is_none()),
@@ -759,6 +975,13 @@ fn actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers() ->
         nodes.stop_all()?;
         let honest_ids: BTreeSet<_> = fault.honest.values().copied().collect();
         let head: ParentPoint = serde_json::from_value(statuses[0]["head"].clone())?;
+        ensure!(
+            fault
+                .decisions
+                .get(&1)
+                .is_some_and(|(proposal, _)| proposal.value == head.block_hash),
+            "observed first QC differs from published statement"
+        );
         evidence["before_restart_archive"] =
             audit_archived_quorums(&nodes, &honest, &genesis, &set, head, &honest_ids)?;
         for index in &honest {
@@ -789,7 +1012,13 @@ fn actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers() ->
             nodes.submit_batch(*index, &next)?;
         }
         hashes.extend(transaction_hashes(&next)?);
-        wait_decision(&mut fault, &mut nodes, &honest, 2)?;
+        let successor_context = ConsensusContext {
+            height: head.height + 1,
+            parent_block_hash: head.block_hash,
+            parent_decision_hash: head.decision_hash,
+            ..context
+        };
+        wait_decision(&mut fault, &mut nodes, &honest, successor_context)?;
         let continued = nodes.wait_receipts(&honest, &hashes)?;
         ensure!(
             continued[0][..2] == receipts[0]
@@ -814,11 +1043,26 @@ fn actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers() ->
         evidence["cold_pids"] = json!(cold_pids);
         nodes.stop_all()?;
         let head: ParentPoint = serde_json::from_value(final_status[0]["head"].clone())?;
+        ensure!(
+            fault
+                .decisions
+                .get(&2)
+                .is_some_and(|(proposal, _)| proposal.value == head.block_hash),
+            "observed successor QC differs from published statement"
+        );
         evidence["final_archive"] =
             audit_archived_quorums(&nodes, &honest, &genesis, &set, head, &honest_ids)?;
         phase = "passed";
         Ok(())
     })();
+    if result.is_err() {
+        // A failed CI run must retain structured state, not only a possibly
+        // truncated debug string in the test harness's stderr.
+        evidence["failure_status_snapshot"] = match status_all(&mut nodes, &honest) {
+            Ok(statuses) => json!(statuses),
+            Err(error) => json!({"unavailable":format!("{error:#}")}),
+        };
+    }
     evidence["wire_observations"] = fault.report();
     let report = json!({"schema":"novovm/resident-product-rpc-aab/v1","passed":result.is_ok(),
         "failure":result.as_ref().err().map(|error|format!("{error:#}")),"phase":phase,"evidence":evidence,
