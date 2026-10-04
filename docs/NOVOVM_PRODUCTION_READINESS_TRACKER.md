@@ -8,6 +8,57 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-04 ZK统一语义接线前复现独立验真缺口（接线未签收）
+
+基线 `main/origin/main@cb4d3c38`，本机 Windows/MSVC。用户要求继续将已有 ZK
+语义接回原节点；本轮实际核查后发现不能仅补调用即签收。没有改交易、共识、
+GPU实现或SDK，没有另建证明器。AOEM兄弟仓只读；通用内核修复另待用户授权。
+
+### 已实测的反例，而非根据接口名称推断
+
+最小C用例直接包含**未修改**的随包 `hosted_resident_proof_verify.c`，使用其
+已有 `NO_MAIN` 条件；只使用虚构公开数据，不加载AOEM、不调用GPU、不访问链。
+私有成员profile3取深度0、`root != leaf_commitment`：按该实现的关系定义，
+零深度根必须等于叶承诺，因此不存在满足该公开语句的成员见证。
+
+| 原外部验证器的输入 | 实际返回值 |
+| --- | --- |
+| 无私有见证，公开构造封装/摘要的错误关系 | 0，接受 |
+| 直接篡改上述封装 | -1，拒绝 |
+| 篡改后仅重算checksum | -1，拒绝 |
+| 篡改后重算全部公开摘要和checksum | 0，接受 |
+| 更改预期public input、不重新绑定 | -1，拒绝 |
+
+主任务独立重编复跑同样结果。**反例程序exit=0表示成功复现缺陷，密码安全验收
+为FAIL。** 同版本原Rust proof smoke和原C完整verifier smoke仍各exit=0；这说明
+既有正常/简单篡改用例不足以证明对不可信证明者的独立有效性，不是缺库导致失败。
+源码、命令、输出、SDK和源文件SHA见
+[复现记录](../artifacts/audit/zk-semantic-boundary-20261004/verification.json)与
+[最小反例](../artifacts/audit/zk-semantic-boundary-20261004/verify_without_witness.c)。
+首次主任务C编译漏include目录而失败，补原头文件目录后通过，记录未抹掉。
+
+### 精确影响范围与保留资产
+
+- 当前op98的profile1/2/3不能表达完整NOV交易关系；私有profile的外部验证
+  在没有见证时只核公开封装/摘要一致性。AOEM源`ffi/aoem-ffi/src/lib.rs`
+  的`verify_fixed_profile_resident_proof_v1`在AORFv3分支也只查结构和checksum。
+- **生成端有真实成员关系检查；本反例没有证明AOEM生成器会接受错误见证。**
+  问题是恶意来源可绕过生成器，而接收方当前外部验证不能识别伪造关系。
+  不能仅补深度0比较就宣布一般私有成员证明问题已修复。
+- 原`GraphKind::Zk`、`WorkloadHint::Zk`、NTT→MSM→Hash图及常驻Vulkan后端
+  真实存在，予以保留。其图/队列结果不自动成为完整NOV密码证明；本结论不
+  否定AOEM其它Groth16/Halo2/Bulletproof等真实密码实现，也未审计其全部安全性。
+- 随包DLL哈希匹配manifest的`56e9da15`来源。只读比较到AOEM本地`34d66a51`
+  后续ffi差异为隐私接口增补，相关ZK实现未变；不把未重建的兄弟仓当运行库。
+- 当前resident `ComputeOwner`的FIFO同时承担鉴权和交易计算，不能将长证明
+  同步塞进去。wire输出读回是进程级surface、不是会话隔离数据库，生命周期
+  接入还须复用现有有界预算与唯一I/O owner；本轮没有为此新建服务。
+
+本轮仅提交反例及交接事实，不改生产路径，不声称新增业务ZK/GPU或TPS。
+现有CPU快路径保留，49项原草稿哈希不变。待明确授权后，先在AOEM的通用语义
+与独立验真契约内修复，再回原node接线；不恢复RISC0旁路，不在AOEM加入NOV
+账户/费用/共识业务，不以再造固定profile演示替代真实关系接入。
+
 ## 2026-10-04 撤除后端特定证明旁路，保留原节点与统一 ZK 入口
 
 代码基线 `387bf0b7a11cd0421322e283e51c5364ac530b5a` 加本节所在纠错提交。

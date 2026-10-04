@@ -1,0 +1,51 @@
+{
+  "baseline": "cb4d3c38e9ab805df7e8b65878e674be6aa5ac4a",
+  "environment": "Windows x64, Visual Studio 2026 18.2.1, MSVC v14.50.18.0, C11 /O2",
+  "scope": "Fictitious local inputs only; the shipped standalone C verifier is included unchanged. No AOEM DLL loaded, no GPU or network invoked, no wallet or chain data accessed.",
+  "command": "cl /nologo /std:c11 /W3 /O2 /Iaoem\\windows\\include artifacts\\audit\\zk-semantic-boundary-20261004\\verify_without_witness.c /Foartifacts\\audit\\zk-semantic-boundary-20261004\\verify_without_witness.obj /Feartifacts\\audit\\zk-semantic-boundary-20261004\\verify_without_witness.exe",
+  "compile_exit_code": 0,
+  "test_exit_code": 0,
+  "security_acceptance": "FAIL: exit 0 means the false-relation acceptance was reproduced, not that proof soundness passed",
+  "root_agent_recheck": {
+    "compile_exit_code": 0,
+    "test_exit_code": 0,
+    "same_five_verifier_results": true,
+    "binary_path": "target/zk-semantic-boundary-20261004/verify_without_witness.exe",
+    "binary_sha256": "015534d3ca2825f61cb09c3227e3094924c812e773cce2ef90d0ca2858e788f8",
+    "initial_compile_failure": "Both C compile attempts omitted /Iaoem/windows/include and failed C1083 aoem.h missing; no test ran. Adding the include path compiled the unchanged sources successfully.",
+    "original_rust_smoke_exit_code": 0,
+    "original_rust_smoke_stdout": "SUPERVM_AOEM_PROOF_ENGINE_HOST_SMOKE|profile=fixed_profile_v1|proof=ok|verify=ok|state_read=ok|metadata=ok|failures=0",
+    "original_c_verifier_smoke_exit_code": 0,
+    "original_c_verifier_smoke_stdout": "C_HOST_RESIDENT_PROOF_VERIFY|profile=zk_merkle_membership_v1|proof_parse=ok|private_membership=ok|privacy=ok|public_input_binding=ok|public_outputs_binding=ok|verify=ok|resident_asset=ok|batch_verify=ok|tamper_root_rejected=ok|tamper_commitment_rejected=ok|tamper_nullifier_rejected=ok|tamper_depth_rejected=ok|tamper_rejected=ok",
+    "original_smokes_library": "aoem/windows/core/bin/aoem_ffi.dll",
+    "original_smokes_library_sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+    "manifest_source_commit": "56e9da15010490ab54435ba6ab1c226f3d739176"
+  },
+  "raw_program_stdout": "{\"profile_id\":3,\"witness_supplied\":false,\"aoem_called\":false,\"gpu_called\":false,\"tree_depth\":0,\"root_differs_from_leaf_commitment\":true,\"public_constructed_verifier_rc\":0,\"raw_tamper_verifier_rc\":-1,\"checksum_only_repaired_verifier_rc\":-1,\"all_public_digests_recomputed_verifier_rc\":0,\"changed_statement_without_rebind_verifier_rc\":-1}",
+  "result": {
+    "profile_id": 3,
+    "witness_supplied": false,
+    "aoem_called": false,
+    "gpu_called": false,
+    "tree_depth": 0,
+    "root_differs_from_leaf_commitment": true,
+    "public_constructed_verifier_rc": 0,
+    "raw_tamper_verifier_rc": -1,
+    "checksum_only_repaired_verifier_rc": -1,
+    "all_public_digests_recomputed_verifier_rc": 0,
+    "changed_statement_without_rebind_verifier_rc": -1
+  },
+  "interpretation": "For depth zero the claimed membership relation requires root == leaf_commitment. The deliberately unequal public values are accepted by verify_contract_against_inputs without a witness after public digest/checksum construction. Simple tamper rejection therefore does not establish private membership proof soundness against an untrusted producer.",
+  "non_claims": [
+    "No claim that AOEM execution would accept the missing or false witness; its producer-side relation parser was not called.",
+    "No claim about unrelated AOEM proof implementations, GPU arithmetic correctness, or existing transaction/BFT correctness.",
+    "No mainchain or performance measurement."
+  ],
+  "sha256": {
+    "verify_without_witness.c": "c6a864ca1d562025091c11245d3ad465b4b0d8dcab2b7d112b04d1cd86bc42f2",
+    "verify_without_witness.exe": "dd259e86a4e5e631bedac84a82f1fb0d6d798c2d0b3c23839c87669315280bac",
+    "../../../aoem/examples/hosted_resident_proof_verify.c": "8aae864a1fef8f28a60e4f3af9af578ff525924767d0af9de241cf2a634b82c0",
+    "../../../aoem/examples/hosted_resident_proof_smoke.c": "4188b3f6360bb0a9e2203734a60a98158112d953c997a05a159a81db23347260",
+    "../../../aoem/windows/include/aoem.h": "81b199c32989bfc70772a98520693b9134ea7e390de9dd960ca3c9f46110b84b"
+  }
+}
