@@ -63,6 +63,19 @@ Shared product and multi-device development contract:
   post-quantum security remain core product delivery objectives. A runnable
   chain, component benchmark, storage-ownership gate, or green CI does not
   replace these objectives. Do not reduce scope without the user's agreement.
+- User correction 2026-10-04: `crates/novovm-node` is the product controller;
+  Rust's `main()` is only its executable bootstrap, not a competing product
+  architecture. Reuse the existing node -> exec -> bindings -> AOEM semantic
+  dispatch, including the dedicated ZK workloads. A function residing inside
+  node, or an API re-exported by exec, does not prove semantic integration.
+  Do not promote the direct RISC0/portable-receipt diagnostic path into another
+  product proof service. The backend-specific RPC service added in `387bf0b7`
+  has been retired by user request; its old reports remain historical evidence,
+  not the current integration direction. Preserve existing unified ZK/GPU code,
+  the measured CPU fast path, reusable proof relations and recovery assets.
+  Never substitute a fixed-profile proof for a different business relation or
+  claim GPU execution merely from a workload name. Retire incorrect product
+  wiring, not AOEM capabilities or the original node.
 - User clarification 2026-10-04: integrate the complete, measured `a7db795`
   fast path into the original product on current main. Preserve product
   responsibilities, not the old serial control flow. Reviewed controller,

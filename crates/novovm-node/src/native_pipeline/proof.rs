@@ -19,9 +19,12 @@ use crate::native_pipeline::state::frontier::CaptureBudget;
 use crate::native_pipeline::state::tree::NodeHash;
 use anyhow::{ensure, Context, Result};
 
+// Preserve the direct-backend adapter and its counterexamples as diagnostics,
+// not as a backend-specific product API or an implicit node service.
+#[cfg(test)]
 mod receipt;
-pub(crate) mod service;
 mod wire;
+#[cfg(test)]
 pub use receipt::{ExecutionProofPins, VerifiedExecutionReceipt};
 
 /// Guest resource profile, NOT a production block-size or proof-mandatory rule.
@@ -73,25 +76,6 @@ pub struct ExecutionJournalV1 {
 }
 
 impl ExecutionJournalV1 {
-    /// Read-only expected outputs from an archive candidate. The caller must
-    /// separately validate its chain/QC; this constructor grants no authority.
-    pub(crate) fn from_stored(
-        stored: &crate::native_pipeline::persistence::StoredCandidate,
-    ) -> Result<Self> {
-        let transactions = u64::try_from(stored.raw_transactions().len())?;
-        Ok(Self {
-            plan: stored.plan_commitment(),
-            post_state: stored.state_root(),
-            receipts: stored.receipt_batch_commitment(),
-            execution: stored.statement_commitment(),
-            transactions,
-            state_version: stored
-                .context()
-                .parent_state_version
-                .checked_add(transactions)
-                .context("execution proof state version overflow")?,
-        })
-    }
     /// Expected bytes from this pipeline's immutable, durably completed local
     /// candidate. This does not make its parent canonical or grant finality.
     pub fn from_candidate(

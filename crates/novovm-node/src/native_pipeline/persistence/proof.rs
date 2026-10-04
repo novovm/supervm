@@ -1,7 +1,9 @@
-//! Optional immutable proof attachments on the SAME candidate I/O owner.
+//! Retained TEST-ONLY immutable attachment codec from `387bf0b7`.
+//! The backend-specific product service and its I/O lane have been retired.
+//! This regression asset is not a second product proof/storage entry point.
 //! Bytes here are opaque and never confer execution, signing or finality rights.
-//! The proof owner verifies independently pinned image/journal BEFORE writing
-//! and AFTER reading. The storage codec only binds location and exact bytes.
+//! Future reuse must verify the unified semantic proof contract before writing
+//! and after reading. This codec only binds location and exact bytes.
 
 use super::store::BULK_KEYS;
 use super::CandidateStore;

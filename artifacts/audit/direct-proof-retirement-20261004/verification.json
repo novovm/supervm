@@ -1,0 +1,168 @@
+{
+  "schema": "novovm/direct-proof-retirement/v1",
+  "base_commit": "387bf0b7a11cd0421322e283e51c5364ac530b5a",
+  "date": "2026-10-04",
+  "environment": "Windows; local release build; one machine; actual original novovm-node processes",
+  "scope": "Retire the direct RISC0 product service, not existing unified ZK/GPU capabilities or the node controller",
+  "checks": {
+    "format": true,
+    "diff_check": true,
+    "node_all_targets_check": true,
+    "node_all_targets_clippy_deny_warnings": true,
+    "release_node_build": true,
+    "component_tests": {
+      "passed": 376,
+      "failed": 0,
+      "ignored": 57,
+      "seconds": 1.45
+    },
+    "opaque_attachment_real_library_test": {
+      "passed": true,
+      "seconds": 0.14
+    },
+    "assembly_boundary": true,
+    "protected_drafts": {
+      "count": 49,
+      "sha256_unchanged": true
+    }
+  },
+  "product_binary_sha256": "d0bc1aee37f184f6b02e297bdc604877115e785a0b46bc3d5ff515d82359da53",
+  "aoem_library_sha256": "4de9c21853b4bebf1527f2b7d8461a3f393fcf83263e040408a0f7745b0ed463",
+  "mixed_rpc": {
+    "raw_report": "target/resident-rpc-tests/29408-1791081530505395900/result.json",
+    "schema": "novovm/resident-product-rpc-functional/v1",
+    "cold_receipts_equal": true,
+    "transactions": 8,
+    "raw_sha256": "013b83382357e39c19d2369c558315a359d229717b01396f363434cb072f6dda",
+    "success": 7,
+    "retired_rpc_rejections": [
+      {
+        "node": 1,
+        "method": "nov_proveBlock",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      },
+      {
+        "node": 1,
+        "method": "nov_getBlockProof",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      },
+      {
+        "node": 0,
+        "method": "nov_proveBlock",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      },
+      {
+        "node": 0,
+        "method": "nov_getBlockProof",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      },
+      {
+        "node": 2,
+        "method": "nov_proveBlock",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      },
+      {
+        "node": 2,
+        "method": "nov_getBlockProof",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      },
+      {
+        "node": 3,
+        "method": "nov_proveBlock",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      },
+      {
+        "node": 3,
+        "method": "nov_getBlockProof",
+        "response": {
+          "jsonrpc": "2.0",
+          "id": 10,
+          "error": {
+            "code": -32000,
+            "message": "method not connected to resident profile; no legacy fallback"
+          }
+        }
+      }
+    ],
+    "business_failure": 1
+  },
+  "single_ingress": {
+    "passed": true,
+    "raw_report": "target/resident-rpc-single-ingress-tests/18340-1791081532348121900/result.json",
+    "phase": "complete",
+    "raw_sha256": "7d872ac0c3fb2f5efcac1d44fb1e2f3d45c2e3e64d9623ba40b3a78dec8e8d8e"
+  },
+  "aab": {
+    "raw_report": "target/resident-rpc-aab-tests/21340-1791081533680720200/result.json",
+    "raw_sha256": "d5c34477289301631d3289163e99625997c3e758a47c3eabb8003a0786853b1b",
+    "external_qc_manufactured": false,
+    "passed": true,
+    "phase": "passed",
+    "qc_required": 3,
+    "topology": "one host; three unchanged original novovm-node processes + one test-only Byzantine WSS/E2E peer",
+    "honest_signer_reset": false
+  },
+  "observation_seconds": {
+    "mixed_rpc": 1.83,
+    "single_ingress": 1.32,
+    "aab": 11.11
+  },
+  "limitations": [
+    "No new GPU or ZK execution claim",
+    "No 65536 transaction TPS/P95/P99 rerun",
+    "No Linux or physical multi-machine run in this cleanup",
+    "No deletion of runtime data, proof attachments, historical evidence or original ZK/GPU code",
+    "OS 10054 and TLS close_notify messages during process shutdown are retained in test logs; not a zero-error-log claim",
+    "Raw reports remain at the listed local repository-relative target paths; this compact committed file is an extraction, not the complete reports"
+  ],
+  "recovery": "Deleted service and dedicated process test remain recoverable from Git commit 387bf0b7; reusable relation/receipt/storage tests preserved"
+}

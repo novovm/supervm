@@ -72,7 +72,6 @@ fn config(size: usize) -> ResidentConfig {
         rpc_addr: "127.0.0.1:0".parse().unwrap(),
         workers: 1,
         batch_size: size,
-        proof: None,
         relay: ProductRelayClientConfigV1 {
             endpoint: "wss://127.0.0.1:9/not-opened".into(),
             expected_relay_peer_id: "not-connected-test-peer".into(),

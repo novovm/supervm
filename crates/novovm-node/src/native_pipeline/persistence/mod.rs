@@ -5,6 +5,9 @@
 pub mod io;
 pub(crate) mod metadata;
 pub mod packet;
+// Retained opaque attachment codec/regressions, not an active proof service.
+// Reuse requires the original node's unified semantic proof contract.
+#[cfg(test)]
 pub(crate) mod proof;
 mod store;
 

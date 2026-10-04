@@ -34,9 +34,6 @@ pub struct ResidentConfig {
     pub genesis: GenesisConfig,
     pub workers: u32,
     pub batch_size: usize,
-    /// Optional asynchronous complete-NOV proof owner. No finality-policy change.
-    #[serde(default)]
-    pub proof: Option<crate::native_pipeline::proof::service::ProofConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -101,20 +98,12 @@ impl ResidentConfig {
         {
             resolve_relative(base, certificate_path);
         }
-        if let Some(proof) = &mut config.proof {
-            resolve_relative(base, &mut proof.library);
-            resolve_relative(base, &mut proof.guest);
-        }
         config.normalize_native_paths();
         config.validate()?;
         Ok(config)
     }
 
     pub(super) fn normalize_native_paths(&mut self) {
-        if let Some(proof) = &mut self.proof {
-            proof.library = native_path(&proof.library);
-            proof.guest = native_path(&proof.guest);
-        }
         for target in [
             &mut self.library,
             &mut self.database,
@@ -169,9 +158,6 @@ impl ResidentConfig {
             );
         }
         self.genesis.validate()?;
-        if let Some(proof) = &self.proof {
-            proof.validate()?;
-        }
         Ok(())
     }
 }
@@ -383,6 +369,46 @@ mod tests {
     }
 
     #[test]
+    fn retired_direct_risc0_proof_config_is_never_silently_accepted() {
+        let base = serde_json::json!({
+            "profile": PROFILE,
+            "library": "not-opened-library",
+            "database": "not-opened-database",
+            "rpc_addr": "127.0.0.1:0",
+            "signing_key_file": "not-read-key",
+            "relay": {
+                "endpoint": "wss://127.0.0.1:9/not-opened",
+                "expected_relay_peer_id": "not-connected-test-peer",
+                "tls_trust": "native_web_pki"
+            },
+            "genesis": genesis(),
+            "workers": 1,
+            "batch_size": 2
+        });
+        // Decode only: no key, library, network or database is opened here.
+        let config: ResidentConfig = serde_json::from_value(base.clone()).unwrap();
+        assert_eq!(config.profile, PROFILE);
+        assert_eq!(config.batch_size, 2);
+        for retired in [
+            serde_json::Value::Null,
+            serde_json::json!({}),
+            serde_json::json!({
+                "library": "retired-proof-library",
+                "guest": "retired-guest.bin",
+                "image_id": [1, 2, 3, 4, 5, 6, 7, 8]
+            }),
+        ] {
+            let mut value = base.clone();
+            value["proof"] = retired;
+            let error = serde_json::from_value::<ResidentConfig>(value).unwrap_err();
+            assert!(
+                error.to_string().contains("unknown field `proof`"),
+                "retired direct-proof configuration must fail, even when null: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn genesis_derivation_binds_economics_validator_weights_and_protocol() {
         let mut base = genesis();
         base.genesis_config_commitment = base.derive_commitment().unwrap();
@@ -507,7 +533,6 @@ mod tests {
             genesis,
             workers: 2,
             batch_size: 2,
-            proof: None,
         };
         let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;
         let parent = first.controller.parent();

@@ -587,18 +587,6 @@ impl CandidatePipeline {
         self.config.store.domain
     }
 
-    /// One bounded optional proof lane on the existing storage owner. This
-    /// grants neither signing access nor a second database/head. Drain/drop the
-    /// proof owner before shutting down the pipeline.
-    pub(crate) fn take_proof_io(
-        &self,
-    ) -> Result<crate::native_pipeline::persistence::io::IoProofClient> {
-        self.io
-            .as_ref()
-            .context("pipeline I/O closed")?
-            .proof_client()
-    }
-
     pub(crate) fn owner_identity(&self) -> Arc<()> {
         self.identity.clone()
     }

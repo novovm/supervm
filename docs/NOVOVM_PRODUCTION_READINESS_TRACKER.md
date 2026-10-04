@@ -8,7 +8,59 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
-## 2026-10-04 原RPC候选完整证明、同库耐久保存与冷恢复
+## 2026-10-04 撤除后端特定证明旁路，保留原节点与统一 ZK 入口
+
+代码基线 `387bf0b7a11cd0421322e283e51c5364ac530b5a` 加本节所在纠错提交。
+用户明确要求及时删除最近错误接线，避免后续继续按独立 RISC0 产品路线开发。
+`crates/novovm-node` 一直是产品总控；Rust `main()` 仅是可执行文件的启动函数，
+不是需要另建或恢复的产品架构。本轮不改原 node bootstrap 或既有 ops-wire 入口。
+
+### 实际撤除与保留
+
+- 删除 `native_pipeline/proof/service.rs`，以及仅验证该服务的
+  `consensus/resident_rpc_process/proof.rs`。撤下 `nov_proveBlock`、
+  `nov_getBlockProof`、`nov_chainStatus.business_proof` 和相关启动/轮询/关闭。
+- 删除 resident 的后端特定 `proof` 配置。旧字段包括 `null` 也明确报
+  `unknown field proof`，不能静默忽略、自动选另一个后端或假装已迁成统一证明。
+- 撤下仅供该服务使用的 `IoProofClient` / ProofRead/Write / pipeline claim；
+  原候选、共识、查询的 I/O 行为不变。没有删除任何运行数据或已保存附件。
+- 保留原 AOEM 专用 ZK/GPU、统一 wire/exec/bindings、APFL/常驻快路径、完整
+  关系/guest/反例。node 的直接 receipt 适配和不透明附件 codec 仅在
+  `cfg(test)` 编译，不再导出为活动产品证明入口；附件实库回归仍由 CI 执行。
+- 原始证明和性能报告全部保留；被删除源码可从 `387bf0b7` 恢复。其历史证明
+  时间不代表 AOEM 统一 ZK/GPU 性能，也不能作为重新启用后端直连服务的依据。
+
+后续仍须沿既有 node 的专用语义任务、资源生命周期、输出和业务关系核对接入；
+不以此清理宣布新 GPU/证明交付，不将固定 profile 重标成另一种业务证明。
+
+### 本轮验证
+
+本机 Windows、原节点 release，本节源码在同一机器验证：
+
+- `cargo check -p novovm-node --all-targets --locked`、对应严格 Clippy
+  `-D warnings`、release node/测试构建、根工作区 fmt 和 diff 检查通过。
+  Cargo 仍提示原有多个 binary 共用同一源文件，不把它说成零告警构建。
+- `native_pipeline::`：376通过、0失败、57忽略；新增旧配置三种形态拒绝通过。
+  保留的不透明附件实库测试1项通过，覆盖多片、重开、不可覆盖与损坏拒绝。
+- 四个真实原节点混合RPC回归1.83秒通过：8笔最终回执（7成功、1业务失败），
+  两票不能出头、经济/nonce/回执和冷恢复/后继通过；四节点共8次退役接口
+  调用全部拒绝，调用前后链头/pending/已有回执不变。
+- 同版单入口传播/失败/重启1.32秒通过；A/A/B恢复11.11秒通过，后者仍是
+  三个真实原节点加一个受控故障peer、三诚实签者QC，不重置签者、不外造QC。
+- 装配边界检查通过；49项已有草稿逐文件SHA256与开工前一致。原node bootstrap、
+  exec/bindings/AOEM SDK均无改动。删除源码可由Git恢复，真实数据未触碰。
+
+程序/库哈希、8次拒绝结果及本地原始报告位置/哈希见
+[清理验证摘要](../artifacts/audit/direct-proof-retirement-20261004/verification.json)。
+原始报告留在摘要列出的 `target/` 路径；提交的摘要不是完整原始报告。
+关闭测试进程时的OS 10054/TLS close_notify日志保留，不称零错误日志。
+本轮未重跑65,536笔性能，不产生新的 TPS/P95/P99、GPU/ZK、Linux或公网验收声明。
+推送后的GitHub CI另行核对，不用本机结果代替远端结果。
+
+## 2026-10-04 历史：原RPC候选直接后端证明服务（已撤除）
+
+**本节记录 `387bf0b7` 的历史实现和实测。上节已撤除其产品入口；下列 RPC、
+配置示例与当时的下一步不是当前部署或开发指令。原始证据保留，不改写测试事实。**
 
 基线 `main@d44779b237a0de766eee48e20f24fe7da468aa81` 加本节所在提交。
 原 `novovm-node/native-resident-v1` 新增显式、可选的同候选证明服务；不是

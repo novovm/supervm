@@ -12,8 +12,6 @@ mod load;
 mod aab;
 #[path = "resident_rpc_process/offline.rs"]
 mod offline;
-#[path = "resident_rpc_process/proof.rs"]
-mod proof;
 
 use super::network_integration::Relay;
 use super::*;
@@ -783,6 +781,41 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
                 && status["pending_survives_restart"] == false),
         "product profile differs"
     );
+    // The retired direct-RISC0 product endpoints must not start a hidden owner
+    // or change the normal transaction/query path. Historical receipt assets
+    // remain available to separate diagnostics, not as an implicit RPC backend.
+    let mut retired_proof_responses = Vec::new();
+    for (position, index) in order.iter().enumerate() {
+        ensure!(
+            statuses[position].get("business_proof").is_none(),
+            "retired direct-proof service still exposed in chain status"
+        );
+        for method in ["nov_proveBlock", "nov_getBlockProof"] {
+            let response = nodes.request(
+                *index,
+                json!({"jsonrpc":"2.0","id":10,"method":method,"params":[1]}),
+            )?;
+            ensure!(
+                response.get("result").is_none()
+                    && response["error"]["message"]
+                        .as_str()
+                        .is_some_and(|message| message.contains("method not connected")),
+                "retired direct-proof endpoint unexpectedly connected: {response}"
+            );
+            retired_proof_responses.push(json!({"node":index,"method":method,"response":response}));
+        }
+        let after = nodes.rpc(*index, "nov_chainStatus", json!([]))?;
+        ensure!(
+            after["head"] == statuses[position]["head"]
+                && after["pending"] == statuses[position]["pending"]
+                && after.get("business_proof").is_none(),
+            "retired endpoint changed transaction or chain state"
+        );
+    }
+    ensure!(
+        nodes.wait_receipts(&order, &all_hashes)? == before,
+        "retired endpoint changed existing finalized receipt queries"
+    );
     let balances_before = nodes.balances(&order, &before[0], [200, 150])?;
     let live_pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
     nodes.stop_all()?;
@@ -839,6 +872,7 @@ fn actual_product_rpc_signed_batches_failures_quorum_and_restart() -> Result<()>
         "legacy_host_permission":false,"live_pids":live_pids,"restarted_pids":cold_pids,
         "two_of_four_no_head":minority,"admission":admitted,"mixed_async_admission":mixed_admission,"bad_signature_response":rejected,
         "pending_same_hash_bad_signature":pending_signature_rejections,
+        "retired_direct_proof_rpc_rejections":retired_proof_responses,
         "nonce_replay_response":replay,"unique_finalized_transactions":8,"successful_transactions":7,
         "business_failed_transactions":1,"cold_receipts_equal":true,"receipts":final_receipts[0],
         "balances_before_restart":balances_before,"balances_after_restart":balances_reopened,

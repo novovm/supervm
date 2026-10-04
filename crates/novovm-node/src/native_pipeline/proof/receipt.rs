@@ -1,6 +1,7 @@
-//! Optional proof-owner calls for the SAME NOV relation and candidate outputs.
+//! Diagnostic receipt adapter for the SAME NOV relation and candidate outputs.
 //! Reuses the existing complete guest input and AOEM AORCP002 adapter; it does
 //! not build another prover, infer an image from a receipt, or alter consensus.
+//! No product RPC or node startup route activates this direct-backend adapter.
 
 use super::{wire, ExecutionJournalV1, JOURNAL_BYTES, MAX_INPUT_BYTES};
 use crate::native_pipeline::business::nov_transfer_batch::ExecutedNovBatch;
@@ -99,7 +100,7 @@ impl ExecutionProofPins {
         )
     }
 
-    pub(super) fn prove(
+    fn prove(
         &self,
         session: &mut impl Backend,
         elf: &[u8],
@@ -114,7 +115,7 @@ impl ExecutionProofPins {
         self.verify(session, &receipt, expected)
     }
 
-    pub(super) fn verify(
+    fn verify(
         &self,
         session: &mut impl Backend,
         receipt: &[u8],
@@ -144,7 +145,7 @@ fn frame_input(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 // Private test seam; product callers can only use the actual AOEM session.
-pub(super) trait Backend {
+trait Backend {
     fn prove(&mut self, elf: &[u8], input: &[u8], image: &[u32; 8]) -> Result<Vec<u8>>;
     fn verify(&mut self, receipt: &[u8], image: &[u32; 8], expected: &[u8]) -> Result<()>;
 }

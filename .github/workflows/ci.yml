@@ -303,8 +303,8 @@ jobs:
           cargo test -p novovm-exec --lib resident --locked -- --test-threads=1
           cargo test -p novovm-network --lib duplex --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_pipeline --locked -- --test-threads=1
-          # Opaque proof attachment durability only; complete real proving needs
-          # an explicitly pinned AORCP002 backend/guest and is tested separately.
+          # Retained test-only opaque attachment durability. This does not enable
+          # the retired backend-specific product proof service or prove ZK/GPU.
           cargo test -p novovm-node --lib real_proof_storage_multichunk_reopen_immutable_and_corruption_rejection --locked -- --ignored --test-threads=1
           cargo build -p novovm-node --bin novovm-node --locked
           target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
