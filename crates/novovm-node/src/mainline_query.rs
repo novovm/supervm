@@ -1022,32 +1022,32 @@ fn privacy_capabilities_from_params_or_env_v1(params: &Value) -> (AoemCapability
 
 fn run_mainline_privacy_capability_status_v1(params: &Value) -> Result<Value> {
     let (capabilities, capability_source) = privacy_capabilities_from_params_or_env_v1(params);
-    let zk_query_proof_capable = capabilities.zkvm_verify || capabilities.zkvm_prove;
-    let ringct_query_proof_capable = capabilities.ringct_verify || capabilities.ringct_prove;
-    let mut proof_systems = Vec::new();
-    if ringct_query_proof_capable {
-        proof_systems.push("ringct");
+    // These are caller/environment declarations, not observations of a loaded
+    // engine or proof-backed query implementation. Keep them for diagnostics
+    // without granting product availability, authorization or proof validity.
+    let mut declared_proof_systems = Vec::new();
+    if capabilities.ringct_verify || capabilities.ringct_prove {
+        declared_proof_systems.push("ringct");
     }
-    if zk_query_proof_capable {
-        proof_systems.push("zk");
+    if capabilities.zkvm_verify || capabilities.zkvm_prove {
+        declared_proof_systems.push("zk");
     }
-    let status = if proof_systems.is_empty() {
-        "read_gate_only"
-    } else {
-        "privacy_proof_capable"
-    };
     Ok(json!({
         "method": "nov_getPrivacyCapabilityStatus",
         "found": true,
-        "status": status,
+        "status": "read_gate_only",
         "privacy_query_surface": "mainline_read_gate",
         "truth_source": "mainline_unified_account_surface/native_execution_store",
         "m2_asset_read_redaction": true,
         "m2_fee_privacy_required": true,
         "user_level_balances_public_by_default": false,
         "proof_generation_performed": false,
+        "proof_verification_performed": false,
+        "capability_claims_verified": false,
+        "capability_scope": "unverified_aoem_declarations_not_product_availability_or_proof_verification",
         "capability_source": capability_source,
-        "privacy_query_proof_systems": proof_systems,
+        "privacy_query_proof_systems": [],
+        "declared_aoem_proof_systems": declared_proof_systems,
         "ringct": {
             "role": "confidential_amounts_and_membership",
             "prove": capabilities.ringct_prove,
@@ -1070,11 +1070,7 @@ fn run_mainline_privacy_capability_status_v1(params: &Value) -> Result<Value> {
         "policy": {
             "public_m2_detail_query": "redacted",
             "authorized_m2_detail_query": "mainline_read_gate",
-            "proof_backed_private_query": if proof_systems.is_empty() {
-                "unavailable"
-            } else {
-                "available_by_capability"
-            },
+            "proof_backed_private_query": "unavailable",
             "no_second_ledger": true,
         },
     }))
@@ -11347,6 +11343,52 @@ mod tests {
         }
     }
 
+    fn assert_privacy_capability_status_is_read_gate_only(out: &Value) {
+        assert_eq!(out["status"], "read_gate_only");
+        assert_eq!(out["privacy_query_proof_systems"], json!([]));
+        assert_eq!(out["policy"]["proof_backed_private_query"], "unavailable");
+        assert_eq!(out["proof_generation_performed"], false);
+        assert_eq!(out["proof_verification_performed"], false);
+        assert_eq!(out["capability_claims_verified"], false);
+        assert_eq!(
+            out["capability_scope"],
+            "unverified_aoem_declarations_not_product_availability_or_proof_verification"
+        );
+        assert_eq!(out["policy"]["public_m2_detail_query"], "redacted");
+        assert_eq!(
+            out["policy"]["authorized_m2_detail_query"],
+            "mainline_read_gate"
+        );
+        assert_eq!(out["policy"]["no_second_ledger"], true);
+    }
+
+    // Each environment-sensitive test uses its own child process; never change
+    // the shared test process's capabilities while other query tests run.
+    fn privacy_capability_status_isolated_env(test_name: &str, declared: Option<&str>) -> bool {
+        const CHILD: &str = "NOVOVM_PRIVACY_CAPABILITY_TEST_CHILD";
+        if std::env::var(CHILD).as_deref() == Ok(test_name) {
+            return true;
+        }
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("--exact")
+            .arg(format!("mainline_query::tests::{test_name}"))
+            .args(["--nocapture", "--test-threads=1"])
+            .env(CHILD, test_name)
+            .env_remove("NOVOVM_AOEM_CAPABILITIES_JSON");
+        if let Some(value) = declared {
+            command.env("NOVOVM_AOEM_CAPABILITIES_JSON", value);
+        }
+        let output = command.output().expect("spawn isolated capability test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed"),
+            "isolated capability test failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        false
+    }
+
     #[test]
     fn privacy_capability_status_reports_ringct_zk_and_mldsa_boundaries() {
         let bogus_canonical_store =
@@ -11381,10 +11423,7 @@ mod tests {
             Some("nov_getPrivacyCapabilityStatus")
         );
         assert_eq!(out.get("found").and_then(Value::as_bool), Some(true));
-        assert_eq!(
-            out.get("status").and_then(Value::as_str),
-            Some("privacy_proof_capable")
-        );
+        assert_privacy_capability_status_is_read_gate_only(&out);
         assert_eq!(
             out.get("capability_source").and_then(Value::as_str),
             Some("params")
@@ -11423,15 +11462,21 @@ mod tests {
             Some(false)
         );
         let systems = out
-            .get("privacy_query_proof_systems")
+            .get("declared_aoem_proof_systems")
             .and_then(Value::as_array)
-            .expect("proof system list should exist");
+            .expect("declared proof system list should exist");
         assert!(systems.iter().any(|v| v.as_str() == Some("ringct")));
         assert!(systems.iter().any(|v| v.as_str() == Some("zk")));
     }
 
     #[test]
     fn privacy_capability_status_without_capabilities_is_read_gate_only() {
+        if !privacy_capability_status_isolated_env(
+            "privacy_capability_status_without_capabilities_is_read_gate_only",
+            None,
+        ) {
+            return;
+        }
         let bogus_canonical_store =
             std::path::Path::new("this-canonical-store-does-not-exist.json");
         let out = run_mainline_query_from_path(
@@ -11440,6 +11485,9 @@ mod tests {
             &json!({}),
         )
         .expect("privacy capability status should work without configured capabilities");
+
+        assert_privacy_capability_status_is_read_gate_only(&out);
+        assert_eq!(out["declared_aoem_proof_systems"], json!([]));
 
         assert_eq!(
             out.get("status").and_then(Value::as_str),
@@ -11465,6 +11513,72 @@ mod tests {
                 .and_then(Value::as_bool),
             Some(false)
         );
+    }
+
+    #[test]
+    fn privacy_capability_status_caller_claims_never_enable_proof_queries() {
+        for alias in ["aoem_capabilities", "capabilities"] {
+            for (capabilities, declared, path) in [
+                (
+                    json!({"privacy": {"ringct": {"prove": true}}}),
+                    "ringct",
+                    "/ringct/prove",
+                ),
+                (
+                    json!({"privacy": {"ringct": {"verify": true}}}),
+                    "ringct",
+                    "/ringct/verify",
+                ),
+                (json!({"zkvm": {"prove": true}}), "zk", "/zk/prove"),
+                (json!({"zkvm": {"verify": true}}), "zk", "/zk/verify"),
+            ] {
+                let mut params = json!({
+                    "status": "privacy_proof_capable",
+                    "proof_verification_performed": true,
+                    "capability_claims_verified": true,
+                    "policy": {"proof_backed_private_query": "available_by_capability"},
+                });
+                params[alias] = capabilities;
+                let out = run_mainline_query_from_path(
+                    Path::new("this-canonical-store-does-not-exist.json"),
+                    "nov_getPrivacyCapabilityStatus",
+                    &params,
+                )
+                .expect("caller declaration is diagnostic only");
+                assert_privacy_capability_status_is_read_gate_only(&out);
+                assert_eq!(out["capability_source"], "params");
+                assert_eq!(out["declared_aoem_proof_systems"], json!([declared]));
+                assert_eq!(out.pointer(path), Some(&Value::Bool(true)));
+            }
+        }
+    }
+
+    #[test]
+    fn privacy_capability_status_environment_claims_do_not_enable_proof_queries() {
+        if !privacy_capability_status_isolated_env(
+            "privacy_capability_status_environment_claims_do_not_enable_proof_queries",
+            Some(
+                r#"{"privacy":{"ringct":{"prove":true,"verify":true}},"zkvm":{"prove":true,"verify":true}}"#,
+            ),
+        ) {
+            return;
+        }
+        let out = run_mainline_query_from_path(
+            Path::new("this-canonical-store-does-not-exist.json"),
+            "nov_getPrivacyCapabilityStatus",
+            &json!({}),
+        )
+        .expect("environment declaration is diagnostic only");
+        assert_privacy_capability_status_is_read_gate_only(&out);
+        assert_eq!(
+            out["capability_source"],
+            "env:NOVOVM_AOEM_CAPABILITIES_JSON"
+        );
+        assert_eq!(out["declared_aoem_proof_systems"], json!(["ringct", "zk"]));
+        assert_eq!(out["ringct"]["prove"], true);
+        assert_eq!(out["ringct"]["verify"], true);
+        assert_eq!(out["zk"]["prove"], true);
+        assert_eq!(out["zk"]["verify"], true);
     }
 
     #[test]

@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**本机限定修正收口（2026-10-04，基线 `19043354` 加本节提交）：** 原节点
+`nov_getPrivacyCapabilityStatus` 不再将请求/环境中的AOEM能力声明误报为证明
+查询已可用；保留声明、来源和原读策略。Windows release 4项状态反例与1项
+既有策略回归、严格lib Clippy、fmt通过；49草稿哈希不变，认领释放。相关源码
+中未找到可直接恢复旧私有profile的完整电路与生产固定参数；新关系/哈希/版本
+需要明确契约，不以乘法、累加或范围证明替代NOV完整业务。未改AOEM、交易或
+最终性，未交付新ZK/GPU/TPS；详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
+
 **当前授权与修复范围（2026-10-04）：** 用户已授权AOEM通用密码/语义接口修复。
 AOEM代码`1377cd1e`已撤回不可靠的私有profile3，封堵生成、资产注册与外部
 验真；公开profile1/2仅保留明确标识的非ZK诊断。SUPERVM同步FULLMAX、唯一

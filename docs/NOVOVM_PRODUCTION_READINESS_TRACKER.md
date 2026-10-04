@@ -8,6 +8,45 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-04 证明关系复核与原节点能力误报纠正（非新证明交付）
+
+基线SUPERVM `1904335456`、AOEM `2331fb3c47`。本次只读核对相关密码关系与
+统一入口，修改原节点的能力查询，不修改AOEM、交易计算、共识或最终性。
+
+- `nov_getPrivacyCapabilityStatus` 原先只凭请求/环境中的 `prove` 或 `verify`
+  声明，就报告 `privacy_proof_capable/available_by_capability`。本方法没有
+  实际生成/验证证明，也没有已接通的证明查询服务；该输出不能作为可用性证据。
+  修正后保留原RingCT/ZK/ML-DSA声明与来源，将其明确列为未验证声明；实际
+  查询仍是 `read_gate_only`，证明查询不可用，实际可用证明系统列表为空。
+  这不是关闭一个已可用的证明服务，不改变读取鉴权或M2信息遮蔽。
+- AOEM统一op96–99及 `GraphKind::Zk` 的NTT/MSM/Hash能力保留。限定源码核对
+  显示：FFI默认Groth16电路是 `a*b=c`；Halo2当前电路是累加关系，未在电路中
+  验证输入证明；真实Bulletproof范围证明和经典CLSAG/BP+验真也不能顶替隐藏
+  Merkle路径或完整NOV业务关系。这不否定这些原有能力，不恢复RISC0产品旁路。
+- 已撤回profile3的 `parse_zk_merkle_membership_v1` 是普通见证检查，没有查到
+  可直接复用的对应私有电路；其叶、nullifier与树节点调用自定义
+  `proof_contract_digest32`（AOEM `crates/ffi/aoem-ffi/src/lib.rs`），未找到该摘要
+  具备密码学安全性的依据。不能把旧摘要直接写入真实电路就宣称修复。
+  Groth16本地临时setup也不等于已固定的生产验证参数。
+
+下一密码修复需要明确新的关系/哈希/证明版本及参数信任契约，保持旧不可靠
+profile拒绝；先决定要证明的业务关系，再复用AOEM后端，不能拿另一固定关系
+换标签交付。NOV规则留在SUPERVM，AOEM只承载通用证明能力。本次未选择新密码
+方案或修改链协议，未新增ZK、GPU业务或TPS成绩。
+
+远端状态补正：上一提交 `1904335456` 的CI `37179579101` 已完成，活动Rust、
+安全、保留组件和LAN检查通过；Node项目检查仍跳过。这个结果不等于本次修改
+的远端CI，也不等于主网或完整ZK验收。
+
+本机Windows/MSVC release：`cargo test --release --locked --target-dir target
+-p novovm-node --lib privacy_capability_status -- --test-threads=1 --nocapture`
+4/4通过，覆盖两种参数别名、单prove/verify、伪造成功字段、隔离环境声明及
+未配置状态；同harness的既有 `privacy_audit_policy_locks_m2_query_surface`
+1/1通过。`cargo clippy --release --locked --target-dir target -p novovm-node
+--lib -- -D warnings`、workspace fmt与限定diff检查通过。Cargo既有重复binary
+目标警告仍保留。本轮未重跑四节点、Linux或吞吐，不把查询单测当作产品ZK
+验证；49项原草稿哈希不变。认领收口，无新增证明协议或密码后端选择。
+
 ## 2026-10-04 已授权AOEM私有profile安全封堵与原节点回归（非ZK恢复）
 
 SUPERVM基线 `da95316c` 加本节提交；用户明确授权修改AOEM通用密码/语义契约。
