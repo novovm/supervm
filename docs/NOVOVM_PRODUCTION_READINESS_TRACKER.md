@@ -8,6 +8,57 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 原生 UCA 账户记录与候选状态恢复
+
+输入 `f731060e0146b51914565fce9baa75baf7df5c02`。native adapter 新增
+`uca_state`，复用既有 `UcaAccount`；版本 1 记录包含根绑定、状态、代次、
+独立 V4 行政 nonce 及最多 64 条授权承诺（含未过期撤销墓碑）。单账户
+记录最多 32 KiB，单次授权最长 65,536 个块；这是候选格式上限，不是
+生产租约/收费政策。当前仅 Ed25519，其他算法及强制私有/PQ/ZK 模式
+拒绝，不降级。NUCA/1 命令为固定 70/78 字节，方法、应用域、期限和
+承诺都在原完整 V4 双签内。承诺不含聊天公钥、联系人或原始网络证书；
+它本身不能证明匿名性，公开账户/用途/时间仍会关联。
+
+纯 reducer 校验当前账户及完整双签后，在副本上同时产生授权变更与下个
+nonce，保留完整父记录比较，任何失败不修改输入。撤销墓碑保留至原期限，
+禁止租期内用同一承诺重新授权而复活旧凭证；过期项只在成功候选中回收。
+没有新建数据库、全局身份缓存、真实账户或余额；也未替代交易失败时应由
+既有执行器完成的费用/nonce 规则。
+
+节点在原 `module_state` 增加可选 `native_uca_accounts_v1`，逐账户映射
+到现有物理/共识记录。未启用时不序列化空字段，旧状态图像保持；显式
+登记版本字段，拒绝未知字段、错误所有者、超大/错误版本记录。旧分片
+写法遇到新账户状态直接失败，避免账户状态从持久化中消失。尚无生产
+注册/导入入口，旧 `unified_account_surface` 数据库不成为原生可信来源。
+
+Windows / Rust 1.94.0：adapter `uca_` **13 项**；node release 新记录
+**2 项**；真实 AOEM **1 项跨进程恢复**（另启动专用 worker）通过。真实
+库为已固定的 core `01779fe4...056674`，测试库在忽略目录
+`artifacts/uca-state-tests/`。父进程写隔离夹具，子进程重开、验证双签撤销
+并写候选，父进程再次重开检查 nonce/撤销同时保留、旧交易拒绝、旧根
+不变，以及增量共识根与完整状态重算一致。没有发布权威链头，未测真实
+断电、跨节点共识或原子费用提交；不得把单账户叶持久化称作完整授权最终性。
+
+既有记录 **5 项**、共识投影 **8 项**、远端入口 **5 项**、创世 **10 项**
+通过。adapter all-targets 与 node release lib 严格 Clippy、限定 rustfmt、
+diff 检查通过。复现时显式设置 `CARGO_TARGET_DIR=<SUPERVM>/target`：
+
+```powershell
+cargo test --locked -p novovm-adapter-novovm --lib uca_
+cargo test --locked --release -p novovm-node --lib native_uca_
+cargo test --locked --release -p novovm-node --lib real_aoem_native_uca_records_survive_process_restart -- --ignored --nocapture --test-threads=1
+```
+
+日志：`artifacts/uca-state-node-tests.log`、`uca-state-aoem-restart.log`、
+`uca-regression-*.log`、`uca-state-*-clippy.log`。首轮测试编译发现测试辅助
+名称遮蔽及误用不存在的 overlay 构造器，已修正后重编译通过。
+
+**仍未接通：** 注册/根轮换的版本化业务、生产已验证父状态提供方、
+V4 候选认证/执行/费用/失败消费/回执/共识发布的一体化接线及移动接入。
+下一步须将账户效果与既有费用和规范回执置于同一候选，重新验证精确父
+再发布；不能单独把 reducer 结果作为已授权。V3 继续拒绝 V4，历史 Host
+执行开关未启用。授权承诺不是匿名凭证，聊天不因此增加逐消息链 RPC。
+
 ## 2026-10-10 版本化 UCA 授权载体与完整封包预检
 
 输入 `a66f0501ac681be60231a314de9ac572feae7d61`。本片在已有 protocol

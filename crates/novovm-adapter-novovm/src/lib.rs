@@ -3,6 +3,7 @@
 mod bincode_compat;
 pub mod native_intent;
 pub mod uca_delegation;
+pub mod uca_state;
 
 use anyhow::{anyhow, bail, Result};
 use aoem_bindings::{

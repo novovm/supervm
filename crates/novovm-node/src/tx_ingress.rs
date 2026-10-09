@@ -18,6 +18,9 @@ mod native_store_records;
 mod native_transfer_record_execution;
 #[path = "native_transfer_state_access.rs"]
 mod native_transfer_state_access;
+#[cfg(test)]
+#[path = "native_uca_record_tests.rs"]
+mod native_uca_record_tests;
 
 #[path = "native_nonce_migration.rs"]
 pub mod native_nonce_migration;
@@ -876,6 +879,11 @@ pub struct NovNativeExecutionModuleStateV1 {
     pub account_asset_balances: BTreeMap<String, BTreeMap<String, u128>>,
     pub native_auth_nonce_reservations: BTreeMap<String, String>,
     pub native_auth_next_nonces: BTreeMap<String, u64>,
+    // Versioned, opt-in native UCA records. Absence preserves prior roots;
+    // never implicitly import the legacy unified_account_surface database.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub native_uca_accounts_v1:
+        BTreeMap<String, novovm_adapter_novovm::uca_state::NativeUcaAccountRecordV1>,
     // A missing persisted marker means legacy, not the new-genesis default.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub native_auth_nonce_identity_scheme: String,
@@ -1075,6 +1083,7 @@ impl Default for NovNativeExecutionModuleStateV1 {
             account_asset_balances: BTreeMap::new(),
             native_auth_nonce_reservations: BTreeMap::new(),
             native_auth_next_nonces: BTreeMap::new(),
+            native_uca_accounts_v1: BTreeMap::new(),
             native_auth_nonce_identity_scheme: NATIVE_AUTH_NONCE_IDENTITY_SCHEME_V2.to_string(),
             protocol_config_commitment: String::new(),
             governance_proposals: BTreeMap::new(),
@@ -5260,6 +5269,9 @@ fn native_module_state_shard_value_v1(
     module_state: &NovNativeExecutionModuleStateV1,
     shard: &str,
 ) -> Result<Vec<u8>> {
+    if !module_state.native_uca_accounts_v1.is_empty() {
+        bail!("native UCA records require the versioned record layout; legacy shards would omit identity state");
+    }
     let mut value = match shard {
         "treasury" => serde_json::json!({
             "treasury_reserves": module_state.treasury_reserves,

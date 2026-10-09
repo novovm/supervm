@@ -88,7 +88,7 @@ pub struct PersonaAddress {
     pub external_address: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UcaAccount {
     pub uca_id: String,
     pub primary_key_ref: Vec<u8>,
@@ -133,7 +133,7 @@ impl UcaKeyProofType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UcaPrimaryKeyBinding {
     pub key_algo: UcaKeyAlgo,
     pub public_key: Vec<u8>,

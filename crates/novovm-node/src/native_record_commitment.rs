@@ -151,7 +151,14 @@ fn is_consensus_path(path: &[String]) -> Result<bool> {
                     .map_err(|error| error.to_string())?;
                 let StrictObject(fields) =
                     serde_json::from_slice(&raw).map_err(|error| error.to_string())?;
-                Ok(fields.into_keys().collect())
+                Ok(fields
+                    .into_keys()
+                    .chain(
+                        physical::OPTIONAL_MODULE_MAPS_V1
+                            .iter()
+                            .map(|name| (*name).to_owned()),
+                    )
+                    .collect())
             })
             .as_ref()
             .map_err(|error| anyhow::anyhow!("consensus module field schema: {error}"))?;
@@ -169,6 +176,7 @@ fn is_consensus_path(path: &[String]) -> Result<bool> {
 }
 
 fn projected_value(path: &[String], raw: &[u8]) -> Result<Vec<u8>> {
+    physical::validate_uca_record_value_v1(path, raw)?;
     if physical::is_object_path_v1(path)? {
         if raw == physical::OBJECT {
             return Ok(physical::OBJECT.to_vec());

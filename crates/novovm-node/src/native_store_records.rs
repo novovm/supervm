@@ -17,6 +17,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) type Records = BTreeMap<Vec<u8>, Vec<u8>>;
 type Object = BTreeMap<String, Box<RawValue>>;
 pub(super) const OBJECT: &[u8] = b"\0";
+// Optional versioned maps are absent in inactive/legacy stores. Register their
+// paths explicitly without serializing empty markers into existing state roots.
+pub(super) const OPTIONAL_MODULE_MAPS_V1: &[&str] = &["native_uca_accounts_v1"];
 
 pub(super) trait NativeRecordAccessV1 {
     /// Returns a raw typed JSON token; structural object markers are exposed as
@@ -94,6 +97,11 @@ fn module_maps() -> Result<&'static BTreeSet<String>> {
         Ok(fields
             .into_iter()
             .filter_map(|(name, value)| (value.get() == "{}").then_some(name))
+            .chain(
+                OPTIONAL_MODULE_MAPS_V1
+                    .iter()
+                    .map(|name| (*name).to_owned()),
+            )
             .collect())
     })
     .as_ref()
@@ -121,6 +129,7 @@ pub(super) fn physical_path_value_v1(parts: &[String], raw: &[u8]) -> Result<Vec
     if parts.len() > 4 {
         bail!("native store record path exceeds layout depth");
     }
+    validate_uca_record_value_v1(parts, raw)?;
     if is_object_path_v1(parts)? {
         let object: Object = serde_json::from_slice(raw)?;
         if !object.is_empty() {
@@ -130,6 +139,27 @@ pub(super) fn physical_path_value_v1(parts: &[String], raw: &[u8]) -> Result<Vec
     }
     let parsed: Box<RawValue> = serde_json::from_slice(raw)?;
     Ok(parsed.get().as_bytes().to_vec())
+}
+
+pub(super) fn validate_uca_record_value_v1(parts: &[String], raw: &[u8]) -> Result<()> {
+    if parts.len() == 3 && parts[0] == "module_state" && parts[1] == "native_uca_accounts_v1" {
+        use novovm_adapter_novovm::uca_state::{
+            NativeUcaAccountRecordV1, MAX_ACCOUNT_RECORD_BYTES_V1,
+        };
+        if raw.len() > MAX_ACCOUNT_RECORD_BYTES_V1 {
+            bail!("native UCA record input exceeds byte budget");
+        }
+        let record: NativeUcaAccountRecordV1 = serde_json::from_slice(raw)?;
+        record.validate(&parts[2])?;
+        if super::native_record_commitment::canonical_raw_json_v1(raw)?
+            != super::native_record_commitment::canonical_raw_json_v1(&serde_json::to_vec(
+                &record,
+            )?)?
+        {
+            bail!("native UCA record contains unrepresented fields");
+        }
+    }
+    Ok(())
 }
 
 impl NativeRecordAccessV1 for RecordOverlayV1<'_> {
@@ -182,7 +212,10 @@ fn validate_update_path(parts: &[String]) -> Result<()> {
         bail!("native store record path exceeds layout depth");
     }
     if parts.is_empty() || parts.len() == 1 || (parts.len() == 2 && parts[0] == "module_state") {
-        if !fields.contains(parts) {
+        let optional_map = parts.len() == 2
+            && parts[0] == "module_state"
+            && OPTIONAL_MODULE_MAPS_V1.contains(&parts[1].as_str());
+        if !fields.contains(parts) && !optional_map {
             bail!("unknown native store record field");
         }
     } else {
@@ -316,6 +349,7 @@ fn visit_object(
 
 /// Cold state-only conversion; deliberately does not serialize history receipts.
 pub(super) fn encode_module_v1(state: &super::NovNativeExecutionModuleStateV1) -> Result<Records> {
+    validate_uca_records(state)?;
     let raw: Box<RawValue> = serde_json::from_slice(&typed_raw_v1(state)?)?;
     let mut records = Records::new();
     visit_object(
@@ -340,12 +374,20 @@ pub(super) fn full_store_encodings_for_test_v1() -> usize {
 /// Cold-path conversion only. RawValue preserves every u128/i128 JSON token;
 /// routing through serde_json::Value would round values above u64 through f64.
 pub(super) fn encode(store: &NovNativeExecutionStoreV1) -> Result<Records> {
+    validate_uca_records(&store.module_state)?;
     #[cfg(test)]
     FULL_STORE_ENCODINGS.with(|count| count.set(count.get() + 1));
     let raw: Box<RawValue> = serde_json::from_slice(&typed_raw_v1(store)?)?;
     let mut records = Records::new();
     visit_object(&raw, &mut Vec::new(), module_maps()?, &mut records)?;
     Ok(records)
+}
+
+fn validate_uca_records(state: &super::NovNativeExecutionModuleStateV1) -> Result<()> {
+    for (id, account) in &state.native_uca_accounts_v1 {
+        account.validate(id)?;
+    }
+    Ok(())
 }
 
 /// Reject unknown records, missing defaulted fields, noncanonical values, and
