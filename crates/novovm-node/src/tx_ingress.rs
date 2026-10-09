@@ -30002,6 +30002,70 @@ mod tests {
     }
 
     #[test]
+    fn remote_native_ingress_rejects_v4_until_canonical_uca_state_is_connected() {
+        use ed25519_dalek::Signer;
+        use novovm_protocol::uca_delegation::{
+            SignedUcaDelegationV1, UcaDelegationClaimsV1, UcaDelegationPurposeV1,
+        };
+        use novovm_protocol::uca_transaction::{
+            decode_uca_transaction_v4, encode_uca_transaction_v4,
+        };
+        let chain_id = 90_151;
+        let seed = [0x7a; 32];
+        let mut tx = build_signed_native_auth_test_tx_v1(chain_id, 0, seed, "v4-test-only", 1);
+        let device_key: [u8; 32] = tx.signature[..32].try_into().unwrap();
+        let NovTxKindV1::Execute(exec) = &mut tx.kind else {
+            unreachable!()
+        };
+        exec.caller = device_key.to_vec();
+        exec.account_id = Some("uca:v4-test-only".into());
+        exec.fee_owner_account_id = exec.account_id.clone();
+        exec.nonce_owner_account_id = exec.account_id.clone();
+        exec.target = NovExecutionTargetV1::NativeModule("unified_account".into());
+        exec.method = "authorize_device_v1".into();
+        tx.signature = novovm_adapter_novovm::signature_payload_with_seed_v1(
+            &nov_native_tx_to_adapter_tx_ir_v1(&tx).unwrap(),
+            seed,
+        );
+        let claims = UcaDelegationClaimsV1 {
+            chain_id,
+            genesis: [8; 32],
+            account_id: "uca:v4-test-only".into(),
+            account_epoch: 1,
+            app_scope: [9; 32],
+            delegate_public_key: device_key,
+            native_intent: novovm_protocol::native_tx_unsigned_commitment_v3(&tx).unwrap(),
+            not_before_height: 1,
+            expires_at_height: 5,
+            purpose: UcaDelegationPurposeV1::AuthorizeDevice,
+        };
+        let signature = ed25519_dalek::SigningKey::from_bytes(&[0x7b; 32])
+            .sign(&claims.signing_bytes().unwrap())
+            .to_bytes();
+        let proof = SignedUcaDelegationV1 { claims, signature };
+        let raw = encode_uca_transaction_v4(&tx, &proof).unwrap();
+        let id = *decode_uca_transaction_v4(&raw).unwrap().transaction_id();
+        let params = serde_json::json!({"chain_id":chain_id});
+        assert!(canonical_nov_native_tx_hash_from_payload_v1(&raw).is_err());
+        let local = ingest_local_nov_raw_tx_payload_v1(&params, &raw).unwrap_err();
+        assert!(local.to_string().contains("wire version mismatch"));
+        let remote =
+            ingest_remote_nov_raw_tx_payload_v1(&params, chain_id, 81, id, &raw, None).unwrap_err();
+        assert!(remote.to_string().contains("wire version mismatch"));
+        assert_eq!(
+            get_network_runtime_native_pending_tx_payload_v1(chain_id, id),
+            None
+        );
+        if let Some(reservations) = NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1.get() {
+            assert!(!reservations
+                .lock()
+                .unwrap()
+                .keys()
+                .any(|(chain, _, _)| *chain == chain_id));
+        }
+    }
+
+    #[test]
     fn remote_native_ingress_rejects_noncanonical_wire_before_nonce_reservation() {
         with_test_native_execution_store_path_v1(|path| {
             for variant in 0..4u64 {

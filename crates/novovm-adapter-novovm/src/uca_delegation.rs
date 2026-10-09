@@ -9,10 +9,47 @@ use novovm_adapter_api::{UcaKeyAlgo, UcaStatus};
 use novovm_protocol::uca_delegation::{
     SignedUcaDelegationV1, UcaDelegationClaimsV1, UcaDelegationPurposeV1,
 };
+use novovm_protocol::uca_transaction::{decode_uca_transaction_v4, DecodedUcaTransactionV4};
 use novovm_protocol::{
     native_tx_unsigned_commitment_v3, NovExecutionPolicyV1, NovExecutionTargetV1,
     NovNativeTxWireV1, NovTxKindV1,
 };
+
+/// Verified signatures and caller-supplied authenticated parent constraints.
+/// Not a state transition, persisted nonce reservation or finality receipt.
+pub struct VerifiedUcaTransactionV4 {
+    decoded: DecodedUcaTransactionV4,
+    proof: VerifiedUcaDelegationV1,
+}
+impl VerifiedUcaTransactionV4 {
+    pub fn transaction_id(&self) -> &[u8; 32] {
+        self.decoded.transaction_id()
+    }
+    pub fn transaction(&self) -> &NovNativeTxWireV1 {
+        self.decoded.transaction()
+    }
+    pub fn native_intent(&self) -> &[u8; 32] {
+        self.proof.native_intent()
+    }
+    pub fn parent_height(&self) -> u64 {
+        self.proof.parent_height()
+    }
+}
+
+/// Full-carrier preflight. Never strip a V4 envelope into the V3 admission path.
+/// A canonical state owner must still recheck and consume the nonce atomically.
+pub fn verify_uca_transaction_v4(
+    wire: &[u8],
+    context: &UcaDelegationContextV1<'_>,
+) -> Result<VerifiedUcaTransactionV4> {
+    let decoded = decode_uca_transaction_v4(wire)?;
+    let proof = verify_uca_delegation_v1(
+        &decoded.delegation().encode()?,
+        decoded.transaction(),
+        context,
+    )?;
+    Ok(VerifiedUcaTransactionV4 { decoded, proof })
+}
 
 /// LOCAL authenticated parent-state data. No Serialize/Deserialize: a peer
 /// cannot establish authority by supplying its own "trusted" root and epoch.

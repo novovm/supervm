@@ -240,3 +240,63 @@ fn codec_rejects_all_truncations_trailing_bytes_versions_and_oversized_ids() {
     bad.claims.expires_at_height = 267;
     assert!(bad.encode().is_err());
 }
+
+#[test]
+fn complete_v4_carrier_requires_both_signatures_and_current_parent() {
+    use novovm_protocol::uca_transaction::encode_uca_transaction_v4;
+    let (account, tx, proof) = fixture();
+    let ctx = context(&account);
+    let bytes = encode_uca_transaction_v4(&tx, &proof).unwrap();
+    let verified = verify_uca_transaction_v4(&bytes, &ctx).unwrap();
+    assert_eq!(verified.transaction(), &tx);
+    assert_eq!(verified.native_intent(), &proof.claims.native_intent);
+    assert_ne!(verified.transaction_id(), verified.native_intent());
+    assert_eq!(verified.parent_height(), ctx.parent_height);
+    let mut forged = bytes.clone();
+    *forged.last_mut().unwrap() ^= 1;
+    assert!(verify_uca_transaction_v4(&forged, &ctx).is_err());
+    let mut forged = tx.clone();
+    forged.signature[60] ^= 1;
+    let forged_wire = encode_uca_transaction_v4(&forged, &proof).unwrap();
+    assert!(verify_uca_transaction_v4(&forged_wire, &ctx).is_err());
+    let mut stale = context(&account);
+    stale.next_nonce += 1;
+    assert!(verify_uca_transaction_v4(&bytes, &stale).is_err());
+    let mut stale = context(&account);
+    stale.delegation_epoch += 1;
+    assert!(verify_uca_transaction_v4(&bytes, &stale).is_err());
+    let mut wrong = context(&account);
+    wrong.genesis[0] ^= 1;
+    assert!(verify_uca_transaction_v4(&bytes, &wrong).is_err());
+}
+
+#[test]
+fn complete_v4_revoke_requires_new_device_and_root_signatures() {
+    use novovm_protocol::uca_transaction::encode_uca_transaction_v4;
+    let (account, mut tx, mut proof) = fixture();
+    let NovTxKindV1::Execute(exec) = &mut tx.kind else {
+        unreachable!()
+    };
+    exec.method = "revoke_device_v1".into();
+    proof.claims.purpose = UcaDelegationPurposeV1::RevokeDevice;
+    proof.claims.native_intent = native_tx_unsigned_commitment_v3(&tx).unwrap();
+    let ctx = context(&account);
+    assert!(
+        verify_uca_transaction_v4(&encode_uca_transaction_v4(&tx, &proof).unwrap(), &ctx).is_err()
+    );
+    let message = novovm_adapter_api::native_signing::tx_signing_message_v1(
+        &crate::native_intent::nov_native_tx_to_adapter_tx_ir_v1(&tx).unwrap(),
+    );
+    tx.signature[32..]
+        .copy_from_slice(&SigningKey::from_bytes(&[32; 32]).sign(&message).to_bytes());
+    // Correct device signature alone is still insufficient for the new purpose.
+    assert!(
+        verify_uca_transaction_v4(&encode_uca_transaction_v4(&tx, &proof).unwrap(), &ctx).is_err()
+    );
+    proof.signature = SigningKey::from_bytes(&[31; 32])
+        .sign(&proof.claims.signing_bytes().unwrap())
+        .to_bytes();
+    assert!(
+        verify_uca_transaction_v4(&encode_uca_transaction_v4(&tx, &proof).unwrap(), &ctx).is_ok()
+    );
+}

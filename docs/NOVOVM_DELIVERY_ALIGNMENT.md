@@ -1,5 +1,7 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-10 UCA 授权交易载体收口：** 输入 `a66f0501`。protocol 增加有界 V4 授权载体，native adapter 对完整交易/委托双签预检，NOVOCHAT 直接适配。39 项协议、8 项委托、5 项节点入口回归及严格 Clippy 通过，认领释放。精确哈希匹配的 AOEM 主 DLL 已恢复，历史身份 4 项包括此前失败的 ML-DSA-87 轮换全部通过；详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。旧 V3 入口继续拒绝 V4，不以解码/验签替代可信父状态、原子 nonce/费用提交或最终回执；不启用旧 Host UCA 生产写路径，不声称 PQ 委托已接通。
+
 **2026-10-09 原生授权输入边界修复收口：** 输入基线 `a34ca4a9`。两项失败回归复现原生 Postcard 解码忽略尾随内容、接受非最短整数的问题；现有 protocol 解码改为完整消费与无额外整包缓冲的规范字节比对，签名和正常编码不变。协议 35 项、节点 release 10 项限定回归及严格 Clippy 通过，认领释放；详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。NOVOCHAT 直接固定复用；不启用旧 Host UCA 写库或把旧库当共识父状态。真实授权状态、原子消费及最终回执仍须接入原生候选链。
 
 **2026-10-09 原生委托证明收口：** 输入基线 `fbcb16a7`。protocol 已增加有界、版本化、单交易 UCA 委托封包，native adapter 已增加真实 Ed25519 根/设备双签验证及本地准备入口；由 NOVOCHAT 直接互操作。绑定链/创世、账户/代次、应用、行政设备签者、完整原生交易意图及高度窗口；可信账户状态不从封包自报。原 node 三个交易转换函数原样移到已有 adapter 并重新导出，签名字节不变。protocol 32 项、委托 6 项及节点限定回归通过，严格 Clippy 通过，认领释放；详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。生产 wire v3/Transfer 快路径与 UCA 写门禁保持，尚不发行手机授权或提交账户状态；验签通过不能作为 accepted/finalized。后续还需原生状态所有者、重放消费和规范回执接线。

@@ -8,6 +8,62 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 版本化 UCA 授权载体与完整封包预检
+
+输入 `a66f0501ac681be60231a314de9ac572feae7d61`。本片在已有 protocol
+增加 `uca_transaction`，明确为 `NNX1/4`：5 字节头、u32 大端内层长度、
+完整规范 `NNX1/3` 交易、u16 大端委托长度、完整 `NUCD/1` 证明。内层
+最多 70 KiB、委托最多 359 字节、总封包最多 72,050 字节；先检查边界，
+再分配/解码，拒绝嵌套 V4、旧 V1、截断、尾随及非规范内层编码。
+本地编码同样限制 args 为 64 KiB。无隐式版本探测或剥掉委托的降级路径。
+
+结构校验要求用途、目标模块、行政设备签者、账户/费用/nonce 所有者及
+完整意图与委托一致。V4 ID 是有独立域和长度绑定的全封包 SHA-256，包含
+根/设备签名字节；它与内层 V3 intent 不同，后续准入、重放和回执必须
+明确使用对应标识，不能把两者混用。未改变已有 V3 编码器及签名字节。
+
+native adapter 的 `verify_uca_transaction_v4` 直接复用已有真实双签和
+上下文检查，返回完整交易及 V4 ID，不返回可当作共识授权的伪回执。
+可信父状态依旧必须由调用方独立认证；预检不消费 nonce、不写账户或费用。
+protocol 解码成功也不证明签名正确。封包包含 UCA 关联，不能发给聊天
+联系人/普通中继。NOVOCHAT 在隔离互操作工程准备和校验完整载体。
+
+Windows / Rust 1.94.0：protocol 全部 **39 项**、adapter 委托 **8 项**
+通过；两 crate all-targets 严格 Clippy 通过。新增用例覆盖完整封包变更、
+真实根/设备签名篡改、撤销用途重新双签、父状态代次/nonce/创世不匹配，
+以及边界最大参数。显式设置 `CARGO_TARGET_DIR=<SUPERVM>/target` 后复现：
+
+```powershell
+cargo test --locked -p novovm-protocol --lib
+cargo test --locked -p novovm-adapter-novovm --lib uca_delegation
+cargo clippy --locked -p novovm-protocol -p novovm-adapter-novovm --all-targets --no-deps -- -D warnings
+```
+
+节点 release `remote_native_ingress_` **5 项**通过，其中新增真实签名 V4
+在本地、远端、V3 摘要入口均被拒绝的回归，且无 pending payload 或 nonce
+预留。node release lib 严格 Clippy、限定 rustfmt 与 diff 检查通过。
+
+此前 AOEM 环境缺口本轮已解决：通过现有 SSH 身份取得 LFS batch 下载
+授权（明确 `Accept: application/vnd.git-lfs+json`），下载 44,048,384 字节，
+SHA-256 为 `01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674`。
+校验后回填本仓 LFS 对象缓存并执行
+`git lfs checkout aoem/windows/core/bin/aoem_ffi.dll`；checkout 哈希再次相符，
+跟踪指针没有变更。没有替换成旧库，未保存/输出临时授权头或签名下载 URL。
+
+恢复精确 DLL 后，历史 `unified_account_surface_cut_a_` **4 项全通过**，
+包括此前受阻的 ML-DSA-87 密钥生成、签名、轮换及绑定持久化。该组仍是
+历史 Host 比较测试：仅在测试进程设置 `NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1`，
+在独立临时库执行后恢复原环境，不在生产启动器放开。命令为
+`cargo test --locked --release -p novovm-node --lib unified_account_surface_cut_a_ -- --test-threads=1`。
+这只解决本机该项密码/历史接口验证，V4 当前仍只支持 Ed25519 预检，
+不因此声称已交付 PQ 委托、匿名证明或真实手机授权。
+
+**仍未接生产执行。** 当前节点 V3 decoder 明确拒绝 V4；本片只增加节点
+拒绝回归，没有启用新的 RPC/候选执行分支。真正的 UCA 生命周期、父状态
+来源、原子 nonce/费用/授权提交和最终回执仍须在原候选执行链成套接入。
+不能因为“原生交易已携带证明”就解除 `ua_*` 写门禁；不能从旧独立 router
+快照制造可信上下文。本片未签发手机权限、部署节点或执行真实资产操作。
+
 ## 2026-10-09 授权接入前的原生交易编码修复
 
 输入基线 `a34ca4a96f3928d97a049643d20c865f0d0585b1`。继续追踪 UCA
