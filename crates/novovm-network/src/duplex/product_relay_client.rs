@@ -28,9 +28,13 @@ use sha1::{Digest as Sha1Digest, Sha1};
 use std::{
     collections::VecDeque,
     io::{self, Read, Write},
-    net::{SocketAddr, TcpStream, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc,
+    },
+    thread,
     time::{Duration, Instant, SystemTime},
 };
 
@@ -38,6 +42,11 @@ const MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1: usize = 125;
 const PRODUCT_RELAY_FRAME_DEADLINE_MS_V1: u64 = 10_000;
 const PRODUCT_RELAY_PROTOCOL_ITEM_DEADLINE_MS_V1: u64 = 10_000;
 const PRODUCT_RELAY_MAX_CONTROL_FRAMES_PER_PROTOCOL_ITEM_V1: usize = 64;
+const PRODUCT_RELAY_CONTROL_POLL_V1: Duration = Duration::from_millis(20);
+const PRODUCT_RELAY_CONTROL_IO_POLL_V1: Duration = Duration::from_millis(50);
+const PRODUCT_RELAY_MAX_RESOLVERS_V1: usize = 8;
+const PRODUCT_RELAY_MAX_RESOLVED_ADDRESSES_V1: usize = 8;
+static PRODUCT_RELAY_RESOLVERS_V1: AtomicUsize = AtomicUsize::new(0);
 pub(crate) mod pipeline;
 pub(crate) const PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_EVENTS_V1: usize = 64;
 pub(crate) const PRODUCT_RELAY_CLIENT_FORWARD_OUTCOME_PENDING_BYTES_V1: usize = 16 * 1024 * 1024;
@@ -64,6 +73,68 @@ pub struct ProductRelayClientConfigV1 {
     pub read_timeout_ms: u64,
     #[serde(default = "default_tls_trust_v1")]
     pub tls_trust: ProductRelayTlsTrustV1,
+}
+
+/// Runtime authorization/cancellation supplied by the product using this
+/// transport. The hook must be fast, nonblocking, and safe on any caller thread.
+/// It is checked before/after connection work and every socket IO for the
+/// lifetime of the client. It cannot change TLS trust or relay identity pins.
+#[derive(Clone)]
+pub struct ProductRelayClientControlV1 {
+    check: Arc<dyn Fn() -> io::Result<()> + Send + Sync>,
+    connect_deadline: Option<Instant>,
+}
+
+impl std::fmt::Debug for ProductRelayClientControlV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProductRelayClientControlV1")
+            .field("connect_deadline", &self.connect_deadline)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ProductRelayClientControlV1 {
+    pub fn new(check: impl Fn() -> io::Result<()> + Send + Sync + 'static) -> Self {
+        Self {
+            check: Arc::new(check),
+            connect_deadline: None,
+        }
+    }
+
+    /// Further caps config's timeout; neither DNS nor another address resets it.
+    pub fn with_connect_deadline(mut self, deadline: Instant) -> Self {
+        self.connect_deadline = Some(deadline);
+        self
+    }
+
+    fn check_v1(&self) -> io::Result<()> {
+        (self.check)().map_err(|source| {
+            io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                ProductRelayControlErrorV1(source),
+            )
+        })
+    }
+}
+
+#[derive(Debug)]
+struct ProductRelayControlErrorV1(io::Error);
+
+impl std::fmt::Display for ProductRelayControlErrorV1 {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "product relay runtime control rejected: {}",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ProductRelayControlErrorV1 {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,8 +230,11 @@ struct ProductRelayDeadlineTcpStreamV1 {
     read_operation_deadline: Option<Instant>,
     retry_idle_reads: bool,
     terminal_error: Option<String>,
+    control: Option<ProductRelayClientControlV1>,
     #[cfg(test)]
     test_write_fault: Option<ProductRelayClientWriteFaultV1>,
+    #[cfg(test)]
+    test_short_write_limit: Option<usize>,
     #[cfg(test)]
     test_io_calls: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -200,10 +274,12 @@ pub fn product_relay_client_read_is_idle_timeout_v1(error: &anyhow::Error) -> bo
         || error.chain().any(|cause| {
             cause.is::<ProductRelayAbsoluteDeadlineErrorV1>()
                 || cause.is::<ProductRelayTerminalErrorV1>()
+                || cause.is::<ProductRelayControlErrorV1>()
                 || cause.downcast_ref::<io::Error>().is_some_and(|error| {
                     error.get_ref().is_some_and(|inner| {
                         inner.is::<ProductRelayAbsoluteDeadlineErrorV1>()
                             || inner.is::<ProductRelayTerminalErrorV1>()
+                            || inner.is::<ProductRelayControlErrorV1>()
                     })
                 })
         });
@@ -237,8 +313,11 @@ impl ProductRelayDeadlineTcpStreamV1 {
             read_operation_deadline: None,
             retry_idle_reads: false,
             terminal_error: None,
+            control: None,
             #[cfg(test)]
             test_write_fault: None,
+            #[cfg(test)]
+            test_short_write_limit: None,
             #[cfg(test)]
             test_io_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
@@ -351,6 +430,9 @@ impl ProductRelayDeadlineTcpStreamV1 {
     }
 
     fn check_current_deadlines_v1(&self) -> io::Result<()> {
+        if let Some(control) = &self.control {
+            control.check_v1()?;
+        }
         if self
             .handshake_deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
@@ -400,6 +482,15 @@ impl ProductRelayDeadlineTcpStreamV1 {
         .into_iter()
         .flatten()
         .min();
+        let configured = if self.control.is_some() {
+            Some(
+                configured.map_or(PRODUCT_RELAY_CONTROL_IO_POLL_V1, |timeout| {
+                    timeout.min(PRODUCT_RELAY_CONTROL_IO_POLL_V1)
+                }),
+            )
+        } else {
+            configured
+        };
         Ok(match deadline {
             Some(deadline) => {
                 let remaining = deadline
@@ -469,14 +560,27 @@ impl Read for ProductRelayDeadlineTcpStreamV1 {
 
 impl Write for ProductRelayDeadlineTcpStreamV1 {
     fn write(&mut self, input: &[u8]) -> io::Result<usize> {
-        let result = (|| {
-            let timeout = self.bounded_io_timeout_v1(self.write_timeout)?;
+        let poll_deadline = self
+            .write_timeout
+            .and_then(|timeout| Instant::now().checked_add(timeout));
+        let result = (|| loop {
+            let configured = poll_deadline.map(|deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(1))
+            });
+            let timeout = self.bounded_io_timeout_v1(configured)?;
             if timeout != self.write_timeout {
                 self.inner.set_write_timeout(timeout)?;
             }
             #[cfg(test)]
             self.test_io_calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            #[cfg(test)]
+            let input = match self.test_short_write_limit.take() {
+                Some(limit) => &input[..input.len().min(limit)],
+                None => input,
+            };
             #[cfg(test)]
             let result = match self.test_write_fault.take() {
                 Some(ProductRelayClientWriteFaultV1::Timeout) => Err(io::Error::new(
@@ -501,7 +605,19 @@ impl Write for ProductRelayDeadlineTcpStreamV1 {
                 self.retain_read_ahead_deadline_v1(self.inner.read_ahead_started_at())?;
                 self.check_io_deadlines_v1()
             })();
-            self.finish_io_progress_v1(result, maintenance)
+            let result = self.finish_io_progress_v1(result, maintenance);
+            if self.control.is_some()
+                && self.terminal_error.is_none()
+                && poll_deadline.is_none_or(|deadline| Instant::now() < deadline)
+                && result
+                    .as_ref()
+                    .is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock)
+            {
+                // Readiness polling made no progress. Keep the same socket,
+                // TLS record and write deadline; never replay partial writes.
+                continue;
+            }
+            return result;
         })();
         if let Err(error) = &result {
             // Stream::write may temporarily swallow a transport error. Make
@@ -558,31 +674,96 @@ pub struct ProductRelayConnectorV1 {
 
 impl ProductRelayClientV1 {
     pub fn connect(identity: &SigningKey, config: &ProductRelayClientConfigV1) -> Result<Self> {
+        Self::connect_inner_v1(
+            identity,
+            config,
+            None,
+            &PRODUCT_RELAY_RESOLVERS_V1,
+            system_resolve_v1,
+        )
+    }
+
+    pub fn connect_with_control(
+        identity: &SigningKey,
+        config: &ProductRelayClientConfigV1,
+        control: ProductRelayClientControlV1,
+    ) -> Result<Self> {
+        Self::connect_inner_v1(
+            identity,
+            config,
+            Some(control),
+            &PRODUCT_RELAY_RESOLVERS_V1,
+            system_resolve_v1,
+        )
+    }
+
+    fn connect_inner_v1(
+        identity: &SigningKey,
+        config: &ProductRelayClientConfigV1,
+        control: Option<ProductRelayClientControlV1>,
+        resolver_slots: &'static AtomicUsize,
+        resolver: impl FnOnce(String, u16) -> io::Result<Vec<SocketAddr>> + Send + 'static,
+    ) -> Result<Self> {
+        // The single budget starts before parsing, DNS, trust loading or TCP.
+        let connect_timeout = Duration::from_millis(config.connect_timeout_ms.max(1));
+        let mut handshake_deadline = Instant::now()
+            .checked_add(connect_timeout)
+            .context("product relay client handshake deadline overflow")?;
+        if let Some(deadline) = control
+            .as_ref()
+            .and_then(|control| control.connect_deadline)
+        {
+            handshake_deadline = handshake_deadline.min(deadline);
+        }
+        check_connect_control_v1(control.as_ref(), handshake_deadline)?;
         if config.expected_relay_peer_id.is_empty() {
             bail!("expected_relay_peer_id is required");
         }
         let endpoint = parse_endpoint_v1(&config.endpoint)?;
-        let tls_config = build_tls_config_v1(&config.tls_trust, endpoint.socket_addr.ip())?;
-        let connect_timeout = Duration::from_millis(config.connect_timeout_ms.max(1));
+        let server_name = ServerName::try_from(endpoint.host.clone())
+            .context("relay endpoint must use a valid DNS hostname or IP")?;
+        let addresses = resolve_controlled_v1(
+            endpoint.host.clone(),
+            endpoint.port,
+            control.as_ref(),
+            handshake_deadline,
+            resolver_slots,
+            resolver,
+        )?;
+        let tls_config = build_tls_config_v1(&config.tls_trust, addresses[0].ip())?;
+        check_connect_control_v1(control.as_ref(), handshake_deadline)?;
         let read_timeout = Duration::from_millis(config.read_timeout_ms.max(1));
-        let handshake_deadline = Instant::now()
-            .checked_add(connect_timeout)
-            .context("product relay client handshake deadline overflow")?;
-        let tcp = TcpStream::connect_timeout(&endpoint.socket_addr, connect_timeout)
+        let mut connected = None;
+        let mut last_error = None;
+        for address in addresses {
+            check_connect_control_v1(control.as_ref(), handshake_deadline)?;
+            validate_tls_trust_endpoint_v1(&config.tls_trust, address.ip())?;
+            match connect_tcp_controlled_v1(address, control.as_ref(), handshake_deadline) {
+                Ok(tcp) => {
+                    connected = Some(tcp);
+                    break;
+                }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        check_connect_control_v1(control.as_ref(), handshake_deadline)?;
+        let tcp = connected
+            .ok_or_else(|| {
+                last_error.unwrap_or_else(|| {
+                    io::Error::new(io::ErrorKind::AddrNotAvailable, "no relay address")
+                })
+            })
             .with_context(|| format!("connect relay endpoint: {}", config.endpoint))?;
         // The post-authentication idle poll interval must not shorten TLS, HTTP
         // upgrade or the signed node handshake. The wrapper caps every I/O at
         // the same absolute connect deadline.
         tcp.set_read_timeout(Some(connect_timeout))?;
         tcp.set_write_timeout(Some(connect_timeout))?;
-        let server_name = ServerName::try_from(endpoint.host.clone())
-            .context("relay endpoint must use a DNS hostname")?;
         let connection = rustls::ClientConnection::new(tls_config, server_name)
             .context("create relay TLS client")?;
-        let mut stream = rustls::StreamOwned::new(
-            connection,
-            ProductRelayDeadlineTcpStreamV1::new(tcp, handshake_deadline)?,
-        );
+        let mut socket = ProductRelayDeadlineTcpStreamV1::new(tcp, handshake_deadline)?;
+        socket.control = control;
+        let mut stream = rustls::StreamOwned::new(connection, socket);
         websocket_upgrade_v1(&mut stream, &endpoint)?;
         let initiator = NodeHandshakeInitiatorV1::start(
             identity,
@@ -863,6 +1044,11 @@ impl ProductRelayClientV1 {
             .replace(protocol_item_deadline);
         let result = self.read_protocol_item_until_inner_v1(protocol_item_deadline);
         self.stream.sock.read_operation_deadline = previous_deadline;
+        if result.is_ok() {
+            // Preserve socket progress for rustls internally, but never expose
+            // an event completed after a runtime revocation to its caller.
+            self.stream.sock.check_io_deadlines_v1()?;
+        }
         if self.stream.sock.terminal_error.is_some() {
             // rustls may write buffered ciphertext while reading. Such a
             // transport timeout is terminal even without an explicit Pong or
@@ -1136,8 +1322,18 @@ impl ProductRelayConnectorV1 {
 #[derive(Debug)]
 struct RelayEndpointV1 {
     host: String,
-    socket_addr: SocketAddr,
+    port: u16,
     path: String,
+}
+
+impl RelayEndpointV1 {
+    fn authority_v1(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1198,7 +1394,154 @@ impl ServerCertVerifier for NodeKeyBoundVerifierV1 {
     }
 }
 
+fn check_connect_control_v1(
+    control: Option<&ProductRelayClientControlV1>,
+    deadline: Instant,
+) -> io::Result<()> {
+    if let Some(control) = control {
+        control.check_v1()?;
+    }
+    if Instant::now() >= deadline {
+        return Err(absolute_deadline_error_v1(
+            "product relay connect deadline exceeded",
+        ));
+    }
+    Ok(())
+}
+
+struct ResolverPermitV1(&'static AtomicUsize);
+
+impl ResolverPermitV1 {
+    fn acquire(slots: &'static AtomicUsize) -> io::Result<Self> {
+        slots
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                (used < PRODUCT_RELAY_MAX_RESOLVERS_V1).then_some(used + 1)
+            })
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "product relay DNS worker budget exhausted",
+                )
+            })?;
+        Ok(Self(slots))
+    }
+}
+
+impl Drop for ResolverPermitV1 {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn system_resolve_v1(host: String, port: u16) -> io::Result<Vec<SocketAddr>> {
+    Ok((host.as_str(), port)
+        .to_socket_addrs()?
+        .take(PRODUCT_RELAY_MAX_RESOLVED_ADDRESSES_V1)
+        .collect())
+}
+
+fn resolve_controlled_v1(
+    host: String,
+    port: u16,
+    control: Option<&ProductRelayClientControlV1>,
+    deadline: Instant,
+    slots: &'static AtomicUsize,
+    resolver: impl FnOnce(String, u16) -> io::Result<Vec<SocketAddr>> + Send + 'static,
+) -> io::Result<Vec<SocketAddr>> {
+    check_connect_control_v1(control, deadline)?;
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(vec![SocketAddr::new(ip, port)]);
+    }
+    let permit = ResolverPermitV1::acquire(slots)?;
+    let (send, receive) = mpsc::sync_channel(1);
+    // OS name resolution itself is not cancellable. Detached workers have a
+    // fixed global cap and ONLY resolve names: late results cannot create a
+    // socket or carry identity material, and are dropped with the receiver.
+    thread::Builder::new()
+        .name("novovm-relay-dns".into())
+        .spawn(move || {
+            let _permit = permit;
+            let result = resolver(host, port).map(|mut addresses| {
+                addresses.truncate(PRODUCT_RELAY_MAX_RESOLVED_ADDRESSES_V1);
+                addresses
+            });
+            let _ = send.send(result);
+        })?;
+    loop {
+        check_connect_control_v1(control, deadline)?;
+        let wait =
+            PRODUCT_RELAY_CONTROL_POLL_V1.min(deadline.saturating_duration_since(Instant::now()));
+        match receive.recv_timeout(wait) {
+            Ok(result) => {
+                check_connect_control_v1(control, deadline)?;
+                let addresses = result?;
+                if addresses.is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrNotAvailable,
+                        "relay endpoint has no address",
+                    ));
+                }
+                return Ok(addresses);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(io::Error::other("relay DNS worker ended without a result"));
+            }
+        }
+    }
+}
+
+fn connect_tcp_controlled_v1(
+    address: SocketAddr,
+    control: Option<&ProductRelayClientControlV1>,
+    deadline: Instant,
+) -> io::Result<TcpStream> {
+    check_connect_control_v1(control, deadline)?;
+    let mut socket = mio::net::TcpStream::connect(address)?;
+    check_connect_control_v1(control, deadline)?;
+    let mut poll = mio::Poll::new()?;
+    let mut events = mio::Events::with_capacity(4);
+    poll.registry()
+        .register(&mut socket, mio::Token(0), mio::Interest::WRITABLE)?;
+    loop {
+        check_connect_control_v1(control, deadline)?;
+        let wait =
+            PRODUCT_RELAY_CONTROL_POLL_V1.min(deadline.saturating_duration_since(Instant::now()));
+        match poll.poll(&mut events, Some(wait)) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        }
+        check_connect_control_v1(control, deadline)?;
+        if events.is_empty() {
+            continue;
+        }
+        if let Some(error) = socket.take_error()? {
+            return Err(error);
+        }
+        match socket.peer_addr() {
+            Ok(_) => {
+                poll.registry().deregister(&mut socket)?;
+                check_connect_control_v1(control, deadline)?;
+                return Ok(socket.into());
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotConnected | io::ErrorKind::WouldBlock
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn parse_endpoint_v1(endpoint: &str) -> Result<RelayEndpointV1> {
+    if endpoint.len() > 2048
+        || endpoint.chars().any(char::is_whitespace)
+        || endpoint.contains('@')
+        || endpoint.contains('#')
+    {
+        bail!("invalid or oversized relay endpoint");
+    }
     let without_scheme = endpoint
         .strip_prefix("wss://")
         .context("relay endpoint must start with wss://")?;
@@ -1208,14 +1551,26 @@ fn parse_endpoint_v1(endpoint: &str) -> Result<RelayEndpointV1> {
         .rsplit_once(':')
         .context("relay endpoint must contain host:port")?;
     let port = port.parse::<u16>().context("parse relay endpoint port")?;
-    let socket_addr = (host, port)
-        .to_socket_addrs()
-        .context("resolve relay endpoint")?
-        .next()
-        .context("relay endpoint has no address")?;
+    let host = if host.starts_with('[') {
+        let ip = host
+            .strip_prefix('[')
+            .and_then(|host| host.strip_suffix(']'))
+            .context("invalid bracketed relay IPv6 host")?;
+        ip.parse::<std::net::Ipv6Addr>()
+            .context("invalid relay IPv6 address")?;
+        ip
+    } else {
+        if host.contains([':', '[', ']']) {
+            bail!("relay IPv6 address must be bracketed");
+        }
+        host
+    };
+    if host.is_empty() || host.len() > 253 || port == 0 {
+        bail!("invalid relay host or port");
+    }
     Ok(RelayEndpointV1 {
         host: host.into(),
-        socket_addr,
+        port,
         path: format!("/{}", split.next().unwrap_or("novovm")),
     })
 }
@@ -1294,7 +1649,7 @@ fn websocket_upgrade_v1<S: Read + Write>(stream: &mut S, endpoint: &RelayEndpoin
     write!(
         stream,
         "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: {}\r\n\r\n",
-        endpoint.path, endpoint.host, key, PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2
+        endpoint.path, endpoint.authority_v1(), key, PRODUCT_RELAY_WEBSOCKET_SUBPROTOCOL_V2
     )?;
     stream.flush()?;
     let response = read_http_headers_v1(stream)?;
@@ -1613,6 +1968,256 @@ mod tests {
     use std::{fs, net::TcpListener, thread};
 
     include!("product_relay_client_failure_tests.rs");
+
+    #[test]
+    fn endpoint_parser_preserves_ipv6_authority_without_dns() {
+        let endpoint = parse_endpoint_v1("wss://[::1]:8443/novovm").unwrap();
+        assert_eq!(endpoint.host, "::1");
+        assert_eq!(endpoint.port, 8443);
+        assert_eq!(endpoint.authority_v1(), "[::1]:8443");
+        assert_eq!(endpoint.path, "/novovm");
+        assert!(parse_endpoint_v1("wss://::1:8443/novovm").is_err());
+        assert!(parse_endpoint_v1("wss://[invalid]:443/novovm").is_err());
+        assert_eq!(
+            parse_endpoint_v1("wss://relay.invalid:443/novovm")
+                .unwrap()
+                .authority_v1(),
+            "relay.invalid:443"
+        );
+    }
+
+    fn cancelling_control_v1(
+        cancelled: Arc<std::sync::atomic::AtomicBool>,
+    ) -> ProductRelayClientControlV1 {
+        ProductRelayClientControlV1::new(move || {
+            if cancelled.load(Ordering::Acquire) {
+                Err(io::Error::new(io::ErrorKind::Interrupted, "test cancelled"))
+            } else {
+                Ok(())
+            }
+        })
+    }
+
+    #[test]
+    fn controlled_connect_cancels_real_stalled_tls_before_connect_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_cancel = Arc::clone(&cancelled);
+        let (stop, stopping) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            // Real TLS ClientHello proves TCP connected before cancellation.
+            assert!(socket.read(&mut [0; 4096]).unwrap() > 0);
+            server_cancel.store(true, Ordering::Release);
+            let _ = stopping.recv_timeout(Duration::from_secs(2));
+        });
+        let config = ProductRelayClientConfigV1 {
+            endpoint: format!("wss://{address}/novovm"),
+            expected_relay_peer_id: "novovm-ed25519:control-test".into(),
+            connect_timeout_ms: 5000,
+            read_timeout_ms: 5000,
+            tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+        };
+        let start = Instant::now();
+        let error = ProductRelayClientV1::connect_with_control(
+            &SigningKey::from_bytes(&[195; 32]),
+            &config,
+            cancelling_control_v1(cancelled),
+        )
+        .err()
+        .expect("cancelled TLS must fail");
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&error));
+        assert!(format!("{error:#}").contains("runtime control rejected"));
+        let _ = stop.send(());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn controlled_dns_deadline_drops_late_result_without_connecting() {
+        static SLOTS: AtomicUsize = AtomicUsize::new(0);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, released) = mpsc::channel();
+        let (started, worker_started) = mpsc::channel();
+        let config = ProductRelayClientConfigV1 {
+            endpoint: format!("wss://delayed.invalid:{}/novovm", address.port()),
+            expected_relay_peer_id: "novovm-ed25519:control-test".into(),
+            connect_timeout_ms: 5000,
+            read_timeout_ms: 5000,
+            tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
+        };
+        let start = Instant::now();
+        let control = ProductRelayClientControlV1::new(|| Ok(()))
+            .with_connect_deadline(start + Duration::from_millis(80));
+        let error = ProductRelayClientV1::connect_inner_v1(
+            &SigningKey::from_bytes(&[196; 32]),
+            &config,
+            Some(control),
+            &SLOTS,
+            move |_host, _port| {
+                started.send(()).unwrap();
+                released.recv_timeout(Duration::from_secs(2)).unwrap();
+                Ok(vec![address])
+            },
+        )
+        .err()
+        .expect("DNS must consume connect budget");
+        worker_started.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&error));
+        assert_eq!(SLOTS.load(Ordering::Acquire), 1);
+        release.send(()).unwrap();
+        let cleanup_deadline = Instant::now() + Duration::from_secs(1);
+        while SLOTS.load(Ordering::Acquire) != 0 && Instant::now() < cleanup_deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(SLOTS.load(Ordering::Acquire), 0);
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+    }
+
+    #[test]
+    fn controlled_dns_worker_and_address_budgets_are_enforced() {
+        static SLOTS: AtomicUsize = AtomicUsize::new(0);
+        let permits: Vec<_> = (0..PRODUCT_RELAY_MAX_RESOLVERS_V1)
+            .map(|_| ResolverPermitV1::acquire(&SLOTS).unwrap())
+            .collect();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let error = resolve_controlled_v1(
+            "bounded.invalid".into(),
+            443,
+            None,
+            deadline,
+            &SLOTS,
+            |_, _| panic!("resolver must not start beyond worker cap"),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        // Literal addresses do not depend on or consume a resolver worker.
+        assert_eq!(
+            resolve_controlled_v1(
+                "127.0.0.1".into(),
+                443,
+                None,
+                deadline,
+                &SLOTS,
+                |_, _| panic!("IP literal must not resolve")
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+        drop(permits);
+        let addresses = resolve_controlled_v1(
+            "bounded.invalid".into(),
+            443,
+            None,
+            deadline,
+            &SLOTS,
+            |_, _| {
+                Ok((1..=16)
+                    .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+                    .collect())
+            },
+        )
+        .unwrap();
+        assert_eq!(addresses.len(), PRODUCT_RELAY_MAX_RESOLVED_ADDRESSES_V1);
+    }
+
+    #[test]
+    fn controlled_pre_dns_cancellation_starts_no_worker_or_socket() {
+        static SLOTS: AtomicUsize = AtomicUsize::new(0);
+        let control = ProductRelayClientControlV1::new(|| {
+            Err(io::Error::new(io::ErrorKind::TimedOut, "runtime deadline"))
+        });
+        let error = resolve_controlled_v1(
+            "denied.invalid".into(),
+            443,
+            Some(&control),
+            Instant::now() + Duration::from_secs(1),
+            &SLOTS,
+            |_, _| panic!("cancelled resolver must not start"),
+        )
+        .unwrap_err();
+        assert_eq!(SLOTS.load(Ordering::Acquire), 0);
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
+        assert!(!product_relay_client_read_is_idle_timeout_v1(&error.into()));
+    }
+
+    #[test]
+    fn controlled_socket_idle_read_cancellation_is_sticky() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (_peer, _) = listener.accept().unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut guarded =
+            ProductRelayDeadlineTcpStreamV1::new(tcp, Instant::now() + Duration::from_secs(5))
+                .unwrap();
+        guarded.control = Some(cancelling_control_v1(Arc::clone(&cancelled)));
+        let calls = Arc::clone(&guarded.test_io_calls);
+        let canceller = thread::spawn(move || {
+            while calls.load(Ordering::Acquire) == 0 {
+                thread::yield_now();
+            }
+            thread::sleep(Duration::from_millis(10));
+            cancelled.store(true, Ordering::Release);
+        });
+        let start = Instant::now();
+        let error = guarded.read(&mut [0; 1]).unwrap_err();
+        canceller.join().unwrap();
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionAborted);
+        let calls = guarded.test_io_calls.load(Ordering::Acquire);
+        assert!(guarded.write(b"must not escape").is_err());
+        assert_eq!(guarded.test_io_calls.load(Ordering::Acquire), calls);
+    }
+
+    #[test]
+    fn controlled_socket_write_polling_preserves_partial_progress() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        socket2::SockRef::from(&tcp)
+            .set_send_buffer_size(4096)
+            .unwrap();
+        tcp.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let payload = vec![0x95; 512 * 1024];
+        let size = payload.len();
+        let server = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(160));
+            let mut received = vec![0; size];
+            peer.read_exact(&mut received).unwrap();
+            // The writer closes after submitting the exact remainder. EOF
+            // proves no duplicate suffix arrived, without racing a try-read.
+            assert_eq!(peer.read(&mut [0; 1]).unwrap(), 0);
+            received
+        });
+        let mut guarded =
+            ProductRelayDeadlineTcpStreamV1::new(tcp, Instant::now() + Duration::from_secs(3))
+                .unwrap();
+        guarded.control = Some(ProductRelayClientControlV1::new(|| Ok(())));
+        // OS send buffers may accept the whole payload, including on Windows.
+        // Bound the FIRST real socket write deterministically; do not fake its
+        // return value or assume buffer tuning forces platform backpressure.
+        const PREFIX: usize = 137;
+        guarded.test_short_write_limit = Some(PREFIX);
+        let first = guarded.write(&payload).unwrap();
+        assert!(first > 0 && first <= PREFIX);
+        guarded.write_all(&payload[first..]).unwrap();
+        assert!(guarded.test_io_calls.load(Ordering::Acquire) > 1);
+        drop(guarded);
+        assert_eq!(server.join().unwrap(), payload);
+    }
 
     fn check_test_upgrade_response_v2(response: &str) -> Result<()> {
         struct Upgrade {

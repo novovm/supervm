@@ -8,6 +8,33 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 NOVOCHAT 所需连接取消与共享期限
+
+代码输入 `4fd30a959`，本机认领 `88609f6d`；仅既有
+`crates/novovm-network/src/duplex/product_relay_client.rs` 增量。
+原 `connect` API 保留，新增 `connect_with_control`；产品可传快速、非阻塞的
+授权/取消检查，控制函数保留至连接后的每次底层 IO。DNS、TCP、TLS、WS 和
+节点签名握手共用绝对连接期限，不因换地址重置。最多 8 个未完成 OS DNS
+工作线程、8 个返回地址；取消后迟结果只丢弃，解析线程不持有 socket 或身份。
+TCP 使用非阻塞 Mio 单 socket，受控 IO 最长 50ms 轮询，取消成为终止错误，
+不当作空闲重试。部分写进度先交 rustls 记账，随后拒绝新 IO；不重发已写字节。
+IPv6 HTTP Host authority 保留方括号。
+
+Windows / Rust 1.94.0，显式 `CARGO_TARGET_DIR=<SUPERVM>/target`、
+`CARGO_BUILD_JOBS=1`：`cargo test --locked -p novovm-network --lib -- --test-threads=1`
+为 **696 通过、11 原有忽略项未执行**；`cargo clippy --locked -p novovm-network
+--all-targets --no-deps -- -D warnings` 及限定 rustfmt/diff 检查通过。
+日志位于忽略目录 `artifacts/novochat-network-regression.log`、
+`novochat-network-clippy.log`。首轮短写测试错误假设 Windows 必然拆包，改为
+测试专用首次真实短写限制，验证对端全部字节及 EOF 后无尾随重复；没有更改
+生产写语义。新增测试还覆盖 TLS 停滞取消、DNS 迟结果、解析上限、DNS 前拒绝、
+socket 等待中取消及取消后禁止继续 IO。
+
+边界：OS DNS 本身不能强杀，其许可直到解析真正结束才释放；根证书及 CA
+文件读取只能前后检查。多个解析地址仍顺序尝试，首地址可能耗尽预算，未实现
+Happy Eyeballs。已发出的字节不可撤回。这些是通用传输组件验证，不是跨 NAT、
+手机通信、UCA 授权、匿名路由或 NOV 交易验收；未改产品入口及交易/共识路径。
+
 ## 2026-10-10 原生 UCA 账户记录与候选状态恢复
 
 输入 `f731060e0146b51914565fce9baa75baf7df5c02`。native adapter 新增

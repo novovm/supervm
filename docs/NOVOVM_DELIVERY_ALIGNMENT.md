@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-10 NOVOCHAT 连接控制认领：** 本机已核对 `main@4fd30a959cc36205225b288da340695c94af2f3e` 与远端一致、工作区干净。本轮限定 `crates/novovm-network/src/duplex/product_relay_client.rs` 及必要导出、相邻测试和本台账：补齐 DNS/连接/已连接 I/O 的有界取消控制，供 NOVOCHAT 自适应调度复用。保持原 WSS/签名协议与产品入口；不改 NOV 交易、共识、账户或 AOEM。验证后提交并释放本认领；不以组件通过签收跨网或隐私通讯。
+**2026-10-10 NOVOCHAT 连接控制收口：** 输入 `4fd30a959`，认领提交 `88609f6d`。仅修改既有 duplex relay client：DNS/TCP/TLS/WS/身份握手共用期限，增加可保留至后续 IO 的取消/授权检查，DNS 迟结果无拨号副作用并限制未完成解析数量。Windows 全网络 lib **696 项通过、11 项原有忽略项未执行**，all-targets 严格 Clippy 通过，认领释放。未改 NOV 交易、共识、账户或 AOEM；未完成 Happy Eyeballs、移动切网或合格隐私路径，详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
 
 **2026-10-10 原生 UCA 候选状态收口：** 输入 `f731060e`，本机 main。原账户类型纳入版本化原生记录，增加有界授权承诺、撤销墓碑和行政 nonce 的纯状态转移；物理/共识记录同步覆盖，旧分片拒绝静默遗漏。13 项 adapter 测试、2 项节点记录测试、1 项真实 AOEM 跨进程恢复（含子进程）及 28 项既有回归通过，严格 Clippy 通过，认领释放。详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。候选持久化不等于共识发布：注册/轮换、已验证父状态的生产读取、费用/失败消费及最终回执仍未接通；V4 准入和旧 Host 写门禁保持关闭。不把授权承诺或公开管理格式当作匿名聊天身份。
 
