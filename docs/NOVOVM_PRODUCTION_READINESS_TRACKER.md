@@ -8,7 +8,41 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 可选可靠 NAT 载体与连接身份绑定
+
+输入 `7ced1724`，认领 `264cc3ca`，仅 network、lockfile 与台账。
+`iroh-transport` 默认关闭，固定 iroh 1.3.0（禁用默认 features，选用已有
+AWS-LC TLS provider）。不启用 N0 默认发现、IP 发布、端口映射或隐式 DNS；
+显式配置最多 4 个 HTTPS/443 relay、DNS 字面地址，并在 bind 前检查本地授权。
+载体独立随机密钥，NOVOVM 设备身份签名覆盖实际 TLS exporter、双方端点、
+用途/版本和原 E2E 握手；双向加密 Finished 后才提供业务 channel。
+
+每作用域最长 120 秒、帧 16 KiB、流接收窗 64 KiB、发送窗 128 KiB、
+一个双向流、8 个远端 NAT 候选。进程最多 4 个 endpoint，包括仍在关闭的 owner。
+取消或失败在尚未开始 graceful close 时通过 Drop-abort 取消后台任务；正常
+关闭由独立任务持续驱动，超过 5 秒返回清理未完成并保留许可，不能丢弃底层
+close future。上游关闭耗时没有公开硬上限；abort 后任务释放需调度推进，
+不宣称返回瞬间已无在途网络包。半帧读写/finish 被取消会作废并关闭连接。
+
+Rust 1.94 / Windows，`CARGO_TARGET_DIR=<SUPERVM>/target`、`CARGO_BUILD_JOBS=1`：
+`cargo test --locked -p novovm-network --features iroh-transport --lib -- --test-threads=1`
+**718 通过、11 原有忽略项未执行**；同 feature 的 all-targets/no-deps 严格 Clippy
+通过。新增 6 个载体测试（真实 QUIC/13 KiB 帧/端口释放/半帧取消）与 16 个身份
+绑定测试。首轮 peer ID 长度误算已由现有编码器对照修复；失败日志仍保留。
+证据为忽略目录 `artifacts/iroh-full-tests.log`、`iroh-clippy.log`。
+
+边界：这是可选传输组件，未接产品 node、生产 UCA 或主应用。端点地址目前由
+受信控制层提供，仍需签名发现/续期、Android 生命周期、独立 relay 与隐私路径。
+8 次 accept 预算不限制上游 pending Incoming：库默认 65,536 个等待对象及
+100 MiB 额外缓存（不含第一包）；正式公网服务仍需独立准入 owner 与更严端点
+级限额。单次无效握手有 3 秒预算且计入总次数，不无限等待。默认隐私仍不得
+用该直连/单 relay 载体。TLS/QUIC 或独立设备密钥均不等于匿名或抗量子验收。
+lockfile 新增依赖并更新 5 个既有包版本（hashbrown、indexmap、webpki-roots、
+zeroize、zeroize_derive）；原协议与交易源码未改。认领释放。
+
 ## 2026-10-10 NOVOCHAT 所需连接取消与共享期限
+
+以下为上一片；最新可靠载体组件结果见本节前的新增记录。
 
 代码输入 `4fd30a959`，本机认领 `88609f6d`；仅既有
 `crates/novovm-network/src/duplex/product_relay_client.rs` 增量。

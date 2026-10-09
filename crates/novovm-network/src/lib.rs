@@ -11,6 +11,8 @@ pub mod eth_rlpx;
 pub mod eth_runtime_config;
 pub mod eth_selection_config;
 pub mod gossip;
+#[cfg(feature = "iroh-transport")]
+pub mod iroh_transport;
 pub mod novorudp;
 pub mod overlay;
 pub mod overlay_runtime;
@@ -25,6 +27,8 @@ pub mod route;
 pub mod routing;
 pub mod runtime_status;
 pub mod transport;
+#[cfg(feature = "iroh-transport")]
+pub mod transport_binding;
 
 pub use adaptive_overlay::*;
 pub use availability::*;

@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-10 NOVOCHAT 可靠 NAT 载体认领（进行中）：** 本机 `main@7ced1724`，用户已授权通讯基础设施。限定认领 `crates/novovm-network/Cargo.toml`、`Cargo.lock`、`crates/novovm-network/src/lib.rs`、新 `iroh_transport.rs` / `transport_binding.rs` 及相邻测试与本台账。以可选 feature 固定复用 iroh 1.3.0 的可靠流、穿透和中继；不使用默认第三方发现，先检查本地授权再打开网络，现有 NOVOVM 身份需与实际载体握手绑定。此为载体集成，不替换原 node/controller、NOVO 协议或交易路径；不改账户、共识、奖励和 AOEM。默认隐私继续拒绝直接/单中继载体，公共 relay 若测试仅计第三方互操作，不计合格隐私或独立 NOVOVM 节点验收。认领期间其他机器请避开上述文件；完成必要验证后提交并释放。
+**2026-10-10 NOVOCHAT 可靠 NAT 载体组件收口：** 输入 `7ced1724`，认领 `264cc3ca`。既有 network 增加可选 `iroh-transport` feature，固定 iroh 1.3.0，默认关闭；可靠 QUIC 流与 NOVOVM 原 E2E 握手通过 TLS exporter、双方独立身份和双向 Finished 绑定。授权先于网络、限时作用域、取消与有界关闭 owner 已测试。Windows 网络 lib **718 通过、11 原有忽略项未执行**，严格 all-targets Clippy 通过，认领释放。未改原 node/交易/账户/共识/AOEM；未完成主应用、Android、独立公网节点或合格隐私验收。公共 iroh relay 与原 NOVOVM WSS 协议不同，不允许冒充兼容或已授权节点，剩余边界见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
 
 **2026-10-10 NOVOCHAT 连接控制收口：** 输入 `4fd30a959`，认领提交 `88609f6d`。仅修改既有 duplex relay client：DNS/TCP/TLS/WS/身份握手共用期限，增加可保留至后续 IO 的取消/授权检查，DNS 迟结果无拨号副作用并限制未完成解析数量。Windows 全网络 lib **696 项通过、11 项原有忽略项未执行**，all-targets 严格 Clippy 通过，认领释放。未改 NOV 交易、共识、账户或 AOEM；未完成 Happy Eyeballs、移动切网或合格隐私路径，详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
 
