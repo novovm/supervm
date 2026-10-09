@@ -1,5 +1,7 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-10 NOVOCHAT 可靠 NAT 载体认领（进行中）：** 本机 `main@7ced1724`，用户已授权通讯基础设施。限定认领 `crates/novovm-network/Cargo.toml`、`Cargo.lock`、`crates/novovm-network/src/lib.rs`、新 `iroh_transport.rs` / `transport_binding.rs` 及相邻测试与本台账。以可选 feature 固定复用 iroh 1.3.0 的可靠流、穿透和中继；不使用默认第三方发现，先检查本地授权再打开网络，现有 NOVOVM 身份需与实际载体握手绑定。此为载体集成，不替换原 node/controller、NOVO 协议或交易路径；不改账户、共识、奖励和 AOEM。默认隐私继续拒绝直接/单中继载体，公共 relay 若测试仅计第三方互操作，不计合格隐私或独立 NOVOVM 节点验收。认领期间其他机器请避开上述文件；完成必要验证后提交并释放。
+
 **2026-10-10 NOVOCHAT 连接控制收口：** 输入 `4fd30a959`，认领提交 `88609f6d`。仅修改既有 duplex relay client：DNS/TCP/TLS/WS/身份握手共用期限，增加可保留至后续 IO 的取消/授权检查，DNS 迟结果无拨号副作用并限制未完成解析数量。Windows 全网络 lib **696 项通过、11 项原有忽略项未执行**，all-targets 严格 Clippy 通过，认领释放。未改 NOV 交易、共识、账户或 AOEM；未完成 Happy Eyeballs、移动切网或合格隐私路径，详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
 
 **2026-10-10 原生 UCA 候选状态收口：** 输入 `f731060e`，本机 main。原账户类型纳入版本化原生记录，增加有界授权承诺、撤销墓碑和行政 nonce 的纯状态转移；物理/共识记录同步覆盖，旧分片拒绝静默遗漏。13 项 adapter 测试、2 项节点记录测试、1 项真实 AOEM 跨进程恢复（含子进程）及 28 项既有回归通过，严格 Clippy 通过，认领释放。详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。候选持久化不等于共识发布：注册/轮换、已验证父状态的生产读取、费用/失败消费及最终回执仍未接通；V4 准入和旧 Host 写门禁保持关闭。不把授权承诺或公开管理格式当作匿名聊天身份。
