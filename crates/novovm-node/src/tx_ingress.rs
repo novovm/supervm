@@ -30002,6 +30002,68 @@ mod tests {
     }
 
     #[test]
+    fn remote_native_ingress_rejects_noncanonical_wire_before_nonce_reservation() {
+        with_test_native_execution_store_path_v1(|path| {
+            for variant in 0..4u64 {
+                let chain_id = 90_140 + variant;
+                let tx = build_signed_native_auth_test_tx_v1(
+                    chain_id,
+                    0,
+                    [0x79; 32],
+                    "canonical-wire-only",
+                    21,
+                );
+                let raw = encode_native_auth_test_tx_v1(&tx);
+                let hash = canonical_nov_native_tx_hash_from_payload_v1(&raw).unwrap();
+                let mut malformed = raw.clone();
+                match variant {
+                    0 => malformed.push(0),
+                    1 => malformed.extend_from_slice(b"NUCD\x01not-a-wire-extension"),
+                    2 => malformed.extend_from_slice(&raw),
+                    _ => {
+                        let end = (5..raw.len()).find(|&i| raw[i] & 0x80 == 0).unwrap();
+                        malformed[end] |= 0x80;
+                        malformed.insert(end + 1, 0);
+                    }
+                }
+                let params = serde_json::json!({
+                    "chain_id": chain_id, "native_execution_store_path": path,
+                });
+                assert!(canonical_nov_native_tx_hash_from_payload_v1(&malformed).is_err());
+                let local = ingest_local_nov_raw_tx_payload_v1(&params, &malformed)
+                    .expect_err("local ingress must reject noncanonical wire");
+                assert!(local.to_string().contains("decode"));
+                let remote = ingest_remote_nov_raw_tx_payload_v1(
+                    &params, chain_id, 79, hash, &malformed, None,
+                )
+                .expect_err("remote ingress must reject before nonce reservation");
+                assert!(remote.to_string().contains("decode"));
+                assert_eq!(
+                    get_network_runtime_native_pending_tx_payload_v1(chain_id, hash),
+                    None
+                );
+                if let Some(reservations) = NOV_NATIVE_AUTH_NONCE_RESERVATIONS_V1.get() {
+                    assert!(!reservations
+                        .lock()
+                        .unwrap()
+                        .keys()
+                        .any(|(chain, _, _)| *chain == chain_id));
+                }
+                assert_eq!(
+                    ingest_remote_nov_raw_tx_payload_v1(&params, chain_id, 79, hash, &raw, None,)
+                        .expect("canonical transaction with the same nonce remains admissible"),
+                    hash
+                );
+                assert_eq!(
+                    get_network_runtime_native_pending_tx_payload_v1(chain_id, hash),
+                    Some(raw)
+                );
+                clear_native_auth_runtime_reservations_for_chain_v1(chain_id);
+            }
+        });
+    }
+
+    #[test]
     fn signed_native_wire_maps_to_adapter_verifiable_canonical_ir() {
         let chain_id = 90_110;
         let tx = build_signed_native_auth_test_tx_v1(

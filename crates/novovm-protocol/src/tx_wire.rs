@@ -260,6 +260,51 @@ pub fn native_tx_unsigned_commitment_v3(
     Ok(hasher.finalize().into())
 }
 
+// Compare the serializer's canonical bytes directly with the input. No second
+// transaction-sized buffer is allocated, including for large Execute arguments.
+struct CanonicalBytes<'a>(&'a [u8]);
+impl postcard::ser_flavors::Flavor for CanonicalBytes<'_> {
+    type Output = ();
+
+    fn try_push(&mut self, byte: u8) -> postcard::Result<()> {
+        self.try_extend(&[byte])
+    }
+
+    fn try_extend(&mut self, bytes: &[u8]) -> postcard::Result<()> {
+        if !self.0.starts_with(bytes) {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        self.0 = &self.0[bytes.len()..];
+        Ok(())
+    }
+
+    fn finalize(self) -> postcard::Result<()> {
+        if !self.0.is_empty() {
+            return Err(postcard::Error::SerializeBufferFull);
+        }
+        Ok(())
+    }
+}
+
+fn decode_canonical_native_payload<T>(bytes: &[u8]) -> Result<T, NativeTxWireError>
+where
+    T: serde::de::DeserializeOwned + serde::Serialize,
+{
+    let (value, remaining): (T, _) = postcard::take_from_bytes(bytes)
+        .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string()))?;
+    if !remaining.is_empty() {
+        return Err(NativeTxWireError::DecodeFailed(
+            "trailing native transaction bytes".into(),
+        ));
+    }
+    postcard::serialize_with_flavor(&value, CanonicalBytes(bytes)).map_err(|_| {
+        NativeTxWireError::DecodeFailed("noncanonical native transaction encoding".into())
+    })?;
+    Ok(value)
+}
+
+/// Accept exactly one canonical transaction. Extra bytes are never an ignored
+/// extension/delegation, and alternate integer spellings cannot alias its wire.
 pub fn decode_nov_native_tx_wire_v1(bytes: &[u8]) -> Result<NovNativeTxWireV1, NativeTxWireError> {
     let header_len = 4 + 1;
     if bytes.len() < header_len {
@@ -272,15 +317,14 @@ pub fn decode_nov_native_tx_wire_v1(bytes: &[u8]) -> Result<NovNativeTxWireV1, N
         return Err(NativeTxWireError::MagicMismatch);
     }
     match bytes[4] {
-        NOV_NATIVE_TX_WIRE_VERSION_V3 => postcard::from_bytes(&bytes[header_len..])
-            .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string())),
+        NOV_NATIVE_TX_WIRE_VERSION_V3 => decode_canonical_native_payload(&bytes[header_len..]),
         NOV_NATIVE_TX_WIRE_VERSION_V2 => Err(NativeTxWireError::VersionMismatch {
             expected: NOV_NATIVE_TX_WIRE_VERSION_V3,
             got: NOV_NATIVE_TX_WIRE_VERSION_V2,
         }),
         NOV_NATIVE_TX_WIRE_VERSION_V1 => {
-            let legacy: NovNativeTxWireLegacyV1 = postcard::from_bytes(&bytes[header_len..])
-                .map_err(|err| NativeTxWireError::DecodeFailed(err.to_string()))?;
+            let legacy: NovNativeTxWireLegacyV1 =
+                decode_canonical_native_payload(&bytes[header_len..])?;
             Ok(NovNativeTxWireV1 {
                 chain_id: legacy.chain_id,
                 kind: legacy.kind,
@@ -297,6 +341,85 @@ pub fn decode_nov_native_tx_wire_v1(bytes: &[u8]) -> Result<NovNativeTxWireV1, N
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn boundary_fixture() -> NovNativeTxWireV1 {
+        NovNativeTxWireV1 {
+            chain_id: 1,
+            kind: NovTxKindV1::Transfer(NovTransferTxV1 {
+                from: vec![1; 32],
+                to: vec![2; 20],
+                asset: "NOV".into(),
+                amount: 1,
+                nonce: 0,
+                fee_policy: NovFeePolicyV1 {
+                    pay_asset: "NOV".into(),
+                    max_pay_amount: 1,
+                    slippage_bps: 0,
+                },
+            }),
+            signature: vec![3; 96],
+        }
+    }
+
+    #[test]
+    fn native_wire_rejects_unconsumed_authorization_bytes() {
+        let tx = boundary_fixture();
+        let valid = encode_nov_native_tx_wire_v1(&tx).unwrap();
+        assert_eq!(decode_nov_native_tx_wire_v1(&valid).unwrap(), tx);
+        for suffix in [
+            vec![0],
+            b"NUCD\x01unsigned-attachment".to_vec(),
+            valid.clone(),
+        ] {
+            let mut bytes = valid.clone();
+            bytes.extend_from_slice(&suffix);
+            assert!(
+                decode_nov_native_tx_wire_v1(&bytes).is_err(),
+                "ignored suffix of {} bytes",
+                suffix.len()
+            );
+        }
+    }
+
+    #[test]
+    fn native_wire_rejects_nonminimal_integer_encoding() {
+        let valid = encode_nov_native_tx_wire_v1(&boundary_fixture()).unwrap();
+        assert_eq!(valid[5], 1); // Postcard chain_id = 1.
+        let mut alias = valid.clone();
+        alias.splice(5..6, [0x81, 0x00]);
+        assert!(decode_nov_native_tx_wire_v1(&alias).is_err());
+    }
+
+    #[test]
+    fn native_wire_canonical_check_covers_legacy_truncations_and_versions() {
+        let tx = boundary_fixture();
+        let mut legacy = b"NNX1\x01".to_vec();
+        legacy.extend(
+            postcard::to_allocvec(&NovNativeTxWireLegacyV1 {
+                chain_id: tx.chain_id,
+                kind: tx.kind.clone(),
+                signature: [3; 32],
+            })
+            .unwrap(),
+        );
+        for valid in [encode_nov_native_tx_wire_v1(&tx).unwrap(), legacy] {
+            assert!(decode_nov_native_tx_wire_v1(&valid).is_ok());
+            for n in 0..valid.len() {
+                assert!(decode_nov_native_tx_wire_v1(&valid[..n]).is_err());
+            }
+            let mut bad = valid.clone();
+            bad.push(0);
+            assert!(decode_nov_native_tx_wire_v1(&bad).is_err());
+            let mut bad = valid.clone();
+            bad.splice(5..6, [0x81, 0]);
+            assert!(decode_nov_native_tx_wire_v1(&bad).is_err());
+            for version in [0, 2, 4, 255] {
+                let mut bad = valid.clone();
+                bad[4] = version;
+                assert!(decode_nov_native_tx_wire_v1(&bad).is_err());
+            }
+        }
+    }
 
     fn fuzz_env_u64(name: &str, default: u64) -> u64 {
         std::env::var(name)

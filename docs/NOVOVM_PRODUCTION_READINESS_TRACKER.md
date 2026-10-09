@@ -8,6 +8,53 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-09 授权接入前的原生交易编码修复
+
+输入基线 `a34ca4a96f3928d97a049643d20c865f0d0585b1`。继续追踪 UCA
+可信状态时发现：`postcard::from_bytes` 不检查未消费输入。两项新增回归
+在修改前真实失败，分别复现合法交易附加 1 字节仍被解码、链 ID 使用
+非最短整数编码仍被解码。尾随授权封包被忽略不等于伪造签名成功，但会使
+不同原始输入被视作同一交易，不能拿这种隐式扩展承载 UCA 权限。
+
+`novovm-protocol::tx_wire` 现要求消费完整载荷，并用序列化输出逐段比对
+原始字节，拒绝非规范编码；不分配第二个完整交易缓冲。V3 和只用于明确
+拒绝旧认证的 V1 都执行此规则，V2/未知版本继续拒绝。正常编码器、签名
+消息和意图承诺不变；准入范围收紧，未来节点发布需保持全网一致，不能
+把这次修复作为异构版本热更新或历史非规范交易迁移已经验证的证据。
+
+Windows / Rust 1.94.0：协议全部 **35 项**测试、protocol all-targets
+严格 Clippy 通过。三项新增协议测试覆盖尾随/拼接、非最短整数、V1/V3
+截断及版本边界；既有 Transfer/Execute/Governance 正常编码回归保留。
+复现：设置 `CARGO_TARGET_DIR=<SUPERVM>/target` 后运行
+`cargo test --locked -p novovm-protocol --lib` 和
+`cargo clippy --locked -p novovm-protocol --all-targets --no-deps -- -D warnings`。
+
+节点 release **10 项**限定回归通过（`remote_native_ingress_` 4 项、
+`nov_native_ingress_rejects_` 5 项、
+`signed_native_wire_maps_to_adapter_verifiable_canonical_ir` 1 项）。新增节点
+测试使用真实签名，确认 4 种畸形输入在本地/远端入口和规范摘要入口均拒绝，
+没有 pending payload 或 nonce 预留，随后同 nonce 的规范交易仍正常入队。
+以上三个过滤器分别用于 `cargo test --locked --release -p novovm-node --lib
+<filter> -- --test-threads=1`，不启用旧 Host 业务执行。此为本机入口测试，
+未发送真实链交易或声称原子账户提交已经接通。
+
+`cargo clippy --locked --release -p novovm-node --lib --no-deps -- -D warnings`、
+限定源码 rustfmt 与 diff 检查通过；构建过程原有多 bin 共用文件的 Cargo
+manifest 提示保留，不将其记录成新增源码警告或本轮修复范围。
+
+真实状态核对：`unified_account_surface.rs` 的旧 router 快照是独立文件/
+RocksDB，当前 `NovNativeExecutionModuleStateV1` 没有其账户根与设备撤销
+状态；候选父状态验证位于 `native_candidate_live_parent.rs`、
+`native_candidate_auth.rs`，耐久 nonce 属于同一原生候选/发布链。不能
+把旧 UCA 快照塞进委托 context 就认定它经过共识认证。本片先收口实际
+输入缺陷，尚未交付状态接入。剩余实施须成套绑定版本化原生授权载体、
+同一父状态内的 UCA 生命周期、原子 nonce/费用/状态提交和最终回执；
+不另建旁路授权库，也不解除生产写门禁。
+
+本轮再次定向补取锁定 AOEM 主 DLL；下载未完成，停止本次卡住的 fetch，
+checkout 仍为 133 字节 LFS 指针，没有更换版本。未部署节点、签发手机
+权限或执行资产操作；ML-DSA 和真实双机通信仍未验收。
+
 ## 2026-10-09 单交易 UCA 委托证明（未接生产准入）
 
 输入基线 `fbcb16a7416e3fa15f01c1c6b137d4b40d9da74d`。protocol 新增

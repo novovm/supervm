@@ -1,5 +1,7 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-09 原生授权输入边界修复收口：** 输入基线 `a34ca4a9`。两项失败回归复现原生 Postcard 解码忽略尾随内容、接受非最短整数的问题；现有 protocol 解码改为完整消费与无额外整包缓冲的规范字节比对，签名和正常编码不变。协议 35 项、节点 release 10 项限定回归及严格 Clippy 通过，认领释放；详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。NOVOCHAT 直接固定复用；不启用旧 Host UCA 写库或把旧库当共识父状态。真实授权状态、原子消费及最终回执仍须接入原生候选链。
+
 **2026-10-09 原生委托证明收口：** 输入基线 `fbcb16a7`。protocol 已增加有界、版本化、单交易 UCA 委托封包，native adapter 已增加真实 Ed25519 根/设备双签验证及本地准备入口；由 NOVOCHAT 直接互操作。绑定链/创世、账户/代次、应用、行政设备签者、完整原生交易意图及高度窗口；可信账户状态不从封包自报。原 node 三个交易转换函数原样移到已有 adapter 并重新导出，签名字节不变。protocol 32 项、委托 6 项及节点限定回归通过，严格 Clippy 通过，认领释放；详见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。生产 wire v3/Transfer 快路径与 UCA 写门禁保持，尚不发行手机授权或提交账户状态；验签通过不能作为 accepted/finalized。后续还需原生状态所有者、重放消费和规范回执接线。
 
 **2026-10-09 NOVOCHAT 直接接入：** 用户先授权扩展三个仓库，随后明确原厂 NOVOCHAT 直接适配 SUPERVM，不以修复旧钱包或第三方 SDK 为前置；KINGCLUB 不改。本片基线 `5dc902e3`，范围为已有 `novovm-adapter-api` 的 UCA 密钥绑定编码、`unified_account_surface.rs` 对应复用和相邻测试/台账。仅将原有编码提取为节点与 NOVOCHAT 可直接共用的实现，不改授权政策、链状态、共识或奖励发行。两个旧钱包远端仍为 3 月版本，Flutter SDK 为本机未跟踪目录，保留原状。本片验收及 ML-DSA 环境缺口见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)；生产 UCA 写门禁保持，不宣称移动授权已接通。
