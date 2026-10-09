@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 mod bincode_compat;
+pub mod native_intent;
+pub mod uca_delegation;
 
 use anyhow::{anyhow, bail, Result};
 use aoem_bindings::{

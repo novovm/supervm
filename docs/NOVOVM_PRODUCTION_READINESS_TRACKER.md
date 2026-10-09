@@ -8,6 +8,52 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-09 单交易 UCA 委托证明（未接生产准入）
+
+输入基线 `fbcb16a7416e3fa15f01c1c6b137d4b40d9da74d`。protocol 新增
+`NUCD\x01` 有界封包：最多 359 字节，账户标识最多 128 字节，高度窗口
+最多 256 个块；绑定链 ID、创世摘要、账户、撤销代次、应用范围、行政设备
+公钥、现有 native V3 完整意图承诺及用途。仅预留设备授权/撤销两种用途，
+不是新 native wire 版本，也不允许据此转账。未知版本、截断和尾随字节拒绝。
+
+native adapter 负责真实 Ed25519 根签名和设备交易签名的严格验证；本地准备
+入口在调用根签名器前检查设备签名和所有约束。可信父状态由调用方提供，
+不能从远端封包自行声明。根算法不是 Ed25519、要求其他执行安全策略、
+缺失根绑定或状态不匹配时拒绝，不自动降级。该片不声称实现抗量子或匿名性。
+
+原 node 的 native wire -> TxIR 转换及两个辅助函数原样移到既有 native
+adapter，node 重新导出原函数；三段函数体与输入基线逐字比较一致，继续
+使用原签名字节及意图承诺。没有重写节点、执行所有者或账户状态机。
+
+当前规范执行链尚无 UCA 委托父状态提供方、原子 nonce 消费及状态回执。
+`VerifiedUcaDelegationV1` 仅表示在传入上下文下验签通过；对同一上下文重复
+验证仍允许，不能当持久去重、accepted/finalized 或设备权限。生产 `ua_*`
+写门禁和直接签名者准入保持。账户根关联封包不得发送给聊天联系人/中继。
+NOVOCHAT 在隔离互操作工程直接复用；没有发行手机授权、部署节点或资产操作。
+
+Windows / Rust 1.94.0：protocol 全部 32 项、native adapter 新增委托 6 项
+通过；adapter all-targets 严格 Clippy 通过。节点 release 五项既有拒绝回归
+通过，覆盖链域、旧签名、完整 signed wire 篡改及未经授权的主体/费用/nonce
+所有者。另有 remote-native-ingress 三项回归通过（入队前验签、外层摘要/
+签名不匹配及流内冲突拒绝），一项 signed-wire 到可验签 TxIR 的正向回归
+通过，共 9 项节点限定回归；node release lib 严格 Clippy、限定源码
+rustfmt 和 diff 检查通过。复现时显式设置 `CARGO_TARGET_DIR=<SUPERVM>/target`：
+
+```powershell
+cargo test --locked -p novovm-protocol --lib
+cargo test --locked -p novovm-adapter-novovm --lib uca_delegation
+cargo clippy --locked -p novovm-adapter-novovm --all-targets --no-deps -- -D warnings
+cargo test --locked --release -p novovm-node --lib nov_native_ingress_rejects_ -- --test-threads=1
+cargo test --locked --release -p novovm-node --lib remote_native_ingress_ -- --test-threads=1
+cargo test --locked --release -p novovm-node --lib signed_native_wire_maps_to_adapter_verifiable_canonical_ir -- --test-threads=1
+cargo clippy --locked --release -p novovm-node --lib --no-deps -- -D warnings
+```
+
+AOEM 主 DLL 仍缺锁定 LFS 二进制，前片的 ML-DSA 环境失败未解决；本片
+Ed25519 验证不调用该 DLL，不能用它替代 ML-DSA 验收。下一片接既有
+node -> exec -> AOEM 的规范身份状态所有者、原子 nonce 消费和可信回执，
+然后移动身份安全域才能消费真实授权。本片验证不等于完整项目安全审计。
+
 ## 2026-10-09 NOVOCHAT 直接复用 UCA 编码（非移动授权交付）
 
 输入基线 `5dc902e3d6e26f350c7a5b1da363835d6a9e6ef4`。用户决定由原厂

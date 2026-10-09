@@ -14,6 +14,7 @@ pub mod native_parent_nonce;
 pub mod native_treasury;
 pub mod protocol_catalog;
 pub mod tx_wire;
+pub mod uca_delegation;
 pub mod wire;
 
 pub use block_binding::*;
