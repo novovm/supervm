@@ -1,5 +1,7 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-09 NOVOCHAT 直接接入：** 用户先授权扩展三个仓库，随后明确原厂 NOVOCHAT 直接适配 SUPERVM，不以修复旧钱包或第三方 SDK 为前置；KINGCLUB 不改。本片基线 `5dc902e3`，范围为已有 `novovm-adapter-api` 的 UCA 密钥绑定编码、`unified_account_surface.rs` 对应复用和相邻测试/台账。仅将原有编码提取为节点与 NOVOCHAT 可直接共用的实现，不改授权政策、链状态、共识或奖励发行。两个旧钱包远端仍为 3 月版本，Flutter SDK 为本机未跟踪目录，保留原状。本片验收及 ML-DSA 环境缺口见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)；生产 UCA 写门禁保持，不宣称移动授权已接通。
+
 **本机限定修正收口（2026-10-04，基线 `19043354` 加本节提交）：** 原节点
 `nov_getPrivacyCapabilityStatus` 不再将请求/环境中的AOEM能力声明误报为证明
 查询已可用；保留声明、来源和原读策略。Windows release 4项状态反例与1项

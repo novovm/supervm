@@ -8,6 +8,37 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-09 NOVOCHAT 直接复用 UCA 编码（非移动授权交付）
+
+输入基线 `5dc902e3d6e26f350c7a5b1da363835d6a9e6ef4`。用户决定由原厂
+NOVOCHAT 直接适配 SUPERVM，旧钱包和第三方 SDK 不作为前置。本片只把
+现有主密钥引用派生及 `signature_v1` 所有权签名字节编码提取到已有
+`novovm-adapter-api::uca_key_binding`，原节点改为引用同一实现。未改密码
+算法、授权政策、交易/共识或奖励规则，未另建身份状态机。
+
+Windows / Rust 1.94.0：共享编码 2 项测试通过（固定字节及域/主体/操作
+绑定）；原节点 release `unified_account_surface_cut_a_` 的 Ed25519、
+secp256k1、错误签名不污染状态 3 项通过，ML-DSA-87 项未通过。原因是
+随仓 `aoem/windows/core/bin/aoem_ffi.dll` 仍为 133 字节 LFS 指针，实际
+44,048,384 字节二进制未补取完成，故不能认定本机 ML-DSA 验证通过。
+所需 SHA-256 为 `01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674`。
+限定源码 rustfmt、diff 检查及 node lib 严格 Clippy 通过。
+
+复现：显式 `CARGO_TARGET_DIR=<SUPERVM>/target`，运行
+`cargo test --locked -p novovm-adapter-api --lib` 和
+`cargo test --locked --release -p novovm-node --lib unified_account_surface_cut_a_ -- --test-threads=1`。
+后者是历史 Host 比较测试，须仅在测试进程设置
+`NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1`；测试使用独立临时数据库，结束恢复
+环境。默认门禁下初跑为 1 通过/3 拒绝；显式测试 opt-in 后为 3 通过/1
+环境失败。不修改默认门禁、不在生产启动器设置该变量，不把这些历史
+测试视为原生交易已接通。首次使用 `primary_key` 过滤器选中 0 项，未计入
+证据。`cargo clippy --locked --release -p novovm-node --lib --no-deps -- -D warnings` 通过。
+
+生产 `ua_*` 写操作仍拒绝未接通的规范原生交易委托；原所有权签名不是
+应用/设备/期限/撤销授权。本片范围收口，ML-DSA 环境缺口保留。下一片须
+接规范委托和可信状态回执，再接移动密钥所有者；未发行真实手机授权、
+未部署节点、未执行资产操作或 NOV 结算，不宣称双机或匿名通信通过。
+
 ## 2026-10-04 证明关系复核与原节点能力误报纠正（非新证明交付）
 
 基线SUPERVM `1904335456`、AOEM `2331fb3c47`。本次只读核对相关密码关系与

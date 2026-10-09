@@ -6,6 +6,9 @@ use ed25519_dalek::{
     Signature as Ed25519Signature, Verifier as Ed25519Verifier, VerifyingKey as Ed25519VerifyingKey,
 };
 use k256::ecdsa::{Signature as Secp256k1Signature, VerifyingKey as Secp256k1VerifyingKey};
+use novovm_adapter_api::uca_key_binding::{
+    derive_primary_key_ref_from_binding_v1, primary_key_proof_message_v1,
+};
 use novovm_adapter_api::unified_account::{PersonaBinding, UcaAccount};
 use novovm_adapter_api::{
     AccountAuditEvent, AccountPolicy, AccountRole, KycPolicyMode, MappedAssetLockProof,
@@ -5149,37 +5152,6 @@ fn parse_key_proof_payload_v1(params: &Value) -> Result<Vec<u8>> {
             )
         })?;
     decode_hex_bytes(&raw, "proof_payload")
-}
-
-fn derive_primary_key_ref_from_binding_v1(key_algo: UcaKeyAlgo, public_key: &[u8]) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(b"uca-primary-key-ref-v2");
-    hasher.update(key_algo.as_str().as_bytes());
-    hasher.update([0u8]);
-    hasher.update(public_key);
-    hasher.finalize().to_vec()
-}
-
-fn primary_key_proof_message_v1(
-    account_id: &str,
-    action: &str,
-    key_algo: UcaKeyAlgo,
-    public_key: &[u8],
-    primary_key_ref: &[u8],
-) -> Vec<u8> {
-    let mut out = Vec::new();
-    out.extend_from_slice(b"novovm-uca-primary-key-proof-v1");
-    out.push(0);
-    out.extend_from_slice(action.as_bytes());
-    out.push(0);
-    out.extend_from_slice(account_id.as_bytes());
-    out.push(0);
-    out.extend_from_slice(key_algo.as_str().as_bytes());
-    out.push(0);
-    out.extend_from_slice(format!("0x{}", to_hex_lower(public_key)).as_bytes());
-    out.push(0);
-    out.extend_from_slice(format!("0x{}", to_hex_lower(primary_key_ref)).as_bytes());
-    out
 }
 
 fn validate_public_key_format_v1(key_algo: UcaKeyAlgo, public_key: &[u8]) -> Result<()> {

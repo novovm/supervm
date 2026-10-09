@@ -7,6 +7,7 @@ pub mod evm_mirror;
 pub mod ir;
 pub mod mapped_asset;
 pub mod native_signing;
+pub mod uca_key_binding;
 pub mod unified_account;
 
 pub use chain_adapter::{default_chain_id, AdapterFactory, ChainAdapter, ChainConfig, ChainType};
