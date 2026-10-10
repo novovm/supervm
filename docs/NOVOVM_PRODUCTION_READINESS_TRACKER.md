@@ -8,6 +8,31 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 本地未注册身份的受限授权
+
+输入 `133b1c38`，认领 `54375526`；限定 `novovm-adapter-api`、根 lockfile
+及两份台账。新增 `local_identity`，保留既有 UCA Ed25519 primary key ref。
+签名固定新域、版本、可信根与引用、用途、设备、完整范围摘要、实际主体公钥、
+challenge、独立撤销 epoch 与签发/到期时间。规范强钥及 prime-order 检查、
+`verify_strict`，拒绝根/主体复用。证明与验证结果不提供网络序列化或 Debug，
+签者无通用签名和私钥读取接口；明确启用既有 ed25519-dalek 的密钥清零能力。
+
+验证必须由受保护调用者提供可信 root pin、精确预期绑定和当前活动 epoch，
+不能从证明自身认可签发者。请求在签发时最多五分钟，授权最长二十四小时，
+过期不续期。根持钥证明本身不负责请求消耗、持久时钟、撤销或平台授权；
+这些仍须由 NOVOCHAT 本地受保护所有者实现。多个 scope 的独立证明不互相
+替换，也不使用旧账户 create/rotate 签名字节授予聊天权限。
+
+Windows `cargo test --locked -p novovm-adapter-api` **20 项通过**，含新增
+10 项真实签名反例和原包回归；严格 all-targets/no-deps Clippy、相关源文件
+格式及 diff 检查通过。日志 `artifacts/novochat-local-identity-api-full-tests.log`
+与 `artifacts/novochat-local-identity-api-clippy.log`。没有测试整个交易节点、
+AOEM、远程 CI 或手机；此处只交付公共密码契约，认领释放。
+
+根/授权不得发送给联系人、发现或中继节点，稳定引用可能关联会话。
+此能力是本地未注册身份授权，不是链上 UCA、全局撤销同步、硬件证明、
+匿名路径或 PQ。原链上账户/交易入口和生产能力门禁保持。
+
 ## 2026-10-10 流 IO 失败与协议错误分类
 
 输入 `983fe493`，认领 `898b9db5`；限定既有可选 iroh 载体及交接台账。

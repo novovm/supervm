@@ -5,6 +5,7 @@ mod bincode_compat;
 pub mod chain_adapter;
 pub mod evm_mirror;
 pub mod ir;
+pub mod local_identity;
 pub mod mapped_asset;
 pub mod native_signing;
 pub mod uca_key_binding;

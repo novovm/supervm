@@ -8,10 +8,12 @@ description = "NOVOVM adapter API: IR types + adapter traits (host-facing), no L
 
 [dependencies]
 anyhow = "1"
+ed25519-dalek = { version = "2", features = ["zeroize"] }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 sha2 = "0.10"
 serde_json = { version = "1", optional = true }
+zeroize = "1"
 
 [features]
 # Keep compatibility with older code that uses `#[cfg(feature = "serde_json")]`.
