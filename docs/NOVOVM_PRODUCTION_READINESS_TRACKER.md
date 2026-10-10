@@ -10,6 +10,11 @@
 
 ## 2026-10-11 可选 TLS 认证流与共同帧接口
 
+同轮格式收尾：NOVOCHAT 的 `cargo fmt --all` 也访问本地路径依赖，发现并
+纠正 `lib.rs` 中 TLS/transport 模块声明的字典序。仅调整声明顺序，没有
+语义或 feature 变化；依赖输入守卫正确拒绝未提交的排序，随后固定到
+包含本次格式收尾的提交，不放宽守卫。原测试证据范围保持如下。
+
 输入 `60d4f3b3`、认领 `30cf2468`，限定既有 `novovm-network`、根 lockfile
 和两份台账。`tls-transport` 默认关闭；仅接收调用者已授权的 owned IO，
 没有 DNS、拨号、Tor 或路径许可。TLS 1.3 使用独立临时 Ed25519 raw public

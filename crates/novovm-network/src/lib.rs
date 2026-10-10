@@ -29,9 +29,9 @@ pub mod relay;
 pub mod route;
 pub mod routing;
 pub mod runtime_status;
-pub mod transport;
 #[cfg(feature = "tls-transport")]
 pub mod tls_transport;
+pub mod transport;
 #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
 pub mod transport_binding;
 
