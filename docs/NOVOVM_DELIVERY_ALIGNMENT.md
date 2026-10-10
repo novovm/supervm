@@ -1,4 +1,6 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-10 NOVOCHAT 短期寻址接入认领（进行中）：** 本机 NOVOCHAT 会话，输入 `30ff2f4cbd5858793f679760ab90c6e65ea8892c`，仅认领 `crates/novovm-network/src/iroh_transport.rs`、新增 `crates/novovm-network/src/opaque_rendezvous.rs`、`crates/novovm-network/src/lib.rs` 及本文件/验收台账。目标：允许未知临时 transport key 在有界接入后接受独立身份验证，并提供内存内有容量/期限/修订号限制的不透明寻址记录。验收为现有网络回归、身份/资源/重放反例和严格 Clippy；NOVOCHAT 另验跨网设备接线。交易、共识、账户和 AOEM 不在范围内；测试允许列表不等于 UCA，单节点路径不等于合格匿名路径。
+
 **2026-10-10 NOVOCHAT 双工载体收口：** 输入 `4d8b928c`，认领 `a3c2367f`/`728e58b0`。既有可选 iroh 载体增加借用式独立读写、永久共享失败状态，复用原 relay Data 二进制编码并在分配前限制 16 KiB。Windows 网络 lib 726 通过、11 原有忽略项未执行，严格 all-targets/no-deps Clippy 通过，认领释放。未改交易、账户、共识或 AOEM；这是网络控制接入的底层组件，尚不代表生产发现、UCA、手机或匿名路径验收，详见最新台账。
 
 **2026-10-10 NOVOCHAT 可靠 NAT 载体组件收口：** 输入 `7ced1724`，认领 `264cc3ca`。既有 network 增加可选 `iroh-transport` feature，固定 iroh 1.3.0，默认关闭；可靠 QUIC 流与 NOVOVM 原 E2E 握手通过 TLS exporter、双方独立身份和双向 Finished 绑定。授权先于网络、限时作用域、取消与有界关闭 owner 已测试。Windows 网络 lib **718 通过、11 原有忽略项未执行**，严格 all-targets Clippy 通过，认领释放。未改原 node/交易/账户/共识/AOEM；未完成主应用、Android、独立公网节点或合格隐私验收。公共 iroh relay 与原 NOVOVM WSS 协议不同，不允许冒充兼容或已授权节点，剩余边界见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
