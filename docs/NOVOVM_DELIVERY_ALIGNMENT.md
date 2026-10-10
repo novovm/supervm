@@ -1,5 +1,5 @@
 # NOVOVM 产品目标与交付主线
-**2026-10-10 NOVOCHAT 短期寻址接入认领（进行中）：** 本机 NOVOCHAT 会话，输入 `30ff2f4cbd5858793f679760ab90c6e65ea8892c`，仅认领 `crates/novovm-network/src/iroh_transport.rs`、新增 `crates/novovm-network/src/opaque_rendezvous.rs`、`crates/novovm-network/src/lib.rs` 及本文件/验收台账。目标：允许未知临时 transport key 在有界接入后接受独立身份验证，并提供内存内有容量/期限/修订号限制的不透明寻址记录。验收为现有网络回归、身份/资源/重放反例和严格 Clippy；NOVOCHAT 另验跨网设备接线。交易、共识、账户和 AOEM 不在范围内；测试允许列表不等于 UCA，单节点路径不等于合格匿名路径。
+**2026-10-10 NOVOCHAT 短期寻址组件收口：** 输入 `30ff2f4c`，认领 `4407ade1`。既有 iroh 载体支持未知临时 endpoint 接入，适配层入站/出站合计最多 4 条连接、单 accept、TLS/首流 3 秒；身份验证仍须上层使用本连接绑定和双向 Finished。新增通用内存不透明寻址记录，30 秒 TTL、16 条/64 KiB 有效数据、64 条实例内防回滚记录；不接交易或聊天存储。Windows 网络 lib 串行 **745 通过、11 原有忽略项未执行**，严格 all-targets/no-deps Clippy 通过；认领释放。首次并行测试出现既有共享状态测试冲突，失败日志保留。组件不等于生产发现、UCA 或匿名；iroh 内部 pending 队列仍未取得同等入站上限，详见最新台账。
 
 **2026-10-10 NOVOCHAT 双工载体收口：** 输入 `4d8b928c`，认领 `a3c2367f`/`728e58b0`。既有可选 iroh 载体增加借用式独立读写、永久共享失败状态，复用原 relay Data 二进制编码并在分配前限制 16 KiB。Windows 网络 lib 726 通过、11 原有忽略项未执行，严格 all-targets/no-deps Clippy 通过，认领释放。未改交易、账户、共识或 AOEM；这是网络控制接入的底层组件，尚不代表生产发现、UCA、手机或匿名路径验收，详见最新台账。
 

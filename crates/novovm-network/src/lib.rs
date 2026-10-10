@@ -14,6 +14,7 @@ pub mod gossip;
 #[cfg(feature = "iroh-transport")]
 pub mod iroh_transport;
 pub mod novorudp;
+pub mod opaque_rendezvous;
 pub mod overlay;
 pub mod overlay_runtime;
 pub mod product_directory;

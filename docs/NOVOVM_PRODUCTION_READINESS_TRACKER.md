@@ -8,6 +8,34 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 临时 endpoint 接入与有界不透明寻址
+
+输入 `30ff2f4c`，认领 `4407ade1`；仅 network 的 `iroh_transport.rs`、
+`opaque_rendezvous.rs`、模块导出及台账。`accept_inbound` 不要求预先通过
+电脑传入客户端每次新建的 transport key；只建立 TLS endpoint 身份，上层
+必须在同流核验独立允许列表身份、TLS binding 和双向 Finished，才可访问服务。
+入站/出站共用每 scope 4 条活跃准入（含建立中），一个 accept 消费者；
+入站 TLS/首个双向流共用 3 秒，取消/超时关闭已建连接。该上限不是 iroh
+内部 pending-Incoming 队列上限，当前公开 builder 未接入同等队列配置；
+生产抗滥用与持续服务尚不能据此签收。
+
+通用 rendezvous store 不做文件/网络 IO，不解析内部密文。调用者提供真实
+已鉴权 owner、随机 slot 能力和新服务 instance，并负责持续 TTL 清理。
+限制单记录 4096 字节、TTL 30 秒、16 条有效记录/64 KiB、每 owner 8 槽，
+实例最多 64 槽/120 秒。首次写入绑定 owner，更高修订可替换；同修订同内容
+只返回原期限，过期/已消费不能复活；ACK 必须精确匹配修订和摘要。
+墓碑不驱逐，时钟回退永久拒绝；满额时拒绝，不能用淘汰高水位放过重放。
+这不是聊天信箱、UCA 准入或恶意节点删除证明。
+
+本机验证（`CARGO_TARGET_DIR=<SUPERVM_ROOT>/target`、`CARGO_BUILD_JOBS=1`）：
+`cargo test --locked -p novovm-network --features iroh-transport --lib -- --test-threads=1`
+为 **745 通过、11 原有忽略项未执行**；严格 all-targets/no-deps Clippy 通过。
+增加 5 条真实载体反例与 14 条存储反例。首轮误用默认并行测试，711 通过、
+34 条既有全局 runtime 状态测试失败；纠正为仓库串行方式后通过，不覆盖失败日志。
+本地证据 `artifacts/novochat-rendezvous-{network-tests,network-serial,clippy}.log`。
+认领已释放；NOVOCHAT 的端到端加密地址、节点 RPC 和跨网设备证据另行记录。
+未改 NOV 交易、共识、账户、AOEM，也未签收主应用、移动切网或合格隐私路径。
+
 ## 2026-10-10 可靠载体双工帧与有界二进制密文
 
 输入 `4d8b928c`，认领 `a3c2367f`、`728e58b0`；仅原 network 的

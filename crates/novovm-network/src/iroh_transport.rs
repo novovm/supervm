@@ -30,7 +30,11 @@ use std::{
 
 pub const IROH_ALPN_V1: &[u8] = BOUND_TRANSPORT_ALPN_V1;
 pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
+/// Adapter-owned active connections, including outbound attempts and inbound
+/// handshakes. This is NOT iroh's internal pending-Incoming queue limit.
+pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
 const CHECK_INTERVAL: Duration = Duration::from_millis(20);
+const INCOMING_SETUP_TIMEOUT: Duration = Duration::from_secs(3);
 static ENDPOINT_LIMIT: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
 /// Fast local authorization/cancellation check. Never do RPC or blocking IO here.
@@ -132,6 +136,8 @@ pub struct IrohScopeV1 {
     endpoint: Endpoint,
     control: IrohControlV1,
     relays: Vec<RelayUrl>,
+    connections: tokio::sync::Semaphore,
+    accept_consumer: tokio::sync::Mutex<()>,
 }
 
 /// The operation and all borrowed streams end before endpoint.close + drop.
@@ -197,6 +203,8 @@ where
         endpoint,
         control,
         relays: config.relays,
+        connections: tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1),
+        accept_consumer: tokio::sync::Mutex::new(()),
     };
     let result = tokio::select! {
         biased;
@@ -286,36 +294,102 @@ impl IrohScopeV1 {
 
     pub async fn connect(&self, peer: &IrohAddressV1) -> Result<IrohStreamV1<'_>> {
         let address = self.peer_address(peer)?;
+        // Reserve before dialing: outbound work shares the same active budget
+        // as inbound TLS handshakes and streams, without a waiting queue.
+        let admission = self
+            .connections
+            .try_acquire()
+            .context("carrier connection limit")?;
         let connection = self.endpoint.connect(address, IROH_ALPN_V1).await?;
-        self.stream(connection, peer.endpoint_key, true).await
+        let pending = PendingConnection::new(connection);
+        tokio::time::timeout(
+            INCOMING_SETUP_TIMEOUT,
+            self.stream(pending, peer.endpoint_key, true, admission),
+        )
+        .await
+        .context("carrier stream setup deadline")?
     }
 
+    /// Accept a known TLS endpoint. Unknown endpoints are closed, never treated
+    /// as an invitation to change the expected application identity.
     pub async fn accept(&self, expected_endpoint: [u8; 32]) -> Result<IrohStreamV1<'_>> {
         self.control.check()?;
         EndpointId::from_bytes(&expected_endpoint)?;
-        // Bounded unwanted peers. Only one handshake is actively accepted at a
-        // time. Library pending-incoming limits still apply before accept.
+        self.accept_inner(Some(expected_endpoint)).await
+    }
+
+    /// Accept a TLS-authenticated temporary endpoint whose key is not known in
+    /// advance. This grants NO NOVOVM/application identity or rendezvous access.
+    /// The caller must verify an independently authorized application pin and
+    /// both Finished records using this stream's binding before using its data.
+    ///
+    /// Only one accept future may consume a scope's incoming queue. Active
+    /// admission is shared with connect(); excess Incoming objects are refused
+    /// before starting TLS. iroh 1.3 does not expose a Builder setter for its
+    /// endpoint-wide pending-Incoming queue, whose library limit still applies.
+    /// The three-second budget starts when an Incoming is dequeued, and covers
+    /// TLS plus opening the first bidirectional stream, not application auth.
+    pub async fn accept_inbound(&self) -> Result<IrohStreamV1<'_>> {
+        self.accept_inner(None).await
+    }
+
+    async fn accept_inner(&self, expected: Option<[u8; 32]>) -> Result<IrohStreamV1<'_>> {
+        self.control.check()?;
+        let _consumer = self
+            .accept_consumer
+            .try_lock()
+            .context("carrier accept already pending")?;
+        // The same consumer guard covers both accept APIs and is released on
+        // cancellation. Concurrent callers must not steal and reject peers.
         for _ in 0..8 {
+            self.control.check()?;
             let incoming = self.endpoint.accept().await.context("endpoint closed")?;
-            let connection = match tokio::time::timeout(Duration::from_secs(3), incoming).await {
+            self.control.check()?;
+            let admission = match self.connections.try_acquire() {
+                Ok(admission) => admission,
+                Err(error) => {
+                    incoming.refuse();
+                    return Err(error).context("carrier connection limit");
+                }
+            };
+            let deadline = tokio::time::Instant::now() + INCOMING_SETUP_TIMEOUT;
+            let connection = match tokio::time::timeout_at(deadline, incoming).await {
                 Ok(Ok(connection)) => connection,
                 _ => continue,
             };
-            if connection.remote_id().as_bytes() != &expected_endpoint {
-                connection.close(1u32.into(), b"unexpected endpoint");
+            let remote = *connection.remote_id().as_bytes();
+            let pending = PendingConnection::new(connection);
+            if expected.is_some_and(|expected| expected != remote) {
+                // PendingConnection also closes on timeout/cancellation before
+                // the stream becomes an owned, admitted IrohStreamV1.
+                pending
+                    .connection
+                    .as_ref()
+                    .context("missing pending connection")?
+                    .close(1u32.into(), b"unexpected endpoint");
                 continue;
             }
-            return self.stream(connection, expected_endpoint, false).await;
+            return tokio::time::timeout_at(
+                deadline,
+                self.stream(pending, remote, false, admission),
+            )
+            .await
+            .context("incoming stream setup deadline")?;
         }
         bail!("incoming peer budget exhausted")
     }
 
-    async fn stream(
-        &self,
-        connection: Connection,
+    async fn stream<'a>(
+        &'a self,
+        mut pending: PendingConnection,
         expected: [u8; 32],
         initiator: bool,
-    ) -> Result<IrohStreamV1<'_>> {
+        admission: tokio::sync::SemaphorePermit<'a>,
+    ) -> Result<IrohStreamV1<'a>> {
+        let connection = pending
+            .connection
+            .as_ref()
+            .context("missing pending connection")?;
         self.control.check()?;
         ensure!(
             connection.remote_id().as_bytes() == &expected && connection.alpn() == IROH_ALPN_V1,
@@ -329,12 +403,40 @@ impl IrohScopeV1 {
         self.control.check()?;
         Ok(IrohStreamV1 {
             scope: self,
-            connection,
+            connection: pending
+                .connection
+                .take()
+                .context("missing pending connection")?,
             send,
             recv,
             failed: AtomicBool::new(false),
             initiator,
+            _admission: admission,
         })
+    }
+}
+
+/// Owns an established TLS connection before its stream is returned. In
+/// particular, cancelling accept_bi/open_bi must not leave an unadmitted live
+/// connection in the scope. Constructed before polling the setup future so an
+/// already-expired timeout closes it too.
+struct PendingConnection {
+    connection: Option<Connection>,
+}
+
+impl PendingConnection {
+    fn new(connection: Connection) -> Self {
+        Self {
+            connection: Some(connection),
+        }
+    }
+}
+
+impl Drop for PendingConnection {
+    fn drop(&mut self) {
+        if let Some(connection) = &self.connection {
+            connection.close(1u32.into(), b"connection setup cancelled");
+        }
     }
 }
 
@@ -345,6 +447,7 @@ pub struct IrohStreamV1<'a> {
     recv: RecvStream,
     failed: AtomicBool,
     initiator: bool,
+    _admission: tokio::sync::SemaphorePermit<'a>,
 }
 
 /// A borrowed framed writer. The parent stream and its authorized scope remain
@@ -484,6 +587,13 @@ impl IrohStreamV1<'_> {
                 failed: &self.failed,
             },
         ))
+    }
+
+    /// The identity proved by TLS, not a NOVOVM identity or an application pin.
+    /// Never promote this temporary transport key into a trusted contact.
+    pub fn remote_endpoint_key(&self) -> Result<[u8; 32]> {
+        self.check()?;
+        Ok(*self.connection.remote_id().as_bytes())
     }
 
     /// Material is only for the NOVOVM signed connection binding, never a wallet
@@ -719,6 +829,298 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a.1, "direct");
         assert_ne!(a.0 .0, a.0 .1);
+    }
+
+    #[tokio::test]
+    async fn inbound_unknown_endpoint_has_the_same_tls_binding_without_a_client_bootstrap() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (address_tx, address_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                address_tx.send(scope.address()?).unwrap();
+                // No client endpoint key or address is supplied to the listener.
+                let mut stream = scope.accept_inbound().await?;
+                let remote = stream.remote_endpoint_key()?;
+                let binding = stream.binding_material()?;
+                let _proof = stream.binding()?;
+                // Transport-only test bytes; no application identity or access
+                // is granted by these bytes or by accept_inbound().
+                ensure!(
+                    stream.read_frame().await? == b"transport probe",
+                    "wrong probe"
+                );
+                stream.write_frame(b"transport reply").await?;
+                stream.finish().await?;
+                Ok((remote, binding))
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                let own_endpoint = scope.address()?.endpoint_key;
+                let mut stream = scope.connect(&address_rx.await?).await?;
+                let binding = stream.binding_material()?;
+                stream.write_frame(b"transport probe").await?;
+                ensure!(
+                    stream.read_frame().await? == b"transport reply",
+                    "wrong reply"
+                );
+                stream.finish().await?;
+                Ok((own_endpoint, binding))
+            })
+        });
+        let (server, client) = tokio::join!(server, client);
+        assert_eq!(server.unwrap(), client.unwrap());
+    }
+
+    #[tokio::test]
+    async fn concurrent_known_and_unknown_accepts_fail_without_consuming_each_others_peers() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        with_iroh_scope_v1(local_config(), control(), |scope| {
+            Box::pin(async move {
+                let expected = *iroh::SecretKey::generate().public().as_bytes();
+                let mut first = Box::pin(scope.accept_inbound());
+                // Poll the first consumer into its actual endpoint wait.
+                tokio::select! {
+                    biased;
+                    _ = &mut first => bail!("unexpected incoming connection"),
+                    _ = async {} => {},
+                }
+                let error = scope
+                    .accept(expected)
+                    .await
+                    .err()
+                    .context("second accept succeeded")?;
+                ensure!(
+                    error.to_string().contains("accept already pending"),
+                    "wrong admission error"
+                );
+                drop(first);
+                // Cancelling the first waiter must release the same guard used
+                // by both APIs, with no reserved connection left behind.
+                let mut next = Box::pin(scope.accept(expected));
+                tokio::select! {
+                    biased;
+                    _ = &mut next => bail!("consumer remained blocked after cancellation"),
+                    _ = async {} => {},
+                }
+                let error = scope
+                    .accept_inbound()
+                    .await
+                    .err()
+                    .context("third accept succeeded")?;
+                ensure!(
+                    error.to_string().contains("accept already pending"),
+                    "wrong admission error"
+                );
+                drop(next);
+                ensure!(
+                    scope.accept_consumer.try_lock().is_ok(),
+                    "consumer guard leaked"
+                );
+                ensure!(
+                    scope.connections.available_permits() == IROH_MAX_CONNECTIONS_V1,
+                    "connection permit leaked"
+                );
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn known_endpoint_accept_still_closes_a_different_tls_peer() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (address_tx, address_rx) = oneshot::channel();
+        let (rejected_tx, rejected_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                address_tx.send(scope.address()?).unwrap();
+                let expected = *iroh::SecretKey::generate().public().as_bytes();
+                let mut accepting = Box::pin(scope.accept(expected));
+                tokio::select! {
+                    _ = &mut accepting => bail!("wrong endpoint ended the known-peer wait"),
+                    result = rejected_rx => result?,
+                }
+                drop(accepting);
+                ensure!(
+                    scope.connections.available_permits() == IROH_MAX_CONNECTIONS_V1,
+                    "rejected peer retained a permit"
+                );
+                Ok(())
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                let reason = match scope.connect(&address_rx.await?).await {
+                    Ok(stream) => stream.connection.closed().await.to_string(),
+                    Err(error) => format!("{error:#}"),
+                };
+                ensure!(
+                    reason.contains("unexpected endpoint"),
+                    "peer was not rejected for its endpoint pin: {reason}"
+                );
+                rejected_tx.send(()).unwrap();
+                Ok(())
+            })
+        });
+        let (server, client) = tokio::join!(server, client);
+        server.unwrap();
+        client.unwrap();
+    }
+
+    #[tokio::test]
+    async fn active_admission_bounds_inbound_and_outbound_and_releases_on_drop() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (address_tx, address_rx) = oneshot::channel();
+        let (extra_address_tx, extra_address_rx) = oneshot::channel();
+        let (client_address_tx, client_address_rx) = oneshot::channel();
+        let (full_tx, full_rx) = oneshot::channel();
+        let (finish_tx, finish_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                let address = scope.address()?;
+                address_tx.send(address.clone()).unwrap();
+                extra_address_tx.send(address).unwrap();
+                let client_address = client_address_rx.await?;
+                let mut streams = Vec::new();
+                for _ in 0..IROH_MAX_CONNECTIONS_V1 {
+                    let mut stream = scope.accept_inbound().await?;
+                    ensure!(
+                        stream.read_frame().await? == b"hold",
+                        "missing held connection"
+                    );
+                    streams.push(stream);
+                }
+                ensure!(
+                    scope.connections.available_permits() == 0,
+                    "active cap not reserved"
+                );
+                let error = scope
+                    .connect(&client_address)
+                    .await
+                    .err()
+                    .context("inbound sessions did not consume outbound capacity")?;
+                ensure!(
+                    error.to_string().contains("connection limit"),
+                    "inbound and outbound admission are not shared"
+                );
+                full_tx.send(()).unwrap();
+                let error = scope
+                    .accept_inbound()
+                    .await
+                    .err()
+                    .context("excess inbound accepted")?;
+                ensure!(
+                    error.to_string().contains("connection limit"),
+                    "wrong capacity error"
+                );
+                finish_tx.send(()).unwrap();
+                for mut stream in streams {
+                    stream.finish().await?;
+                }
+                ensure!(
+                    scope.connections.available_permits() == IROH_MAX_CONNECTIONS_V1,
+                    "inbound capacity retained after drop"
+                );
+                Ok(())
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                let address = address_rx.await?;
+                client_address_tx.send(scope.address()?).unwrap();
+                let mut streams = Vec::new();
+                for _ in 0..IROH_MAX_CONNECTIONS_V1 {
+                    let mut stream = scope.connect(&address).await?;
+                    stream.write_frame(b"hold").await?;
+                    streams.push(stream);
+                }
+                let error = scope
+                    .connect(&address)
+                    .await
+                    .err()
+                    .context("excess outbound started")?;
+                ensure!(
+                    error.to_string().contains("connection limit"),
+                    "wrong capacity error"
+                );
+                finish_rx.await?;
+                for mut stream in streams {
+                    stream.finish().await?;
+                }
+                ensure!(
+                    scope.connections.available_permits() == IROH_MAX_CONNECTIONS_V1,
+                    "outbound capacity retained after drop"
+                );
+                Ok(())
+            })
+        });
+        let extra = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                let address = extra_address_rx.await?;
+                full_rx.await?;
+                ensure!(
+                    scope.connect(&address).await.is_err(),
+                    "full server admitted an extra connection"
+                );
+                ensure!(
+                    scope.connections.available_permits() == IROH_MAX_CONNECTIONS_V1,
+                    "failed dial retained a permit"
+                );
+                Ok(())
+            })
+        });
+        let (server, client, extra) = tokio::join!(server, client, extra);
+        server.unwrap();
+        client.unwrap();
+        extra.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inbound_peer_that_never_opens_a_stream_is_closed_at_setup_deadline() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (address_tx, address_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                address_tx.send(scope.address()?).unwrap();
+                let error = scope
+                    .accept_inbound()
+                    .await
+                    .err()
+                    .context("peer without stream was accepted")?;
+                ensure!(
+                    error.to_string().contains("incoming stream setup deadline"),
+                    "wrong deadline error"
+                );
+                ensure!(
+                    scope.connections.available_permits() == IROH_MAX_CONNECTIONS_V1,
+                    "timed out setup retained a permit"
+                );
+                ensure!(
+                    scope.accept_consumer.try_lock().is_ok(),
+                    "timed out setup retained the consumer"
+                );
+                Ok(())
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                // Deliberately bypass only the client stream-opening helper in
+                // this local test: complete real TLS but open no QUIC stream.
+                let peer = scope.peer_address(&address_rx.await?)?;
+                let connection = scope.endpoint.connect(peer, IROH_ALPN_V1).await?;
+                let reason = connection.closed().await.to_string();
+                ensure!(
+                    reason.contains("connection setup cancelled"),
+                    "setup cancellation did not close TLS: {reason}"
+                );
+                Ok(())
+            })
+        });
+        let (server, client) = tokio::join!(server, client);
+        server.unwrap();
+        client.unwrap();
     }
 
     #[tokio::test]
