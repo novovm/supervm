@@ -81,6 +81,7 @@ pub struct IrohConfigV1 {
     relays: Vec<RelayUrl>,
     nameserver: IpAddr,
     bind_address: Option<SocketAddr>,
+    relay_only: bool,
 }
 
 impl IrohConfigV1 {
@@ -111,11 +112,32 @@ impl IrohConfigV1 {
             relays: parsed,
             nameserver,
             bind_address: None,
+            relay_only: false,
         })
+    }
+
+    /// Disable direct IP transports and accept only locally approved relay
+    /// candidates. This is a routing constraint, NOT an anonymity guarantee.
+    ///
+    /// In iroh 1.3 this also disables QUIC address-discovery probes because no
+    /// IP transport exists. HTTPS relay probes and relay connections remain;
+    /// the explicitly configured DNS resolver can still send UDP queries.
+    pub fn with_relay_only(mut self) -> Result<Self> {
+        ensure!(
+            !self.relays.is_empty(),
+            "relay-only requires an approved relay"
+        );
+        ensure!(
+            self.bind_address.is_none(),
+            "relay-only cannot bind an IP transport"
+        );
+        self.relay_only = true;
+        Ok(self)
     }
 
     /// Optional interface binding, primarily for deterministic local tests.
     pub fn with_bind_address(mut self, address: SocketAddr) -> Result<Self> {
+        ensure!(!self.relay_only, "relay-only cannot bind an IP transport");
         ensure!(!address.ip().is_multicast(), "invalid bind address");
         self.bind_address = Some(address);
         Ok(self)
@@ -136,6 +158,7 @@ pub struct IrohScopeV1 {
     endpoint: Endpoint,
     control: IrohControlV1,
     relays: Vec<RelayUrl>,
+    relay_only: bool,
     connections: tokio::sync::Semaphore,
     accept_consumer: tokio::sync::Mutex<()>,
 }
@@ -191,7 +214,9 @@ where
         .transport_config(transport);
     // Iroh generates a fresh independent transport key. No wallet/chat seed is
     // accepted by this API, so key reuse cannot occur through configuration.
-    if let Some(address) = config.bind_address {
+    if config.relay_only {
+        builder = builder.clear_ip_transports();
+    } else if let Some(address) = config.bind_address {
         builder = builder.clear_ip_transports().bind_addr(address)?;
     }
     let endpoint = tokio::select! {
@@ -203,6 +228,7 @@ where
         endpoint,
         control,
         relays: config.relays,
+        relay_only: config.relay_only,
         connections: tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1),
         accept_consumer: tokio::sync::Mutex::new(()),
     };
@@ -242,7 +268,11 @@ impl IrohScopeV1 {
         let address = self.endpoint.addr();
         Ok(IrohAddressV1 {
             endpoint_key: *address.id.as_bytes(),
-            direct: address.ip_addrs().take(8).copied().collect(),
+            direct: if self.relay_only {
+                Vec::new()
+            } else {
+                address.ip_addrs().take(8).copied().collect()
+            },
             relays: address
                 .relay_urls()
                 .take(4)
@@ -277,7 +307,9 @@ impl IrohScopeV1 {
                     && !address.ip().is_multicast(),
                 "invalid candidate"
             );
-            addresses.push(TransportAddr::Ip(*address));
+            if !self.relay_only {
+                addresses.push(TransportAddr::Ip(*address));
+            }
         }
         for relay in &peer.relays {
             ensure!(relay.len() <= 512, "relay candidate too long");
@@ -288,6 +320,10 @@ impl IrohScopeV1 {
             );
             addresses.push(TransportAddr::Relay(relay));
         }
+        ensure!(
+            !self.relay_only || !addresses.is_empty(),
+            "relay-only scope requires an approved relay candidate"
+        );
         ensure!(!addresses.is_empty(), "no approved peer candidate");
         Ok(EndpointAddr::from_parts(id, addresses))
     }
@@ -708,6 +744,132 @@ mod tests {
     }
     fn control() -> IrohControlV1 {
         IrohControlV1::new(Instant::now() + Duration::from_secs(8), || Ok(())).unwrap()
+    }
+
+    fn local_relay_only_config() -> IrohConfigV1 {
+        // A literal loopback URL: these tests require neither a relay server nor
+        // public DNS. They test fail-closed routing, not successful relay IO.
+        IrohConfigV1::new(
+            &["https://127.0.0.1/".to_owned()],
+            "127.0.0.1".parse().unwrap(),
+        )
+        .unwrap()
+        .with_relay_only()
+        .unwrap()
+    }
+
+    #[test]
+    fn relay_only_requires_relays_and_rejects_ip_binding_in_both_orders() {
+        let dns = "127.0.0.1".parse().unwrap();
+        let bind = "127.0.0.1:0".parse().unwrap();
+        assert!(!IrohConfigV1::new(&[], dns).unwrap().relay_only);
+        assert!(IrohConfigV1::new(&[], dns)
+            .unwrap()
+            .with_relay_only()
+            .is_err());
+        assert!(IrohConfigV1::new(&["https://127.0.0.1/".to_owned()], dns)
+            .unwrap()
+            .with_bind_address(bind)
+            .unwrap()
+            .with_relay_only()
+            .is_err());
+        assert!(local_relay_only_config().with_bind_address(bind).is_err());
+        assert!(local_relay_only_config().with_relay_only().is_ok());
+    }
+
+    #[tokio::test]
+    async fn relay_only_has_no_bound_ip_socket_and_filters_direct_candidates_before_dial() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        with_iroh_scope_v1(local_relay_only_config(), control(), |scope| {
+            Box::pin(async move {
+                // Inspect the actual endpoint, not just the exported address:
+                // hiding addresses would not disable direct transports.
+                assert!(scope.endpoint.bound_sockets().is_empty());
+                assert!(scope.endpoint.addr().ip_addrs().next().is_none());
+                assert!(scope.address()?.direct.is_empty());
+                let mut peer = IrohAddressV1 {
+                    endpoint_key: *iroh::SecretKey::generate().public().as_bytes(),
+                    direct: vec!["127.0.0.1:9".parse().unwrap()],
+                    relays: vec![],
+                };
+                let error =
+                    match tokio::time::timeout(Duration::from_millis(200), scope.connect(&peer))
+                        .await
+                        .expect("direct-only input must fail before network IO")
+                    {
+                        Ok(_) => panic!("relay-only scope accepted a direct-only peer"),
+                        Err(error) => error,
+                    };
+                assert!(error.to_string().contains("approved relay candidate"));
+                assert_eq!(
+                    scope.connections.available_permits(),
+                    IROH_MAX_CONNECTIONS_V1
+                );
+                peer.relays.push("https://127.0.0.1/".to_owned());
+                let filtered = scope.peer_address(&peer)?;
+                assert!(filtered.ip_addrs().next().is_none());
+                assert_eq!(filtered.relay_urls().count(), 1);
+                peer.relays.push("https://127.0.0.2/".to_owned());
+                assert!(scope
+                    .peer_address(&peer)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("not locally approved"));
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn relay_only_online_wait_is_revoked_and_releases_its_endpoint_admission() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let revoked = Arc::new(AtomicBool::new(false));
+        let check_revoked = revoked.clone();
+        let gate = IrohControlV1::new(Instant::now() + Duration::from_secs(5), move || {
+            ensure!(
+                !check_revoked.load(Ordering::Acquire),
+                "relay scope revoked"
+            );
+            Ok(())
+        })
+        .unwrap();
+        let dropped = Arc::new(AtomicBool::new(false));
+        struct DropMarker(Arc<AtomicBool>);
+        impl Drop for DropMarker {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let marker = DropMarker(dropped.clone());
+        let (ready, started) = oneshot::channel();
+        let operation = with_iroh_scope_v1(local_relay_only_config(), gate, move |scope| {
+            Box::pin(async move {
+                let _marker = marker;
+                assert!(scope.endpoint.bound_sockets().is_empty());
+                ready.send(()).unwrap();
+                scope.online().await
+            })
+        });
+        let trigger = async {
+            started.await.unwrap();
+            // Give the real online future a poll; no server is required on the
+            // loopback relay. Revocation must interrupt the entire owner.
+            tokio::task::yield_now().await;
+            revoked.store(true, Ordering::Release);
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(operation, trigger)
+        })
+        .await
+        .expect("relay-only online wait ignored revocation");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("relay scope revoked"));
+        assert!(dropped.load(Ordering::Acquire));
+        assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 4);
     }
 
     #[test]

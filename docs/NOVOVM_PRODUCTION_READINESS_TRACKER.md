@@ -8,6 +8,25 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 显式仅中继载体约束
+
+输入 `d8490975`，认领 `d1b1f47`；仅 `iroh_transport.rs` 和两份交接台账。
+`IrohConfigV1::with_relay_only` 必须提供批准的中继，使用 iroh 的
+`clear_ip_transports` 真正关闭 IP 载体，而不只是隐去地址提示。发出的地址
+不含 direct，拨号先验证原始候选边界再剔除 direct，无批准中继直接拒绝；
+与 IP bind 的两种调用顺序都拒绝。原默认自动模式、身份绑定、准入限额、
+3 秒入站与上层 8 秒认证期限保持。单中继不能作为合格匿名路径，
+HTTPS 上线探测和显式 UDP DNS 仍可能存在，不宣称全程无 UDP。
+
+本机网络 lib 串行 **748 通过、11 原有忽略项未执行**，严格
+all-targets/no-deps Clippy 通过。新增配置冲突、真实 endpoint 无 IP socket /
+候选过滤、等待上线时撤销并回收准入三项反例；测试使用本地不可用中继，
+没有据此声称公网中继通信成功。证据：
+`artifacts/novochat-relay-only-network.log`、
+`artifacts/novochat-relay-only-clippy.log`。认领释放；NOVOCHAT 另行构建并执行
+手机自动模式/仅中继对照，当前握手失败根因尚未确认。未改 NOV 交易、
+账户、共识、AOEM，也未完成主应用、恢复或合格隐私路径验收。
+
 ## 2026-10-10 临时 endpoint 接入与有界不透明寻址
 
 输入 `30ff2f4c`，认领 `4407ade1`；仅 network 的 `iroh_transport.rs`、
