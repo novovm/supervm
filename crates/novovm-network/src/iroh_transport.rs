@@ -33,6 +33,15 @@ pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
 /// Adapter-owned active connections, including outbound attempts and inbound
 /// handshakes. This is NOT iroh's internal pending-Incoming queue limit.
 pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
+
+/// A failure returned by an actual QUIC stream IO operation, or an explicit
+/// peer STOP. Only this carrier can construct the marker. It does not classify
+/// frame violations, local authorization failures or an already-failed stream
+/// as transport failures, and does not itself authorize retries or downgrade.
+#[derive(Debug, thiserror::Error)]
+#[error("carrier stream IO failed: {0:#}")]
+pub struct IrohStreamIoFailureV1(#[source] anyhow::Error);
+
 const CHECK_INTERVAL: Duration = Duration::from_millis(20);
 const INCOMING_SETUP_TIMEOUT: Duration = Duration::from_secs(3);
 static ENDPOINT_LIMIT: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
@@ -552,8 +561,12 @@ async fn write_frame_io(
         failed,
         complete: false,
     };
-    send.write_all(&(bytes.len() as u32).to_be_bytes()).await?;
-    send.write_all(bytes).await?;
+    send.write_all(&(bytes.len() as u32).to_be_bytes())
+        .await
+        .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
+    send.write_all(bytes)
+        .await
+        .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
     check_frame_io(scope, connection, failed)?;
     guard.complete = true;
     Ok(())
@@ -572,17 +585,32 @@ async fn read_frame_io(
         complete: false,
     };
     let mut length = [0u8; 4];
-    recv.read_exact(&mut length).await?;
+    recv.read_exact(&mut length)
+        .await
+        .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
     let length = u32::from_be_bytes(length) as usize;
     ensure!(
         length > 0 && length <= IROH_MAX_FRAME_V1,
         "carrier frame limit"
     );
     let mut bytes = vec![0; length];
-    recv.read_exact(&mut bytes).await?;
+    recv.read_exact(&mut bytes)
+        .await
+        .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
     check_frame_io(scope, connection, failed)?;
     guard.complete = true;
     Ok(bytes)
+}
+
+async fn confirm_send_completion(send: &mut SendStream) -> Result<()> {
+    ensure!(
+        send.stopped()
+            .await
+            .map_err(|error| IrohStreamIoFailureV1(error.into()))?
+            .is_none(),
+        IrohStreamIoFailureV1(anyhow::anyhow!("peer stopped stream"))
+    );
+    Ok(())
 }
 
 impl IrohWriteHalfV1<'_> {
@@ -714,10 +742,14 @@ impl IrohStreamV1<'_> {
         self.send.finish()?;
         let mut trailing = [0u8; 1];
         ensure!(
-            self.recv.read(&mut trailing).await?.is_none(),
+            self.recv
+                .read(&mut trailing)
+                .await
+                .map_err(|error| IrohStreamIoFailureV1(error.into()))?
+                .is_none(),
             "unexpected trailing stream data"
         );
-        ensure!(self.send.stopped().await?.is_none(), "peer stopped stream");
+        confirm_send_completion(&mut self.send).await?;
         self.check()?;
         guard.complete = true;
         Ok(())
@@ -1345,6 +1377,145 @@ mod tests {
         b.unwrap();
     }
 
+    #[derive(Clone, Copy)]
+    enum StreamFaultFixture {
+        Disconnect,
+        OversizedLength,
+        TrailingData,
+    }
+
+    async fn real_stream_fault(fault: StreamFaultFixture) -> Result<anyhow::Error> {
+        let (a_tx, a_rx) = oneshot::channel();
+        let (b_tx, b_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                a_tx.send(scope.address()?).unwrap();
+                let peer: IrohAddressV1 = b_rx.await?;
+                let mut stream = scope.accept(peer.endpoint_key).await?;
+                ensure!(stream.read_frame().await? == b"ready", "fixture not ready");
+                stream.write_frame(b"accepted").await?;
+                let error = match fault {
+                    StreamFaultFixture::TrailingData => stream.finish().await.unwrap_err(),
+                    _ => stream.read_frame().await.unwrap_err(),
+                };
+                done_tx.send(()).unwrap();
+                Ok(error)
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                b_tx.send(scope.address()?).unwrap();
+                let mut stream = scope.connect(&a_rx.await?).await?;
+                stream.write_frame(b"ready").await?;
+                ensure!(
+                    stream.read_frame().await? == b"accepted",
+                    "fixture not accepted"
+                );
+                match fault {
+                    StreamFaultFixture::Disconnect => {
+                        stream.connection.close(42u32.into(), b"fixture disconnect");
+                    }
+                    StreamFaultFixture::OversizedLength => {
+                        // Bypass the local frame encoder to exercise a real
+                        // malicious wire prefix before receiver allocation.
+                        stream
+                            .send
+                            .write_all(&((IROH_MAX_FRAME_V1 + 1) as u32).to_be_bytes())
+                            .await?;
+                    }
+                    StreamFaultFixture::TrailingData => {
+                        stream.send.write_all(b"unexpected").await?;
+                    }
+                }
+                // Keep both endpoint owners alive until the actual read or
+                // finish error is classified; fixture drop must not mask it.
+                done_rx.await?;
+                Ok(())
+            })
+        });
+        let (server, client) = tokio::join!(server, client);
+        client?;
+        server
+    }
+
+    #[tokio::test]
+    async fn real_quic_disconnect_marks_only_actual_stream_io_failure() -> Result<()> {
+        let _permit = SERIAL.acquire().await?;
+        let error = real_stream_fault(StreamFaultFixture::Disconnect).await?;
+        let marker = error
+            .downcast_ref::<IrohStreamIoFailureV1>()
+            .context("actual peer disconnect did not retain stream IO classification")?;
+        assert!(
+            std::error::Error::source(marker).is_some(),
+            "lost underlying QUIC failure"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn real_quic_oversized_frame_and_trailing_bytes_are_not_io_failures() -> Result<()> {
+        let _permit = SERIAL.acquire().await?;
+        for (fault, expected) in [
+            (StreamFaultFixture::OversizedLength, "carrier frame limit"),
+            (
+                StreamFaultFixture::TrailingData,
+                "unexpected trailing stream data",
+            ),
+        ] {
+            let error = real_stream_fault(fault).await?;
+            assert!(
+                !error.is::<IrohStreamIoFailureV1>(),
+                "wire violation became transport failure"
+            );
+            assert_eq!(error.to_string(), expected);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn real_quic_peer_stop_is_explicit_stream_interruption() -> Result<()> {
+        let _permit = SERIAL.acquire().await?;
+        let (a_tx, a_rx) = oneshot::channel();
+        let (b_tx, b_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                a_tx.send(scope.address()?).unwrap();
+                let peer: IrohAddressV1 = b_rx.await?;
+                let mut stream = scope.accept(peer.endpoint_key).await?;
+                ensure!(stream.read_frame().await? == b"ready");
+                stream.write_frame(b"accepted").await?;
+                // Exercise the same real stopped() check used by finish. Do
+                // not send local FIN here: its transport ACK could race with
+                // STOP and legitimately complete before the peer interrupts.
+                let error = confirm_send_completion(&mut stream.send).await.unwrap_err();
+                assert!(
+                    error.is::<IrohStreamIoFailureV1>(),
+                    "peer STOP was not classified: {error:#}"
+                );
+                assert!(error.to_string().contains("peer stopped stream"));
+                done_tx.send(()).unwrap();
+                Ok(())
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                b_tx.send(scope.address()?).unwrap();
+                let mut stream = scope.connect(&a_rx.await?).await?;
+                stream.write_frame(b"ready").await?;
+                ensure!(stream.read_frame().await? == b"accepted");
+                stream.recv.stop(7u32.into())?;
+                done_rx.await?;
+                Ok(())
+            })
+        });
+        let (server, client) = tokio::join!(server, client);
+        server?;
+        client?;
+        Ok(())
+    }
+
     async fn exchange_split_frames(stream: &mut IrohStreamV1<'_>, base: u8) -> Result<()> {
         {
             let (mut writer, mut reader) = stream.split_io()?;
@@ -1500,12 +1671,9 @@ mod tests {
                     let (mut writer, mut reader) = stream.split_io()?;
                     let oversized = vec![0; IROH_MAX_FRAME_V1 + 1];
                     for frame in [&[][..], oversized.as_slice()] {
-                        assert!(writer
-                            .write_frame(frame)
-                            .await
-                            .unwrap_err()
-                            .to_string()
-                            .contains("frame limit"));
+                        let error = writer.write_frame(frame).await.unwrap_err();
+                        assert!(!error.is::<IrohStreamIoFailureV1>());
+                        assert!(error.to_string().contains("frame limit"));
                     }
                     writer.write_frame(b"legal").await?;
                     ensure!(
@@ -1517,22 +1685,15 @@ mod tests {
                     cancelled.store(true, Ordering::Release);
                     let denied = writer.write_frame(b"forbidden").await;
                     cancelled.store(false, Ordering::Release);
-                    assert!(denied
-                        .unwrap_err()
-                        .to_string()
-                        .contains("test gate revoked"));
-                    assert!(reader
-                        .read_frame()
-                        .await
-                        .unwrap_err()
-                        .to_string()
-                        .contains("stream failed"));
-                    assert!(writer
-                        .write_frame(b"still forbidden")
-                        .await
-                        .unwrap_err()
-                        .to_string()
-                        .contains("stream failed"));
+                    let denied = denied.unwrap_err();
+                    assert!(!denied.is::<IrohStreamIoFailureV1>());
+                    assert!(denied.to_string().contains("test gate revoked"));
+                    let failed_read = reader.read_frame().await.unwrap_err();
+                    assert!(!failed_read.is::<IrohStreamIoFailureV1>());
+                    assert!(failed_read.to_string().contains("stream failed"));
+                    let failed_write = writer.write_frame(b"still forbidden").await.unwrap_err();
+                    assert!(!failed_write.is::<IrohStreamIoFailureV1>());
+                    assert!(failed_write.to_string().contains("stream failed"));
                 }
                 assert!(stream.split_io().is_err());
                 Ok(())

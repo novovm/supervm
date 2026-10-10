@@ -8,6 +8,22 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 流 IO 失败与协议错误分类
+
+输入 `983fe493`，认领 `898b9db5`；限定既有可选 iroh 载体及交接台账。
+新增外部不可构造的 `IrohStreamIoFailureV1`，仅真实 QUIC 流读写错误和
+明确的对端 STOP 产生该标记，并保留原始错误来源。帧长度、尾随字节、
+授权、失败锁存及本地 finish 状态错误仍保持原分类。它不代表对端主动取消，
+也不授予重试、身份或隐私降级权限；NOVOCHAT 诊断须另核双端事件。
+
+Windows 网络 lib 串行 **751 通过、11 原有忽略项未执行**（44.33 秒）。
+新增真实本机 QUIC 断连、超长帧/尾随、STOP 三项回归，加强原有边界与撤销
+反例；没有外网故障或手机验收结论。日志为
+`artifacts/novochat-stream-io-network.log`。严格 all-targets/no-deps Clippy、
+单文件格式和差异检查通过，日志 `artifacts/novochat-stream-io-clippy.log`；
+认领释放。
+未改变 wire、默认路由、身份政策、交易或共识。
+
 ## 2026-10-10 显式仅中继载体约束
 
 输入 `d8490975`，认领 `d1b1f47`；仅 `iroh_transport.rs` 和两份交接台账。
