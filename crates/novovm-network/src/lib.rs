@@ -3,6 +3,8 @@
 pub mod adaptive_overlay;
 pub mod availability;
 pub mod capability;
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+pub mod carrier_stream;
 pub mod control_plane;
 pub mod duplex;
 pub mod eth_chain_config;
@@ -28,7 +30,9 @@ pub mod route;
 pub mod routing;
 pub mod runtime_status;
 pub mod transport;
-#[cfg(feature = "iroh-transport")]
+#[cfg(feature = "tls-transport")]
+pub mod tls_transport;
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
 pub mod transport_binding;
 
 pub use adaptive_overlay::*;

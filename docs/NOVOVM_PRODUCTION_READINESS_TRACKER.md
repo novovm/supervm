@@ -8,6 +8,35 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-11 可选 TLS 认证流与共同帧接口
+
+输入 `60d4f3b3`、认领 `30cf2468`，限定既有 `novovm-network`、根 lockfile
+和两份台账。`tls-transport` 默认关闭；仅接收调用者已授权的 owned IO，
+没有 DNS、拨号、Tor 或路径许可。TLS 1.3 使用独立临时 Ed25519 raw public
+keys、双方真实 CertificateVerify、规范素数阶公钥校验及固定 ALPN，关闭
+0-RTT、会话恢复、SNI。真实 exporter 仅在模块内生成原
+`VerifiedTransportBinding`，不开放外部证据构造或密钥导入。
+
+`CarrierStreamV1` 的私有 variants/halves 只包装真实 Iroh/TLS 流，复用
+原二进制 envelope 编码。每帧最多 16 KiB，写入必须 flush；帧中途取消
+永久使双方失效并立即关闭 owned IO。固定期限最长 120 秒；每进程至多
+4 个 TLS scope、每 scope 4 条已准入连接。每条成功流的运行时监督任务
+在空闲时仍检查期限/撤销，Drop 关闭 IO 并取消任务；已取消任务的内存由
+Tokio 调度回收，不将连接上限误称为任意瞬时任务内存的硬上限。
+完成要求双向 close_notify 且没有尾随数据，裸 EOF 不算成功。
+
+Windows 网络 lib `--features iroh-transport,tls-transport --test-threads=1`
+完整 **762 项通过、11 项原有忽略未执行**。补充声明 A 公钥却由 B 签名的
+真实 TLS 反例后，TLS 专项 **11 项通过**，包括错误/缺失身份、错 ALPN、
+跨连接重放、双工大帧、半帧取消、篡改/尾随/截断、空闲到期/撤销及释放。
+严格 all-targets/no-deps Clippy 与只启用 TLS feature 的 lib 编译通过；
+日志为 `artifacts/novochat-tls-full.log`、`novochat-tls-focused-final.log`、
+`novochat-tls-clippy-final.log`、`novochat-tls-only-check.log`。
+
+此为本机组件证据，尚非 Android、真实 onion 网络、主应用或匿名路径验收。
+底层 IO 的来源必须先由调用方授权；TLS 持钥不替代 UCA、联系人固定密钥、
+隐私资格或持久收件回执。NOVOCHAT 负责后续接线，认领释放。
+
 ## 2026-10-10 本地未注册身份的受限授权
 
 输入 `133b1c38`，认领 `54375526`；限定 `novovm-adapter-api`、根 lockfile

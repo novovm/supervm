@@ -9,6 +9,7 @@ description = "NOVOVM network abstraction (transport traits + in-memory impl)."
 [features]
 default = []
 iroh-transport = ["dep:iroh"]
+tls-transport = ["dep:tokio-rustls", "dep:curve25519-dalek", "tokio/net"]
 
 [dependencies]
 aes = "0.8"
@@ -16,6 +17,7 @@ anyhow = "1"
 base64 = "=0.22.1"
 chacha20poly1305 = "0.10"
 ctr = "0.9"
+curve25519-dalek = { version = "4", optional = true }
 dashmap = "6.1"
 ed25519-dalek = "2"
 hkdf = "0.12"
@@ -35,6 +37,7 @@ sha3 = "0.10"
 snap = "1"
 thiserror = "1"
 tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "macros", "io-util"] }
+tokio-rustls = { version = "=0.26.6", optional = true, default-features = false, features = ["aws_lc_rs"] }
 zeroize = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

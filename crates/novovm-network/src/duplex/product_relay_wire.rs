@@ -74,17 +74,17 @@ fn encode_binary_message_v2(
 /// This is a wire codec only: it does not authenticate identities, validate
 /// session/sequence state, decrypt ciphertext or authorize a control purpose.
 /// Callers must agree this binary carrier and apply their E2E/session checks.
-#[cfg(feature = "iroh-transport")]
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
 pub fn encode_iroh_envelope_v1(envelope: &SecureNovoRudpEnvelopeV1) -> Result<Vec<u8>> {
-    encode_binary_message_v2(envelope, None, crate::iroh_transport::IROH_MAX_FRAME_V1)
+    encode_binary_message_v2(envelope, None, 16 * 1024)
 }
 
 /// Decode only the existing NVRLY002 Data form, using borrowed preflight before
 /// allocating owned fields. JSON, Delivery, trailing bytes and over-limit frames
 /// are rejected. Successful decoding is not identity or ciphertext verification.
-#[cfg(feature = "iroh-transport")]
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
 pub fn decode_iroh_envelope_v1(wire: &[u8]) -> Result<SecureNovoRudpEnvelopeV1> {
-    if wire.len() > crate::iroh_transport::IROH_MAX_FRAME_V1 {
+    if wire.len() > 16 * 1024 {
         bail!("binary envelope exceeds carrier frame limit");
     }
     if !wire.starts_with(MAGIC) || wire.get(MAGIC.len()) != Some(&DATA) {

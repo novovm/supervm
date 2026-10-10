@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-11 NOVOCHAT 认证流接入认领：** 本机核对 `main@60d4f3b34864acac7b2bed6889b9b390ea8ada8c` 与远端一致、工作区干净。认领 `novovm-network` 的可选 TLS 1.3 载体、封闭认证帧流、相邻 feature/codec gate/测试及根 lockfile、两份交接台账；不修改 NOV 交易、共识、账户或 AOEM。复用既有 exporter 绑定与端到端协议，禁止外部伪造已验证绑定；TLS 不授予匿名路径资格。完成后记录实际验证并释放。
+**2026-10-11 NOVOCHAT 认证流接入收口：** 输入 `60d4f3b3`，认领 `30cf2468`；可选 TLS 1.3 双向持钥载体与封闭 `CarrierStreamV1` 已复用既有 exporter 绑定、端到端握手和帧格式。Windows 网络 lib 串行 **762 通过、11 原有忽略项未执行**，补充伪造持钥反例后 TLS 专项 **11 通过**；严格 all-targets/no-deps Clippy 与独立 TLS feature 编译通过。认领释放。TLS 不授予隐私资格，不解析目的、不创建底层网络；未改 NOV 交易、共识、账户或 AOEM，详见最新台账。
 
 **2026-10-10 NOVOCHAT 本地身份授权组件收口：** 输入 `133b1c38`，认领 `54375526`。既有 `novovm-adapter-api` 增加本地 root 持钥与用途/设备/范围/独立公钥绑定的严格 Ed25519 授权，复用 UCA primary key ref，证明留在本地。Windows 整包 **20 项测试**及 all-targets/no-deps 严格 Clippy 通过，依赖仅复用锁定版本，认领释放。持久授权消耗、撤销及实际客户端调用归 NOVOCHAT 接线；没有新增链上账户状态、交易/费用/共识写入，不将本地持钥声明为链上注册、匿名或抗量子能力，详见最新台账。
 
