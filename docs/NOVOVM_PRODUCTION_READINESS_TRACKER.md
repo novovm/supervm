@@ -8,6 +8,27 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-10 可靠载体双工帧与有界二进制密文
+
+输入 `4d8b928c`，认领 `a3c2367f`、`728e58b0`；仅原 network 的
+`iroh_transport.rs`、`duplex/product_relay_wire.rs` 与重导出/台账。
+`split_io` 返回借用式独立读写，不转移或暴露 endpoint/Connection 所有权；
+两方向共享永久失败状态。半帧取消、IO 错误和已观察撤销会关闭整连接，
+成功方向不能清除另一个方向的失败。释放 halves 后可由原流完成双向 FIN。
+原单流读写沿用同一保护逻辑，不通过取消半帧来轮询另一方向。
+
+紧凑 codec 复用既有 NVRLY002 Data 字节，编码借用 envelope，按完整长度
+在分配/复制前检查 16 KiB；解码借用预检后才复制，拒绝 JSON、Delivery、
+尾随字节和畸形长度。codec 只处理格式，不证明身份或密文真实；调用者仍须
+验证 BoundSecureChannel。新增真实 8 KiB 加密载荷测试确认二进制可承载，
+JSON 数字数组形式超过上限；未降低控制消息额度或改变原 relay 格式。
+
+Windows / Rust 1.94，显式本仓 target、单编译作业：网络 lib 含 iroh
+**726 passed、11 原有 ignored 未执行**，严格 all-targets/no-deps Clippy
+通过。新增 3 项真实 QUIC 双工/半帧取消/门禁测试、5 项 codec 测试；双向
+24×16 KiB 帧后可正常收尾。日志 `artifacts/control-duplex-tests.log`、
+`artifacts/control-duplex-clippy.log`。未改交易或启动产品节点，不是生产
+信令、自动发现、Android 生命周期或合格隐私路径验收。认领释放。
 ## 2026-10-10 可选可靠 NAT 载体与连接身份绑定
 
 输入 `7ced1724`，认领 `264cc3ca`，仅 network、lockfile 与台账。

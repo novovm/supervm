@@ -3,6 +3,7 @@
 //! presets, address publication, port mapping, or implicit public DNS are enabled.
 //! NOVOVM application identity and E2E authentication remain a separate layer.
 
+pub use crate::duplex::{decode_iroh_envelope_v1, encode_iroh_envelope_v1};
 use crate::transport_binding::{
     VerifiedTransportBinding, BOUND_TRANSPORT_ALPN_V1, BOUND_TRANSPORT_EXPORTER_CONTEXT_V1,
     BOUND_TRANSPORT_EXPORTER_LABEL_V1,
@@ -20,7 +21,10 @@ use std::{
     future::Future,
     net::{IpAddr, SocketAddr},
     pin::Pin,
-    sync::{Arc, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
     time::{Duration, Instant},
 };
 
@@ -328,7 +332,7 @@ impl IrohScopeV1 {
             connection,
             send,
             recv,
-            failed: false,
+            failed: AtomicBool::new(false),
             initiator,
         })
     }
@@ -339,27 +343,147 @@ pub struct IrohStreamV1<'a> {
     connection: Connection,
     send: SendStream,
     recv: RecvStream,
-    failed: bool,
+    failed: AtomicBool,
     initiator: bool,
 }
 
-struct FrameIoGuard {
-    connection: Connection,
+/// A borrowed framed writer. The parent stream and its authorized scope remain
+/// alive until both halves are released. Dropping an in-progress write closes
+/// the entire connection; restarting a partly-written frame is never allowed.
+pub struct IrohWriteHalfV1<'a> {
+    scope: &'a IrohScopeV1,
+    connection: &'a Connection,
+    send: &'a mut SendStream,
+    failed: &'a AtomicBool,
+}
+
+/// A borrowed framed reader, independent of the writer's mutable borrow. Keep
+/// one read future alive across application-level waits; cancelling it poisons
+/// both directions rather than forgetting a partially consumed frame.
+pub struct IrohReadHalfV1<'a> {
+    scope: &'a IrohScopeV1,
+    connection: &'a Connection,
+    recv: &'a mut RecvStream,
+    failed: &'a AtomicBool,
+}
+
+struct FrameIoGuard<'a> {
+    connection: &'a Connection,
+    failed: &'a AtomicBool,
     complete: bool,
 }
-impl Drop for FrameIoGuard {
+impl Drop for FrameIoGuard<'_> {
     fn drop(&mut self) {
         if !self.complete {
+            // This is a permanent, shared terminal latch, never an IO-busy bit.
+            // A successful concurrent operation must not clear this failure.
+            self.failed.store(true, Ordering::Release);
             self.connection
                 .close(1u32.into(), b"frame operation cancelled");
         }
     }
 }
 
+fn check_frame_io(scope: &IrohScopeV1, connection: &Connection, failed: &AtomicBool) -> Result<()> {
+    ensure!(!failed.load(Ordering::Acquire), "carrier stream failed");
+    if let Err(error) = scope.control.check() {
+        failed.store(true, Ordering::Release);
+        connection.close(1u32.into(), b"frame authorization revoked");
+        return Err(error);
+    }
+    // The other half can fail while the local authority callback is running.
+    ensure!(!failed.load(Ordering::Acquire), "carrier stream failed");
+    Ok(())
+}
+
+async fn write_frame_io(
+    scope: &IrohScopeV1,
+    connection: &Connection,
+    failed: &AtomicBool,
+    send: &mut SendStream,
+    bytes: &[u8],
+) -> Result<()> {
+    check_frame_io(scope, connection, failed)?;
+    ensure!(
+        !bytes.is_empty() && bytes.len() <= IROH_MAX_FRAME_V1,
+        "carrier frame limit"
+    );
+    let mut guard = FrameIoGuard {
+        connection,
+        failed,
+        complete: false,
+    };
+    send.write_all(&(bytes.len() as u32).to_be_bytes()).await?;
+    send.write_all(bytes).await?;
+    check_frame_io(scope, connection, failed)?;
+    guard.complete = true;
+    Ok(())
+}
+
+async fn read_frame_io(
+    scope: &IrohScopeV1,
+    connection: &Connection,
+    failed: &AtomicBool,
+    recv: &mut RecvStream,
+) -> Result<Vec<u8>> {
+    check_frame_io(scope, connection, failed)?;
+    let mut guard = FrameIoGuard {
+        connection,
+        failed,
+        complete: false,
+    };
+    let mut length = [0u8; 4];
+    recv.read_exact(&mut length).await?;
+    let length = u32::from_be_bytes(length) as usize;
+    ensure!(
+        length > 0 && length <= IROH_MAX_FRAME_V1,
+        "carrier frame limit"
+    );
+    let mut bytes = vec![0; length];
+    recv.read_exact(&mut bytes).await?;
+    check_frame_io(scope, connection, failed)?;
+    guard.complete = true;
+    Ok(bytes)
+}
+
+impl IrohWriteHalfV1<'_> {
+    pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
+        write_frame_io(self.scope, self.connection, self.failed, self.send, bytes).await
+    }
+}
+
+impl IrohReadHalfV1<'_> {
+    pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        read_frame_io(self.scope, self.connection, self.failed, self.recv).await
+    }
+}
+
 impl IrohStreamV1<'_> {
     fn check(&self) -> Result<()> {
-        ensure!(!self.failed, "carrier stream failed");
-        self.scope.control.check()
+        check_frame_io(self.scope, &self.connection, &self.failed)
+    }
+
+    /// Split only the framed IO borrows, without transferring the connection or
+    /// extending its scope. Once both halves are dropped, the original stream
+    /// can be used again (including `finish`) if neither direction has failed.
+    /// A half's failed/cancelled operation permanently invalidates both halves
+    /// and the parent. Ordinary application waits must not cancel half-frames.
+    pub fn split_io(&mut self) -> Result<(IrohWriteHalfV1<'_>, IrohReadHalfV1<'_>)> {
+        self.check()?;
+        Ok((
+            IrohWriteHalfV1 {
+                scope: self.scope,
+                connection: &self.connection,
+                send: &mut self.send,
+                failed: &self.failed,
+            },
+            IrohReadHalfV1 {
+                scope: self.scope,
+                connection: &self.connection,
+                recv: &mut self.recv,
+                failed: &self.failed,
+            },
+        ))
     }
 
     /// Material is only for the NOVOVM signed connection binding, never a wallet
@@ -418,90 +542,39 @@ impl IrohStreamV1<'_> {
     }
 
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
-        self.check()?;
-        ensure!(
-            !bytes.is_empty() && bytes.len() <= IROH_MAX_FRAME_V1,
-            "carrier frame limit"
-        );
-        self.failed = true; // Dropping a partly-completed future poisons this stream.
-        let mut guard = FrameIoGuard {
-            connection: self.connection.clone(),
-            complete: false,
-        };
-        let result: Result<()> = async {
-            self.send
-                .write_all(&(bytes.len() as u32).to_be_bytes())
-                .await?;
-            self.send.write_all(bytes).await?;
-            self.scope.control.check()
-        }
-        .await;
-        if result.is_err() {
-            self.connection.close(1u32.into(), b"write failed");
-        } else {
-            self.failed = false;
-        }
-        guard.complete = result.is_ok();
-        result
+        write_frame_io(
+            self.scope,
+            &self.connection,
+            &self.failed,
+            &mut self.send,
+            bytes,
+        )
+        .await
     }
 
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        self.check()?;
-        self.failed = true;
-        let mut guard = FrameIoGuard {
-            connection: self.connection.clone(),
-            complete: false,
-        };
-        let result: Result<Vec<u8>> = async {
-            let mut length = [0u8; 4];
-            self.recv.read_exact(&mut length).await?;
-            let length = u32::from_be_bytes(length) as usize;
-            ensure!(
-                length > 0 && length <= IROH_MAX_FRAME_V1,
-                "carrier frame limit"
-            );
-            let mut bytes = vec![0; length];
-            self.recv.read_exact(&mut bytes).await?;
-            self.scope.control.check()?;
-            Ok(bytes)
-        }
-        .await;
-        if result.is_err() {
-            self.connection.close(1u32.into(), b"read failed");
-        } else {
-            self.failed = false;
-        }
-        guard.complete = result.is_ok();
-        result
+        read_frame_io(self.scope, &self.connection, &self.failed, &mut self.recv).await
     }
 
     /// Flush both directions before closing QUIC. Transport completion is NOT a
     /// recipient's application receipt; the application must verify that first.
     pub async fn finish(&mut self) -> Result<()> {
         self.check()?;
-        self.failed = true;
         let mut guard = FrameIoGuard {
-            connection: self.connection.clone(),
+            connection: &self.connection,
+            failed: &self.failed,
             complete: false,
         };
-        let result: Result<()> = async {
-            self.send.finish()?;
-            let mut trailing = [0u8; 1];
-            ensure!(
-                self.recv.read(&mut trailing).await?.is_none(),
-                "unexpected trailing stream data"
-            );
-            ensure!(self.send.stopped().await?.is_none(), "peer stopped stream");
-            self.scope.control.check()
-        }
-        .await;
-        if result.is_err() {
-            self.connection.close(1u32.into(), b"finish failed");
-        } else {
-            self.failed = false;
-        }
-        guard.complete = result.is_ok();
-        result
+        self.send.finish()?;
+        let mut trailing = [0u8; 1];
+        ensure!(
+            self.recv.read(&mut trailing).await?.is_none(),
+            "unexpected trailing stream data"
+        );
+        ensure!(self.send.stopped().await?.is_none(), "peer stopped stream");
+        self.check()?;
+        guard.complete = true;
+        Ok(())
     }
 }
 
@@ -514,7 +587,6 @@ impl Drop for IrohStreamV1<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::sync::oneshot;
     static SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
@@ -701,6 +773,204 @@ mod tests {
                 let mut stream = scope.connect(&a_rx.await?).await?;
                 stream.send.write_all(&100u32.to_be_bytes()).await?;
                 assert!(stream.read_frame().await.is_err());
+                Ok(())
+            })
+        });
+        let (a, b) = tokio::join!(server, client);
+        a.unwrap();
+        b.unwrap();
+    }
+
+    async fn exchange_split_frames(stream: &mut IrohStreamV1<'_>, base: u8) -> Result<()> {
+        {
+            let (mut writer, mut reader) = stream.split_io()?;
+            let send = async {
+                // More than either QUIC window: both directions must keep
+                // receiving while the independent writers apply backpressure.
+                for sequence in 0..24u8 {
+                    writer
+                        .write_frame(&vec![base + sequence; IROH_MAX_FRAME_V1])
+                        .await?;
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            let receive = async {
+                let remote_base = if base == 0 { 128 } else { 0 };
+                for sequence in 0..24u8 {
+                    ensure!(
+                        reader.read_frame().await?
+                            == vec![remote_base + sequence; IROH_MAX_FRAME_V1],
+                        "duplex frame order/content differs"
+                    );
+                }
+                Ok::<_, anyhow::Error>(())
+            };
+            tokio::try_join!(send, receive)?;
+        }
+        // The borrowed halves do not take ownership or make finishing depend
+        // on a background task retaining an endpoint clone.
+        stream.finish().await
+    }
+
+    #[tokio::test]
+    async fn split_real_quic_exchanges_large_frames_simultaneously_and_finishes() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (a_tx, a_rx) = oneshot::channel();
+        let (b_tx, b_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                a_tx.send(scope.address()?).unwrap();
+                let peer: IrohAddressV1 = b_rx.await?;
+                let mut stream = scope.accept(peer.endpoint_key).await?;
+                exchange_split_frames(&mut stream, 128).await
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                b_tx.send(scope.address()?).unwrap();
+                let mut stream = scope.connect(&a_rx.await?).await?;
+                exchange_split_frames(&mut stream, 0).await
+            })
+        });
+        let (a, b) = tokio::join!(server, client);
+        a.unwrap();
+        b.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cancelling_split_partial_read_permanently_invalidates_writer_and_parent() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (a_tx, a_rx) = oneshot::channel();
+        let (b_tx, b_rx) = oneshot::channel();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                a_tx.send(scope.address()?).unwrap();
+                let peer: IrohAddressV1 = b_rx.await?;
+                let mut stream = scope.accept(peer.endpoint_key).await?;
+                ensure!(stream.read_frame().await? == b"ready", "missing ready");
+                {
+                    let (mut writer, mut reader) = stream.split_io()?;
+                    // A successful concurrent write must not reset the latch
+                    // set when this incomplete read is subsequently dropped.
+                    let (reading, writing) = tokio::join!(
+                        tokio::time::timeout(Duration::from_millis(100), reader.read_frame()),
+                        writer.write_frame(b"read pending"),
+                    );
+                    writing?;
+                    assert!(reading.is_err());
+                    assert!(writer
+                        .write_frame(b"must not send")
+                        .await
+                        .unwrap_err()
+                        .to_string()
+                        .contains("stream failed"));
+                    assert!(reader
+                        .read_frame()
+                        .await
+                        .unwrap_err()
+                        .to_string()
+                        .contains("stream failed"));
+                }
+                assert!(stream.split_io().is_err());
+                assert!(stream
+                    .finish()
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("stream failed"));
+                Ok(())
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                b_tx.send(scope.address()?).unwrap();
+                let mut stream = scope.connect(&a_rx.await?).await?;
+                stream.write_frame(b"ready").await?;
+                // Deliberately send a valid prefix and only part of its body.
+                stream.send.write_all(&100u32.to_be_bytes()).await?;
+                stream.send.write_all(b"partial").await?;
+                ensure!(
+                    stream.read_frame().await? == b"read pending",
+                    "missing frame"
+                );
+                assert!(stream.read_frame().await.is_err());
+                Ok(())
+            })
+        });
+        let (a, b) = tokio::join!(server, client);
+        a.unwrap();
+        b.unwrap();
+    }
+
+    #[tokio::test]
+    async fn split_frame_bounds_reject_without_io_and_revocation_is_permanent() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (a_tx, a_rx) = oneshot::channel();
+        let (b_tx, b_rx) = oneshot::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let gate_cancelled = cancelled.clone();
+        let gate = IrohControlV1::new(Instant::now() + Duration::from_secs(8), move || {
+            ensure!(!gate_cancelled.load(Ordering::Acquire), "test gate revoked");
+            Ok(())
+        })
+        .unwrap();
+        let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                a_tx.send(scope.address()?).unwrap();
+                let peer: IrohAddressV1 = b_rx.await?;
+                let mut stream = scope.accept(peer.endpoint_key).await?;
+                ensure!(
+                    stream.read_frame().await? == b"legal",
+                    "bounds polluted wire"
+                );
+                stream.write_frame(b"legal received").await?;
+                assert!(stream.read_frame().await.is_err());
+                Ok(())
+            })
+        });
+        let client = with_iroh_scope_v1(local_config(), gate, move |scope| {
+            Box::pin(async move {
+                b_tx.send(scope.address()?).unwrap();
+                let mut stream = scope.connect(&a_rx.await?).await?;
+                {
+                    let (mut writer, mut reader) = stream.split_io()?;
+                    let oversized = vec![0; IROH_MAX_FRAME_V1 + 1];
+                    for frame in [&[][..], oversized.as_slice()] {
+                        assert!(writer
+                            .write_frame(frame)
+                            .await
+                            .unwrap_err()
+                            .to_string()
+                            .contains("frame limit"));
+                    }
+                    writer.write_frame(b"legal").await?;
+                    ensure!(
+                        reader.read_frame().await? == b"legal received",
+                        "missing ack"
+                    );
+                    // These operations return Ready without yielding; the outer
+                    // scope watchdog cannot preempt these local assertions.
+                    cancelled.store(true, Ordering::Release);
+                    let denied = writer.write_frame(b"forbidden").await;
+                    cancelled.store(false, Ordering::Release);
+                    assert!(denied
+                        .unwrap_err()
+                        .to_string()
+                        .contains("test gate revoked"));
+                    assert!(reader
+                        .read_frame()
+                        .await
+                        .unwrap_err()
+                        .to_string()
+                        .contains("stream failed"));
+                    assert!(writer
+                        .write_frame(b"still forbidden")
+                        .await
+                        .unwrap_err()
+                        .to_string()
+                        .contains("stream failed"));
+                }
+                assert!(stream.split_io().is_err());
                 Ok(())
             })
         });

@@ -21,3 +21,5 @@ pub mod worker;
 pub use novorudp::*;
 pub use product_overlay::*;
 pub use product_relay::*;
+#[cfg(feature = "iroh-transport")]
+pub use product_relay_wire::{decode_iroh_envelope_v1, encode_iroh_envelope_v1};

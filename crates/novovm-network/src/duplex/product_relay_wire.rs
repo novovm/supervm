@@ -16,18 +16,25 @@ const DATA: u8 = 1;
 const DELIVERY: u8 = 2;
 
 pub(crate) fn encode_message_v2(message: &ProductRelayWireMessageV1) -> Result<Vec<u8>> {
-    let (tag, envelope, delivery) = match message {
-        ProductRelayWireMessageV1::Data(envelope) => (DATA, envelope, None),
-        ProductRelayWireMessageV1::Delivery(delivery) => {
-            (DELIVERY, &delivery.envelope, Some(delivery))
-        }
+    let (envelope, delivery) = match message {
+        ProductRelayWireMessageV1::Data(envelope) => (envelope, None),
+        ProductRelayWireMessageV1::Delivery(delivery) => (&delivery.envelope, Some(delivery)),
         _ => {
             let mut output = BoundedJson(Vec::new());
             serde_json::to_writer(&mut output, message).context("encode relay V2 control JSON")?;
             return Ok(output.0);
         }
     };
+    encode_binary_message_v2(envelope, delivery, PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1)
+}
 
+// Borrow the envelope throughout size validation. In particular, the narrower
+// iroh profile must reject an oversized input before cloning or allocating it.
+fn encode_binary_message_v2(
+    envelope: &SecureNovoRudpEnvelopeV1,
+    delivery: Option<&OpaqueRelayDeliveryV1>,
+    max_wire_bytes: usize,
+) -> Result<Vec<u8>> {
     // Compute and validate the complete size before allocating or copying.
     let mut length = WireLength(MAGIC.len() + 1);
     if let Some(delivery) = delivery {
@@ -39,11 +46,14 @@ pub(crate) fn encode_message_v2(message: &ProductRelayWireMessageV1) -> Result<V
     length.variable(envelope.sender_peer_id.as_bytes())?;
     length.variable(envelope.recipient_peer_id.as_bytes())?;
     length.variable(&envelope.ciphertext)?;
+    if length.0 > max_wire_bytes {
+        bail!("binary envelope exceeds carrier frame limit");
+    }
 
     let mut output = Vec::new();
     output.try_reserve_exact(length.0)?;
     output.extend_from_slice(MAGIC);
-    output.push(tag);
+    output.push(if delivery.is_some() { DELIVERY } else { DATA });
     if let Some(delivery) = delivery {
         put_variable(&mut output, delivery.source_peer_id.as_bytes())?;
         put_variable(&mut output, delivery.target_peer_id.as_bytes())?;
@@ -58,6 +68,32 @@ pub(crate) fn encode_message_v2(message: &ProductRelayWireMessageV1) -> Result<V
     put_variable(&mut output, &envelope.ciphertext)?;
     debug_assert_eq!(output.len(), length.0);
     Ok(output)
+}
+
+/// Encode the existing NVRLY002 Data envelope within the iroh frame limit.
+/// This is a wire codec only: it does not authenticate identities, validate
+/// session/sequence state, decrypt ciphertext or authorize a control purpose.
+/// Callers must agree this binary carrier and apply their E2E/session checks.
+#[cfg(feature = "iroh-transport")]
+pub fn encode_iroh_envelope_v1(envelope: &SecureNovoRudpEnvelopeV1) -> Result<Vec<u8>> {
+    encode_binary_message_v2(envelope, None, crate::iroh_transport::IROH_MAX_FRAME_V1)
+}
+
+/// Decode only the existing NVRLY002 Data form, using borrowed preflight before
+/// allocating owned fields. JSON, Delivery, trailing bytes and over-limit frames
+/// are rejected. Successful decoding is not identity or ciphertext verification.
+#[cfg(feature = "iroh-transport")]
+pub fn decode_iroh_envelope_v1(wire: &[u8]) -> Result<SecureNovoRudpEnvelopeV1> {
+    if wire.len() > crate::iroh_transport::IROH_MAX_FRAME_V1 {
+        bail!("binary envelope exceeds carrier frame limit");
+    }
+    if !wire.starts_with(MAGIC) || wire.get(MAGIC.len()) != Some(&DATA) {
+        bail!("iroh envelope requires NVRLY002 Data");
+    }
+    let message = BinaryMessage::preflight(wire)?;
+    // The tag check above and preflight use the same existing wire constants.
+    debug_assert!(message.delivery.is_none());
+    Ok(message.envelope.into_owned())
 }
 
 pub(crate) fn decode_message_v2(wire: &[u8]) -> Result<ProductRelayWireMessageV1> {
@@ -285,3 +321,162 @@ impl Write for BoundedJson {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, feature = "iroh-transport"))]
+mod iroh_envelope_tests {
+    use super::*;
+    use crate::{
+        duplex::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
+        iroh_transport::IROH_MAX_FRAME_V1,
+    };
+    use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, KeyInit, Nonce};
+
+    // Real AEAD ciphertext over a maximum-sized NOVOCHAT control payload. This
+    // is an isolated codec fixture, not an authenticated peer/session proof.
+    fn encrypted_control() -> SecureNovoRudpEnvelopeV1 {
+        let session_id = [0x71; 16];
+        let nonce = [0x32; 12];
+        let frame = NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            session_id,
+            7,
+            1,
+            0,
+            0,
+            vec![0xa3; 8192],
+        );
+        let plaintext = frame.try_encode().unwrap();
+        let cipher = ChaCha20Poly1305::new((&[0x23; 32]).into());
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce), plaintext.as_slice())
+            .unwrap();
+        SecureNovoRudpEnvelopeV1 {
+            version: 1,
+            session_id,
+            sender_peer_id: format!("novovm-ed25519:{}", "11".repeat(32)),
+            recipient_peer_id: format!("novovm-ed25519:{}", "22".repeat(32)),
+            sequence: 1,
+            nonce,
+            ciphertext,
+        }
+    }
+
+    #[test]
+    fn maximum_control_ciphertext_reuses_exact_binary_data_bytes() {
+        let envelope = encrypted_control();
+        let wire = encode_iroh_envelope_v1(&envelope).unwrap();
+        assert!(wire.len() <= IROH_MAX_FRAME_V1);
+        assert!(serde_json::to_vec(&envelope).unwrap().len() > IROH_MAX_FRAME_V1);
+        assert_eq!(
+            wire,
+            encode_message_v2(&ProductRelayWireMessageV1::Data(envelope.clone())).unwrap()
+        );
+        assert_eq!(decode_iroh_envelope_v1(&wire).unwrap(), envelope);
+        assert_eq!(
+            &wire[wire.len() - envelope.ciphertext.len()..],
+            &envelope.ciphertext
+        );
+        let view = BinaryMessage::preflight(&wire).unwrap();
+        assert_eq!(
+            view.envelope.ciphertext.as_ptr(),
+            wire[wire.len() - envelope.ciphertext.len()..].as_ptr()
+        );
+    }
+
+    #[test]
+    fn exact_carrier_limit_succeeds_but_larger_envelopes_fail() {
+        let mut envelope = encrypted_control();
+        envelope.ciphertext.clear();
+        let overhead = encode_iroh_envelope_v1(&envelope).unwrap().len();
+        envelope
+            .ciphertext
+            .resize(IROH_MAX_FRAME_V1 - overhead, 0x93);
+        let wire = encode_iroh_envelope_v1(&envelope).unwrap();
+        assert_eq!(wire.len(), IROH_MAX_FRAME_V1);
+        assert_eq!(decode_iroh_envelope_v1(&wire).unwrap(), envelope);
+        envelope.ciphertext.push(0);
+        assert!(encode_iroh_envelope_v1(&envelope).is_err());
+        let relay_wire = encode_message_v2(&ProductRelayWireMessageV1::Data(envelope)).unwrap();
+        assert_eq!(relay_wire.len(), IROH_MAX_FRAME_V1 + 1);
+        assert!(decode_iroh_envelope_v1(&relay_wire).is_err());
+
+        let mut huge_id = encrypted_control();
+        huge_id.sender_peer_id = "x".repeat(IROH_MAX_FRAME_V1);
+        assert!(encode_iroh_envelope_v1(&huge_id).is_err());
+        let mut huge_ciphertext = encrypted_control();
+        huge_ciphertext
+            .ciphertext
+            .resize(PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1 + 1, 0);
+        assert!(encode_iroh_envelope_v1(&huge_ciphertext).is_err());
+    }
+
+    #[test]
+    fn only_binary_data_is_accepted_without_fallback_or_trailing_bytes() {
+        let envelope = encrypted_control();
+        assert!(decode_iroh_envelope_v1(&serde_json::to_vec(&envelope).unwrap()).is_err());
+        assert!(decode_iroh_envelope_v1(
+            &serde_json::to_vec(&ProductRelayWireMessageV1::Data(envelope.clone())).unwrap()
+        )
+        .is_err());
+        let delivery = ProductRelayWireMessageV1::Delivery(OpaqueRelayDeliveryV1 {
+            source_peer_id: envelope.sender_peer_id.clone(),
+            target_peer_id: envelope.recipient_peer_id.clone(),
+            received_at_ms: 1,
+            envelope: envelope.clone(),
+        });
+        let delivery = encode_message_v2(&delivery).unwrap();
+        assert!(delivery.len() < IROH_MAX_FRAME_V1);
+        assert!(decode_iroh_envelope_v1(&delivery).is_err());
+        let wire = encode_iroh_envelope_v1(&envelope).unwrap();
+        for length in 0..wire.len() {
+            assert!(
+                decode_iroh_envelope_v1(&wire[..length]).is_err(),
+                "cut {length}"
+            );
+        }
+        for tag in [0, DELIVERY, 3, 255] {
+            let mut wrong = wire.clone();
+            wrong[MAGIC.len()] = tag;
+            assert!(decode_iroh_envelope_v1(&wrong).is_err());
+        }
+        let mut wrong_magic = wire.clone();
+        wrong_magic[0] ^= 1;
+        assert!(decode_iroh_envelope_v1(&wrong_magic).is_err());
+        let mut trailing = wire;
+        trailing.push(0);
+        assert!(decode_iroh_envelope_v1(&trailing).is_err());
+    }
+
+    #[test]
+    fn borrowed_preflight_rejects_bad_lengths_and_utf8_before_ownership() {
+        let envelope = encrypted_control();
+        let wire = encode_iroh_envelope_v1(&envelope).unwrap();
+        let sender_length = MAGIC.len() + 1 + 2 + 16;
+        let recipient_length = sender_length + 4 + envelope.sender_peer_id.len();
+        let ciphertext_length = recipient_length + 4 + envelope.recipient_peer_id.len() + 8 + 12;
+        for offset in [sender_length, recipient_length, ciphertext_length] {
+            for length in [u32::MAX, IROH_MAX_FRAME_V1 as u32 + 1] {
+                let mut invalid = wire.clone();
+                invalid[offset..offset + 4].copy_from_slice(&length.to_be_bytes());
+                assert!(decode_iroh_envelope_v1(&invalid).is_err());
+            }
+        }
+        for offset in [sender_length + 4, recipient_length + 4] {
+            let mut invalid = wire.clone();
+            invalid[offset] = 255;
+            assert!(decode_iroh_envelope_v1(&invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn codec_does_not_claim_identity_session_or_ciphertext_authentication() {
+        let mut envelope = encrypted_control();
+        envelope.version = u16::MAX;
+        envelope.sender_peer_id = "not an authenticated identity".into();
+        envelope.ciphertext[0] ^= 1;
+        let wire = encode_iroh_envelope_v1(&envelope).unwrap();
+        assert_eq!(decode_iroh_envelope_v1(&wire).unwrap(), envelope);
+        // The caller must pass this decoded envelope to its actual channel's
+        // open method; this codec deliberately does not mint verified evidence.
+    }
+}
