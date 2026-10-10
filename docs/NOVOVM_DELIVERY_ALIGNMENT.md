@@ -1,5 +1,5 @@
 # NOVOVM 产品目标与交付主线
-**2026-10-10 NOVOCHAT 网络控制通道认领：** 输入 main `4d8b928c95504d080ce79be695e7f1937c6b78b8`，远端同提交、工作区干净。本机 NOVOCHAT 会话认领 `crates/novovm-network/src/iroh_transport.rs`、`src/duplex/product_relay_wire.rs` 及本文件/生产台账；限定新增借用式双工帧 IO、共享失败关闭状态和复用既有二进制密文编码，供真实加密控制通道使用。验收覆盖同时读写、半帧取消/授权撤销、最大合法控制密文、回环及现有网络回归；不改 NOV 交易、账户、共识、AOEM 或默认隐私政策。认领进行中，尚未实现或验收。
+**2026-10-10 NOVOCHAT 网络控制通道认领：** 输入 main `4d8b928c95504d080ce79be695e7f1937c6b78b8`，远端同提交、工作区干净。本机 NOVOCHAT 会话认领 `crates/novovm-network/src/iroh_transport.rs`、`src/duplex/product_relay_wire.rs`、`src/duplex/mod.rs`（仅重导出）及本文件/生产台账；限定新增借用式双工帧 IO、共享失败关闭状态和复用既有二进制密文编码，供真实加密控制通道使用。验收覆盖同时读写、半帧取消/授权撤销、最大合法控制密文、回环及现有网络回归；不改 NOV 交易、账户、共识、AOEM 或默认隐私政策。认领进行中，尚未实现或验收。
 
 **2026-10-10 NOVOCHAT 可靠 NAT 载体组件收口：** 输入 `7ced1724`，认领 `264cc3ca`。既有 network 增加可选 `iroh-transport` feature，固定 iroh 1.3.0，默认关闭；可靠 QUIC 流与 NOVOVM 原 E2E 握手通过 TLS exporter、双方独立身份和双向 Finished 绑定。授权先于网络、限时作用域、取消与有界关闭 owner 已测试。Windows 网络 lib **718 通过、11 原有忽略项未执行**，严格 all-targets Clippy 通过，认领释放。未改原 node/交易/账户/共识/AOEM；未完成主应用、Android、独立公网节点或合格隐私验收。公共 iroh relay 与原 NOVOVM WSS 协议不同，不允许冒充兼容或已授权节点，剩余边界见[最新台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
 
