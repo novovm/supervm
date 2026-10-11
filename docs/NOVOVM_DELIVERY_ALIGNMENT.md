@@ -6,7 +6,12 @@
 对应 `scripts/tests/windows-relay-install.tests.ps1` 及本台账/验收文档。
 复用现有 `supervm-relay --runtime duplex-v2`，不改交易、AOEM、共识、network
 协议或 novovmctl 产品控制流。验收：限定程序 TCP 443 的规则可重复安装、
-状态读回和定向卸载，实际管理员安装与手机握手分别记录。当前认领中。
+状态读回和定向卸载，实际管理员安装与手机握手分别记录。认领 `7e22f00`。
+已完成管理员安装、重复安装及 PersistentStore/ActiveStore 读回，19 项策略
+断言通过；真实 PKL110 Wi-Fi 到已安装节点的 TLS/身份握手通过，120 秒节点
+退出后规则保留。卸载仅夹具验证，未删除用户要求保留的真实规则；不是
+蜂窝聊天、匿名或完整全节点安装验收。认领释放，详见
+[Windows 安装记录](NOVOVM-NETWORK/WINDOWS_RELAY_INSTALL.md)。
 
 **2026-10-11 NOVOCHAT 单会话字节载体收口：** 输入 `1e15ed8f`，认领
 `d9a67eb7`，实现 `60546962`。仅新增 network `duplex/byte_stream.rs`、
