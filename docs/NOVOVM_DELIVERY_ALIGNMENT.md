@@ -1,5 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-11 NOVOCHAT 单会话字节载体认领（进行中）：** 输入 `1e15ed8f`，
+本会话认领 `crates/novovm-network/src/duplex/byte_stream.rs`、
+`duplex/byte_stream/tests.rs`（新增）、`duplex/mod.rs` 导出及必要的
+`duplex/product_relay_client/pipeline.rs` 小共享接口，另含本文件/生产台账。
+复用既有 WSS、节点握手、NovoRUDP Data/Done 和双工 pipeline，补有界
+AsyncRead/AsyncWrite 单会话适配；原期限/授权贯穿 IO，拒绝重连拼接和
+未认证 EOF，不做节点目录、选路、隐私资格或聊天业务的平行实现。
+验证包括真实服务字节交换、取消/过期/背压/关闭，随后由 NOVOCHAT 复用
+受保护日志和签名回执验证落盘及丢 ACK 重开。未改 AOEM、账本、共识、
+交易网络、原 wire 编码或服务默认配置；不签收手机/匿名验收。
+
 **2026-10-11 NOVOCHAT 双工中继启动入口收口：** 输入 `7febd4ad`，认领
 `443fa1eb`，实现 `c76e81e2`。两个既有部署入口共享 network 薄启动适配，
 显式 `--runtime duplex-v2` 唯一进入既有双工 daemon，所有失败禁止 legacy
