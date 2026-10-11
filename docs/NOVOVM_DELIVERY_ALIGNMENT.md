@@ -1,15 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-11 NOVOCHAT 双工中继启动入口认领（进行中）：** 输入 `7febd4ad`，
-本会话限定认领 `crates/novovm-network/src/product_relay_launch.rs`（新增薄启动
-适配及纯参数/分派验证）、`crates/novovm-network/src/lib.rs` 声明、
-`crates/novovm-relay/src/main.rs`、`crates/novovm-relay/tests/` 进程互操作验证、
-`crates/novovm-node/src/bin/novovm-product-relay.rs` 及本文件/生产台账。
-只显式选择既有 duplex daemon，与历史入口保持明确区分，选新版失败禁止旧版
-回退；不改 wire、加密/身份规则、交易节点运行路径、AOEM、账本或共识。
-验收先做本机真实中继进程与独立客户端的认证/双向数据/回执和错误版本拒绝，
-不将其称为双手机、匿名或生产授权完成。通用网络能力归本仓，NOVOCHAT 仅
-接联系人、受保护消息与产品任务；尚未完成本认领。
+**2026-10-11 NOVOCHAT 双工中继启动入口收口：** 输入 `7febd4ad`，认领
+`443fa1eb`，实现 `c76e81e2`。两个既有部署入口共享 network 薄启动适配，
+显式 `--runtime duplex-v2` 唯一进入既有双工 daemon，所有失败禁止 legacy
+回退；历史位置参数仍是明确打印的 `legacy-json`，不改原交易服务默认。
+启动分派 6 项通过，轻量二进制真实进程与两个独立 NOVOCHAT 客户端完成
+双向 E2E Data/Ack；旧协商、错误 pin 正反对照及真实旧服务版本拒绝通过。
+详细构建/验证记录见最新台账。未改 wire、加密/身份政策、交易、AOEM、
+账本或共识；不是手机主应用、持久消息、生产节点授权或匿名验收。
+进程协调复用 NOVOCHAT 原工具，未在本仓新增聊天业务协议；认领释放。
 
 **2026-10-11 NOVOCHAT 认证流接入收口：** 输入 `60d4f3b3`，认领 `30cf2468`；可选 TLS 1.3 双向持钥载体与封闭 `CarrierStreamV1` 已复用既有 exporter 绑定、端到端握手和帧格式。Windows 网络 lib 串行 **762 通过、11 原有忽略项未执行**，补充伪造持钥反例后 TLS 专项 **11 通过**；严格 all-targets/no-deps Clippy 与独立 TLS feature 编译通过。认领释放。TLS 不授予隐私资格，不解析目的、不创建底层网络；未改 NOV 交易、共识、账户或 AOEM，详见最新台账。
 

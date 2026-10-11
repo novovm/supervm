@@ -8,6 +8,43 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-11 既有 duplex 中继部署入口
+
+输入 main `7febd4ad`，认领 `443fa1eb`，源码提交 `c76e81e2`。限定修改
+`novovm-network/src/product_relay_launch.rs` 与导出、轻量 `supervm-relay`
+及节点 `novovm-product-relay` 两个 main，不改任何 daemon、wire、身份政策、
+账本、AOEM 或共识。历史单位置参数和显式 `legacy-json` 仍进原实现；
+精确 `--runtime duplex-v2` 只进 `duplex::product_relay_daemon`，读配置、
+TLS、绑定或协议错误均直接返回，不回退旧实现。两个 daemon 的历史报告
+版本都为 2，模式与实际协商证据单独核对，不拿数字相同当兼容。
+
+Windows 单线程启动选择器测试 **6 通过**，覆盖严格参数、单次分派和真实
+坏配置不调用 legacy。轻量部署 binary debug 构建通过。日志保留在
+`artifacts/novochat-relay-launch-tests.log`、`novochat-relay-cli-build.log`。
+另一启动入口 `cargo check --locked -p novovm-node --bin novovm-product-relay`
+通过（包含原有 RocksDB 依赖编译），日志 `novochat-node-relay-entry-check.log`。
+network 与轻量 relay 的 all-targets/no-deps 严格 Clippy 通过，日志
+`novochat-relay-launch-clippy.log`。未把 node 的 check 宣称为其部署运行验收。
+
+NOVOCHAT 在本机 IPv4 loopback 真正启动本仓 `supervm-relay.exe`，两个
+独立客户端完成节点签名挑战握手、原 E2E 会话、各 8 条 Data 和 8 条
+接收 ACK，双向 16 个密文摘要逐一一致。Ack 复用原 NovoRUDP frame，
+绑定会话/方向/完整 Data，明确仅认证接收核对，不是持久聊天回执。
+新服务拒绝缺失、旧和混合子协议且新版正对照成功；错 pin 未就绪、
+前后正确 pin 均认证成功；另启动真实 legacy 服务，确认监听后由新版
+客户端以缺失 required subprotocol v2 明确拒绝。两服务正常退出，
+新版活动连接为 0。协调器有原 120 秒总期限和精确子进程回收。
+
+客户端与协调器属于 NOVOCHAT 原诊断工具扩展，Rust **7 项**、Python
+**9 项**及客户端严格 Clippy 通过。原始报告在 NOVOCHAT 本地忽略目录
+`artifacts/relay-checks/ee66e79417c24639bb681aaecc824f8b/report.json`，
+`passed=true`；部署 binary SHA-256 为
+`ac24be61a5a71b8ebf0a991995c7734e6698e0bfaef6a906e30d7e8b29949cc8`。
+密钥、构建产物、逐帧证据不提交。不是双手机/公网/生产 UCA/匿名验收，
+也不是全项目安全审计；未触碰默认 Privacy 或旧交易网络安全边界。
+下一刀为通用有界 WSS 单会话载体和 NOVOCHAT 受保护消息投递接合，不能
+把自动重连的 worker 队列拼成同一 TLS 流。文件认领释放。
+
 ## 2026-10-11 可选 TLS 认证流与共同帧接口
 
 同轮格式收尾：NOVOCHAT 的 `cargo fmt --all` 也访问本地路径依赖，发现并
