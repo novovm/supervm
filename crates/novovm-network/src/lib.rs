@@ -24,6 +24,7 @@ pub mod product_identity;
 pub mod product_nat;
 pub mod product_overlay;
 pub mod product_relay;
+pub mod product_relay_launch;
 pub mod reachability;
 pub mod relay;
 pub mod route;
