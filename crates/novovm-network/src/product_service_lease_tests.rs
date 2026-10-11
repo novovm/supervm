@@ -281,3 +281,83 @@ async fn real_carrier_renews_three_times_without_reauthorizing_node() -> Result<
     b?;
     Ok(())
 }
+
+struct MemoryCheckpoint(Mutex<Vec<u8>>, std::sync::atomic::AtomicBool);
+impl ServiceLeasePersistenceV1 for MemoryCheckpoint {
+    fn commit(&self, expected: &[u8], next: &[u8]) -> Result<()> {
+        ensure!(
+            !self.1.load(std::sync::atomic::Ordering::Acquire),
+            "injected write failure"
+        );
+        let mut value = self.0.lock().unwrap();
+        ensure!(*value == expected, "stale checkpoint");
+        *value = next.to_vec();
+        Ok(())
+    }
+}
+fn restore(bytes: &[u8], now: u64) -> Result<ServiceLeaseBookV1> {
+    ServiceLeaseBookV1::restore(
+        BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+        bytes,
+        now,
+    )
+}
+#[test]
+fn durable_renewal_and_revocation_survive_reopen() -> Result<()> {
+    let mut b = book();
+    let initial = b.checkpoint()?;
+    let owner = Arc::new(MemoryCheckpoint(Mutex::new(initial.clone()), false.into()));
+    b.attach_persistence(owner.clone(), &initial)?;
+    accept(&mut b, record(2, 8, 3000, 100_000), 3000)?;
+    let saved = owner.0.lock().unwrap().clone();
+    drop(b);
+    let mut b = restore(&saved, 4000)?;
+    b.attach_persistence(owner.clone(), &saved)?;
+    assert!(accept(&mut b, record(2, 2, 4000, 100_000), 4000).is_err());
+    b.replace_sources(vec![source(vec![], 5000)], 5000)?;
+    let mut b = restore(&owner.0.lock().unwrap(), 6000)?;
+    assert!(b.routes(6000)?.is_empty());
+    assert!(b
+        .replace_sources(vec![source(vec![record(2, 9, 6000, 400_000)], 6000)], 6000)
+        .is_err());
+    Ok(())
+}
+#[test]
+fn durable_expired_history_is_retained_but_never_authorizes_route() -> Result<()> {
+    let b = book();
+    let bytes = b.checkpoint()?;
+    let mut reopened = restore(&bytes, 900_000)?;
+    assert!(reopened.routes(900_000)?.is_empty());
+    assert!(reopened
+        .check_route(
+            key(2).verifying_key().to_bytes(),
+            key(3).verifying_key().to_bytes(),
+            [4; 32],
+            900_000
+        )
+        .is_err());
+    assert!(restore(&bytes, 1999).is_err());
+    let wrong = BootstrapTrustPolicyV1::single_signer(key(7).verifying_key().to_bytes());
+    assert!(ServiceLeaseBookV1::restore(wrong, &bytes, 4000).is_err());
+    let mut invalid: serde_json::Value = serde_json::from_slice(&bytes)?;
+    invalid["current"][0]["sequence"] = 999.into();
+    assert!(restore(&serde_json::to_vec(&invalid)?, 4000).is_err());
+    Ok(())
+}
+#[test]
+fn durable_failure_freezes_book_and_stale_writer_cannot_replace_newer_state() -> Result<()> {
+    let mut b = book();
+    let initial = b.checkpoint()?;
+    let owner = Arc::new(MemoryCheckpoint(Mutex::new(initial.clone()), false.into()));
+    b.attach_persistence(owner.clone(), &initial)?;
+    let mut stale = restore(&initial, 2000)?;
+    stale.attach_persistence(owner.clone(), &initial)?;
+    accept(&mut b, record(2, 3, 3000, 100_000), 3000)?;
+    assert!(accept(&mut stale, record(2, 2, 3000, 100_000), 3000).is_err());
+    assert!(stale.routes(3000).is_err());
+    owner.1.store(true, std::sync::atomic::Ordering::Release);
+    assert!(b.replace_sources(vec![source(vec![], 4000)], 4000).is_err());
+    assert!(b.routes(4000).is_err());
+    assert!(b.checkpoint().is_err());
+    Ok(())
+}

@@ -1,8 +1,7 @@
 //! Admission and renewal for NOVOVM's opaque rendezvous service. Reuses the
 //! product directory's signed manifests/records; no chat or account identifier.
-//! Trust anchors are supplied separately. This bounded book is process-local:
-//! durable rollback protection and authenticated source retrieval belong to the
-//! install/cache owner, not to untrusted responses from a rendezvous node.
+//! Trust anchors are supplied separately. Optional durable checkpoints retain
+//! authorization history; encryption and external freshness remain platform-owned.
 use crate::{
     carrier_stream::CarrierStreamV1,
     iroh_transport::IrohAddressV1,
@@ -17,7 +16,7 @@ use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 const PREFIX: &str = "iroh-rendezvous-v1://";
@@ -148,13 +147,15 @@ struct Entry {
 }
 /// The caller must hold this under its existing Application/native owner lock.
 /// No network IO, wallet lookup, automatic trust-on-first-use or privacy claim.
-#[derive(Clone)]
 pub struct ServiceLeaseBookV1 {
     policy: BootstrapTrustPolicyV1,
     sources: Vec<BootstrapSourceV1>,
     entries: BTreeMap<[u8; 32], Entry>,
     tombstones: BTreeSet<[u8; 32]>,
     clock: u64,
+    persistence: Option<Arc<dyn ServiceLeasePersistenceV1>>,
+    persisted: Vec<u8>,
+    failed: bool,
 }
 impl ServiceLeaseBookV1 {
     pub fn new(
@@ -176,12 +177,16 @@ impl ServiceLeaseBookV1 {
             entries,
             tombstones: BTreeSet::new(),
             clock: now,
+            persistence: None,
+            persisted: Vec::new(),
+            failed: false,
         })
     }
     pub fn sources(&self) -> Vec<BootstrapSourceV1> {
         self.sources.clone()
     }
     fn observe(&mut self, now: u64) -> Result<()> {
+        ensure!(!self.failed, "service lease persistence unavailable");
         ensure!(now >= self.clock, "service lease clock rollback");
         self.clock = now;
         Ok(())
@@ -228,10 +233,7 @@ impl ServiceLeaseBookV1 {
             tombstones.len() <= 32 && entries.keys().all(|pin| !tombstones.contains(pin)),
             "revoked service identity"
         );
-        self.entries = entries;
-        self.sources = sources;
-        self.tombstones = tombstones;
-        Ok(())
+        self.publish(sources, entries, tombstones)
     }
     pub fn routes(&mut self, now: u64) -> Result<Vec<PeerSignedRelayRecordV1>> {
         self.observe(now)?;
@@ -291,17 +293,18 @@ impl ServiceLeaseBookV1 {
                 && address.instance == instance,
             "renewal identity differs"
         );
-        let entry = self
-            .entries
-            .get_mut(&expected_pin)
-            .context("service revoked")?;
+        let entry = self.entries.get(&expected_pin).context("service revoked")?;
         ensure!(
             entry.expires > now && record.expires_at_ms <= entry.expires,
             "renewal exceeds authority"
         );
         newer(&entry.current, &record)?;
-        entry.current = record;
-        Ok(())
+        let mut entries = self.entries.clone();
+        entries
+            .get_mut(&expected_pin)
+            .expect("checked entry")
+            .current = record;
+        self.publish(self.sources.clone(), entries, self.tombstones.clone())
     }
 }
 fn validated_sources(
@@ -451,3 +454,7 @@ pub async fn serve_service_lease_v1(
 #[cfg(test)]
 #[path = "product_service_lease_tests.rs"]
 mod tests;
+
+#[path = "product_service_checkpoint.rs"]
+mod checkpoint;
+pub use checkpoint::{ServiceLeasePersistenceV1, MAX_SERVICE_CHECKPOINT_BYTES};
