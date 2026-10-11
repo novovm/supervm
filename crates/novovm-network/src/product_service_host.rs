@@ -119,6 +119,30 @@ impl ServiceLeaseHostV1 {
 }
 
 impl ServiceLeaseBookV1 {
+    /// A separately approved mirror can deliver fresh signed sources after all
+    /// service routes expire. It cannot introduce source IDs, replace local
+    /// priorities, omit an admitted publisher, or mint a service lease.
+    pub fn accept_bootstrap_sources(
+        &mut self,
+        updates: Vec<BootstrapSourceV1>,
+        now: u64,
+    ) -> Result<()> {
+        ensure!(
+            updates.len() == self.sources.len(),
+            "incomplete bootstrap refresh"
+        );
+        validated_sources(&updates, &self.policy, now)?;
+        let mut sources = self.sources();
+        for update in updates {
+            let source = sources
+                .iter_mut()
+                .find(|old| old.manifest.manifest_id == update.manifest.manifest_id)
+                .context("unapproved bootstrap source identity")?;
+            source.manifest = update.manifest;
+        }
+        self.replace_sources(sources, now)
+    }
+
     /// Persist trustworthy revocations even if the accompanying lease is absent
     /// or invalid. A bad lease never authorizes discovery or application IO.
     /// The caller pins the carrier and checks its own path policy before dialing.
@@ -188,4 +212,24 @@ pub async fn serve_service_offer_v2(
     );
     let offer = host.offer(now()?)?;
     stream.write_frame(&encode(&offer)?).await
+}
+
+/// Source-only distributor using the existing V2 prelude. Its owner supplies a
+/// bounded, audience-specific bundle; it has no signing key and grants no path
+/// qualification. Consumers MUST validate/persist with their original book.
+pub async fn serve_bootstrap_sources_v2(
+    stream: &mut CarrierStreamV1<'_>,
+    sources: Vec<BootstrapSourceV1>,
+) -> Result<()> {
+    ensure!((1..=4).contains(&sources.len()), "bootstrap source budget");
+    let bytes = encode(&ServiceLeaseOfferV2 {
+        version: 2,
+        sources,
+        lease: None,
+    })?;
+    ensure!(
+        stream.read_frame().await?.as_slice() == REQUEST_V2,
+        "bootstrap request version"
+    );
+    stream.write_frame(&bytes).await
 }

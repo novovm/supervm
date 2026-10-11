@@ -26,6 +26,8 @@ pub mod novorudp;
 pub mod opaque_rendezvous;
 pub mod overlay;
 pub mod overlay_runtime;
+#[cfg(feature = "iroh-transport")]
+pub mod product_bootstrap_refresh;
 pub mod product_directory;
 pub mod product_identity;
 pub mod product_nat;

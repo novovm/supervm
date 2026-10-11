@@ -699,3 +699,64 @@ async fn real_carrier_v2_refreshes_sources_and_durably_issues() -> Result<()> {
     b?;
     Ok(())
 }
+
+#[test]
+fn bootstrap_refresh_recovers_expired_routes_without_changing_trust() -> Result<()> {
+    let mut b = book();
+    let saved = b.checkpoint()?;
+    let file = HostDirectory::new();
+    let store =
+        ServiceLeaseFileV1::create(&file.path(), zeroize::Zeroizing::new([92; 32]), &saved)?;
+    b.attach_persistence(store.clone(), &saved)?;
+    assert!(b.routes(500_001)?.is_empty());
+    let mut next = source(vec![record(2, 65, 500_001, 600_000)], 500_001);
+    next.manifest.expires_at_ms = 600_000;
+    directory::sign_bootstrap_manifest_v1(&mut next.manifest, &key(1))?;
+    next.priority = 999;
+    next.source_kind = BootstrapSourceKindV1::Official;
+    b.accept_bootstrap_sources(vec![next.clone()], 500_002)?;
+    assert_eq!(b.routes(500_003)?[0].sequence, 65);
+    assert_eq!(b.sources()[0].priority, 0);
+    assert_eq!(
+        b.sources()[0].source_kind,
+        BootstrapSourceKindV1::FriendInvite
+    );
+    drop(b);
+    drop(store);
+    let (_, bytes) = ServiceLeaseFileV1::open(&file.path(), zeroize::Zeroizing::new([92; 32]))?;
+    let mut restored = restore(&bytes, 500_004)?;
+    assert_eq!(restored.routes(500_005)?[0].sequence, 65);
+    next.manifest.issued_at_ms += 10;
+    next.manifest.relay_records.clear();
+    directory::sign_bootstrap_manifest_v1(&mut next.manifest, &key(1))?;
+    restored.accept_bootstrap_sources(vec![next], 500_020)?;
+    assert!(restored.routes(500_021)?.is_empty());
+    let mut resurrect = source(vec![record(2, 66, 500_030, 600_000)], 500_030);
+    resurrect.manifest.expires_at_ms = 600_000;
+    directory::sign_bootstrap_manifest_v1(&mut resurrect.manifest, &key(1))?;
+    assert!(restored
+        .accept_bootstrap_sources(vec![resurrect], 500_031)
+        .is_err());
+    Ok(())
+}
+
+#[test]
+fn bootstrap_refresh_rejects_omission_new_identity_and_bad_signatures() -> Result<()> {
+    let mut b = book();
+    let previous = b.checkpoint()?;
+    assert!(b.accept_bootstrap_sources(vec![], 2000).is_err());
+    let valid = source(vec![record(2, 2, 2000, 400_000)], 2000);
+    let mut unknown = valid.clone();
+    unknown.manifest.manifest_id = "unapproved-source".into();
+    directory::sign_bootstrap_manifest_v1(&mut unknown.manifest, &key(1))?;
+    assert!(b.accept_bootstrap_sources(vec![unknown], 2000).is_err());
+    let mut forged = valid.clone();
+    forged.manifest.signatures[0].signature[0] ^= 1;
+    assert!(b.accept_bootstrap_sources(vec![forged], 2000).is_err());
+    assert_eq!(b.checkpoint()?, previous);
+    b.accept_bootstrap_sources(vec![valid], 2000)?;
+    assert!(b
+        .accept_bootstrap_sources(vec![source(vec![record(2, 1, 1000, 400_000)], 1000)], 2000)
+        .is_err());
+    Ok(())
+}
