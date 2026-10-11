@@ -1,15 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-11 NOVOCHAT 单会话字节载体认领（进行中）：** 输入 `1e15ed8f`，
-本会话认领 `crates/novovm-network/src/duplex/byte_stream.rs`、
-`duplex/byte_stream/tests.rs`（新增）、`duplex/mod.rs` 导出及必要的
-`duplex/product_relay_client/pipeline.rs` 小共享接口，另含本文件/生产台账。
-复用既有 WSS、节点握手、NovoRUDP Data/Done 和双工 pipeline，补有界
-AsyncRead/AsyncWrite 单会话适配；原期限/授权贯穿 IO，拒绝重连拼接和
-未认证 EOF，不做节点目录、选路、隐私资格或聊天业务的平行实现。
-验证包括真实服务字节交换、取消/过期/背压/关闭，随后由 NOVOCHAT 复用
-受保护日志和签名回执验证落盘及丢 ACK 重开。未改 AOEM、账本、共识、
-交易网络、原 wire 编码或服务默认配置；不签收手机/匿名验收。
+**2026-10-11 NOVOCHAT 单会话字节载体收口：** 输入 `1e15ed8f`，认领
+`d9a67eb7`，实现 `60546962`。仅新增 network `duplex/byte_stream.rs`、
+测试及 `duplex/mod.rs` 导出；复用既有 WSS、节点握手、NovoRUDP Data/Done
+和双工 pipeline，未改 pipeline、daemon 或 wire 编码。有界单会话
+AsyncRead/AsyncWrite 保留原期限/授权，禁止重连拼接与未认证 EOF；
+中继准入不当作应用回执。Windows 网络库完整串行 **778 通过、11 原有
+忽略未执行**，含新载体 **10 项**；严格 all-targets/no-deps Clippy 通过。
+NOVOCHAT 接受保护消息库与签名回执的 TLS/WSS 专项 **22 项通过**，其中
+新 WSS **8 项**。真实本机 daemon/客户端验证落盘、丢回执重开、撤销与
+原期限；不是 Android、跨网或生产节点授权验收。未改 AOEM、账本、共识、
+交易、默认配置或隐私资格，认领释放；详见最新台账。
 
 **2026-10-11 NOVOCHAT 双工中继启动入口收口：** 输入 `7febd4ad`，认领
 `443fa1eb`，实现 `c76e81e2`。两个既有部署入口共享 network 薄启动适配，

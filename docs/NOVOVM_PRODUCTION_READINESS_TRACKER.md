@@ -8,6 +8,47 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-11 单会话 WSS 字节流与受保护消息接入
+
+输入 `1e15ed8f`，认领 `d9a67eb7`，源码 `60546962`。通用实现为
+`novovm-network/src/duplex/byte_stream.rs` 与原 `duplex/mod.rs` 导出，
+调用原 `ProductRelayClientV1::connect_with_control → into_pipeline →
+NodeHandshake → E2eSecureChannel → NovoRUDP Data/Done`。没有平行中继
+协议，也未改变既有 pipeline、daemon、AOEM、账本、共识和交易网络。
+
+同一流固定会话、单中继及独立 peer pin，强制验证外层 TLS 证书；严格
+检查连续 envelope/frame 序号、累计字节位置、session/domain。原期限和
+授权覆盖 DNS/连接及后续 IO，裸 EOF、失序、换会话或撤权永久失败。
+write 只表示本地准入；flush 只表示匹配的中继转发准入，不能代替对方
+接收或落盘。认证 Done 是半关闭，完成要求双方 Done、所有本地准入
+确认和实际 worker 退出。IO 正常关闭后丢弃可在原期限内排空 Done；
+提前丢弃会取消，线程退出前保留配额，不声称错误返回即同步回收。
+
+至多四个 worker，16 KiB 块、各方向 64 KiB 队列，另有一个待入队块和
+原 pipeline/TLS/socket 的独立缓冲；不宣称这是整个进程内存上限。
+入站队列满会暂停 pipeline 推进，必须持续消费，不承诺阻塞读者下仍
+无限独立发送。没有自动发现、路由资格、重连、匿名或聊天业务逻辑。
+
+Windows `cargo test --locked -p novovm-network --features
+iroh-transport,tls-transport --lib -- --test-threads=1` **778 通过，11 项
+原有忽略未执行**。新载体 **10 项**包含：真实 WSS 双向各约 192 KiB，
+缓冲满后恢复且逐字节一致，认证半关闭及连续三次关闭/重开，撤权缓冲
+拒读与唤醒，真实 daemon 断线不算 EOF，缺席 peer 原期限，连接取消
+后真实配额/注册回收，四 owner 上限和第五个未拨号，以及 TLS finish
+后立即 Drop 并确认线程真实 join。全套串行避免既有 TLS scope 测试
+之间的进程配额竞争，未放宽生产上限。严格 all-targets/no-deps Clippy
+及限定文件格式检查通过。日志为本机忽略的
+`artifacts/novochat-byte-stream-full.log` 和 `novochat-byte-stream-clippy.log`。
+
+NOVOCHAT 在这版源上复用原受保护 outbox/inbox、身份/联系人/路由许可
+及签名持久回执，授权 TLS/WSS 专项 **22 通过**，其中新 WSS **8 项**。
+真实本机 loopback daemon 支持消息落盘与丢回执后的原 ID 查询恢复；
+同进程存储重开和显式故障注入不是手机进程重启或实际丢包证据。
+正常应用任务、受信节点/端点交换、双 Android 跨网及自主匿名仍待接通。
+默认 Privacy 仍拒绝普通中继；当前本地 UCA 持钥不等于生产链上授权。
+认领释放。NOVOCHAT 的完整调用链与复现见其
+`docs/implementation/OWN_NETWORK_PROTECTED_DELIVERY.md`。
+
 ## 2026-10-11 既有 duplex 中继部署入口
 
 输入 main `7febd4ad`，认领 `443fa1eb`，源码提交 `c76e81e2`。限定修改
