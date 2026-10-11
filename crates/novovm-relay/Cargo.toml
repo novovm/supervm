@@ -7,9 +7,10 @@ description = "Standalone deployment of the existing SuperVM opaque relay runtim
 
 [features]
 default = []
-iroh-transport = ["novovm-network/iroh-transport"]
+iroh-transport = ["novovm-network/iroh-transport", "dep:futures-util"]
 
 [dependencies]
+futures-util = { version = "0.3", optional = true }
 anyhow = "1"
 base64 = "0.22"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
@@ -45,4 +46,9 @@ required-features = ["iroh-transport"]
 [[bin]]
 name = "novovm-bootstrap-publisher"
 path = "src/bootstrap_publisher.rs"
+required-features = ["iroh-transport"]
+
+[[bin]]
+name = "novovm-bootstrap-mirror"
+path = "src/bootstrap_mirror.rs"
 required-features = ["iroh-transport"]

@@ -274,10 +274,14 @@ impl Owner {
         let activation = Arc::new(AtomicBool::new(activate));
         let (send, ready) = oneshot::channel();
         let durable = self.durable.clone();
+        let published = self.config.root()?.join("active.sources.json");
         let hooks = RendezvousEpochOwnerV1 {
             stop: stop.clone(),
             activate: activation.clone(),
             prepared: Box::new(move || send.send(()).map_err(|_| anyhow::anyhow!("owner stopped"))),
+            sources_changed: Box::new(move |sources| {
+                atomic(&published, &serde_json::to_vec(sources)?)
+            }),
             before_activate: Box::new(move || {
                 durable
                     .lock()

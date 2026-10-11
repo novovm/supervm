@@ -2954,6 +2954,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",
+ "futures-util",
  "mio",
  "novovm-network",
  "rand 0.8.5",

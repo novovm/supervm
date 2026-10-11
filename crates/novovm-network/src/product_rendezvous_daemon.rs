@@ -191,11 +191,15 @@ pub fn run_rendezvous_cli_v2(path: &Path) -> Result<()> {
 /// Platform supervisor controls preparation and activation separately. Preparing a
 /// fresh carrier does not open the authorization journal or serve clients. The
 /// previous epoch must release its journal before activation is permitted.
+pub type RendezvousSourceObserverV1 = Box<dyn Fn(&[BootstrapSourceV1]) -> Result<()>>;
+
 pub struct RendezvousEpochOwnerV1 {
     pub stop: Arc<AtomicBool>,
     pub activate: Arc<AtomicBool>,
     pub prepared: Box<dyn FnOnce() -> Result<()>>,
     pub before_activate: Box<dyn FnOnce() -> Result<()>>,
+    /// Only called after activation/durable acceptance, including revocation.
+    pub sources_changed: RendezvousSourceObserverV1,
 }
 
 /// Only an absent publisher response is eligible for automatic backoff. Invalid
@@ -294,6 +298,7 @@ pub async fn run_owned_rendezvous_epoch_v2(
                 Err(e) => return Err(e),
             }
         };
+        let mut sources_changed = None;
         let recovered = if let Some(owner) = owner {
             // Independent trust and exact new identity are checked BEFORE ready.
             // The durable history check is repeated at activation after the old
@@ -307,6 +312,7 @@ pub async fn run_owned_rendezvous_epoch_v2(
             }
             sources = read_json(&config.source_path)?; // Recheck a revocation arriving during handoff.
             (owner.before_activate)()?;
+            sources_changed = Some(owner.sources_changed);
             if config.enroll {
                 ensure!(!config.journal_path.try_exists()?, "service already enrolled");
                 None
@@ -328,9 +334,11 @@ pub async fn run_owned_rendezvous_epoch_v2(
             let file = ServiceLeaseFileV1::create(&config.journal_path, storage, &checkpoint)?;
             book.attach_persistence(file, &checkpoint)?;
         }
+        let published = book.sources();
         let host = Arc::new(ServiceLeaseHostV1::new(key.clone(), book)?.with_lease_limit(30_000)?);
         *authority.lock().map_err(|_| anyhow::anyhow!("service supervision unavailable"))? =
             Some((host.clone(), endpoint.address.endpoint_key, endpoint.instance));
+        if let Some(publish) = &sources_changed { publish(&published)?; }
         let store = Arc::new(Mutex::new(RendezvousStoreV1::new(endpoint.instance, deadline)?));
         let mut active = FuturesUnordered::new();
         let mut accepting = Box::pin(scope.accept_inbound());
@@ -352,7 +360,8 @@ pub async fn run_owned_rendezvous_epoch_v2(
                     let next: Vec<BootstrapSourceV1> = read_json(&config.source_path)?;
                     let encoded = serde_json::to_vec(&next)?;
                     if encoded != last_sources {
-                        host.replace_sources(next, now_ms()?)?;
+                        host.replace_sources(next.clone(), now_ms()?)?;
+                        if let Some(publish) = &sources_changed { publish(&next)?; }
                         last_sources = encoded;
                     }
                     host.check_route(endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;

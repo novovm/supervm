@@ -221,6 +221,12 @@ async fn protected_owner_prepares_next_epoch_and_recovers_identity_without_raw_k
             .address
             .endpoint_key
     );
+    let published: Vec<BootstrapSourceV1> =
+        serde_json::from_slice(&std::fs::read(fixture.0.join("active.sources.json"))?)?;
+    assert_eq!(
+        published[0].manifest.relay_records[0], first,
+        "prepared/unapproved epoch leaked to distribution"
+    );
     let source = fixture.approve(&second)?;
     tokio::time::sleep(Duration::from_millis(250)).await;
     exchange(&second, source).await?;

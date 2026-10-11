@@ -91,6 +91,7 @@ pub struct IrohConfigV1 {
     nameserver: IpAddr,
     bind_address: Option<SocketAddr>,
     relay_only: bool,
+    service_identity: Option<iroh::SecretKey>,
 }
 
 impl IrohConfigV1 {
@@ -122,7 +123,21 @@ impl IrohConfigV1 {
             nameserver,
             bind_address: None,
             relay_only: false,
+            service_identity: None,
         })
+    }
+
+    /// An explicitly provisioned distribution service may retain its independent
+    /// carrier identity across bounded scopes. The platform owns protected key
+    /// custody and permission expiry. Never pass a wallet, chat or issuer seed.
+    /// Ordinary client/rendezvous scopes keep the default fresh identity.
+    pub fn with_owned_service_identity(
+        mut self,
+        seed: zeroize::Zeroizing<[u8; 32]>,
+    ) -> Result<Self> {
+        ensure!(*seed != [0; 32], "empty service carrier identity");
+        self.service_identity = Some(iroh::SecretKey::from_bytes(&seed));
+        Ok(self)
     }
 
     /// Disable direct IP transports and accept only locally approved relay
@@ -221,8 +236,11 @@ where
         .portmapper_config(PortmapperConfig::Disabled)
         .net_report_config(report)
         .transport_config(transport);
-    // Iroh generates a fresh independent transport key. No wallet/chat seed is
-    // accepted by this API, so key reuse cannot occur through configuration.
+    // Only explicit platform-owned distribution services use a retained key.
+    // Default clients and rendezvous epochs still generate fresh identities.
+    if let Some(key) = config.service_identity {
+        builder = builder.secret_key(key);
+    }
     if config.relay_only {
         builder = builder.clear_ip_transports();
     } else if let Some(address) = config.bind_address {
