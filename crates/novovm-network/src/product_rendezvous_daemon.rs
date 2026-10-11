@@ -22,12 +22,15 @@ use std::{
     io::{IsTerminal, Read, Write},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use zeroize::Zeroizing;
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RendezvousDaemonConfigV2 {
     pub version: u8,
@@ -84,7 +87,7 @@ fn strong_key(key: &[u8; 32]) -> Result<()> {
 }
 
 impl RendezvousDaemonConfigV2 {
-    fn validate(&self) -> Result<(IrohConfigV1, BootstrapTrustPolicyV1)> {
+    pub fn validate(&self) -> Result<(IrohConfigV1, BootstrapTrustPolicyV1)> {
         ensure!(
             self.version == 2 && self.engineering_direct_allowed,
             "explicit engineering service required"
@@ -185,6 +188,27 @@ pub fn run_rendezvous_cli_v2(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Platform supervisor controls preparation and activation separately. Preparing a
+/// fresh carrier does not open the authorization journal or serve clients. The
+/// previous epoch must release its journal before activation is permitted.
+pub struct RendezvousEpochOwnerV1 {
+    pub stop: Arc<AtomicBool>,
+    pub activate: Arc<AtomicBool>,
+    pub prepared: Box<dyn FnOnce() -> Result<()>>,
+    pub before_activate: Box<dyn FnOnce() -> Result<()>>,
+}
+
+/// Only an absent publisher response is eligible for automatic backoff. Invalid
+/// signatures, revocations, storage failures and expired supplied grants are not.
+#[derive(Debug)]
+pub struct RendezvousAuthorizationUnavailable;
+impl std::fmt::Display for RendezvousAuthorizationUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("source authorization timed out")
+    }
+}
+impl std::error::Error for RendezvousAuthorizationUnavailable {}
+
 /// One finite instance, no chat state. Restart uses a fresh transport identity
 /// and instance, and therefore requires a new independently signed grant.
 pub async fn run_rendezvous_epoch_v2(
@@ -192,6 +216,17 @@ pub async fn run_rendezvous_epoch_v2(
     key: SigningKey,
     storage: Zeroizing<[u8; 32]>,
     proposal: impl FnOnce(&crate::product_directory::PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<RendezvousDaemonReportV2> {
+    run_owned_rendezvous_epoch_v2(config, key, storage, proposal, None).await
+}
+
+/// The optional owner is local lifecycle control, never a source of network trust.
+pub async fn run_owned_rendezvous_epoch_v2(
+    config: RendezvousDaemonConfigV2,
+    key: SigningKey,
+    storage: Zeroizing<[u8; 32]>,
+    proposal: impl FnOnce(&crate::product_directory::PeerSignedRelayRecordV1) -> Result<()> + 'static,
+    owner: Option<RendezvousEpochOwnerV1>,
 ) -> Result<RendezvousDaemonReportV2> {
     let (carrier, policy) = config.validate()?;
     ensure!(
@@ -204,18 +239,22 @@ pub async fn run_rendezvous_epoch_v2(
         "service and client identities must differ"
     );
     // Fail restore/lock/key corruption BEFORE opening a network endpoint.
-    let recovered = if config.enroll {
-        ensure!(
-            !config.journal_path.try_exists()?,
-            "service already enrolled"
-        );
-        None
-    } else {
-        let (file, checkpoint) = ServiceLeaseFileV1::open(&config.journal_path, storage.clone())?;
-        let mut book = ServiceLeaseBookV1::restore(policy.clone(), &checkpoint, now_ms()?)?;
-        book.attach_persistence(file, &checkpoint)?;
-        Some(book)
+    let restore = || -> Result<Option<ServiceLeaseBookV1>> {
+        Ok(if config.enroll {
+            ensure!(
+                !config.journal_path.try_exists()?,
+                "service already enrolled"
+            );
+            None
+        } else {
+            let (file, checkpoint) =
+                ServiceLeaseFileV1::open(&config.journal_path, storage.clone())?;
+            let mut book = ServiceLeaseBookV1::restore(policy.clone(), &checkpoint, now_ms()?)?;
+            book.attach_persistence(file, &checkpoint)?;
+            Some(book)
+        })
     };
+    let recovered = if owner.is_none() { restore()? } else { None };
     let deadline = Instant::now() + Duration::from_millis(config.run_for_ms);
     let expires = now_ms()?
         .checked_add(config.run_for_ms)
@@ -224,7 +263,12 @@ pub async fn run_rendezvous_epoch_v2(
     type LiveAuthority = Option<(Arc<ServiceLeaseHostV1>, [u8; 32], [u8; 32])>;
     let authority: Arc<Mutex<LiveAuthority>> = Arc::new(Mutex::new(None));
     let probe = authority.clone();
+    let stopped = owner.as_ref().map(|owner| owner.stop.clone());
     let control = IrohControlV1::new(deadline + Duration::from_secs(2), move || {
+        ensure!(
+            !stopped.as_ref().is_some_and(|s| s.load(Ordering::Acquire)),
+            "service stopped by owner"
+        );
         let state = probe
             .lock()
             .map_err(|_| anyhow::anyhow!("service supervision unavailable"))?;
@@ -241,8 +285,8 @@ pub async fn run_rendezvous_epoch_v2(
         proposal(&record)?;
         // The separate publisher wraps this exact proposal in a trusted source.
         // An old source file is rejected; no local root or replacement is made.
-        let sources: Vec<BootstrapSourceV1> = loop {
-            ensure!(Instant::now() < deadline, "source authorization timed out");
+        let mut sources: Vec<BootstrapSourceV1> = loop {
+            if Instant::now() >= deadline { return Err(RendezvousAuthorizationUnavailable.into()); }
             match read_json(&config.source_path) {
                 Ok(sources) => break sources,
                 Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
@@ -250,6 +294,29 @@ pub async fn run_rendezvous_epoch_v2(
                 Err(e) => return Err(e),
             }
         };
+        let recovered = if let Some(owner) = owner {
+            // Independent trust and exact new identity are checked BEFORE ready.
+            // The durable history check is repeated at activation after the old
+            // owner exits; passing this check never bypasses a tombstone.
+            let mut candidate = ServiceLeaseBookV1::new(policy.clone(), sources.clone(), now_ms()?)?;
+            candidate.check_route(pin, endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
+            (owner.prepared)()?;
+            while !owner.activate.load(Ordering::Acquire) {
+                ensure!(Instant::now() < deadline && !owner.stop.load(Ordering::Acquire), "epoch activation cancelled/expired");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            sources = read_json(&config.source_path)?; // Recheck a revocation arriving during handoff.
+            (owner.before_activate)()?;
+            if config.enroll {
+                ensure!(!config.journal_path.try_exists()?, "service already enrolled");
+                None
+            } else {
+                let (file, checkpoint) = ServiceLeaseFileV1::open(&config.journal_path, storage.clone())?;
+                let mut book = ServiceLeaseBookV1::restore(policy.clone(), &checkpoint, now_ms()?)?;
+                book.attach_persistence(file, &checkpoint)?;
+                Some(book)
+            }
+        } else { recovered };
         let mut last_sources = serde_json::to_vec(&sources)?;
         let mut book = match recovered {
             Some(mut book) => { book.replace_sources(sources, now_ms()?)?; book }
@@ -268,12 +335,16 @@ pub async fn run_rendezvous_epoch_v2(
         let mut active = FuturesUnordered::new();
         let mut accepting = Box::pin(scope.accept_inbound());
         let mut report = RendezvousDaemonReportV2::default();
+        // End a little before the wall-clock grant boundary. Wall milliseconds
+        // truncate sub-ms precision whereas Instant does not; exact equality
+        // must never turn normal shutdown into an expired-authority restart.
+        let serving_deadline = deadline - Duration::from_millis(250);
         let mut maintenance = tokio::time::interval(Duration::from_millis(250));
         maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
                 biased;
-                _ = tokio::time::sleep_until(deadline.into()) => {
+                _ = tokio::time::sleep_until(serving_deadline.into()) => {
                     report.rejected_or_timed_out += active.len();
                     break;
                 }

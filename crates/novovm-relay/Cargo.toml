@@ -20,16 +20,24 @@ rustls-native-certs = "0.8.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
+zeroize = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 
 [target.'cfg(windows)'.dependencies]
 mio = { version = "1.1.1", default-features = false, features = ["os-poll", "net"] }
 
+windows-service = "0.8.1"
+windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+
 [dev-dependencies]
-zeroize = "1"
 rcgen = "0.12"
 socket2 = "0.6"
 
 [[bin]]
 name = "supervm-relay"
 path = "src/main.rs"
+
+[[bin]]
+name = "novovm-rendezvous-service"
+path = "src/rendezvous_service.rs"
+required-features = ["iroh-transport"]

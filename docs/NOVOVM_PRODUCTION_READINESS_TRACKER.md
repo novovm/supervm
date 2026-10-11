@@ -8,6 +8,37 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-11 Windows 托管 owner 与跨任期预授权
+
+输入 `fde02bdf`、认领 `eb1e55d3`。新增 `novovm-rendezvous-service` 作为
+SCM 平台 owner，仍调用同一个 `run_owned_rendezvous_epoch_v2`、Iroh、
+ServiceLeaseHost 和原 V2 寻址协议；没有替换 node 产品控制器或金融功能。
+CurrentUser DPAPI 封装独立签名/存储材料，owner 加密日志先预约全部任期序号，
+新实例的外部授权提前准备，激活前重读来源并核对持久撤销。原有界 CLI 保留。
+SCM 自动启动、专用虚拟账号、两次有延迟的崩溃恢复、停止取消及程序绑定 UDP
+防火墙安装代码已提供；仅 Status 实测和语法检查，未安装/重启验收。
+
+本机 Windows 最终验证：平台 owner 单测 **2 通过**（真实 DPAPI 篡改拒绝、
+无发布者时常驻退避和停止、重复 owner 不改活跃状态）；新增真实 executable
+进程专项 **5 通过**；原有 executable 回归 **4 通过**；服务租约回归
+**24 通过**；network/relay all-targets 严格 Clippy 通过。测试使用明确夹具
+发布者及本机直接 QUIC，无第三方 Relay 或公网跨网投递；未重跑完整金融工程。
+日志 `artifacts/node-owner-final-process.log`、`node-owner-lease-regression.log`、
+`node-owner-clippy.log`。Rust 文件格式、PowerShell parser、diff 检查通过。
+
+测试发现并修复两个实际生命周期问题：墙钟毫秒截断导致自然结束偶发被当成
+授权过期，改为提前 250 ms 停止服务；ready 通道关闭抢先遮蔽缺少回复的真实
+错误，改为等待载体完成并保留类型，只对缺少回复退避。原始失败分别保留于
+`node-owner-process-first-expiry-failure.log`、`node-owner-first-retry-failure.log`。
+一次重复构建遇到 Windows 已运行测试 exe 的 LNK1104，串行等待后重跑通过；
+没有结束无关进程、放松验收或升级无关依赖。
+
+用户确认暂无正式发布者，先实现与独立进程验证。发布者是已配置的服务信任
+策略，不是全网官方审批门槛，也不要求用户购买第二台主机。正式发布/手机
+端点更新、SCM 虚拟账号实际托管与开机恢复、24 小时及手机 Wi-Fi/蜂窝验收仍
+未完成。两个日志各 16 MiB，安全轮转/完整备份防回滚未交付。详情见
+[Windows owner 契约](NOVOVM_RENDEZVOUS_WINDOWS_OWNER.md)。认领释放。
+
 ## 2026-10-11 寻址服务入口与单一协议实现
 
 输入 `68eacb80`，认领 `09f5d39b`。NOVOCHAT 通用 bound_session / discovery_control
