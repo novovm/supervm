@@ -8,6 +8,7 @@
 //! The product node owns its lifecycle; transport acceptance is never execution
 //! or finality acknowledgement. This is not another product or authority owner.
 
+pub mod byte_stream;
 pub mod fragments;
 pub mod novorudp;
 pub mod product_overlay;
