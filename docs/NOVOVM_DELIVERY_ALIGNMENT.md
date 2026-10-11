@@ -1,5 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-11 NOVOCHAT 双工中继启动入口认领（进行中）：** 输入 `7febd4ad`，
+本会话限定认领 `crates/novovm-network/src/product_relay_launch.rs`（新增薄启动
+适配及纯参数/分派验证）、`crates/novovm-network/src/lib.rs` 声明、
+`crates/novovm-relay/src/main.rs`、`crates/novovm-relay/tests/` 进程互操作验证、
+`crates/novovm-node/src/bin/novovm-product-relay.rs` 及本文件/生产台账。
+只显式选择既有 duplex daemon，与历史入口保持明确区分，选新版失败禁止旧版
+回退；不改 wire、加密/身份规则、交易节点运行路径、AOEM、账本或共识。
+验收先做本机真实中继进程与独立客户端的认证/双向数据/回执和错误版本拒绝，
+不将其称为双手机、匿名或生产授权完成。通用网络能力归本仓，NOVOCHAT 仅
+接联系人、受保护消息与产品任务；尚未完成本认领。
+
 **2026-10-11 NOVOCHAT 认证流接入收口：** 输入 `60d4f3b3`，认领 `30cf2468`；可选 TLS 1.3 双向持钥载体与封闭 `CarrierStreamV1` 已复用既有 exporter 绑定、端到端握手和帧格式。Windows 网络 lib 串行 **762 通过、11 原有忽略项未执行**，补充伪造持钥反例后 TLS 专项 **11 通过**；严格 all-targets/no-deps Clippy 与独立 TLS feature 编译通过。认领释放。TLS 不授予隐私资格，不解析目的、不创建底层网络；未改 NOV 交易、共识、账户或 AOEM，详见最新台账。
 
 **2026-10-10 NOVOCHAT 本地身份授权组件收口：** 输入 `133b1c38`，认领 `54375526`。既有 `novovm-adapter-api` 增加本地 root 持钥与用途/设备/范围/独立公钥绑定的严格 Ed25519 授权，复用 UCA primary key ref，证明留在本地。Windows 整包 **20 项测试**及 all-targets/no-deps 严格 Clippy 通过，依赖仅复用锁定版本，认领释放。持久授权消耗、撤销及实际客户端调用归 NOVOCHAT 接线；没有新增链上账户状态、交易/费用/共识写入，不将本地持钥声明为链上注册、匿名或抗量子能力，详见最新台账。
