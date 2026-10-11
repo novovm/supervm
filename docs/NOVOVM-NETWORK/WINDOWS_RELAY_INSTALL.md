@@ -4,6 +4,40 @@ Date: 2026-10-11. Input: `adbf7f07`; claim: `7e22f00`.
 The user requested persistent node permission, replacing the temporary firewall
 experiment. Installation now installs the existing relay and its rule together.
 
+## Weak nodes and read-only diagnosis
+
+User clarification: node participation must work with varied home/mobile
+networks. Public inbound access, IPv6 enablement and router changes are not
+participation prerequisites. The persistent TCP rule supports a listening
+relay role; it does not make every device an Internet ingress relay.
+
+The optional [network preflight](../../scripts/windows/Get-NovovmNodeNetwork.ps1)
+is read-only and never gates a runtime or changes settings. It distinguishes
+disabled IPv6 bindings, unavailable preferred addresses and missing default
+routes. A private/shared-address device with a live default route remains an
+outbound candidate requiring an actual authenticated path. There is no NAT
+classification, router WAN observation or public reachability assertion without
+corresponding measurements. Applications must try their authorized transport
+paths rather than ask ordinary users to repair an IPv6 prerequisite.
+
+```powershell
+.\scripts\windows\Get-NovovmNodeNetwork.ps1 -InterfaceAlias <exact-adapter-name>
+```
+
+This optional command requires no administrator consent, DNS or network probe.
+It is not an installer requirement. The address classifier conservatively
+excludes common special IPv6 ranges; it is not a complete allocation database.
+Range references checked 2026-10-11: [IANA IPv4 special registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
+and [IANA IPv6 special registry](https://www.iana.org/assignments/iana-ipv6-special-registry/).
+
+Input for this addition: `afd03228`, claim `4f28ecc7`. Local WLAN readback is
+IPv6 disabled, preferred private IPv4 and live IPv4 default route. It reports
+`outboundCandidateRequiresAuthenticatedPath` and `inboundRequiredForParticipation:false`.
+The user requested keeping weak-network participation automatic; no IPv6
+enable operation was executed. 39 fixture assertions passed, including shared
+address boundaries, unavailable/dead routes and tentative/source-excluded IPv6.
+No statement that IPv6 alone makes cellular ingress reachable is made.
+
 ## Entry and ownership
 
 - [Installer](../../scripts/windows/install-novovm-relay.ps1)
