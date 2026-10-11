@@ -97,6 +97,9 @@ pub async fn refresh_bootstrap_sources_v1(
             book.lock()
                 .map_err(|_| anyhow::anyhow!("bootstrap owner unavailable"))?
                 .accept_bootstrap_sources(offer.sources, observed)?;
+            // The shared carrier requires BOTH ends to finish. Dropping early
+            // would reset a distributor that is flushing its response.
+            stream.finish().await?;
             Ok(Some(()))
         })
         .await;
