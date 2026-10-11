@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-11 Windows 节点网络自检认领：** 本机 NOVOCHAT 会话，输入
+`afd03228`，本地/远端一致、工作区干净。当前实际 WLAN 禁用 IPv6，需要
+区分本机绑定、地址范围、默认路由与外部入站验收。范围仅新增
+`scripts/windows/Get-NovovmNodeNetwork.ps1`、`NovovmNodeNetwork.psm1`、
+`scripts/tests/windows-node-network.tests.ps1` 和网络安装文档/两份台账；
+只读收集，不修改网卡/路由器或网络运行时，不扫描端点，不发送公网请求。
+不改身份/协议/交易/AOEM/共识；当前认领中。
+
 **2026-10-11 Windows 节点安装与持久防火墙认领：** 本机 NOVOCHAT 会话，输入
 `adbf7f07`（本地/远端一致、工作区干净）。用户明确改为持久节点放行并要求
 安装自动配置。范围仅新增 `scripts/windows/` 下 relay 安装/防火墙模块、
