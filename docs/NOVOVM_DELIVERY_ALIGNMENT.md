@@ -1,12 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-11 自有寻址服务启动接线认领（进行中）：** NOVOCHAT 会话，输入
+**2026-10-11 自有寻址服务启动接线认领（已释放）：** NOVOCHAT 会话，输入
 `68eacb80`，本地/远端 main 一致、工作区干净。限定 network 的通用认证流/
 寻址 RPC 归并、服务运行入口及相邻测试、共享 relay selector、novovm-relay
 feature/进程互操作测试、Cargo.lock 和两份交付台账。既有 NOVOCHAT 线格式
 保持，聊天端改为复用；显式新运行方式，不回退旧协议。平台 owner 通过私有
 管道提供独立密钥，外部发布者签名授权；不自签根，不突破短租约/实例期限。
 不修改交易、AOEM、共识、网卡/路由器；常驻安装和手机跨网结果另行验收。
+认领 `09f5d39b`：网络 lib 823 通过/11 原有忽略，实际 executable 进程测试
+4 通过，默认 feature selector 7 通过，TLS-only check 与两包严格 all-targets
+Clippy 通过。单一协议实现、有界入口及撤销监督完成，认领释放。
+具体运行契约与未完成项见 [寻址服务入口](NOVOVM_RENDEZVOUS_ENTRY.md)。
 
 **2026-10-11 节点签发 owner 与在线签名源刷新认领：** NOVOCHAT 会话，输入
 `e9e7dc3a`，本地/远端 main 一致且干净。限定 `novovm-network` 既有服务租约模块、

@@ -1,0 +1,75 @@
+# 自有寻址服务可执行入口
+
+2026-10-11，输入 `68eacb80`，认领 `09f5d39b`。本片交付独立进程入口及
+通用协议归并。工程普通连接，没有匿名资格；没有改 NOV 交易、AOEM 或共识。
+
+## 唯一实现与真实调用链
+
+```text
+supervm-relay --runtime rendezvous-v2 <owner-config.json>
+  → network::product_relay_launch（显式选择，不回退 WSS / V1）
+  → product_rendezvous_daemon::run_rendezvous_cli_v2
+  → 原 IrohScope（本地授权、显式 relay / DNS、期限和取消）
+  → 新传输公钥 / 新实例 → 节点签名 proposal → 独立发布者签名来源
+  → ServiceLeaseBook + ServiceLeaseFile（固定信任、加密日志、文件锁、CAS）
+  → ServiceLeaseHost / NVLSRQ02（先落盘再提供短租约）
+  → bound_session（TLS exporter、身份签名、双向 Finished）
+  → discovery_control（原寻址 RPC）→ Opaque RendezvousStore
+```
+
+`bound_session.rs` 与 `discovery_control.rs` 从 NOVOCHAT 迁回 network，原
+线格式、域分隔字符串、消息类型和安全回归保留。历史 `novochat.endpoint-rpc`
+名称不是新的聊天节点协议；更名需要显式版本迁移，本次不更改。NOVOCHAT 仅
+保留 `pub use` 兼容入口，未来其他客户端可直接复用本实现。服务记录是有限期
+不透明寻址密文，不是聊天历史或钱包账户。
+
+## 运行契约
+
+构建：设置本仓 `CARGO_TARGET_DIR`、`CARGO_BUILD_JOBS=1`，执行
+`cargo build -p novovm-relay --features iroh-transport`。未启用该 feature 的
+历史程序拒绝此运行方式；仍保留显式旧 WSS 入口。node 中的既有 relay bin
+共用 selector，但本片只验收轻量 `supervm-relay`，未编译/验收金融节点整体。
+
+配置必须显式 `version:2`、`engineering_direct_allowed:true`；包括固定发布者
+公钥（1–8、阈值）、允许客户端公钥（1–16）、批准的 relay/DNS、可选绑定地址、
+绝对 journal/source 路径、`enroll`、record ID、grant sequence、`run_for_ms`
+及 `max_sessions`。没有自动信任网络返回的根，没有公共 relay 默认值。
+
+平台 owner 通过重定向 stdin 传入 `NVKEYS02` + 32 字节独立节点签名种子 +
+32 字节独立存储材料；不放命令行、环境变量或 JSON。重定向 stdout 第一行
+是 `awaiting_authorization` 和节点自签 proposal，只交给本地受信 owner，
+不代表已被网络接受。单独的发布者将 proposal 放入已有 SignedBootstrapManifest，
+原子发布到 source 文件。不存在来源时有界等待，错误/旧来源直接失败。
+配置、管道、来源文件和目录 ACL 仍由安装 owner 保护；仅检查非终端输入输出
+不能证明私有 IPC 或平台密钥托管。当前未提供 Windows DPAPI/系统服务安装 owner，
+不得把原始密钥文件重定向冒充已完成安全安装。
+
+首次 `enroll:true` 用 create-new 建日志，已有文件就拒绝；`enroll:false` 必须
+打开既有日志，丢失/错误密钥/锁冲突不会重建。每次进程重启使用新传输密钥和
+随机实例，需要新发布者授权，grant sequence 必须高于既有签发历史。旧记录
+不能复活旧寻址实例或重置序号。整个旧备份回放仍需外部 freshness anchor。
+
+## 资源、撤销与剩余工作
+
+本运行入口是一段 **5–110 秒有界服务任期**，最多 64 次接入、4 个并发流、
+V2 前导 3 秒、每流最多 30 秒。沿用原握手/RPC/存储上限及 30 秒记录 TTL；
+250 ms 本地 owner 维护到期清理与来源文件更新，不重复写入相同来源。已接受
+撤销先持久保存；载体每次授权检查同时核对当前服务授权，终止全部旧流。
+日志上限、丢回包序号恢复、错误身份、旧线格式拒绝保持原规则。报告只有
+连接总数/完成/拒绝计数，不输出客户端身份、寻址能力或载荷。
+
+它还不是无限常驻服务。跨任期的自动发行、可信源推送、持久平台密钥 owner、
+崩溃重启监督、长期日志轮转及部署限流仍待交付；不能循环自签来绕过发布者
+授权。Windows 现有持久 TCP 443 WSS 防火墙规则保留，未把它误称为 Iroh
+寻址服务或公网可达保证。无需为此打开 IPv6 或修改路由器。
+
+真实进程验收由 `crates/novovm-relay/tests/rendezvous_process.rs` 调用实际
+binary，通过私有管道传入明确测试材料、在 loopback 上授权。双客户端并发
+PUT/GET/ACK/重复 ACK/删除，连续两次启动和日志恢复、旧源回滚、错误发布者、
+缺失恢复、未经显式许可、旧 V1 及未知身份拒绝、在线签名撤销均单独检查。
+这些是工程进程验证，不是 Android Wi-Fi/蜂窝、抗封锁或匿名验收。
+
+本次 Windows 结果：进程专项 4 通过、网络库 823 通过/11 原有忽略、默认
+selector 7 通过、TLS-only 编译通过、network/relay all-targets 严格 Clippy
+通过。进程专项与库测试层次不同，默认 selector 与全 feature 库测试有重叠，
+不相加宣称独立测试数。日志见最新生产台账。

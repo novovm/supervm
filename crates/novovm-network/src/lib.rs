@@ -1,5 +1,13 @@
 #![forbid(unsafe_code)]
 
+#[cfg(all(test, feature = "iroh-transport"))]
+pub(crate) static SERVICE_TEST_SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+pub mod bound_session;
+#[cfg(feature = "iroh-transport")]
+pub mod discovery_control;
+#[cfg(feature = "iroh-transport")]
+pub mod product_rendezvous_daemon;
 pub mod adaptive_overlay;
 pub mod availability;
 pub mod capability;

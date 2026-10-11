@@ -8,10 +8,11 @@ description = "NOVOVM network abstraction (transport traits + in-memory impl)."
 
 [features]
 default = []
-iroh-transport = ["dep:iroh"]
+iroh-transport = ["dep:iroh", "dep:futures-util"]
 tls-transport = ["dep:tokio-rustls", "dep:curve25519-dalek", "tokio/net"]
 
 [dependencies]
+futures-util = { version = "0.3", optional = true }
 aes = "0.8"
 anyhow = "1"
 base64 = "=0.22.1"

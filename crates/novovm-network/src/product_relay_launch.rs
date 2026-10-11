@@ -12,12 +12,13 @@ use std::{
 };
 
 const USAGE: &str =
-    "usage: <relay-executable> [--runtime legacy-json|duplex-v2] <relay-config.json>";
+    "usage: <relay-executable> [--runtime legacy-json|duplex-v2|rendezvous-v2] <relay-config.json>";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelayDaemonRuntimeV1 {
     LegacyJson,
     DuplexV2,
+    RendezvousV2,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +48,8 @@ where
                 RelayDaemonRuntimeV1::LegacyJson
             } else if runtime == "duplex-v2" {
                 RelayDaemonRuntimeV1::DuplexV2
+            } else if runtime == "rendezvous-v2" {
+                RelayDaemonRuntimeV1::RendezvousV2
             } else {
                 bail!("unsupported relay runtime; {USAGE}");
             };
@@ -90,7 +93,16 @@ where
             RelayDaemonRuntimeV1::DuplexV2 => {
                 writeln!(stderr, "relay runtime: duplex-v2 (explicit; no legacy fallback)")?;
             }
+            RelayDaemonRuntimeV1::RendezvousV2 => {
+                writeln!(stderr, "relay runtime: rendezvous-v2 (explicit engineering epoch; no fallback)")?;
+            }
         }
+    }
+    if launch.runtime == RelayDaemonRuntimeV1::RendezvousV2 {
+        #[cfg(feature = "iroh-transport")]
+        return crate::product_rendezvous_daemon::run_rendezvous_cli_v2(&launch.config_path);
+        #[cfg(not(feature = "iroh-transport"))]
+        bail!("rendezvous-v2 requires the iroh-transport feature");
     }
     dispatch_relay_launch_v1(launch, legacy, |path| {
         use crate::duplex::product_relay_daemon::{
@@ -109,6 +121,7 @@ where
     match launch.runtime {
         RelayDaemonRuntimeV1::LegacyJson => legacy(&launch.config_path),
         RelayDaemonRuntimeV1::DuplexV2 => duplex(&launch.config_path),
+        RelayDaemonRuntimeV1::RendezvousV2 => bail!("rendezvous cannot dispatch a WSS runtime"),
     }
 }
 
@@ -116,6 +129,27 @@ where
 mod tests {
     use super::*;
     use std::{cell::Cell, fs::OpenOptions};
+
+    #[test]
+    fn rendezvous_is_explicit_and_cannot_dispatch_either_wss_backend() {
+        let launch = parse_relay_launch_v1(["--runtime", "rendezvous-v2", "node.json"]).unwrap();
+        assert_eq!(launch.runtime, RelayDaemonRuntimeV1::RendezvousV2);
+        assert!(!launch.legacy_positional);
+        assert!(dispatch_relay_launch_v1(
+            launch,
+            |_| panic!("legacy fallback"),
+            |_| panic!("duplex fallback")
+        )
+        .is_err());
+        #[cfg(not(feature = "iroh-transport"))]
+        assert!(run_product_relay_cli_v1(
+            ["--runtime", "rendezvous-v2", "missing.json"],
+            |_| panic!("legacy fallback")
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("requires the iroh-transport feature"));
+    }
 
     #[test]
     fn historical_and_explicit_legacy_are_distinguishable() {

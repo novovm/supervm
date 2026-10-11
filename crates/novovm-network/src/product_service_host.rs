@@ -21,6 +21,13 @@ pub struct ServiceLeaseHostV1 {
 }
 
 impl ServiceLeaseHostV1 {
+    /// Fast local supervision; does not renew or perform file/network IO.
+    pub fn check_route(&self, endpoint: [u8; 32], instance: [u8; 32], now: u64) -> Result<()> {
+        self.book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?
+            .check_route(self.key.verifying_key().to_bytes(), endpoint, instance, now)
+    }
     /// Only an already durable book is accepted. The caller must explicitly
     /// enroll or restore it with the install owner's unchanged trust policy.
     pub fn new(key: SigningKey, book: ServiceLeaseBookV1) -> Result<Self> {

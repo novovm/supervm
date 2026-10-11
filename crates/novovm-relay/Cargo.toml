@@ -5,6 +5,10 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 description = "Standalone deployment of the existing SuperVM opaque relay runtime"
 
+[features]
+default = []
+iroh-transport = ["novovm-network/iroh-transport"]
+
 [dependencies]
 anyhow = "1"
 base64 = "0.22"
@@ -22,6 +26,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 mio = { version = "1.1.1", default-features = false, features = ["os-poll", "net"] }
 
 [dev-dependencies]
+zeroize = "1"
 rcgen = "0.12"
 socket2 = "0.6"
 

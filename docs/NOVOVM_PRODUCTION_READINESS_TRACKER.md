@@ -8,6 +8,27 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-11 寻址服务入口与单一协议实现
+
+输入 `68eacb80`，认领 `09f5d39b`。NOVOCHAT 通用 bound_session / discovery_control
+迁回 network，保持既有线格式与回归测试；客户端仅导入。既有 supervm-relay
+通过共享 selector 显式选择 rendezvous-v2，复用签发 host、加密日志、来源
+验证、Iroh 载体、Finished 及不透明寻址存储，没有新增聊天中继协议。
+
+真实 executable 两客户端双向 PUT/GET/ACK、重复 ACK、删除与连续两次重启
+通过；序号耐久恢复、旧来源/错误根/缺失恢复/未经许可/旧线格式/未知身份
+拒绝；在线签名撤销保存墓碑并终止活跃服务。进程专项 **4 通过**。第一次撤销
+测试误将立即收到 QUIC 正常关闭作为前提，发生载体超时；改为有界拒绝迟到
+数据并核对服务退出/耐久撤销，失败日志保留，不把终止时间当公网恢复性能。
+
+Windows 网络 lib 串行 **823 通过、11 原有忽略**，默认 feature selector
+**7 通过**、TLS-only check、network + relay 严格 all-targets Clippy 通过。
+日志 `artifacts/rendezvous-launch-{network,process,default,tls-only,clippy}.log`。
+非完整 node/金融链或双手机跨网验收。运行入口只承载 5–110 秒授权任期；
+密钥托管/Windows 常驻安装 owner、跨任期来源发行与自动监督、长期容量仍待完成。
+普通工程路径不授予匿名资格，无隐私路径仍失败关闭。详见
+[运行契约](NOVOVM_RENDEZVOUS_ENTRY.md)，认领释放。
+
 ## 2026-10-11 耐久节点签发与 V2 签名来源刷新
 
 输入 `e9e7dc3a`，认领 `bf99ad39`。通用实现位于 network 的
