@@ -1,5 +1,6 @@
 //! One long-lived platform owner, finite network epochs, and external signed
 //! source handoff. This module owns no publisher key and no chat protocol.
+use crate::windows_owner_files::{atomic, check_path, create, read_bounded};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_network::{
@@ -14,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{File, OpenOptions},
     future::Future,
-    io::{Read, Write},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -84,48 +84,6 @@ impl Config {
     fn root(&self) -> Result<&Path> {
         self.epoch.journal_path.parent().context("owner directory")
     }
-}
-
-pub fn check_path(path: &Path) -> Result<()> {
-    ensure!(path.is_absolute(), "absolute private path required");
-    for part in path.ancestors() {
-        if let Ok(meta) = std::fs::symlink_metadata(part) {
-            use std::os::windows::fs::MetadataExt;
-            ensure!(
-                !meta.file_type().is_symlink() && meta.file_attributes() & 0x400 == 0,
-                "managed path must not use a reparse point"
-            );
-        }
-    }
-    Ok(())
-}
-pub fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    check_path(path)?;
-    let mut data = Vec::new();
-    File::open(path)?
-        .take((limit + 1) as u64)
-        .read_to_end(&mut data)?;
-    ensure!(data.len() <= limit, "owner file size");
-    Ok(data)
-}
-fn create(path: &Path, data: &[u8]) -> Result<()> {
-    check_path(path)?;
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    file.write_all(data)?;
-    file.sync_all()?;
-    Ok(())
-}
-fn atomic(path: &Path, data: &[u8]) -> Result<()> {
-    check_path(path)?;
-    let stage = path.with_extension("pending");
-    // A stale interrupted status write is safe to replace: it contains no keys
-    // or authoritative state. This helper is never used for a signing journal.
-    if stage.try_exists()? {
-        std::fs::remove_file(&stage)?;
-    }
-    create(&stage, data)?;
-    std::fs::rename(stage, path)?;
-    Ok(())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -333,7 +291,7 @@ impl Owner {
             config,
             self.key.clone(),
             self.storage.clone(),
-            move |record| create(&output, &serde_json::to_vec(record)?),
+            move |record| atomic(&output, &serde_json::to_vec(record)?),
             Some(hooks),
         ));
         Ok(Epoch {

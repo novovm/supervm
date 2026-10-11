@@ -4,6 +4,8 @@
 mod rendezvous_owner;
 #[cfg(windows)]
 mod windows_custody;
+#[cfg(windows)]
+mod windows_owner_files;
 
 #[cfg(windows)]
 mod windows {
@@ -124,13 +126,20 @@ mod windows {
         }
         ensure!(
             args.len() == 2 || args.len() == 3,
-            "usage: --service CONFIG | --foreground CONFIG EPOCHS"
+            "usage: --check CONFIG | --provision CONFIG | --service CONFIG | --foreground CONFIG EPOCHS"
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
         if args[0] == "--check" {
             ensure!(args.len() == 2, "check arguments");
             Config::load(&path)?;
+        } else if args[0] == "--provision" {
+            ensure!(args.len() == 2, "provision arguments");
+            let config = Config::load(&path)?;
+            // Creates/restores custody and exports only the public identity.
+            // No carrier is opened and no service authority is granted here.
+            let _owner = Owner::open(config.clone())?;
+            config.status("provisioned", 0)?;
         } else if args[0] == "--service" {
             ensure!(args.len() == 2, "service arguments");
             CONFIG

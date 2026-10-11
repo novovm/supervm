@@ -41,3 +41,8 @@ path = "src/main.rs"
 name = "novovm-rendezvous-service"
 path = "src/rendezvous_service.rs"
 required-features = ["iroh-transport"]
+
+[[bin]]
+name = "novovm-bootstrap-publisher"
+path = "src/bootstrap_publisher.rs"
+required-features = ["iroh-transport"]

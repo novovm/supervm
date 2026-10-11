@@ -1,6 +1,7 @@
 # 自有寻址服务可执行入口
 
-**后续增量：** Windows 系统密钥托管、常驻 owner 与提前准备下一任期已接线；
+**后续增量：** [独立签名发布进程](NOVOVM_BOOTSTRAP_PUBLISHER.md)已接线，
+可在本机自动授权新任期；Windows 系统密钥托管、常驻 owner 与提前准备下一任期已接线；
 [运行与验收边界](NOVOVM_RENDEZVOUS_WINDOWS_OWNER.md)。下文保留原有界入口的
 交付记录，不能将新平台入口的实现等同于已完成系统安装/重启和手机跨网。
 
