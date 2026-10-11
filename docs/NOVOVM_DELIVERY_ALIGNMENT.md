@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-11 Windows 节点安装与持久防火墙认领：** 本机 NOVOCHAT 会话，输入
+`adbf7f07`（本地/远端一致、工作区干净）。用户明确改为持久节点放行并要求
+安装自动配置。范围仅新增 `scripts/windows/` 下 relay 安装/防火墙模块、
+对应 `scripts/tests/windows-relay-install.tests.ps1` 及本台账/验收文档。
+复用现有 `supervm-relay --runtime duplex-v2`，不改交易、AOEM、共识、network
+协议或 novovmctl 产品控制流。验收：限定程序 TCP 443 的规则可重复安装、
+状态读回和定向卸载，实际管理员安装与手机握手分别记录。当前认领中。
+
 **2026-10-11 NOVOCHAT 单会话字节载体收口：** 输入 `1e15ed8f`，认领
 `d9a67eb7`，实现 `60546962`。仅新增 network `duplex/byte_stream.rs`、
 测试及 `duplex/mod.rs` 导出；复用既有 WSS、节点握手、NovoRUDP Data/Done
