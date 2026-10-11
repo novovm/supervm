@@ -8,6 +8,34 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-11 签名寻址服务授权与在线续期
+
+输入 `f110c5f7`，认领 `5d0c76e5`。`product_service_lease.rs` 复用
+`product_directory` 的签名清单/记录，显式新增 `IrohRendezvousV1` 类型；
+其 URI 包含规范编码的临时载体公钥/端点及服务实例，不冒充旧 WSS/QUIC。
+独立提供的信任锚验证来源，最多 4 来源/2 个候选/8 锚，来源授权最长 10 分钟，
+节点记录最长 120 秒。真实载体的版本化租约前导交换在原寻址握手之前；旧服务
+不会静默协商成功。自签节点不能给自己增加信任或续期上层授权。
+
+`ServiceLeaseBookV1` 拒绝伪造、弱公钥、回滚、同序号异文、错实例/载体、
+超额候选和时间倒退；更新来源可撤销节点，进程内墓碑禁止重新引入。
+`ServiceLeaseIssuerV1` 仅使用服务自己的密钥签发严格递增序号，不含用户或钱包
+身份；生命周期由现有 carrier owner 控制。调用者仍负责路由政策、实际双方
+持钥握手及取消。此功能不授予匿名资格，不改账本、UCA、交易、共识或 AOEM。
+
+Windows `novovm-network --features iroh-transport,tls-transport --lib
+-- --test-threads=1` **790 通过、11 项原有忽略未执行**；新增租约专项
+**12 通过**，含实际 loopback QUIC 连接连续三次签名续期；all-targets/no-deps
+严格 Clippy 通过。首次 socket 夹具遗漏关闭同步导致失败，修正测试 ACK 屏障后
+通过，没有放宽生产超时或校验。日志位于本机忽略的
+`artifacts/service-lease-{tests,full,clippy}.log`。
+
+`product_node_overlay.rs` 仅补新增枚举的测试夹具穷尽分支，原产品 WSS 路径
+继续显式拒绝不支持的载体。来源抓取/可信安装包、加密耐久节点缓存和跨进程
+防回滚尚未交付；issuer 重启须由安装 owner 提供不回退的序号基础/新签名来源，
+不能把进程内测试称为设备重启通过。NOVOCHAT 主应用及双 Android 跨网另验。
+认领释放。
+
 ## 2026-10-11 弱网节点参与与只读网络自检
 
 输入 `afd03228`，认领 `4f28ecc7`。新只读脚本

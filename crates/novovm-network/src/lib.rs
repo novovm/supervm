@@ -25,6 +25,8 @@ pub mod product_nat;
 pub mod product_overlay;
 pub mod product_relay;
 pub mod product_relay_launch;
+#[cfg(feature = "iroh-transport")]
+pub mod product_service_lease;
 pub mod reachability;
 pub mod relay;
 pub mod route;

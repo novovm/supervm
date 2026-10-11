@@ -40,6 +40,8 @@ pub enum ProductDirectoryErrorV1 {
 pub enum RelayTransportV1 {
     Wss443,
     Quic443,
+    /// NOVOVM opaque rendezvous over the explicitly versioned Iroh carrier.
+    IrohRendezvousV1,
     Udp,
 }
 
@@ -166,7 +168,8 @@ pub enum BootstrapSourceKindV1 {
     DiscoveredDirectory,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BootstrapSourceV1 {
     pub source_kind: BootstrapSourceKindV1,
     pub priority: u16,
@@ -558,6 +561,7 @@ fn validate_endpoint_v1(endpoint: &RelayEndpointV1) -> Result<(), ProductDirecto
         RelayTransportV1::Quic443 => {
             endpoint.uri.starts_with("quic://") && endpoint.uri.contains(":443")
         }
+        RelayTransportV1::IrohRendezvousV1 => endpoint.uri.starts_with("iroh-rendezvous-v1://"),
         RelayTransportV1::Udp => endpoint.uri.starts_with("udp://"),
     };
     if !valid || endpoint.max_sessions == 0 || endpoint.max_bytes_per_minute == 0 {
@@ -582,6 +586,7 @@ fn candidate_snapshot_v1(candidate: &RelayCandidateRuntimeV1) -> Option<RelayCan
     let transport_score = match selected_endpoint.transport {
         RelayTransportV1::Wss443 => 300i64,
         RelayTransportV1::Quic443 => 250,
+        RelayTransportV1::IrohRendezvousV1 => 200,
         RelayTransportV1::Udp => 150,
     };
     let success_bonus = candidate.last_success_ms.map_or(0, |_| 80);
@@ -603,6 +608,7 @@ fn endpoint_score_v1(endpoint: &RelayEndpointV1) -> u8 {
     match endpoint.transport {
         RelayTransportV1::Wss443 => 0,
         RelayTransportV1::Quic443 => 1,
+        RelayTransportV1::IrohRendezvousV1 => 3,
         RelayTransportV1::Udp => 2,
     }
 }
@@ -670,7 +676,7 @@ fn validate_bootstrap_manifest_inner_v1(
     ))
 }
 
-fn relay_record_signing_bytes_v1(record: &PeerSignedRelayRecordV1) -> Vec<u8> {
+pub(crate) fn relay_record_signing_bytes_v1(record: &PeerSignedRelayRecordV1) -> Vec<u8> {
     let mut out = Vec::new();
     append_field_v1(&mut out, b"novovm-product-relay-record-v1");
     out.extend_from_slice(&record.version.to_be_bytes());
@@ -684,7 +690,7 @@ fn relay_record_signing_bytes_v1(record: &PeerSignedRelayRecordV1) -> Vec<u8> {
     out
 }
 
-fn bootstrap_manifest_signing_bytes_v1(manifest: &SignedBootstrapManifestV1) -> Vec<u8> {
+pub(crate) fn bootstrap_manifest_signing_bytes_v1(manifest: &SignedBootstrapManifestV1) -> Vec<u8> {
     let mut out = Vec::new();
     append_field_v1(&mut out, b"novovm-product-bootstrap-manifest-v1");
     out.extend_from_slice(&manifest.version.to_be_bytes());
@@ -737,6 +743,7 @@ fn strategy_decision_bytes_v1(decision: &StrategyDecisionV1) -> Vec<u8> {
             .map(|transport| match transport {
                 RelayTransportV1::Wss443 => "wss_443",
                 RelayTransportV1::Quic443 => "quic_443",
+                RelayTransportV1::IrohRendezvousV1 => "iroh_rendezvous_v1",
                 RelayTransportV1::Udp => "udp",
             }),
     );
@@ -764,6 +771,7 @@ fn append_endpoints_v1(out: &mut Vec<u8>, endpoints: &[RelayEndpointV1]) {
             match endpoint.transport {
                 RelayTransportV1::Wss443 => b"wss_443",
                 RelayTransportV1::Quic443 => b"quic_443",
+                RelayTransportV1::IrohRendezvousV1 => b"iroh_rendezvous_v1",
                 RelayTransportV1::Udp => b"udp",
             },
         );
@@ -820,6 +828,7 @@ mod tests {
         let uri = match transport {
             RelayTransportV1::Wss443 => format!("wss://{host}:443/novovm"),
             RelayTransportV1::Quic443 => format!("quic://{host}:443"),
+            RelayTransportV1::IrohRendezvousV1 => panic!("use typed service fixture"),
             RelayTransportV1::Udp => format!("udp://{host}:41030"),
         };
         RelayEndpointV1 {
