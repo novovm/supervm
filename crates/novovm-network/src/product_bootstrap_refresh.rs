@@ -91,9 +91,12 @@ pub async fn refresh_bootstrap_sources_v1(
             );
             // Persist before any consumer sees refreshed addresses. Preserve a
             // valid revocation even when the refreshed bundle has zero routes.
+            // Authorization callbacks may read this same book. Never invoke
+            // caller code while holding its state lock.
+            let observed = now()?;
             book.lock()
                 .map_err(|_| anyhow::anyhow!("bootstrap owner unavailable"))?
-                .accept_bootstrap_sources(offer.sources, now()?)?;
+                .accept_bootstrap_sources(offer.sources, observed)?;
             Ok(Some(()))
         })
         .await;
