@@ -1,19 +1,18 @@
 #![forbid(unsafe_code)]
 
 #[cfg(all(test, feature = "iroh-transport"))]
-pub(crate) static SERVICE_TEST_SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
-pub mod bound_session;
-#[cfg(feature = "iroh-transport")]
-pub mod discovery_control;
-#[cfg(feature = "iroh-transport")]
-pub mod product_rendezvous_daemon;
+pub(crate) static SERVICE_TEST_SERIAL: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(1);
 pub mod adaptive_overlay;
 pub mod availability;
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+pub mod bound_session;
 pub mod capability;
 #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
 pub mod carrier_stream;
 pub mod control_plane;
+#[cfg(feature = "iroh-transport")]
+pub mod discovery_control;
 pub mod duplex;
 pub mod eth_chain_config;
 pub mod eth_fullnode;
@@ -33,6 +32,8 @@ pub mod product_nat;
 pub mod product_overlay;
 pub mod product_relay;
 pub mod product_relay_launch;
+#[cfg(feature = "iroh-transport")]
+pub mod product_rendezvous_daemon;
 #[cfg(feature = "iroh-transport")]
 pub mod product_service_lease;
 pub mod reachability;
