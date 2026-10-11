@@ -52,6 +52,256 @@ fn book() -> ServiceLeaseBookV1 {
     )
     .unwrap()
 }
+
+struct HostDirectory(std::path::PathBuf);
+impl HostDirectory {
+    fn new() -> Self {
+        let p = std::env::temp_dir().join(format!(
+            "novovm-service-host-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        std::fs::create_dir(&p).unwrap();
+        Self(p)
+    }
+    fn path(&self) -> std::path::PathBuf {
+        self.0.join("lease.journal")
+    }
+}
+impl Drop for HostDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+fn durable_host(dir: &HostDirectory) -> Result<ServiceLeaseHostV1> {
+    let mut b = book();
+    let checkpoint = b.checkpoint()?;
+    let file =
+        ServiceLeaseFileV1::create(&dir.path(), zeroize::Zeroizing::new([91; 32]), &checkpoint)?;
+    b.attach_persistence(file, &checkpoint)?;
+    ServiceLeaseHostV1::new(key(2), b)
+}
+fn reopen_host(dir: &HostDirectory, now: u64) -> Result<ServiceLeaseHostV1> {
+    let (file, checkpoint) =
+        ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
+    let mut b = restore(&checkpoint, now)?;
+    b.attach_persistence(file, &checkpoint)?;
+    ServiceLeaseHostV1::new(key(2), b)
+}
+fn accept_offer(b: &mut ServiceLeaseBookV1, offer: ServiceLeaseOfferV2, now: u64) -> Result<u64> {
+    b.accept_offer(
+        offer,
+        key(2).verifying_key().to_bytes(),
+        key(3).verifying_key().to_bytes(),
+        [4; 32],
+        now,
+    )
+}
+
+#[test]
+fn host_persists_before_offer_and_continues_after_reopen() -> Result<()> {
+    let dir = HostDirectory::new();
+    let host = durable_host(&dir)?;
+    assert!(reopen_host(&dir, 3000).is_err()); // exclusive process owner
+    assert_eq!(host.offer(3000)?.lease.unwrap().sequence, 2);
+    drop(host); // intentionally lose the network response/ACK
+    let host = reopen_host(&dir, 4000)?;
+    let offer = host.offer(4000)?;
+    assert_eq!(offer.lease.as_ref().unwrap().sequence, 3);
+    accept_offer(&mut book(), offer, 4000)?;
+    assert!(host.offer(3999).is_err());
+    drop(host);
+    let raw = std::fs::read(dir.path())?;
+    assert!(!raw
+        .windows(b"installation-source".len())
+        .any(|w| w == b"installation-source"));
+    assert!(ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([92; 32])).is_err());
+    assert!(reopen_host(&dir, 3999).is_err());
+    Ok(())
+}
+
+#[test]
+fn host_refresh_and_revocation_persist_without_root_rotation() -> Result<()> {
+    let dir = HostDirectory::new();
+    let host = durable_host(&dir)?;
+    let mut client = book();
+    accept_offer(&mut client, host.offer(3000)?, 3000)?;
+    let updated = source(vec![record(2, 10, 4000, 450_000)], 4000);
+    host.replace_sources(vec![updated], 4000)?;
+    let offer = host.offer(5000)?;
+    assert_eq!(offer.lease.as_ref().unwrap().sequence, 11);
+    accept_offer(&mut client, offer, 5000)?;
+    assert_eq!(client.sources()[0].manifest.issued_at_ms, 4000);
+    host.replace_sources(vec![source(vec![], 6000)], 6000)?;
+    assert!(accept_offer(&mut client, host.offer(7000)?, 7000).is_err());
+    assert!(client.routes(7000)?.is_empty());
+    drop(host);
+    let host = reopen_host(&dir, 8000)?;
+    assert!(host.offer(8000)?.lease.is_none());
+    assert!(host
+        .replace_sources(vec![source(vec![record(2, 12, 9000, 450_000)], 9000)], 9000)
+        .is_err());
+    assert!(host.offer(500_000).is_err());
+    Ok(())
+}
+
+#[test]
+fn host_rejects_torn_state_and_missing_history_without_reset() -> Result<()> {
+    use std::io::Write;
+    let dir = HostDirectory::new();
+    let host = durable_host(&dir)?;
+    host.offer(3000)?;
+    drop(host);
+    let mut file = std::fs::OpenOptions::new().append(true).open(dir.path())?;
+    file.write_all(&99u32.to_le_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    assert!(reopen_host(&dir, 4000).is_err());
+    assert!(durable_host(&dir).is_err()); // no create-or-reset
+    assert!(
+        ServiceLeaseFileV1::open(&dir.0.join("missing"), zeroize::Zeroizing::new([91; 32]))
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn host_write_failure_never_releases_a_lease() -> Result<()> {
+    let mut b = book();
+    let checkpoint = b.checkpoint()?;
+    let owner = Arc::new(MemoryCheckpoint(
+        Mutex::new(checkpoint.clone()),
+        false.into(),
+    ));
+    b.attach_persistence(owner.clone(), &checkpoint)?;
+    let host = ServiceLeaseHostV1::new(key(2), b)?;
+    owner.1.store(true, std::sync::atomic::Ordering::Release);
+    assert!(host.offer(3000).is_err());
+    owner.1.store(false, std::sync::atomic::Ordering::Release);
+    assert!(host.offer(4000).is_err());
+    let b = restore(&owner.0.lock().unwrap(), 4000)?;
+    assert_eq!(
+        b.entries[&key(2).verifying_key().to_bytes()]
+            .current
+            .sequence,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn offer_cannot_extend_authority_with_a_self_signed_source() -> Result<()> {
+    let dir = HostDirectory::new();
+    let host = durable_host(&dir)?;
+    let mut offer = host.offer(3000)?;
+    offer.sources[0].manifest.signatures.clear();
+    directory::sign_bootstrap_manifest_v1(&mut offer.sources[0].manifest, &key(2))?;
+    let mut b = book();
+    assert!(accept_offer(&mut b, offer, 3000).is_err());
+    assert_eq!(b.routes(3000)?[0].sequence, 1);
+    let mut wrong = host.offer(4000)?;
+    wrong.version = 1;
+    assert!(accept_offer(&mut b, wrong, 4000).is_err());
+    Ok(())
+}
+
+#[test]
+fn online_refresh_keeps_independent_sources_and_local_priorities() -> Result<()> {
+    let dir = HostDirectory::new();
+    let host = durable_host(&dir)?;
+    let mut other = source(vec![record(5, 1, 1000, 400_000)], 1000);
+    other.manifest.manifest_id = "independent-source".into();
+    directory::sign_bootstrap_manifest_v1(&mut other.manifest, &key(1))?;
+    let mut sources = book().sources();
+    sources.push(other);
+    let mut client = ServiceLeaseBookV1::new(
+        BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+        sources,
+        2000,
+    )?;
+    let mut offer = host.offer(3000)?;
+    offer.sources[0].source_kind = BootstrapSourceKindV1::Official;
+    offer.sources[0].priority = 999;
+    accept_offer(&mut client, offer, 3000)?;
+    assert_eq!(client.routes(3000)?.len(), 2);
+    assert_eq!(
+        client.sources()[0].source_kind,
+        BootstrapSourceKindV1::FriendInvite
+    );
+    assert_eq!(client.sources()[0].priority, 0);
+    host.replace_sources(vec![source(vec![], 4000)], 4000)?;
+    assert!(accept_offer(&mut client, host.offer(5000)?, 5000).is_err());
+    assert_eq!(client.routes(5000)?.len(), 1);
+    assert_eq!(
+        client.routes(5000)?[0].relay_public_key,
+        key(5).verifying_key().to_bytes()
+    );
+    Ok(())
+}
+
+#[test]
+fn durable_host_child() -> Result<()> {
+    let Some(path) = std::env::var_os("NOVOVM_TEST_LEASE_JOURNAL") else {
+        return Ok(());
+    };
+    // Test-only keys and clocks. Reopen existing history, never create on error.
+    let (file, checkpoint) = ServiceLeaseFileV1::open(
+        std::path::Path::new(&path),
+        zeroize::Zeroizing::new([91; 32]),
+    )?;
+    let mut book = restore(&checkpoint, 10_000)?;
+    book.attach_persistence(file, &checkpoint)?;
+    let host = ServiceLeaseHostV1::new(key(2), book)?;
+    let _lost_response = host.offer(10_000)?;
+    Ok(())
+}
+
+#[test]
+fn real_process_restarts_do_not_reissue_lost_responses() -> Result<()> {
+    let dir = HostDirectory::new();
+    drop(durable_host(&dir)?);
+    for expected in 2..=3 {
+        let mut command = std::process::Command::new(std::env::current_exe()?);
+        command
+            .args([
+                "--exact",
+                "product_service_lease::tests::durable_host_child",
+            ])
+            .env("NOVOVM_TEST_LEASE_JOURNAL", dir.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x08000000);
+        }
+        let mut child = command.spawn()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait()? {
+                ensure!(status.success(), "host child failed");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                anyhow::bail!("host child timed out");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let (_file, checkpoint) =
+            ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
+        let b = restore(&checkpoint, 11_000)?;
+        assert_eq!(
+            b.entries[&key(2).verifying_key().to_bytes()]
+                .current
+                .sequence,
+            expected
+        );
+    }
+    Ok(())
+}
 fn accept(book: &mut ServiceLeaseBookV1, value: PeerSignedRelayRecordV1, now: u64) -> Result<()> {
     book.accept_renewal(
         value,
@@ -359,5 +609,93 @@ fn durable_failure_freezes_book_and_stale_writer_cannot_replace_newer_state() ->
     assert!(b.replace_sources(vec![source(vec![], 4000)], 4000).is_err());
     assert!(b.routes(4000).is_err());
     assert!(b.checkpoint().is_err());
+    Ok(())
+}
+#[tokio::test]
+async fn real_carrier_v2_refreshes_sources_and_durably_issues() -> Result<()> {
+    use crate::iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1};
+    use std::time::{Duration, Instant};
+    let config =
+        IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let end = Instant::now() + Duration::from_secs(20);
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+    let server_barrier = barrier.clone();
+    let server = with_iroh_scope_v1(
+        IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)?,
+        IrohControlV1::new(end, || Ok(()))?,
+        move |scope| {
+            Box::pin(async move {
+                let endpoint = IrohServiceEndpointV1 {
+                    instance: [4; 32],
+                    address: scope.address()?,
+                };
+                let initial = directory::sign_relay_record_v1(
+                    &key(2),
+                    "real-service",
+                    vec![endpoint.endpoint()?],
+                    1000,
+                    400_000,
+                    1,
+                )?;
+                tx.send(source(vec![initial.clone()], 1000))
+                    .map_err(|_| anyhow::anyhow!("fixture receiver ended"))?;
+                let dir = HostDirectory::new();
+                let mut book = ServiceLeaseBookV1::new(
+                    BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+                    vec![source(vec![initial], 1000)],
+                    2000,
+                )?;
+                let checkpoint = book.checkpoint()?;
+                let file = ServiceLeaseFileV1::create(
+                    &dir.path(),
+                    zeroize::Zeroizing::new([91; 32]),
+                    &checkpoint,
+                )?;
+                book.attach_persistence(file, &checkpoint)?;
+                let host = ServiceLeaseHostV1::new(key(2), book)?;
+                for _ in 0..3 {
+                    let mut stream = scope.accept_inbound().await?.into();
+                    serve_service_offer_v2(&mut stream, &host, || Ok(3000)).await?;
+                    // Receive an explicit fixture ACK before closing the connection.
+                    ensure!(stream.read_frame().await? == b"fixture-ack", "fixture ACK");
+                    server_barrier.wait().await;
+                }
+                Ok(())
+            })
+        },
+    );
+    let client = async {
+        let source = rx.await?;
+        let mut b = ServiceLeaseBookV1::new(
+            BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+            vec![source],
+            2000,
+        )?;
+        let route = IrohServiceEndpointV1::from_record(&b.routes(2000)?[0])?;
+        with_iroh_scope_v1(config, IrohControlV1::new(end, || Ok(()))?, move |scope| {
+            Box::pin(async move {
+                for seq in 2..=4 {
+                    let mut stream = scope.connect(&route.address).await?.into();
+                    let r = request_service_offer_v2(&mut stream).await?;
+                    assert_eq!(r.lease.as_ref().unwrap().sequence, seq);
+                    b.accept_offer(
+                        r,
+                        key(2).verifying_key().to_bytes(),
+                        route.address.endpoint_key,
+                        [4; 32],
+                        3000,
+                    )?;
+                    stream.write_frame(b"fixture-ack").await?;
+                    barrier.wait().await;
+                }
+                Ok(())
+            })
+        })
+        .await
+    };
+    let (a, b) = tokio::join!(server, client);
+    a?;
+    b?;
     Ok(())
 }

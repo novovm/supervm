@@ -8,6 +8,36 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-11 耐久节点签发与 V2 签名来源刷新
+
+输入 `e9e7dc3a`，认领 `bf99ad39`。通用实现位于 network 的
+`product_service_host.rs` / `product_service_file.rs`，由既有
+`product_service_lease.rs` 导出。ServiceLeaseHostV1 仅接收已经附接耐久存储的
+ServiceLeaseBook，复用已有根信任、来源、签名记录及序号校验。签发先将完整
+授权状态 CAS 提交并 sync，再交付租约；丢回包/节点进程退出不会复用序号。
+服务端只持节点签名密钥，来源须由独立受信发布者签名，不能自授新根或续权。
+
+显式 `NVLSRQ02/NVLSRS02` 前导返回有界签名来源及在线租约，最大 16 KiB，
+不探测或回退 V1；原 V1 API 供显式旧调用保留，不由新客户端使用。客户端
+accept_offer 按已批准来源 ID 合并，保留其他来源、当地 source kind/priority；
+新来源 ID、换锚、回滚和复活撤销均拒绝。有效签名撤销先保存，即使节点不再
+有租约也不能继续聊天 IO。在线租约最多 120 秒，可缩短；来源最多 10 分钟。
+
+ServiceLeaseFileV1 使用独立外部存储密钥、XChaCha20-Poly1305 随机 nonce 和
+链式 AAD，持有 OS 文件锁；create 与 open 分开，缺失/破损/错密钥/旧 CAS/
+不确定写入停止，绝不自动重置。每次写入重验有界日志后追加并 sync。日志上限
+16 MiB，达到上限停止，尚无压缩/轮转；不是无限运行/性能签收。平台安装 owner
+仍须提供私有、备份排除目录和密钥保护，本模块不在磁盘存密钥；完整有效旧备份
+回放与恶意管理员回滚仍需外部 freshness anchor。现有 Windows WSS 安装器未
+接到该 Iroh service host，不把测试进程称为完成安装的自主节点。
+
+Windows `cargo test -p novovm-network --features iroh-transport,tls-transport
+--lib product_service_lease -- --test-threads=1` **24 通过**：两次真实子进程重开、
+真实 loopback Iroh V2 交换、签发先落盘/丢回包、独立来源保留、签名刷新/撤销、
+错根、错密钥、残缺日志及写失败等。严格 all-targets Clippy 通过，日志
+`artifacts/service-host-{tests,clippy}.log`。未重跑全网络套件，未操作金融/AOEM/
+共识、手机或路由器，不宣称匿名、生产安装或手机跨网签收。认领释放。
+
 ## 2026-10-11 节点授权耐久恢复契约
 
 输入 `22d6d9d4`，认领 `d88394d0`。`product_service_checkpoint.rs` 是已有

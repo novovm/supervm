@@ -458,3 +458,12 @@ mod tests;
 #[path = "product_service_checkpoint.rs"]
 mod checkpoint;
 pub use checkpoint::{ServiceLeasePersistenceV1, MAX_SERVICE_CHECKPOINT_BYTES};
+
+#[path = "product_service_host.rs"]
+mod host;
+pub use host::{
+    request_service_offer_v2, serve_service_offer_v2, ServiceLeaseHostV1, ServiceLeaseOfferV2,
+};
+#[path = "product_service_file.rs"]
+mod file;
+pub use file::ServiceLeaseFileV1;
