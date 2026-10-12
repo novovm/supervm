@@ -74,6 +74,19 @@ pub enum BootstrapRefreshEventV1 {
     Complete,
 }
 
+/// Every bounded attempt failed at the transport layer while an attempted
+/// mirror's original permission remained live. Only an outer authorized task
+/// owner may start a fresh operation; this never extends an invitation or scope.
+/// Protocol, signature, storage, cancellation and expiry errors do not use it.
+#[derive(Debug)]
+pub struct BootstrapTransportUnavailableV1(());
+impl std::fmt::Display for BootstrapTransportUnavailableV1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("approved bootstrap mirrors temporarily unavailable")
+    }
+}
+impl std::error::Error for BootstrapTransportUnavailableV1 {}
+
 /// Compatibility entry point; callers needing diagnostics use the same owner.
 pub async fn refresh_bootstrap_sources_v1(
     scope: &IrohScopeV1,
@@ -98,8 +111,10 @@ pub async fn refresh_bootstrap_sources_observed_v1(
 ) -> Result<()> {
     use BootstrapRefreshEventV1::*;
     ensure!((1..=2).contains(&peers.len()), "bootstrap mirror budget");
+    let started_at = now()?;
     let until = Instant::now() + Duration::from_secs(12);
     let mut last = PermissionExpired;
+    let mut failed_permission_until = 0;
     for pass in 0..2 {
         if pass > 0 {
             scope.check_authority()?;
@@ -134,6 +149,7 @@ pub async fn refresh_bootstrap_sources_observed_v1(
                     .await
                 {
                     Err(_) => {
+                        failed_permission_until = failed_permission_until.max(peer.expires_at_ms);
                         last = ConnectTimeout;
                         observe(last);
                         continue;
@@ -141,6 +157,7 @@ pub async fn refresh_bootstrap_sources_observed_v1(
                     Ok(Err(error))
                         if error.downcast_ref::<IrohConnectUnavailableV1>().is_some() =>
                     {
+                        failed_permission_until = failed_permission_until.max(peer.expires_at_ms);
                         last = ConnectUnavailable;
                         observe(last);
                         continue;
@@ -161,11 +178,13 @@ pub async fn refresh_bootstrap_sources_observed_v1(
             .await
             {
                 Err(_) => {
+                    failed_permission_until = failed_permission_until.max(peer.expires_at_ms);
                     last = ReadTimeout;
                     observe(last);
                     continue;
                 }
                 Ok(Err(error)) if is_carrier_io_failure(&error) => {
+                    failed_permission_until = failed_permission_until.max(peer.expires_at_ms);
                     last = ReadUnavailable;
                     observe(last);
                     continue;
@@ -216,7 +235,16 @@ pub async fn refresh_bootstrap_sources_observed_v1(
         }
     }
     observe(last);
-    anyhow::bail!("approved bootstrap mirrors unavailable")
+    // A transport timeout can race revocation/expiry. Never turn that race into
+    // permission to retry, or classify an unattempted expired peer as transient.
+    scope.check_authority()?;
+    let finished_at = now()?;
+    ensure!(finished_at >= started_at, "bootstrap clock rollback");
+    ensure!(
+        failed_permission_until > finished_at,
+        "bootstrap permission expired"
+    );
+    Err(BootstrapTransportUnavailableV1(()).into())
 }
 
 #[cfg(test)]

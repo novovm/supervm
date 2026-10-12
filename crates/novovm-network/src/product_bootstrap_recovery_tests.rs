@@ -5,7 +5,7 @@ use crate::{
     iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
     product_bootstrap_refresh::{
         refresh_bootstrap_sources_observed_v1, BootstrapRefreshEventV1 as Event,
-        BootstrapRefreshPeerV1,
+        BootstrapRefreshPeerV1, BootstrapTransportUnavailableV1,
     },
 };
 use std::{
@@ -92,7 +92,7 @@ async fn exchange(mode: &'static str) -> Result<()> {
                     if mode == "reset" || mode == "slow" {
                         result?;
                     } else {
-                        assert!(result.is_err());
+                        assert!(!result.unwrap_err().is::<BootstrapTransportUnavailableV1>());
                     }
                     Ok(())
                 })
@@ -131,6 +131,100 @@ async fn exchange(mode: &'static str) -> Result<()> {
             saved.lock().unwrap().sources()[0].manifest.issued_at_ms,
             1000
         );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn bootstrap_recovery_exhaustion_is_typed_only_under_live_original_permission() -> Result<()>
+{
+    use std::sync::atomic::AtomicU64;
+    for mode in ["unavailable", "expired", "revoked", "clock_rollback"] {
+        let end = Instant::now() + Duration::from_secs(10);
+        let wall = Arc::new(AtomicU64::new(3000));
+        let revoked = Arc::new(AtomicBool::new(false));
+        let gate = revoked.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let server = with_iroh_scope_v1(config()?, IrohControlV1::new(end, || Ok(()))?, |scope| {
+            Box::pin(async move {
+                tx.send(scope.address()?).unwrap();
+                for _ in 0..2 {
+                    let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
+                    stream.read_frame().await?;
+                    drop(stream); // Lose both responses on real QUIC streams.
+                }
+                // Keep the endpoint alive until both resets reach the client.
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok(())
+            })
+        });
+        let client = async move {
+            let peer = BootstrapRefreshPeerV1 {
+                address: rx.await?,
+                expires_at_ms: 10_000,
+            };
+            let book = Arc::new(Mutex::new(book()));
+            let before = book.lock().unwrap().checkpoint()?;
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let saved = book.clone();
+            let recorded = events.clone();
+            let result = with_iroh_scope_v1(
+                config()?,
+                IrohControlV1::new(end, move || {
+                    ensure!(!gate.load(Ordering::Acquire), "test permission revoked");
+                    Ok(())
+                })?,
+                move |scope| {
+                    Box::pin(async move {
+                        refresh_bootstrap_sources_observed_v1(
+                            scope,
+                            &[peer],
+                            &book,
+                            || Ok(wall.load(Ordering::Acquire)),
+                            |event| {
+                                let mut events = events.lock().unwrap();
+                                events.push(event);
+                                if events
+                                    .iter()
+                                    .filter(|e| **e == Event::ReadUnavailable)
+                                    .count()
+                                    == 2
+                                {
+                                    match mode {
+                                        "expired" => wall.store(10_000, Ordering::Release),
+                                        "clock_rollback" => wall.store(2999, Ordering::Release),
+                                        "revoked" => revoked.store(true, Ordering::Release),
+                                        _ => {}
+                                    }
+                                }
+                            },
+                        )
+                        .await
+                    })
+                },
+            )
+            .await;
+            let error = result.unwrap_err();
+            assert_eq!(
+                error.is::<BootstrapTransportUnavailableV1>(),
+                mode == "unavailable",
+                "{mode}: {error:#}"
+            );
+            assert_eq!(saved.lock().unwrap().checkpoint()?, before);
+            assert_eq!(
+                recorded
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|e| **e == Event::Connecting)
+                    .count(),
+                2
+            );
+            Ok::<_, anyhow::Error>(())
+        };
+        let (server, client) = tokio::join!(server, client);
+        server?;
+        client?;
     }
     Ok(())
 }

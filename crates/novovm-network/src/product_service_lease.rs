@@ -223,7 +223,24 @@ impl ServiceLeaseBookV1 {
                 if next.grant == previous.grant {
                     next.current = previous.current.clone();
                 } else {
-                    newer(&previous.current, &next.grant)?;
+                    if next.grant.issued_at_ms < previous.current.issued_at_ms {
+                        // A separately publisher-authorized epoch can be prepared
+                        // while the old epoch still issues online leases. Its
+                        // reserved sequence must exceed ALL consumed old leases;
+                        // only a fresh instance AND carrier may use this ordering.
+                        // Grant/source time checks above and the local clock are
+                        // unchanged. Online renewal still uses strict `newer`.
+                        let old = IrohServiceEndpointV1::from_record(&previous.current)?;
+                        let fresh = IrohServiceEndpointV1::from_record(&next.grant)?;
+                        ensure!(
+                            next.grant.sequence > previous.current.sequence
+                                && fresh.instance != old.instance
+                                && fresh.address.endpoint_key != old.address.endpoint_key,
+                            "service lease rollback"
+                        );
+                    } else {
+                        newer(&previous.current, &next.grant)?;
+                    }
                 }
             } else {
                 tombstones.insert(*pin);

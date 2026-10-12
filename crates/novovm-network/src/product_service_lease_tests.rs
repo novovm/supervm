@@ -53,6 +53,69 @@ fn book() -> ServiceLeaseBookV1 {
     .unwrap()
 }
 
+fn prepared_epoch(
+    sequence: u64,
+    issued: u64,
+    instance: [u8; 32],
+    carrier: u8,
+) -> PeerSignedRelayRecordV1 {
+    let mut endpoint = address(carrier);
+    endpoint.instance = instance;
+    directory::sign_relay_record_v1(
+        &key(2),
+        "service",
+        vec![endpoint.endpoint().unwrap()],
+        issued,
+        400_000,
+        sequence,
+    )
+    .unwrap()
+}
+
+#[test]
+fn prepared_epoch_survives_old_online_renewal_and_durable_restore() -> Result<()> {
+    let mut b = book();
+    let next = prepared_epoch(66, 2500, [5; 32], 6);
+    accept(&mut b, record(2, 2, 3000, 100_000), 3000)?;
+    let mut recovered = restore(&b.checkpoint()?, 3100)?;
+    recovered.replace_sources(vec![source(vec![next.clone()], 2600)], 3100)?;
+    assert_eq!(recovered.routes(3100)?, vec![next.clone()]);
+    let mut recovered = restore(&recovered.checkpoint()?, 3200)?;
+    assert_eq!(recovered.routes(3200)?, vec![next]);
+    assert!(accept(&mut recovered, record(2, 3, 3300, 100_000), 3300).is_err());
+    Ok(())
+}
+
+#[test]
+fn prepared_epoch_never_waives_rollback_signature_or_revocation() -> Result<()> {
+    for bad in [
+        prepared_epoch(2, 2500, [5; 32], 6), // no fresh sequence reservation
+        prepared_epoch(66, 999, [5; 32], 6), // before previous independent grant
+        prepared_epoch(66, 2500, [4; 32], 6), // same instance
+        prepared_epoch(66, 2500, [5; 32], 3), // same transport identity
+    ] {
+        let mut b = book();
+        accept(&mut b, record(2, 2, 3000, 100_000), 3000)?;
+        let old = b.routes(3000)?;
+        assert!(b
+            .replace_sources(vec![source(vec![bad], 2600)], 3100)
+            .is_err());
+        assert_eq!(b.routes(3100)?, old);
+    }
+    let next = prepared_epoch(66, 2500, [5; 32], 6);
+    let mut b = book();
+    accept(&mut b, record(2, 2, 3000, 100_000), 3000)?;
+    let mut forged = source(vec![next.clone()], 2600);
+    forged.manifest.signatures[0].signature[0] ^= 1;
+    assert!(b.replace_sources(vec![forged], 3100).is_err());
+    b.replace_sources(vec![source(vec![], 3200)], 3200)?;
+    assert!(b
+        .replace_sources(vec![source(vec![next], 3300)], 3300)
+        .is_err());
+    assert!(b.routes(3300)?.is_empty());
+    Ok(())
+}
+
 struct HostDirectory(std::path::PathBuf);
 impl HostDirectory {
     fn new() -> Self {

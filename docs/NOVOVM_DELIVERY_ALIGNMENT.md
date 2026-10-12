@@ -1,12 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-12 自动恢复第二刀认领（进行中）：** NOVOCHAT 会话，输入 `9cfaf15b`，
+**2026-10-12 自动恢复第二刀认领（已释放）：** NOVOCHAT 会话，输入 `9cfaf15b`，
 已核对 main、本地/远端及干净工作区。限定 network 的 `product_service_lease.rs`、
 对应租约测试、`product_bootstrap_refresh.rs` 和来源刷新测试；relay 的
 `tests/rendezvous_owner_process.rs` 及必要的原任期 owner 接线、交付记录。
 先复现预备任期与旧任期在线续约的排序冲突，再提供纯来源传输不可达的类型化
 结果；签名、撤销、回滚与原许可期限保持。复用既有协议，不改 AOEM、金融、共识
-或 KINGCLUB。组件与真实进程通过后由 NOVOCHAT 接回有界自动恢复并单列手机验收。
+或 KINGCLUB。认领 `e1ec8b5f`，租约/来源恢复 39 项、来源许可 1 项、Windows
+真实节点/发布者/镜像进程 5/5/4 项与 network/relay 严格 Clippy 通过。
+NOVOCHAT 接回有界自动恢复并单列手机验收；本片不签收手机或匿名能力。
 
 **2026-10-12 租约生效等待与网络校时认领（已释放）：** NOVOCHAT 会话，输入
 `0eb59a2b`，已核对本地/远端 main 一致、工作区干净。限定 network 的

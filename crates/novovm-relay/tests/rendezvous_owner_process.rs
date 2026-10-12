@@ -180,11 +180,12 @@ async fn exchange(record: &PeerSignedRelayRecordV1, source: BootstrapSourceV1) -
                 let mut rpc =
                     DiscoveryClient::connect(&mut stream, &key(73), node, endpoint.instance)
                         .await?;
-                rpc.put([11; 32], 1, 2000, vec![12; 128]).await?;
-                let value = rpc.get([11; 32]).await?.context("missing opaque object")?;
+                let slot = rand::random(); // Each probe is a distinct test object.
+                rpc.put(slot, 1, 2000, vec![12; 128]).await?;
+                let value = rpc.get(slot).await?.context("missing opaque object")?;
                 assert_eq!(value.ciphertext, vec![12; 128]);
-                assert!(rpc.ack([11; 32], value.revision, value.digest).await?);
-                assert!(!rpc.ack([11; 32], value.revision, value.digest).await?);
+                assert!(rpc.ack(slot, value.revision, value.digest).await?);
+                assert!(!rpc.ack(slot, value.revision, value.digest).await?);
                 rpc.close().await?;
                 Ok(())
             })
@@ -203,7 +204,7 @@ async fn protected_owner_prepares_next_epoch_and_recovers_identity_without_raw_k
     seen.insert(first.sequence);
     let source = fixture.approve(&first)?;
     tokio::time::sleep(Duration::from_millis(150)).await;
-    exchange(&first, source).await?;
+    exchange(&first, source.clone()).await?;
     let protected_keys = std::fs::read(fixture.0.join("keys.dpapi"))?;
     let second = fixture.proposal(&seen).await?;
     seen.insert(second.sequence);
@@ -227,6 +228,14 @@ async fn protected_owner_prepares_next_epoch_and_recovers_identity_without_raw_k
         published[0].manifest.relay_records[0], first,
         "prepared/unapproved epoch leaked to distribution"
     );
+    // The old epoch remains live while the next proposal awaits its publisher.
+    // Its online lease is now newer in wall time than the reserved next grant.
+    // Handoff must order separate epochs by the reserved sequence, without
+    // accepting a stale online renewal or making an unapproved route visible.
+    assert!(now_ms()? > second.issued_at_ms);
+    exchange(&first, source)
+        .await
+        .context("old epoch online renewal during preparation")?;
     let source = fixture.approve(&second)?;
     tokio::time::sleep(Duration::from_millis(250)).await;
     exchange(&second, source).await?;

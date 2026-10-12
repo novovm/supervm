@@ -8,6 +8,35 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-12 预备任期交接与来源传输耗尽
+
+输入 `9cfaf15b`，认领 `e1ec8b5f`。NOVOCHAT 上轮实机节点报 `service lease
+rollback`。新增确定性回归复现：新任期提前签名之后，旧任期继续签发在线租约；
+新 grant 的时间早于旧 current，原统一排序误拒绝合法交接。
+
+调用链仍为 `rendezvous_owner::run_inner → run_owned_rendezvous_epoch_v2 →
+ServiceLeaseBookV1::replace_sources`。保持独立发布者验签、source/grant 时间
+不倒退、持久序列及撤销历史；只有新实例和新传输公钥同时变化、授权序列严格
+大于已消费在线序列，才允许提前准备的 grant 早于旧在线续约。同任期在线续约
+仍使用原 `newer` 检查，不重置日志、时钟或身份。相同序列、旧 grant 时间、单独
+换实例/公钥、假签名和撤销复活均拒绝。节点/客户端复用同一规则，wire 未变。
+
+`refresh_bootstrap_sources_observed_v1` 在原两轮/两节点/12 秒预算内耗尽纯
+传输尝试后，检查原 scope、实际尝试过的镜像许可期限和墙钟未倒退，再返回
+`BootstrapTransportUnavailableV1`。外层可在原用户许可内退役旧任务后重开；
+协议/签名/存储、撤销、过期仍返回终止错误。类型不能由外部随意构造，不按
+错误文本判断。失败不写来源缓存、不使用旧路由；已提交撤销不会因丢 ACK 撤回。
+
+Windows 本机验证：租约/来源刷新 **39/39**，镜像许可 **1/1**；真实节点
+进程 **5/5**、独立发布者 **5/5**、镜像 **4/4**；network/relay all-targets
+Clippy `-D warnings` 通过。真实进程增强覆盖预备新任期时继续请求旧任期、
+切换后通信及重启身份/序列保持。首次新增进程探测复用了已 ACK 的寻址键，
+被去重拒绝；改用每次独立的测试对象后通过，没有降低产品去重检查。来源新
+故障用例初次因测试闭包生命周期编译失败，修正后通过；不计入通过样本。
+日志在本机忽略目录 `artifacts/recovery2-{before-network,network,process,
+owner-final,clippy}.log`。手机原消息/断网恢复由 NOVOCHAT 单列，未预报结果。
+无 AOEM/金融/共识、默认 Privacy、载体自主性或匿名能力位变更。
+
 ## 2026-10-12 在线租约生效等待与差分校准策略
 
 输入 `0eb59a2b`，认领 `f634fb43`。原 `accept_offer` 的来源、撤销持久化与严格
