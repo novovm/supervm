@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-12 租约生效等待与网络校时认领：** NOVOCHAT 会话，输入
+`0eb59a2b`，已核对本地/远端 main 一致、工作区干净。限定 network 的
+`product_service_host.rs`、`product_service_lease.rs` 及相邻测试、网络校时设计与
+交付记录。为已认证但略早于本机时间的在线租约增加有界等待，生效前不授予
+业务权限，不接受过期记录；默认 Privacy、撤销、原始期限和金融/AOEM/共识
+边界保持。分布式差分校时先明确可信来源、误差区间和验收，不把等待当作已完成
+全网时钟同步。NOVOCHAT 复用这一通用入口接回普通聊天自动循环并继续真机验证。
+
 **2026-10-12 多路径自主通讯设计（仅文档，已完成）：** 用户要求逐行评估
 386 行外部参考，基线 SUPERVM `6f05f98f` / NOVOCHAT `9f0f7f3`。
 形成 [NOVONET Transport Policy v1](NOVONET_TRANSPORT_POLICY_V1.md)：复用现有
