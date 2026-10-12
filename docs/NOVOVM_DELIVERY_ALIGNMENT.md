@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-13 E64 首错与来源生命周期认领（进行中）：** NOVOCHAT 会话，输入
+`b774d32a`，已 fetch 核对 main、本地/远端一致、工作区干净。限定 network 的
+`iroh_transport.rs`、`product_bootstrap_refresh.rs`、`product_service_host.rs` 及
+相邻回归、两份交付台账；先补固定协议子类型/首错阶段，不记录身份、地址或
+远端原因文本。仅在真实故障证实分类错误后修改恢复语义；版本/签名/撤销仍拒绝，
+不增加重试或任务预算。NOVOCHAT 接统一任务轨迹、许可到期边界并恢复两条原消息。
+不改 AOEM、金融、共识、网卡/路由器、防火墙或 KINGCLUB；多轮实机验收单列。
+
 **2026-10-12 E83 端点回收认领（已释放）：** NOVOCHAT 会话，输入 `fc3eab44`，已 fetch
 核对 main、本地/远端一致、工作区干净。限定 `iroh_transport.rs` 及载体回归、
 固定 Iroh 1.3.0 的 `vendor/iroh` 源码与许可证/补丁来源记录、network Cargo
