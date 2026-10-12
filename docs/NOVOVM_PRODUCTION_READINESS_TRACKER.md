@@ -8,6 +8,34 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 UDP 操作系统关闭完成屏障
+
+输入 `33903231`，认领 `0e133992`。未改代码先运行旧黑洞 QUIC 用例，首轮
+复现 `local driver retained UDP socket`。进一步核对本机固定 netwatch 0.19.3：
+`UdpSocket::Drop` 通过 spawn_blocking 关闭 OS socket，但不等待该任务；只等待
+actor/QUIC driver 并不能证明端口已释放。新用例占住 Tokio 唯一 blocking
+worker，旧实现仍在 0.06 秒报告关闭成功，因此确定存在缺失的 OS 完成屏障。
+
+补丁位于固定 `vendor/iroh`：`IpTransport::close_handle` →
+`Transports::ip_close_handles` → `EndpointInner::bind/close_inner`。
+保留每个已配置 IP socket 的 Arc，停止并等待 actor/QUIC driver 后，逐个显式
+等待 `UdpSocket::close()`，最后才返回 Some(drained)。不增加 socket、不编辑
+全局 Cargo registry、不改 wire/签名/隐私/重试/消息模型。原五秒总关闭上限
+覆盖该等待，超时或取消仍失败；Drop/abort 不宣称 join 完成。Relay-only 无 IP
+socket 时该集合为空。原始导入 SHA256 清单保持，补丁文件目录记录已更新。
+
+Windows 验证：载体 **25/25**（10.71s）、租约 **41/41**（15.50s），
+network/relay all-targets Clippy `-D warnings`、改动文件 rustfmt 与 diff 检查
+通过。旧黑洞用例加强为保留 endpoint/connecting handle 时立即 bind；与阻塞池
+用例连续 **30 轮、60/60**，不使用 sleep 或 bind 重试冒充关闭完成。
+原失败日志保留：`artifacts/recovery18-{drain-before-1,os-close-red}.log`；
+通过日志：`recovery18-{carrier,leases,clippy,close-repeat-*}.log`。
+
+本片修复并验证此具体 OS close race，不宣称所有平台/上游任务已完整审计。
+NOVOCHAT 样本 17 的约 95 秒恢复含多次任务/对端认证交接，不归因于单次 close；
+历史手机 E64、长期连续性、自主载体和匿名性保持未签收。正式手机结果由
+NOVOCHAT 单列，通用网络能力仍沉淀在 SUPERVM。
+
 ## 2026-10-13 来源刷新首错的有界协议诊断
 
 输入 `b774d32a`、认领 `b116cb6d`，NOVOCHAT `cab7edd` 手机来源刷新 E64 尚未

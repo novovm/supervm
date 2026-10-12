@@ -168,6 +168,11 @@ impl From<Config> for SocketAddr {
 }
 
 impl IpTransport {
+    /// Keep a close handle independent of the QUIC driver's transport ownership.
+    pub(super) fn close_handle(&self) -> Arc<UdpSocket> {
+        self.socket.clone()
+    }
+
     pub(crate) fn bind(config: Config, metrics: Arc<SocketMetrics>) -> io::Result<Self> {
         let addr: SocketAddr = config.into();
         debug!(?addr, "binding");

@@ -213,6 +213,10 @@ pub(crate) struct EndpointInner {
     endpoint: noq::Endpoint,
     // Runtime used by noq
     runtime: Arc<Runtime>,
+    // netwatch's Drop detaches the OS close. Keep these sockets alive until
+    // the close owner can explicitly await it after stopping their drivers.
+    #[cfg(not(wasm_browser))]
+    ip_close_handles: Vec<Arc<netwatch::UdpSocket>>,
     /// Static configuration for the endpoint.
     pub(crate) static_config: StaticConfig,
 }
@@ -940,6 +944,9 @@ impl EndpointInner {
         )
         .map_err(|err| e!(BindError::Sockets, err))?;
 
+        #[cfg(not(wasm_browser))]
+        let ip_close_handles = transports.ip_close_handles();
+
         if let Some(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
             if let transports::Addr::Ip(SocketAddr::V4(addr)) = t {
                 Some(addr.port())
@@ -1109,6 +1116,8 @@ impl EndpointInner {
             actor_task,
             endpoint,
             runtime,
+            #[cfg(not(wasm_browser))]
+            ip_close_handles,
             static_config,
         })
     }
@@ -1215,6 +1224,15 @@ impl EndpointInner {
         // Expects that the `noq::Endpoint` has been closed before this call,
         // otherwise, the runtime will never shutdown.
         self.runtime.shutdown().await;
+
+        // Actor-owned rebinding and QUIC socket polling have stopped. Joining
+        // those tasks alone does not join netwatch's detached Drop close; its
+        // explicit close awaits the OS socket release on the blocking pool.
+        // Cancellation here still triggers CancelClose, never Some(...).
+        #[cfg(not(wasm_browser))]
+        for socket in &self.ip_close_handles {
+            socket.close().await;
+        }
 
         self.sock.shutdown.closed.store(true, Ordering::SeqCst);
 

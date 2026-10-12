@@ -412,6 +412,12 @@ impl Transports {
         })
     }
 
+    /// Retains the configured IP sockets for explicit, awaited local shutdown.
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn ip_close_handles(&self) -> Vec<Arc<netwatch::UdpSocket>> {
+        self.ip.iter().map(|t| t.close_handle()).collect()
+    }
+
     /// Returns the bound addresses for IP based transports
     #[cfg(not(wasm_browser))]
     pub(crate) fn ip_bind_addrs(&self) -> Vec<SocketAddr> {

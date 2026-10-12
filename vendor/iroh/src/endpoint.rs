@@ -1729,7 +1729,8 @@ impl Endpoint {
     }
 
     /// NOVOVM pinned patch: bound remote QUIC draining, then join local actors
-    /// and connection drivers before returning. `Some(false)` means that remote
+    /// and connection drivers and await IP socket closure before returning.
+    /// `Some(false)` means that remote
     /// draining timed out, NOT that local cleanup failed or application data was
     /// delivered. `None` means a close was already started; it is not a completion
     /// barrier for that other owner. Application stream completion stays separate.

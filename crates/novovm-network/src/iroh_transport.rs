@@ -1269,13 +1269,66 @@ mod tests {
         .unwrap();
         assert_eq!(drained, Some(false));
         assert!(endpoint.is_closed());
-        drop(connecting);
-        drop(endpoint);
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(
             std::net::UdpSocket::bind(port).is_ok(),
-            "local driver retained UDP socket"
+            "completed close retained UDP socket while endpoint handles remain"
         );
+        drop(connecting);
+        drop(endpoint);
+    }
+
+    #[test]
+    fn completed_close_waits_for_operating_system_socket_release() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let _permit = SERIAL.acquire().await.unwrap();
+            let endpoint = Endpoint::builder(presets::Minimal)
+                .alpns(vec![IROH_ALPN_V1.to_vec()])
+                .clear_address_lookup()
+                .relay_mode(RelayMode::Disabled)
+                .clear_ip_transports()
+                .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+                .unwrap()
+                .bind()
+                .await
+                .unwrap();
+            let port = endpoint.bound_sockets()[0];
+
+            // netwatch closes the OS socket on Tokio's blocking pool. Hold its
+            // sole worker to distinguish a joined close from a detached Drop.
+            // Dropping the sender also releases the worker on assertion panic.
+            let (release, held) = std::sync::mpsc::channel::<()>();
+            let (ready, started) = oneshot::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                let _ = ready.send(());
+                let _ = held.recv();
+            });
+            started.await.unwrap();
+            let mut close = Box::pin(endpoint.close_with_drain_timeout(Duration::from_millis(100)));
+            assert!(
+                tokio::time::timeout(Duration::from_millis(250), &mut close)
+                    .await
+                    .is_err(),
+                "close reported local completion before its OS close could run"
+            );
+            assert!(std::net::UdpSocket::bind(port).is_err());
+            drop(release);
+            blocker.await.unwrap();
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(2), close)
+                    .await
+                    .unwrap(),
+                Some(true)
+            );
+            assert!(endpoint.is_closed());
+            // No Drop, sleep or bind retry may be needed after Some(...).
+            assert!(std::net::UdpSocket::bind(port).is_ok());
+        });
     }
 
     #[tokio::test]
