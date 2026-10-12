@@ -1,5 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-13 UDP 本地回收屏障认领（进行中）：** NOVOCHAT 会话，输入
+`33903231`，已 fetch 核对 main/远端一致、工作区干净。原黑洞 QUIC 用例首轮
+复现 `local driver retained UDP socket`。限定 `iroh_transport.rs`、固定
+`vendor/iroh` 的关闭/任务归属实现和补丁记录、相邻测试与两份交付台账。
+先追踪真实 socket owner，再修本地完成屏障；不增加五秒总预算、不以 sleep
+或重试绑定掩盖未 join 的资源，不修改 wire/认证/Privacy/金融/AOEM/共识。
+NOVOCHAT 仅更新必要依赖输入并验收原数据下的正式手机恢复；约 95 秒慢恢复
+目前有多次对端认证交接证据，不能预先归因于该 UDP 问题。
+
 **2026-10-13 E64 首错与来源生命周期认领（已释放）：** NOVOCHAT 会话，输入
 `b774d32a`，已 fetch 核对 main、本地/远端一致、工作区干净。限定 network 的
 `iroh_transport.rs`、`product_bootstrap_refresh.rs`、`product_service_host.rs` 及
