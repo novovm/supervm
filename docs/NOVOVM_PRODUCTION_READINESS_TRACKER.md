@@ -36,6 +36,16 @@ NOVOCHAT 样本 17 的约 95 秒恢复含多次任务/对端认证交接，不�
 历史手机 E64、长期连续性、自主载体和匿名性保持未签收。正式手机结果由
 NOVOCHAT 单列，通用网络能力仍沉淀在 SUPERVM。
 
+接入 `2cf514f6` 后 NOVOCHAT 来源专项 14/14、正式 Android 构建和两机原位
+升级通过。样本 18 一次蜂窝中断 13.550 秒后约 24 秒重新认证，Wi-Fi 新消息
+持久确认，但蜂窝随后 source connect 阶段 E214 blocked：origin=3/code=2
+（QUIC CONNECTION_REFUSED）、offerStep=0/sourceCommitted=false。未继续第二、
+三轮；原待发消息保留。这与旧 E64 同属粗协议类别，但不证明旧样本皆为同因。
+镜像启动约 330 秒时拒接，接近 110 秒 epoch 交接；没有节点逐连接事件，不
+将其作为已证因果。应进一步验证初始拒接/停止接入与已认证流协议错误的区别，
+本片不扩大重试。Wi-Fi 20 次任务后原许可自然到期；所有本轮节点进程已定向
+停止，授权历史保持。手机详情在 NOVOCHAT `AUTOMATIC_RECOVERY.md` 样本 18。
+
 ## 2026-10-13 来源刷新首错的有界协议诊断
 
 输入 `b774d32a`、认领 `b116cb6d`，NOVOCHAT `cab7edd` 手机来源刷新 E64 尚未
