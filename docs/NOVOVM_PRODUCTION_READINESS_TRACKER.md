@@ -8,6 +8,35 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-12 端点关闭归属与本地完成屏障
+
+输入 `fc3eab44`，认领 `e3cfef8c`。NOVOCHAT 样本 11 在来源交换后出现 E83：
+旧 scope 将 endpoint.close 放到 detached task，五秒超时后 Application 会关闭
+所属 runtime，任务线程退出无法证明后台关闭完成。源代码另确认 Iroh 1.3.0
+开始 close 后的 is_closing 会阻止 abort。首个只检查 Drop 后 UDP 端口的本机
+用例在原版即通过，不将“取消一定泄漏端口”作为已复现结论。
+
+`with_iroh_scope_v1` 改为 inline 关闭；原五秒监督中，远端 QUIC 排空最多四秒，
+随后仍必须等待本地 actor（超时则 abort 后 await）与 QUIC task tracker 退出。
+本地完成后才释放 scope/许可并复核原授权；远端未排空记录计数，不能当作业务
+送达证据。业务流 finish、真实回执与原错误保持。取消或本地关闭超时仍失败，
+没有将 E83 加入自动重试名单，也没有延长原任务。并发第二个 close 返回 None，
+不伪装为另一个 owner 已完成。
+
+最小底层补丁固定在 `vendor/iroh` 1.3.0，保留 BSD3 许可、原 revision/package
+checksum 和逐文件 SHA256；只修改 endpoint.rs/socket.rs，network 路径依赖让
+手机/节点用同一补丁，根 workspace 排除此第三方包。详见
+[补丁来源与契约](../vendor/iroh/NOVOVM_PATCH.md)。未修改全局 Cargo 缓存、
+协议/密钥交换、外部服务选择、金融/AOEM/共识。
+
+Windows 载体 **23/23**（11.27s）、租约 **41/41**（15.38s），network/relay
+all-targets Clippy `-D warnings` 通过。新增真实 QUIC 用例覆盖取消已开始的
+close、端点停止、运行时仍在时 UDP 端口释放；真实 UDP 黑洞/三秒 initial RTT
+使远端排空未完成，100ms 测试预算后等待本地回收并验证端口立即可重新绑定。
+这是故障夹具的参数，不改变产品 RTT 或四秒预算。首轮编译缺 Duration 导入
+已修正，原失败日志保留。日志 `artifacts/recovery12-{before,carrier,leases,clippy}.log`。
+手机仍须以正常 APP/原消息验证，不由组件测试推定 E83 或全天候恢复已签收。
+
 ## 2026-10-12 新连接引导记录与既有在线租约分开读取
 
 输入 `1eb60c31`，认领 `db5ec3ee`。`ServiceLeaseBookV1::bootstrap_routes`

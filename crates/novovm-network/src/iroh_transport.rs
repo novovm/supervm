@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, OnceLock,
     },
     time::{Duration, Instant},
@@ -33,6 +33,14 @@ pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
 /// Adapter-owned active connections, including outbound attempts and inbound
 /// handshakes. This is NOT iroh's internal pending-Incoming queue limit.
 pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
+
+static FORCED_DRAINS: AtomicU64 = AtomicU64::new(0);
+
+/// Redacted process-wide diagnostics only; never an application receipt or
+/// authority to retry. Counts completed local shutdowns with timed-out remote drain.
+pub fn iroh_forced_drain_count_v1() -> u64 {
+    FORCED_DRAINS.load(Ordering::Relaxed)
+}
 
 /// A failure returned by an actual QUIC stream IO operation, or an explicit
 /// peer STOP. Only this carrier can construct the marker. It does not classify
@@ -284,8 +292,8 @@ where
     F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
 {
     control.check()?;
-    // Includes any graceful cleanup still running after its caller left. Never
-    // open unbounded endpoints or accumulate a queue of waiting scopes.
+    // A permit covers the operation and its inline local cleanup. No detached
+    // endpoint closer may outlive the runtime that owns the operation.
     let permit = ENDPOINT_LIMIT
         .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
         .clone()
@@ -351,25 +359,29 @@ where
     // Include post-operation authorization: a late success cannot revive a scope.
     let result = scope.control.check().and(result);
     if result.is_err() {
-        // Drop without starting close invokes iroh's abort path, cancelling all
-        // actors. Do not cancel an already-started close: in 1.3.0 that leaves
-        // is_closing set and prevents Drop from aborting the remaining tasks.
+        // Failed operations never gain success from endpoint cleanup.
         drop(scope);
         tokio::task::yield_now().await;
         drop(permit);
         return result;
     }
     let final_control = scope.control.clone();
-    let cleanup = tokio::spawn(async move {
-        scope.endpoint.close().await;
-        drop(scope);
-        drop(permit);
-    });
-    // Timing out this JoinHandle detaches it, not its future: it keeps driving
-    // close and holds the global permit. At most four such owners can exist.
-    tokio::time::timeout(Duration::from_secs(5), cleanup)
-        .await
-        .context("carrier graceful cleanup still running")??;
+    let cleanup = tokio::select! {
+        biased;
+        error = final_control.revoked() => Err(error),
+        closed = tokio::time::timeout(Duration::from_secs(5),
+            scope.endpoint.close_with_drain_timeout(Duration::from_secs(4))) => {
+            closed.context("carrier graceful cleanup still running")
+                .and_then(|value| value.context("carrier endpoint close already started"))
+        }
+    };
+    if matches!(cleanup, Ok(false)) {
+        FORCED_DRAINS.fetch_add(1, Ordering::Relaxed);
+    }
+    drop(scope);
+    tokio::task::yield_now().await;
+    drop(permit);
+    cleanup?;
     final_control.check().and(result)
 }
 
@@ -1086,6 +1098,100 @@ mod tests {
         .await;
         assert!(result.unwrap_err().to_string().contains("privacy required"));
         assert!(!entered.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn cancelled_endpoint_close_releases_socket_before_runtime_exit() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let bind = || async {
+            Endpoint::builder(presets::Minimal)
+                .alpns(vec![IROH_ALPN_V1.to_vec()])
+                .clear_address_lookup()
+                .relay_mode(RelayMode::Disabled)
+                .clear_ip_transports()
+                .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+                .unwrap()
+                .bind()
+                .await
+                .unwrap()
+        };
+        let client = bind().await;
+        let server = bind().await;
+        let port = client.bound_sockets()[0];
+        let accepted = async { server.accept().await.unwrap().await.unwrap() };
+        let (connection, incoming) =
+            tokio::join!(client.connect(server.addr(), IROH_ALPN_V1), accepted);
+        let connection = connection.unwrap();
+        let mut close = Box::pin(client.close());
+        assert!(futures_util::poll!(close.as_mut()).is_pending());
+        // The close has started, but its owner is cancelled while QUIC drains.
+        drop(close);
+        assert!(client.is_closed(), "cancelled close left a live endpoint");
+        drop(connection);
+        drop(client);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            if std::net::UdpSocket::bind(port).is_ok() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "cancelled close retained UDP socket"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        drop(incoming);
+        server.close().await;
+    }
+
+    #[tokio::test]
+    async fn bounded_drain_joins_local_drivers_without_waiting_for_unreachable_peer() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = Endpoint::builder(presets::Minimal)
+            .alpns(vec![IROH_ALPN_V1.to_vec()])
+            .clear_address_lookup()
+            .relay_mode(RelayMode::Disabled)
+            .clear_ip_transports()
+            .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+            .unwrap()
+            .transport_config(
+                QuicTransportConfig::builder()
+                    .initial_rtt(Duration::from_secs(3))
+                    .build(),
+            )
+            .bind()
+            .await
+            .unwrap();
+        let port = endpoint.bound_sockets()[0];
+        let peer = EndpointAddr::new(iroh::SecretKey::from_bytes(&[7; 32]).public())
+            .with_addrs([TransportAddr::Ip(sink.local_addr().unwrap())]);
+        let mut connecting = Box::pin(endpoint.connect(peer, IROH_ALPN_V1));
+        let mut packet = [0u8; 2048];
+        tokio::select! {
+            _ = &mut connecting => panic!("blackhole unexpectedly connected"),
+            packet = tokio::time::timeout(Duration::from_secs(2), sink.recv(&mut packet)) => {
+                assert!(packet.unwrap().unwrap() > 0);
+            }
+        }
+        // Actual unacknowledged QUIC traffic, no mock close future. The remote
+        // drain exceeds this budget; local drivers must nevertheless be joined.
+        let started = Instant::now();
+        let drained = tokio::time::timeout(
+            Duration::from_secs(2),
+            endpoint.close_with_drain_timeout(Duration::from_millis(100)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(drained, Some(false));
+        assert!(endpoint.is_closed());
+        drop(connecting);
+        drop(endpoint);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(
+            std::net::UdpSocket::bind(port).is_ok(),
+            "local driver retained UDP socket"
+        );
     }
 
     #[tokio::test]

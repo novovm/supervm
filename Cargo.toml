@@ -23,7 +23,7 @@ members = [
 ]
 # Retain post-isolation components as an independently tested implementation
 # source, not a second default product or an unreviewed legacy dependency.
-exclude = ["legacy/supervm-20261002", "runtime", "proofs/native-auth"]
+exclude = ["legacy/supervm-20261002", "runtime", "proofs/native-auth", "vendor/iroh"]
 resolver = "2"
 
 # Keep the post-isolation release arithmetic checks when restoring assembly.
