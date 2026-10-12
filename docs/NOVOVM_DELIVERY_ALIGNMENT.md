@@ -1,5 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-13 E83 端点回收认领：** NOVOCHAT 会话，输入 `fc3eab44`，已 fetch
+核对 main、本地/远端一致、工作区干净。限定 `iroh_transport.rs` 及载体回归、
+固定 Iroh 1.3.0 的 `vendor/iroh` 源码与许可证/补丁来源记录、network Cargo
+依赖、根 workspace 排除/锁文件和两份交付台账。修复优雅关闭开始后取消不能
+abort、后台清理与 Application runtime 寿命不一致的问题；保持五秒关闭预算，
+强制回收须有完成屏障，不以线程退出替代回收完成，不修改流 finish、认证、
+撤销/Privacy 或业务回执。NOVOCHAT 仅更新依赖锁、构建和原消息手机验证。
+不修改 AOEM、金融、共识、路由器、KINGCLUB；组件与手机结果分别记录。
+
 **2026-10-12 自动恢复第五刀认领（已释放）：** NOVOCHAT 会话，输入 `1eb60c31`，
 已 fetch 核对 main、本地/远端一致且工作区干净。限定 network 的
 `product_service_lease.rs`、相邻测试及本交付记录/生产台账，补充新连接专用的
