@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-12 自动恢复第五刀认领（进行中）：** NOVOCHAT 会话，输入 `1eb60c31`，
+**2026-10-12 自动恢复第五刀认领（已释放）：** NOVOCHAT 会话，输入 `1eb60c31`，
 已 fetch 核对 main、本地/远端一致且工作区干净。限定 network 的
 `product_service_lease.rs`、相邻测试及本交付记录/生产台账，补充新连接专用的
 已签名 bootstrap locator 读取，避免将上一连接即将到期的在线租约当作新连接
@@ -8,6 +8,10 @@
 撤销/任期/签名/回滚检查保持。NOVOCHAT 复用通用 API 做手机恢复验证，
 不改 AOEM、金融、共识、KINGCLUB 或路由器配置。冷启动会话许可另行核对，
 不把消息持久化当作联网授权。
+认领 `db5ec3ee`；`bootstrap_routes` 返回未改写的原签名记录，旧 `routes`、
+在线租约/撤销/来源有效期逻辑不变。租约回归 41/41，network all-targets
+严格 Clippy 通过；新增用例覆盖旧短租约剩余 50ms、持久恢复、来源先到期、
+撤销不可复活与任期换钥。手机耗时与验收由 NOVOCHAT 单列，不作连通保证。
 
 **2026-10-12 自动恢复第三刀认领（已释放）：** NOVOCHAT 会话，输入 `b5a30aad`，
 本地/远端 main 一致且工作区干净。限定 network 的 `iroh_transport.rs`、相邻

@@ -658,6 +658,63 @@ fn expired_renewal_can_only_bootstrap_again_with_unexpired_authority() {
     accept(&mut b, record(2, 3, 3100, 4100), 3100).unwrap();
     assert!(b.routes(400_000).unwrap().is_empty());
 }
+
+#[test]
+fn new_connection_locator_is_not_truncated_by_previous_online_lease() -> Result<()> {
+    let mut b = book();
+    let grant = b.bootstrap_routes(2000)?[0].clone();
+    let short = record(2, 2, 2000, 3000);
+    accept(&mut b, short.clone(), 2000)?;
+    // Reproduce the old admission input: a new attempt has just 50ms left even
+    // though the independent publisher's locator remains valid for minutes.
+    assert_eq!(b.routes(2950)?[0].expires_at_ms - 2950, 50);
+    assert_eq!(b.bootstrap_routes(2950)?, vec![grant.clone()]);
+    let checkpoint = b.checkpoint()?;
+    let mut restored = restore(&checkpoint, 2960)?;
+    assert_eq!(restored.bootstrap_routes(2960)?, vec![grant.clone()]);
+    assert_eq!(restored.routes(2960)?, vec![short]);
+    assert!(accept(&mut restored, grant.clone(), 2960).is_err()); // not an online renewal
+    assert_eq!(restored.bootstrap_routes(3100)?, vec![grant]);
+    accept(&mut restored, record(2, 3, 3100, 4100), 3100)?;
+    assert_eq!(restored.routes(3100)?[0].expires_at_ms, 4100);
+    assert!(restored.bootstrap_routes(400_000)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn bootstrap_locator_retains_source_expiry_revocation_epoch_and_clock_gates() -> Result<()> {
+    let mut b = book();
+    assert!(b.bootstrap_routes(1999).is_err());
+    let next = prepared_epoch(66, 2500, [5; 32], 6);
+    b.replace_sources(vec![source(vec![next.clone()], 2600)], 3100)?;
+    assert_eq!(b.bootstrap_routes(3100)?, vec![next]);
+    assert!(b
+        .check_route(
+            key(2).verifying_key().to_bytes(),
+            key(3).verifying_key().to_bytes(),
+            [4; 32],
+            3100
+        )
+        .is_err());
+    b.replace_sources(vec![source(vec![], 3200)], 3200)?;
+    let mut restored = restore(&b.checkpoint()?, 3300)?;
+    assert!(restored.bootstrap_routes(3300)?.is_empty());
+    assert!(restored
+        .replace_sources(vec![source(vec![record(2, 1, 1000, 400_000)], 3400)], 3400)
+        .is_err());
+    let mut shorter = source(vec![record(2, 1, 1000, 400_000)], 1000);
+    shorter.manifest.expires_at_ms = 3000;
+    shorter.manifest.signatures.clear();
+    directory::sign_bootstrap_manifest_v1(&mut shorter.manifest, &key(1))?;
+    let mut bounded = ServiceLeaseBookV1::new(
+        BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+        vec![shorter],
+        2000,
+    )?;
+    assert_eq!(bounded.bootstrap_routes(2999)?.len(), 1);
+    assert!(bounded.bootstrap_routes(3000)?.is_empty());
+    Ok(())
+}
 #[test]
 fn signed_revocation_interrupts_routes_and_cannot_be_replayed_away() {
     let mut b = book();

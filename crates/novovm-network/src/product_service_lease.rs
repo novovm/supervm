@@ -252,6 +252,22 @@ impl ServiceLeaseBookV1 {
         );
         self.publish(sources, entries, tombstones)
     }
+    /// Locators for a NEW connection and lease handshake only. Unlike routes(),
+    /// these are the original publisher-authorized signed records, not a
+    /// previous connection's shorter online lease. No record is re-signed or
+    /// given a later expiry. Callers must check_route throughout dialing and
+    /// accept a fresh service offer before service RPC; this grants no right
+    /// to continue an old stream beyond its own online lease.
+    pub fn bootstrap_routes(&mut self, now: u64) -> Result<Vec<PeerSignedRelayRecordV1>> {
+        self.observe(now)?;
+        Ok(self
+            .entries
+            .values()
+            .filter(|entry| entry.expires > now && entry.grant.expires_at_ms > now)
+            .map(|entry| entry.grant.clone())
+            .collect())
+    }
+
     pub fn routes(&mut self, now: u64) -> Result<Vec<PeerSignedRelayRecordV1>> {
         self.observe(now)?;
         Ok(self

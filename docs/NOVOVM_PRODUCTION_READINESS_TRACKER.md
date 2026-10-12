@@ -8,6 +8,22 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-12 新连接引导记录与既有在线租约分开读取
+
+输入 `1eb60c31`，认领 `db5ec3ee`。`ServiceLeaseBookV1::bootstrap_routes`
+从同一已认证 book 返回仍在原来源授权内的 grant 原记录，供新连接取得
+服务 offer 使用。旧 `routes` 优先返回尚有效的 current 在线租约，接近到期时
+可能只剩 50ms；将其作为新发现轮次的期限会导致新流提前结束。新增读取
+不延長/重签记录，不重置 current 或序列；拨号仍须 check_route，业务 RPC
+仍须新流在线租约，不能用 bootstrap 延长旧流。没有新增目录或协议。
+
+Windows 租约回归 **41/41**（15.18s），含两个新增入口边界测试：短在线
+租约仍有效/过期后都可用未到期引导记录开启新握手；持久恢复、来源先到期、
+撤销/旧任期/时钟回退均保持拒绝。network all-targets Clippy `-D warnings`
+通过。日志 `artifacts/recovery5-service-lease.log`、`recovery5-network-clippy.log`。
+NOVOCHAT 使用新 API；实际双手机恢复耗时单独验收，未改变生产能力位，
+不签收常驻、隐私、跨网或全球可达性。AOEM/金融/共识保持不动。
+
 ## 2026-10-12 连接失败的固定类型诊断
 
 输入 `b5a30aad`，认领 `1650c74a`。`iroh_transport::iroh_connection_failure_kind_v1`
