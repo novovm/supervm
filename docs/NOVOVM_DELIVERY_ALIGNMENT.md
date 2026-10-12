@@ -1,5 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-13 镜像 110 秒交接与 E214 认领（进行中）：** NOVOCHAT 会话，输入
+`d57afa6a` / NOVOCHAT `656c0cc`，已 fetch 核对两仓 main/远端一致且干净。
+限定 `bootstrap_mirror_owner.rs`、镜像入口/进程测试、`iroh_transport.rs` 及
+相邻载体测试、镜像契约与两份交付台账。先以真实 QUIC 和有界脱敏生命周期
+事件验证交接拒接，再优先修服务端生命周期；不把全部 CONNECTION_REFUSED
+列为可恢复、不扩大客户端预算、不延长原许可、不绕过签名/撤销/Privacy。
+不改金融/AOEM/共识、路由器或 KINGCLUB。手机保留原联系人、消息和待发 ID，
+多任期和三轮蜂窝中断结果单列，历史样本的时间相关性不当作根因证明。
+
 **2026-10-13 UDP 本地回收屏障认领（已释放）：** NOVOCHAT 会话，输入
 `33903231`，已 fetch 核对 main/远端一致、工作区干净。原黑洞 QUIC 用例首轮
 复现 `local driver retained UDP socket`。限定 `iroh_transport.rs`、固定
