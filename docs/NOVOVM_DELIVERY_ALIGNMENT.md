@@ -1,5 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-12 多路径自主通讯设计（仅文档，已完成）：** 用户要求逐行评估
+386 行外部参考，基线 SUPERVM `6f05f98f` / NOVOCHAT `9f0f7f3`。
+形成 [NOVONET Transport Policy v1](NOVONET_TRANSPORT_POLICY_V1.md)：复用现有
+carrier/目录/授权/overlay，自主运营优先，外部服务须批准，默认 Privacy
+不降级；协议、运营归属与隐私资格分别判断。Controller 是原产品内部职责，
+不创建第二套节点/调度权威。下一刀先接普通聊天自动收发，再补持续节点、
+实际路径诊断和自主中继/多路径验收。交易结算后置，原 AOEM/金融/共识边界
+保持。本轮不改源码、不部署、不操作手机，不增加生产能力位或测试通过计数。
+
 **2026-10-12 手机来源刷新有界恢复认领（已释放）：** NOVOCHAT 会话，输入
 `c11c4e3c`，本地/远端 main 一致且工作区干净。限定 network 的
 `product_bootstrap_refresh.rs`、Iroh 连接错误分类及相邻测试；必要模块登记和
