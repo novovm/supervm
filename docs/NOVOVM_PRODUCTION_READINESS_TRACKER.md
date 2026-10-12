@@ -24,6 +24,9 @@ local driver retained UDP socket；单独立即复测 1/1（0.20s），不能据
 失败或宣称回收稳定。诊断变更未调整任何关闭代码/测试预算，后续保持待办。
 证据：`artifacts/recovery16-{protocol,carrier,drain-recheck,leases,clippy-final}.log`。
 手机首错、消息交付与多轮恢复由 NOVOCHAT 单列，当前没有安全拒绝转重试。
+`ebd85ec4` 接入后的样本 16 完成三轮约 18 秒蜂窝断网，认证恢复约 64/30/29 秒；
+两端各 18 个任务后按原许可正常 expired。E64 本轮未复现，根因未签收；已释放
+源码认领。仍为测试发布者/自有寻址控制面与获准的第三方 Iroh relay 承载。
 
 ## 2026-10-12 端点关闭归属与本地完成屏障
 
