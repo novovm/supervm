@@ -328,6 +328,48 @@ pub struct IrohScopeV1 {
     relay_only: bool,
     connections: tokio::sync::Semaphore,
     accept_consumer: tokio::sync::Mutex<()>,
+    listener_only: bool,
+}
+
+/// Platform-owned, inbound-only service listener. Its fixed operator permission
+/// is distinct from short client tasks and signed service/source leases. There
+/// is no renewal method. Stop/revocation is polled throughout bind, serving and
+/// cleanup. Each admitted stream gets a separate, non-renewable 3-second budget.
+/// This does not grant application identity, source trust or Privacy eligibility.
+pub async fn with_iroh_listener_v1<T, F>(
+    config: IrohConfigV1,
+    until: Instant,
+    check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    operation: F,
+) -> Result<T>
+where
+    F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>> + 'static,
+{
+    ensure!(
+        config.service_identity.is_some(),
+        "listener requires protected service identity"
+    );
+    let remaining = until.saturating_duration_since(Instant::now());
+    ensure!(
+        !remaining.is_zero() && remaining <= Duration::from_secs(86400),
+        "listener permission bound"
+    );
+    // Only local cleanup may use this reserve: the operation is stopped at
+    // `until`, and the original operator check still applies during cleanup.
+    let control = IrohControlV1 {
+        check: Arc::new(check),
+        deadline: until + Duration::from_secs(6),
+    };
+    with_iroh_scope_inner(config, control, true, move |scope| {
+        Box::pin(async move {
+            tokio::select! {
+                biased;
+                result = operation(scope) => result,
+                _ = tokio::time::sleep_until(until.into()) => bail!("listener permission ended"),
+            }
+        })
+    })
+    .await
 }
 
 /// The operation and all borrowed streams end before endpoint.close + drop.
@@ -337,6 +379,18 @@ pub struct IrohScopeV1 {
 pub async fn with_iroh_scope_v1<T, F>(
     config: IrohConfigV1,
     control: IrohControlV1,
+    operation: F,
+) -> Result<T>
+where
+    F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
+{
+    with_iroh_scope_inner(config, control, false, operation).await
+}
+
+async fn with_iroh_scope_inner<T, F>(
+    config: IrohConfigV1,
+    control: IrohControlV1,
+    listener_only: bool,
     operation: F,
 ) -> Result<T>
 where
@@ -401,6 +455,7 @@ where
         relay_only: config.relay_only,
         connections: tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1),
         accept_consumer: tokio::sync::Mutex::new(()),
+        listener_only,
     };
     let result = tokio::select! {
         biased;
@@ -507,6 +562,10 @@ impl IrohScopeV1 {
     }
 
     pub async fn connect(&self, peer: &IrohAddressV1) -> Result<IrohStreamV1<'_>> {
+        ensure!(
+            !self.listener_only,
+            "service listener cannot initiate connections"
+        );
         let address = self.peer_address(peer)?;
         // Reserve before dialing: outbound work shares the same active budget
         // as inbound TLS handshakes and streams, without a waiting queue.
@@ -627,6 +686,16 @@ impl IrohScopeV1 {
         self.control.check()?;
         Ok(IrohStreamV1 {
             scope: self,
+            io_control: IrohControlV1 {
+                check: self.control.check.clone(),
+                deadline: if self.listener_only {
+                    self.control
+                        .deadline
+                        .min(Instant::now() + Duration::from_secs(3))
+                } else {
+                    self.control.deadline
+                },
+            },
             connection: pending
                 .connection
                 .take()
@@ -666,6 +735,7 @@ impl Drop for PendingConnection {
 
 pub struct IrohStreamV1<'a> {
     scope: &'a IrohScopeV1,
+    io_control: IrohControlV1,
     connection: Connection,
     send: SendStream,
     recv: RecvStream,
@@ -678,7 +748,7 @@ pub struct IrohStreamV1<'a> {
 /// alive until both halves are released. Dropping an in-progress write closes
 /// the entire connection; restarting a partly-written frame is never allowed.
 pub struct IrohWriteHalfV1<'a> {
-    scope: &'a IrohScopeV1,
+    control: &'a IrohControlV1,
     connection: &'a Connection,
     send: &'a mut SendStream,
     failed: &'a AtomicBool,
@@ -688,7 +758,7 @@ pub struct IrohWriteHalfV1<'a> {
 /// one read future alive across application-level waits; cancelling it poisons
 /// both directions rather than forgetting a partially consumed frame.
 pub struct IrohReadHalfV1<'a> {
-    scope: &'a IrohScopeV1,
+    control: &'a IrohControlV1,
     connection: &'a Connection,
     recv: &'a mut RecvStream,
     failed: &'a AtomicBool,
@@ -711,9 +781,13 @@ impl Drop for FrameIoGuard<'_> {
     }
 }
 
-fn check_frame_io(scope: &IrohScopeV1, connection: &Connection, failed: &AtomicBool) -> Result<()> {
+fn check_frame_io(
+    control: &IrohControlV1,
+    connection: &Connection,
+    failed: &AtomicBool,
+) -> Result<()> {
     ensure!(!failed.load(Ordering::Acquire), "carrier stream failed");
-    if let Err(error) = scope.control.check() {
+    if let Err(error) = control.check() {
         failed.store(true, Ordering::Release);
         connection.close(1u32.into(), b"frame authorization revoked");
         return Err(error);
@@ -724,13 +798,13 @@ fn check_frame_io(scope: &IrohScopeV1, connection: &Connection, failed: &AtomicB
 }
 
 async fn write_frame_io(
-    scope: &IrohScopeV1,
+    control: &IrohControlV1,
     connection: &Connection,
     failed: &AtomicBool,
     send: &mut SendStream,
     bytes: &[u8],
 ) -> Result<()> {
-    check_frame_io(scope, connection, failed)?;
+    check_frame_io(control, connection, failed)?;
     ensure!(
         !bytes.is_empty() && bytes.len() <= IROH_MAX_FRAME_V1,
         "carrier frame limit"
@@ -740,32 +814,37 @@ async fn write_frame_io(
         failed,
         complete: false,
     };
-    send.write_all(&(bytes.len() as u32).to_be_bytes())
-        .await
-        .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
-    send.write_all(bytes)
-        .await
-        .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
-    check_frame_io(scope, connection, failed)?;
+    tokio::time::timeout_at(control.deadline.into(), async {
+        send.write_all(&(bytes.len() as u32).to_be_bytes())
+            .await
+            .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
+        send.write_all(bytes)
+            .await
+            .map_err(|error| IrohStreamIoFailureV1(error.into()))
+    })
+    .await
+    .context("carrier stream deadline")??;
+    check_frame_io(control, connection, failed)?;
     guard.complete = true;
     Ok(())
 }
 
 async fn read_frame_io(
-    scope: &IrohScopeV1,
+    control: &IrohControlV1,
     connection: &Connection,
     failed: &AtomicBool,
     recv: &mut RecvStream,
 ) -> Result<Vec<u8>> {
-    check_frame_io(scope, connection, failed)?;
+    check_frame_io(control, connection, failed)?;
     let mut guard = FrameIoGuard {
         connection,
         failed,
         complete: false,
     };
     let mut length = [0u8; 4];
-    recv.read_exact(&mut length)
+    tokio::time::timeout_at(control.deadline.into(), recv.read_exact(&mut length))
         .await
+        .context("carrier stream deadline")?
         .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
     let length = u32::from_be_bytes(length) as usize;
     ensure!(
@@ -773,10 +852,11 @@ async fn read_frame_io(
         "carrier frame limit"
     );
     let mut bytes = vec![0; length];
-    recv.read_exact(&mut bytes)
+    tokio::time::timeout_at(control.deadline.into(), recv.read_exact(&mut bytes))
         .await
+        .context("carrier stream deadline")?
         .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
-    check_frame_io(scope, connection, failed)?;
+    check_frame_io(control, connection, failed)?;
     guard.complete = true;
     Ok(bytes)
 }
@@ -794,19 +874,19 @@ async fn confirm_send_completion(send: &mut SendStream) -> Result<()> {
 
 impl IrohWriteHalfV1<'_> {
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
-        write_frame_io(self.scope, self.connection, self.failed, self.send, bytes).await
+        write_frame_io(self.control, self.connection, self.failed, self.send, bytes).await
     }
 }
 
 impl IrohReadHalfV1<'_> {
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        read_frame_io(self.scope, self.connection, self.failed, self.recv).await
+        read_frame_io(self.control, self.connection, self.failed, self.recv).await
     }
 }
 
 impl IrohStreamV1<'_> {
     fn check(&self) -> Result<()> {
-        check_frame_io(self.scope, &self.connection, &self.failed)
+        check_frame_io(&self.io_control, &self.connection, &self.failed)
     }
 
     /// Split only the framed IO borrows, without transferring the connection or
@@ -818,13 +898,13 @@ impl IrohStreamV1<'_> {
         self.check()?;
         Ok((
             IrohWriteHalfV1 {
-                scope: self.scope,
+                control: &self.io_control,
                 connection: &self.connection,
                 send: &mut self.send,
                 failed: &self.failed,
             },
             IrohReadHalfV1 {
-                scope: self.scope,
+                control: &self.io_control,
                 connection: &self.connection,
                 recv: &mut self.recv,
                 failed: &self.failed,
@@ -896,7 +976,7 @@ impl IrohStreamV1<'_> {
 
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
         write_frame_io(
-            self.scope,
+            &self.io_control,
             &self.connection,
             &self.failed,
             &mut self.send,
@@ -906,7 +986,13 @@ impl IrohStreamV1<'_> {
     }
 
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        read_frame_io(self.scope, &self.connection, &self.failed, &mut self.recv).await
+        read_frame_io(
+            &self.io_control,
+            &self.connection,
+            &self.failed,
+            &mut self.recv,
+        )
+        .await
     }
 
     /// Flush both directions before closing QUIC. Transport completion is NOT a
@@ -920,15 +1006,19 @@ impl IrohStreamV1<'_> {
         };
         self.send.finish()?;
         let mut trailing = [0u8; 1];
-        ensure!(
-            self.recv
-                .read(&mut trailing)
-                .await
-                .map_err(|error| IrohStreamIoFailureV1(error.into()))?
-                .is_none(),
-            "unexpected trailing stream data"
-        );
-        confirm_send_completion(&mut self.send).await?;
+        tokio::time::timeout_at(self.io_control.deadline.into(), async {
+            ensure!(
+                self.recv
+                    .read(&mut trailing)
+                    .await
+                    .map_err(|error| IrohStreamIoFailureV1(error.into()))?
+                    .is_none(),
+                "unexpected trailing stream data"
+            );
+            confirm_send_completion(&mut self.send).await
+        })
+        .await
+        .context("carrier stream deadline")??;
         self.check()?;
         guard.complete = true;
         Ok(())
@@ -1098,6 +1188,89 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn listener_requires_owned_identity_and_keeps_client_scope_bound() {
+        assert!(IrohControlV1::new(Instant::now() + Duration::from_secs(121), || Ok(())).is_err());
+        let result: Result<()> = with_iroh_listener_v1(
+            local_config(),
+            Instant::now() + Duration::from_secs(130),
+            || Ok(()),
+            |_| Box::pin(async { panic!("unowned listener bound") }),
+        )
+        .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("protected service identity"));
+        let result = with_iroh_listener_v1(
+            local_config()
+                .with_owned_service_identity(zeroize::Zeroizing::new([17; 32]))
+                .unwrap(),
+            Instant::now() + Duration::from_secs(86401),
+            || Ok(()),
+            |_| Box::pin(async { Ok(()) }),
+        )
+        .await;
+        assert!(result.unwrap_err().to_string().contains("permission bound"));
+    }
+
+    #[tokio::test]
+    async fn listener_cannot_dial_or_extend_an_admitted_stream() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let (tx, rx) = oneshot::channel();
+        let server = with_iroh_listener_v1(
+            local_config()
+                .with_owned_service_identity(zeroize::Zeroizing::new([17; 32]))
+                .unwrap(),
+            Instant::now() + Duration::from_secs(130),
+            || Ok(()),
+            move |scope| {
+                Box::pin(async move {
+                    let address = scope.address()?;
+                    ensure!(scope.connect(&address).await.is_err(), "listener dialed");
+                    tx.send(address).unwrap();
+                    let mut stream = scope.accept_inbound().await?;
+                    ensure!(stream.read_frame().await? == b"hello", "payload");
+                    let started = Instant::now();
+                    ensure!(
+                        stream.read_frame().await.is_err(),
+                        "idle request outlived its deadline"
+                    );
+                    ensure!(
+                        started.elapsed() < Duration::from_secs(4),
+                        "unbounded listener read"
+                    );
+                    ensure!(
+                        stream.write_frame(b"late").await.is_err(),
+                        "listener revived old stream"
+                    );
+                    // A new connection has a NEW short budget, same endpoint.
+                    drop(stream);
+                    let mut stream = scope.accept_inbound().await?;
+                    ensure!(stream.read_frame().await? == b"next", "new request");
+                    stream.write_frame(b"ok").await?;
+                    stream.finish().await
+                })
+            },
+        );
+        let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+            Box::pin(async move {
+                let peer = rx.await?;
+                let mut stream = scope.connect(&peer).await?;
+                stream.write_frame(b"hello").await?;
+                ensure!(stream.read_frame().await.is_err(), "late response accepted");
+                drop(stream);
+                let mut stream = scope.connect(&peer).await?;
+                stream.write_frame(b"next").await?;
+                ensure!(stream.read_frame().await? == b"ok", "fresh response");
+                stream.finish().await
+            })
+        });
+        let (a, b) = tokio::join!(server, client);
+        a.unwrap();
+        b.unwrap();
     }
 
     #[tokio::test]
@@ -1329,6 +1502,68 @@ mod tests {
             // No Drop, sleep or bind retry may be needed after Some(...).
             assert!(std::net::UdpSocket::bind(port).is_ok());
         });
+    }
+
+    #[tokio::test]
+    async fn draining_endpoint_refuses_new_handshake_before_any_offer() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = Endpoint::builder(presets::Minimal)
+            .alpns(vec![IROH_ALPN_V1.to_vec()])
+            .clear_address_lookup()
+            .relay_mode(RelayMode::Disabled)
+            .clear_ip_transports()
+            .bind_addr("127.0.0.1:0".parse::<SocketAddr>().unwrap())
+            .unwrap()
+            .transport_config(
+                QuicTransportConfig::builder()
+                    .initial_rtt(Duration::from_secs(3))
+                    .build(),
+            )
+            .bind()
+            .await
+            .unwrap();
+        let address = endpoint.addr();
+        let peer = EndpointAddr::new(iroh::SecretKey::from_bytes(&[7; 32]).public())
+            .with_addrs([TransportAddr::Ip(sink.local_addr().unwrap())]);
+        let mut pending = Box::pin(endpoint.connect(peer, IROH_ALPN_V1));
+        let mut packet = [0u8; 2048];
+        tokio::select! {
+            _ = &mut pending => panic!("blackhole unexpectedly connected"),
+            result = tokio::time::timeout(Duration::from_secs(2), sink.recv(&mut packet)) => {
+                assert!(result.unwrap().unwrap() > 0);
+            }
+        }
+        // Hold a real unacknowledged QUIC connection in drain. A new connection
+        // to this same approved identity reaches noq's closed-endpoint refusal,
+        // before TLS/ALPN or any NOVOVM offer exchange can complete.
+        let mut closing = Box::pin(endpoint.close_with_drain_timeout(Duration::from_secs(2)));
+        assert!(futures_util::poll!(closing.as_mut()).is_pending());
+        let probe = async {
+            with_iroh_scope_v1(local_config(), control(), move |scope| {
+                Box::pin(async move {
+                    let peer = IrohAddressV1 {
+                        endpoint_key: *address.id.as_bytes(),
+                        direct: address.ip_addrs().copied().collect(),
+                        relays: vec![],
+                    };
+                    let error = match scope.connect(&peer).await {
+                        Ok(_) => panic!("closing endpoint accepted a new connection"),
+                        Err(error) => error,
+                    };
+                    assert_eq!(
+                        iroh_protocol_diagnostic_v1(&error),
+                        Some(IrohProtocolDiagnosticV1 { origin: 3, code: 2 })
+                    );
+                    assert!(!error.is::<IrohConnectUnavailableV1>());
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+        };
+        let (closed, ()) = tokio::join!(closing, probe);
+        assert_eq!(closed, Some(false));
     }
 
     #[tokio::test]

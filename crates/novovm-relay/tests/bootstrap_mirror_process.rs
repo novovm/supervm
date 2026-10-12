@@ -68,6 +68,63 @@ async fn active(f: &Fixture) -> Result<Vec<BootstrapSourceV1>> {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn mirror_listener_keeps_single_binding_across_110_second_boundary() -> Result<()> {
+    let f = Fixture::new()?;
+    let _node = f.launch_node(50)?;
+    let first = f.proposal(&BTreeSet::new()).await?;
+    f.enroll(first.relay_public_key)?;
+    let _publisher = f.launch_publisher(250)?;
+    let sources = active(&f).await?;
+    initialize(&f, now_ms()? + 250000)?;
+    let _mirror = launch(&f, 240)?;
+    let peer: BootstrapRefreshPeerV1 = read_json(&f.root.join("mirror/peer.json")).await?;
+    let book = Arc::new(Mutex::new(ServiceLeaseBookV1::new(
+        BootstrapTrustPolicyV1::single_signer(f.publisher_pin),
+        sources,
+        now_ms()?,
+    )?));
+    fetch(peer.clone(), book.clone()).await?;
+    let began = Instant::now();
+    let mut attempts = 0;
+    let mut failures = vec![];
+    for boundary in [110, 220] {
+        tokio::time::sleep_until((began + Duration::from_secs(boundary - 2)).into()).await;
+        while began.elapsed() < Duration::from_secs(boundary + 4) {
+            attempts += 1;
+            if let Err(error) = fetch(peer.clone(), book.clone()).await {
+                failures.push((
+                    began.elapsed().as_millis(),
+                    novovm_network::iroh_transport::iroh_protocol_diagnostic_v1(&error),
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(80)).await;
+        }
+    }
+    let events: Value = read_json(&f.root.join("mirror/lifecycle.json")).await?;
+    let bindings = events["binds"].as_u64().context("binding counter")?;
+    let stops = events["stops"].as_u64().context("stop counter")?;
+    ensure!(
+        events["checkpoints"].as_u64().unwrap_or(0) >= 2,
+        "two lifetime boundaries not reached"
+    );
+    let resumed: BootstrapRefreshPeerV1 = read_json(&f.root.join("mirror/peer.json")).await?;
+    ensure!(
+        serde_json::to_vec(&peer)? == serde_json::to_vec(&resumed)?,
+        "mirror identity/address/permission changed"
+    );
+    eprintln!("handoff probe attempts={attempts} failures={failures:?} lifecycle={events}");
+    ensure!(
+        failures.is_empty(),
+        "mirror boundary rejected a real refresh"
+    );
+    ensure!(
+        bindings == 1 && stops == 0,
+        "mirror rebound at 110 seconds: {bindings} binds/{stops} stops"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn real_mirror_serves_active_epoch_then_restores_identity_and_client_cache() -> Result<()> {
     let f = Fixture::new()?;
     let _node = f.launch_node(3)?;

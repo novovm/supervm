@@ -6,7 +6,7 @@ use ed25519_dalek::SigningKey;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use novovm_network::{
     carrier_stream::CarrierStreamV1,
-    iroh_transport::{with_iroh_scope_v1, IrohAddressV1, IrohConfigV1, IrohControlV1},
+    iroh_transport::{with_iroh_listener_v1, IrohAddressV1, IrohConfigV1},
     product_bootstrap_refresh::{validate_bootstrap_refresh_peers_v1, BootstrapRefreshPeerV1},
     product_directory::{BootstrapSourceV1, BootstrapTrustPolicyV1},
     product_rendezvous_daemon::now_ms,
@@ -15,13 +15,13 @@ use novovm_network::{
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, VecDeque},
     fs::{File, OpenOptions},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -153,6 +153,62 @@ pub struct Owner {
     seed: Zeroizing<[u8; 32]>,
     book: ServiceLeaseBookV1,
     _lock: File,
+}
+
+/// Bounded local lifecycle evidence, never authority or an online guarantee.
+/// No keys, addresses, request bodies or remote error strings are recorded.
+struct Trace {
+    root: PathBuf,
+    started: Instant,
+    entries: Mutex<TraceState>,
+}
+#[derive(Default)]
+struct TraceState {
+    binds: u64,
+    stops: u64,
+    checkpoints: u64,
+    events: VecDeque<serde_json::Value>,
+}
+impl Trace {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            started: Instant::now(),
+            entries: Mutex::new(TraceState::default()),
+        }
+    }
+    fn event(&self, epoch: u64, phase: &'static str) -> Result<()> {
+        let mut entries = self
+            .entries
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mirror trace poisoned"))?;
+        let seq = entries
+            .events
+            .back()
+            .and_then(|e| e["seq"].as_u64())
+            .unwrap_or(0)
+            + 1;
+        if entries.events.len() == 128 {
+            entries.events.pop_front();
+        }
+        match phase {
+            "bound_identity_verified" => entries.binds += 1,
+            "endpoint_stopping" => entries.stops += 1,
+            "listener_checkpoint" => entries.checkpoints += 1,
+            _ => {}
+        }
+        entries
+            .events
+            .push_back(serde_json::json!({"seq":seq,"utc_ms":now_ms()?,
+            "elapsed_ms":self.started.elapsed().as_millis() as u64,"epoch":epoch,"phase":phase}));
+        atomic(
+            &self.root.join("lifecycle.json"),
+            &serde_json::to_vec(&serde_json::json!({
+                "version":1,"pid":std::process::id(),"events":entries.events,
+                "binds":entries.binds,"stops":entries.stops,"checkpoints":entries.checkpoints
+            }))?,
+        )
+    }
 }
 fn lock(root: &Path) -> Result<File> {
     let path = root.join("mirror.lock");
@@ -302,23 +358,33 @@ impl Owner {
         }
         Ok(())
     }
-    async fn epoch(mut self, stop: Arc<AtomicBool>, until: Instant) -> Result<Self> {
+    async fn serve(
+        mut self,
+        stop: Arc<AtomicBool>,
+        until: Instant,
+        trace: Arc<Trace>,
+    ) -> Result<()> {
         self.reload()?; // Bad supplied data stops before any bind or DNS.
         let allowed = self.config.permission_expires_at_ms;
         ensure!(now_ms()? < allowed, "mirror permission expired");
-        let control = IrohControlV1::new(until + Duration::from_secs(6), move || {
+        let check = move || {
             ensure!(
                 !stop.load(Ordering::Acquire) && now_ms()? < allowed,
                 "mirror stopped/permission expired"
             );
             Ok(())
-        })?;
+        };
         let carrier = self
             .config
             .carrier()?
             .with_owned_service_identity(self.seed.clone())?;
-        with_iroh_scope_v1(carrier, control, move |scope| Box::pin(async move {
-            if !self.config.relays.is_empty() { scope.online().await?; }
+        let completed = trace.clone();
+        let epoch = 1; // One listener instance; signed source epochs remain independent.
+        trace.event(epoch, "binding")?;
+        let result = with_iroh_listener_v1(carrier, until, check, move |scope| Box::pin(async move {
+            ensure!(scope.address()?.endpoint_key == SigningKey::from_bytes(&self.seed).verifying_key().to_bytes(), "mirror custody identity mismatch");
+            trace.event(epoch, "bound_identity_verified")?;
+            if !self.config.relays.is_empty() { scope.online().await?; trace.event(epoch, "relay_online")?; }
             self.publish_invite(scope.address()?)?;
             let mut phase = self.availability();
             self.status(phase)?;
@@ -328,14 +394,21 @@ impl Owner {
             update.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut window = Instant::now();
             let mut requests = 0;
+            let mut checkpoint = Instant::now() + Duration::from_secs(110);
+            trace.event(epoch, "accept_ready")?;
             loop {
                 tokio::select! {
                     biased;
                     _ = tokio::time::sleep_until(until.into()) => break,
                     _ = update.tick() => {
+                        if Instant::now() >= checkpoint {
+                            trace.event(epoch, "listener_checkpoint")?;
+                            checkpoint = Instant::now() + Duration::from_secs(110);
+                        }
                         if self.reload()? {
                             active.clear(); // Superseded/revoked sources cannot finish in flight.
                             self.publish_invite(scope.address()?)?;
+                            trace.event(epoch, "source_committed")?;
                         }
                         let next_phase = self.availability();
                         if next_phase != phase { self.status(next_phase)?; phase = next_phase; }
@@ -345,6 +418,7 @@ impl Owner {
                     incoming = &mut accepting, if active.len() < 4 && requests < 16 => {
                         accepting = Box::pin(scope.accept_inbound());
                         requests += 1;
+                        trace.event(epoch, if incoming.is_ok() { "stream_accepted" } else { "accept_failed" })?;
                         if let Ok(stream) = incoming {
                             if let Ok(sources) = self.live_sources() {
                                 let expires = sources.iter().map(|s| s.manifest.expires_at_ms).min().context("mirror source absent")?;
@@ -363,25 +437,33 @@ impl Owner {
             }
             drop(active);
             drop(accepting);
-            Ok(self)
-        })).await
+            trace.event(epoch, "endpoint_stopping")?;
+            Ok(())
+        })).await;
+        completed.event(
+            epoch,
+            if result.is_ok() {
+                "endpoint_closed"
+            } else {
+                "endpoint_failed"
+            },
+        )?;
+        result
     }
     pub async fn run(config: Config, stop: Arc<AtomicBool>, limit: Option<Duration>) -> Result<()> {
         let root = config.state_directory.clone();
-        let mut owner = Self::open(config)?;
-        let deadline = limit.map(|d| Instant::now() + d);
-        let result = async {
-            while !stop.load(Ordering::Acquire) && deadline.is_none_or(|d| Instant::now() < d) {
-                let until = deadline
-                    .unwrap_or(Instant::now() + Duration::from_secs(110))
-                    .min(Instant::now() + Duration::from_secs(110));
-                // Rebind under the SAME custody identity only inside the original
-                // operator permission. Original scope/connection caps remain.
-                owner = owner.epoch(stop.clone(), until).await?;
-            }
-            Ok::<_, anyhow::Error>(())
-        }
-        .await;
+        let owner = Self::open(config)?;
+        let trace = Arc::new(Trace::new(root.clone()));
+        // Listener ownership is fixed at open, never renewed by a source change
+        // or wall-clock rollback. The UTC permission is also checked continuously.
+        let remaining = Duration::from_millis(
+            owner
+                .config
+                .permission_expires_at_ms
+                .saturating_sub(now_ms()?),
+        );
+        let until = Instant::now() + remaining.min(limit.unwrap_or(remaining));
+        let result = owner.serve(stop.clone(), until, trace).await;
         let result = if stop.load(Ordering::Acquire) {
             Ok(())
         } else {
