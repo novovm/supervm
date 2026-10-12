@@ -98,6 +98,201 @@ fn accept_offer(b: &mut ServiceLeaseBookV1, offer: ServiceLeaseOfferV2, now: u64
     )
 }
 
+fn activation_offer(record: PeerSignedRelayRecordV1) -> ServiceLeaseOfferV2 {
+    ServiceLeaseOfferV2 {
+        version: 2,
+        sources: book().sources(),
+        lease: Some(record),
+    }
+}
+
+#[tokio::test]
+async fn activation_wait_keeps_old_authority_until_real_local_time() -> Result<()> {
+    let owner = Mutex::new(book());
+    let started = std::time::Instant::now();
+    let now = || Ok(2000 + started.elapsed().as_millis() as u64);
+    let endpoint = address(3);
+    let offer = activation_offer(record(2, 2, 2120, 100_000));
+    // Legacy strict admission is unchanged: a future record is not valid now.
+    assert!(accept_offer(
+        &mut book(),
+        activation_offer(offer.lease.clone().unwrap()),
+        2000
+    )
+    .is_err());
+    let waiting = accept_service_offer_with_activation_v2(
+        &owner,
+        offer,
+        key(2).verifying_key().to_bytes(),
+        &endpoint,
+        now,
+        || Ok(()),
+    );
+    let inspect = async {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        let mut book = owner.lock().unwrap();
+        assert_eq!(book.routes(now().unwrap()).unwrap()[0].sequence, 1);
+        assert!(book.clock < 2120); // signature precheck did not adopt remote time
+    };
+    let (result, ()) = tokio::join!(waiting, inspect);
+    assert_eq!(result?, 100_000);
+    assert!(now()? >= 2120);
+    assert_eq!(owner.lock().unwrap().routes(now()?)?[0].sequence, 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn activation_wait_rejects_invalid_expired_and_excessive_future_records() -> Result<()> {
+    let mut forged = record(2, 2, 2100, 100_000);
+    forged.signature[0] ^= 1;
+    for record in [
+        forged,
+        record(2, 2, 1500, 1900),
+        record(2, 2, 4001, 100_000),
+        record(5, 2, 2100, 100_000),
+        record(2, 1, 2100, 100_000),
+    ] {
+        let owner = Mutex::new(book());
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            accept_service_offer_with_activation_v2(
+                &owner,
+                activation_offer(record),
+                key(2).verifying_key().to_bytes(),
+                &address(3),
+                || Ok(2000),
+                || Ok(()),
+            ),
+        )
+        .await?;
+        assert!(result.is_err());
+        assert_eq!(owner.lock().unwrap().routes(2000)?[0].sequence, 1);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn activation_wait_persists_revocation_before_considering_future_lease() -> Result<()> {
+    let dir = HostDirectory::new();
+    let mut b = book();
+    let checkpoint = b.checkpoint()?;
+    let file =
+        ServiceLeaseFileV1::create(&dir.path(), zeroize::Zeroizing::new([91; 32]), &checkpoint)?;
+    b.attach_persistence(file, &checkpoint)?;
+    let owner = Mutex::new(b);
+    let offer = ServiceLeaseOfferV2 {
+        version: 2,
+        sources: vec![source(vec![], 2000)],
+        lease: Some(record(2, 2, 2100, 100_000)),
+    };
+    assert!(accept_service_offer_with_activation_v2(
+        &owner,
+        offer,
+        key(2).verifying_key().to_bytes(),
+        &address(3),
+        || Ok(2000),
+        || Ok(())
+    )
+    .await
+    .is_err());
+    drop(owner);
+    let (_, bytes) = ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
+    let mut restored = restore(&bytes, 2200)?;
+    assert!(restored.routes(2200)?.is_empty());
+    assert!(restored
+        .accept_renewal(
+            record(2, 2, 2200, 100_000),
+            key(2).verifying_key().to_bytes(),
+            key(3).verifying_key().to_bytes(),
+            [4; 32],
+            2200
+        )
+        .is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn activation_wait_rechecks_revocation_while_waiting() -> Result<()> {
+    let owner = Mutex::new(book());
+    let start = std::time::Instant::now();
+    let now = || Ok(2000 + start.elapsed().as_millis() as u64);
+    let endpoint = address(3);
+    let wait = accept_service_offer_with_activation_v2(
+        &owner,
+        activation_offer(record(2, 2, 2300, 100_000)),
+        key(2).verifying_key().to_bytes(),
+        &endpoint,
+        now,
+        || Ok(()),
+    );
+    let revoke = async {
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        owner
+            .lock()
+            .unwrap()
+            .replace_sources(vec![source(vec![], 2010)], now().unwrap())
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(wait, revoke);
+    assert!(result.is_err());
+    assert!(owner.lock().unwrap().routes(now()?)?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn activation_wait_obeys_cancel_original_deadline_and_clock_rollback() -> Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    for rollback in [false, true] {
+        let owner = Mutex::new(book());
+        let clock = AtomicU64::new(2000);
+        let checks = AtomicU64::new(0);
+        let result = accept_service_offer_with_activation_v2(
+            &owner,
+            activation_offer(record(2, 2, 2100, 100_000)),
+            key(2).verifying_key().to_bytes(),
+            &address(3),
+            || Ok(clock.load(Ordering::Acquire)),
+            || {
+                if checks.fetch_add(1, Ordering::AcqRel) > 0 {
+                    if rollback {
+                        clock.store(1999, Ordering::Release);
+                    } else {
+                        anyhow::bail!("original operation cancelled or expired");
+                    }
+                }
+                Ok(())
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(owner.lock().unwrap().routes(2200)?[0].sequence, 1);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn activation_wait_frozen_clock_exhausts_monotonic_budget() -> Result<()> {
+    let owner = Mutex::new(book());
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        accept_service_offer_with_activation_v2(
+            &owner,
+            activation_offer(record(2, 2, 2100, 100_000)),
+            key(2).verifying_key().to_bytes(),
+            &address(3),
+            || Ok(2000),
+            || Ok(()),
+        ),
+    )
+    .await?;
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "service lease activation wait exceeded"
+    );
+    assert_eq!(owner.lock().unwrap().routes(2000)?[0].sequence, 1);
+    Ok(())
+}
+
 #[test]
 fn host_persists_before_offer_and_continues_after_reopen() -> Result<()> {
     let dir = HostDirectory::new();

@@ -154,27 +154,137 @@ impl ServiceLeaseBookV1 {
         instance: [u8; 32],
         now: u64,
     ) -> Result<u64> {
+        self.accept_offer_sources(&offer, pin, endpoint, instance, now)?;
+        let record = offer.lease.context("service no longer authorized")?;
+        let expiry = record.expires_at_ms;
+        self.accept_renewal(record, pin, endpoint, instance, now)?;
+        Ok(expiry)
+    }
+
+    fn accept_offer_sources(
+        &mut self,
+        offer: &ServiceLeaseOfferV2,
+        pin: [u8; 32],
+        endpoint: [u8; 32],
+        instance: [u8; 32],
+        now: u64,
+    ) -> Result<()> {
         ensure!(offer.version == 2, "service offer version");
-        encode(&offer)?;
+        encode(offer)?;
         // A peer only refreshes source IDs the install owner already admitted.
         // Missing sources are not revocations: retain independent publishers.
         validated_sources(&offer.sources, &self.policy, now)?;
         let mut sources = self.sources();
-        for update in offer.sources {
+        for update in &offer.sources {
             let source = sources
                 .iter_mut()
                 .find(|old| old.manifest.manifest_id == update.manifest.manifest_id)
                 .context("unapproved online source identity")?;
             // Source kind and local priority are not covered by the manifest
             // signature. Keep these local admission attributes unchanged.
-            source.manifest = update.manifest;
+            source.manifest = update.manifest.clone();
         }
         self.replace_sources(sources, now)?;
-        self.check_route(pin, endpoint, instance, now)?;
+        self.check_route(pin, endpoint, instance, now)
+    }
+}
+
+/// Bounded activation wait, NOT a clock correction or an expiry grace period.
+/// Sources/revocations are validated and persisted at the caller's real time
+/// first. Only a cryptographically checked, pinned online renewal may wait.
+/// No discovery/application IO is authorized until the ORIGINAL validator
+/// accepts it at real local time; the original carrier/operation guard remains
+/// active. The book mutex is never held across an await.
+pub async fn accept_service_offer_with_activation_v2(
+    book: &Mutex<ServiceLeaseBookV1>,
+    offer: ServiceLeaseOfferV2,
+    pin: [u8; 32],
+    expected: &IrohServiceEndpointV1,
+    now: impl Fn() -> Result<u64>,
+    check: impl Fn() -> Result<()>,
+) -> Result<u64> {
+    use std::time::{Duration, Instant};
+    const WAIT: Duration = Duration::from_millis(2000);
+    let until = Instant::now() + WAIT;
+    check()?;
+    let record = {
+        let mut owner = book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("lease owner unavailable"))?;
+        // Sampling inside the owner lock prevents contention from looking like
+        // a clock rollback. Never substitute a peer's timestamp for this sample.
+        let current = now()?;
+        owner.accept_offer_sources(
+            &offer,
+            pin,
+            expected.address.endpoint_key,
+            expected.instance,
+            current,
+        )?;
         let record = offer.lease.context("service no longer authorized")?;
-        let expiry = record.expires_at_ms;
-        self.accept_renewal(record, pin, endpoint, instance, now)?;
-        Ok(expiry)
+        if record.issued_at_ms <= current {
+            let expiry = record.expires_at_ms;
+            owner.accept_renewal(
+                record,
+                pin,
+                expected.address.endpoint_key,
+                expected.instance,
+                current,
+            )?;
+            return Ok(expiry);
+        }
+        // This verification at issued_at only checks the candidate signature,
+        // shape and lifetime. It does not publish it, advance the book clock,
+        // confer authority, or qualify the candidate for application traffic.
+        let address = verify(&record, record.issued_at_ms, MAX_SERVICE_LEASE_MS)?;
+        ensure!(
+            record.relay_public_key == pin
+                && address.address.endpoint_key == expected.address.endpoint_key
+                && address.instance == expected.instance,
+            "renewal identity differs"
+        );
+        let entry = owner.entries.get(&pin).context("service revoked")?;
+        ensure!(
+            record.expires_at_ms <= entry.expires,
+            "renewal exceeds authority"
+        );
+        newer(&entry.current, &record)?;
+        ensure!(
+            record.issued_at_ms - current <= WAIT.as_millis() as u64,
+            "service lease activation wait exceeded"
+        );
+        record
+    };
+    loop {
+        check()?;
+        ensure!(
+            Instant::now() < until,
+            "service lease activation wait exceeded"
+        );
+        {
+            let mut owner = book
+                .lock()
+                .map_err(|_| anyhow::anyhow!("lease owner unavailable"))?;
+            let current = now()?;
+            owner.check_route(
+                pin,
+                expected.address.endpoint_key,
+                expected.instance,
+                current,
+            )?;
+            if current >= record.issued_at_ms {
+                let expiry = record.expires_at_ms;
+                owner.accept_renewal(
+                    record,
+                    pin,
+                    expected.address.endpoint_key,
+                    expected.instance,
+                    current,
+                )?;
+                return Ok(expiry);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
 
