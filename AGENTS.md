@@ -1,5 +1,17 @@
 # Agent Highest Law
 
+- 2026-10-13 user correction for NOVONET: develop one product runtime, not a
+  separate test licensing/renewal system. L3 service identity and listening
+  endpoint are long-lived; short signed authorizations and client sessions are
+  separate. Do not periodically tear down healthy listeners for lease renewal.
+  Replace the legacy 24-hour operator gate through an explicit versioned policy
+  and protected-state migration, preserving identity, revocation and history;
+  never silently rewrite an expired credential or reset client data. Reuse
+  native NovoRUDP/WSS; retain Iroh as a replaceable compatible/fallback carrier,
+  including optional self-hosted Relay on capable L3 nodes. Default Privacy,
+  E2EE and identity checks remain. Current implementation and exact remaining
+  gaps are in `docs/NOVONET_TRANSPORT_POLICY_V1.md` (2026-10-13 revision).
+
 The active development project is the `SUPERVM` Git repository that contains
 this file.
 

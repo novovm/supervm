@@ -10,6 +10,98 @@ NOVOCHAT `9f0f7f38cb956b9d5f131b855bfa9dee4d524e3d`；核对时两仓
 本轮仅阅读源码、既有实测记录和官方资料并形成设计；不新增构建、手机测试或部署。
 当前验收依据见[生产台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
 
+## 2026-10-13 修订：持续服务、统一产品运行与自主传输接线
+
+此节采用用户最新直接要求，覆盖下文历史实施顺序中的限时工程运营安排。
+两份参考附件已依指定顺序全文阅读；附件中的 GitHub 自述及建议不是验收证据。
+复核输入为 `d57afa6a` / NOVOCHAT `656c0cc`，本轮持续镜像修复已提交
+`bf7ca269`。这不是全部网络已经交付的声明。
+
+**决定：保留 Iroh 并收尾已有连接稳定性；统一由 NOVONET 选路。优先复用并接通
+原生 NovoRUDP 和自有 WSS，Iroh 是可替换的兼容/备用载体。停止增建限时测试许可
+或测试专用续期系统，后续开发与实机验证采用同一产品代码和运行契约。**
+
+### 稳定性与安全的关系
+
+长期节点身份、监听端点、服务授权、客户端会话分别管理。正常来源更新或授权
+续期不主动拆除仍然可用的服务入口；提前准备、验签并原子切换新授权。若新的
+业务授权不可用，只拒绝失去授权的业务，保持身份、恢复入口和合法的其他业务。
+运营者停止或撤销服务时才关闭对应入口，不能用持续监听继续过期业务。
+
+E2EE、真实身份认证、防重放和撤销是基本通信能力；匿名性另行验证。稳定不能
+靠跳过这些检查实现，安全也不能用固定频率掉线来冒充。继续默认 Privacy
+失败关闭；此次并未批准把默认模式改成普通单跳。用户明确选择的直接/普通
+路径按其暴露边界运行，不用“工程模式”名称长期替代产品授权设计。
+
+### 同一产品的长期运行契约（尚待完整实现）
+
+| 对象 | 产品契约 | 当前实现及迁移要求 |
+| --- | --- | --- |
+| L3 本地运行许可 | 安装/启用时由设备运营者授予，直到停用或撤销；不每天重新征求开发测试批准 | V1 mirror 配置绑定固定期限且初始化最多 24h；此限制需要版本化替换，不能把旧凭证改成永不过期 |
+| 节点长期身份 | 系统托管、重启恢复；撤销和正式轮换单独处理 | 保留 DPAPI/平台密钥、签名序号、journal 与撤销历史，不重新生成身份绕过旧状态 |
+| 来源镜像入口 | 稳定监听，只分发合法签名来源；入口无来源时等待，不伪造来源 | `bf7ca269` 已取消 mirror 的 110s 周期重绑，但仍在原 V1 期限内运行 |
+| 节点服务授权 | 在长期信任策略内提前取得短期签名授权；验证用途、身份、序号与撤销后更新 | 既有 publisher/lease book 复用；不新增中心许可机构，不让节点给自己授予更高层信任 |
+| 首次信任及地址 | 长期可信公钥与可变地址/短期在线证明分开；一次入网后合法更新，不每天导入邀请 | 现有手机 binding 还包括镜像地址和截止时间；需有版本、有持久原子提交的信任迁移，保留旧检查点 |
+| 会话与请求 | 连接按真实健康与授权管理；短请求有资源预算，会话换钥不等于全节点重启 | 普通客户端 120s 作用域、寻址端点任期仍存在；本片只修 mirror，不能声称所有周期重连已消除 |
+
+本地启用服务的决定来自运营者；远端是否信任这个节点来自各自配置的信任锚和
+已验证声明。两者都不是政府牌照或项目方统一审批。“同一产品运行”不等于旧
+签名可以无期限复活，也不表示当前未验收产品已经达到发布标准。
+
+升级使用现有 owner/cache 做一次受授权的版本化迁移：先验证旧托管身份和状态，
+再原子保存新运行政策及信任绑定，崩溃恢复只能落在完整旧版或完整新版；不得
+清空数据库、重建联系人或修改 Message ID。已过期旧入口不能自行续权；迁移
+依据本次用户确认的产品运营决定建立新政策，撤销历史继续约束新政策。发现
+密钥/日志损坏仍报错，不偷偷重新注册。回滚防护仍需可靠的新鲜度依据。
+
+### 实际复用矩阵与调用链
+
+| 能力 | 当前真实代码/记录 | 手机接线结论与最小后续动作 |
+| --- | --- | --- |
+| 原生 NovoRUDP | [帧、修复窗口与发送状态](../crates/novovm-network/src/novorudp.rs)，[既有跨机 2400 对象记录](NOVORUDP_TRANSPORT_BOUNDARY_RESET_V0_SIGNOFF.md) | 历史跨机记录不是本轮 Android 结果。普通 App 自动链中没有接通这个原生 UDP 可靠传输循环；先复用既有算法与取消/流控边界，再接同一消息 owner，不能复制金融业务收发循环 |
+| NOVOVM WSS | [duplex client](../crates/novovm-network/src/duplex/product_relay_client.rs)、[byte stream](../crates/novovm-network/src/duplex/byte_stream.rs)；启动选择 `--runtime duplex-v2` | NOVOCHAT `app_delivery::worker` 已有 WSS 分支，经 `authorized_wss_endpoint` → `authorized_tls_delivery` → `RelayByteStreamV1`。它尚未成为当前 managed 自动链中的原生优先/自动备用候选 |
+| Iroh 当前手机主链 | NOVOCHAT `AdaptiveWork.run` → 来源刷新 → `automatic_round` → `run_protected_round` → `run_connection_round` → `run_connection_attempt` → `with_iroh_scope_v1` | 已有双机有限样本；当前不能把“原生 NOVOVM 失败后自动转 Iroh”写成已完成，因为这个实际执行器仍创建 Iroh 端点 |
+| 通用认证帧流 | [CarrierStreamV1](../crates/novovm-network/src/carrier_stream.rs) 已接 Iroh/TLS，真实 exporter binding + 节点签名 | 延用现有接口，新增载体不得伪造 VerifiedTransportBinding；不是再造一套聊天协议 |
+| NAT 与候选排序 | [product_nat](../crates/novovm-network/src/product_nat.rs)、[adaptive_overlay](../crates/novovm-network/src/adaptive_overlay.rs)；NOVOCHAT 有 `udp_path`、`adaptive` | 组件与诊断不等于普通 App 完整自动打洞；迁接到 SUPERVM 通用任务所有者，禁止并行出现第二个业务发送者 |
+| KINGCLUB 媒体/UI | NOVOCHAT `MEDIA_REUSE.md` 与迁入源码：录音生命周期、音频约束、容器清理 | 继续复用；媒体轨道、通话状态及转码适配新 E2EE 信令。旧 CCSOP 账号、上传和 TURN 凭据不能成为新产品中心依赖；KINGCLUB 只读 |
+
+注意 `novovm-network::novorudp` 与 `duplex::novorudp` 是不同版本边界，不按类型
+同名推断线格式互通。WSS/QUIC 已提供可靠字节传输，复用 NovoRUDP 帧与节点
+认证时不再叠加 UDP 重传引擎。消息持久回执属于业务确认，仍要保留。
+
+### Iroh 在 L3 上的位置
+
+采用 Iroh 开源技术和依赖第三方公共 Relay 是两回事。具备可达入口及资源的
+L3 可提供兼容 `iroh-relay` 服务，由统一选路发现/选择；其他 L3/L4 可以只作为
+客户端或受限贡献节点。自托管不要求 IDC，但仅启动进程不会创造公网可达性。
+当前 `novovm-bootstrap-mirror` 是来源分发入口，不是完整 Iroh 数据 Relay。
+
+原生直连/自主 WSS 优先；合格自托管 Iroh 可作为自主兼容备用；第三方 Relay
+只在既定策略允许时使用。安全拒绝不触发“绕路重试”，不能为了遵守排序先
+等待所有不可用路径依次超时；在总预算内按已知能力与健康选择候选。
+UDP 受限时须测实际 Relay TCP/HTTPS 路径、DNS 和控制面是否仍可用，不能把
+两个依赖相同被封出口的候选算成独立故障域。
+
+官方[自托管 Relay 配置](https://github.com/n0-computer/docs.iroh.computer/blob/main/add-a-relay.mdx)
+支持自有 Relay；实际部署须匹配本仓固定版本互操作。
+[官方隐私边界](https://docs.iroh.computer/deployment/security-privacy)明确 Relay
+仍可观察连接元数据。由自己运营不自动满足匿名资格。
+
+### 执行顺序和本轮边界
+
+1. 持续 mirror 修复已独立提交 `bf7ca269`：28 个载体、41 个租约、15 个进程
+   用例通过；跨两个旧切换点 51 次刷新成功。不是 24h 或手机 E214 闭环。
+2. 接下来交付同一 owner 的长期运行政策与现存手机信任迁移，连同寻址服务
+   的稳定端点/短授权分离；停止新建一轮轮 24h 测试镜像和邀请。
+3. 用原联系人与待发 ID 完成正式 App Wi-Fi/蜂窝连续恢复；记录直接/中继及
+   第三方依赖，分别验收原消息、新消息、持久回执、重启和下一轮可继续。
+4. 原生 NovoRUDP/WSS 接入现有业务调用链，先与 Iroh 做同条件真实对照，再把
+   合格自主路径设为优先；同时按可达条件交付自托管 Relay，随后验证第二故障域。
+
+第 2–4 项仍待实现/验收，不要求买新硬件、开 IPv6 或重置两部手机。Iroh
+不再扩展独立目录、联系人、许可或路由系统；NOVONET 持有同一套通用能力。
+本次没有创建新 24h 镜像、安装新 APK、改写手机信任库或新增消息样本。
+
 ## 1. 采纳的核心决定
 
 NOVONET 是 NOVOVM 的自主通讯网络能力，不另建区块链、中心路由平台或聊天服务器。
