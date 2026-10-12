@@ -134,6 +134,57 @@ fn connect_unavailable(error: &iroh::endpoint::ConnectError) -> bool {
     )
 }
 
+/// Protocol-only diagnostics. Origin 1 = version mismatch, 2 = locally
+/// detected transport violation, 3 = peer transport close. Standard QUIC/TLS
+/// codes only; unknown extensions collapse to 65535. Never expose reasons,
+/// frame bodies, identities or addresses, and NEVER use this to grant retries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct IrohProtocolDiagnosticV1 {
+    pub origin: u8,
+    pub code: u16,
+}
+
+pub fn iroh_protocol_diagnostic_v1(error: &anyhow::Error) -> Option<IrohProtocolDiagnosticV1> {
+    use iroh::endpoint::{ConnectError, ConnectingError, ConnectionError};
+    fn classify(error: &ConnectionError) -> Option<IrohProtocolDiagnosticV1> {
+        let (origin, code) = match error {
+            ConnectionError::VersionMismatch => (1, 0),
+            ConnectionError::TransportError(error) => (2, u64::from(error.code)),
+            ConnectionError::ConnectionClosed(error) => (3, u64::from(error.error_code)),
+            _ => return None,
+        };
+        Some(IrohProtocolDiagnosticV1 {
+            origin,
+            code: if code <= 17 || (256..=511).contains(&code) {
+                code as u16
+            } else {
+                65535
+            },
+        })
+    }
+    for cause in error.chain() {
+        if let Some(error) = cause.downcast_ref::<ConnectionError>() {
+            if let Some(value) = classify(error) {
+                return Some(value);
+            }
+        }
+        if let Some(error) = cause.downcast_ref::<ConnectError>() {
+            let connection = match error {
+                ConnectError::Connection { source, .. } => Some(source),
+                ConnectError::Connecting {
+                    source: ConnectingError::ConnectionError { source, .. },
+                    ..
+                } => Some(source),
+                _ => None,
+            };
+            if let Some(value) = connection.and_then(classify) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
 const CHECK_INTERVAL: Duration = Duration::from_millis(20);
 const INCOMING_SETUP_TIMEOUT: Duration = Duration::from_secs(3);
 static ENDPOINT_LIMIT: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
@@ -928,6 +979,39 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn protocol_diagnostics_keep_only_fixed_codes_and_never_mark_retry() {
+        use iroh::endpoint::{ConnectionError, TransportError, TransportErrorCode, VarInt};
+        for (code, expected) in [(0, 0), (10, 10), (256, 256), (511, 511), (99999, 65535)] {
+            let error = ConnectionError::TransportError(TransportError::new(
+                TransportErrorCode::from(VarInt::from_u32(code)),
+                "private peer reason must not be retained".into(),
+            ));
+            let error = anyhow::Error::new(error).context("local operation");
+            let diagnostic = iroh_protocol_diagnostic_v1(&error).unwrap();
+            assert_eq!(
+                diagnostic,
+                IrohProtocolDiagnosticV1 {
+                    origin: 2,
+                    code: expected
+                }
+            );
+            assert!(!error.is::<IrohStreamIoFailureV1>());
+            assert!(!error.is::<IrohConnectUnavailableV1>());
+            assert!(!serde_json::to_string(&diagnostic)
+                .unwrap()
+                .contains("private"));
+        }
+        assert_eq!(
+            iroh_protocol_diagnostic_v1(&ConnectionError::VersionMismatch.into()),
+            Some(IrohProtocolDiagnosticV1 { origin: 1, code: 0 })
+        );
+        assert!(iroh_protocol_diagnostic_v1(&anyhow::anyhow!(
+            "transport error: protocol violation"
+        ))
+        .is_none());
     }
 
     fn local_config() -> IrohConfigV1 {

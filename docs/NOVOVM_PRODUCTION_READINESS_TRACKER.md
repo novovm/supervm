@@ -8,6 +8,23 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 来源刷新首错的有界协议诊断
+
+输入 `b774d32a`、认领 `b116cb6d`，NOVOCHAT `cab7edd` 手机来源刷新 E64 尚未
+精确分类。`iroh_protocol_diagnostic_v1` 将 VersionMismatch、TransportError、
+ConnectionClosed 分开，记录标准 QUIC 0–17/TLS 256–511，其他码统一 65535；
+不输出远端原因、帧内容、身份或地址，不授予任何重试。原 E64 粗分类 API 保留。
+V2 offer 写请求、读响应和解码增加 `ServiceOfferStepV2` context，保留原始
+anyhow 类型与载体 IO 标记；签名、版本、撤销、预算与 finish 行为均未修改。
+
+Windows 专项 1 项、租约/来源全组 **41/41**（15.39s）、network all-targets
+Clippy `-D warnings`（21.83s）通过。载体全组 **23/24**（10.34s），既有
+`bounded_drain_joins_local_drivers_without_waiting_for_unreachable_peer` 一次报
+local driver retained UDP socket；单独立即复测 1/1（0.20s），不能据此抹去原
+失败或宣称回收稳定。诊断变更未调整任何关闭代码/测试预算，后续保持待办。
+证据：`artifacts/recovery16-{protocol,carrier,drain-recheck,leases,clippy-final}.log`。
+手机首错、消息交付与多轮恢复由 NOVOCHAT 单列，当前没有安全拒绝转重试。
+
 ## 2026-10-12 端点关闭归属与本地完成屏障
 
 输入 `fc3eab44`，认领 `e3cfef8c`。NOVOCHAT 样本 11 在来源交换后出现 E83：

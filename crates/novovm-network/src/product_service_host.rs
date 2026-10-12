@@ -300,15 +300,36 @@ fn encode(offer: &ServiceLeaseOfferV2) -> Result<Vec<u8>> {
 pub async fn request_service_offer_v2(
     stream: &mut CarrierStreamV1<'_>,
 ) -> Result<ServiceLeaseOfferV2> {
-    stream.write_frame(REQUEST_V2).await?;
-    let bytes = stream.read_frame().await?;
-    ensure!(
-        bytes.len() > 8 && bytes.len() <= MAX_OFFER_BYTES && bytes.starts_with(RESPONSE_V2),
-        "service offer version/size"
-    );
-    let offer: ServiceLeaseOfferV2 = serde_json::from_slice(&bytes[8..])?;
-    ensure!(offer.version == 2, "service offer version");
-    Ok(offer)
+    stream
+        .write_frame(REQUEST_V2)
+        .await
+        .context(ServiceOfferStepV2::Write)?;
+    let bytes = stream
+        .read_frame()
+        .await
+        .context(ServiceOfferStepV2::Read)?;
+    (|| {
+        ensure!(
+            bytes.len() > 8 && bytes.len() <= MAX_OFFER_BYTES && bytes.starts_with(RESPONSE_V2),
+            "service offer version/size"
+        );
+        let offer: ServiceLeaseOfferV2 = serde_json::from_slice(&bytes[8..])?;
+        ensure!(offer.version == 2, "service offer version");
+        Ok(offer)
+    })()
+    .context(ServiceOfferStepV2::Decode)
+}
+
+/// An anyhow context preserves the original sealed carrier error for the
+/// existing retry predicate. This phase is diagnostic only, never authority.
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum ServiceOfferStepV2 {
+    #[error("service offer request write")]
+    Write,
+    #[error("service offer response read")]
+    Read,
+    #[error("service offer response decode")]
+    Decode,
 }
 
 pub async fn serve_service_offer_v2(
