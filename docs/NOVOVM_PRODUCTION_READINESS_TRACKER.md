@@ -8,6 +8,17 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-12 连接失败的固定类型诊断
+
+输入 `b5a30aad`，认领 `1650c74a`。`iroh_transport::iroh_connection_failure_kind_v1`
+只读检查 Iroh 的 `ConnectError` / `ConnectionError`，将超时、reset、远端正常/
+异常关闭、协议/TLS 认证、本地关闭/拒绝、资源耗尽分类给产品层。没有输出地址、
+身份或远端 reason 文本；这些类别不是自动重试许可，不改变连接和来源验证流程。
+特别是远端 code 0 关闭仍不能仅凭诊断自动重试。Windows 载体回归 **21/21**，
+network all-targets Clippy `-D warnings` 通过；日志 `artifacts/recovery3-carrier.log`
+与 `recovery3-clippy.log`。NOVOCHAT 的手机 `source_rejected/E8` 原因需装包后
+再核对，本片不推测已修好真实恢复，不签收匿名、独立载体或全天候服务。
+
 ## 2026-10-12 预备任期交接与来源传输耗尽
 
 输入 `9cfaf15b`，认领 `e1ec8b5f`。NOVOCHAT 上轮实机节点报 `service lease

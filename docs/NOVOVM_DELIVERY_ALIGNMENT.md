@@ -1,11 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-12 自动恢复第三刀认领（进行中）：** NOVOCHAT 会话，输入 `b5a30aad`，
+**2026-10-12 自动恢复第三刀认领（已释放）：** NOVOCHAT 会话，输入 `b5a30aad`，
 本地/远端 main 一致且工作区干净。限定 network 的 `iroh_transport.rs`、相邻
 来源刷新回归与本交付记录/生产台账，为手机 `source_rejected/E8` 增加不含地址、
 身份或远端错误文本的连接阶段及原因诊断。保持原重试白名单、认证、许可和
 资源边界；先获得精确证据再处理可恢复连接，不把任意拒绝变成重试。NOVOCHAT
 同时修普通输入框与过期发现记录处理。无 AOEM、金融、共识或 KINGCLUB 改动。
+认领 `1650c74a`；固定类型诊断已实现，载体 21 项与 network all-targets 严格
+Clippy 通过。没有修改重试规则；手机精确原因与闭环由 NOVOCHAT 单列。
 
 **2026-10-12 自动恢复第二刀认领（已释放）：** NOVOCHAT 会话，输入 `9cfaf15b`，
 已核对 main、本地/远端及干净工作区。限定 network 的 `product_service_lease.rs`、

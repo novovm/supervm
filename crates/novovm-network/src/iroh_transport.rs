@@ -48,6 +48,67 @@ pub struct IrohStreamIoFailureV1(#[source] anyhow::Error);
 #[error("carrier connect unavailable: {0:#}")]
 pub struct IrohConnectUnavailableV1(#[source] anyhow::Error);
 
+/// Fixed, non-sensitive diagnostic categories. These are NOT retry permission.
+/// In particular a remote close, even code zero, does not authorize a redial.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrohConnectionFailureKindV1 {
+    Timeout,
+    Reset,
+    RemoteGracefulClose,
+    RemoteApplicationClose,
+    Protocol,
+    Authentication,
+    LocalClosed,
+    LocalRejected,
+    ResourceExhausted,
+    OtherConnect,
+}
+
+fn connection_failure_kind(error: &iroh::endpoint::ConnectionError) -> IrohConnectionFailureKindV1 {
+    use iroh::endpoint::ConnectionError;
+    use IrohConnectionFailureKindV1::*;
+    match error {
+        ConnectionError::TimedOut => Timeout,
+        ConnectionError::Reset => Reset,
+        ConnectionError::ApplicationClosed(close) if close.error_code == 0u32.into() => {
+            RemoteGracefulClose
+        }
+        ConnectionError::ApplicationClosed(_) => RemoteApplicationClose,
+        ConnectionError::VersionMismatch
+        | ConnectionError::TransportError(_)
+        | ConnectionError::ConnectionClosed(_) => Protocol,
+        ConnectionError::LocallyClosed => LocalClosed,
+        ConnectionError::CidsExhausted => ResourceExhausted,
+    }
+}
+
+/// Inspect typed carrier errors without exporting peer reason strings, endpoint
+/// addresses or identifiers. Unknown/local policy errors remain unclassified.
+pub fn iroh_connection_failure_kind_v1(
+    error: &anyhow::Error,
+) -> Option<IrohConnectionFailureKindV1> {
+    use iroh::endpoint::{ConnectError, ConnectingError, ConnectionError};
+    if let Some(error) = error.downcast_ref::<ConnectError>() {
+        return Some(match error {
+            ConnectError::Connection { source, .. } => connection_failure_kind(source),
+            ConnectError::Connecting { source, .. } => match source {
+                ConnectingError::ConnectionError { source, .. } => connection_failure_kind(source),
+                ConnectingError::HandshakeFailure { .. } => {
+                    IrohConnectionFailureKindV1::Authentication
+                }
+                ConnectingError::LocallyRejected { .. } => {
+                    IrohConnectionFailureKindV1::LocalRejected
+                }
+                _ => IrohConnectionFailureKindV1::OtherConnect,
+            },
+            _ => IrohConnectionFailureKindV1::OtherConnect,
+        });
+    }
+    error
+        .downcast_ref::<ConnectionError>()
+        .map(connection_failure_kind)
+}
+
 fn connect_unavailable(error: &iroh::endpoint::ConnectError) -> bool {
     use iroh::endpoint::{ConnectError, ConnectingError, ConnectionError};
     matches!(
@@ -822,6 +883,40 @@ mod tests {
     use super::*;
     use tokio::sync::oneshot;
     static SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+    #[test]
+    fn fixed_connection_diagnostics_do_not_grant_retries_or_match_text() {
+        use iroh::endpoint::ConnectionError;
+        for (error, expected) in [
+            (
+                ConnectionError::TimedOut,
+                IrohConnectionFailureKindV1::Timeout,
+            ),
+            (ConnectionError::Reset, IrohConnectionFailureKindV1::Reset),
+            (
+                ConnectionError::VersionMismatch,
+                IrohConnectionFailureKindV1::Protocol,
+            ),
+            (
+                ConnectionError::LocallyClosed,
+                IrohConnectionFailureKindV1::LocalClosed,
+            ),
+            (
+                ConnectionError::CidsExhausted,
+                IrohConnectionFailureKindV1::ResourceExhausted,
+            ),
+        ] {
+            let error = anyhow::Error::new(error).context("outer operation");
+            assert_eq!(iroh_connection_failure_kind_v1(&error), Some(expected));
+            assert!(!error.is::<IrohConnectUnavailableV1>());
+        }
+        for message in ["timed out", "closed by peer", "authentication failed"] {
+            assert_eq!(
+                iroh_connection_failure_kind_v1(&anyhow::anyhow!(message)),
+                None
+            );
+        }
+    }
 
     fn local_config() -> IrohConfigV1 {
         IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
