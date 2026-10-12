@@ -42,6 +42,29 @@ pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
 #[error("carrier stream IO failed: {0:#}")]
 pub struct IrohStreamIoFailureV1(#[source] anyhow::Error);
 
+/// Only a timeout/reset during an actual outbound handshake. Local policy,
+/// capacity, TLS authentication and protocol errors never carry this marker.
+#[derive(Debug, thiserror::Error)]
+#[error("carrier connect unavailable: {0:#}")]
+pub struct IrohConnectUnavailableV1(#[source] anyhow::Error);
+
+fn connect_unavailable(error: &iroh::endpoint::ConnectError) -> bool {
+    use iroh::endpoint::{ConnectError, ConnectingError, ConnectionError};
+    matches!(
+        error,
+        ConnectError::Connection {
+            source: ConnectionError::TimedOut | ConnectionError::Reset,
+            ..
+        } | ConnectError::Connecting {
+            source: ConnectingError::ConnectionError {
+                source: ConnectionError::TimedOut | ConnectionError::Reset,
+                ..
+            },
+            ..
+        }
+    )
+}
+
 const CHECK_INTERVAL: Duration = Duration::from_millis(20);
 const INCOMING_SETUP_TIMEOUT: Duration = Duration::from_secs(3);
 static ENDPOINT_LIMIT: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
@@ -290,6 +313,10 @@ where
 }
 
 impl IrohScopeV1 {
+    pub(crate) fn check_authority(&self) -> Result<()> {
+        self.control.check()
+    }
+
     pub fn address(&self) -> Result<IrohAddressV1> {
         self.control.check()?;
         let address = self.endpoint.addr();
@@ -363,7 +390,17 @@ impl IrohScopeV1 {
             .connections
             .try_acquire()
             .context("carrier connection limit")?;
-        let connection = self.endpoint.connect(address, IROH_ALPN_V1).await?;
+        let connection = self
+            .endpoint
+            .connect(address, IROH_ALPN_V1)
+            .await
+            .map_err(|error| {
+                if connect_unavailable(&error) {
+                    anyhow::Error::new(IrohConnectUnavailableV1(error.into()))
+                } else {
+                    error.into()
+                }
+            })?;
         let pending = PendingConnection::new(connection);
         tokio::time::timeout(
             INCOMING_SETUP_TIMEOUT,

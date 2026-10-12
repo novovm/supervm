@@ -2,12 +2,16 @@
 //! transport. A mirror is a distribution location, never a new trust anchor.
 use crate::{
     carrier_stream::{is_carrier_io_failure, CarrierStreamV1},
-    iroh_transport::{IrohAddressV1, IrohScopeV1},
+    iroh_transport::{IrohAddressV1, IrohConnectUnavailableV1, IrohScopeV1},
     product_service_lease::{request_service_offer_v2, IrohServiceEndpointV1, ServiceLeaseBookV1},
 };
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, sync::Mutex, time::Duration};
+use std::{
+    collections::BTreeSet,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 /// Explicit local invitation permission, separate from short service grants.
 /// A platform persists it with its original trust policy, never learns it from
@@ -53,62 +57,165 @@ pub fn validate_bootstrap_refresh_peers_v1(
     Ok(())
 }
 
-/// Caller authorizes the scope BEFORE bind/DNS, and keeps checking identity,
-/// contact policy, network generation, cancellation and the original deadline.
-/// Only constant V2 requests leave the client: no contacts/account identifiers.
-/// An unavailable mirror may select another approved peer. Invalid supplied
-/// protocol/signatures/rollback/revocation never fall back to cached routes.
+/// Fixed local diagnostics; never an address, identity, source body or raw error.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BootstrapRefreshEventV1 {
+    Connecting,
+    Reading,
+    Validating,
+    Finishing,
+    Retry,
+    ConnectTimeout,
+    ConnectUnavailable,
+    ReadTimeout,
+    ReadUnavailable,
+    PermissionExpired,
+    Rejected,
+    Complete,
+}
+
+/// Compatibility entry point; callers needing diagnostics use the same owner.
 pub async fn refresh_bootstrap_sources_v1(
     scope: &IrohScopeV1,
     peers: &[BootstrapRefreshPeerV1],
     book: &Mutex<ServiceLeaseBookV1>,
     now: impl Fn() -> Result<u64>,
 ) -> Result<()> {
+    refresh_bootstrap_sources_observed_v1(scope, peers, book, now, |_| {}).await
+}
+
+/// Cold connect and V2 response have separate budgets, within one 12s refresh
+/// window AND the original carrier deadline. At most two passes/two peers,
+/// one connection at a time. Only transport unavailability permits another
+/// attempt. Invalid protocol, permission, signature or storage is terminal;
+/// a retry never consumes old routes or changes the original trust policy.
+pub async fn refresh_bootstrap_sources_observed_v1(
+    scope: &IrohScopeV1,
+    peers: &[BootstrapRefreshPeerV1],
+    book: &Mutex<ServiceLeaseBookV1>,
+    now: impl Fn() -> Result<u64>,
+    observe: impl Fn(BootstrapRefreshEventV1),
+) -> Result<()> {
+    use BootstrapRefreshEventV1::*;
     ensure!((1..=2).contains(&peers.len()), "bootstrap mirror budget");
-    for peer in peers {
-        if peer.expires_at_ms <= now()? {
-            continue;
+    let until = Instant::now() + Duration::from_secs(12);
+    let mut last = PermissionExpired;
+    for pass in 0..2 {
+        if pass > 0 {
+            scope.check_authority()?;
+            if Instant::now() >= until {
+                break;
+            }
+            observe(Retry);
+            // Small bounded jitter; no new scope, endpoint, task or deadline.
+            tokio::time::sleep_until(
+                until
+                    .min(
+                        Instant::now()
+                            + Duration::from_millis(150 + u64::from(rand::random::<u8>())),
+                    )
+                    .into(),
+            )
+            .await;
         }
-        let response = tokio::time::timeout(Duration::from_secs(3), async {
-            // A connect failure is unavailable, never a successful admission.
-            let connected = match scope.connect(&peer.address).await {
-                Ok(value) => value,
-                Err(_) => return Ok(None),
-            };
+        for peer in peers {
+            scope.check_authority()?;
+            if Instant::now() >= until {
+                break;
+            }
+            if peer.expires_at_ms <= now()? {
+                last = PermissionExpired;
+                continue;
+            }
+            observe(Connecting);
+            let connect_until = until.min(Instant::now() + Duration::from_secs(5));
+            let connected =
+                match tokio::time::timeout_at(connect_until.into(), scope.connect(&peer.address))
+                    .await
+                {
+                    Err(_) => {
+                        last = ConnectTimeout;
+                        observe(last);
+                        continue;
+                    }
+                    Ok(Err(error))
+                        if error.downcast_ref::<IrohConnectUnavailableV1>().is_some() =>
+                    {
+                        last = ConnectUnavailable;
+                        observe(last);
+                        continue;
+                    }
+                    Ok(Err(error)) => {
+                        observe(Rejected);
+                        return Err(error).context("bootstrap connect rejected");
+                    }
+                    Ok(Ok(stream)) => stream,
+                };
             let mut stream: CarrierStreamV1<'_> = connected.into();
-            let offer = match request_service_offer_v2(&mut stream).await {
-                Ok(offer) => offer,
-                Err(error) if is_carrier_io_failure(&error) => return Ok(None),
-                Err(error) => return Err(error),
+            observe(Reading);
+            let read_until = until.min(Instant::now() + Duration::from_secs(3));
+            let offer = match tokio::time::timeout_at(
+                read_until.into(),
+                request_service_offer_v2(&mut stream),
+            )
+            .await
+            {
+                Err(_) => {
+                    last = ReadTimeout;
+                    observe(last);
+                    continue;
+                }
+                Ok(Err(error)) if is_carrier_io_failure(&error) => {
+                    last = ReadUnavailable;
+                    observe(last);
+                    continue;
+                }
+                Ok(Err(error)) => {
+                    observe(Rejected);
+                    return Err(error).context("bootstrap protocol rejected");
+                }
+                Ok(Ok(offer)) => offer,
             };
+            scope.check_authority()?;
+            if peer.expires_at_ms <= now()? {
+                observe(PermissionExpired);
+                anyhow::bail!("bootstrap permission expired in flight");
+            }
+            observe(Validating);
+            // Caller code can read this book: call it BEFORE taking the lock.
+            let observed = now()?;
+            let accepted = (|| {
+                ensure!(
+                    offer.lease.is_none(),
+                    "source mirror cannot issue online service leases"
+                );
+                book.lock()
+                    .map_err(|_| anyhow::anyhow!("bootstrap owner unavailable"))?
+                    .accept_bootstrap_sources(offer.sources, observed)
+            })();
+            if let Err(error) = accepted {
+                observe(Rejected);
+                return Err(error).context("bootstrap source rejected");
+            }
+            // Revocations are already durable. Never redo validation or fall
+            // back after this commit, even if the final transport ACK is lost.
+            observe(Finishing);
+            tokio::time::timeout_at(
+                until.min(Instant::now() + Duration::from_secs(3)).into(),
+                stream.finish(),
+            )
+            .await
+            .context("bootstrap finish timeout")??;
+            scope.check_authority()?;
             ensure!(
                 peer.expires_at_ms > now()?,
-                "bootstrap permission expired in flight"
+                "bootstrap permission expired at completion"
             );
-            ensure!(
-                offer.lease.is_none(),
-                "source mirror cannot issue online service leases"
-            );
-            // Persist before any consumer sees refreshed addresses. Preserve a
-            // valid revocation even when the refreshed bundle has zero routes.
-            // Authorization callbacks may read this same book. Never invoke
-            // caller code while holding its state lock.
-            let observed = now()?;
-            book.lock()
-                .map_err(|_| anyhow::anyhow!("bootstrap owner unavailable"))?
-                .accept_bootstrap_sources(offer.sources, observed)?;
-            // The shared carrier requires BOTH ends to finish. Dropping early
-            // would reset a distributor that is flushing its response.
-            stream.finish().await?;
-            Ok(Some(()))
-        })
-        .await;
-        match response {
-            Ok(Ok(Some(()))) => return Ok(()),
-            Ok(Err(error)) => return Err(error).context("bootstrap refresh rejected"),
-            Ok(Ok(None)) | Err(_) => {}
+            observe(Complete);
+            return Ok(());
         }
     }
+    observe(last);
     anyhow::bail!("approved bootstrap mirrors unavailable")
 }
 

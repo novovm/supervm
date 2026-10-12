@@ -760,3 +760,6 @@ fn bootstrap_refresh_rejects_omission_new_identity_and_bad_signatures() -> Resul
         .is_err());
     Ok(())
 }
+
+#[path = "product_bootstrap_recovery_tests.rs"]
+mod bootstrap_recovery;
