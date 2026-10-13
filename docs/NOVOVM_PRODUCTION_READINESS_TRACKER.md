@@ -10,6 +10,23 @@
 
 ## 2026-10-14 Lease-bounded authenticated mailbox window
 
+Android follow-through (NOVOCHAT regular APK d87c7e24): existing pending48
+recovered without another Send. New49-56 all gained device durable receipts
+within ONE pair of original ten-minute engineering grants. Three cellular
+cuts (20.133/12.114/3.113s) and a new reverse message after each recovered
+without manual reconnect. Healthy signed windows reached about53.9s; one
+Put committed34.576s into the same original task. Both clients consumed the
+existing E219 boundary statuses after the decoder fix, ending normally at
+their original permission deadlines (14/17 tasks, zero native_reply_rejected
+or trace_unavailable). App restart retained recent messages and Delivered.
+One endpoint bind per process; QUIC opened/reused1/12 and5/11. The first
+recovery included another network-generation failure, retained in the report.
+Online new-message device receipts3.986-7.311s; restore-to-receipt
+19.201/8.929/9.524s, not P95. Single own L3 plus external Iroh Relay remains;
+this is NOT production latency, redundancy or anonymity acceptance.
+Phone keys/identity and node protected files unchanged. Complete failure and
+timing evidence is in NOVOCHAT AUTOMATIC_RECOVERY.md and ignored window logs.
+
 Windows follow-through: the first installed Android sample still received a
 30s offer. The real `rendezvous_self_owned_owner` entry had a hardcoded
 `with_lease_limit(30_000)` omitted by the component fixture. Removed that
@@ -23,7 +40,8 @@ four protected hashes unchanged. Phone A retained authenticated sessions for
 about 53s and deposited the original message 48 after 30s in one stream.
 Phone B exposed an existing Android E217-219 status-decoder omission after the
 intentional node restart; this partial batch is NOT a recovery gate PASS and
-StoreReceipt is NOT device delivery. Chat-side correction/acceptance pending.
+StoreReceipt is NOT device delivery. Corrected follow-through is separately
+recorded above; it does not turn the original failed batch into a PASS.
 
 Input `67defadb`, network-only. `NVMBOX03` explicitly selects the existing
 mailbox session with a signed-lease service window. No fallback to an older
