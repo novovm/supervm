@@ -10,6 +10,21 @@
 
 ## 2026-10-14 Lease-bounded authenticated mailbox window
 
+Windows follow-through: the first installed Android sample still received a
+30s offer. The real `rendezvous_self_owned_owner` entry had a hardcoded
+`with_lease_limit(30_000)` omitted by the component fixture. Removed that
+admission-era override: common 120s policy is further bounded by the original
+90s signed generation. Old offers/keys/config/history are untouched. The real
+Windows process test now asserts fresh offers exceed 30s and never exceed 90s.
+All seven owner process tests PASS (175.23s), including migration, two instance
+turns, restart, revocation, missing keys, unavailable publisher and sequence
+reservation; strict entry/test Clippy PASS. Own node upgraded in place with
+four protected hashes unchanged. Phone A retained authenticated sessions for
+about 53s and deposited the original message 48 after 30s in one stream.
+Phone B exposed an existing Android E217-219 status-decoder omission after the
+intentional node restart; this partial batch is NOT a recovery gate PASS and
+StoreReceipt is NOT device delivery. Chat-side correction/acceptance pending.
+
 Input `67defadb`, network-only. `NVMBOX03` explicitly selects the existing
 mailbox session with a signed-lease service window. No fallback to an older
 selector. The same Finished authentication, message framing, capabilities,

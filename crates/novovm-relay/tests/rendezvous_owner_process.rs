@@ -256,6 +256,12 @@ async fn owned_exchange(
                 let mut stream = scope.connect(&endpoint.address).await?.into();
                 let offer = request_service_offer_v2(&mut stream).await?;
                 ensure!(offer.sources.is_empty(), "unexpected publisher");
+                let lease = offer.lease.as_ref().context("lease")?;
+                ensure!(
+                    (30_001..=90_000)
+                        .contains(&lease.expires_at_ms.saturating_sub(lease.issued_at_ms)),
+                    "self-owned entry still conflates admission with service lease"
+                );
                 let next =
                     IrohServiceEndpointV1::from_record(offer.lease.as_ref().context("lease")?)?;
                 history.accept_offer(

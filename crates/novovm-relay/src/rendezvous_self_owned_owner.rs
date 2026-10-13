@@ -297,7 +297,13 @@ impl Owner {
                 };
                 book.check_route(self.policy.node_pin, endpoint.address.endpoint_key, endpoint.instance, now)?;
                 drop(file); // Book retains the sole durable file owner.
-                Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?.with_lease_limit(30_000)?))
+                // Use the common bounded lease policy. The old 30s override was
+                // tied to the unauthenticated stream watchdog, not to protected
+                // operator permission. Offers remain capped by the current
+                // signed store generation (90s), and existing offers never move.
+                // NVMBOX03 alone admits the lease-bounded authenticated window;
+                // legacy stream and client operation deadlines remain unchanged.
+                Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
             }, move |record| {
                 atomic(&publish_root.join("self-owned-record.json"), &serde_json::to_vec(record)?)?;
                 atomic(&publish_root.join("status.json"), &serde_json::to_vec(&serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false}))?)
