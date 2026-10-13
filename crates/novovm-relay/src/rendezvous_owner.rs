@@ -26,7 +26,7 @@ use std::{
 use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u8,
@@ -134,6 +134,10 @@ pub struct Owner {
 impl Owner {
     pub fn open(config: Config) -> Result<Self> {
         let root = config.root()?;
+        ensure!(
+            !root.join("self-owned-policy.dpapi").try_exists()?,
+            "explicit self-owned policy installed; legacy owner retired"
+        );
         check_path(&root.join("owner.lock"))?;
         let lock = OpenOptions::new()
             .read(true)

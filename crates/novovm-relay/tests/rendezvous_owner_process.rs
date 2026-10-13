@@ -194,6 +194,191 @@ async fn exchange(record: &PeerSignedRelayRecordV1, source: BootstrapSourceV1) -
     .await
 }
 
+impl Fixture {
+    fn owned_config(&self) -> Result<()> {
+        std::fs::write(
+            self.0.join("owned.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version":2,"root":self.0,"allowed_clients":[pin(73),pin(74)],"relays":[],
+                "nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
+                "record_id":"owner-test-node"
+            }))?,
+        )?;
+        Ok(())
+    }
+    fn launch_owned(&self, mode: &str) -> Result<Process> {
+        use std::os::windows::process::CommandExt;
+        let mut command = Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"));
+        command.arg(mode);
+        if mode == "--migrate-self-owned" {
+            command.arg(self.0.join("config.json"));
+        }
+        Ok(Process(
+            command
+                .arg(self.0.join("owned.json"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .creation_flags(0x08000000)
+                .spawn()?,
+        ))
+    }
+    async fn owned_record(&self, after: u64) -> Result<PeerSignedRelayRecordV1> {
+        let end = Instant::now() + Duration::from_secs(8);
+        while Instant::now() < end {
+            if let Ok(bytes) = std::fs::read(self.0.join("self-owned-record.json")) {
+                if let Ok(record) = serde_json::from_slice::<PeerSignedRelayRecordV1>(&bytes) {
+                    if record.sequence > after {
+                        return Ok(record);
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        anyhow::bail!("self-owned record not published")
+    }
+}
+async fn owned_exchange(
+    record: &PeerSignedRelayRecordV1,
+    mut history: ServiceLeaseBookV1,
+) -> Result<ServiceLeaseBookV1> {
+    let endpoint = IrohServiceEndpointV1::from_record(record)?;
+    let node = record.relay_public_key;
+    let config =
+        IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)?;
+    with_iroh_scope_v1(
+        config,
+        IrohControlV1::new(Instant::now() + Duration::from_secs(5), || Ok(()))?,
+        move |scope| {
+            Box::pin(async move {
+                // Use the original cached locator, including after its old store
+                // instance has expired. Only the fresh signed offer authorizes IO.
+                let mut stream = scope.connect(&endpoint.address).await?.into();
+                let offer = request_service_offer_v2(&mut stream).await?;
+                ensure!(offer.sources.is_empty(), "unexpected publisher");
+                let next =
+                    IrohServiceEndpointV1::from_record(offer.lease.as_ref().context("lease")?)?;
+                history.accept_offer(
+                    offer,
+                    node,
+                    endpoint.address.endpoint_key,
+                    next.instance,
+                    now_ms()?,
+                )?;
+                let mut rpc =
+                    DiscoveryClient::connect(&mut stream, &key(73), node, next.instance).await?;
+                let slot = rand::random();
+                rpc.put(slot, 1, 2000, vec![12; 128]).await?;
+                let received = rpc.get(slot).await?.context("opaque object missing")?;
+                assert_eq!(received.ciphertext, vec![12; 128]);
+                assert!(rpc.ack(slot, received.revision, received.digest).await?);
+                assert!(!rpc.ack(slot, received.revision, received.digest).await?);
+                rpc.close().await?;
+                Ok(history)
+            })
+        },
+    )
+    .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn self_owned_process_migrates_without_publisher_keeps_listener_across_instances_and_restarts(
+) -> Result<()> {
+    let fixture = Fixture::new()?;
+    let mut legacy = fixture.launch(1)?;
+    let proposal = fixture.proposal(&BTreeSet::new()).await?;
+    let source = fixture.approve(&proposal)?;
+    legacy.finish(true).await?;
+    drop(legacy);
+    let keys = std::fs::read(fixture.0.join("keys.dpapi"))?;
+    fixture.owned_config()?;
+    let owner = fixture.launch_owned("--migrate-self-owned")?;
+    let first = fixture.owned_record(0).await?;
+    assert_eq!(first.relay_public_key, proposal.relay_public_key);
+    assert_eq!(keys, std::fs::read(fixture.0.join("keys.dpapi"))?);
+    let admitted_at = source.manifest.issued_at_ms.max(proposal.issued_at_ms);
+    let previous = ServiceLeaseBookV1::new(
+        BootstrapTrustPolicyV1::single_signer(pin(71)),
+        vec![source],
+        admitted_at,
+    )?;
+    let trust = SelfOwnedTrustV1 {
+        version: 1,
+        node_pins: [first.relay_public_key].into(),
+    };
+    let mut history =
+        previous.prepare_self_owned_migration(trust.clone(), vec![first.clone()], now_ms()?)?;
+    history = owned_exchange(&first, history).await?;
+    for _ in 0..2 {
+        tokio::time::sleep(Duration::from_secs(61)).await;
+        // No invitation refresh; old cache is enough to authenticate a fresh
+        // store behind the SAME still-listening QUIC endpoint.
+        history = owned_exchange(&first, history).await?;
+    }
+    let newest = fixture.owned_record(first.sequence).await?;
+    assert_eq!(
+        serde_json::to_value(IrohServiceEndpointV1::from_record(&first)?.address)?,
+        serde_json::to_value(IrohServiceEndpointV1::from_record(&newest)?.address)?
+    );
+    assert_ne!(
+        IrohServiceEndpointV1::from_record(&first)?.instance,
+        IrohServiceEndpointV1::from_record(&newest)?.instance
+    );
+    // Single owner lock remains held after the activation callback returns.
+    let mut duplicate = fixture.launch_owned("--foreground")?;
+    duplicate.finish(false).await?;
+    drop(owner); // Crash recovery uses the same DPAPI custody and journal.
+    let restarted = fixture.launch_owned("--foreground")?;
+    let fresh = fixture.owned_record(newest.sequence).await?;
+    assert_eq!(keys, std::fs::read(fixture.0.join("keys.dpapi"))?);
+    assert_eq!(
+        IrohServiceEndpointV1::from_record(&first)?
+            .address
+            .endpoint_key,
+        IrohServiceEndpointV1::from_record(&fresh)?
+            .address
+            .endpoint_key
+    );
+    owned_exchange(&fresh, history).await?;
+    drop(restarted);
+    // A legacy entry cannot turn the preserved old Publisher history back on.
+    let mut old = fixture.launch(1)?;
+    old.finish(false).await?;
+    // Missing state never enrolls again, even under the explicit CLI command.
+    std::fs::rename(
+        fixture.0.join("service.journal"),
+        fixture.0.join("saved.journal"),
+    )?;
+    let mut missing = fixture.launch_owned("--provision-self-owned")?;
+    missing.finish(false).await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn self_owned_process_fresh_node_requires_no_publisher_or_original_root() -> Result<()> {
+    let fixture = Fixture::new()?;
+    fixture.owned_config()?;
+    let owner = fixture.launch_owned("--provision-self-owned")?;
+    let record = fixture.owned_record(0).await?;
+    let history = ServiceLeaseBookV1::new_self_owned(
+        SelfOwnedTrustV1 {
+            version: 1,
+            node_pins: [record.relay_public_key].into(),
+        },
+        vec![record.clone()],
+        now_ms()?,
+    )?;
+    owned_exchange(&record, history).await?;
+    drop(owner);
+    let mut input: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.0.join("owned.json"))?)?;
+    input["allowed_clients"] = serde_json::json!([pin(73), pin(74), pin(75)]);
+    std::fs::write(fixture.0.join("owned.json"), serde_json::to_vec(&input)?)?;
+    let mut changed = fixture.launch_owned("--foreground")?;
+    changed.finish(false).await?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn protected_owner_prepares_next_epoch_and_recovers_identity_without_raw_key_pipe(
 ) -> Result<()> {

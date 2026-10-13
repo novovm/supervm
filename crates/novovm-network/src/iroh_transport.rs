@@ -193,7 +193,7 @@ static ENDPOINT_LIMIT: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 #[derive(Clone)]
 pub struct IrohControlV1 {
     check: Arc<dyn Fn() -> Result<()> + Send + Sync>,
-    deadline: Instant,
+    deadline: Option<Instant>,
 }
 
 impl IrohControlV1 {
@@ -208,14 +208,21 @@ impl IrohControlV1 {
         );
         Ok(Self {
             check: Arc::new(check),
-            deadline,
+            deadline: Some(deadline),
         })
     }
 
     fn check(&self) -> Result<()> {
         (self.check)()?;
-        ensure!(Instant::now() < self.deadline, "carrier scope expired");
+        ensure!(
+            self.deadline.is_none_or(|end| Instant::now() < end),
+            "carrier scope expired"
+        );
         Ok(())
+    }
+
+    fn io_deadline(&self) -> Result<Instant> {
+        self.deadline.context("stream requires a finite IO budget")
     }
 
     async fn revoked(&self) -> anyhow::Error {
@@ -328,7 +335,7 @@ pub struct IrohScopeV1 {
     relay_only: bool,
     connections: tokio::sync::Semaphore,
     accept_consumer: tokio::sync::Mutex<()>,
-    listener_only: bool,
+    listener_budget: Option<Duration>,
 }
 
 /// Platform-owned, inbound-only service listener. Its fixed operator permission
@@ -358,9 +365,9 @@ where
     // `until`, and the original operator check still applies during cleanup.
     let control = IrohControlV1 {
         check: Arc::new(check),
-        deadline: until + Duration::from_secs(6),
+        deadline: Some(until + Duration::from_secs(6)),
     };
-    with_iroh_scope_inner(config, control, true, move |scope| {
+    with_iroh_scope_inner(config, control, Some(Duration::from_secs(3)), move |scope| {
         Box::pin(async move {
             tokio::select! {
                 biased;
@@ -369,6 +376,34 @@ where
             }
         })
     })
+    .await
+}
+
+/// Stable inbound-only node listener under an explicit LOCAL owner policy.
+/// It confers no peer trust or service authority. Each accepted stream still
+/// gets a finite 30-second budget; callers verify fresh signed service leases.
+/// The owner check is polled during binding, serving and resource cleanup.
+pub async fn with_iroh_owned_listener_v1<T, F>(
+    config: IrohConfigV1,
+    check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    operation: F,
+) -> Result<T>
+where
+    F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>> + 'static,
+{
+    ensure!(
+        config.service_identity.is_some(),
+        "listener requires protected service identity"
+    );
+    with_iroh_scope_inner(
+        config,
+        IrohControlV1 {
+            check: Arc::new(check),
+            deadline: None,
+        },
+        Some(Duration::from_secs(30)),
+        operation,
+    )
     .await
 }
 
@@ -384,13 +419,13 @@ pub async fn with_iroh_scope_v1<T, F>(
 where
     F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
 {
-    with_iroh_scope_inner(config, control, false, operation).await
+    with_iroh_scope_inner(config, control, None, operation).await
 }
 
 async fn with_iroh_scope_inner<T, F>(
     config: IrohConfigV1,
     control: IrohControlV1,
-    listener_only: bool,
+    listener_budget: Option<Duration>,
     operation: F,
 ) -> Result<T>
 where
@@ -455,7 +490,7 @@ where
         relay_only: config.relay_only,
         connections: tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1),
         accept_consumer: tokio::sync::Mutex::new(()),
-        listener_only,
+        listener_budget,
     };
     let result = tokio::select! {
         biased;
@@ -524,6 +559,10 @@ impl IrohScopeV1 {
         self.control.check()
     }
 
+    pub fn uses_relays(&self) -> bool {
+        !self.relays.is_empty()
+    }
+
     fn peer_address(&self, peer: &IrohAddressV1) -> Result<EndpointAddr> {
         self.control.check()?;
         ensure!(
@@ -563,7 +602,7 @@ impl IrohScopeV1 {
 
     pub async fn connect(&self, peer: &IrohAddressV1) -> Result<IrohStreamV1<'_>> {
         ensure!(
-            !self.listener_only,
+            self.listener_budget.is_none(),
             "service listener cannot initiate connections"
         );
         let address = self.peer_address(peer)?;
@@ -688,10 +727,9 @@ impl IrohScopeV1 {
             scope: self,
             io_control: IrohControlV1 {
                 check: self.control.check.clone(),
-                deadline: if self.listener_only {
-                    self.control
-                        .deadline
-                        .min(Instant::now() + Duration::from_secs(3))
+                deadline: if let Some(budget) = self.listener_budget {
+                    let until = Instant::now() + budget;
+                    Some(self.control.deadline.map_or(until, |end| end.min(until)))
                 } else {
                     self.control.deadline
                 },
@@ -814,7 +852,7 @@ async fn write_frame_io(
         failed,
         complete: false,
     };
-    tokio::time::timeout_at(control.deadline.into(), async {
+    tokio::time::timeout_at(control.io_deadline()?.into(), async {
         send.write_all(&(bytes.len() as u32).to_be_bytes())
             .await
             .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
@@ -842,7 +880,7 @@ async fn read_frame_io(
         complete: false,
     };
     let mut length = [0u8; 4];
-    tokio::time::timeout_at(control.deadline.into(), recv.read_exact(&mut length))
+    tokio::time::timeout_at(control.io_deadline()?.into(), recv.read_exact(&mut length))
         .await
         .context("carrier stream deadline")?
         .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
@@ -852,7 +890,7 @@ async fn read_frame_io(
         "carrier frame limit"
     );
     let mut bytes = vec![0; length];
-    tokio::time::timeout_at(control.deadline.into(), recv.read_exact(&mut bytes))
+    tokio::time::timeout_at(control.io_deadline()?.into(), recv.read_exact(&mut bytes))
         .await
         .context("carrier stream deadline")?
         .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
@@ -1006,7 +1044,7 @@ impl IrohStreamV1<'_> {
         };
         self.send.finish()?;
         let mut trailing = [0u8; 1];
-        tokio::time::timeout_at(self.io_control.deadline.into(), async {
+        tokio::time::timeout_at(self.io_control.io_deadline()?.into(), async {
             ensure!(
                 self.recv
                     .read(&mut trailing)

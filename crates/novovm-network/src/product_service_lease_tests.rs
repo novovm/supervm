@@ -12,6 +12,63 @@ fn own_book() -> Result<ServiceLeaseBookV1> {
 }
 
 #[test]
+fn self_owned_store_rotation_requires_fresh_signature_on_unchanged_transport() -> Result<()> {
+    let mut client = own_book()?;
+    let mut endpoint = address(3);
+    endpoint.instance = [8; 32];
+    let fresh = directory::sign_relay_record_v1(
+        &key(2),
+        "service",
+        vec![endpoint.endpoint()?],
+        500_000,
+        530_000,
+        2,
+    )?;
+    let pin = key(2).verifying_key().to_bytes();
+    let transport = endpoint.address.endpoint_key;
+    client.check_bootstrap_route(pin, transport, [4; 32], 500_000)?;
+    assert!(client
+        .check_route(pin, transport, endpoint.instance, 500_000)
+        .is_err());
+    let mut forged = fresh.clone();
+    forged.signature[0] ^= 1;
+    assert!(client
+        .accept_offer(
+            ServiceLeaseOfferV2 {
+                version: 2,
+                sources: vec![],
+                lease: Some(forged)
+            },
+            pin,
+            transport,
+            endpoint.instance,
+            500_000
+        )
+        .is_err());
+    client.accept_offer(
+        ServiceLeaseOfferV2 {
+            version: 2,
+            sources: vec![],
+            lease: Some(fresh.clone()),
+        },
+        pin,
+        transport,
+        endpoint.instance,
+        500_000,
+    )?;
+    client.check_route(pin, transport, endpoint.instance, 500_000)?;
+    let mut reopened =
+        ServiceLeaseBookV1::restore_self_owned(own_trust(), &client.checkpoint()?, 500_001)?;
+    assert_eq!(reopened.routes(500_001)?, vec![fresh]);
+    assert!(accept(&mut reopened, record(2, 1, 500_001, 510_000), 500_001).is_err());
+    reopened.revoke_self_owned(pin, 500_001)?;
+    assert!(reopened
+        .check_bootstrap_route(pin, transport, [8; 32], 500_001)
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn self_owned_does_not_need_publisher_but_does_need_confirmed_key() -> Result<()> {
     let mut b = own_book()?;
     assert!(b.sources().is_empty());

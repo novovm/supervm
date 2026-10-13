@@ -45,6 +45,30 @@ struct State {
 }
 
 impl ServiceLeaseBookV1 {
+    /// Check the stable locator for a NEW handshake. Store instances may rotate
+    /// behind that same pinned transport. Only accept_renewal authorizes the
+    /// offered instance, after signature, freshness and sequence validation.
+    pub fn check_bootstrap_route(
+        &mut self,
+        pin: [u8; 32],
+        endpoint: [u8; 32],
+        instance: [u8; 32],
+        now: u64,
+    ) -> Result<()> {
+        if !self.is_self_owned() {
+            return self.check_route(pin, endpoint, instance, now);
+        }
+        self.observe(now)?;
+        let entry = self.entries.get(&pin).context("service revoked")?;
+        ensure!(
+            IrohServiceEndpointV1::from_record(&entry.current)?
+                .address
+                .endpoint_key
+                == endpoint,
+            "self-owned transport changed"
+        );
+        Ok(())
+    }
     pub fn durable_checkpoint(&self) -> Result<Vec<u8>> {
         ensure!(
             !self.failed && self.persistence.is_some(),

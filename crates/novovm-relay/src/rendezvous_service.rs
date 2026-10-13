@@ -3,6 +3,8 @@
 #[cfg(windows)]
 mod rendezvous_owner;
 #[cfg(windows)]
+mod rendezvous_self_owned_owner;
+#[cfg(windows)]
 mod windows_custody;
 #[cfg(windows)]
 mod windows_owner_files;
@@ -34,6 +36,17 @@ mod windows {
     define_windows_service!(service_entry, service_main);
 
     fn execute(config: &std::path::Path, stop: Arc<AtomicBool>, epochs: Option<u64>) -> Result<()> {
+        let version = serde_json::from_slice::<serde_json::Value>(
+            &super::windows_owner_files::read_bounded(config, 65536)?,
+        )?["version"]
+            .as_u64();
+        if version == Some(2) {
+            ensure!(
+                epochs.is_none(),
+                "self-owned service uses local stop, not endpoint epochs"
+            );
+            return execute_owned(config, stop, false, None);
+        }
         let config = Config::load(config)?;
         let result = (|| {
             let owner = Owner::open(config.clone())?;
@@ -46,6 +59,19 @@ mod windows {
             config.record_start_failure();
         }
         result
+    }
+    fn execute_owned(
+        config: &std::path::Path,
+        stop: Arc<AtomicBool>,
+        provision: bool,
+        legacy: Option<super::rendezvous_owner::Config>,
+    ) -> Result<()> {
+        let config = super::rendezvous_self_owned_owner::Config::load(config)?;
+        let owner = super::rendezvous_self_owned_owner::Owner::open(config, provision, legacy)?;
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(owner.run(stop))
     }
     fn service_main(_: Vec<OsString>) {
         let _ = run_service();
@@ -130,9 +156,37 @@ mod windows {
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
+        if args[0] == "--migrate-self-owned" {
+            ensure!(
+                args.len() == 3,
+                "usage: --migrate-self-owned OLD_CONFIG NEW_CONFIG"
+            );
+            let old = Config::load(&path)?;
+            return execute_owned(
+                &PathBuf::from(&args[2]),
+                Arc::new(AtomicBool::new(false)),
+                true,
+                Some(old),
+            );
+        }
+        if args[0] == "--provision-self-owned" {
+            ensure!(args.len() == 2, "usage: --provision-self-owned CONFIG");
+            return execute_owned(&path, Arc::new(AtomicBool::new(false)), true, None);
+        }
+        if args[0] == "--foreground" && args.len() == 2 {
+            return execute_owned(&path, Arc::new(AtomicBool::new(false)), false, None);
+        }
         if args[0] == "--check" {
             ensure!(args.len() == 2, "check arguments");
-            Config::load(&path)?;
+            let version = serde_json::from_slice::<serde_json::Value>(
+                &super::windows_owner_files::read_bounded(&path, 65536)?,
+            )?["version"]
+                .as_u64();
+            if version == Some(2) {
+                super::rendezvous_self_owned_owner::Config::load(&path)?;
+            } else {
+                Config::load(&path)?;
+            }
         } else if args[0] == "--provision" {
             ensure!(args.len() == 2, "provision arguments");
             let config = Config::load(&path)?;

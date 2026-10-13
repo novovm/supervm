@@ -78,3 +78,17 @@ PUT/GET/ACK/重复 ACK/删除，连续两次启动和日志恢复、旧源回滚
 selector 7 通过、TLS-only 编译通过、network/relay all-targets 严格 Clippy
 通过。进程专项与库测试层次不同，默认 selector 与全 feature 库测试有重叠，
 不相加宣称独立测试数。日志见最新生产台账。
+
+## 2026-10-13 自主策略 v2 运行入口
+
+同一 `novovm-rendezvous-service` 增加本地自主策略，并复用原 V2 Offer/服务握手/寻址 RPC。
+不要求 Publisher 或 24 小时测试运营许可。原 v1 配置继续按旧规则验证，不自动转换。
+
+- 新节点：`--provision-self-owned CONFIG`，明确创建受 DPAPI 托管的节点和存储密钥并开始运行。
+- 旧节点迁移：停止旧 owner 后，`--migrate-self-owned OLD_CONFIG NEW_CONFIG`。新配置的 root 必须是原 `service.journal` 所在目录，节点、客户端资源范围、Relay/DNS 及 record_id 保留。首次切换建立独立的稳定传输密钥；聊天/钱包密钥不作为载体密钥。
+- 正常启动：`--foreground CONFIG`（持续运行）或原 `--service CONFIG`（SCM 停止处理保持）。不再传 EPOCHS，也没有隐式延长旧许可。
+- 新配置字段：`version=2, root, allowed_clients, relays, nameserver, bind_address, relay_only, record_id`。`root` 为受限 ACL、无 reparse point 的绝对私有目录。批准后的配置与新传输 seed 由 `self-owned-policy.dpapi` 固定，不能直接改 JSON 扩权。
+- `self-owned-record.json` 是当前自签定位声明，首次接纳必须新鲜并由接收方确认公钥；不是 Privacy 或全网信任证明。已有本地信任可用历史定位地址请求新签名租约，不可用旧租约继续业务。
+- 监听端点持续存在；临时寻址存储 90 秒，每 60 秒切换；单个入站操作最多 30 秒。新请求选择实例和租约是原子步骤，旧实例随最后一个有界会话释放。原 TTL、去重与资源限制保持。
+- 本轮进程测试覆盖新节点、显式旧节点迁移、两次实例交接及重启。手机结果单独记录，不等于匿名或已摆脱外部 Iroh Relay。
+- 16 MiB 加密日志仍无安全轮转，到限停止；完整旧备份回滚仍需额外新鲜度机制。当前不承诺长期无人值守产品签收。

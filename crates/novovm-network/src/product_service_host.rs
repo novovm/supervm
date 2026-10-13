@@ -1,5 +1,5 @@
-//! One signer and one durable authorization book. Source signing belongs to the
-//! independently trusted publisher; this host cannot extend its own authority.
+//! One signer and one durable authorization book. Endorsed and explicitly
+//! locally pinned trust are separate policies, sharing the same signed offers.
 use super::*;
 
 const REQUEST_V2: &[u8; 8] = b"NVLSRQ02";
@@ -70,6 +70,11 @@ impl ServiceLeaseHostV1 {
     }
 
     pub fn offer(&self, now: u64) -> Result<ServiceLeaseOfferV2> {
+        self.offer_until(now, u64::MAX)
+    }
+
+    /// Bound each online lease to the selected store's unchanged deadline.
+    pub fn offer_until(&self, now: u64, store_expires_ms: u64) -> Result<ServiceLeaseOfferV2> {
         let mut book = self
             .book
             .lock()
@@ -88,7 +93,9 @@ impl ServiceLeaseHostV1 {
                     entry.grant.record_id.clone(),
                     entry.grant.endpoints.clone(),
                     now,
-                    now.saturating_add(self.lease_ms).min(entry.expires),
+                    now.saturating_add(self.lease_ms)
+                        .min(entry.expires)
+                        .min(store_expires_ms),
                     entry
                         .current
                         .sequence
@@ -117,6 +124,44 @@ impl ServiceLeaseHostV1 {
             )?;
         }
         Ok(offer)
+    }
+
+    /// Local service owner starts a fresh bounded store on the SAME transport.
+    /// This is never available to the Publisher-endorsed policy.
+    pub fn rotate_self_owned(
+        &self,
+        endpoint: &IrohServiceEndpointV1,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        let mut book = self
+            .book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?;
+        ensure!(book.is_self_owned(), "self-owned policy required");
+        let pin = self.key.verifying_key().to_bytes();
+        let entry = book.entries.get(&pin).context("service revoked")?;
+        ensure!(
+            IrohServiceEndpointV1::from_record(&entry.current)?
+                .address
+                .endpoint_key
+                == endpoint.address.endpoint_key,
+            "self-owned transport changed"
+        );
+        let record = directory::sign_relay_record_v1(
+            &self.key,
+            entry.grant.record_id.clone(),
+            vec![endpoint.endpoint()?],
+            now,
+            expires,
+            entry
+                .current
+                .sequence
+                .checked_add(1)
+                .context("host sequence exhausted")?,
+        )?;
+        book.replace_self_owned_records(vec![record.clone()], now)?;
+        Ok(record)
     }
 }
 
@@ -178,7 +223,7 @@ impl ServiceLeaseBookV1 {
                 offer.sources.is_empty(),
                 "self-owned offer cannot import endorsements"
             );
-            return self.check_route(pin, endpoint, instance, now);
+            return self.check_bootstrap_route(pin, endpoint, instance, now);
         }
         // A peer only refreshes source IDs the install owner already admitted.
         // Missing sources are not revocations: retain independent publishers.
@@ -275,7 +320,7 @@ pub async fn accept_service_offer_with_activation_v2(
                 .lock()
                 .map_err(|_| anyhow::anyhow!("lease owner unavailable"))?;
             let current = now()?;
-            owner.check_route(
+            owner.check_bootstrap_route(
                 pin,
                 expected.address.endpoint_key,
                 expected.instance,
@@ -346,12 +391,22 @@ pub async fn serve_service_offer_v2(
     host: &ServiceLeaseHostV1,
     now: impl FnOnce() -> Result<u64>,
 ) -> Result<()> {
+    serve_service_offer_selected_v2(stream, || Ok((host.offer(now()?)?, ()))).await
+}
+
+/// Select the store and its offer together AFTER receiving the V2 request.
+/// A generation switch cannot pair a new lease with an older store instance.
+pub async fn serve_service_offer_selected_v2<T>(
+    stream: &mut CarrierStreamV1<'_>,
+    select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
+) -> Result<T> {
     ensure!(
         stream.read_frame().await?.as_slice() == REQUEST_V2,
         "service offer request version"
     );
-    let offer = host.offer(now()?)?;
-    stream.write_frame(&encode(&offer)?).await
+    let (offer, selected) = select()?;
+    stream.write_frame(&encode(&offer)?).await?;
+    Ok(selected)
 }
 
 /// Source-only distributor using the existing V2 prelude. Its owner supplies a

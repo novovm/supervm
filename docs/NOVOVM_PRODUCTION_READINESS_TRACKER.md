@@ -8,6 +8,31 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 自主节点真实入口与稳定监听（手机验收前）
+
+在 `e7379b22` 基础上交付 `novovm-rendezvous-service` 本地 v2 自主策略。
+调用链为 Windows DPAPI owner → `run_self_owned_rendezvous_v1` →
+`with_iroh_owned_listener_v1` → 原 V2 Offer + Finished 绑定身份握手 + 原寻址 RPC。
+长期节点/传输密钥不随短租约轮换；90 秒有界寻址实例每 60 秒切换，新请求
+原子选择实例及其签名租约，旧流最多 30 秒且不续期。未增加聊天专用线协议。
+默认入站上限 4、既有记录/字节/身份资源边界保留，不引入全网许可或链 RPC。
+
+`--migrate-self-owned OLD_CONFIG NEW_CONFIG` 为显式本机迁移，保留原 DPAPI
+节点/存储密钥、加密日志、序号预留、背书与撤销历史；新策略也受 DPAPI 绑定，
+旧入口不能重新启动，新旧状态损坏/丢失均拒绝。初次节点使用
+`--provision-self-owned CONFIG`；普通运行使用 `--foreground CONFIG` 或原 SCM。
+这不是把旧许可延期：接收方仍须明确确认自主节点公钥，验证新鲜在线签名。
+
+Windows 真实可执行进程 **2/2**（133.88s）：新节点无 Publisher；旧节点迁移、
+跨两次实例切换、原缓存获取新实例、端点地址/公钥不变、进程重启后恢复、
+并发 owner 拒绝、旧入口及缺失日志拒绝。通用租约 **47/47**，Iroh **28/28**，
+network/relay all-targets Clippy `-D warnings` 通过。日志均在忽略的
+`artifacts/self-owned-*.log`。尚未据此签收两 Android 或第三方载体独立性。
+
+仍有限制：加密日志 16 MiB 到限安全停止，安全轮转未交付；完整旧备份防回滚
+仍需外部新鲜度依据；本机客户端资源许可为运营者配置，尚无开放服务计费接口。
+自有 Iroh Relay、UCA 既有账户绑定、L4 实际中继及匿名路径不在本次签收范围。
+
 ## 2026-10-13 自主入网、统一 UCA 与 L4 奖励的架构边界
 
 本节的运行时后续：基于 `c7b32c93`、认领 `e82e90d4`，既有 ServiceLeaseBook

@@ -354,11 +354,21 @@ impl ServiceLeaseBookV1 {
             "renewal exceeds authority"
         );
         newer(&entry.current, &record)?;
+        if self.is_self_owned() {
+            ensure!(
+                IrohServiceEndpointV1::from_record(&entry.current)?
+                    .address
+                    .endpoint_key
+                    == expected_endpoint,
+                "self-owned renewal changed transport"
+            );
+        }
         let mut entries = self.entries.clone();
-        entries
-            .get_mut(&expected_pin)
-            .expect("checked entry")
-            .current = record;
+        let entry = entries.get_mut(&expected_pin).expect("checked entry");
+        if self.is_self_owned() {
+            entry.grant = record.clone();
+        }
+        entry.current = record;
         self.publish(self.sources.clone(), entries, self.tombstones.clone())
     }
 }
@@ -518,7 +528,8 @@ pub use checkpoint::{ServiceLeasePersistenceV1, MAX_SERVICE_CHECKPOINT_BYTES};
 mod host;
 pub use host::{
     accept_service_offer_with_activation_v2, request_service_offer_v2, serve_bootstrap_sources_v2,
-    serve_service_offer_v2, ServiceLeaseHostV1, ServiceLeaseOfferV2, ServiceOfferStepV2,
+    serve_service_offer_selected_v2, serve_service_offer_v2, ServiceLeaseHostV1,
+    ServiceLeaseOfferV2, ServiceOfferStepV2,
 };
 #[path = "product_service_file.rs"]
 mod file;
