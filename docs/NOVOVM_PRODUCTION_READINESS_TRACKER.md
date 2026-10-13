@@ -8,6 +8,41 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 发现 RPC 复用移动长期端点（长尾与连续性仍未签收）
+
+输入本仓 `5a4475a2` / NOVOCHAT `f4cb62d`；手机接线提交 NOVOCHAT
+`089b8c7`。本仓本片仅更新交付记录，没有修改通用网络、主链、AOEM 或金融
+语义。App 的 `DiscoveryRoundConfig.endpoint → run_node → with_connection_scope
+→ IrohEndpointOwnerV1.with_operation` 直接复用既有通用能力。控制、发现 RPC、
+数据使用同一端点，各自保留原期限、签名、撤销、Privacy 与独立对端认证。
+
+三批正式 PKL110 Wi-Fi / PCLM50 蜂窝样本，两端每进程 bind 总数始终为 1，
+原 PERSIST4 R3 两条已恢复。后两批节点各 330 次采样、各跨 12 个自主寻址实例，
+公钥和监听入口稳定；未开启 Publisher/旧镜像，第三方 Iroh Relay 仍参与。
+不能把复用 Endpoint 当作 QUIC 连接/认证缓存，亦不等于自主匿名传输。
+
+前两批各 R1–R4 及每轮新消息完成，R5 到原用户许可末端/结束仍待发，后续新
+合法许可恢复原 ID；不能跨许可拼成五轮连续通过。第二批 R2 认证仍达约
+178.4 秒、持久发件确认约 182.0 秒。新固定阶段记录显示多个发现 RPC 在发布/
+领取、IO/截止时失败；部分双方在线租约对应相同实例，不能只归因于每 60 秒
+换实例。原 90 秒有效期、短操作预算和恢复名单均未扩大。
+
+第三批 R1/R2/R3 双向交付，但随后 Wi-Fi task14 在持久确认/收件之后出现 E7，
+任务剩余 18.931 秒、用户许可剩余 136.935 秒，自动状态 blocked。E7 仍为
+App 收尾相关文字后备分类，首个底层类型/具体调用尚未定位；不是已证明的
+Iroh finish 缺陷，也不是用户许可正常到期。AFTER3 两条保留待发，重开确认
+已送达状态与未发送状态均保持，未忽略收尾异常或更换 Message ID。
+
+App 真实 QUIC 发现 22 项及后补负例 1 项、两轮保留端点丢 ACK 1 项通过；
+Python 36、Kotlin 35、Flutter 聊天 27 项及严格 Clippy/fmt 通过。测试夹具
+停机竞态与错误身份断言修正前的失败仍记录，不冒称全栈零失败。正常包已
+原位安装，原密钥/历史保持。完整逐轮表、阶段计数、构建哈希与证据边界在
+NOVOCHAT `docs/implementation/AUTOMATIC_RECOVERY.md` 最新节。
+
+**正常发现重复 bind 消除已验证；五轮连续恢复、Automatic Recovery v1、
+长尾改善与 1/5/10 秒 P95 均未签收。** 继续定位 App 收尾首错及 RPC/对端
+会合生命周期，不新增协议或用放宽授权掩盖问题。
+
 ## 2026-10-13 移动长期端点与网络代次接线（整体延迟未签收）
 
 `a5ecac32` 的 `IrohEndpointOwnerV1`、`d4e27c83` 的 Android 网络变化通知，
