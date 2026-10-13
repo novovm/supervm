@@ -2816,6 +2816,14 @@ AOEM_API int32_t aoem_execute_primitive_v1(
 AOEM_API void aoem_free(uint8_t* ptr, size_t len);
 
 // Integer binary result v1 (capability compute_checked_integer_binary_result_v1).
+// AOIP0 v9 (compute_checked_integer_dataflow_v1) extends the same Run/result
+// contract with bounded cross-row input bindings. Header/sequence match v8;
+// rows=logical rows (1..resident capacity, <=4096). Input body contains exactly
+// rows*inputs bindings: LE u32 tag=0 + 32 LE u32 limbs; or tag=1 + prior_row u32
+// + output_column u32. Only prior rows and valid output columns are allowed.
+// The existing pure integer program runs each row. Rejected predecessor reads
+// abort/poison; no stale/partial result. Final AOIR0001 contains logical rows.
+// This is not a state-effect/business plan or a GPU-residency guarantee.
 // Execute through opcode 113, AOIP0 version 8, command 2: same v7 Run header,
 // input_bytes excludes the u64 LE monotonic nonzero sequence inserted at byte 40.
 // i1024 only. Open/close retain strict v7; no numeric JSON state is materialized.

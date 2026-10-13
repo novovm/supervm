@@ -8,6 +8,87 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 Explicit integer dependency plan (partial step 2, NOT complete candidate execution)
+
+Input SUPERVM `c48dd7bd`; AOEM generic adapter pushed as `6cedc1e3`.
+The original node now compiles constant/prior-output bindings instead of advancing
+`ComponentState` after each integer wave. Exec submits one bounded AOIP0 v9
+plan through the SAME opcode113/resident outcome operator; final AOIR0001 result
+ownership, full-width checks, failure latch and single-take sequence are retained.
+AOEM receives an explicit acyclic dependency graph, not NOV callbacks or rules.
+No new node, signer, ledger, shader or consensus protocol was introduced.
+
+What is **not** finished: the rows are still predictions; global fee capacity,
+ordered repair, receipt/effect generation and `finish()` remain in the existing
+AOEM CPU callback. Internal dataflow levels still read back/bind/upload limbs;
+this is not continuous GPU residency. Complete plan/proof/production acceptance
+remain OPEN. Next implementation must compile the fee window, failure priority,
+per-transaction rounding, capacity and effects, not wrap this finish callback.
+
+The same-candidate real-AOEM fixture now includes incoming funds, spending,
+consecutive nonce, a business failure consuming nonce, and a subsequent spend
+(four dependency levels). It matches CPU balances/nonce/fees/receipts/state root.
+Treasury overflow with dependent repair also matches, **but that repair still
+uses finish**, so the test is not evidence of complete fee-plan execution.
+Normal production diagnostics time the binary plan; old v7 JSON detailed profile
+is test compatibility only and cannot explain v9 device time.
+
+Verification: AOEM 15 resource tests including real DAG and v7/v8 compatibility,
+plus rejected-predecessor/no-result/poison retest; exec 64 passed/25 ignored;
+node pipeline 395 passed/60 ignored; node Release build, fmt and strict scoped
+Clippy passed. Bundled full-u128 oracle passed. Real integer-mode single-ingress
+failure/restart, A/A/B (three honest original processes plus fault peer), and
+offline quorum/catchup/restart passed (5.77s, 13.26s, 47.78s respectively).
+No physical four-machine or Linux integer-mode qualification is implied.
+
+### Frozen CPU regression investigation (separate from final performance)
+
+Same frozen load driver, AC, single ingress, 65,536 signatures, same economics
+and four-node final receipts; two rounds per old/new node × old/new DLL, reverse
+second order. Old node `92160d3e…`, new c48 delivery node `dca03e2e…`;
+old DLL `3c65bd83…`, binary-result DLL `9e39b9d…`. Pooled successful TPS:
+old/old **9110.33**, old/new **9435.86**, new/old **9617.31**, new/new **9157.75**.
+The same new/new pair varied **8437.17 → 10012.90**. Effects change direction
+across combinations; this does not identify a stable culprit or prove no
+regression. Prior negative CPU samples remain valid observations and unresolved.
+This uses the final c48 delivery node, not the earlier `4a03f542…` checkpoint.
+
+### Final paired original-node performance
+
+Frozen baseline is c48 delivery node `dca03e2e…` / DLL `9e39b9d…`.
+Final node **`63aaf36c…`**, DLL **`f85e7ebf…`**, same frozen driver
+`07090a3c…`; full hashes in validation. Windows Release, AC before/after,
+diagnostics off, no concurrent builds/tests; original single RPC, four validators,
+65,536 real signatures, batches 1024, 1024 payers × 64 nonces, shared recipient,
+8192 in flight. All 8 rounds: **65,536 successful, 0 business failures, 0 permanent
+rejects, 0 unresolved**; economics, history eviction and cold recovery passed.
+Business failure behavior is verified by correctness fixtures, not counted as
+successful load. P95/P99 below include client submission and slowest-node HTTP
+receipt observation, not pure consensus/device time.
+
+| Round | Successful TPS | P95 ms | P99 ms |
+| --- | ---: | ---: | ---: |
+| baseline-cpu-1 | 9146.88 | 1266.813 | 1424.077 |
+| baseline-cpu-2 | 9094.54 | 1164.488 | 1228.883 |
+| baseline-integer-1 | 8983.48 | 1118.689 | 1285.898 |
+| baseline-integer-2 | 8974.59 | 1156.538 | 1299.389 |
+| final-cpu-1 | 9219.52 | 1136.906 | 1242.703 |
+| final-cpu-2 | 9631.30 | 1049.928 | 1249.098 |
+| final-integer-1 | 8960.33 | 1167.152 | 1335.828 |
+| final-integer-2 | 9031.90 | 1121.964 | 1257.791 |
+
+Pooled (total successes / total measured seconds): CPU **9120.63 → 9420.91**
+(+3.29%), integer **8979.03 → 8995.97** (+0.19%). These are finite observations,
+not stable acceleration. Integer tails do not improve consistently; the common
+load has little intra-candidate dependency, so it does not demonstrate a speedup
+from removing dependent-wave resubmissions. CPU default remains preserved.
+
+SDK: Windows FULLMAX core/header only advanced; ABI/hash/capability load verified,
+117 checksum entries matched. Linux and sidecars retained, not requalified.
+49 protected drafts hash-identical. Source/contract, all 16 load reports and three
+fault/recovery reports: [validation](../artifacts/audit/resident-integer-dataflow-20261013/validation.json).
+Current CI for this delivery must be checked separately; local tests are not CI.
+
 ## 2026-10-13 Unified integer binary result slice (not complete algebraic plan)
 
 User approved the four-part [mapping and order](NOVOVM_ALGEBRAIC_PLAN_INTEGRATION.md)

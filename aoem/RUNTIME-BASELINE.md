@@ -1,6 +1,16 @@
 # AOEM FULLMAX Runtime Baseline
 
-## Current: 2026-10-13 Windows binary integer result
+## Current: 2026-10-13 Windows bounded integer dataflow
+
+Core/header AOEM `6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423`, same FULLMAX features;
+44,470,784 bytes, SHA256 `f85e7ebf1fa906984f66b6e9cc4ebc9005efe636f64304c04665a3f73cb352f7`.
+AOIP0 v9 input references, existing resident outcome operator, AOIR0001 final
+results; generic input dataflow, not NOV policy or complete business effects.
+15 native resource tests passed, including real dependency/poisoning and v7/v8
+compatibility. Product validation and performance are recorded in the tracker.
+Linux and sidecars unchanged. No full GPU-residency or proof signoff.
+
+## Previous: 2026-10-13 Windows binary integer result
 
 Core/header AOEM `8f12c805122c6e59889ce4f3352aa0541f869593`, same FULLMAX features;
 44,429,824 bytes, SHA256 `9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9`.

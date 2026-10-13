@@ -59,6 +59,50 @@ fn binary_integer_wrong_result_latches_owner_and_does_not_retry_or_fall_back() {
 }
 
 #[test]
+fn dataflow_preflight_owner_edges_and_poison_preserve_binary_contract() {
+    struct BinaryOnly(usize);
+    impl ResourceTransport for BinaryOnly {
+        fn exchange(&mut self, _: &str, _: &[u8]) -> Result<Value> {
+            panic!("dataflow must not use JSON");
+        }
+        fn exchange_binary(&mut self, _: &str, payload: &[u8], _: u64, _: u64) -> Result<Vec<u8>> {
+            self.0 += 1;
+            assert_eq!(word(payload, 8)?, 9);
+            assert_eq!(word(payload, 28)?, 2);
+            assert_eq!(word(payload, 48 + 4 * 132)?, 1);
+            Ok(vec![0; 40])
+        }
+    }
+    let req = request();
+    let shape = validate_program(&req.program, 4, 1, 2).unwrap();
+    let mut owner = ResourceOwner {
+        transport: BinaryOnly(0),
+        owner: 42,
+        prefix: "test/dataflow".into(),
+        resources: BTreeMap::from([(7, shape)]),
+        last_resource_id: 7,
+        poisoned: false,
+    };
+    let resource = AoemIntegerResourceV7 { owner: 42, id: 7 };
+    let literal = AoemIntegerInputV1::Literal(AoemInteger1024V1::from_u128(1));
+    let mut rows = vec![vec![literal; 4], vec![literal; 4]];
+    rows[1][0] = AoemIntegerInputV1::Output { row: 1, column: 0 };
+    assert!(owner.run_dataflow(&resource, &rows).is_err());
+    rows[1][0] = AoemIntegerInputV1::Output { row: 0, column: 1 };
+    assert!(owner.run_dataflow(&resource, &rows).is_err());
+    rows[1][0] = AoemIntegerInputV1::Output { row: 0, column: 0 };
+    assert!(owner
+        .run_dataflow(&AoemIntegerResourceV7 { owner: 43, id: 7 }, &rows)
+        .is_err());
+    assert!(!owner.poisoned);
+    assert_eq!(owner.transport.0, 0);
+    assert!(owner.run_dataflow(&resource, &rows).is_err());
+    assert!(owner.poisoned);
+    assert!(owner.run_dataflow(&resource, &rows).is_err());
+    assert_eq!(owner.transport.0, 1);
+}
+
+#[test]
 fn binary_integer_decoder_preserves_contract_without_json_intermediate() {
     let req = request();
     let shape = validate_program(&req.program, 4, 1, 1).unwrap();

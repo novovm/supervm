@@ -22,6 +22,13 @@ static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AoemInteger1024V1(pub [u32; 32]);
 
+/// Pure data dependency, not a host callback or an authoritative state write.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AoemIntegerInputV1 {
+    Literal(AoemInteger1024V1),
+    Output { row: u32, column: u32 },
+}
+
 impl AoemInteger1024V1 {
     pub fn from_u128(value: u128) -> Self {
         let mut limbs = [0; 32];
@@ -481,6 +488,7 @@ pub struct AoemIntegerResourceSessionV7 {
     inner: ResourceOwner<AoemExecSession>,
     profile_supported: bool,
     binary_supported: bool,
+    dataflow_supported: bool,
 }
 
 /// Local measurements only. Never include these in business or consensus commitments.
@@ -551,6 +559,8 @@ impl AoemExecFacade {
             })
             .map_err(|_| anyhow::anyhow!("integer resource owner sequence exhausted"))?;
         Ok(AoemIntegerResourceSessionV7 {
+            dataflow_supported: self.capabilities_json()?["compute_checked_integer_dataflow_v1"]
+                == true,
             binary_supported: self.capabilities_json()?["compute_checked_integer_binary_result_v1"]
                 == true
                 && self.dynlib.supports_integer_result_take_v1(),
@@ -570,6 +580,22 @@ impl AoemExecFacade {
 }
 
 impl AoemIntegerResourceSessionV7 {
+    pub fn supports_dataflow_v1(&self) -> bool {
+        self.binary_supported && self.dataflow_supported
+    }
+
+    /// One delegation with explicit backward row references, final results only.
+    /// All numerical work stays in the existing AOEM checked integer operator.
+    pub fn run_dataflow_v1(
+        &mut self,
+        resource: &AoemIntegerResourceV7,
+        rows: &[Vec<AoemIntegerInputV1>],
+    ) -> Result<AoemIntegerOutcomeBatchV1> {
+        if !self.supports_dataflow_v1() {
+            bail!("AOEM integer dataflow unsupported; no fallback");
+        }
+        self.inner.run_dataflow(resource, rows)
+    }
     pub fn supports_binary_result_v1(&self) -> bool {
         self.binary_supported
     }
@@ -801,6 +827,56 @@ struct ResourceOwner<T> {
 }
 
 impl<T: ResourceTransport> ResourceOwner<T> {
+    fn run_dataflow(
+        &mut self,
+        resource: &AoemIntegerResourceV7,
+        rows: &[Vec<AoemIntegerInputV1>],
+    ) -> Result<AoemIntegerOutcomeBatchV1> {
+        let mut shape = self.shape(resource)?;
+        if rows.is_empty() || rows.len() > shape.rows {
+            bail!("integer dataflow row bound");
+        }
+        let mut body = Vec::new();
+        for (index, row) in rows.iter().enumerate() {
+            if row.len() != shape.inputs {
+                bail!("integer dataflow input shape");
+            }
+            for binding in row {
+                match binding {
+                    AoemIntegerInputV1::Literal(value) => {
+                        body.extend_from_slice(&0u32.to_le_bytes());
+                        for limb in value.0 {
+                            body.extend_from_slice(&limb.to_le_bytes());
+                        }
+                    }
+                    AoemIntegerInputV1::Output { row, column } => {
+                        if *row as usize >= index || *column as usize >= shape.outputs {
+                            bail!("integer dataflow invalid reference");
+                        }
+                        for n in [1, *row, *column] {
+                            body.extend_from_slice(&n.to_le_bytes());
+                        }
+                    }
+                }
+            }
+        }
+        shape.rows = rows.len();
+        let sequence = REQUEST_SEQUENCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| anyhow::anyhow!("integer request sequence exhausted"))?
+            + 1;
+        let mut payload = resource_header(2, resource.id, rows.len(), 0, body.len());
+        payload[8..12].copy_from_slice(&9u32.to_le_bytes());
+        payload.extend_from_slice(&sequence.to_le_bytes());
+        payload.extend_from_slice(&body);
+        self.poisoned = true;
+        let bytes =
+            self.transport
+                .exchange_binary(&self.prefix, &payload, resource.id, sequence)?;
+        let output = decode_binary(&bytes, resource.id, sequence, &shape)?;
+        self.poisoned = false;
+        Ok(output)
+    }
     fn run_binary(
         &mut self,
         resource: &AoemIntegerResourceV7,

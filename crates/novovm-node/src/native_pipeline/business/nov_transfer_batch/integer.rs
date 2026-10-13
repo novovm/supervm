@@ -1,13 +1,18 @@
 //! One owner-thread resource, one fixed row shape, no per-batch device setup.
 
 use super::checked_integer_asset::{transfer_asset, INPUTS, OUTPUTS};
+#[cfg(test)]
 use crate::native_pipeline::business::quoted_transfer::{
     TransferIntent, TransferOutcome, TransferSnapshot,
 };
-use anyhow::{ensure, Context, Result};
+#[cfg(test)]
+use anyhow::Context;
+use anyhow::{ensure, Result};
+#[cfg(test)]
+use novovm_exec::resident::AoemInteger1024V1;
 use novovm_exec::resident::{
-    AoemExecOpenOptions, AoemInteger1024V1, AoemIntegerOutcomeKindV1, AoemIntegerResourceSessionV7,
-    AoemIntegerResourceV7, AoemLibrarySelection,
+    AoemExecOpenOptions, AoemIntegerInputV1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
+    AoemIntegerResourceSessionV7, AoemIntegerResourceV7, AoemLibrarySelection,
 };
 use std::path::Path;
 
@@ -35,8 +40,8 @@ impl ResidentTransferResources {
         let facade = selection.open_wire_facade()?;
         let mut session = facade.create_integer_resource_session_v7("novovm/native-transfer")?;
         ensure!(
-            session.supports_binary_result_v1(),
-            "NOV integer execution requires AOEM binary result v1; update SDK, no JSON fallback"
+            session.supports_dataflow_v1(),
+            "NOV integer execution requires AOEM dataflow v1; update SDK, no fallback"
         );
         let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, max_rows)?;
         Ok(Self {
@@ -51,6 +56,31 @@ impl ResidentTransferResources {
         self.capacity
     }
 
+    pub(super) fn run_plan(
+        &mut self,
+        rows: &[Vec<AoemIntegerInputV1>],
+    ) -> Result<AoemIntegerOutcomeBatchV1> {
+        ensure!(!self.poisoned, "NOV integer resource poisoned");
+        self.poisoned = true;
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::IntegerWire,
+        );
+        let batch = self.session.run_dataflow_v1(&self.resource, rows)?;
+        ensure!(batch.rows.len() == rows.len(), "NOV dataflow result count");
+        for row in &batch.rows {
+            ensure!(
+                row.outcome == AoemIntegerOutcomeKindV1::Value
+                    && row.fault == 0
+                    && row.component.is_none()
+                    && row.failed_instruction.is_none(),
+                "NOV dataflow rejected row"
+            );
+        }
+        self.poisoned = false;
+        Ok(batch)
+    }
+
+    #[cfg(test)]
     pub(super) fn run(
         &mut self,
         inputs: &[(TransferIntent, TransferSnapshot, Option<String>)],

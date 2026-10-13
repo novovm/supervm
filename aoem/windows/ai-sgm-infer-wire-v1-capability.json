@@ -1,5 +1,14 @@
 {
-  "source_commit": "8f12c805122c6e59889ce4f3352aa0541f869593",
+  "source_commit": "6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423",
+  "checked_integer_dataflow_v1": {
+    "included": true,
+    "capability_flag": "compute_checked_integer_dataflow_v1",
+    "payload_version": 9,
+    "result_magic": "AOIR0001",
+    "input_bindings": "literal_i1024_or_prior_output",
+    "complete_business_plan": false,
+    "device_resident_intermediates": false
+  },
   "checked_integer_binary_result_v1": {
     "included": true,
     "capability_flag": "compute_checked_integer_binary_result_v1",
@@ -14,7 +23,7 @@
   "status": "production_model_session_capability",
   "entry": "aoem_execute_ops_wire_v1",
   "result": "aoem_state_read_v1",
-  "result_scope": "legacy/model/diagnostic contracts; integer v8 uses checked_integer_binary_result_v1",
+  "result_scope": "legacy/model/diagnostic contracts; integer v8/v9 use checked_integer_binary_result_v1",
   "payload_contract": "versioned_model_session_or_checked_program_binary",
   "model_asset_required": true,
   "model_asset_required_scope": "model_session_payloads_only",

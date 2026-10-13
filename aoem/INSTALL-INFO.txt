@@ -1,8 +1,9 @@
 AOEM runtime in SUPERVM is packaged as one portable FULLMAX host bundle.
 
 Current update (2026-10-13):
-  Windows core/header: AOEM 8f12c805122c6e59889ce4f3352aa0541f869593.
-  Normal integer execution requires binary result v1 (AOIP0 v8/AOIR0001).
+  Windows core/header: AOEM 6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423.
+  Normal integer execution requires dataflow v1 (AOIP0 v9/AOIR0001).
+  This removes node prediction-wave resubmission, not the global fee/effect finish.
   Execution still enters through the unified wire. v7 diagnostic compatibility remains.
   Windows sidecars: retained 1377cd1e bundle, not rebuilt.
   Linux core/header/sidecars: retained 1377cd1e bundle, not upgraded.

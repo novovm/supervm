@@ -332,129 +332,15 @@ fn speculate(
     Ok(predictions)
 }
 
-struct ComponentState {
-    balances: BTreeMap<Account, u128>,
-    nonces: BTreeMap<[u8; 32], u64>,
-}
-
-impl ComponentState {
-    fn new(prepared: &Prepared, component: usize) -> Self {
-        let mut state = Self {
-            balances: BTreeMap::new(),
-            nonces: BTreeMap::new(),
-        };
-        for &index in &prepared.components[component] {
-            let request = &prepared.requests[index];
-            for account in [&request.payer, &request.recipient] {
-                state
-                    .balances
-                    .insert(account.clone(), prepared.balances[account].unwrap_or(0));
-            }
-            state.nonces.insert(
-                prepared.identities[index],
-                prepared.nonces[&prepared.identities[index]],
-            );
-        }
-        state
-    }
-
-    fn snapshot(&self, prepared: &Prepared, index: usize) -> TransferSnapshot {
-        let request = &prepared.requests[index];
-        TransferSnapshot {
-            payer_balance: self.balances[&request.payer],
-            recipient_balance: self.balances[&request.recipient],
-            next_nonce: self.nonces[&prepared.identities[index]],
-        }
-    }
-
-    fn advance(&mut self, prepared: &Prepared, index: usize, outcome: &TransferOutcome) {
-        let request = &prepared.requests[index];
-        self.balances
-            .insert(request.payer.clone(), outcome.delta().payer.after);
-        self.balances
-            .insert(request.recipient.clone(), outcome.delta().recipient.after);
-        self.nonces
-            .insert(prepared.identities[index], outcome.delta().nonce_after);
-    }
-}
-
 struct IntegerPredictions {
     components: Vec<Option<Vec<Prediction>>>,
     rows: usize,
     waves: usize,
 }
 
-fn speculate_integer(
-    prepared: &Prepared,
-    resources: &mut ResidentTransferResources,
-    now: u128,
-) -> Result<IntegerPredictions> {
-    ensure!(!prepared.components.is_empty(), "empty NOV component plan");
-    let quotation = FeeQuotationContext::new(&prepared.policy, now)?;
-    let mut states: Vec<_> = (0..prepared.components.len())
-        .map(|component| ComponentState::new(prepared, component))
-        .collect();
-    let mut predictions: Vec<Vec<Prediction>> = prepared
-        .components
-        .iter()
-        .map(|indices| Vec::with_capacity(indices.len()))
-        .collect();
-    // One row per independent component per wave. Re-enqueue only components
-    // with work left, avoiding O(component_count * longest_component) scans.
-    let mut active: Vec<usize> = (0..states.len()).collect();
-    let mut rows = 0;
-    let mut waves = 0;
-    while !active.is_empty() {
-        let mut next = Vec::with_capacity(active.len());
-        for chunk in active.chunks(resources.capacity()) {
-            let mut inputs = Vec::with_capacity(chunk.len());
-            let mut fees = Vec::with_capacity(chunk.len());
-            for &component in chunk {
-                let index = prepared.components[component][predictions[component].len()];
-                let fee = quotation.prepare(&prepared.requests[index])?;
-                let (intent, rejection) = intent(prepared, index, &fee)?;
-                fees.push(fee);
-                inputs.push((
-                    intent,
-                    states[component].snapshot(prepared, index),
-                    rejection,
-                ));
-            }
-            let outcomes = resources.run(&inputs)?;
-            ensure!(
-                outcomes.len() == chunk.len(),
-                "NOV integer wave coverage mismatch"
-            );
-            rows += chunk.len();
-            waves += 1;
-            for (((&component, (_, snapshot, _)), outcome), fee) in
-                chunk.iter().zip(inputs).zip(outcomes).zip(fees)
-            {
-                let index = prepared.components[component][predictions[component].len()];
-                states[component].advance(prepared, index, &outcome);
-                predictions[component].push(Prediction {
-                    index,
-                    snapshot,
-                    outcome,
-                    fee,
-                });
-                if predictions[component].len() < prepared.components[component].len() {
-                    next.push(component);
-                }
-            }
-        }
-        active = next;
-    }
-    ensure!(
-        rows == prepared.requests.len(),
-        "NOV integer prediction coverage mismatch"
-    );
-    Ok(IntegerPredictions {
-        components: predictions.into_iter().map(Some).collect(),
-        rows,
-        waves,
-    })
-}
+#[path = "dataflow.rs"]
+mod dataflow;
+use dataflow::speculate as speculate_integer;
 
 fn finish(
     input: SignatureCheckedInput,

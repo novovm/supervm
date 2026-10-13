@@ -2923,7 +2923,7 @@ pub use semantic_graph_v3::{
     AoemStorageProviderConfigV1,
 };
 pub use semantic_integer::{
-    AoemInteger1024V1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
+    AoemInteger1024V1, AoemIntegerInputV1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
     AoemIntegerOutcomeRequestV1, AoemIntegerOutcomeRowV1, AoemIntegerResourceDiagnosticsV1,
     AoemIntegerResourceProfileV1, AoemIntegerResourceSessionV7, AoemIntegerResourceV7,
 };

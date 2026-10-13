@@ -715,9 +715,9 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
             .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY required")?,
     );
     let mut session = ComputeSession::open(&library, 4)?;
-    // One shape across all parents/batches. More components than capacity and
-    // dependent tails exercise chunking, valid padding and fresh-input reuse.
-    let mut resources = ResidentTransferResources::new(&library, 4, 2)?;
+    // One bounded candidate plan across all parents/batches. Dependent tails
+    // execute inside AOEM; smaller candidates reuse the same physical shape.
+    let mut resources = ResidentTransferResources::new(&library, 4, 7)?;
     let raw = vec![
         signed(21, 3),
         signed(22, 5),
@@ -752,12 +752,52 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
             )?;
         assert_same_execution(&cpu, &gpu);
         assert_eq!(gpu.observation().gpu_rows, raw.len());
-        assert_eq!(gpu.observation().gpu_waves, 4);
+        assert_eq!(gpu.observation().gpu_waves, 2);
         assert_eq!(gpu.observation().recomputed_transactions, 0);
         assert_eq!(cpu.observation().gpu_rows, 0);
         assert_eq!(cpu.observation().gpu_waves, 0);
         assert!(gpu.observation().peak_callbacks > 0);
     }
+
+    // Four dependent rows in ONE candidate: incoming funds, consecutive nonce,
+    // business failure consuming nonce, then another spend. The node does not
+    // receive any intermediate result to choose or submit these successors.
+    let b =
+        Sha256::digest(SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes())[12..].to_vec();
+    let raw = vec![
+        signed_with(21, 0, |tx| {
+            tx.to = b.clone();
+            tx.amount = 500;
+        }),
+        signed_with(22, 0, |tx| tx.amount = 1),
+        signed_with(22, 1, |tx| tx.amount = u128::MAX),
+        signed_with(22, 2, |tx| tx.amount = 1),
+    ];
+    let (mut memory, root) = parent(&raw, 10_000, 0);
+    let update = stage_state_update(
+        &memory,
+        root,
+        &[StateChange::Put {
+            key: balance_key(&Account::try_from(b).unwrap()),
+            value: 0u128.to_le_bytes().to_vec(),
+        }],
+    )?;
+    let root = update.root();
+    memory.0.extend(update.nodes().clone());
+    let cpu = body(&raw)
+        .bind(context(root))?
+        .capture(&memory, capture_budget())?
+        .execute(&mut session, Duration::from_secs(10))?;
+    let gpu = body(&raw)
+        .bind(context(root))?
+        .capture(&memory, capture_budget())?
+        .execute_with_integer_resources(&mut session, &mut resources, Duration::from_secs(10))?;
+    assert_same_execution(&cpu, &gpu);
+    assert_eq!(gpu.observation().gpu_waves, 4);
+    assert_eq!(gpu.observation().gpu_rows, 4);
+    assert_eq!(gpu.observation().recomputed_transactions, 0);
+    assert_eq!(gpu.receipts()[2].delta.nonce_after, 2);
+    assert_eq!(gpu.receipts()[3].delta.nonce_after, 3);
 
     let b =
         Sha256::digest(SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes())[12..].to_vec();

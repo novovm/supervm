@@ -1,5 +1,16 @@
 # AOEM FULLMAX SUPERVM Host Package
 
+## 2026-10-13: Bounded integer input dataflow
+
+Windows core/header source: `6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423`.
+Same unified opcode113, same resident integer operator, explicit AOIP0 v9
+constant/prior-output bindings, same AOIR0001 final result. No domain rules,
+new shader or callback executor. v7/v8 compatibility retained. Node consumes
+one prediction-plan result instead of advancing each wave. Global fee/effect
+finish and internal GPU level readback remain; this is not complete algebraic
+candidate execution or proof qualification. CPU remains the default.
+
+
 ## 2026-10-13: Binary integer result v1
 
 Windows core/header: AOEM `8f12c805122c6e59889ce4f3352aa0541f869593`.

@@ -88,6 +88,9 @@ static COUNTERS: [Counter; NAMES.len()] = [const { Counter::new() }; NAMES.len()
 
 // One bounded local record, no transaction/body retention and no consensus input.
 static INTEGER: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+// Legacy v7 oracle diagnostics only. Product dataflow uses IntegerWire timing;
+// never substitute JSON-oracle device samples for the binary production path.
+#[cfg(test)]
 pub(crate) fn record_integer(
     p: &novovm_exec::AoemIntegerResourceProfileV1,
     active: usize,

@@ -1,14 +1,21 @@
 {
-  "stamp": "20261013-integer-binary-core-8f12c805",
-  "release_version": "1.5.0+8f12c805-windows-core-integer-binary1",
-  "source_commit": "8f12c805122c6e59889ce4f3352aa0541f869593",
+  "stamp": "20261013-integer-dataflow-core-6cedc1e3",
+  "release_version": "1.5.0+6cedc1e3-windows-core-integer-dataflow1",
+  "source_commit": "6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423",
   "source_commit_scope": "core_and_public_header_only",
   "platform": "windows",
   "profile": "fullmax",
   "bundle_dir": ".",
   "core_dll": "core/bin/aoem_ffi.dll",
-  "core_sha256": "9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9",
-  "core_bytes": 44429824,
+  "core_sha256": "f85e7ebf1fa906984f66b6e9cc4ebc9005efe636f64304c04665a3f73cb352f7",
+  "core_bytes": 44470784,
+  "integer_dataflow_v1": {
+    "capability_flag": "compute_checked_integer_dataflow_v1",
+    "execution": "aoem_execute_ops_wire_v1/opcode113/AOIP0-v9",
+    "explicit_prior_output_bindings": true,
+    "complete_business_plan": false,
+    "device_resident_intermediates": false
+  },
   "integer_binary_result_v1": {
     "capability_flag": "compute_checked_integer_binary_result_v1",
     "execution": "aoem_execute_ops_wire_v1/opcode113/AOIP0-v8",
@@ -124,7 +131,7 @@
     "runtime_canon_changed": true
   },
   "checksums": "CHECKSUMS.sha256",
-  "notes": "Windows FULLMAX core/header advanced to 8f12c805. Integer numeric results use versioned binary handoff through the existing execution owner. v7 compatibility/profile schemas unchanged. No NOV policy in AOEM; no complete plan or TPS signoff. Sidecars/Linux unchanged. Current scoped validation is in RUNTIME-BASELINE.md; historical validation below is not current qualification.",
+  "notes": "Windows FULLMAX core/header advanced to 6cedc1e3. Integer numeric results use versioned binary handoff through the existing execution owner. v7 compatibility/profile schemas unchanged. No NOV policy in AOEM; no complete plan or TPS signoff. Sidecars/Linux unchanged. Current scoped validation is in RUNTIME-BASELINE.md; historical validation below is not current qualification.",
   "previous_update_validation": {
     "bound_resource_driver_identity": "NVIDIA GeForce RTX 5090 Laptop GPU; vendor 0x10de; device 0x2c58; discrete type 2; queue 0",
     "device_timestamp": "64 valid bits; 1 ns/tick; 64 completed samples per original node in diagnostic workload",
