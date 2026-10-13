@@ -10,6 +10,16 @@
 
 ## 2026-10-13 自主入网、统一 UCA 与 L4 奖励的架构边界
 
+本节的运行时后续：基于 `c7b32c93`、认领 `e82e90d4`，既有 ServiceLeaseBook
+已增加显式 `SelfOwnedTrustV1`，与原 Publisher 策略共用 V2 Offer、在线租约、
+CAS 持久化和撤销；旧策略的非零签名门限保持。新增 V2 本地 checkpoint，V1
+恢复字节不变；显式迁移候选保留旧背书历史、序号及撤销，待平台原子提交。
+本地已核对公钥与历史定位地址只允许取得新在线声明，不复活过期声明、延长
+旧流或授予 Privacy；当前载体/服务握手仍须验证双方持钥。
+Windows 租约/来源专项 **46/46**（15.42s），network all-targets Clippy
+`-D warnings` 通过；日志 `artifacts/self-owned-{leases,clippy}.log`。
+这是通用运行时组件，手机/常驻启动入口及完整 Self-Owned Discovery v1 尚未签收。
+
 输入 `4670da2c` / NOVOCHAT `3cbe565`。已完成定向源码复核和
 [迁移契约](NOVONET_SELF_SOVEREIGN_IDENTITY_V1.md)，未改运行时或操作手机。
 节点自签记录已存在；当前 managed 手机链仍需配置 signer 来源，不能声称

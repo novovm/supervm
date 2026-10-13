@@ -27,8 +27,11 @@ impl ServiceLeaseBookV1 {
     /// Contains node addresses/history. Keep it encrypted and backup-excluded.
     pub fn checkpoint(&self) -> Result<Vec<u8>> {
         ensure!(!self.failed, "service lease persistence unavailable");
+        if matches!(self.policy, ServiceTrustV1::SelfOwned(_)) {
+            return self.self_owned_checkpoint();
+        }
         encode(
-            &self.policy,
+            self.policy.endorsed()?,
             &self.sources,
             &self.entries,
             &self.tombstones,
@@ -107,7 +110,7 @@ impl ServiceLeaseBookV1 {
             entry.current = record.clone();
         }
         let result = Self {
-            policy,
+            policy: ServiceTrustV1::Endorsed(policy),
             sources: state.sources,
             entries,
             tombstones: state.tombstones,
@@ -115,6 +118,7 @@ impl ServiceLeaseBookV1 {
             persistence: None,
             persisted: Vec::new(),
             failed: false,
+            prior_endorsement: None,
         };
         ensure!(
             result.checkpoint()? == bytes,
@@ -147,7 +151,18 @@ impl ServiceLeaseBookV1 {
         tombstones: BTreeSet<[u8; 32]>,
     ) -> Result<()> {
         if let Some(owner) = &self.persistence {
-            let next = encode(&self.policy, &sources, &entries, &tombstones, self.clock)?;
+            let next = match &self.policy {
+                ServiceTrustV1::Endorsed(policy) => {
+                    encode(policy, &sources, &entries, &tombstones, self.clock)?
+                }
+                ServiceTrustV1::SelfOwned(policy) => self_owned::encode_self_owned(
+                    policy,
+                    &entries,
+                    &tombstones,
+                    self.clock,
+                    &self.prior_endorsement,
+                )?,
+            };
             if let Err(error) = owner.commit(&self.persisted, &next) {
                 self.failed = true;
                 return Err(error);

@@ -1,5 +1,139 @@
 use super::*;
 use directory::{BootstrapSourceKindV1, SignedBootstrapManifestV1};
+
+fn own_trust() -> SelfOwnedTrustV1 {
+    SelfOwnedTrustV1 {
+        version: 1,
+        node_pins: [key(2).verifying_key().to_bytes()].into(),
+    }
+}
+fn own_book() -> Result<ServiceLeaseBookV1> {
+    ServiceLeaseBookV1::new_self_owned(own_trust(), vec![record(2, 1, 1000, 400_000)], 2000)
+}
+
+#[test]
+fn self_owned_does_not_need_publisher_but_does_need_confirmed_key() -> Result<()> {
+    let mut b = own_book()?;
+    assert!(b.sources().is_empty());
+    assert_eq!(b.bootstrap_candidates(2000)?.len(), 1);
+    let mut bad = record(2, 1, 1000, 400_000);
+    bad.signature[0] ^= 1;
+    assert!(ServiceLeaseBookV1::new_self_owned(own_trust(), vec![bad], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(
+        own_trust(),
+        vec![record(4, 1, 1000, 400_000)],
+        2000
+    )
+    .is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(
+        own_trust(),
+        vec![record(2, 1, 1000, 400_000)],
+        400_000
+    )
+    .is_err());
+    assert!(ServiceLeaseBookV1::new(
+        BootstrapTrustPolicyV1 {
+            allowed_signer_peer_ids: BTreeSet::new(),
+            minimum_valid_signatures: 0
+        },
+        Vec::new(),
+        2000
+    )
+    .is_err());
+    assert!(b.replace_sources(book().sources(), 2000).is_err());
+    Ok(())
+}
+
+#[test]
+fn self_owned_expired_claim_is_only_locator_and_new_online_offer_is_required() -> Result<()> {
+    let dir = HostDirectory::new();
+    let mut b = own_book()?;
+    let bytes = b.checkpoint()?;
+    let file = ServiceLeaseFileV1::create(&dir.path(), zeroize::Zeroizing::new([91; 32]), &bytes)?;
+    b.attach_persistence(file, &bytes)?;
+    let host = ServiceLeaseHostV1::new(key(2), b)?;
+    let mut client = ServiceLeaseBookV1::restore_self_owned(own_trust(), &bytes, 500_000)?;
+    assert!(client.routes(500_000)?.is_empty());
+    assert_eq!(client.bootstrap_candidates(500_000)?.len(), 1);
+    assert!(accept(&mut client, record(2, 1, 1000, 100_000), 500_000).is_err());
+    let offer = host.offer(500_000)?;
+    assert!(offer.sources.is_empty());
+    assert_eq!(accept_offer(&mut client, offer, 500_000)?, 620_000);
+    let current = client.routes(500_000)?;
+    let mut restarted =
+        ServiceLeaseBookV1::restore_self_owned(own_trust(), &client.checkpoint()?, 500_001)?;
+    assert_eq!(restarted.routes(500_001)?, current);
+    assert!(accept(&mut restarted, record(2, 1, 500_001, 510_000), 500_001).is_err());
+    Ok(())
+}
+
+#[test]
+fn self_owned_offers_reject_forgery_wrong_endpoint_and_endorsement_fallback() -> Result<()> {
+    for case in 0..5 {
+        let mut b = own_book()?;
+        let mut lease = record(2, 2, 2000, 30_000);
+        match case {
+            0 => lease.signature[0] ^= 1,
+            1 => lease = record(4, 2, 2000, 30_000),
+            2 => lease = prepared_epoch(2, 2000, [5; 32], 6),
+            3 => lease = record(2, 1, 2000, 30_000),
+            _ => {}
+        }
+        let offer = ServiceLeaseOfferV2 {
+            version: 2,
+            sources: if case == 4 { book().sources() } else { vec![] },
+            lease: Some(lease),
+        };
+        assert!(accept_offer(&mut b, offer, 2000).is_err());
+        assert_eq!(b.routes(2000)?[0].sequence, 1);
+    }
+    let mut endorsed = book();
+    assert!(accept_offer(
+        &mut endorsed,
+        ServiceLeaseOfferV2 {
+            version: 2,
+            sources: vec![],
+            lease: Some(record(2, 2, 2000, 30_000))
+        },
+        2000
+    )
+    .is_err());
+    Ok(())
+}
+
+#[test]
+fn self_owned_revocation_survives_restart_and_rejects_new_signed_record() -> Result<()> {
+    let mut b = own_book()?;
+    b.revoke_self_owned(key(2).verifying_key().to_bytes(), 2000)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(own_trust(), &b.checkpoint()?, 3000)?;
+    assert!(b.bootstrap_candidates(3000)?.is_empty());
+    assert!(b
+        .replace_self_owned_records(vec![record(2, 3, 3000, 40_000)], 3000)
+        .is_err());
+    assert!(accept(&mut b, record(2, 3, 3000, 40_000), 3000).is_err());
+    Ok(())
+}
+
+#[test]
+fn self_owned_migration_preserves_old_history_and_rejects_revoked_or_rollback() -> Result<()> {
+    let mut old = book();
+    accept(&mut old, record(2, 10, 2000, 30_000), 2000)?;
+    assert!(old
+        .prepare_self_owned_migration(own_trust(), vec![record(2, 9, 3000, 40_000)], 3000)
+        .is_err());
+    let next =
+        old.prepare_self_owned_migration(own_trust(), vec![record(2, 11, 3000, 40_000)], 3000)?;
+    assert_eq!(
+        next.prior_endorsement.as_deref(),
+        Some(std::str::from_utf8(&old.checkpoint()?)?)
+    );
+    ServiceLeaseBookV1::restore_self_owned(own_trust(), &next.checkpoint()?, 3000)?;
+    old.replace_sources(vec![source(vec![], 3000)], 3000)?;
+    assert!(old
+        .prepare_self_owned_migration(own_trust(), vec![record(2, 11, 3000, 40_000)], 3000)
+        .is_err());
+    Ok(())
+}
 fn key(n: u8) -> SigningKey {
     SigningKey::from_bytes(&[n; 32])
 }

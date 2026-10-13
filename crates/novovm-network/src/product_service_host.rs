@@ -76,7 +76,9 @@ impl ServiceLeaseHostV1 {
             .map_err(|_| anyhow::anyhow!("host unavailable"))?;
         book.observe(now)?;
         // Do not serve expired source sets, even when a lease was once valid.
-        validated_sources(&book.sources, &book.policy, now)?;
+        if let ServiceTrustV1::Endorsed(policy) = &book.policy {
+            validated_sources(&book.sources, policy, now)?;
+        }
         let pin = self.key.verifying_key().to_bytes();
         let lease = match book.entries.get(&pin) {
             Some(entry) => {
@@ -131,7 +133,7 @@ impl ServiceLeaseBookV1 {
             updates.len() == self.sources.len(),
             "incomplete bootstrap refresh"
         );
-        validated_sources(&updates, &self.policy, now)?;
+        validated_sources(&updates, self.policy.endorsed()?, now)?;
         let mut sources = self.sources();
         for update in updates {
             let source = sources
@@ -171,9 +173,16 @@ impl ServiceLeaseBookV1 {
     ) -> Result<()> {
         ensure!(offer.version == 2, "service offer version");
         encode(offer)?;
+        if matches!(self.policy, ServiceTrustV1::SelfOwned(_)) {
+            ensure!(
+                offer.sources.is_empty(),
+                "self-owned offer cannot import endorsements"
+            );
+            return self.check_route(pin, endpoint, instance, now);
+        }
         // A peer only refreshes source IDs the install owner already admitted.
         // Missing sources are not revocations: retain independent publishers.
-        validated_sources(&offer.sources, &self.policy, now)?;
+        validated_sources(&offer.sources, self.policy.endorsed()?, now)?;
         let mut sources = self.sources();
         for update in &offer.sources {
             let source = sources

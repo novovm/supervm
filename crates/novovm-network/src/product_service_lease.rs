@@ -148,7 +148,7 @@ struct Entry {
 /// The caller must hold this under its existing Application/native owner lock.
 /// No network IO, wallet lookup, automatic trust-on-first-use or privacy claim.
 pub struct ServiceLeaseBookV1 {
-    policy: BootstrapTrustPolicyV1,
+    policy: ServiceTrustV1,
     sources: Vec<BootstrapSourceV1>,
     entries: BTreeMap<[u8; 32], Entry>,
     tombstones: BTreeSet<[u8; 32]>,
@@ -156,6 +156,21 @@ pub struct ServiceLeaseBookV1 {
     persistence: Option<Arc<dyn ServiceLeasePersistenceV1>>,
     persisted: Vec<u8>,
     failed: bool,
+    prior_endorsement: Option<String>,
+}
+
+#[derive(Clone)]
+enum ServiceTrustV1 {
+    Endorsed(BootstrapTrustPolicyV1),
+    SelfOwned(SelfOwnedTrustV1),
+}
+impl ServiceTrustV1 {
+    fn endorsed(&self) -> Result<&BootstrapTrustPolicyV1> {
+        match self {
+            Self::Endorsed(policy) => Ok(policy),
+            Self::SelfOwned(_) => anyhow::bail!("self-owned trust is not publisher authority"),
+        }
+    }
 }
 impl ServiceLeaseBookV1 {
     pub fn new(
@@ -172,7 +187,7 @@ impl ServiceLeaseBookV1 {
         );
         let entries = validated_sources(&sources, &policy, now)?;
         Ok(Self {
-            policy,
+            policy: ServiceTrustV1::Endorsed(policy),
             sources,
             entries,
             tombstones: BTreeSet::new(),
@@ -180,6 +195,7 @@ impl ServiceLeaseBookV1 {
             persistence: None,
             persisted: Vec::new(),
             failed: false,
+            prior_endorsement: None,
         })
     }
     pub fn sources(&self) -> Vec<BootstrapSourceV1> {
@@ -196,7 +212,7 @@ impl ServiceLeaseBookV1 {
     /// leave the previous state intact. No unbounded tombstone eviction.
     pub fn replace_sources(&mut self, sources: Vec<BootstrapSourceV1>, now: u64) -> Result<()> {
         self.observe(now)?;
-        let mut entries = validated_sources(&sources, &self.policy, now)?;
+        let mut entries = validated_sources(&sources, self.policy.endorsed()?, now)?;
         for source in &sources {
             if let Some(old) = self
                 .sources
@@ -295,12 +311,18 @@ impl ServiceLeaseBookV1 {
         self.observe(now)?;
         let entry = self.entries.get(&pin).context("service revoked")?;
         ensure!(entry.expires > now, "bootstrap authorization expired");
-        let route = if entry.current.expires_at_ms > now {
+        let self_owned = matches!(self.policy, ServiceTrustV1::SelfOwned(_));
+        let route = if self_owned || entry.current.expires_at_ms > now {
             &entry.current
         } else {
             &entry.grant
         };
-        ensure!(route.expires_at_ms > now, "service route expired");
+        // A locally pinned self-owned locator only authorizes the fresh offer
+        // handshake. Callers must separately enforce the returned online lease.
+        ensure!(
+            self_owned || route.expires_at_ms > now,
+            "service route expired"
+        );
         let address = IrohServiceEndpointV1::from_record(route)?;
         ensure!(
             address.address.endpoint_key == endpoint && address.instance == instance,
@@ -501,3 +523,7 @@ pub use host::{
 #[path = "product_service_file.rs"]
 mod file;
 pub use file::ServiceLeaseFileV1;
+
+#[path = "product_service_self_owned.rs"]
+mod self_owned;
+pub use self_owned::{SelfOwnedTrustV1, ServiceBootstrapCandidateV1};
