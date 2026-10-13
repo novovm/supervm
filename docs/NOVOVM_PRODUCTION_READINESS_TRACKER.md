@@ -8,6 +8,31 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 移动端长期 Iroh Endpoint：通用载体节点
+
+输入 `main@95e33995`（含其他机器的主链回执更新 `191f5f89`），仅修改
+`crates/novovm-network/src/iroh_transport.rs` 及本轮网络文档。没有修改 AOEM、
+账本、共识、UCA 或交易执行。产品边界见
+[传输策略第 13 节](NOVONET_TRANSPORT_POLICY_V1.md#13-2026-10-13移动端长期端点与短操作分开管理)。
+
+新增 `IrohEndpointOwnerV1::bind / with_operation / close`，在同一活跃 Tokio
+runtime 保留一个端点。每个短操作继续独立验权及原期限检查，所有 scope 共享
+入站接受互斥锁和 4 个连接配额。控制、数据各自新建 QUIC 连接并认证，不复用
+另一对端的信任或会话。配置不匹配、跨 runtime、撤销和旧 control 到期仍拒绝。
+显式 close 封禁准入、等待旧操作退出，再走原 4 秒排空/5 秒 OS 关闭屏障；
+关闭取消/失败不报成功，不在 owner 仍持有资源时释放端点配额。
+
+Windows 本机 `iroh_transport::tests` **36/36 通过**（新增 8 项），包括真实
+嵌套数据连接结束后控制流继续双向传帧、同一端点后继新授权、真实拨号到期、
+入站竞争、运行中关闭、撤销、配置错配、跨 runtime 以及取消关闭。绑定完成
+恰逢撤销时的 inline 关闭也实测原 UDP 端口可立即重新绑定。`cargo check`、
+严格 Clippy、fmt、diff 检查通过。复现：`cargo test -p novovm-network --features iroh-transport --lib iroh_transport::tests -- --test-threads=1`；`cargo clippy -p novovm-network --features iroh-transport --lib -j1 -- -D warnings`（本机显式使用 SUPERVM target）。后续 App 实机接线另行记录。
+
+以上是通用载体组件结果，**尚不代表手机提速、长期运行或 Persistent Mobile
+Transport v1 产品签收**。内部节点发现仍可创建短作用域；总 bind 计数包含
+这些真实创建，不能从主端点实例未变推出整轮零建连。没有增加重试预算、
+降低 Privacy、放松错误白名单或改变回执含义。
+
 ## 2026-10-13 主链历史回执与真实缓存淘汰恢复
 
 输入 `main@0688b760`，保持原 `novovm-node/native_pipeline → novovm-exec → AOEM`

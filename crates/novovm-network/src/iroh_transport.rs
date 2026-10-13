@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, OnceLock,
     },
     time::{Duration, Instant},
@@ -35,6 +35,7 @@ pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
 pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
 
 static FORCED_DRAINS: AtomicU64 = AtomicU64::new(0);
+static BINDS_COMPLETED: AtomicU64 = AtomicU64::new(0);
 
 /// Redacted process-wide diagnostics only; never an application receipt or
 /// authority to retry. Counts completed local shutdowns with timed-out remote drain.
@@ -340,9 +341,280 @@ pub struct IrohScopeV1 {
     control: IrohControlV1,
     relays: Vec<RelayUrl>,
     relay_only: bool,
-    connections: tokio::sync::Semaphore,
-    accept_consumer: tokio::sync::Mutex<()>,
+    connections: Arc<tokio::sync::Semaphore>,
+    accept_consumer: Arc<tokio::sync::Mutex<()>>,
     listener_budget: Option<Duration>,
+}
+
+/// Process-local diagnostics, not identifiers, receipts or permission to retry.
+/// `instance` is assigned after a real endpoint bind. `binds_completed` includes
+/// temporary scopes too, so a caller can detect accidental additional binds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrohEndpointSnapshotV1 {
+    pub instance: u64,
+    pub binds_completed: u64,
+    pub operations_started: u64,
+    pub active_operations: usize,
+    pub closing: bool,
+    pub closed: bool,
+}
+
+struct EndpointOwnerState {
+    check: Arc<dyn Fn() -> Result<()> + Send + Sync>,
+    closing: AtomicBool,
+    closed: AtomicBool,
+    active: AtomicUsize,
+    started: AtomicU64,
+}
+
+impl EndpointOwnerState {
+    fn check(&self) -> Result<()> {
+        ensure!(
+            !self.closing.load(Ordering::SeqCst),
+            "carrier owner stopped"
+        );
+        if let Err(error) = (self.check)() {
+            // An owner's revocation is terminal. A later successful callback
+            // must not resurrect its endpoint or any of its operation scopes.
+            self.closing.store(true, Ordering::SeqCst);
+            return Err(error);
+        }
+        ensure!(
+            !self.closing.load(Ordering::SeqCst),
+            "carrier owner stopped"
+        );
+        Ok(())
+    }
+}
+
+struct EndpointOperationGuard(Arc<EndpointOwnerState>);
+
+impl Drop for EndpointOperationGuard {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A platform-owned transport endpoint, retained on ONE live Tokio runtime.
+/// The platform must keep that runtime alive until `close()` completes. This
+/// type does not create a runtime, renew authorization, or cache QUIC sessions.
+/// Each operation requires a new finite control and each connect creates a new
+/// authenticated connection. Its retained transport key can be linkable and is
+/// not an anonymous route; callers must apply their policy before binding.
+///
+/// The owner-wide admission and accept mutex apply across nested scopes. There
+/// is one accept consumer at a time: products must sequence control/data accepts
+/// rather than treating an authenticated peer key as an application demux tag.
+pub struct IrohEndpointOwnerV1 {
+    endpoint: Endpoint,
+    runtime: tokio::runtime::Id,
+    instance: u64,
+    state: Arc<EndpointOwnerState>,
+    relays: Vec<RelayUrl>,
+    nameserver: IpAddr,
+    bind_address: Option<SocketAddr>,
+    relay_only: bool,
+    service_identity: Option<EndpointId>,
+    connections: Arc<tokio::sync::Semaphore>,
+    accept_consumer: Arc<tokio::sync::Mutex<()>>,
+    close_gate: tokio::sync::Mutex<()>,
+    close_started: AtomicBool,
+    permit: std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
+}
+
+impl IrohEndpointOwnerV1 {
+    /// `check` grants only local endpoint ownership, never peer/application
+    /// trust. It must be fast and non-blocking, and failure permanently stops
+    /// admission. The platform is responsible for observing its policy while
+    /// idle and calling `close`; active operations also poll it themselves.
+    pub async fn bind(
+        config: IrohConfigV1,
+        check: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<Self> {
+        let runtime = tokio::runtime::Handle::try_current()
+            .context("carrier owner requires a live runtime")?
+            .id();
+        let state = Arc::new(EndpointOwnerState {
+            check: Arc::new(check),
+            closing: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            active: AtomicUsize::new(0),
+            started: AtomicU64::new(0),
+        });
+        let bound_state = state.clone();
+        let control = IrohControlV1 {
+            check: Arc::new(move || bound_state.check()),
+            deadline: None,
+        };
+        let (endpoint, permit, instance) = bind_carrier_endpoint(&config, &control).await?;
+        if let Err(error) = control.check() {
+            // Revocation may race successful bind. Do not publish/cache an
+            // owner; retain endpoint admission through bounded inline cleanup.
+            let cleanup = tokio::time::timeout(
+                Duration::from_secs(5),
+                endpoint.close_with_drain_timeout(Duration::from_secs(4)),
+            )
+            .await;
+            return match cleanup {
+                Ok(Some(drained)) => {
+                    if !drained {
+                        FORCED_DRAINS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(error)
+                }
+                _ => Err(error.context("revoked carrier bind cleanup did not complete")),
+            };
+        }
+        Ok(Self {
+            endpoint,
+            runtime,
+            instance,
+            state,
+            service_identity: config
+                .service_identity
+                .as_ref()
+                .map(iroh::SecretKey::public),
+            relays: config.relays,
+            nameserver: config.nameserver,
+            bind_address: config.bind_address,
+            relay_only: config.relay_only,
+            connections: Arc::new(tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1)),
+            accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
+            close_gate: tokio::sync::Mutex::new(()),
+            close_started: AtomicBool::new(false),
+            permit: std::sync::Mutex::new(Some(permit)),
+        })
+    }
+
+    fn check_runtime(&self) -> Result<()> {
+        ensure!(
+            tokio::runtime::Handle::try_current()
+                .context("carrier owner requires its live runtime")?
+                .id()
+                == self.runtime,
+            "carrier owner runtime changed"
+        );
+        Ok(())
+    }
+
+    /// Exact local routing policy compatibility (relay ordering is irrelevant).
+    /// A product must check this against its newly approved candidate config;
+    /// retaining an endpoint never expands the candidate's relay/DNS policy.
+    pub fn matches_config(&self, config: &IrohConfigV1) -> bool {
+        self.nameserver == config.nameserver
+            && self.bind_address == config.bind_address
+            && self.relay_only == config.relay_only
+            && self.service_identity
+                == config
+                    .service_identity
+                    .as_ref()
+                    .map(iroh::SecretKey::public)
+            && self.relays.len() == config.relays.len()
+            && self
+                .relays
+                .iter()
+                .all(|relay| config.relays.contains(relay))
+    }
+
+    pub fn snapshot(&self) -> IrohEndpointSnapshotV1 {
+        IrohEndpointSnapshotV1 {
+            instance: self.instance,
+            binds_completed: BINDS_COMPLETED.load(Ordering::Relaxed),
+            operations_started: self.state.started.load(Ordering::Relaxed),
+            active_operations: self.state.active.load(Ordering::SeqCst),
+            closing: self.state.closing.load(Ordering::SeqCst),
+            closed: self.state.closed.load(Ordering::Acquire),
+        }
+    }
+
+    /// Borrow a fresh finite operation. The original deadline is unchanged;
+    /// ending/cancelling it drops only its streams and connections. It cannot
+    /// return a borrowed stream or prolong a previous operation's authority.
+    pub async fn with_operation<T, F>(&self, control: IrohControlV1, operation: F) -> Result<T>
+    where
+        F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
+    {
+        self.check_runtime()?;
+        control.io_deadline()?;
+        control.check()?;
+        self.state.check()?;
+        self.state.active.fetch_add(1, Ordering::SeqCst);
+        let _active = EndpointOperationGuard(self.state.clone());
+        // Paired with close's SeqCst closing/admission reads. If close won the
+        // race before admission, no operation is permitted to enter network IO.
+        self.state.check()?;
+        self.state.started.fetch_add(1, Ordering::Relaxed);
+        let owner_state = self.state.clone();
+        let operation_control = control.clone();
+        let scope = IrohScopeV1 {
+            endpoint: self.endpoint.clone(),
+            control: IrohControlV1 {
+                check: Arc::new(move || {
+                    owner_state.check()?;
+                    operation_control.check()
+                }),
+                deadline: control.deadline,
+            },
+            relays: self.relays.clone(),
+            relay_only: self.relay_only,
+            connections: self.connections.clone(),
+            accept_consumer: self.accept_consumer.clone(),
+            listener_budget: None,
+        };
+        let result = tokio::select! {
+            biased;
+            error = scope.control.revoked() => Err(error),
+            result = operation(&scope) => result,
+        };
+        scope.control.check().and(result)
+    }
+
+    /// Stop admission, await all borrowed operations, then join QUIC/actor and
+    /// OS socket closure on the owning runtime. Cleanup has its own bounded
+    /// budget and grants no message or authorization success. A cancelled or
+    /// timed-out close is fail-closed, but is NOT reported as completed.
+    pub async fn close(&self) -> Result<()> {
+        self.check_runtime()?;
+        self.state.closing.store(true, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let _close = self.close_gate.lock().await;
+            if self.state.closed.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            ensure!(
+                !self.close_started.load(Ordering::Acquire),
+                "carrier owner close did not complete"
+            );
+            while self.state.active.load(Ordering::SeqCst) != 0 {
+                tokio::time::sleep(CHECK_INTERVAL).await;
+            }
+            self.close_started.store(true, Ordering::Release);
+            let drained = self
+                .endpoint
+                .close_with_drain_timeout(Duration::from_secs(4))
+                .await
+                .context("carrier endpoint close already started")?;
+            if !drained {
+                FORCED_DRAINS.fetch_add(1, Ordering::Relaxed);
+            }
+            self.state.closed.store(true, Ordering::Release);
+            self.permit
+                .lock()
+                .map_err(|_| anyhow::anyhow!("carrier endpoint admission poisoned"))?
+                .take();
+            Ok(())
+        })
+        .await
+        .context("carrier owner cleanup still running")?
+    }
+}
+
+impl Drop for IrohEndpointOwnerV1 {
+    fn drop(&mut self) {
+        self.state.closing.store(true, Ordering::SeqCst);
+        // Endpoint Drop aborts its tasks. Only explicit close proves that the
+        // operating-system resources have been released; never mark closed here.
+    }
 }
 
 /// Platform-owned, inbound-only service listener. Its fixed operator permission
@@ -429,15 +701,10 @@ where
     with_iroh_scope_inner(config, control, None, operation).await
 }
 
-async fn with_iroh_scope_inner<T, F>(
-    config: IrohConfigV1,
-    control: IrohControlV1,
-    listener_budget: Option<Duration>,
-    operation: F,
-) -> Result<T>
-where
-    F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
-{
+async fn bind_carrier_endpoint(
+    config: &IrohConfigV1,
+    control: &IrohControlV1,
+) -> Result<(Endpoint, tokio::sync::OwnedSemaphorePermit, u64)> {
     control.check()?;
     // A permit covers the operation and its inline local cleanup. No detached
     // endpoint closer may outlive the runtime that owns the operation.
@@ -477,8 +744,8 @@ where
         .transport_config(transport);
     // Only explicit platform-owned distribution services use a retained key.
     // Default clients and rendezvous epochs still generate fresh identities.
-    if let Some(key) = config.service_identity {
-        builder = builder.secret_key(key);
+    if let Some(key) = &config.service_identity {
+        builder = builder.secret_key(key.clone());
     }
     if config.relay_only {
         builder = builder.clear_ip_transports();
@@ -490,13 +757,27 @@ where
         error = control.revoked() => return Err(error),
         result = builder.bind() => result?,
     };
+    let instance = BINDS_COMPLETED.fetch_add(1, Ordering::Relaxed) + 1;
+    Ok((endpoint, permit, instance))
+}
+
+async fn with_iroh_scope_inner<T, F>(
+    config: IrohConfigV1,
+    control: IrohControlV1,
+    listener_budget: Option<Duration>,
+    operation: F,
+) -> Result<T>
+where
+    F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
+{
+    let (endpoint, permit, _) = bind_carrier_endpoint(&config, &control).await?;
     let scope = IrohScopeV1 {
         endpoint,
         control,
         relays: config.relays,
         relay_only: config.relay_only,
-        connections: tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1),
-        accept_consumer: tokio::sync::Mutex::new(()),
+        connections: Arc::new(tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1)),
+        accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
         listener_budget,
     };
     let result = tokio::select! {
@@ -1157,6 +1438,451 @@ mod tests {
     }
     fn control() -> IrohControlV1 {
         IrohControlV1::new(Instant::now() + Duration::from_secs(8), || Ok(())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn persistent_endpoint_nested_connections_keep_control_alive_and_bind_independently() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let server = Arc::new(
+            IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+                .await
+                .unwrap(),
+        );
+        let client = Arc::new(
+            IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+                .await
+                .unwrap(),
+        );
+        let bound = BINDS_COMPLETED.load(Ordering::Relaxed);
+        let server_instance = server.snapshot().instance;
+        let client_instance = client.snapshot().instance;
+        let ports = [
+            server.endpoint.bound_sockets()[0],
+            client.endpoint.bound_sockets()[0],
+        ];
+        // Repeat with newly authorized scopes on exactly the same two endpoints.
+        // Payloads are transport-only fixtures, not application delivery claims.
+        for round in 1..=2 {
+            let (server_tx, server_rx) = oneshot::channel();
+            let (client_tx, client_rx) = oneshot::channel();
+            let nested_server = server.clone();
+            let server_task = server.with_operation(control(), move |scope| {
+                Box::pin(async move {
+                    server_tx.send(scope.address()?).unwrap();
+                    let peer: IrohAddressV1 = client_rx.await?;
+                    let mut control_stream = scope.accept(peer.endpoint_key).await?;
+                    let control_binding = control_stream.binding_material()?;
+                    ensure!(
+                        control_stream.read_frame().await? == b"control",
+                        "control fixture"
+                    );
+                    control_stream.write_frame(b"control ready").await?;
+                    let nested_state = nested_server.clone();
+                    let data_binding = nested_server
+                        .with_operation(control(), move |data_scope| {
+                            Box::pin(async move {
+                                ensure!(
+                                    nested_state.snapshot().active_operations == 2,
+                                    "nested admission"
+                                );
+                                let mut data = data_scope.accept(peer.endpoint_key).await?;
+                                let binding = data.binding_material()?;
+                                ensure!(
+                                    data_scope.connections.available_permits() == 2,
+                                    "shared connection cap"
+                                );
+                                ensure!(data.read_frame().await? == b"data", "data fixture");
+                                data.write_frame(b"data done").await?;
+                                data.finish().await?;
+                                drop(data);
+                                Ok(binding)
+                            })
+                        })
+                        .await?;
+                    ensure!(
+                        scope.connections.available_permits() == 3,
+                        "data permit leaked"
+                    );
+                    ensure!(
+                        control_stream.read_frame().await? == b"after data",
+                        "control lost after data finish"
+                    );
+                    control_stream.write_frame(b"still alive").await?;
+                    control_stream.finish().await?;
+                    Ok((control_binding, data_binding))
+                })
+            });
+            let nested_client = client.clone();
+            let client_task = client.with_operation(control(), move |scope| {
+                Box::pin(async move {
+                    client_tx.send(scope.address()?).unwrap();
+                    let peer = server_rx.await?;
+                    let mut control_stream = scope.connect(&peer).await?;
+                    let control_binding = control_stream.binding_material()?;
+                    control_stream.write_frame(b"control").await?;
+                    ensure!(
+                        control_stream.read_frame().await? == b"control ready",
+                        "control response"
+                    );
+                    let data_binding = nested_client
+                        .with_operation(control(), move |data_scope| {
+                            Box::pin(async move {
+                                let mut data = data_scope.connect(&peer).await?;
+                                let binding = data.binding_material()?;
+                                data.write_frame(b"data").await?;
+                                ensure!(data.read_frame().await? == b"data done", "data response");
+                                data.finish().await?;
+                                drop(data);
+                                Ok(binding)
+                            })
+                        })
+                        .await?;
+                    control_stream.write_frame(b"after data").await?;
+                    ensure!(
+                        control_stream.read_frame().await? == b"still alive",
+                        "control closed by nested scope"
+                    );
+                    control_stream.finish().await?;
+                    Ok((control_binding, data_binding))
+                })
+            });
+            let (a, b) = tokio::join!(server_task, client_task);
+            let (a, b) = (a.unwrap(), b.unwrap());
+            assert_eq!(a, b, "both ends must derive the real connection binding");
+            assert_eq!(a.0 .0, a.1 .0, "same initiator endpoint");
+            assert_eq!(a.0 .1, a.1 .1, "same responder endpoint");
+            assert_ne!(a.0 .2, a.1 .2, "data must use an independent TLS exporter");
+            for owner in [&server, &client] {
+                assert_eq!(owner.snapshot().active_operations, 0);
+                assert_eq!(owner.snapshot().operations_started, round * 2);
+                assert_eq!(owner.snapshot().binds_completed, bound);
+                assert!(!owner.snapshot().closed);
+            }
+            assert_eq!(server.snapshot().instance, server_instance);
+            assert_eq!(client.snapshot().instance, client_instance);
+            assert_eq!(server.endpoint.bound_sockets()[0], ports[0]);
+            assert_eq!(client.endpoint.bound_sockets()[0], ports[1]);
+        }
+        let (a, b) = tokio::join!(server.close(), client.close());
+        a.unwrap();
+        b.unwrap();
+        for (owner, port) in [(&server, ports[0]), (&client, ports[1])] {
+            assert!(owner.snapshot().closed);
+            assert!(
+                std::net::UdpSocket::bind(port).is_ok(),
+                "owner close returned before UDP release"
+            );
+            assert!(owner
+                .with_operation(control(), |_| Box::pin(async { Ok(()) }))
+                .await
+                .is_err());
+        }
+        assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 4);
+    }
+
+    #[tokio::test]
+    async fn persistent_endpoint_deadline_cancels_real_dial_without_reviving_old_control() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+            .await
+            .unwrap();
+        let sink = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer = IrohAddressV1 {
+            endpoint_key: *iroh::SecretKey::generate().public().as_bytes(),
+            direct: vec![sink.local_addr().unwrap()],
+            relays: vec![],
+        };
+        let old =
+            IrohControlV1::new(Instant::now() + Duration::from_millis(400), || Ok(())).unwrap();
+        let dial = owner.with_operation(old.clone(), move |scope| {
+            Box::pin(async move {
+                let _stream = scope.connect(&peer).await?;
+                Ok(())
+            })
+        });
+        let traffic = async {
+            let mut bytes = [0; 2048];
+            assert!(
+                tokio::time::timeout(Duration::from_millis(300), sink.recv(&mut bytes))
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    > 0
+            );
+        };
+        let (result, ()) = tokio::join!(dial, traffic);
+        assert!(result.unwrap_err().to_string().contains("scope expired"));
+        assert_eq!(owner.snapshot().active_operations, 0);
+        assert_eq!(
+            owner.connections.available_permits(),
+            IROH_MAX_CONNECTIONS_V1
+        );
+        assert!(!owner.snapshot().closing);
+        let old_result: Result<()> = owner
+            .with_operation(old, |_| {
+                Box::pin(async { panic!("expired control entered") })
+            })
+            .await;
+        assert!(old_result.is_err());
+        assert_eq!(owner.snapshot().operations_started, 1);
+        owner
+            .with_operation(control(), |scope| {
+                Box::pin(async move {
+                    scope.address()?;
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(owner.snapshot().operations_started, 2);
+        owner.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_endpoint_shares_accept_consumer_across_operations() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let owner = Arc::new(
+            IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+                .await
+                .unwrap(),
+        );
+        let nested = owner.clone();
+        owner
+            .with_operation(control(), move |scope| {
+                Box::pin(async move {
+                    let mut first = Box::pin(scope.accept_inbound());
+                    assert!(futures_util::poll!(first.as_mut()).is_pending());
+                    let result = nested
+                        .with_operation(control(), |scope| {
+                            Box::pin(async move {
+                                let _stream = scope.accept_inbound().await?;
+                                Ok(())
+                            })
+                        })
+                        .await;
+                    ensure!(
+                        result
+                            .unwrap_err()
+                            .to_string()
+                            .contains("accept already pending"),
+                        "scopes did not share accept lock"
+                    );
+                    drop(first);
+                    let mut next = Box::pin(scope.accept_inbound());
+                    ensure!(
+                        futures_util::poll!(next.as_mut()).is_pending(),
+                        "cancelled accept retained lock"
+                    );
+                    drop(next);
+                    Ok(())
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(owner.snapshot().active_operations, 0);
+        assert_eq!(
+            owner.connections.available_permits(),
+            IROH_MAX_CONNECTIONS_V1
+        );
+        owner.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_endpoint_close_interrupts_active_scope_before_os_barrier() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+            .await
+            .unwrap();
+        let port = owner.endpoint.bound_sockets()[0];
+        let dropped = Arc::new(AtomicBool::new(false));
+        struct DropMarker(Arc<AtomicBool>);
+        impl Drop for DropMarker {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let marker = DropMarker(dropped.clone());
+        let (ready, started) = oneshot::channel();
+        let operation = owner.with_operation(control(), move |scope| {
+            Box::pin(async move {
+                let _marker = marker;
+                ready.send(()).unwrap();
+                let _stream = scope.accept_inbound().await?;
+                Ok(())
+            })
+        });
+        let close = async {
+            started.await.unwrap();
+            owner.close().await
+        };
+        let (operation, close) = tokio::join!(operation, close);
+        assert!(operation.is_err());
+        close.unwrap();
+        assert!(dropped.load(Ordering::Acquire));
+        assert_eq!(owner.snapshot().active_operations, 0);
+        assert!(owner.snapshot().closed);
+        assert!(std::net::UdpSocket::bind(port).is_ok());
+        owner.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_endpoint_owner_revocation_is_terminal_and_config_is_exact() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let binds = BINDS_COMPLETED.load(Ordering::Relaxed);
+        assert!(
+            IrohEndpointOwnerV1::bind(local_config(), || bail!("privacy required"))
+                .await
+                .is_err()
+        );
+        assert_eq!(BINDS_COMPLETED.load(Ordering::Relaxed), binds);
+        let revoked = Arc::new(AtomicBool::new(false));
+        let check_revoked = revoked.clone();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), move || {
+            ensure!(!check_revoked.load(Ordering::Acquire), "owner revoked");
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(owner.matches_config(&local_config()));
+        let mut wrong = local_config();
+        wrong.nameserver = "127.0.0.2".parse().unwrap();
+        assert!(!owner.matches_config(&wrong));
+        let mut wrong = local_config();
+        wrong.bind_address = None;
+        assert!(!owner.matches_config(&wrong));
+        let mut wrong = local_config();
+        wrong.relays.push("https://127.0.0.1/".parse().unwrap());
+        assert!(!owner.matches_config(&wrong));
+        let mut wrong = local_config();
+        wrong.relay_only = true;
+        assert!(!owner.matches_config(&wrong));
+        let wrong = local_config()
+            .with_owned_service_identity(zeroize::Zeroizing::new([17; 32]))
+            .unwrap();
+        assert!(!owner.matches_config(&wrong));
+        revoked.store(true, Ordering::Release);
+        assert!(owner
+            .with_operation::<(), _>(control(), |_| Box::pin(async {
+                panic!("revoked owner entered")
+            }))
+            .await
+            .is_err());
+        revoked.store(false, Ordering::Release);
+        assert!(owner
+            .with_operation::<(), _>(control(), |_| Box::pin(async {
+                panic!("revived owner entered")
+            }))
+            .await
+            .is_err());
+        assert!(owner.snapshot().closing);
+        assert_eq!(owner.snapshot().operations_started, 0);
+        owner.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn persistent_endpoint_revocation_at_bind_completion_releases_the_actual_socket() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let probe = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let port = probe.local_addr().unwrap();
+        drop(probe);
+        let before = BINDS_COMPLETED.load(Ordering::Relaxed);
+        let result =
+            IrohEndpointOwnerV1::bind(local_config().with_bind_address(port).unwrap(), move || {
+                ensure!(
+                    BINDS_COMPLETED.load(Ordering::Relaxed) == before,
+                    "owner revoked during bind"
+                );
+                Ok(())
+            })
+            .await;
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("revoked during bind"));
+        assert_eq!(BINDS_COMPLETED.load(Ordering::Relaxed), before + 1);
+        assert!(
+            std::net::UdpSocket::bind(port).is_ok(),
+            "revoked bind returned before socket cleanup"
+        );
+        assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 4);
+    }
+
+    #[test]
+    fn persistent_endpoint_rejects_a_different_runtime_without_closing_the_owner() {
+        let first = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let second = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _permit = first.block_on(SERIAL.acquire()).unwrap();
+        let owner = first
+            .block_on(IrohEndpointOwnerV1::bind(local_config(), || Ok(())))
+            .unwrap();
+        let error = second
+            .block_on(owner.with_operation::<(), _>(control(), |_| {
+                Box::pin(async { panic!("wrong runtime entered") })
+            }))
+            .unwrap_err();
+        assert!(error.to_string().contains("runtime changed"));
+        assert!(second
+            .block_on(owner.close())
+            .unwrap_err()
+            .to_string()
+            .contains("runtime changed"));
+        assert!(!owner.snapshot().closing);
+        first.block_on(owner.close()).unwrap();
+    }
+
+    #[test]
+    fn persistent_endpoint_cancelled_close_does_not_claim_barrier_or_release_admission() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let _permit = SERIAL.acquire().await.unwrap();
+            let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+                .await
+                .unwrap();
+            let port = owner.endpoint.bound_sockets()[0];
+            let (release, held) = std::sync::mpsc::channel::<()>();
+            let (ready, started) = oneshot::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                let _ = ready.send(());
+                let _ = held.recv();
+            });
+            started.await.unwrap();
+            let mut close = Box::pin(owner.close());
+            assert!(tokio::time::timeout(Duration::from_millis(150), &mut close)
+                .await
+                .is_err());
+            assert!(!owner.snapshot().closed);
+            assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 3);
+            drop(close);
+            assert!(
+                owner.close().await.is_err(),
+                "cancelled close became a completion proof"
+            );
+            assert!(!owner.snapshot().closed);
+            assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 3);
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            let end = Instant::now() + Duration::from_secs(1);
+            while std::net::UdpSocket::bind(port).is_err() {
+                assert!(
+                    Instant::now() < end,
+                    "cancelled owner retained socket after worker resumed"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            drop(owner);
+            assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 4);
+        });
     }
 
     fn local_relay_only_config() -> IrohConfigV1 {
