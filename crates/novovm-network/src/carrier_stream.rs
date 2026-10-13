@@ -73,6 +73,18 @@ enum ReadHalf<'stream> {
 }
 
 impl CarrierStreamV1<'_> {
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn admit_service_window(
+        &mut self,
+        deadline: std::time::Instant,
+    ) -> anyhow::Result<()> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => stream.admit_service_window(deadline),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no owned service window"),
+        }
+    }
+
     pub fn binding(&self) -> anyhow::Result<VerifiedTransportBinding> {
         match &self.inner {
             #[cfg(feature = "iroh-transport")]

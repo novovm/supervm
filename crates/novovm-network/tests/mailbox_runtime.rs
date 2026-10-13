@@ -1,5 +1,5 @@
 #![cfg(feature = "iroh-transport")]
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_network::{
     carrier_stream::CarrierStreamV1, iroh_transport::*, mailbox_rpc::*, mailbox_store::*,
@@ -232,7 +232,7 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
             }
         }
         // Explicit multi-request mode on the SAME transport after legacy streams.
-        endpoint
+        let (mut book, route, grant) = endpoint
             .with_reusable_operation(control(), 5, move |scope| {
                 Box::pin(async move {
                     let raw = scope.connect(&route.address).await?;
@@ -266,14 +266,69 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                             "session response differs"
                         );
                     }
-                    session.finish().await
+                    session.finish().await?;
+                    Ok((book, route, grant))
                 })
             })
+            .await?;
+        // Select the new capability explicitly. Keep the SAME authenticated
+        // stream beyond the old 30s cutoff AND a 60s rendezvous generation turn.
+        // The original signed offer is still valid; no renewed offer or channel.
+        endpoint
+            .with_reusable_operation(
+                IrohControlV1::new(Instant::now() + Duration::from_secs(85), || Ok(()))?,
+                5,
+                move |scope| {
+                    Box::pin(async move {
+                        let raw = scope.connect(&route.address).await?;
+                        ensure!(raw.connection_reused(), "window rebuilt transport");
+                        let mut stream: CarrierStreamV1<'_> = raw.into();
+                        let offer = request_mailbox_offer_v3(&mut stream).await?;
+                        let offered =
+                            IrohServiceEndpointV1::from_record(offer.lease.as_ref().unwrap())?;
+                        book.accept_offer(
+                            offer,
+                            key(1).verifying_key().to_bytes(),
+                            route.address.endpoint_key,
+                            offered.instance,
+                            now_ms()?,
+                        )?;
+                        let mut session = MailboxClientSessionV2::begin(
+                            &mut stream,
+                            &key(2),
+                            key(1).verifying_key().to_bytes(),
+                        )
+                        .await?;
+                        let start = Instant::now();
+                        for seconds in [15, 33, 49, 64] {
+                            tokio::time::sleep_until((start + Duration::from_secs(seconds)).into())
+                                .await;
+                            ensure!(
+                                matches!(
+                                    session
+                                        .request(MailboxRequestV1::Fetch {
+                                            mailbox: grant.id,
+                                            read: *grant.read.as_bytes()
+                                        })
+                                        .await?,
+                                    MailboxReplyV1::Empty
+                                ),
+                                "window fetch failed"
+                            );
+                        }
+                        ensure!(
+                            session.remaining_requests() == MAX_SESSION_REQUESTS_V2 - 4,
+                            "window reset request budget"
+                        );
+                        session.finish().await
+                    })
+                },
+            )
             .await?;
         endpoint.close().await?;
         Ok::<_, anyhow::Error>(())
     };
-    let (a, b) = tokio::time::timeout(Duration::from_secs(20), async {
+    let (a, b) = tokio::time::timeout(Duration::from_secs(90), async {
         tokio::join!(server, client)
     })
     .await?;
@@ -286,6 +341,103 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                 .chain()
                 .any(|e| e.to_string() == "service stopped by owner"),
             "unexpected node exit: {error:#}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn authenticated_window_rejects_expiry_revocation_and_wrong_identity() -> Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for case in ["expiry", "revoked", "identity"] {
+        let directory = tempfile::tempdir()?;
+        let database = directory.path().join("window-negative.db");
+        let service = Arc::new(MailboxServiceV1::new(
+            MailboxStore::open(&database, Limits::default())?,
+            key(1),
+        ));
+        let authorized = Arc::new(AtomicBool::new(true));
+        let check = authorized.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (done, wait_done) = tokio::sync::oneshot::channel();
+        let server = with_iroh_owned_listener_v1(
+            config().with_owned_service_identity(zeroize::Zeroizing::new([93; 32]))?,
+            || Ok(()),
+            move |scope| {
+                Box::pin(async move {
+                    tx.send(scope.address()?)
+                        .map_err(|_| anyhow::anyhow!("fixture channel"))?;
+                    let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
+                    let result = serve_mailbox_window_v3(
+                        &mut stream,
+                        &key(1),
+                        &[key(2).verifying_key().to_bytes()],
+                        &service,
+                        move || {
+                            ensure!(check.load(Ordering::Acquire), "fixture revoked");
+                            Ok(())
+                        },
+                        Instant::now() + Duration::from_secs(2),
+                    )
+                    .await;
+                    drop(stream);
+                    // The real node retains its endpoint after rejecting one
+                    // stream. Let QUIC deliver that close instead of aborting
+                    // the whole fixture endpoint before the client observes it.
+                    let _ = wait_done.await;
+                    result
+                })
+            },
+        );
+        let grant = MailboxGrant::generate()?;
+        let id = grant.id;
+        let read = *grant.read.as_bytes();
+        let client = with_iroh_scope_v1(config(), control(), move |scope| {
+            Box::pin(async move {
+                let mut stream: CarrierStreamV1<'_> = scope.connect(&rx.await?).await?.into();
+                let signer = key(if case == "identity" { 3 } else { 2 });
+                let opened = MailboxClientSessionV2::begin(
+                    &mut stream,
+                    &signer,
+                    key(1).verifying_key().to_bytes(),
+                )
+                .await;
+                if case == "identity" {
+                    ensure!(opened.is_err(), "wrong identity admitted");
+                    let _ = done.send(());
+                    return Ok(());
+                }
+                let mut session = opened?;
+                if case == "expiry" {
+                    tokio::time::sleep(Duration::from_millis(2200)).await;
+                } else {
+                    authorized.store(false, Ordering::Release);
+                }
+                let expires =
+                    (novovm_network::product_rendezvous_daemon::now_ms()? / 1000) as i64 + 60;
+                ensure!(
+                    session.request(register(&grant, expires)).await.is_err(),
+                    "invalid window allowed request"
+                );
+                ensure!(
+                    session.request(register(&grant, expires)).await.is_err(),
+                    "failed window resurrected"
+                );
+                let _ = done.send(());
+                Ok(())
+            })
+        });
+        let (a, b) = tokio::join!(server, client);
+        ensure!(a.is_err(), "invalid authority was accepted");
+        b.with_context(|| format!("negative window case {case}"))?;
+        let now = (novovm_network::product_rendezvous_daemon::now_ms()? / 1000) as i64;
+        let mut store = MailboxStore::open(&database, Limits::default())?;
+        ensure!(
+            matches!(
+                store.fetch(&id, &Capability::from_bytes(read)?, now),
+                Err(StoreError::Unauthorized)
+            ),
+            "rejected request wrote storage"
         );
     }
     Ok(())

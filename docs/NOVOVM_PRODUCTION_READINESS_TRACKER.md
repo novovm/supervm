@@ -8,6 +8,31 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Lease-bounded authenticated mailbox window
+
+Input `67defadb`, network-only. `NVMBOX03` explicitly selects the existing
+mailbox session with a signed-lease service window. No fallback to an older
+selector. The same Finished authentication, message framing, capabilities,
+durable cursor/pending snapshot, 64-request cap and continuous AEAD counters
+apply. The owned listener retains its 30s unauthenticated admission; only after
+Finished and BeginSession can the internal carrier seam admit one immutable
+window, at most 120s and bounded by the ORIGINAL signed offer. Each request has
+at most 30s IO including notification wait/storage; activity cannot reset the
+window. Finite/outbound scopes cannot use that seam. The host still checks lease
+expiry per operation and its original local revocation policy continuously.
+
+Real QUIC mailbox_runtime: four existing cases PASS (the own-node case now
+retains ONE authenticated session for 64s, across the original 30s cutoff and
+the node's 60s rendezvous rotation). Added expiry/revocation/wrong-identity
+negative case PASS, with no rejected registration committed. First negative
+fixture aborted the whole endpoint before its close was delivered, and hit
+the client scope deadline; corrected it to retain the listener like the real
+node while closing the rejected stream. This was a test lifetime correction,
+not a production retry/authorization change. Finite/outbound rejection QUIC
+test and lib/test-target strict Clippy PASS. Android integration is not yet
+accepted; a longer authorized service window is not cross-task authentication
+reuse, lease renewal, a privacy route, P95 evidence or production certification.
+
 ## 2026-10-14 Mailbox maintenance and queued-client progress
 
 Input `f9baf7a8`, network-only. The installed relay-only node process remained

@@ -131,32 +131,43 @@ pub async fn run_self_owned_node_v1(
                         active.push(async move {
                             let mut stream: CarrierStreamV1<'_> = stream.into();
                             loop {
-                                let again = tokio::time::timeout(Duration::from_secs(30), async {
+                                let admitted_at = Instant::now();
                                     let (kind, (store, offer_until)) = tokio::time::timeout(Duration::from_secs(3), serve_node_offer_selected_v1(&mut stream, || {
                                         let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
                                         let offer = host.offer_until(now_ms()?, current.expires_ms)?;
                                         let until = offer.lease.as_ref().map_or(0, |lease| lease.expires_at_ms);
                                         Ok((offer, (current.store.clone(), until)))
                                     })).await??;
+                                let legacy_until = admitted_at + Duration::from_secs(30);
+                                // The signed offer remains the authority. Its remaining wall
+                                // interval is anchored once to monotonic time, before Finished.
+                                // Neither requests nor node generation rotation can reset it.
+                                let window_until = Instant::now() + Duration::from_millis(
+                                    offer_until.saturating_sub(now_ms()?).min(120_000));
+                                let until = if kind == NodeServiceV1::MailboxWindow { window_until } else { legacy_until };
+                                let again = tokio::time::timeout_at(until.into(), async {
                                     match kind {
                                         NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
-                                        NodeServiceV1::Mailbox | NodeServiceV1::MailboxRealtime => {
+                                        NodeServiceV1::Mailbox | NodeServiceV1::MailboxRealtime | NodeServiceV1::MailboxWindow => {
                                             let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
-                                            if kind == NodeServiceV1::MailboxRealtime {
-                                                crate::mailbox_rpc::serve_mailbox_session_v2(&mut stream,key,clients,mailbox,|| {
+                                            let check = || {
                                                     ensure!(now_ms()? < offer_until, "mailbox offered lease expired");
                                                     Ok(())
-                                                }).await?;
+                                            };
+                                            if kind == NodeServiceV1::MailboxWindow {
+                                                crate::mailbox_rpc::serve_mailbox_window_v3(&mut stream,key,clients,mailbox,check,window_until).await?;
+                                            } else if kind == NodeServiceV1::MailboxRealtime {
+                                                crate::mailbox_rpc::serve_mailbox_session_v2(&mut stream,key,clients,mailbox,check).await?;
                                             } else {
                                                 crate::mailbox_rpc::serve_mailbox_v1(&mut stream,key,clients,mailbox).await?;
                                             }
                                         }
                                     }
-                                    Ok::<_,anyhow::Error>(kind == NodeServiceV1::MailboxRealtime)
+                                    Ok::<_,anyhow::Error>(matches!(kind,NodeServiceV1::MailboxRealtime | NodeServiceV1::MailboxWindow))
                                 }).await??;
                                 if !again { break; }
                                 // Transport continuity only. The next stream receives a new
-                                // 30s IO budget, signed offer and Finished authentication.
+                                // short admission budget, signed offer and Finished authentication.
                                 stream = stream.next_inbound().await?;
                             }
                             Ok::<_,anyhow::Error>(())

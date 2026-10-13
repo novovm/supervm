@@ -532,7 +532,8 @@ pub use host::{
     ServiceLeaseOfferV2, ServiceOfferStepV2,
 };
 pub use host::{
-    request_mailbox_offer_v1, request_mailbox_offer_v2, serve_node_offer_selected_v1, NodeServiceV1,
+    request_mailbox_offer_v1, request_mailbox_offer_v2, request_mailbox_offer_v3,
+    serve_node_offer_selected_v1, NodeServiceV1,
 };
 #[path = "product_service_file.rs"]
 mod file;

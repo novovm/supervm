@@ -738,7 +738,9 @@ where
 
 /// Stable inbound-only node listener under an explicit LOCAL owner policy.
 /// It confers no peer trust or service authority. Each accepted stream still
-/// gets a finite 30-second budget; callers verify fresh signed service leases.
+/// gets a finite 30-second admission budget. An authenticated mailbox service
+/// can enter one separately bounded, signed-lease window; ordinary streams
+/// retain the admission deadline.
 /// The owner check is polled during binding, serving and resource cleanup.
 pub async fn with_iroh_owned_listener_v1<T, F>(
     config: IrohConfigV1,
@@ -1129,6 +1131,7 @@ impl IrohScopeV1 {
             finished: false,
             reused: false,
             handed_off: false,
+            service_window: false,
         })
     }
 }
@@ -1169,6 +1172,7 @@ pub struct IrohStreamV1<'a> {
     finished: bool,
     reused: bool,
     handed_off: bool,
+    service_window: bool,
 }
 
 /// A borrowed framed writer. The parent stream and its authorized scope remain
@@ -1480,6 +1484,31 @@ impl Drop for IrohStreamV1<'_> {
 }
 
 impl<'scope> IrohStreamV1<'scope> {
+    /// Internal admission seam, used only AFTER the selected service verifies
+    /// Finished and its BeginSession. The deadline is derived once from the
+    /// already issued lease, never renewed by activity. Outbound/finite scopes,
+    /// expired admission, repeat admission and completed streams are rejected.
+    pub(crate) fn admit_service_window(&mut self, deadline: Instant) -> Result<()> {
+        self.check()?;
+        ensure!(
+            !self.initiator
+                && self.scope.listener_budget.is_some()
+                && self.scope.control.deadline.is_none()
+                && !self.service_window
+                && !self.finished
+                && !self.handed_off,
+            "service window requires fresh owned inbound stream"
+        );
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        ensure!(
+            !remaining.is_zero() && remaining <= Duration::from_secs(120),
+            "service window outside bounded lease"
+        );
+        self.io_control.deadline = Some(deadline);
+        self.service_window = true;
+        Ok(())
+    }
+
     /// Transfer one admitted inbound connection to its next independent stream.
     /// Only the stable local listener can do this, after a complete operation.
     /// No old application authority or stream deadline is carried forward.
@@ -2907,6 +2936,12 @@ mod tests {
                 // No client endpoint key or address is supplied to the listener.
                 let mut stream = scope.accept_inbound().await?;
                 let remote = stream.remote_endpoint_key()?;
+                ensure!(
+                    stream
+                        .admit_service_window(Instant::now() + Duration::from_secs(60))
+                        .is_err(),
+                    "finite inbound scope gained service authority"
+                );
                 let binding = stream.binding_material()?;
                 let _proof = stream.binding()?;
                 // Transport-only test bytes; no application identity or access
@@ -2924,6 +2959,12 @@ mod tests {
             Box::pin(async move {
                 let own_endpoint = scope.address()?.endpoint_key;
                 let mut stream = scope.connect(&address_rx.await?).await?;
+                ensure!(
+                    stream
+                        .admit_service_window(Instant::now() + Duration::from_secs(60))
+                        .is_err(),
+                    "outbound scope gained service authority"
+                );
                 let binding = stream.binding_material()?;
                 stream.write_frame(b"transport probe").await?;
                 ensure!(

@@ -594,6 +594,47 @@ pub async fn serve_mailbox_session_v2(
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
+    serve_session(stream, identity, allowed, service, authority, None).await
+}
+
+/// Explicit NVMBOX03 admission. The host derives this immutable monotonic
+/// deadline from its signed offer BEFORE authentication. No lease renewal,
+/// request-budget reset or replay-state reset occurs within the session.
+pub async fn serve_mailbox_window_v3(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    allowed: &[[u8; 32]],
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+    deadline: std::time::Instant,
+) -> Result<()> {
+    ensure!(
+        deadline > std::time::Instant::now(),
+        "mailbox window expired"
+    );
+    tokio::time::timeout_at(
+        deadline.into(),
+        serve_session(
+            stream,
+            identity,
+            allowed,
+            service,
+            authority,
+            Some(deadline),
+        ),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("mailbox window expired"))?
+}
+
+async fn serve_session(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    allowed: &[[u8; 32]],
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+    window: Option<std::time::Instant>,
+) -> Result<()> {
     ensure!(
         identity.verifying_key() == service.signer.verifying_key(),
         "mailbox service signer mismatch"
@@ -610,6 +651,15 @@ pub async fn serve_mailbox_session_v2(
     let first: MailboxRequestV1 = receive(stream, &mut channel, &mut received).await?;
     authority()?;
     stream.selected_path()?;
+    if let Some(deadline) = window {
+        ensure!(
+            matches!(&first, MailboxRequestV1::BeginSession),
+            "mailbox window requires session"
+        );
+        // Only the successful, identity-bound service handshake can transition
+        // the listener's short unauthenticated admission into a service window.
+        stream.admit_service_window(deadline)?;
+    }
     if !matches!(&first, MailboxRequestV1::BeginSession) {
         let reply = service.execute(first).await?;
         authority()?;
@@ -624,31 +674,42 @@ pub async fn serve_mailbox_session_v2(
         )
         .await?;
         for index in 0..=MAX_SESSION_REQUESTS_V2 {
-            let request: MailboxRequestV1 = receive(stream, &mut channel, &mut received).await?;
-            authority()?;
-            stream.selected_path()?;
-            if matches!(&request, MailboxRequestV1::EndSession) {
-                send(
-                    stream,
-                    &mut channel,
-                    &MailboxReplyV1::SessionEnded,
-                    &mut sent,
-                )
-                .await?;
+            // Each request keeps the old 30s maximum IO budget, including its
+            // bounded Watch and durable work. Activity cannot slide the window.
+            let done = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                let request: MailboxRequestV1 =
+                    receive(stream, &mut channel, &mut received).await?;
+                authority()?;
+                stream.selected_path()?;
+                if matches!(&request, MailboxRequestV1::EndSession) {
+                    send(
+                        stream,
+                        &mut channel,
+                        &MailboxReplyV1::SessionEnded,
+                        &mut sent,
+                    )
+                    .await?;
+                    return Ok::<_, anyhow::Error>(true);
+                }
+                ensure!(
+                    index < MAX_SESSION_REQUESTS_V2,
+                    "mailbox session request budget"
+                );
+                ensure!(
+                    !matches!(&request, MailboxRequestV1::BeginSession),
+                    "mailbox session already active"
+                );
+                let reply = service.execute(request).await?;
+                authority()?;
+                stream.selected_path()?;
+                send(stream, &mut channel, &reply, &mut sent).await?;
+                Ok(false)
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("mailbox request deadline"))??;
+            if done {
                 break;
             }
-            ensure!(
-                index < MAX_SESSION_REQUESTS_V2,
-                "mailbox session request budget"
-            );
-            ensure!(
-                !matches!(&request, MailboxRequestV1::BeginSession),
-                "mailbox session already active"
-            );
-            let reply = service.execute(request).await?;
-            authority()?;
-            stream.selected_path()?;
-            send(stream, &mut channel, &reply, &mut sent).await?;
         }
     }
     authority()?;

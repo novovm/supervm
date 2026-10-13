@@ -5,6 +5,7 @@ use super::*;
 const REQUEST_V2: &[u8; 8] = b"NVLSRQ02";
 const MAILBOX_REQUEST_V1: &[u8; 8] = b"NVMBOX01";
 const MAILBOX_REQUEST_V2: &[u8; 8] = b"NVMBOX02";
+const MAILBOX_REQUEST_V3: &[u8; 8] = b"NVMBOX03";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
 
@@ -372,6 +373,13 @@ pub async fn request_mailbox_offer_v2(
 ) -> Result<ServiceLeaseOfferV2> {
     request_offer(stream, MAILBOX_REQUEST_V2).await
 }
+/// Same mailbox operations, explicitly selecting a lease-bounded authenticated
+/// window instead of the legacy 30s stream. Unsupported hosts reject, no fallback.
+pub async fn request_mailbox_offer_v3(
+    stream: &mut CarrierStreamV1<'_>,
+) -> Result<ServiceLeaseOfferV2> {
+    request_offer(stream, MAILBOX_REQUEST_V3).await
+}
 async fn request_offer(
     stream: &mut CarrierStreamV1<'_>,
     request: &[u8; 8],
@@ -436,6 +444,7 @@ pub enum NodeServiceV1 {
     Rendezvous,
     Mailbox,
     MailboxRealtime,
+    MailboxWindow,
 }
 
 /// The bounded service selector only chooses a protocol, never trust or privacy.
@@ -451,6 +460,8 @@ pub async fn serve_node_offer_selected_v1<T>(
         NodeServiceV1::Mailbox
     } else if request.as_slice() == MAILBOX_REQUEST_V2 {
         NodeServiceV1::MailboxRealtime
+    } else if request.as_slice() == MAILBOX_REQUEST_V3 {
+        NodeServiceV1::MailboxWindow
     } else {
         anyhow::bail!("unknown node service version");
     };
