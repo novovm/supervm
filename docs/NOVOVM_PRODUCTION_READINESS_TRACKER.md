@@ -8,6 +8,19 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 自主入网、统一 UCA 与 L4 奖励的架构边界
+
+输入 `4670da2c` / NOVOCHAT `3cbe565`。已完成定向源码复核和
+[迁移契约](NOVONET_SELF_SOVEREIGN_IDENTITY_V1.md)，未改运行时或操作手机。
+节点自签记录已存在；当前 managed 手机链仍需配置 signer 来源，不能声称
+已经摆脱 Publisher。统一 UCA 原语已有，NOVOCHAT 本地根尚未绑定既有 NOV
+账户。L4 opt-in 预算组件已有，实际中继、持久贡献计量及 NOV 到账未接通。
+
+自主入网不要求官方许可、持币或逐消息链查询；可选社区背书只约束其服务，
+不具备全网封禁权。用途密钥、资源限额、撤销及默认 Privacy 继续有效。
+本轮验证限定文档差异/链接和源码符号核对，无新增编译、实机、匿名或结算
+验收；Automatic Recovery v1 的未签收状态不变。
+
 ## 2026-10-13 镜像持续监听与 E214 拒接机制
 
 输入 `d57afa6a`，认领 `5121d67f`。实际调用链为 Windows mirror owner →

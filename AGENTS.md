@@ -1,5 +1,21 @@
 # Agent Highest Law
 
+- 2026-10-13 latest user clarification: NOVONET must have a self-owned join and
+  discovery path without mandatory developer/official Publisher, public CA,
+  registration, NOV balance or per-message chain lookup. Verify node signatures
+  and first-contact key binding; authentication is not global admission.
+  Publishers are optional endorsements/scoped service authorities, never a
+  compulsory network license. Do not disable existing verifiers or reinterpret
+  expired grants; migrate protected policies with explicit provenance and retain
+  revocation/history. Reuse one NOVOVM UCA account for NOVOCHAT, wallet and L4,
+  with purpose/device keys and separate spend authority; local root ownership
+  is not proof of an existing/on-chain UCA binding. Phone relay/storage is opt-in
+  with durable resource limits. NOV rewards require actual verified contribution
+  and NOVOVM settlement; no invented yield and no financial gate on free chat.
+  This supersedes blanket independent-Publisher prerequisites and older next
+  steps that would expand them. See `docs/NOVONET_SELF_SOVEREIGN_IDENTITY_V1.md`
+  for the source audit, migration contract and outstanding acceptance.
+
 - 2026-10-13 user correction for NOVONET: develop one product runtime, not a
   separate test licensing/renewal system. L3 service identity and listening
   endpoint are long-lived; short signed authorizations and client sessions are

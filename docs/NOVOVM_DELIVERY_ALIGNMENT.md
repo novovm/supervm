@@ -1,5 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-13 自主入网/UCA/L4 定向复核（文档范围，已完成）：** 输入
+`4670da2c` / NOVOCHAT `3cbe565`，实际两仓 main 与 origin/main 一致且干净。
+用户确认不引入官方/开发者准入、统一复用 UCA、手机自愿贡献并按真实服务
+奖励 NOV。本轮只更新 AGENTS、通用策略、
+[源码复核与迁移契约](NOVONET_SELF_SOVEREIGN_IDENTITY_V1.md)及交付台账；
+NOVOCHAT 同步产品文档。未改运行时代码、金融状态、密钥、手机数据或部署。
+明确当前自签记录已有，而手机 managed 路径仍需 Publisher 背书；本地身份
+原语已复用，但未绑定既有 NOV 账户；L4 预算组件不等于真实转发/奖励结算。
+后续自主来源、长期政策及 UCA 迁移按该契约推进，覆盖下方旧的全局发布者
+前置方向。保持已验证身份/撤销与 Privacy，不以文档修改签收手机结果。
+
 **2026-10-13 镜像 110 秒交接与 E214 认领（已释放）：** NOVOCHAT 会话，输入
 `d57afa6a` / NOVOCHAT `656c0cc`，已 fetch 核对两仓 main/远端一致且干净。
 限定 `bootstrap_mirror_owner.rs`、镜像入口/进程测试、`iroh_transport.rs` 及
