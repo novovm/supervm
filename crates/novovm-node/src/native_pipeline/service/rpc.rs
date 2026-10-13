@@ -32,6 +32,7 @@ const MAX_SIGNERS: usize = 65_536;
 
 mod admission;
 mod gossip;
+mod history;
 
 struct BalanceQuery {
     account: Account,
@@ -99,6 +100,7 @@ pub struct RpcLifecycle {
     projection_error: Option<String>,
     balances: VecDeque<BalanceQuery>,
     admission: admission::AdmissionState,
+    history: history::ReceiptHistory,
 }
 
 impl RpcLifecycle {
@@ -131,6 +133,7 @@ impl RpcLifecycle {
             projection_error: None,
             balances: VecDeque::new(),
             admission: admission::AdmissionState::default(),
+            history: history::ReceiptHistory::default(),
         })
     }
 
@@ -142,6 +145,9 @@ impl RpcLifecycle {
                 self.projection_error = Some(format!("{error:#}"));
             }
         }
+        // Projection/consensus retain first use of the bounded I/O owner.
+        // Optional historical queries must not stall current-height selection.
+        self.history.poll(&self.node.pipeline);
         self.poll_admission()?;
         self.poll_gossip()?;
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
@@ -588,7 +594,8 @@ impl RpcLifecycle {
             "authentication_cache_hits":self.authentication_cache_hits,
             "rpc_authentication":self.admission.status(),
             "pending_survives_restart":false,
-            "receipt_query_scope":"recent 65536 entries, rebuilt from durable archive"})
+            "receipt_query_scope":"hash only: recent 65536 entries; optional block height: verified durable archive",
+            "historical_receipt_queries":self.history.len()})
     }
 
     pub fn handle(&mut self, request: Value) -> Value {
@@ -619,9 +626,23 @@ impl RpcLifecycle {
                 }
                 Some("nov_getAssetBalance") => self.balance(&request["params"]),
                 Some("nov_getTransactionStatus") => {
-                    let hash: Hash = one_hex_param(&request, 32)?
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("32-byte hash required"))?;
+                    let (hash, height) = history::parse_lookup(&request)?;
+                    if let Some(height) = height {
+                        ensure!(
+                            !self.node.controller.is_recovering(),
+                            "historical receipt query unavailable during chain recovery"
+                        );
+                        let head = self.node.controller.head().context(
+                            "historical receipt query requires a locally validated decided head",
+                        )?;
+                        return self.history.lookup(
+                            hash,
+                            height,
+                            head,
+                            self.node.controller.context(),
+                            self.node.validators.clone(),
+                        );
+                    }
                     if let Some(result) = self.receipts.get(&hash) {
                         return Ok(result.clone());
                     }
@@ -788,7 +809,11 @@ fn one_hex_param(request: &Value, max: usize) -> Result<Vec<u8>> {
         .as_array()
         .context("params array required")?;
     ensure!(params.len() == 1, "one parameter required");
-    let text = params[0].as_str().context("hex string required")?;
+    hex_param(&params[0], max)
+}
+
+fn hex_param(value: &Value, max: usize) -> Result<Vec<u8>> {
+    let text = value.as_str().context("hex string required")?;
     ensure!(text.len() <= max * 2 + 2, "hex parameter exceeds bound");
     let text = text.strip_prefix("0x").unwrap_or(text);
     ensure!(

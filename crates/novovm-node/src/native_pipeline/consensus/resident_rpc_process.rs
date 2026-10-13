@@ -1171,6 +1171,9 @@ fn actual_product_rpc_single_ingress_gossip_failures_and_restart() -> Result<()>
             );
         }
         let balances_before = nodes.balances(&indices, &before[0], [200, 150])?;
+        phase = "durable block-scoped receipt queries";
+        evidence["archive_receipts_before_restart"] =
+            verify_block_receipt_queries(&mut nodes, &before[0])?;
         let statuses = nodes.wait_ready(&indices)?;
         ensure!(
             statuses.iter().all(|s| s["head"] == statuses[0]["head"]
@@ -1218,6 +1221,8 @@ fn actual_product_rpc_single_ingress_gossip_failures_and_restart() -> Result<()>
             cold_receipts == before,
             "cold single-ingress receipts changed"
         );
+        evidence["archive_receipts_after_restart"] =
+            verify_block_receipt_queries(&mut nodes, &cold_receipts[0])?;
         let balances_cold = nodes.balances(&indices, &cold_receipts[0], [200, 150])?;
         ensure!(
             balances_cold == balances_before,
@@ -1280,4 +1285,90 @@ fn actual_product_rpc_single_ingress_gossip_failures_and_restart() -> Result<()>
         directory.join("result.json").display()
     );
     result
+}
+
+/// Exercise the existing product endpoint against the verified durable archive,
+/// not the recent in-memory receipt projection. Explicit height must take this
+/// path even when a receipt is still in the recent cache.
+fn wait_block_receipt(
+    nodes: &mut ProductNodes,
+    node: usize,
+    hash: &Value,
+    height: u64,
+) -> Result<Value> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        nodes.alive()?;
+        let receipt = nodes.rpc(node, "nov_getTransactionStatus", json!([hash, height]))?;
+        if receipt["lookup_complete"] == true {
+            return Ok(receipt);
+        }
+        ensure!(
+            receipt["finalized"] == false && Instant::now() < deadline,
+            "block-scoped receipt read failed to complete: {receipt}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn verify_block_receipt_queries(nodes: &mut ProductNodes, receipts: &[Value]) -> Result<Value> {
+    let mut found = 0;
+    let mut absent = 0;
+    let first_height = receipts[0]["block_height"]
+        .as_u64()
+        .context("receipt height")?;
+    let last = receipts.last().context("no finalized receipts")?;
+    let last_height = last["block_height"].as_u64().context("receipt height")?;
+    ensure!(
+        first_height < last_height,
+        "history fixture requires multiple blocks"
+    );
+    for node in 0..4 {
+        // Includes a charged business failure, not merely successful receipts.
+        for expected in receipts {
+            let height = expected["block_height"]
+                .as_u64()
+                .context("receipt height")?;
+            let actual = wait_block_receipt(nodes, node, &expected["tx_hash"], height)?;
+            ensure!(
+                actual["query_scope"] == "block",
+                "query did not use block scope"
+            );
+            for (key, value) in expected.as_object().context("receipt object")? {
+                ensure!(
+                    actual.get(key) == Some(value),
+                    "archive receipt changed field {key}"
+                );
+            }
+            found += 1;
+        }
+        // A cached transaction in another block must not override the locator.
+        for hash in [&last["tx_hash"], &json!(hex(&[0x42; 32]))] {
+            let actual = wait_block_receipt(nodes, node, hash, first_height)?;
+            ensure!(
+                actual["state"] == "not_in_block"
+                    && actual["executed"] == false
+                    && actual["finalized"] == false
+                    && actual["block_height"] == first_height,
+                "block-local absence was not accurately reported: {actual}"
+            );
+            absent += 1;
+        }
+        for height in [json!(0), json!(-1), json!("1"), json!(last_height + 100)] {
+            let response = nodes.request(
+                node,
+                json!({
+                    "jsonrpc":"2.0", "id":1, "method":"nov_getTransactionStatus",
+                    "params":[receipts[0]["tx_hash"],height]
+                }),
+            )?;
+            ensure!(
+                response.get("error").is_some(),
+                "invalid archive locator accepted"
+            );
+        }
+    }
+    Ok(json!({"found":found,"absent_in_requested_block":absent,
+        "four_nodes":true,"source":"verified_durable_archive",
+        "no_global_absence_claim":true,"business_failure_receipt_preserved":true}))
 }

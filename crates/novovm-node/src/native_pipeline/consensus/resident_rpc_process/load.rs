@@ -843,6 +843,256 @@ fn early_reuse_evidence(statuses: &[Value], explicitly_required: bool) -> Result
     )
 }
 
+fn require_history(value: std::result::Result<&str, &std::env::VarError>) -> Result<bool> {
+    match value {
+        Err(std::env::VarError::NotPresent) | Ok("0") => Ok(false),
+        Ok("1") => Ok(true),
+        _ => bail!("NOVOVM_RESIDENT_RPC_REQUIRE_HISTORY must be 0 or 1"),
+    }
+}
+
+fn preserve_history_probe_logs(nodes: &ProductNodes, prefix: &str) -> Result<()> {
+    for node in 0..4 {
+        for stream in ["stdout", "stderr"] {
+            fs::copy(
+                nodes
+                    .directory
+                    .join(format!("existing-{node}.{stream}.log")),
+                nodes
+                    .directory
+                    .join(format!("{prefix}-{node}.{stream}.log")),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Optional, strictly AFTER the original timer and four complete economic
+/// audits. The extra batch changes no original observations/counts/oracle and
+/// uses the original genesis funding, not the extended workload's genesis.
+fn probe_evicted_history(
+    nodes: &mut ProductNodes,
+    mode: SubmissionMode,
+    workload: &Workload,
+    genesis: &GenesisConfig,
+    original_head: ParentPoint,
+    observations: &[Observation],
+    evidence: &mut Value,
+) -> Result<()> {
+    let extended = Workload::new(SENDERS, NONCES + 1, policy())?;
+    ensure!(
+        extended.senders() == workload.senders() && extended.recipient() == workload.recipient(),
+        "history probe changed original workload identities"
+    );
+    let raw = extended.raw_height(NONCES + 1)?;
+    ensure!(raw.len() == SENDERS, "history extension count changed");
+    let mut earliest: Option<&Value> = None;
+    let mut earliest_height = u64::MAX;
+    let mut remaining = vec![workload.initial_sender_balance(); SENDERS];
+    ensure!(
+        observations.len() == TRANSACTIONS,
+        "original audit scope changed"
+    );
+    for (index, observation) in observations.iter().enumerate() {
+        let receipt = observation
+            .receipt
+            .as_ref()
+            .context("original receipt missing")?;
+        let height = receipt["block_height"]
+            .as_u64()
+            .context("original receipt height missing")?;
+        ensure!(
+            receipt["tx_hash"] == observation.hash && receipt["success"] == true,
+            "original history probe receipt differs from successful observation"
+        );
+        if height < earliest_height {
+            earliest = Some(receipt);
+            earliest_height = height;
+        }
+        let debit = AMOUNT
+            .checked_add(
+                receipt["charged_fee"]
+                    .as_str()
+                    .context("original fee missing")?
+                    .parse::<u128>()?,
+            )
+            .context("original probe debit overflow")?;
+        remaining[index % SENDERS] = remaining[index % SENDERS]
+            .checked_sub(debit)
+            .context("original probe funding underflow")?;
+    }
+    let expected = earliest.context("original finalized receipt missing")?;
+    ensure!(
+        earliest_height > 0 && earliest_height <= original_head.height,
+        "original receipt is outside audited head"
+    );
+    let first_block_count = observations
+        .iter()
+        .filter(|observation| {
+            observation
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| receipt["block_height"].as_u64() == Some(earliest_height))
+        })
+        .count();
+    ensure!(
+        (1..=SENDERS).contains(&first_block_count),
+        "first block exceeds eviction batch"
+    );
+    let now = u128::from(genesis.timestamp_unix_ms)
+        .checked_add(u128::from(original_head.height) + 1)
+        .context("probe quote time overflow")?;
+    let probe_policy = policy();
+    let mut expected_fees = Vec::with_capacity(SENDERS);
+    for (index, bytes) in raw.iter().enumerate() {
+        let checked = authenticate_transfer_v3(bytes, CHAIN, 1024)?;
+        let tx = checked.transfer();
+        ensure!(
+            tx.nonce == NONCES
+                && tx.amount == AMOUNT
+                && tx.from == workload.senders()[index].account.as_bytes()
+                && tx.to == workload.recipient().as_bytes(),
+            "history extension changed transfer"
+        );
+        let request = TransferFeeRequest {
+            tx_hash: checked.tx_hash(),
+            payer: workload.senders()[index].account.clone(),
+            recipient: workload.recipient().clone(),
+            asset: tx.asset.to_owned(),
+            amount: tx.amount,
+            pay_asset: tx.fee_policy.pay_asset.to_owned(),
+            max_pay_amount: tx.fee_policy.max_pay_amount,
+            slippage_bps: tx.fee_policy.slippage_bps,
+        };
+        let fee = quote_transfer(&request, &probe_policy, now)??.nov_amount;
+        ensure!(
+            remaining[index] >= AMOUNT.checked_add(fee).context("probe debit overflow")?,
+            "original genesis has insufficient history probe funding margin"
+        );
+        expected_fees.push(fee.to_string());
+    }
+    let ingress = mode.entry().unwrap_or(0);
+    *evidence = json!({"required":true,"executed":true,"passed":false,"phase":"reopen audited original stores",
+        "extra_transactions":SENDERS,"ingress_node":ingress,"after_original_timer_and_four_economic_audits":true,
+        "counted_in_tps":false,"original_economic_oracle_transactions":TRANSACTIONS,
+        "post_extension_full_economic_oracle":false,"genesis_unchanged":true,
+        "minimum_original_funding_remaining":remaining.iter().min().unwrap().to_string(),
+        "original_audited_head":original_head,"original_receipt":expected,
+        "original_first_block_transactions":first_block_count,
+        "preserved_original_cold_logs":"history-original-cold-<node>.<stream>.log"});
+    preserve_history_probe_logs(nodes, "history-original-cold")?;
+    for node in 0..4 {
+        nodes.start(node, "existing")?;
+    }
+    let reopened = nodes.wait_ready(&[0, 1, 2, 3])?;
+    ensure!(
+        reopened
+            .iter()
+            .all(|status| status["head"] == json!(original_head)),
+        "history probe changed original audited head on reopen"
+    );
+    evidence["phase"] = json!("submit extra batch outside measured workload");
+    let hashes = transaction_hashes(&raw)?;
+    nodes.submit_batch(ingress, &raw)?;
+    let receipts = nodes.wait_receipts(&[0, 1, 2, 3], &hashes)?;
+    ensure!(
+        receipts[0].len() == SENDERS,
+        "history extension receipt count differs"
+    );
+    for (index, receipt) in receipts[0].iter().enumerate() {
+        ensure!(
+            receipt["tx_hash"] == hashes[index]
+                && receipt["success"] == true
+                && receipt["nonce_after"] == NONCES + 1
+                && receipt["charged_fee"] == expected_fees[index]
+                && receipt["finality_kind"] == "BFT_durable"
+                && receipt["proof_verified"] == false,
+            "history extension receipt/nonce/fee differs"
+        );
+    }
+    let extended_status = nodes.wait_ready(&[0, 1, 2, 3])?;
+    ensure!(
+        extended_status
+            .iter()
+            .all(|status| status["head"] == extended_status[0]["head"]
+                && status["head"]["state_version"] == (TRANSACTIONS + SENDERS) as u64
+                && status["pending"] == 0),
+        "history extension four heads/counts differ"
+    );
+    evidence["extra_receipts"] = json!(receipts[0]);
+    evidence["extended_status"] = json!(extended_status);
+    let extension_pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
+    evidence["extension_pids"] = json!(extension_pids);
+    evidence["phase"] = json!("evicted receipt archive lookup");
+    evidence["before_restart"] = verify_evicted_receipt(nodes, expected, earliest_height)?;
+    nodes.stop_all()?;
+    preserve_history_probe_logs(nodes, "history-extension")?;
+    evidence["phase"] = json!("cold restart after eviction");
+    for node in 0..4 {
+        nodes.start(node, "existing")?;
+    }
+    let cold = nodes.wait_ready(&[0, 1, 2, 3])?;
+    ensure!(
+        cold.iter()
+            .all(|status| status["head"] == extended_status[0]["head"]),
+        "history extension cold head changed"
+    );
+    let cold_pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
+    ensure!(
+        cold_pids.len() == 4 && cold_pids.iter().all(|pid| !extension_pids.contains(pid)),
+        "history extension did not cold restart four processes"
+    );
+    let cold_receipts = nodes.wait_receipts(&[0, 1, 2, 3], &hashes)?;
+    ensure!(
+        cold_receipts == receipts,
+        "history extension cold receipts changed"
+    );
+    evidence["after_restart"] = verify_evicted_receipt(nodes, expected, earliest_height)?;
+    evidence["cold_status"] = json!(cold);
+    evidence["cold_pids"] = json!(cold_pids);
+    nodes.stop_all()?;
+    evidence["phase"] = json!("complete");
+    evidence["passed"] = json!(true);
+    Ok(())
+}
+
+fn verify_evicted_receipt(
+    nodes: &mut ProductNodes,
+    expected: &Value,
+    height: u64,
+) -> Result<Value> {
+    let mut reports = Vec::with_capacity(4);
+    for node in 0..4 {
+        let recent = nodes.rpc(
+            node,
+            "nov_getTransactionStatus",
+            json!([expected["tx_hash"]]),
+        )?;
+        ensure!(
+            recent["state"] == "not_in_recent_index"
+                && recent["finalized"] == false
+                && recent["lookup_complete"] == false,
+            "old receipt was not actually evicted: {recent}"
+        );
+        let archived = wait_block_receipt(nodes, node, &expected["tx_hash"], height)?;
+        ensure!(
+            archived["query_scope"] == "block",
+            "history probe did not use archive locator"
+        );
+        for (key, value) in expected
+            .as_object()
+            .context("original receipt object missing")?
+        {
+            ensure!(
+                archived.get(key) == Some(value),
+                "evicted archive receipt changed field {key}"
+            );
+        }
+        reports.push(json!({"node":node,"hash_only":recent,"block_scoped":archived}));
+    }
+    Ok(json!(reports))
+}
+
 #[test]
 #[ignore = "real product binary/AOEM required; 65,536 signed HTTP transfers, explicit submission mode, four-node finality and cold restart; run alone"]
 fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Result<()> {
@@ -865,6 +1115,8 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
             Ok("1") => true,
             _ => bail!("NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH must be 0 or 1"),
         };
+    let require_history =
+        require_history(std::env::var("NOVOVM_RESIDENT_RPC_REQUIRE_HISTORY").as_deref())?;
     let binary = PathBuf::from(
         std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
             .context("explicit NOVOVM_RESIDENT_NODE_BINARY required")?,
@@ -883,7 +1135,8 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
     let mut counts = Counts::default();
     let mut events = Events::new(&directory.join("events.jsonl"))?;
     let mut observations = Vec::new();
-    let mut evidence = json!({"async_authentication_required":require_async_auth});
+    let mut evidence = json!({"async_authentication_required":require_async_auth,
+        "historical_receipt_probe_required":require_history});
     let mut elapsed = None;
     let mut timed_wall_seconds = None;
     let mut phase = "prepare signatures/configuration";
@@ -932,7 +1185,8 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         evidence = json!({"binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
             "aoem_sha256":hex(&Sha256::digest(fs::read(library()?)?)),"timeout_seconds":timeout,
             "genesis_commitment":hex(&genesis.genesis_config_commitment),
-            "async_authentication_required":require_async_auth});
+            "async_authentication_required":require_async_auth,
+            "historical_receipt_probe_required":require_history});
         let mut relay = Relay::start(&directory.join("relay"))?;
         let (mut nodes, set) =
             setup_with_genesis(&directory, &relay, binary.clone(), genesis.clone(), SENDERS)?;
@@ -1043,6 +1297,19 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         evidence["live_status"] = json!(before);
         evidence["cold_status"] = json!(cold);
         evidence["database_audits"] = json!(audits);
+        evidence["historical_receipt_probe"] = json!({"required":require_history,"executed":false});
+        if require_history {
+            phase = "optional cache-evicted history probe after original economic audits";
+            probe_evicted_history(
+                &mut nodes,
+                mode,
+                &workload,
+                &genesis,
+                head,
+                &observations,
+                &mut evidence["historical_receipt_probe"],
+            )?;
+        }
         relay.shutdown()?;
         phase = "complete";
         Ok(())
@@ -1289,4 +1556,18 @@ fn load_early_reuse_requires_real_counter_but_keeps_frozen_legacy_comparison_run
     assert_eq!(early_reuse_evidence(&statuses, true).unwrap()["total"], 3);
     statuses[1] = json!({});
     assert!(early_reuse_evidence(&statuses, false).is_err());
+}
+
+#[test]
+fn load_history_requirement_is_strict_opt_in_for_frozen_baselines() {
+    assert!(!require_history(Err(&std::env::VarError::NotPresent)).unwrap());
+    assert!(!require_history(Ok("0")).unwrap());
+    assert!(require_history(Ok("1")).unwrap());
+    for value in ["", "true", "false", "01", "2", " 1", "1 "] {
+        assert!(require_history(Ok(value)).is_err());
+    }
+    assert!(require_history(Err(&std::env::VarError::NotUnicode(
+        std::ffi::OsString::from("non-Unicode fixture"),
+    )))
+    .is_err());
 }

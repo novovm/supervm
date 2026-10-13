@@ -8,6 +8,51 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 主链历史回执与真实缓存淘汰恢复
+
+输入 `main@0688b760`，保持原 `novovm-node/native_pipeline → novovm-exec → AOEM`
+常驻 CPU 快路径及 `novovm-consensus/round_bft`。49 项既有 legacy/runtime 草稿
+在快进前后逐文件 SHA256 相同；未启用旧 Host 许可、修改真实账本或新建分支。
+
+原 `nov_getTransactionStatus` 增加 `[tx_hash, positive_block_height]` 可选定位。
+复用同一 AOEM 归档读取及已验证链前缀、候选和证书检查，不新建账本或全历史扫描。
+只有 hash 时仍查最近 65,536 项；显式高度始终查归档，`not_in_block` 仅表示该块
+没有该交易。损坏/缺失证据返回错误，查询排队不是 finalized。最多 8 个查询，
+全体每控制轮最多推进一次归档读取，保留签票/投影的 I/O 优先机会。
+
+Windows Release，本轮节点 SHA256 `f6b470d6723d447fe7b9e336fc8434ccae5a0496bd82408093c550ea219cafc6`，
+随仓 AOEM DLL `01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674`：
+
+- native_pipeline **385 passed / 57 ignored**；node lib/bin/tests 严格 Clippy 通过。
+- 原单入口四进程夹具通过（2.48s）：7 成功、1 收费业务失败；重启前后各核对
+  24 份完整历史回执、8 个块内不存在结果，并拒绝错误高度。此夹具不是 TPS 测量。
+- 单入口 65,536 笔实签负载：1,024 付款方、每方 64 个连续 nonce、共同收款方，
+  最大批 1,024、在途 8,192；四节点全部成功最终回执用时 **7.522470s / 8,712.032 TPS**。
+  业务失败 **0**、准入拒绝 **0**、重试 **0**；P95 **1,105,661µs**、P99 **1,262,310µs**，
+  从首次 HTTP 提交到最慢节点回执响应，含观察调度。签名预生成/启动/冷恢复不计时。
+  四库全量经济、状态根、3 签 QC、冷恢复核对通过。这是一个当前 CPU 样本，
+  没有同条件修改前对照，不作提速或稳定容量声明。
+- 原负载计时及四库经济核对之后额外提交 1,024 笔，**不计入 TPS**。最早一块
+  1,024 项真实淘汰，四节点 hash-only 返回 `not_in_recent_index`，带高度仍完整查回；
+  再次冷重启后保持。额外批核对回执/费用/nonce/四链头，但没有重做 66,560 笔全量经济 oracle。
+- 同一节点二进制的 A/A/B 分票/重启/后继场景通过（11.28s，三个真实诚实进程
+  加一个受控故障 peer）；离线 peer 隔离、在线法定人数推进、追平和重启场景通过
+  （47.93s 全夹具耗时，不是正常吞吐或单独追平延迟）。未改变计时器、门限或锁规则。
+
+原始功能与负载报告：
+[single ingress](../artifacts/audit/mainchain-receipt-history-20261013/single-ingress-result.json)、
+[load and eviction](../artifacts/audit/mainchain-receipt-history-20261013/load-history-result.json)、
+[A/A/B](../artifacts/audit/mainchain-receipt-history-20261013/aab-result.json)、
+[offline](../artifacts/audit/mainchain-receipt-history-20261013/offline-result.json)。
+逐笔原始观察留在本机 `artifacts/audit/resident-rpc-load/24796-1791865677122624000/observations.json`，
+SHA256 `0da9267db111684b82faba759a025406e8acd1d14de9415a39d79486012e4770`；未上传密钥/数据库。
+尚未验证持续历史查询压力下的吞吐、RPC 层数据库损坏注入、Linux 本轮及实体多机。
+
+GPU/完整业务证明没有因上述结果而签收。用户本轮另行授权 AOEM **通用**常驻数值资源
+适配，禁止 NOV 业务内置；复用现有统一 wire/Vulkan 并接原 exec 门面，源码、FULLMAX SDK、
+真实主链调用和性能分别核验。旧 SDK 未升级时不启用或静默回退。原多资产、Execute、
+隐私/PQ 与发布验收仍属同一产品目标；本节不构成生产可发布结论。
+
 ## 2026-10-13 自主发现接入真实 Android（阶段交付）
 
 基础设施提交 `e7379b22` / `3e015dfe` / `89601224`；NOVOCHAT 运行时接线
