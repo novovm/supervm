@@ -8,6 +8,36 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Android bounded mailbox session gate
+
+SUPERVM network `9333e9df`, merged build `c0d3d01f`; NOVOCHAT `bf86aec`.
+PKL110 Wi-Fi / PCLM50 cellular, same original ten-minute grant, no USB tunnels.
+Five interruptions recovered without manual reconnect; all ten new messages
+received durable device receipts before grant end. Follow-up messages after
+rounds 2 and 5 also delivered. Force-stop/reopen retained all ten on both phones,
+old contacts/history and four protected identity/key files per phone unchanged.
+
+Approximate seconds from cellular enabled to authentication/inbox/sender receipt:
+R1 9.11/12.23/13.81; R2 29.28/31.83/33.40; R3 17.18/19.60/47.07;
+R4 14.20/19.41/23.61; R5 13.06/15.35/17.70. R3 deliberately took sender offline
+after StoreReceipt; recipient independently fetched before sender returned.
+Phone monotonic/host anchor mapping assumes unchanged host wall clock; no P95
+claim. A/B completed 24/22 tasks, normal expired/tasksFinished=true at grant end.
+Endpoint binds1/1; QUIC opened2/6, reused22/15; sessions ready23/20, finished22/16.
+292/234 ended RPCs median965.5/1022.5ms includes Watch and errors, not deliveryP95.
+E1 intentional network cuts, one cellular E211 connect failure and end-grant
+E215 remain in evidence. New legal attempts resumed; Delivered never regressed.
+
+Android/core: 3 mailbox regressions, scoped Clippy/fmt/build passed. Windows node
+first build omitted iroh-transport and failed; corrected feature build passed.
+Phone logs and latency/reopen/install/outage records are local NOVOCHAT artifacts/
+mailbox-session-*; detailed contract in NOVOCHAT DELIVERY_AND_MAILBOX.md.
+All observed authenticated paths used Relay with third-party Iroh dependency.
+Five-round foreground gate passes this batch; low latency, long-term production,
+L4 independent replicas, self-owned transport and anonymity remain unaccepted.
+Installed service.journal near16MiB now makes safe bounded compaction the next
+node-lifetime blocker; never reset signing/revocation history to keep it running.
+
 ## 2026-10-14 Bounded authenticated mailbox sessions
 
 Input `f42510b9`, NOVOCHAT `41c3f57`. Real phones retained three newly delivered
