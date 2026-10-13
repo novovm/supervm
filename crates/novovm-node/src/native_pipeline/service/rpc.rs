@@ -606,6 +606,14 @@ impl RpcLifecycle {
                 "scope":"application codec work, not unique transactions or TLS delivery"}),
             Err(error) => json!({"error":error.to_string()}),
         };
+        let stage_profile = crate::native_pipeline::profile::snapshot();
+        let bound_gpu = stage_profile["integer_resource"]["calls"]
+            .as_u64()
+            .is_some_and(|n| n > 0)
+            && matches!(
+                stage_profile["integer_resource"]["last"]["diagnostics"]["device_type"].as_u64(),
+                Some(1 | 2)
+            );
         json!({"profile":"native-resident-v1","experimental":true,
             "core":"novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
             "consensus":"novovm-consensus/round_bft/journal",
@@ -631,11 +639,12 @@ impl RpcLifecycle {
             "early_bind_reused":stats.early_bind_reused,"early_discarded":stats.early_discarded,
             "execution_failures":stats.execution_failures,"last_error":stats.last_error,
             "execution_backend":backend,
-            "stage_profile":crate::native_pipeline::profile::snapshot(),
+            "stage_profile":stage_profile,
             "business_vulkan_integer_active":stats.execution_gpu_rows_total > 0,
-            "business_gpu_active":if matches!(self.node.pipeline.execution_backend(), crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks) { Some(false) } else { None },
-            "physical_gpu_verified":false,
-            "integer_observation_scope":"AOEM Vulkan non-padding predictions in completed candidates, including stale; fees/ordered repairs remain AOEM CPU; resource ABI does not attest physical device identity",
+            "business_gpu_active":if matches!(self.node.pipeline.execution_backend(), crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks) { Some(false) } else if bound_gpu { Some(stats.execution_gpu_rows_total > 0) } else { None },
+            "physical_gpu_verified":bound_gpu,
+            "physical_gpu_verification_scope":"local driver-reported bound resource after completed diagnostic dispatch; not hardware/remote attestation; false when unobserved",
+            "integer_observation_scope":"AOEM Vulkan non-padding predictions in completed candidates, including stale; fees/ordered repairs remain AOEM CPU; local diagnostics are not business commitments",
             "business_proof_required":false,"business_proof_verified":false,
             "mempool_gossip":true,"gossip_delivery":"best_effort_not_durable",
             "transaction_gossip":self.node.controller.transactions_stats(),

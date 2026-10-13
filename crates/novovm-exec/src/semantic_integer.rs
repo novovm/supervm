@@ -219,7 +219,7 @@ fn optional_index(value: &serde_json::Value, bound: usize) -> Result<Option<usiz
     Ok(Some(index as usize))
 }
 
-fn decode(value: serde_json::Value, shape: &Shape) -> Result<AoemIntegerOutcomeBatchV1> {
+fn decode(mut value: serde_json::Value, shape: &Shape) -> Result<AoemIntegerOutcomeBatchV1> {
     let object = value
         .as_object()
         .context("integer outcome result is not an object")?;
@@ -232,9 +232,9 @@ fn decode(value: serde_json::Value, shape: &Shape) -> Result<AoemIntegerOutcomeB
     {
         bail!("integer outcome result metadata mismatch");
     }
-    let rows = value["rows"]
-        .as_array()
-        .context("integer outcome rows missing")?;
+    let serde_json::Value::Array(rows) = value["rows"].take() else {
+        bail!("integer outcome rows missing");
+    };
     if rows.len() != shape.rows {
         bail!("integer outcome row count mismatch");
     }
@@ -281,7 +281,7 @@ fn decode(value: serde_json::Value, shape: &Shape) -> Result<AoemIntegerOutcomeB
                 bail!("integer outcome must contain exactly 32 u32 limbs");
             }
         }
-        let raw: RawRow = serde_json::from_value(value.clone())?;
+        let raw: RawRow = serde_json::from_value(value)?;
         let component = optional_index(&raw.component, components)?;
         let failed_instruction = optional_index(&raw.failed_instruction, 512)?;
         let outcome = match raw.outcome {
@@ -392,6 +392,37 @@ pub struct AoemIntegerResourceV7 {
 /// ```
 pub struct AoemIntegerResourceSessionV7 {
     inner: ResourceOwner<AoemExecSession>,
+    profile_supported: bool,
+}
+
+/// Local measurements only. Never include these in business or consensus commitments.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AoemIntegerResourceDiagnosticsV1 {
+    pub device_name: String,
+    pub vendor_id: u32,
+    pub device_id: u32,
+    pub device_type: u32,
+    pub queue_family_index: u32,
+    pub timestamp_valid_bits: u32,
+    pub timestamp_period_ns: f64,
+    pub gpu_us: Option<u64>,
+    pub dispatch_us: u64,
+    pub record_us: u64,
+    pub submit_us: u64,
+    pub wait_us: u64,
+    pub upload_us: u64,
+    pub read_decode_us: u64,
+    pub total_us: u64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct AoemIntegerResourceProfileV1 {
+    pub resource_id: u64,
+    pub diagnostics: AoemIntegerResourceDiagnosticsV1,
+    pub encode_us: u64,
+    pub exchange_us: u64,
+    pub decode_us: u64,
 }
 
 fn resource_supported(raw: &serde_json::Value, wire: bool, read: bool) -> bool {
@@ -432,6 +463,9 @@ impl AoemExecFacade {
             })
             .map_err(|_| anyhow::anyhow!("integer resource owner sequence exhausted"))?;
         Ok(AoemIntegerResourceSessionV7 {
+            profile_supported: self.capabilities_json()?
+                ["compute_checked_integer_resource_profile_v1"]
+                == true,
             inner: ResourceOwner {
                 transport: self.create_session()?,
                 owner,
@@ -467,6 +501,19 @@ impl AoemIntegerResourceSessionV7 {
 
     pub fn close(&mut self, resource: &AoemIntegerResourceV7) -> Result<()> {
         self.inner.close(resource)
+    }
+
+    /// An explicitly supported diagnostic command on the same resource and wire.
+    /// Older libraries are rejected before submission; ordinary v7 stays unchanged.
+    pub fn run_profiled(
+        &mut self,
+        resource: &AoemIntegerResourceV7,
+        rows: &[Vec<AoemInteger1024V1>],
+    ) -> Result<(AoemIntegerOutcomeBatchV1, AoemIntegerResourceProfileV1)> {
+        if !self.profile_supported {
+            bail!("loaded AOEM library does not support integer resource profile v1");
+        }
+        self.inner.run_profiled(resource, rows)
     }
 }
 
@@ -691,6 +738,72 @@ impl<T: ResourceTransport> ResourceOwner<T> {
         self.poisoned = false;
         Ok(())
     }
+
+    fn run_profiled(
+        &mut self,
+        resource: &AoemIntegerResourceV7,
+        rows: &[Vec<AoemInteger1024V1>],
+    ) -> Result<(AoemIntegerOutcomeBatchV1, AoemIntegerResourceProfileV1)> {
+        let start = std::time::Instant::now();
+        let shape = self.shape(resource)?;
+        validate_rows(rows, &shape)?;
+        let mut payload = resource_header(
+            4,
+            resource.id,
+            shape.rows,
+            0,
+            shape.rows * shape.inputs * 128,
+        );
+        append_rows(&mut payload, rows);
+        let encode_us = start.elapsed().as_micros() as u64;
+        let start = std::time::Instant::now();
+        let value = self.exchange(&payload)?;
+        let exchange_us = start.elapsed().as_micros() as u64;
+        let start = std::time::Instant::now();
+        let (output, diagnostics) = decode_profiled(value, resource.id, &shape)?;
+        let decode_us = start.elapsed().as_micros() as u64;
+        self.poisoned = false;
+        Ok((
+            output,
+            AoemIntegerResourceProfileV1 {
+                resource_id: resource.id,
+                diagnostics,
+                encode_us,
+                exchange_us,
+                decode_us,
+            },
+        ))
+    }
+}
+
+fn decode_profiled(
+    mut value: serde_json::Value,
+    id: u64,
+    shape: &Shape,
+) -> Result<(AoemIntegerOutcomeBatchV1, AoemIntegerResourceDiagnosticsV1)> {
+    if value.as_object().map(|o| o.len()) != Some(5)
+        || value["kind"] != "compute.ai.sgm_infer_v1.integer_resource.profiled_result"
+        || value["version"] != 1
+        || value["resident_resource_id"].as_u64() != Some(id)
+    {
+        bail!("integer profiled resource id/schema mismatch");
+    }
+    if value["diagnostics"].as_object().map(|o| o.len()) != Some(15) {
+        bail!("integer diagnostic fields mismatch");
+    }
+    let diagnostics: AoemIntegerResourceDiagnosticsV1 =
+        serde_json::from_value(value["diagnostics"].take())?;
+    if diagnostics.device_name.is_empty()
+        || diagnostics.device_name.len() > 256
+        || diagnostics.timestamp_valid_bits > 64
+        || !diagnostics.timestamp_period_ns.is_finite()
+        || diagnostics.timestamp_period_ns < 0.0
+        || (diagnostics.gpu_us.is_some()
+            && (diagnostics.timestamp_valid_bits == 0 || diagnostics.timestamp_period_ns <= 0.0))
+    {
+        bail!("integer diagnostic device/timestamp contract mismatch");
+    }
+    Ok((decode(value["result"].take(), shape)?, diagnostics))
 }
 
 #[cfg(test)]

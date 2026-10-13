@@ -2903,6 +2903,13 @@ AOEM_API const char* aoem_last_error(void* handle);
 
 // AOIP0 version=7 retains a generic checked outcome program in its AOEM context.
 // Capability: compute_checked_integer_resources_v7 (requires apfl-model-session).
+// Optional command 4 (same fields as Run): RunProfiled, explicitly gated by
+// compute_checked_integer_resource_profile_v1. Returns a strict five-field
+// integer_resource.profiled_result v1 envelope: kind, version,
+// resident_resource_id, unchanged numeric result, diagnostics. Diagnostics
+// report the bound device and nullable queue timestamp duration, plus host
+// upload/dispatch/readback wall costs; they are NOT business/consensus evidence.
+// Ordinary Open/Run/Close schemas remain unchanged. No additional C export.
 // Header (40 bytes): magic[8], LE u32 version=7, command, LE u64 resource_id,
 // LE u32 numeric_version, rows, program_bytes, input_bytes; then exact body.
 // command=1 Open: resource_id=0, numeric_version=4 (APFLOU01 v1/i128) or 5

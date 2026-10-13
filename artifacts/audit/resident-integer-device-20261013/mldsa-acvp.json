@@ -1,0 +1,891 @@
+{
+  "accepted": true,
+  "scope": "NIST_sigVer_external_pure_and_internal_raw_90",
+  "certification_claimed": false,
+  "main_chain_integrated": false,
+  "production_ready": false,
+  "excluded": [
+    "external preHash",
+    "internal externalMu=true",
+    "keyGen",
+    "sigGen"
+  ],
+  "upstream_commit": "975de31eb83d87039ec88934fdc47d8c312b892d",
+  "prompt_required_sha256": "e2cba4589389756fa0bea1a7e6837138bf0a81f9d14234c9ee8f6d33caa1654e",
+  "expected_required_sha256": "e1d84ef1b2f35196278ab0b0ed6a46ec62cc03d2dfa92c564199e1999bfb8ea6",
+  "inputs_sha256_verified": true,
+  "probe_source_sha256": "674f44034e3beffdc8cfa39330cb33e215d1f6dbf3026f852dcf0fb6c8d8a916",
+  "groups": [
+    {
+      "group_id": 1,
+      "level": 44,
+      "interface": "external",
+      "accepted": true,
+      "cases": 15,
+      "passed": 15,
+      "failed_case_ids": []
+    },
+    {
+      "group_id": 3,
+      "level": 65,
+      "interface": "external",
+      "accepted": true,
+      "cases": 15,
+      "passed": 15,
+      "failed_case_ids": []
+    },
+    {
+      "group_id": 5,
+      "level": 87,
+      "interface": "external",
+      "accepted": true,
+      "cases": 15,
+      "passed": 15,
+      "failed_case_ids": []
+    },
+    {
+      "group_id": 8,
+      "level": 44,
+      "interface": "internal",
+      "accepted": true,
+      "cases": 15,
+      "passed": 15,
+      "failed_case_ids": []
+    },
+    {
+      "group_id": 10,
+      "level": 65,
+      "interface": "internal",
+      "accepted": true,
+      "cases": 15,
+      "passed": 15,
+      "failed_case_ids": []
+    },
+    {
+      "group_id": 12,
+      "level": 87,
+      "interface": "internal",
+      "accepted": true,
+      "cases": 15,
+      "passed": 15,
+      "failed_case_ids": []
+    }
+  ],
+  "cases": [
+    {
+      "group_id": 1,
+      "case_id": 1,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 2,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 3,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 4,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 5,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 6,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 7,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 8,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 9,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 10,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 11,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 12,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 13,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 14,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 1,
+      "case_id": 15,
+      "level": 44,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 31,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 32,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 33,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 34,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 35,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 36,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 37,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 38,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 39,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 40,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 41,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 42,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 43,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 44,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 3,
+      "case_id": 45,
+      "level": 65,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 61,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 62,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 63,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 64,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 65,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 66,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 67,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 68,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 69,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 70,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 71,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 72,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 73,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 74,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 5,
+      "case_id": 75,
+      "level": 87,
+      "interface": "external",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 106,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 107,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 108,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 109,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 110,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 111,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 112,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 113,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 114,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 115,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 116,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 117,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 118,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 119,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 8,
+      "case_id": 120,
+      "level": 44,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 136,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 137,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 138,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 139,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 140,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 141,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 142,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 143,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 144,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 145,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 146,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 147,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 148,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 149,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 10,
+      "case_id": 150,
+      "level": 65,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 166,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 167,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 168,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 169,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 170,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 171,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 172,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 173,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 174,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 175,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 176,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 177,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 178,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 179,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": false,
+      "actual_valid": false,
+      "accepted": true
+    },
+    {
+      "group_id": 12,
+      "case_id": 180,
+      "level": 87,
+      "interface": "internal",
+      "expected_valid": true,
+      "actual_valid": true,
+      "accepted": true
+    }
+  ],
+  "runtime_sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+  "runtime": "D:\\WorksArea\\AOEM\\cargo-target-ci-local\\release\\aoem_ffi.dll",
+  "head": "a7379623f98db591c7b5edb8690168a0fb3c4aff",
+  "case_count": 90,
+  "passed": 90
+}

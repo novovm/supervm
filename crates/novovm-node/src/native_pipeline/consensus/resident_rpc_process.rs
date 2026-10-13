@@ -434,10 +434,22 @@ fn check_execution_backend(statuses: &[Value], expected_rows: u64) -> Result<()>
         let waves = status["execution_integer_waves_total"]
             .as_u64()
             .context("missing actual integer wave observation")?;
+        let observed = status["stage_profile"]["integer_resource"]["calls"]
+            .as_u64()
+            .is_some_and(|n| n > 0)
+            && matches!(
+                status["stage_profile"]["integer_resource"]["last"]["diagnostics"]["device_type"]
+                    .as_u64(),
+                Some(1 | 2)
+            );
         ensure!(
-            status["physical_gpu_verified"] == false
+            status["physical_gpu_verified"] == observed
                 && if gpu {
-                    status["business_gpu_active"].is_null()
+                    if observed {
+                        status["business_gpu_active"] == (rows > 0)
+                    } else {
+                        status["business_gpu_active"].is_null()
+                    }
                 } else {
                     status["business_gpu_active"] == false
                 },

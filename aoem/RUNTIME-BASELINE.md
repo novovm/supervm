@@ -1,6 +1,51 @@
 # AOEM FULLMAX Runtime Baseline
 
-## Current: 2026-10-13 Windows core-only integer resources
+## Current: 2026-10-13 Windows bound-resource diagnostics and owned results
+
+Windows FULLMAX core/header source is AOEM main
+`5e555e1ab17f849a1a877fd09e24769eba06cddf`. Core size 44,400,128 bytes, SHA256
+`3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43`.
+It was built with the same complete feature list recorded below. Only Windows
+core/header and their capability/provenance records changed. All Windows
+sidecars and the complete Linux bundle remain at their previous recorded sources;
+no all-sidecar, Linux, privacy/proof or whole-product requalification is implied.
+
+The existing unified AOIP0 v7 resource accepts opt-in command 4 only when
+`compute_checked_integer_resource_profile_v1` is true. Its separate strict v1
+envelope reports the actual bound runtime's driver identity, selected-queue
+timestamp properties and nullable command-range time, plus nested host costs.
+Open/Run/Close and ordinary numeric results are unchanged. Old DLLs are explicitly
+unsupported for this diagnostic command, without falling back or poisoning an
+otherwise valid ordinary resource. Profiling is off by default. Fields are local
+observations, never transaction/state/receipt/consensus commitments.
+
+The original node's optional integer prediction path observed RTX 5090 Laptop
+GPU, `10de:2c58`, discrete type 2, queue 0, 64 valid bits, 1 ns/tick. This is a
+driver-reported binding after completed dispatch, not remote hardware attestation.
+Each of four processes ran 64 real 1,024-row batches; GPU command range was about
+0.22 ms/batch. The generic numeric-result envelope and exec readback now transfer
+Value ownership, removing redundant full-result deep copies without changing
+arithmetic or validation. Fees/ordered repair remain AOEM CPU; this is neither
+full GPU business execution nor a business-validity proof.
+
+Final source/build verification: FULLMAX integer 19 passed/1 ignored, timestamp
+wrap regression passed, exec 61 passed/24 explicitly ignored, original node 395
+passed/60 explicitly ignored, release build, root formatting and strict node/exec
+Clippy passed. Actual new-DLL profile/plain equality and old-DLL explicit
+unsupported behavior both passed. Pinned applicable ML-DSA vectors passed 90/90.
+Original-node failures/restart, A/A/B, offline quorum/catchup/restart and full-width
+integer economic repair passed on the final DLL. These are scoped local tests.
+
+Two interleaved formal pairs, diagnostics off, original single-RPC 65,536 load:
+CPU 9,639.424 → 9,735.914 TPS (opposite per-pair directions); integer
+7,267.808 → 7,959.325 TPS (+9.51%, both pairs improve). All transactions successful,
+zero business failures/rejections/retries/transport errors, all-four final
+receipts, history/cache eviction and cold economics preserved. Integer remains
+below CPU; not a stable capacity or GPU-over-CPU claim. Full samples, P95/P99,
+diagnostic separation and exact binary/source hashes are in the
+[current validation record](../artifacts/audit/resident-integer-device-20261013/validation.json).
+
+## Historical: 2026-10-13 Windows core-only integer resources
 
 Only the Windows FULLMAX core and its public header advance to AOEM main
 `1bfa70372e2e60851c6d0ab972dea19678b0fa8c`. This is a mixed-source package,
@@ -31,7 +76,7 @@ The existing mainchain CPU route is unchanged; this generic resource facade
 does not activate GPU NOV business execution, establish a business-validity
 proof, restore private proving, or qualify transaction throughput.
 
-### Current scoped verification
+### Historical scoped verification for 1bfa7037
 
 - Generic v7 and existing v5 execution on the real NVIDIA RTX 5090 Laptop
   Vulkan device: one actual-backend test passed for each route.

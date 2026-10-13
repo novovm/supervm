@@ -555,6 +555,103 @@ fn integer_resource_incomplete_execution_never_reads_a_stale_result() {
 }
 
 #[test]
+fn integer_profile_is_strict_separate_and_poisoned_on_mismatch() {
+    let request = request();
+    let (_, shape) = encode(&request).unwrap();
+    let plain = successful();
+    let diagnostics = json!({"device_name":"test device","vendor_id":4318,"device_id":1,
+        "device_type":2,"queue_family_index":0,"timestamp_valid_bits":64,"timestamp_period_ns":1.0,
+        "gpu_us":3,"dispatch_us":10,"record_us":1,"submit_us":1,"wait_us":5,
+        "upload_us":2,"read_decode_us":3,"total_us":15});
+    let value = json!({"kind":"compute.ai.sgm_infer_v1.integer_resource.profiled_result",
+        "version":1,"resident_resource_id":10,"result":plain,"diagnostics":diagnostics});
+    assert!(decode_profiled(value.clone(), 10, &shape).is_ok());
+    assert!(decode_resource(value.clone(), 10, &shape).is_err());
+    assert!(decode_profiled(value.clone(), 11, &shape).is_err());
+    let mut unavailable = value.clone();
+    unavailable["diagnostics"]["gpu_us"] = Value::Null;
+    unavailable["diagnostics"]["timestamp_valid_bits"] = 0.into();
+    assert!(decode_profiled(unavailable.clone(), 10, &shape).is_ok());
+    unavailable["diagnostics"]["gpu_us"] = 0.into();
+    assert!(decode_profiled(unavailable, 10, &shape).is_err());
+    let mut bad = value.clone();
+    bad["diagnostics"]["unknown"] = true.into();
+    assert!(decode_profiled(bad, 10, &shape).is_err());
+    let mut missing = value.clone();
+    missing["diagnostics"]
+        .as_object_mut()
+        .unwrap()
+        .remove("gpu_us");
+    assert!(decode_profiled(missing, 10, &shape).is_err());
+    let mut wrong = value.clone();
+    wrong["resident_resource_id"] = 11.into();
+    let mut uncertain = mock_owner(vec![Ok(opened(10)), Ok(wrong)]);
+    let token = uncertain.open(&request.program, 4, 1, 1).unwrap();
+    assert!(uncertain.run_profiled(&token, &request.rows).is_err());
+    assert!(uncertain.poisoned);
+    assert!(uncertain.run(&token, &request.rows).is_err());
+    let mut owner = mock_owner(vec![Ok(opened(10)), Ok(value)]);
+    let lease = owner.open(&request.program, 4, 1, 1).unwrap();
+    assert!(owner.run_profiled(&lease, &request.rows).is_ok());
+    assert!(!owner.poisoned);
+    assert_eq!(
+        u32::from_le_bytes(owner.transport.calls[1].1[12..16].try_into().unwrap()),
+        4
+    );
+}
+
+#[test]
+fn owned_result_unwrap_preserves_array_storage_and_missing_semantics() {
+    let array = vec![successful(); 32];
+    let pointer = array.as_ptr();
+    let mut inner = json!({"found":true});
+    inner["value"] = Value::Array(array);
+    let mut envelope = json!({"status":"ok"});
+    envelope["value"] = inner;
+    let result = unwrap_aoem_state_read_value_v1(envelope, "test").unwrap();
+    assert_eq!(
+        result.as_array().unwrap().as_ptr(),
+        pointer,
+        "ownership transfer must not deep clone the result tree"
+    );
+    assert!(
+        unwrap_aoem_state_read_value_v1(json!({"value":{"found":false,"value":null}}), "test")
+            .is_err()
+    );
+    assert_eq!(
+        unwrap_aoem_state_read_value_v1(json!({"value":null}), "test").unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        unwrap_aoem_state_read_value_v1(json!([1, 2]), "test").unwrap(),
+        json!([1, 2])
+    );
+}
+
+#[test]
+#[ignore = "requires explicit trusted v7 DLL; tests both unsupported and supported profile contract"]
+fn integer_resource_profile_real_bound_device_and_plain_parity() {
+    let facade = explicit_facade("NOVOVM_AOEM_V7_TEST_LIBRARY");
+    let request = request();
+    let mut owner = facade
+        .create_integer_resource_session_v7("test/profile")
+        .unwrap();
+    let lease = owner.open(&request.program, 4, 1, 1).unwrap();
+    let plain = owner.run(&lease, &request.rows).unwrap();
+    if !owner.profile_supported {
+        assert!(owner.run_profiled(&lease, &request.rows).is_err());
+        assert!(owner.run(&lease, &request.rows).is_ok());
+    } else {
+        let (profiled, profile) = owner.run_profiled(&lease, &request.rows).unwrap();
+        assert_eq!(plain.rows[0].values, profiled.rows[0].values);
+        assert!(!profile.diagnostics.device_name.is_empty());
+        println!("{}", serde_json::to_string(&profile).unwrap());
+    }
+    owner.close(&lease).unwrap();
+    assert!(owner.run_profiled(&lease, &request.rows).is_err());
+}
+
+#[test]
 fn integer_resource_unwinding_keeps_the_owner_poisoned() {
     struct PanickingTransport;
     impl ResourceTransport for PanickingTransport {

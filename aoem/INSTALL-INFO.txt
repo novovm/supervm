@@ -1,13 +1,16 @@
 AOEM runtime in SUPERVM is packaged as one portable FULLMAX host bundle.
 
 Current update (2026-10-13):
-  Windows core/header: AOEM 1bfa70372e2e60851c6d0ab972dea19678b0fa8c.
+  Windows core/header: AOEM 5e555e1ab17f849a1a877fd09e24769eba06cddf.
   Windows sidecars: retained 1377cd1e bundle, not rebuilt.
   Linux core/header/sidecars: retained 1377cd1e bundle, not upgraded.
   This is a mixed-source FULLMAX package, not a same-version platform rebuild.
   AOIP0 v7 is available from the Windows core only. Require its explicit runtime
   capability; unsupported libraries fail closed without fallback. The mainchain
   CPU route is unchanged; generic v7 is not GPU business or proof completion.
+  Optional command 4 requires compute_checked_integer_resource_profile_v1.
+  It reports the same bound resource's device/timestamps locally; no business
+  or consensus commitment contains diagnostics. Ordinary v7 schemas are unchanged.
 
 Runtime baseline:
   Current source, runtime hashes, build availability and executed test scope:

@@ -85,6 +85,56 @@ impl Counter {
     }
 }
 static COUNTERS: [Counter; NAMES.len()] = [const { Counter::new() }; NAMES.len()];
+
+// One bounded local record, no transaction/body retention and no consensus input.
+static INTEGER: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+pub(crate) fn record_integer(
+    p: &novovm_exec::AoemIntegerResourceProfileV1,
+    active: usize,
+    capacity: usize,
+) {
+    if !enabled() {
+        return;
+    }
+    let Ok(mut guard) = INTEGER.lock() else {
+        return;
+    };
+    if guard.as_ref().and_then(|v| v["resource_id"].as_u64()) != Some(p.resource_id) {
+        *guard = Some(
+            json!({"resource_id":p.resource_id,"calls":0,"gpu_samples":0,"active_rows":0,"capacity_rows":0,"sums_us":{}}),
+        );
+    }
+    let value = guard.as_mut().unwrap();
+    for (name, n) in [
+        ("calls", 1),
+        ("gpu_samples", u64::from(p.diagnostics.gpu_us.is_some())),
+        ("active_rows", active as u64),
+        ("capacity_rows", capacity as u64),
+    ] {
+        value[name] = value[name].as_u64().unwrap_or(0).saturating_add(n).into();
+    }
+    let d = &p.diagnostics;
+    for (name, n) in [
+        ("encode", p.encode_us),
+        ("exchange", p.exchange_us),
+        ("decode", p.decode_us),
+        ("upload", d.upload_us),
+        ("dispatch", d.dispatch_us),
+        ("record", d.record_us),
+        ("submit", d.submit_us),
+        ("wait", d.wait_us),
+        ("gpu", d.gpu_us.unwrap_or(0)),
+        ("read_decode", d.read_decode_us),
+        ("aoem_total", d.total_us),
+    ] {
+        value["sums_us"][name] = value["sums_us"][name]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_add(n)
+            .into();
+    }
+    value["last"] = serde_json::to_value(p).expect("finite validated integer diagnostics");
+}
 pub(crate) fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("NOVOVM_PROFILE_STAGES").ok().as_deref() == Some("1"))
@@ -120,7 +170,12 @@ pub(crate) fn snapshot() -> Value {
     } else {
         Default::default()
     };
-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases})
+    let integer = if enabled() {
+        INTEGER.lock().ok().and_then(|v| v.clone())
+    } else {
+        None
+    };
+    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer})
 }
 
 #[cfg(test)]

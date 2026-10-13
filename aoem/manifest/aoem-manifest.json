@@ -2,7 +2,7 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Windows core resources 2026-10-13",
+    "id": "AOEM FULLMAX Windows bound-resource profile 2026-10-13",
     "stage": "windows_core_only_scoped_validation",
     "document": "RUNTIME-BASELINE.md",
     "macos_pending_not_bundled": true
@@ -13,7 +13,7 @@
   "public_ffi_abi_changed": true,
   "source_artifacts": {
     "source_layout": "mixed_component_provenance",
-    "windows_core_and_header_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+    "windows_core_and_header_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
     "windows_sidecars_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "linux_bundle_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "retained_component_provenance": "platform_manifests_and_historical_runtime_baseline",
@@ -40,8 +40,8 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
-      "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+      "sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+      "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
@@ -56,13 +56,15 @@
       "status": "included",
       "source_bundle": "windows/manifest.json",
       "checked_integer_resources_v7": true,
-      "current_update": "core_and_header_only_retained_sidecars"
+      "current_update": "core_and_header_only_retained_sidecars",
+      "checked_integer_resource_profile_v1": true
     },
     "linux-x86_64": {
       "status": "included",
       "source_bundle": "linux/manifest.json",
       "checked_integer_resources_v7": false,
-      "current_update": "unchanged_1377cd1e_bundle"
+      "current_update": "unchanged_1377cd1e_bundle",
+      "checked_integer_resource_profile_v1": false
     },
     "macos-universal": {
       "status": "pending_rebuild_not_bundled"

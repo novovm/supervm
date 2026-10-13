@@ -1,5 +1,22 @@
 # AOEM FULLMAX SUPERVM Host Package
 
+## 2026-10-13: Bound integer resource profile v1 and owned results
+
+Windows core/header advance to AOEM `5e555e1ab17f849a1a877fd09e24769eba06cddf`;
+Linux and Windows sidecars stay unchanged. Opt-in AOIP0 v7 command 4 uses the
+same bound resource and existing fence to return driver identity, nullable queue
+timestamps and host stage costs. Old Open/Run/Close schemas and numeric results
+stay strict. Diagnostics are local, not proof or consensus inputs. No new C
+export, shader or NOV business logic is added to AOEM.
+
+Already constructed result rows and exec readbacks transfer ownership instead
+of deep-cloning the JSON tree. Same-condition two-pair integer product results
+were 7,267.808 → 7,959.325 TPS; CPU 9,639.424 → 9,735.914, with opposite individual
+CPU directions. Integer still trails CPU, not stable mainnet capacity or GPU
+business/proof completion. All-four final receipts, economics, cold recovery,
+A/A/B, offline recovery and 90 pinned applicable ML-DSA vectors passed on the
+final core. Full metrics and limitations are in the current runtime baseline.
+
 ## 2026-10-13: Windows core-only generic integer resources
 
 The Windows FULLMAX core and header advance to AOEM

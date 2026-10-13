@@ -1,10 +1,10 @@
 {
   "name": "aoem-fullmax-supervm-host",
-  "version": "1.5.0-supervm-fullmax-windows-core-v7",
+  "version": "1.5.0-supervm-fullmax-windows-core-v7-profile1",
   "package_stage": "windows_core_upgrade_with_retained_components",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Windows core resources 2026-10-13",
+    "id": "AOEM FULLMAX Windows bound-resource profile 2026-10-13",
     "stage": "windows_core_only_scoped_validation",
     "document": "RUNTIME-BASELINE.md",
     "macos_pending_not_bundled": true
@@ -32,8 +32,16 @@
     "contract": "windows/ai-sgm-infer-wire-v1-capability.json",
     "unsupported_library_behavior": "reject_without_fallback",
     "mainchain_cpu_route_changed": false,
-    "nov_business_execution_integrated": false,
-    "business_validity_proof": false
+    "nov_business_execution_integrated": true,
+    "business_validity_proof": false,
+    "nov_business_execution_scope": "optional original-node integer prediction; CPU fees/ordered repair remain; not full GPU or proof",
+    "profile_v1": {
+      "capability_flag": "compute_checked_integer_resource_profile_v1",
+      "command": 4,
+      "opt_in": true,
+      "ordinary_schema_unchanged": true,
+      "local_diagnostics_not_commitments": true
+    }
   },
   "semantic_graph_v3": {
     "entry": "aoem_submit_semantic_graph_v3",
@@ -153,10 +161,10 @@
     "windows-x86_64": {
       "status": "included",
       "library": "windows/core/bin/aoem_ffi.dll",
-      "library_sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
-      "library_bytes": 44412416,
+      "library_sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+      "library_bytes": 44400128,
       "fullmax_sidecars": "included",
-      "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+      "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
       "source_commit_scope": "core_and_public_header_only",
       "sidecars_source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
       "sidecars_status": "retained_unchanged_not_rebuilt",
@@ -164,7 +172,8 @@
       "checked_integer_resources_v7": true,
       "semantic_graph_v3_verified": false,
       "semantic_graph_v3_verification_status": "not_requalified_by_resident_compute_v2_and_storage_tests_symbol_retained",
-      "historical_qualification": "RUNTIME-BASELINE.md"
+      "historical_qualification": "RUNTIME-BASELINE.md",
+      "checked_integer_resource_profile_v1": true
     },
     "linux-x86_64": {
       "status": "included",
@@ -176,7 +185,8 @@
       "current_update": "unchanged_1377cd1e_bundle",
       "checked_integer_resources_v7": false,
       "semantic_graph_v3_verified": true,
-      "risc0_guest_methods": "embedded_by_canonical_aoem_build"
+      "risc0_guest_methods": "embedded_by_canonical_aoem_build",
+      "checked_integer_resource_profile_v1": false
     },
     "macos-universal": {
       "status": "pending_rebuild_not_bundled"

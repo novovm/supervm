@@ -1,0 +1,1000 @@
+{
+  "schema": "novovm/integer-bound-device-and-owned-results/v1",
+  "date": "2026-10-13",
+  "scope": "scoped original-product integration, not production signoff",
+  "baseline": {
+    "supervm": "ead863499256e182f1caa2dc0eee809a14db8749",
+    "development_parent": "a7379623f98db591c7b5edb8690168a0fb3c4aff",
+    "preserved_remote_delta": "independent mobile recovery documentation",
+    "aoem": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c"
+  },
+  "final": {
+    "supervm_source": "commit containing this record; exact compiled source file hashes below",
+    "aoem_source": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
+    "aoem_core_sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+    "aoem_core_bytes": 44400128,
+    "header_sha256": "0b80a2885046a660c75662c0d86d0f4b8ef07e812734a31095cc333c8fe3b85a",
+    "header_copy_format": "canonical LF per SDK gitattributes; source header semantics unchanged",
+    "source_and_executable_sha256": [
+      {
+        "path": "crates/novovm-exec/src/lib.rs",
+        "sha256": "8f7d7bfb292ab03c6dda33ba10333b3bcff130c981aae9e3c51a184af81c6b42"
+      },
+      {
+        "path": "crates/novovm-exec/src/resident.rs",
+        "sha256": "f244363d73a04ad3267d18f5950e201dbb976325e7692c3dea57b1c8cdc9decb"
+      },
+      {
+        "path": "crates/novovm-exec/src/semantic_integer.rs",
+        "sha256": "83351b39fbeb3e8f9fac93579de009b51eb6b9bb3ee511b1852487e37a09cbb9"
+      },
+      {
+        "path": "crates/novovm-exec/src/semantic_integer_tests.rs",
+        "sha256": "d55f2e472426d2d7c1627a355bd14ce2d97349dc070e952a4eccb19b28626fda"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs",
+        "sha256": "aff3427a116a998cdf621f37fb635afd6a81d8f23756bba4c500b7e2b8f6a53a"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/consensus/resident_rpc_process.rs",
+        "sha256": "2ee08e617f064d05324107449d9beec16447cec5c64b2eea337d5234d86173fe"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/profile.rs",
+        "sha256": "5ae8da248b73929273910fa715f25d4cb9221b5364c5a4f039a3b02cbb526e24"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+        "sha256": "2587e8b7e53e597583a6cb7bd94306258cb30e12d6a2ebf8d3b23bec0da11a1e"
+      },
+      {
+        "path": "target/release/novovm-node.exe",
+        "sha256": "92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e"
+      },
+      {
+        "path": "target/release/deps/novovm_node-54e8d64d0bc52c1f.exe",
+        "sha256": "d600bc08bcdf90a79a15d96faf486dc59485ce718e913e64ae2bf83d1a1d70eb"
+      },
+      {
+        "path": "target/release/deps/novovm_exec-cd81e51e2f652b67.exe",
+        "sha256": "7d790e5e80c98b626a8c2d70aa141b247d01f0e68551b9a1bae60a89418f14dd"
+      }
+    ]
+  },
+  "path": "novovm-node/native_pipeline -> novovm-exec -> aoem-bindings -> aoem_execute_ops_wire_v1 opcode 113 / AOIP0 v7 -> same context-owned resident Vulkan resource -> aoem_state_read_v1",
+  "changed_work": [
+    "move preconstructed numeric result rows into AOEM Value envelope instead of serializing the full Value tree again",
+    "move profiled numeric result instead of copying it",
+    "take exec state-read inner Value ownership instead of deep cloning",
+    "consume validated row Values during typed decoding instead of cloning every limb tree"
+  ],
+  "preserved": [
+    "strict ordinary v7 Open/Run/Close decoding",
+    "numeric v4/v5 result contract",
+    "full 1024-bit limbs and u128 business range checks",
+    "authentication, nonce, exact parent, per-transaction fee and failure repair",
+    "four independent signer/store finality and cold recovery",
+    "default CPU backend",
+    "resource/context quotas, failure poison and no silent fallback"
+  ],
+  "diagnostics": {
+    "capability": "compute_checked_integer_resource_profile_v1",
+    "command": 4,
+    "result_version": 1,
+    "opt_in": true,
+    "commitment_input": false,
+    "actual_device": {
+      "name": "NVIDIA GeForce RTX 5090 Laptop GPU",
+      "vendor_id": 4318,
+      "device_id": 11352,
+      "device_type": 2,
+      "queue_family_index": 0,
+      "timestamp_valid_bits": 64,
+      "timestamp_period_ns": 1
+    },
+    "identity_scope": "same resource's runtime, driver report after completed dispatch, not malicious-driver-resistant hardware attestation",
+    "timing_scope": "device command range queried after existing fence without WAIT; unsupported/error/ambiguous multiple wrap -> null; no host-wait substitute",
+    "record_scope": "one bounded aggregate per process/resource; each diagnostic workload node had 64 calls and 65536 active/capacity rows",
+    "nested_costs": true,
+    "unattributed_boundary": "exchange includes AOEM queue/state wrapping/serialization/readback; residual is not independently established scheduler wait; input business row construction is outside facade encode"
+  },
+  "conditions": {
+    "os": "Windows",
+    "build": "release --locked",
+    "processes": 4,
+    "physical_machines": 1,
+    "ingress": "single original product RPC",
+    "signed_transactions": 65536,
+    "payers": 1024,
+    "nonces_per_payer": 64,
+    "recipient": "shared",
+    "batch_size": 1024,
+    "window": 8192,
+    "formal_profiling": false,
+    "completion": "all four nodes return matching finalized successful receipts",
+    "latency": "first submit to slowest-node receipt HTTP response; nearest-rank; includes observation scheduling",
+    "cold_history_economics": "required in every load run, outside timed interval",
+    "signing_and_startup": "outside timed interval",
+    "compilation_or_other_fixture_overlap_during_formal": false,
+    "system_power_settings_changed": false,
+    "power_samples": [
+      {
+        "phase": "RUN",
+        "run": "baseline-cpu-1",
+        "at": "2026-10-13T18:34:33.5658900+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryLifePercent": 99
+        },
+        "source": "initial live command output"
+      },
+      {
+        "phase": "END",
+        "run": "baseline-cpu-1",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "RUN",
+        "run": "final-cpu-1",
+        "at": "2026-10-13T18:35:25.5795120+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "END",
+        "run": "final-cpu-1",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "RUN",
+        "run": "baseline-integer-1",
+        "at": "2026-10-13T18:36:14.5181517+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "END",
+        "run": "baseline-integer-1",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "RUN",
+        "run": "final-integer-1",
+        "at": "2026-10-13T18:37:15.3959883+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "END",
+        "run": "final-integer-1",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "RUN",
+        "run": "baseline-cpu-2",
+        "at": "2026-10-13T18:38:11.9560511+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "END",
+        "run": "baseline-cpu-2",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "RUN",
+        "run": "final-cpu-2",
+        "at": "2026-10-13T18:39:03.2698776+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "END",
+        "run": "final-cpu-2",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "RUN",
+        "run": "baseline-integer-2",
+        "at": "2026-10-13T18:39:52.6404332+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "END",
+        "run": "baseline-integer-2",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "RUN",
+        "run": "final-integer-2",
+        "at": "2026-10-13T18:40:54.2160772+08:00",
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      },
+      {
+        "phase": "END",
+        "run": "final-integer-2",
+        "at": null,
+        "status": {
+          "ACLineStatus": 1,
+          "BatteryFlag": 1,
+          "BatteryLifePercent": 99,
+          "SystemStatusFlag": 0,
+          "BatteryLifeTime": 4294967295,
+          "BatteryFullLifeTime": 4294967295
+        }
+      }
+    ]
+  },
+  "runs": [
+    {
+      "name": "diagnostic-before",
+      "diagnostic": true,
+      "passed": true,
+      "tps": 8228.20719724558,
+      "elapsed": 7.964797,
+      "p95": 1221961,
+      "p99": 1295463,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 748544,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 184,
+        "deadline_expirations": 0
+      },
+      "node": "0x1d366c17e4c01ed59f65c9be05a24247510685119a805a0dc8b05a5fa315c54b",
+      "aoem": "0xa2b4086c18d2c3085d4b901d2aba50df6cf8b1767ab45f7a913c4e00fc874085",
+      "evidence_file": "diagnostic-before.json",
+      "local_original": "artifacts/audit/resident-rpc-load/2828-1791886621251599900/result.json"
+    },
+    {
+      "name": "diagnostic-after",
+      "diagnostic": true,
+      "passed": true,
+      "tps": 8465.807495370907,
+      "elapsed": 7.741258,
+      "p95": 1343046,
+      "p99": 1394668,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 772096,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 192,
+        "deadline_expirations": 0
+      },
+      "node": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+      "aoem": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+      "evidence_file": "diagnostic-after.json",
+      "local_original": "artifacts/audit/resident-rpc-load/24716-1791887594622014200/result.json"
+    },
+    {
+      "name": "baseline-cpu-1",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 10171.322909858793,
+      "elapsed": 6.443213,
+      "p95": 1013300,
+      "p99": 1046569,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 670720,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 168,
+        "deadline_expirations": 0
+      },
+      "node": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "evidence_file": "baseline-cpu-1.json",
+      "local_original": "artifacts/audit/resident-rpc-load/17348-1791887673846742500/result.json"
+    },
+    {
+      "name": "final-cpu-1",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 9376.20267797488,
+      "elapsed": 6.98961,
+      "p95": 1166350,
+      "p99": 1275061,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 784384,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 197,
+        "deadline_expirations": 0
+      },
+      "node": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+      "aoem": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+      "evidence_file": "final-cpu-1.json",
+      "local_original": "artifacts/audit/resident-rpc-load/3220-1791887725592210400/result.json"
+    },
+    {
+      "name": "baseline-integer-1",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 7702.536538743161,
+      "elapsed": 8.508366,
+      "p95": 1276409,
+      "p99": 1454972,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 932864,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 232,
+        "deadline_expirations": 0
+      },
+      "node": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "evidence_file": "baseline-integer-1.json",
+      "local_original": "artifacts/audit/resident-rpc-load/28636-1791887774525543800/result.json"
+    },
+    {
+      "name": "final-integer-1",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 8390.053505538363,
+      "elapsed": 7.811154,
+      "p95": 1186132,
+      "p99": 1388408,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 860160,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 212,
+        "deadline_expirations": 0
+      },
+      "node": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+      "aoem": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+      "evidence_file": "final-integer-1.json",
+      "local_original": "artifacts/audit/resident-rpc-load/17160-1791887835403812500/result.json"
+    },
+    {
+      "name": "baseline-cpu-2",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 9160.390703187462,
+      "elapsed": 7.15428,
+      "p95": 1086985,
+      "p99": 1251945,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 795648,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 199,
+        "deadline_expirations": 0
+      },
+      "node": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "evidence_file": "baseline-cpu-2.json",
+      "local_original": "artifacts/audit/resident-rpc-load/8964-1791887891963323500/result.json"
+    },
+    {
+      "name": "final-cpu-2",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 10124.32640694861,
+      "elapsed": 6.473122,
+      "p95": 945040,
+      "p99": 1118496,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 664576,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 166,
+        "deadline_expirations": 0
+      },
+      "node": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+      "aoem": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+      "evidence_file": "final-cpu-2.json",
+      "local_original": "artifacts/audit/resident-rpc-load/2000-1791887943286671300/result.json"
+    },
+    {
+      "name": "baseline-integer-2",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 6879.530122717985,
+      "elapsed": 9.526232,
+      "p95": 1517272,
+      "p99": 1670296,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1166336,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 290,
+        "deadline_expirations": 0
+      },
+      "node": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "evidence_file": "baseline-integer-2.json",
+      "local_original": "artifacts/audit/resident-rpc-load/12284-1791887992647937300/result.json"
+    },
+    {
+      "name": "final-integer-2",
+      "diagnostic": false,
+      "passed": true,
+      "tps": 7570.6616069288375,
+      "elapsed": 8.656575,
+      "p95": 1430220,
+      "p99": 1527368,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1005568,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 253,
+        "deadline_expirations": 0
+      },
+      "node": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+      "aoem": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+      "evidence_file": "final-integer-2.json",
+      "local_original": "artifacts/audit/resident-rpc-load/3376-1791888054223503000/result.json"
+    }
+  ],
+  "aggregates": {
+    "baseline-cpu": 9639.423973228006,
+    "final-cpu": 9735.91392891131,
+    "cpupct": 1.0009929633896242,
+    "baseline-integer": 7267.808242800865,
+    "final-integer": 7959.32456746161,
+    "integerpct": 9.514784946971155
+  },
+  "conclusions": {
+    "device_identity_and_device_timing_integrated": true,
+    "unnecessary_result_work_removed": true,
+    "integer_two_pair_improvement_percent": 9.514784946971155,
+    "cpu_stable_speedup": false,
+    "integer_faster_than_cpu": false,
+    "stable_capacity": false,
+    "physical_gpu_all_business": false,
+    "full_business_proof": false,
+    "million_tps": false,
+    "production_ready": false,
+    "peak_rss_measured": false
+  },
+  "validation": {
+    "original_node_ordinary": {
+      "passed": 395,
+      "ignored": 60
+    },
+    "exec_ordinary": {
+      "passed": 61,
+      "ignored": 24
+    },
+    "aoem_fullmax_integer": {
+      "passed": 19,
+      "ignored": 1
+    },
+    "timestamp_wrap": "passed",
+    "root_fmt": "passed",
+    "node_exec_release_clippy": "passed -D warnings",
+    "aoem_strict_ffi_clippy": "not green; inherited 199 not_unsafe_ptr_arg_deref errors previously recorded; not suppressed or requalified",
+    "release_node_and_fullmax_build": "passed",
+    "profile_supported_new_dll": "passed actual device/plain parity and close",
+    "profile_unsupported_old_dll": "passed explicit unsupported before submission and ordinary Run still usable",
+    "mldsa_pinned_applicable_vectors": {
+      "passed": 90,
+      "total": 90,
+      "report": "mldsa-acvp.json",
+      "certification": false
+    },
+    "single_ingress_failures_restart": {
+      "passed": true,
+      "seconds": 5.76,
+      "report": "single-ingress.json"
+    },
+    "aab": {
+      "passed": true,
+      "seconds": 13.17,
+      "report": "aab.json",
+      "scope": "three honest original processes plus controlled faulty proposer; restart after finality, not uncommitted-write crash"
+    },
+    "offline": {
+      "passed": true,
+      "seconds": 48.27,
+      "report": "offline.json"
+    },
+    "integer_complete_effects_fee_dependency_repair": {
+      "passed": true,
+      "seconds": 0.32
+    },
+    "integer_u128_edges": {
+      "passed": true,
+      "seconds": 0.26
+    },
+    "functional_tests_may_overlap_nonload_checks": true,
+    "packaged_path_first_probe": {
+      "passed": false,
+      "reason": "SDK platform manifest updated but root aoem/manifest/aoem-manifest.json and aoem-sdk-manifest.json still pinned old c040 core; hash guard rejected before use",
+      "resolution": "updated exact source/hash pins, did not disable verification"
+    },
+    "packaged_path_recheck": {
+      "passed": true,
+      "profile_plain_seconds": 3.26,
+      "original_node_single_ingress_seconds": 5.63,
+      "report": "packaged-single-ingress.json",
+      "diagnostic_enabled": true,
+      "scope": "actual bundled path, same core bytes as formal load; not another performance sample"
+    }
+  },
+  "build": {
+    "aoem_target": "../AOEM/cargo-target-ci-local",
+    "aoem_features": "apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+    "node_target": "target",
+    "test_entry": "actual_product_rpc_65536_signed_transfers_finality_and_cold_economics --ignored --test-threads=1 --nocapture",
+    "selection_vars": {
+      "NOVOVM_RESIDENT_RPC_LOAD_MODE": "single_ingress",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_HISTORY": "1",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_APFL": "1",
+      "NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH": "1",
+      "NOVOVM_PROFILE_STAGES": "0 formal / 1 diagnostics",
+      "NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND": "cpu_callbacks or aoem_integer_v7",
+      "AOEM_GPU_VK_DEVICE_NAME": "5090 preference only; identity separately observed",
+      "AOEM_GPU_VK_VENDOR_ID": "0x10de preference only"
+    }
+  },
+  "preserved_drafts": {
+    "count": 49,
+    "unchanged_sha256": true,
+    "files": [
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-exec/src/lib.rs",
+        "sha256": "DFF1A9E3EC52FA2A0BF4F931902595DFEFFA6DF1A195FAAD30A24E667B603C73"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-exec/src/semantic_graph_owner_tests.rs",
+        "sha256": "D708FCEBA7C3317EFC2F280D45021333641172703A91D44F8995F7955B3031F8"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-exec/src/semantic_graph_owner.rs",
+        "sha256": "0B25E57B81048F388107B2C416C6F96D8D1E94A0FDE5BD5B7D0DC09C8A84AF08"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-exec/src/semantic_graph_scope_tests.rs",
+        "sha256": "3E227FD75EBA98C347237339FCEDD070C6E7376683F270BF7585EF4BDEBF06F6"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-exec/src/semantic_graph_session_scope.rs",
+        "sha256": "1DE346DFFFE3AEDA8E829BBA7A53F8C5B065F3C3760948EDAB8E4DD461BCA64C"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-exec/src/semantic_graph_v3.rs",
+        "sha256": "6864748310E35C5D211AC6D2402DD2CC46CE105943BC34581C1E2D62C9DE48FB"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/bin/novovm-node.rs",
+        "sha256": "98C22456137C1B0D901457786BFAD3AB2E51B9B78FD12ED0D132079DA1C503D4"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_block_seal_publication_driver.rs",
+        "sha256": "47FE0924F4C2DC251CBD263BF65DC1D9D282BED6CAED4BDDE26948545739C1E9"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_block_seal_service_config.rs",
+        "sha256": "FE470AC4E64E675202DA3C94523DD05327E4D4567D7B0DB5575264B9B4A059E1"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_block_artifact.rs",
+        "sha256": "3D282C5A8F0328A335FEFEE57463C8DC136304E310BDD7E9B6A99C0D20149910"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_execution_pipeline_tests.rs",
+        "sha256": "D968527E413D1FCFD5F4D26D6E22C365C94605AD321B8BE48D7636B95DBB7E11"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_execution_pipeline.rs",
+        "sha256": "57FF3E50535B4B737EC72EFE9C2C35F11BB6620A705032B04B5663F12A4E03D5"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_execution.rs",
+        "sha256": "F48CFAA237441371D5169540CC3295178CD8F737DD78816C11B05854BC4CFD67"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_input_capture.rs",
+        "sha256": "0C33F67A810138564B32F53481F1819B097D4348EBFA4916D91F9577AA63F444"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_packet_checkpoint_tests.rs",
+        "sha256": "B11C6B5466C8450B627991DD22FC8F31C44CB0CC4D74EC6EEEF7521E79E49B4B"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_prepared_packet_tests.rs",
+        "sha256": "C573A604FCA13E4C2A09310908D5666BAB75189CC4D391FD32539238EAF10BF7"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_prepared_packet.rs",
+        "sha256": "F9A829173004D4D3BB4B7AA381235FC30C9DBB1C0FE45EB26034F66DF030AE6E"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_record_delta.rs",
+        "sha256": "845BDAED0A04DD96DD6AE2DA2A2F5C9A15596A75E0CB1F1FD1CA1D81F5F3FB36"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_rooted_compute_tests.rs",
+        "sha256": "4AF739799D2927AC7C4F58C0AE505E45CD5E3B4C970EEB60E37352760F413C5F"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_rooted_compute.rs",
+        "sha256": "AA1DEDEC00E88B5FBDB51000DD588E147975764037D7F3F046BFBAF7A6A88A4E"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_state_records.rs",
+        "sha256": "9A41E217956803371C4B3553E8C5E973E1A9C2553A1B3C2D101B46D5D265727D"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_worker.rs",
+        "sha256": "9CE9DA331D4857E39A9C7B6BBF5F28E52948E78F3E437D03DBB540B49E47A2CA"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_candidate_workspace.rs",
+        "sha256": "6FD1F08CD410D9FC919AC15BB4BF2DBF3319B9526E9544B8D03C18D31A31C679"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_candidate_pipeline_tests.rs",
+        "sha256": "C8C0A49CE20F3F54223DD6D76EA847BA59D6CAF1E0D48819E363CE66E3FA7C0B"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_candidate_pipeline.rs",
+        "sha256": "D5EB0EDDCDEFAFBA3867636FD4FB858A5656AD7EE6203D019108C58A1B50679B"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_chain_lifecycle.rs",
+        "sha256": "F7BEA7AC04A61A6A07DE59C50B26DCE8C3767EB486923B34BC9C7ECF88BFAC3B"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_chain_pacemaker.rs",
+        "sha256": "4C4757F069420F061CE4889FF66DC7505DB107D2F50DF18959E0D517A8EBCC4C"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_chain_proposer.rs",
+        "sha256": "C27DAAAF783701A2DCEAF179DE6C217D70CEBF2241CCA11DBA3EC3E4AD3CF83F"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_chain_transactions.rs",
+        "sha256": "ED91773241640D6FCA5B5D985114EF45626F5AED990AB3E2D7F45B86B6B3DE0B"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_rpc.rs",
+        "sha256": "2C76701BAF61A353D64DD132E808C75564EF6B58F1B880FEA778E769ECB42B9B"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_sequence_tests.rs",
+        "sha256": "DC553DFA18448B3FCC83F2ED9463FE6EF7313D4A5649F9F3FAE74CAFBA1804AE"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_successor_preparation.rs",
+        "sha256": "C73EDCD3C02742C946BA691F45812DC9DA7618677A5B3A13B7D94B3BFEBC4D11"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_fresh_successor_relay_tests.rs",
+        "sha256": "3049294A79A6A0D4D04C6DBB03C9BBBD146BE897A698057B4473F71DB89BA8B9"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_record_candidate_tests.rs",
+        "sha256": "63AED152AC74414CB2DF5BF68A87F5E4137549151E17FA21A6DC18841A46088E"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/native_state_storage.rs",
+        "sha256": "FFDF36AA5DE668E426D4C57FB66B38DDC5D69AEBE0ECEB865BE1AC77D2EB103E"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/src/tx_ingress.rs",
+        "sha256": "E4B96F786B3734C8C43F3D558609291B9F52564C82E68F4FB1827F161327922B"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/tests/support/native_seal_main_process.rs",
+        "sha256": "2A64B519B3324862550DF0748EE29B36B200BB49444AA3498B90E078966FDBC8"
+      },
+      {
+        "path": "legacy/supervm-20261002/crates/novovm-node/tests/support/native_transfer_throughput_process.rs",
+        "sha256": "806A309F293F6DE735C36BFEDF0D0099044894426BA407783FCC56D5E0B55F80"
+      },
+      {
+        "path": "runtime/novovm-host/src/consensus/channel.rs",
+        "sha256": "0ABA553D9988AF5ACADB8445D500769B2FDD684F5DC5D558FFC9EF69018527EC"
+      },
+      {
+        "path": "runtime/novovm-host/src/consensus/controller_load.rs",
+        "sha256": "C4007E442B68B54C6C1A46C41B49144E98AF88D23E278FE6F1D4A3F826956CCB"
+      },
+      {
+        "path": "runtime/novovm-host/src/consensus/controller.rs",
+        "sha256": "4E64890EF012B146D0BF819808590F486F72F935FEFCD81815F29C72FEEF2643"
+      },
+      {
+        "path": "runtime/novovm-host/src/consensus/controller/archive_tests.rs",
+        "sha256": "D77348A06252D903EEE7301218921684D9FE606915866B69BC5F10269FC50992"
+      },
+      {
+        "path": "runtime/novovm-host/src/consensus/controller/archive.rs",
+        "sha256": "C79B8999B58B41A87274EFF05F18134E351EE20191D7E20A96B161CF4EF4AE45"
+      },
+      {
+        "path": "runtime/novovm-host/src/consensus/controller/regressions.rs",
+        "sha256": "496FA87DC94414BC9D18AA80940CCE30F51CD193999630A144E814B5D4BF0D64"
+      },
+      {
+        "path": "runtime/novovm-host/src/consensus/controller/tests.rs",
+        "sha256": "16FA71CCB6A6CA9A6EC24500877AC6C7E246C5A009F488073F1A8039D5E41F8D"
+      },
+      {
+        "path": "runtime/novovm-host/src/diagnostics.rs",
+        "sha256": "51B2DE9E4A4052EBAB7D085180B7CD1A62FF036AE93B19E40E6830F4C9C3463B"
+      },
+      {
+        "path": "runtime/novovm-host/src/lib.rs",
+        "sha256": "DE110107955E0E40C02A697D1B8BB69640C12C2A71A129F1E0C602559F317F2A"
+      },
+      {
+        "path": "runtime/novovm-host/src/persistence/io.rs",
+        "sha256": "74790822CB2FE1AFDCF4B0C022524B3E4357C060E158CB8A564A9CD384AB412A"
+      },
+      {
+        "path": "runtime/novovm-host/src/pipeline/compute.rs",
+        "sha256": "0FD53C27237EFFE391B827DE6E42DDF4CFC924E5EEC39764B7FE2A028BCB3786"
+      }
+    ]
+  },
+  "evidence_sha256": [
+    {
+      "file": "aab.json",
+      "bytes": 286395,
+      "sha256": "f834c58aa57765e4cec1b409fe1774aa235867e339c4b67c49ce1114357098d5"
+    },
+    {
+      "file": "baseline-cpu-1.json",
+      "bytes": 726270,
+      "sha256": "0f579c847c9b2f2043df7ac8c733eabbd2ec909f070a2cff83bad69448a0d69d"
+    },
+    {
+      "file": "baseline-cpu-2.json",
+      "bytes": 726262,
+      "sha256": "d33f05d21c8948f1fea312c84c49898d0646a7869362e2fc9f5214616041f726"
+    },
+    {
+      "file": "baseline-integer-1.json",
+      "bytes": 726614,
+      "sha256": "e5c94bf417dc5bd884f1059f2c5ceedbdb794a526ad6d7b748f30b98ccd6e311"
+    },
+    {
+      "file": "baseline-integer-2.json",
+      "bytes": 726589,
+      "sha256": "9bcfbf65b70b827de23d140720931fdbdbf58f1b9dc95d466e48ffb8712917b8"
+    },
+    {
+      "file": "diagnostic-after.json",
+      "bytes": 824068,
+      "sha256": "fa02009c429e8575a5015f4560c858bfbb13cdf9af13549463fe4ac1637b0375"
+    },
+    {
+      "file": "diagnostic-before.json",
+      "bytes": 821292,
+      "sha256": "794b8ad228c5b25003ba27e3893e4629f6d528cf8ed1c5ec8d744f8765e51ad4"
+    },
+    {
+      "file": "final-cpu-1.json",
+      "bytes": 729568,
+      "sha256": "bb0bbfd78fec1704446e7b9cbda9215a65526c6dc39e8900b4fe51b34ba10937"
+    },
+    {
+      "file": "final-cpu-2.json",
+      "bytes": 729505,
+      "sha256": "8ed341ab52c2c25f9c3f3141a626993a2741fd20d6b90830e8ca27286f38009a"
+    },
+    {
+      "file": "final-integer-1.json",
+      "bytes": 729825,
+      "sha256": "81c1578ea7aac3e72a38f39cf51c3de23e6aaf09043cbe3d153a12cba722f343"
+    },
+    {
+      "file": "final-integer-2.json",
+      "bytes": 729854,
+      "sha256": "d0578db071f10ac504d6d61bbe3372b747d4bdbcb2f3b7e736036c5d1464fcd5"
+    },
+    {
+      "file": "mldsa-acvp.json",
+      "bytes": 19858,
+      "sha256": "9e30dfd5aada40670dbe73341664ea4c211d0e95903d3c3a61d069854200cf4c"
+    },
+    {
+      "file": "offline.json",
+      "bytes": 885570,
+      "sha256": "ff1b583fcda357ebb34e59ea68f228bd55f0e1df68013173322d5da0d48ef532"
+    },
+    {
+      "file": "single-ingress.json",
+      "bytes": 267434,
+      "sha256": "0123c3bd4b4d0659bcc8a66b1a956792b009d64eb5dcc202383588557bc231b0"
+    },
+    {
+      "file": "packaged-single-ingress.json",
+      "bytes": 404565,
+      "sha256": "cedd07916b2473c51d662f903a155379b15a5e61d2f9c3fa08b55aa655a7c1d2"
+    }
+  ],
+  "limitations": [
+    "formal samples are two pairs per backend, not sustained public mainnet capacity",
+    "integer mode remains below CPU; fees, ordered repairs and state tree not moved to GPU",
+    "whole-interface time still far exceeds device command time; no new zero-copy/binary route or new executor introduced",
+    "Linux/core sidecars not rebuilt or newly qualified; old library remains unsupported for diagnostic command",
+    "retired private profile remains retired; this is not ZK proof integration",
+    "CI status is separate and must be checked for delivery commit"
+  ]
+}

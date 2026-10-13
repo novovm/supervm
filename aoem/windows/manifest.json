@@ -1,26 +1,29 @@
 {
-  "stamp": "20261013-integer-resources-core-1bfa7037",
-  "release_version": "1.5.0+1bfa7037-windows-core-v7",
-  "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+  "stamp": "20261013-integer-profile-core-5e555e1a",
+  "release_version": "1.5.0+5e555e1a-windows-core-v7-profile1",
+  "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
   "source_commit_scope": "core_and_public_header_only",
   "platform": "windows",
   "profile": "fullmax",
   "bundle_dir": ".",
   "core_dll": "core/bin/aoem_ffi.dll",
-  "core_sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
-  "core_bytes": 44412416,
+  "core_sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
+  "core_bytes": 44400128,
   "public_header": "include/aoem.h",
   "retained_sidecars": {
     "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "source_bundle_stamp": "20261004-120246",
-    "paths": ["core/plugins/", "kms-hsm-plugin/"],
+    "paths": [
+      "core/plugins/",
+      "kms-hsm-plugin/"
+    ],
     "status": "unchanged_from_previous_fullmax_bundle",
     "rebuilt_for_this_update": false,
     "provenance": "previous_windows_manifest_and_runtime_baseline"
   },
   "previous_core": {
-    "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
-    "sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
+    "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+    "sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
     "baseline": "../RUNTIME-BASELINE.md"
   },
   "plugins": [
@@ -72,9 +75,24 @@
       "included": true,
       "capability_flag": "compute_checked_integer_resources_v7",
       "lifecycle": "context_owned_open_run_close",
-      "numeric_versions": [4, 5],
+      "numeric_versions": [
+        4,
+        5
+      ],
       "model_asset_required": false,
-      "fallback": false
+      "fallback": false,
+      "profile_v1": {
+        "included": true,
+        "capability_flag": "compute_checked_integer_resource_profile_v1",
+        "command": 4,
+        "result_version": 1,
+        "result_kind": "compute.ai.sgm_infer_v1.integer_resource.profiled_result",
+        "opt_in": true,
+        "identity": "same_bound_runtime_driver_report_not_remote_attestation",
+        "gpu_us": "nullable_same_command_range_timestamp_not_host_wait",
+        "commitment_input": false,
+        "ordinary_v7_schema_unchanged": true
+      }
     },
     "legacy_aoai_v0_supported": false,
     "teacher_runtime_used": false,
@@ -98,22 +116,21 @@
     "runtime_canon_changed": true
   },
   "checksums": "CHECKSUMS.sha256",
-  "notes": "Windows FULLMAX core/header upgraded to 1bfa7037; sidecars remain the unchanged 1377cd1e artifacts. Generic AOIP0 v7 is available through the existing wire/state entry, not an activated NOV business or proof route. Private profile 3 remains withdrawn. Linux and historical qualification are not promoted by this Windows-only update.",
+  "notes": "Windows FULLMAX core/header advanced to 5e555e1a. Bound integer resource profiling is opt-in through the original wire/state semantic path; ordinary v7 schemas unchanged. Result Value ownership removes deep copies. NOV prediction is an explicit experimental original-node consumer; AOEM contains no NOV policy. Sidecars remain unchanged 1377cd1e; Linux not upgraded. Historical validation below is not current qualification.",
   "current_update_validation": {
-    "generic_v7_real_rtx_5090": "passed",
-    "original_node_four_process_cold_recovery": "passed",
-    "retired_private_profile_rejection": "passed",
+    "bound_resource_driver_identity": "NVIDIA GeForce RTX 5090 Laptop GPU; vendor 0x10de; device 0x2c58; discrete type 2; queue 0",
+    "device_timestamp": "64 valid bits; 1 ns/tick; 64 completed samples per original node in diagnostic workload",
+    "generic_fullmax_integer_tests": "19 passed; 1 benchmark ignored",
+    "original_node_four_process_load": "passed; two CPU and two integer formal runs; 65536 successes each; all-four final receipts and cold economics",
+    "original_node_failures_aab_offline_restart": "passed; local controlled processes, not physical multi-machine",
     "packaged_pq_regression": "passed_90_pinned_applicable_vectors",
-    "resident_bindings_regression": "passed_32_including_pure_and_mock_cases_not_proof_qualification",
-    "cpu_load_regression": "passed_65536_success_with_cache_eviction_and_two_cold_restarts",
-    "cpu_load_new_core_tps": 8474.3275,
-    "cpu_load_previous_core_tps": 8712.032,
-    "performance_sample_scope": "one_run_per_dll_same_existing_node_and_test_executables_no_stable_speedup_claim",
-    "new_core_retained_sidecar_combination": "all_modes_probe_timed_out_new_and_previous_core_not_qualified",
+    "cpu_combined_successful_tps": 9735.91392891131,
+    "integer_combined_successful_tps": 7959.32456746161,
+    "performance_sample_scope": "two interleaved pairs each, profiling off; integer improves 9.5148 percent versus old integer, still below CPU; not stable maximum capacity",
     "all_sidecar_requalification": false,
     "whole_product_requalified": false,
-    "evidence_scope": "../RUNTIME-BASELINE.md",
-    "evidence_directory": "../../artifacts/audit/aoem-integer-resource-v7-20261013/"
+    "evidence_directory": "../../artifacts/audit/resident-integer-device-20261013/",
+    "no_new_proof_or_privacy_qualification": true
   },
   "semantic_batch": {
     "entry": "aoem_execute_semantic_batch_v1",
@@ -134,5 +151,21 @@
     "private_profile_3": "rejected_before_work_and_writes",
     "public_profiles": "envelope_integrity_only_not_zk",
     "cryptographic_private_proof_restored": false
+  },
+  "previous_update_validation": {
+    "generic_v7_real_rtx_5090": "passed",
+    "original_node_four_process_cold_recovery": "passed",
+    "retired_private_profile_rejection": "passed",
+    "packaged_pq_regression": "passed_90_pinned_applicable_vectors",
+    "resident_bindings_regression": "passed_32_including_pure_and_mock_cases_not_proof_qualification",
+    "cpu_load_regression": "passed_65536_success_with_cache_eviction_and_two_cold_restarts",
+    "cpu_load_new_core_tps": 8474.3275,
+    "cpu_load_previous_core_tps": 8712.032,
+    "performance_sample_scope": "one_run_per_dll_same_existing_node_and_test_executables_no_stable_speedup_claim",
+    "new_core_retained_sidecar_combination": "all_modes_probe_timed_out_new_and_previous_core_not_qualified",
+    "all_sidecar_requalification": false,
+    "whole_product_requalified": false,
+    "evidence_scope": "../RUNTIME-BASELINE.md",
+    "evidence_directory": "../../artifacts/audit/aoem-integer-resource-v7-20261013/"
   }
 }

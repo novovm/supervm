@@ -2444,19 +2444,19 @@ impl AoemExecSession {
 }
 
 fn unwrap_aoem_state_read_value_v1(
-    response: serde_json::Value,
+    mut response: serde_json::Value,
     key: &str,
 ) -> Result<serde_json::Value> {
-    let Some(value) = response.get("value") else {
+    let Some(value) = response.get_mut("value") else {
         return Ok(response);
     };
     if value.get("found").and_then(|v| v.as_bool()) == Some(false) {
         bail!("aoem_state_read_v1 surface not found: {key}");
     }
-    if let Some(inner) = value.get("value") {
-        return Ok(inner.clone());
+    if let Some(inner) = value.get_mut("value") {
+        return Ok(inner.take());
     }
-    Ok(value.clone())
+    Ok(value.take())
 }
 
 pub fn build_apfl_native_transfer_ops_wire_v1(
@@ -2921,8 +2921,8 @@ pub use semantic_graph_v3::{
 };
 pub use semantic_integer::{
     AoemInteger1024V1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
-    AoemIntegerOutcomeRequestV1, AoemIntegerOutcomeRowV1, AoemIntegerResourceSessionV7,
-    AoemIntegerResourceV7,
+    AoemIntegerOutcomeRequestV1, AoemIntegerOutcomeRowV1, AoemIntegerResourceDiagnosticsV1,
+    AoemIntegerResourceProfileV1, AoemIntegerResourceSessionV7, AoemIntegerResourceV7,
 };
 
 #[allow(dead_code)]

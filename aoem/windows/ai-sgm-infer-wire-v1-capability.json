@@ -1,5 +1,5 @@
 {
-  "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+  "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
   "source_commit_scope": "windows_core_only_not_retained_sidecars_or_linux",
   "capability": "compute.ai.sgm_infer_v1",
   "status": "production_model_session_capability",
@@ -13,7 +13,10 @@
     "capability_flag": "compute_checked_integer_resources_v7",
     "payload_magic": "AOIP0",
     "payload_version": 7,
-    "numeric_versions": [4, 5],
+    "numeric_versions": [
+      4,
+      5
+    ],
     "lifecycle": "context_owned_open_run_close",
     "model_asset_required": false,
     "max_rows": 4096,
@@ -28,8 +31,21 @@
     "faulted_runtime_recovery": "new_aoem_context",
     "host_requirement": "explicit_true_runtime_capability_and_wire_state_symbols",
     "unsupported_library_behavior": "reject_without_fallback",
-    "nov_business_execution_integrated": false,
-    "business_validity_proof": false
+    "nov_business_execution_integrated": true,
+    "business_validity_proof": false,
+    "profile_v1": {
+      "included": true,
+      "capability_flag": "compute_checked_integer_resource_profile_v1",
+      "command": 4,
+      "result_version": 1,
+      "result_kind": "compute.ai.sgm_infer_v1.integer_resource.profiled_result",
+      "opt_in": true,
+      "identity": "same_bound_runtime_driver_report_not_remote_attestation",
+      "gpu_us": "nullable_same_command_range_timestamp_not_host_wait",
+      "commitment_input": false,
+      "ordinary_v7_schema_unchanged": true
+    },
+    "nov_business_execution_scope": "experimental native-resident-v1 integer predictions through original node/exec/bindings; fees and ordered repair remain AOEM CPU; not whole GPU business or proof"
   },
   "legacy_aoai_v0_supported": false,
   "teacher_runtime_used": false,

@@ -91,7 +91,17 @@ impl ResidentTransferResources {
             let _span = crate::native_pipeline::profile::span(
                 crate::native_pipeline::profile::Phase::IntegerWire,
             );
-            self.session.run(&self.resource, &rows)?
+            if crate::native_pipeline::profile::enabled() {
+                let (batch, profile) = self.session.run_profiled(&self.resource, &rows)?;
+                crate::native_pipeline::profile::record_integer(
+                    &profile,
+                    inputs.len(),
+                    self.capacity,
+                );
+                batch
+            } else {
+                self.session.run(&self.resource, &rows)?
+            }
         };
         ensure!(
             batch.rows.len() == self.capacity,

@@ -3,9 +3,9 @@
 This directory is a single AOEM FULLMAX package for SUPERVM. It is not a
 Proof-only sub-package and it is not a separate platform service.
 
-## Current update: Windows core-only resources (2026-10-13)
+## Current update: Windows bound-resource diagnostics (2026-10-13)
 
-Windows core/header now come from AOEM `1bfa70372e2e60851c6d0ab972dea19678b0fa8c`.
+Windows core/header now come from AOEM `5e555e1ab17f849a1a877fd09e24769eba06cddf`.
 Windows sidecars and the entire Linux bundle remain the original `1377cd1e`
 artifacts; this is not a same-version rebuild of all platforms. The complete
 FULLMAX feature set and sidecar files remain included. Exact hashes, provenance
@@ -16,6 +16,13 @@ the existing wire/state entry. The Host requires explicit runtime capability
 support and rejects unsupported libraries without fallback. This does not change
 the mainchain CPU route or complete GPU business execution/private proving.
 Historical qualification below does not transfer to the replacement core.
+
+Optional v7 command 4 has a separate explicit profile-v1 capability and result
+envelope. It observes the same resident resource's device and queue timestamps,
+not a newly enumerated GPU. Ordinary v7 results remain unchanged; diagnostics
+never enter business commitments. The original node uses it for opt-in integer
+prediction diagnostics. Result ownership avoids repeated Value deep copies,
+without replacing the executor, narrowing integers or changing fees/nonce.
 
 Security correction 2026-10-04: private resident profile 3 is withdrawn.
 Its old AORF envelope was publicly forgeable, not a ZK proof. Corrected
