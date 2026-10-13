@@ -1,6 +1,68 @@
 use novovm_network::mailbox_store::*;
 
 #[test]
+fn durable_cursor_migration_commit_atomicity_and_recreation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cursor.db");
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    let grant = store.create(1000, 600).unwrap();
+    store
+        .put(&grant.id, &grant.write, &[2; 32], &[3; 8], 1200, 1000)
+        .unwrap();
+    drop(store);
+    // Exact prior schema with a real committed envelope, not an empty replacement.
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("DROP TABLE mailbox_revisions; PRAGMA user_version=0;")
+        .unwrap();
+    drop(db);
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    let (before, pending) = store.observe(&grant.id, &grant.read, 1000).unwrap();
+    assert!(pending);
+    assert_eq!(before.sequence, 0);
+    assert_eq!(
+        store.fetch(&grant.id, &grant.read, 1000).unwrap()[0].expires,
+        1200
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TRIGGER reject_cursor BEFORE UPDATE ON mailbox_revisions BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(store
+        .put(&grant.id, &grant.write, &[4; 32], &[5; 8], 1300, 1000)
+        .is_err());
+    assert_eq!(store.fetch(&grant.id, &grant.read, 1000).unwrap().len(), 1);
+    assert_eq!(
+        store.observe(&grant.id, &grant.read, 1000).unwrap().0,
+        before
+    );
+    db.execute_batch("DROP TRIGGER reject_cursor;").unwrap();
+    drop(db);
+    store
+        .put(&grant.id, &grant.write, &[4; 32], &[5; 8], 1300, 1000)
+        .unwrap();
+    store
+        .put(&grant.id, &grant.write, &[4; 32], &[5; 8], 1300, 1000)
+        .unwrap();
+    let committed = store.observe(&grant.id, &grant.read, 1000).unwrap().0;
+    assert_eq!(committed.sequence, 1);
+    assert_eq!(committed.generation, before.generation);
+    drop(store);
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    assert_eq!(
+        store.observe(&grant.id, &grant.read, 1001).unwrap().0,
+        committed
+    );
+    store.revoke(&grant.id, &grant.read, 1001).unwrap();
+    assert!(matches!(
+        store.observe(&grant.id, &grant.read, 1001),
+        Err(StoreError::Unauthorized)
+    ));
+    store.sweep(2000).unwrap();
+    store.register(&grant, 2000, 2600).unwrap();
+    let recreated = store.observe(&grant.id, &grant.read, 2000).unwrap();
+    assert_ne!(recreated.0.generation, before.generation);
+    assert!(!recreated.1);
+}
+
+#[test]
 fn existing_empty_or_partial_store_never_silently_reenrolls() {
     let dir = tempfile::tempdir().unwrap();
     let empty = dir.path().join("empty.db");

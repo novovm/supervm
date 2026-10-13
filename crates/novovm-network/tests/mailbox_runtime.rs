@@ -139,42 +139,100 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
         let record = rx.await?;
         let route = IrohServiceEndpointV1::from_record(&record)?;
         let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now_ms()?)?;
-        with_iroh_scope_v1(config(), control(), move |scope| {
-            Box::pin(async move {
-                let grant = MailboxGrant::generate()?;
-                for request in [
-                    register(&grant, (now_ms()? / 1000) as i64 + 600),
-                    MailboxRequestV1::Fetch {
-                        mailbox: grant.id,
-                        read: *grant.read.as_bytes(),
-                    },
-                ] {
-                    let mut stream: CarrierStreamV1<'_> =
-                        scope.connect(&route.address).await?.into();
-                    let offer = request_mailbox_offer_v1(&mut stream).await?;
-                    book.accept_offer(
-                        offer,
-                        key(1).verifying_key().to_bytes(),
-                        route.address.endpoint_key,
-                        route.instance,
-                        now_ms()?,
-                    )?;
-                    let reply = request_mailbox_v1(
-                        &mut stream,
-                        &key(2),
-                        key(1).verifying_key().to_bytes(),
-                        request,
-                    )
-                    .await?;
-                    ensure!(
-                        matches!(reply, MailboxReplyV1::Registered | MailboxReplyV1::Empty),
-                        "host dispatch failed"
-                    );
+        let endpoint = IrohEndpointOwnerV1::bind(config(), || Ok(())).await?;
+        let grant = MailboxGrant::generate()?;
+        let expiry = (now_ms()? / 1000) as i64 + 300;
+        let data = vec![77; 32];
+        let requests = vec![
+            register(&grant, expiry + 60),
+            MailboxRequestV1::Fetch {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+            },
+            MailboxRequestV1::Put {
+                mailbox: grant.id,
+                write: *grant.write.as_bytes(),
+                object: [42; 32],
+                ciphertext: data.clone(),
+                expires: expiry,
+            },
+            MailboxRequestV1::Watch {
+                boxes: vec![MailboxWatchV1 {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                    after: None,
+                }],
+                wait_ms: 0,
+            },
+            MailboxRequestV1::Fetch {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+            },
+            MailboxRequestV1::Consume {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+                object: [42; 32],
+                digest: Sha256::digest(&data).into(),
+            },
+            MailboxRequestV1::Fetch {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+            },
+        ];
+        for (index, request) in requests.into_iter().enumerate() {
+            let route = route.clone();
+            let (reply, returned_book) = endpoint
+                .with_reusable_operation(control(), 5, move |scope| {
+                    Box::pin(async move {
+                        let raw = scope.connect(&route.address).await?;
+                        ensure!(
+                            raw.connection_reused() == (index > 0),
+                            "connection was rebuilt"
+                        );
+                        let mut stream: CarrierStreamV1<'_> = raw.into();
+                        let offer = request_mailbox_offer_v2(&mut stream).await?;
+                        book.accept_offer(
+                            offer,
+                            key(1).verifying_key().to_bytes(),
+                            route.address.endpoint_key,
+                            route.instance,
+                            now_ms()?,
+                        )?;
+                        let reply = request_mailbox_v1(
+                            &mut stream,
+                            &key(2),
+                            key(1).verifying_key().to_bytes(),
+                            request,
+                        )
+                        .await?;
+                        Ok((reply, book))
+                    })
+                })
+                .await?;
+            book = returned_book;
+            match (index, reply) {
+                (0, MailboxReplyV1::Registered)
+                | (1 | 6, MailboxReplyV1::Empty)
+                | (5, MailboxReplyV1::Consumed) => {}
+                (2, MailboxReplyV1::Stored(r)) => r.verify(
+                    key(1).verifying_key().to_bytes(),
+                    grant.id,
+                    [42; 32],
+                    &data,
+                    expiry,
+                )?,
+                (3, MailboxReplyV1::Notice(n)) => ensure!(
+                    n.len() == 1 && n[0].pending && n[0].cursor.sequence == 1,
+                    "cursor mismatch"
+                ),
+                (4, MailboxReplyV1::Object { ciphertext, .. }) => {
+                    ensure!(ciphertext == data, "payload changed")
                 }
-                Ok(())
-            })
-        })
-        .await
+                _ => anyhow::bail!("unexpected mailbox response"),
+            }
+        }
+        endpoint.close().await?;
+        Ok::<_, anyhow::Error>(())
     };
     let (a, b) = tokio::time::timeout(Duration::from_secs(20), async {
         tokio::join!(server, client)

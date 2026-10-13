@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-14 Mailbox Realtime Sync v1（认领中）：** NOVOCHAT 会话，输入本仓
+`a80306cc` / NOVOCHAT `1649293`，工作区原干净。限定既有 mailbox_store/rpc、
+Iroh 入站连接接续、service selector/自主节点宿主及相邻测试；聊天唯一 Application
+owner 接线归 NOVOCHAT。保留 NVMBOX01，显式升级持续信箱能力；持久游标与事务
+提交后的通知联动，通知不替代 Fetch/回执，不延长旧业务期限。与主链/AOEM 认领
+无源码重叠，不改金融/共识。同步时 AOEM LFS 下载停滞，工作树已按远端指针快进，
+新 AOEM DLL 尚未水合；本轮网络测试不宣称该金融运行库已可用。
+
 **2026-10-13 完整计划/二进制结果认领（实施中）：** 用户批准四项对应和顺序，见
 [接入计划](NOVOVM_ALGEBRAIC_PLAN_INTEGRATION.md)。
 本轮从 `c48dd7bd` / AOEM `8f12c805` 继续：整数预测的跨行输入已编译为显式

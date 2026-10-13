@@ -1128,6 +1128,7 @@ impl IrohScopeV1 {
             _admission: Some(admission),
             finished: false,
             reused: false,
+            handed_off: false,
         })
     }
 }
@@ -1167,6 +1168,7 @@ pub struct IrohStreamV1<'a> {
     _admission: Option<tokio::sync::OwnedSemaphorePermit>,
     finished: bool,
     reused: bool,
+    handed_off: bool,
 }
 
 /// A borrowed framed writer. The parent stream and its authorized scope remain
@@ -1458,6 +1460,9 @@ impl IrohStreamV1<'_> {
 
 impl Drop for IrohStreamV1<'_> {
     fn drop(&mut self) {
+        if self.handed_off {
+            return;
+        }
         if self.finished
             && !self.failed.load(Ordering::Acquire)
             && self.io_control.check().is_ok()
@@ -1471,6 +1476,35 @@ impl Drop for IrohStreamV1<'_> {
             }
         }
         self.connection.close(0u32.into(), b"scope finished");
+    }
+}
+
+impl<'scope> IrohStreamV1<'scope> {
+    /// Transfer one admitted inbound connection to its next independent stream.
+    /// Only the stable local listener can do this, after a complete operation.
+    /// No old application authority or stream deadline is carried forward.
+    pub async fn next_inbound(mut self) -> Result<IrohStreamV1<'scope>> {
+        self.check()?;
+        ensure!(
+            self.finished && !self.initiator && self.scope.listener_budget.is_some(),
+            "inbound continuation requires completed listener stream"
+        );
+        let admission = self
+            ._admission
+            .take()
+            .context("missing inbound admission")?;
+        let pending = PendingConnection::new(self.connection.clone());
+        let remote = *self.connection.remote_id().as_bytes();
+        self.handed_off = true;
+        // This is an idle transport budget, not a renewed business permission.
+        let mut stream = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.scope.stream(pending, remote, false, admission),
+        )
+        .await
+        .context("inbound idle deadline")??;
+        stream.reused = true;
+        Ok(stream)
     }
 }
 

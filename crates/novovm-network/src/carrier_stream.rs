@@ -12,6 +12,19 @@ pub struct CarrierStreamV1<'scope> {
     inner: Stream<'scope>,
 }
 
+impl<'scope> CarrierStreamV1<'scope> {
+    /// Stable node listeners may accept a new, independently authorized QUIC
+    /// stream after the previous one finished. TLS-only streams cannot do this.
+    pub async fn next_inbound(self) -> anyhow::Result<Self> {
+        match self.inner {
+            #[cfg(feature = "iroh-transport")]
+            Stream::Iroh(stream) => Ok(stream.next_inbound().await?.into()),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no independent inbound streams"),
+        }
+    }
+}
+
 enum Stream<'scope> {
     #[cfg(feature = "iroh-transport")]
     Iroh(IrohStreamV1<'scope>),

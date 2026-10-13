@@ -117,21 +117,30 @@ pub async fn run_self_owned_node_v1(
                         let key = &key;
                         let clients = &clients;
                         let mailbox=mailbox.clone();
-                        active.push(tokio::time::timeout(Duration::from_secs(30), async move {
+                        active.push(async move {
                             let mut stream: CarrierStreamV1<'_> = stream.into();
-                            let (kind,store) = tokio::time::timeout(Duration::from_secs(3), serve_node_offer_selected_v1(&mut stream, || {
-                                let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
-                                Ok((host.offer_until(now_ms()?, current.expires_ms)?, current.store.clone()))
-                            })).await??;
-                            match kind {
-                                NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
-                                NodeServiceV1::Mailbox => {
-                                    let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
-                                    crate::mailbox_rpc::serve_mailbox_v1(&mut stream,key,clients,mailbox).await?;
-                                }
+                            loop {
+                                let again = tokio::time::timeout(Duration::from_secs(30), async {
+                                    let (kind, store) = tokio::time::timeout(Duration::from_secs(3), serve_node_offer_selected_v1(&mut stream, || {
+                                        let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
+                                        Ok((host.offer_until(now_ms()?, current.expires_ms)?, current.store.clone()))
+                                    })).await??;
+                                    match kind {
+                                        NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
+                                        NodeServiceV1::Mailbox | NodeServiceV1::MailboxRealtime => {
+                                            let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
+                                            crate::mailbox_rpc::serve_mailbox_v1(&mut stream,key,clients,mailbox).await?;
+                                        }
+                                    }
+                                    Ok::<_,anyhow::Error>(kind == NodeServiceV1::MailboxRealtime)
+                                }).await??;
+                                if !again { break; }
+                                // Transport continuity only. The next stream receives a new
+                                // 30s IO budget, signed offer and Finished authentication.
+                                stream = stream.next_inbound().await?;
                             }
                             Ok::<_,anyhow::Error>(())
-                        }));
+                        });
                     }
                 }
             }

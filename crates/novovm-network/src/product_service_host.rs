@@ -4,6 +4,7 @@ use super::*;
 
 const REQUEST_V2: &[u8; 8] = b"NVLSRQ02";
 const MAILBOX_REQUEST_V1: &[u8; 8] = b"NVMBOX01";
+const MAILBOX_REQUEST_V2: &[u8; 8] = b"NVMBOX02";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
 
@@ -365,6 +366,12 @@ pub async fn request_mailbox_offer_v1(
 ) -> Result<ServiceLeaseOfferV2> {
     request_offer(stream, MAILBOX_REQUEST_V1).await
 }
+/// Explicit continuous-connection and cursor notification support. No fallback.
+pub async fn request_mailbox_offer_v2(
+    stream: &mut CarrierStreamV1<'_>,
+) -> Result<ServiceLeaseOfferV2> {
+    request_offer(stream, MAILBOX_REQUEST_V2).await
+}
 async fn request_offer(
     stream: &mut CarrierStreamV1<'_>,
     request: &[u8; 8],
@@ -428,6 +435,7 @@ pub async fn serve_service_offer_selected_v2<T>(
 pub enum NodeServiceV1 {
     Rendezvous,
     Mailbox,
+    MailboxRealtime,
 }
 
 /// The bounded service selector only chooses a protocol, never trust or privacy.
@@ -441,6 +449,8 @@ pub async fn serve_node_offer_selected_v1<T>(
         NodeServiceV1::Rendezvous
     } else if request.as_slice() == MAILBOX_REQUEST_V1 {
         NodeServiceV1::Mailbox
+    } else if request.as_slice() == MAILBOX_REQUEST_V2 {
+        NodeServiceV1::MailboxRealtime
     } else {
         anyhow::bail!("unknown node service version");
     };

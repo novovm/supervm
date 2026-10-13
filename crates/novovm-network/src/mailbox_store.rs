@@ -98,6 +98,15 @@ pub struct StoredEnvelope {
     pub expires: i64,
 }
 
+/// Private per-mailbox commit position. Generation prevents deletion/recreation
+/// from making an old position current. Neither value is a delivery receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MailboxCursorV1 {
+    pub generation: Id,
+    pub sequence: u64,
+}
+
 pub struct MailboxStore {
     db: Connection,
     limits: Limits,
@@ -130,7 +139,7 @@ impl MailboxStore {
         } else {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE
         };
-        let db = Connection::open_with_flags(path, flags)?;
+        let mut db = Connection::open_with_flags(path, flags)?;
         db.busy_timeout(std::time::Duration::from_secs(2))?;
         if exists {
             let tables:i64=db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('clock_guard','mailboxes','envelopes')",[],|r|r.get(0))?;
@@ -166,6 +175,33 @@ impl MailboxStore {
             db.query_row(&format!("PRAGMA max_page_count={pages}"), [], |r| r.get(0))?;
         let synchronous: i64 = db.query_row("PRAGMA synchronous", [], |r| r.get(0))?;
         if actual > pages || synchronous != 3 {
+            return Err(StoreError::Invalid);
+        }
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if version == 0 {
+            // Atomic migration of the existing database; no message, capability,
+            // receipt, expiry or clock guard is changed.
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(
+                "CREATE TABLE mailbox_revisions (
+                mailbox BLOB PRIMARY KEY REFERENCES mailboxes(id) ON DELETE CASCADE,
+                generation BLOB NOT NULL CHECK(length(generation)=32),
+                revision INTEGER NOT NULL CHECK(revision>=0));
+                INSERT INTO mailbox_revisions SELECT id,randomblob(32),0 FROM mailboxes;
+                PRAGMA user_version=1;",
+            )?;
+            tx.commit()?;
+        } else if version != 1 {
+            return Err(StoreError::Invalid);
+        }
+        let missing: i64 = db.query_row(
+            "SELECT count(*) FROM mailboxes m LEFT JOIN
+            mailbox_revisions r ON m.id=r.mailbox WHERE r.mailbox IS NULL
+            OR length(r.generation)!=32 OR r.revision<0",
+            [],
+            |r| r.get(0),
+        )?;
+        if missing != 0 {
             return Err(StoreError::Invalid);
         }
         Ok(Self { db, limits })
@@ -264,6 +300,10 @@ impl MailboxStore {
                 expires
             ],
         )?;
+        tx.execute(
+            "INSERT INTO mailbox_revisions VALUES(?1,?2,0)",
+            params![&grant.id, random()?],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -349,8 +389,47 @@ impl MailboxStore {
             "INSERT INTO envelopes(mailbox,id,payload,digest,expires) VALUES(?1,?2,?3,?4,?5)",
             params![mailbox, object, ciphertext, digest, expires],
         )?;
+        if tx.execute(
+            "UPDATE mailbox_revisions SET revision=revision+1
+            WHERE mailbox=?1 AND revision<9223372036854775807",
+            [mailbox],
+        )? != 1
+        {
+            return Err(StoreError::Invalid);
+        }
         tx.commit()?;
         Ok(PutResult::Stored)
+    }
+    /// Snapshot AFTER notification observation is installed. Put increments the
+    /// cursor in the same transaction as its ciphertext. Fetch stays authoritative
+    /// across lost notifications and node restarts; cursor never consumes data.
+    pub fn observe(
+        &mut self,
+        id: &Id,
+        read: &Capability,
+        now: i64,
+    ) -> Result<(MailboxCursorV1, bool), StoreError> {
+        let tx = self.begin(now)?;
+        authorize(&tx, id, read, false, now)?;
+        let (generation, sequence): (Id, i64) = tx.query_row(
+            "SELECT generation,revision FROM mailbox_revisions WHERE mailbox=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let pending: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM envelopes
+            WHERE mailbox=?1 AND consumed=0 AND expires>?2)",
+            params![id, now],
+            |r| r.get(0),
+        )?;
+        tx.commit()?;
+        Ok((
+            MailboxCursorV1 {
+                generation,
+                sequence: sequence.try_into().map_err(|_| StoreError::Invalid)?,
+            },
+            pending,
+        ))
     }
     /// Non-destructive fetch. The device acknowledges only after authenticated local commit.
     pub fn fetch(

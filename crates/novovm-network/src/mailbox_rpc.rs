@@ -6,7 +6,7 @@ use crate::{
     duplex::{HandshakeReplayCacheV1, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
     iroh_transport::{decode_iroh_envelope_v1, encode_iroh_envelope_v1},
     mailbox_receipt::StoreReceiptV1,
-    mailbox_store::{Capability, MailboxGrant, MailboxStore, StoreError},
+    mailbox_store::{Capability, MailboxCursorV1, MailboxGrant, MailboxStore, StoreError},
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Result};
@@ -23,6 +23,12 @@ const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxRequestV1 {
+    /// Bounded notification wait; each position is private to an authorized box.
+    /// The caller snapshots before Fetch, then watches from that position.
+    Watch {
+        boxes: Vec<MailboxWatchV1>,
+        wait_ms: u32,
+    },
     Register {
         mailbox: [u8; 32],
         write: [u8; 32],
@@ -59,6 +65,7 @@ pub enum MailboxRequestV1 {
 impl Drop for MailboxRequestV1 {
     fn drop(&mut self) {
         match self {
+            Self::Watch { .. } => {} // each item zeroizes its own read capability
             Self::Register { write, read, .. } => {
                 write.zeroize();
                 read.zeroize();
@@ -71,9 +78,28 @@ impl Drop for MailboxRequestV1 {
         }
     }
 }
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MailboxWatchV1 {
+    pub mailbox: [u8; 32],
+    pub read: [u8; 32],
+    pub after: Option<MailboxCursorV1>,
+}
+impl Drop for MailboxWatchV1 {
+    fn drop(&mut self) {
+        self.read.zeroize();
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MailboxNoticeV1 {
+    pub cursor: MailboxCursorV1,
+    pub pending: bool,
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxReplyV1 {
+    Notice(Vec<MailboxNoticeV1>),
     Registered,
     Stored(StoreReceiptV1),
     Object {
@@ -104,6 +130,7 @@ pub struct MailboxServiceV1 {
     store: Arc<Mutex<MailboxStore>>,
     signer: SigningKey,
     slots: Arc<tokio::sync::Semaphore>,
+    changed: tokio::sync::watch::Sender<u64>,
 }
 impl MailboxServiceV1 {
     pub fn new(store: MailboxStore, signer: SigningKey) -> Self {
@@ -111,6 +138,7 @@ impl MailboxServiceV1 {
             store: Arc::new(Mutex::new(store)),
             signer,
             slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            changed: tokio::sync::watch::channel(0).0,
         }
     }
     pub async fn sweep(&self) -> Result<()> {
@@ -127,9 +155,13 @@ impl MailboxServiceV1 {
         .await?
     }
     async fn execute(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        if let MailboxRequestV1::Watch { boxes, wait_ms } = &request {
+            return self.watch(boxes, *wait_ms).await;
+        }
         let permit = self.slots.clone().acquire_owned().await?;
         let store = self.store.clone();
         let signer = self.signer.clone();
+        let changed = self.changed.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let mut store = store
@@ -138,6 +170,9 @@ impl MailboxServiceV1 {
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
+                    MailboxRequestV1::Watch { .. } => {
+                        unreachable!("watch dispatched before store worker")
+                    }
                     MailboxRequestV1::Register {
                         mailbox,
                         write,
@@ -212,6 +247,18 @@ impl MailboxServiceV1 {
                     }
                 }
             })();
+            // Inside the blocking commit worker: even cancellation after commit
+            // cannot drop the wakeup. Private durable positions remain authority.
+            if result.is_ok()
+                && matches!(
+                    &request,
+                    MailboxRequestV1::Put { .. }
+                        | MailboxRequestV1::Revoke { .. }
+                        | MailboxRequestV1::Register { .. }
+                )
+            {
+                changed.send_modify(|value| *value = value.wrapping_add(1));
+            }
             Ok(match result {
                 Ok(reply) => reply,
                 Err(error) => MailboxReplyV1::Rejected(match error {
@@ -227,6 +274,77 @@ impl MailboxServiceV1 {
             })
         })
         .await?
+    }
+    async fn watch(&self, boxes: &[MailboxWatchV1], wait_ms: u32) -> Result<MailboxReplyV1> {
+        if boxes.is_empty()
+            || boxes.len() > 4
+            || wait_ms > 10_000
+            || boxes
+                .iter()
+                .enumerate()
+                .any(|(i, b)| boxes[..i].iter().any(|x| x.mailbox == b.mailbox))
+        {
+            return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Invalid));
+        }
+        // Subscribe BEFORE observing durable state. A commit during/between
+        // snapshot and await changes this receiver; no Fetch/subscribe gap.
+        let mut events = self.changed.subscribe();
+        let until = tokio::time::Instant::now() + std::time::Duration::from_millis(wait_ms.into());
+        loop {
+            let permit = self.slots.clone().acquire_owned().await?;
+            let store = self.store.clone();
+            let queries = boxes.to_vec();
+            let snapshots = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let mut store = store.lock().map_err(|_| StoreError::Invalid)?;
+                let now = now().map_err(|_| StoreError::Invalid)?;
+                queries
+                    .iter()
+                    .map(|query| {
+                        let (cursor, pending) = store.observe(
+                            &query.mailbox,
+                            &Capability::from_bytes(query.read)?,
+                            now,
+                        )?;
+                        if query.after.is_some_and(|old| {
+                            old.generation == cursor.generation && old.sequence > cursor.sequence
+                        }) {
+                            return Err(StoreError::Conflict);
+                        }
+                        Ok(MailboxNoticeV1 { cursor, pending })
+                    })
+                    .collect::<std::result::Result<Vec<_>, StoreError>>()
+            })
+            .await?;
+            let notices = match snapshots {
+                Ok(notices) => notices,
+                Err(StoreError::Unauthorized) => {
+                    return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized))
+                }
+                Err(StoreError::Conflict) => {
+                    return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Conflict))
+                }
+                Err(StoreError::Invalid | StoreError::Random) => {
+                    return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Invalid))
+                }
+                Err(_) => return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Storage)),
+            };
+            if tokio::time::Instant::now() >= until
+                || notices
+                    .iter()
+                    .zip(boxes)
+                    .any(|(n, b)| n.pending || b.after != Some(n.cursor))
+            {
+                return Ok(MailboxReplyV1::Notice(notices));
+            }
+            tokio::select! {
+                result=events.changed() => { result?; }
+                _=tokio::time::sleep_until(until) => {}
+                // Recheck expiry/revocation even without a Put. Never let a
+                // subscription turn a read capability into permanent authority.
+                _=tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+            }
+        }
     }
 }
 fn now() -> Result<i64> {
@@ -355,4 +473,122 @@ pub async fn serve_mailbox_v1(
     send(stream, &mut channel, &reply).await?;
     stream.finish().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod notification_tests {
+    use super::*;
+    #[tokio::test]
+    async fn commit_before_and_during_watch_is_caught_and_bad_cursor_or_key_rejected() -> Result<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let mut store = MailboxStore::open(dir.path().join("watch.db"), Default::default())?;
+        let now = now()?;
+        let grant = store.create(now, 600)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let initial = vec![MailboxWatchV1 {
+            mailbox: grant.id,
+            read: *grant.read.as_bytes(),
+            after: None,
+        }];
+        let MailboxReplyV1::Notice(first) = service.watch(&initial, 0).await? else {
+            panic!("snapshot");
+        };
+        assert!(!first[0].pending);
+        let mut query = initial.clone();
+        query[0].after = Some(first[0].cursor);
+        let put = |id| MailboxRequestV1::Put {
+            mailbox: grant.id,
+            write: *grant.write.as_bytes(),
+            object: [id; 32],
+            ciphertext: vec![id; 8],
+            expires: now + 300,
+        };
+        // Put exactly after Empty, before installing the next watch.
+        assert!(matches!(
+            service.execute(put(2)).await?,
+            MailboxReplyV1::Stored(_)
+        ));
+        let MailboxReplyV1::Notice(notice) = service.watch(&query, 10_000).await? else {
+            panic!("lost gap commit");
+        };
+        assert_eq!(notice[0].cursor.sequence, 1);
+        assert!(notice[0].pending);
+        service
+            .execute(MailboxRequestV1::Consume {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+                object: [2; 32],
+                digest: sha2::Sha256::digest([2; 8]).into(),
+            })
+            .await?;
+        query[0].after = Some(notice[0].cursor);
+        let start = std::time::Instant::now();
+        let waiter = service.watch(&query, 10_000);
+        let writer = async {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            service.execute(put(3)).await
+        };
+        let (notice, stored) = tokio::join!(waiter, writer);
+        stored?;
+        let MailboxReplyV1::Notice(notice) = notice? else {
+            panic!("no live notification");
+        };
+        assert_eq!(notice[0].cursor.sequence, 2);
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
+        query[0].after = Some(MailboxCursorV1 {
+            sequence: 3,
+            ..notice[0].cursor
+        });
+        assert!(matches!(
+            service.watch(&query, 0).await?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Conflict)
+        ));
+        query[0].read = [9; 32];
+        assert!(matches!(
+            service.watch(&query, 0).await?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+        ));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn idle_watch_obeys_revocation_and_cancellation_releases_store() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = MailboxStore::open(dir.path().join("watch.db"), Default::default())?;
+        let grant = store.create(now()?, 600)?;
+        let (cursor, _) = store.observe(&grant.id, &grant.read, now()?)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let query = vec![MailboxWatchV1 {
+            mailbox: grant.id,
+            read: *grant.read.as_bytes(),
+            after: Some(cursor),
+        }];
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(30),
+            service.watch(&query, 10_000)
+        )
+        .await
+        .is_err());
+        let waiter = service.watch(&query, 10_000);
+        let revoker = async {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            service
+                .execute(MailboxRequestV1::Revoke {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                })
+                .await
+        };
+        let (reply, revoked) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            tokio::join!(waiter, revoker)
+        })
+        .await?;
+        assert!(matches!(revoked?, MailboxReplyV1::Revoked));
+        assert!(matches!(
+            reply?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+        ));
+        Ok(())
+    }
+    use sha2::Digest;
 }
