@@ -1,5 +1,16 @@
 # Agent Highest Law
 
+- 2026-10-13 latest commercial clarification: NOVOCHAT is a paid service after a
+  1-3 month trial, with USD 5-20 monthly subscriptions and/or metered service
+  usage. Permissionless network participation does not mean all services must
+  be free. Use one UCA, locally verified bounded service entitlements and NOV
+  settlement, not a mandatory official account server or per-message chain RPC.
+  Reward policy is genesis-defined; fee-funded task rewards must stay below
+  actual irrevocably consumed fees across all beneficiaries and rebates. Free
+  trial usage is not paid revenue and cannot create unbounded cashable rewards.
+  Numeric tiers/splits remain proposals. Keep current communications/UI work
+  moving; this does not authorize deploying billing or modifying financial state.
+
 - 2026-10-13 latest user clarification: NOVONET must have a self-owned join and
   discovery path without mandatory developer/official Publisher, public CA,
   registration, NOV balance or per-message chain lookup. Verify node signatures
@@ -15,7 +26,7 @@
   platform execution/permission gates. Uninitialized runtime still fails closed.
   NOV reward policy belongs to genesis; proposed weights/prices are not approved
   economic parameters. NOV rewards require actual verified contribution
-  and NOVOVM settlement; no invented yield and no financial gate on free chat.
+  and NOVOVM settlement; no invented yield or per-message settlement dependency.
   This supersedes blanket independent-Publisher prerequisites and older next
   steps that would expand them. See `docs/NOVONET_SELF_SOVEREIGN_IDENTITY_V1.md`
   for the source audit, migration contract and outstanding acceptance.
