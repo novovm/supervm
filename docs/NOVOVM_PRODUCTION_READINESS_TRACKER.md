@@ -8,6 +8,52 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 Android cross-task reuse closure and L3/L4 mailbox direction
+
+Transport input `2a0f8442`, NOVOCHAT product commit `ab84a8b`. The existing
+Application owner retains one verified contact association plus the bounded
+control/data QUIC pool. Each new task uses fresh business authentication and
+its own authority/deadline; expired advertisements are never redialed.
+
+PKL110 Wi-Fi / PCLM50 cellular, one original 600s engineering grant per device,
+no reconnect clicks or data reset: each process bound once, created 17/16 tasks,
+and emitted 13 control + 13 data connection reuse events. Twelve reused tasks
+per phone completed fresh data authentication; the last task was deliberately
+force-stopped for the restart check and is not a completed thirteenth sample.
+Discovery-start/RPC-connect counts were 6/5, not one discovery per task.
+Eight messages (four each direction) have device commits and sender durable
+receipts; both reopened apps retained all eight and their persisted statuses.
+No new Connect was granted after reopening; this checks storage, not automatic
+restart of the engineering permission. Original node/identity/history preserved.
+
+An 18.23s cellular outage recovered without reconnect UI, including queued
+messages and the next new pair. First durable sender receipt after the mobile
+data enable command took 91.627-91.773s / 92.479-92.645s, from monotonic clock
+anchor intervals. These are not measured from Android validated-network-ready.
+Retained-task data authentication was 4.812-6.433s / 4.338-7.802s (12 samples
+each); it must not replace the total recovery latency or imply P95 compliance.
+Failures retained: Wi-Fi task6 E216/stage4, task7 E215/stage2, task8 E3/stage3;
+cellular task6 E1/stage4, task7 E215/stage3. Existing legal successor tasks
+continued; no retry whitelist or authorization budget was widened.
+
+NOVOCHAT regression: Application 68 passed / 1 ignored, Kotlin 35 passed,
+Python 46 passed, Clippy/fmt and normal Android build passed. Local ignored
+evidence is NOVOCHAT artifacts/cross-task-*; full call chain, exact package hash,
+phase table and restart limits are in its docs/implementation/AUTOMATIC_RECOVERY.md.
+External Iroh Relay remains involved. This limited round signs off cross-task
+connection reuse, not new five-round recovery, low latency, anonymity or full
+transport independence. The previous component evidence is preserved below.
+
+Per the user's explicit scope, shift the mainline to Distributed Mailbox v1.
+L4 phones must implement temporary ciphertext storage using the same L3/L4
+protocol, not merely forward packets. Placement uses real availability/resources
+and independent failure domains, with bounded replicas, original IDs/TTLs and
+per-recipient-device consumption distinct from per-node replica state. A storage
+receipt is neither Delivered nor a NOV payment. Sleeping phones cannot be the
+sole reliable copy. First single-L3 verification is an implementation step, not
+a permanent L4 exclusion or multi-replica claim. No mailbox runtime, L4 storage,
+replication or settlement is claimed delivered by this documentation update.
+
 ## 2026-10-13 Bounded cross-operation QUIC retention
 
 Input `8f8896b0` / NOVOCHAT `c640c6f`; only generic transport and adjacent tests.
