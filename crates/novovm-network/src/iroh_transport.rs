@@ -50,6 +50,13 @@ pub fn iroh_forced_drain_count_v1() -> u64 {
 #[error("carrier stream IO failed: {0:#}")]
 pub struct IrohStreamIoFailureV1(#[source] anyhow::Error);
 
+/// Only this adapter's finite frame timer can construct this marker. The old
+/// stream is closed and unusable. It is neither a remote rejection nor a new
+/// permission; a product owner must reauthorize a NEW operation to continue.
+#[derive(Debug, thiserror::Error)]
+#[error("carrier frame operation reached its original deadline")]
+pub struct IrohFrameDeadlineV1(());
+
 /// Only a timeout/reset during an actual outbound handshake. Local policy,
 /// capacity, TLS authentication and protocol errors never carry this marker.
 #[derive(Debug, thiserror::Error)]
@@ -861,7 +868,7 @@ async fn write_frame_io(
             .map_err(|error| IrohStreamIoFailureV1(error.into()))
     })
     .await
-    .context("carrier stream deadline")??;
+    .map_err(|_| IrohFrameDeadlineV1(()))??;
     check_frame_io(control, connection, failed)?;
     guard.complete = true;
     Ok(())
@@ -882,7 +889,7 @@ async fn read_frame_io(
     let mut length = [0u8; 4];
     tokio::time::timeout_at(control.io_deadline()?.into(), recv.read_exact(&mut length))
         .await
-        .context("carrier stream deadline")?
+        .map_err(|_| IrohFrameDeadlineV1(()))?
         .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
     let length = u32::from_be_bytes(length) as usize;
     ensure!(
@@ -892,7 +899,7 @@ async fn read_frame_io(
     let mut bytes = vec![0; length];
     tokio::time::timeout_at(control.io_deadline()?.into(), recv.read_exact(&mut bytes))
         .await
-        .context("carrier stream deadline")?
+        .map_err(|_| IrohFrameDeadlineV1(()))?
         .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
     check_frame_io(control, connection, failed)?;
     guard.complete = true;
@@ -1056,7 +1063,7 @@ impl IrohStreamV1<'_> {
             confirm_send_completion(&mut self.send).await
         })
         .await
-        .context("carrier stream deadline")??;
+        .map_err(|_| IrohFrameDeadlineV1(()))??;
         self.check()?;
         guard.complete = true;
         Ok(())
@@ -1272,9 +1279,43 @@ mod tests {
                     let mut stream = scope.accept_inbound().await?;
                     ensure!(stream.read_frame().await? == b"hello", "payload");
                     let started = Instant::now();
+                    let elapsed = stream.read_frame().await.unwrap_err();
                     ensure!(
-                        stream.read_frame().await.is_err(),
-                        "idle request outlived its deadline"
+                        elapsed.is::<IrohFrameDeadlineV1>(),
+                        "owned frame timeout lost its type: {elapsed:#}"
+                    );
+                    ensure!(
+                        crate::discovery_control::is_service_deadline_failure(&elapsed),
+                        "own timer not recognized"
+                    );
+                    ensure!(
+                        !crate::carrier_stream::is_carrier_io_failure(&elapsed),
+                        "local budget became remote IO"
+                    );
+                    use crate::bound_session::BoundSessionError;
+                    ensure!(
+                        crate::discovery_control::is_service_deadline_failure(
+                            &BoundSessionError::Transport(IrohFrameDeadlineV1(()).into()).into()
+                        ),
+                        "transport timer lost classification"
+                    );
+                    ensure!(
+                        !crate::discovery_control::is_service_deadline_failure(
+                            &BoundSessionError::Local(IrohFrameDeadlineV1(()).into()).into()
+                        ),
+                        "local authority rejection became a retry"
+                    );
+                    ensure!(
+                        !crate::discovery_control::is_service_deadline_failure(&anyhow::anyhow!(
+                            "carrier frame operation reached its original deadline"
+                        )),
+                        "text spoofed owned timer"
+                    );
+                    ensure!(
+                        !crate::discovery_control::is_service_deadline_failure(
+                            &BoundSessionError::Authentication(elapsed).into()
+                        ),
+                        "authentication rejection became a retry"
                     );
                     ensure!(
                         started.elapsed() < Duration::from_secs(4),
