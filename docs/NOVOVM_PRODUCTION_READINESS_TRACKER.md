@@ -8,6 +8,33 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Bounded authenticated mailbox sessions
+
+Input `f42510b9`, NOVOCHAT `41c3f57`. Real phones retained three newly delivered
+messages across reopen, but QUIC reuse took milliseconds while each signed offer
+and Finished/request/finish cycle took seconds. This slice extends the SAME
+NVMBOX02 with explicit BeginSession/EndSession. Existing single-request clients
+remain supported; old NVMBOX01 rejects negotiation, with no silent fallback.
+One fresh Finished channel serves up to 64 requests under the unchanged 30s
+stream/offer authority. Each request checks carrier authority and capability;
+session counters/nonces never reset between requests. Cancellation/transport
+error poisons the client session. EndSession completes before pooling transport.
+Expired offers, bad identity or revocation gain no new permission from reuse.
+
+Validation: four mailbox_runtime real QUIC tests (legacy and session on one
+owned listener, 64 KiB multi-frame requests/responses, duplicate receipt, wrong
+read key, revocation and 64-request budget); four mailbox_rpc tests (notification
+race, canceled watch, live revocation, session poisoning and envelope replay),
+scoped Clippy -D warnings passed. Initial two negative fixtures dropped the
+entire server endpoint immediately upon deliberate rejection; peer waited until
+scope expiry. Fixtures now keep the endpoint through its existing close barrier,
+allowing the deliberate close to reach the peer. Product deadlines unchanged;
+original failed log retained. Local logs: mailbox-session-runtime-tests.log,
+mailbox-session-fault-tests[-v2].log, mailbox-session-clippy.log.
+Android session wiring/latency not yet accepted. No finance, carrier replacement,
+new node/account/scheduler, vendor Push or anonymity claim. Existing four-peer
+admission, durable journal rotation, real L4/independent replicas remain open.
+
 ## 2026-10-14 Mailbox continuous connection and durable notification positions
 
 Input `a80306cc`; implementation `e073bca2`. No finance/AOEM/consensus changes.

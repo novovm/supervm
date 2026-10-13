@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use zeroize::{Zeroize, Zeroizing};
 
+pub const MAX_SESSION_REQUESTS_V2: u16 = 64;
+
 const STREAM: u64 = 0x4e564d424f5831;
 const CHUNK: usize = 8192;
 const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array representation.
@@ -23,6 +25,9 @@ const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxRequestV1 {
+    /// Explicit opt-in on NVMBOX02; never a downgrade on an older service.
+    BeginSession,
+    EndSession,
     /// Bounded notification wait; each position is private to an authorized box.
     /// The caller snapshots before Fetch, then watches from that position.
     Watch {
@@ -65,7 +70,7 @@ pub enum MailboxRequestV1 {
 impl Drop for MailboxRequestV1 {
     fn drop(&mut self) {
         match self {
-            Self::Watch { .. } => {} // each item zeroizes its own read capability
+            Self::BeginSession | Self::EndSession | Self::Watch { .. } => {} // each item zeroizes its own read capability
             Self::Register { write, read, .. } => {
                 write.zeroize();
                 read.zeroize();
@@ -99,6 +104,8 @@ pub struct MailboxNoticeV1 {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxReplyV1 {
+    SessionReady,
+    SessionEnded,
     Notice(Vec<MailboxNoticeV1>),
     Registered,
     Stored(StoreReceiptV1),
@@ -170,6 +177,9 @@ impl MailboxServiceV1 {
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
+                    MailboxRequestV1::BeginSession | MailboxRequestV1::EndSession => {
+                        Err(StoreError::Invalid)
+                    }
                     MailboxRequestV1::Watch { .. } => {
                         unreachable!("watch dispatched before store worker")
                     }
@@ -355,17 +365,21 @@ async fn send<T: Serialize>(
     stream: &mut CarrierStreamV1<'_>,
     channel: &mut BoundSecureChannelV1,
     value: &T,
+    sent: &mut u64,
 ) -> Result<()> {
     let bytes = Zeroizing::new(serde_json::to_vec(value)?);
     ensure!(
         !bytes.is_empty() && bytes.len() <= MAX_WIRE,
         "mailbox wire budget"
     );
-    for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
+    for chunk in bytes.chunks(CHUNK) {
         let mut body = Zeroizing::new(Vec::with_capacity(chunk.len() + 4));
         body.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
         body.extend_from_slice(chunk);
-        let sequence = i as u64 + 1;
+        let sequence = sent
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("mailbox sequence exhausted"))?;
+        *sent = sequence;
         let mut frame = NovoRudpTransportFrameV0::new(
             NovoRudpTransportFrameKindV0::Data,
             channel.session_id(),
@@ -386,10 +400,14 @@ async fn send<T: Serialize>(
 async fn receive<T: serde::de::DeserializeOwned>(
     stream: &mut CarrierStreamV1<'_>,
     channel: &mut BoundSecureChannelV1,
+    received: &mut u64,
 ) -> Result<T> {
     let mut body = Zeroizing::new(Vec::new());
     let mut total = 0;
-    for sequence in 1..=(MAX_WIRE.div_ceil(CHUNK) as u64) {
+    for chunk in 0..MAX_WIRE.div_ceil(CHUNK) {
+        let sequence = received
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("mailbox sequence exhausted"))?;
         let envelope = decode_iroh_envelope_v1(&stream.read_frame().await?)?;
         ensure!(envelope.sequence == sequence, "mailbox sequence");
         let mut frame = channel.open_novorudp_frame(&envelope)?;
@@ -409,7 +427,7 @@ async fn receive<T: serde::de::DeserializeOwned>(
             );
             let length = u32::from_be_bytes(frame.payload[..4].try_into()?) as usize;
             ensure!(length > 0 && length <= MAX_WIRE, "mailbox size");
-            if sequence == 1 {
+            if chunk == 0 {
                 total = length;
             }
             ensure!(
@@ -421,6 +439,7 @@ async fn receive<T: serde::de::DeserializeOwned>(
         })();
         frame.payload.zeroize();
         result?;
+        *received = sequence;
         if body.len() == total {
             return Ok(serde_json::from_slice(&body)?);
         }
@@ -444,8 +463,8 @@ pub async fn request_mailbox_v1(
         &mut HandshakeReplayCacheV1::new(8),
     )
     .await?;
-    send(stream, &mut channel, &request).await?;
-    let reply = receive(stream, &mut channel).await?;
+    send(stream, &mut channel, &request, &mut 0).await?;
+    let reply = receive(stream, &mut channel, &mut 0).await?;
     stream.finish().await?;
     Ok(reply)
 }
@@ -466,13 +485,174 @@ pub async fn serve_mailbox_v1(
         &mut HandshakeReplayCacheV1::new(8),
     )
     .await?;
-    let request = receive(stream, &mut channel).await?;
+    let request = receive(stream, &mut channel, &mut 0).await?;
     stream.selected_path()?;
     let reply = service.execute(request).await?;
     stream.selected_path()?;
-    send(stream, &mut channel, &reply).await?;
+    send(stream, &mut channel, &reply, &mut 0).await?;
     stream.finish().await?;
     Ok(())
+}
+
+/// Multiple sequential operations within ONE fresh Finished-bound stream.
+/// The caller retains the original scoped authority/deadline. Sequence and
+/// AEAD nonce state are continuous; cancellation/error poisons the session.
+pub struct MailboxClientSessionV2<'stream, 'scope> {
+    stream: &'stream mut CarrierStreamV1<'scope>,
+    channel: BoundSecureChannelV1,
+    sent: u64,
+    received: u64,
+    requests: u16,
+    poisoned: bool,
+}
+impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
+    pub async fn begin(
+        stream: &'stream mut CarrierStreamV1<'scope>,
+        identity: &SigningKey,
+        pinned_node: [u8; 32],
+    ) -> Result<Self> {
+        let channel = authenticate_bound_session(
+            stream,
+            identity,
+            pinned_node,
+            true,
+            &mut HandshakeReplayCacheV1::new(8),
+        )
+        .await?;
+        let mut session = Self {
+            stream,
+            channel,
+            sent: 0,
+            received: 0,
+            requests: 0,
+            poisoned: false,
+        };
+        ensure!(
+            matches!(
+                session.exchange(MailboxRequestV1::BeginSession).await?,
+                MailboxReplyV1::SessionReady
+            ),
+            "mailbox session negotiation rejected"
+        );
+        Ok(session)
+    }
+    pub fn remaining_requests(&self) -> u16 {
+        MAX_SESSION_REQUESTS_V2.saturating_sub(self.requests)
+    }
+    pub async fn request(&mut self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        ensure!(
+            !matches!(
+                &request,
+                MailboxRequestV1::BeginSession | MailboxRequestV1::EndSession
+            ),
+            "mailbox session control reserved"
+        );
+        ensure!(
+            self.requests < MAX_SESSION_REQUESTS_V2,
+            "mailbox session request budget"
+        );
+        self.requests += 1;
+        let reply = self.exchange(request).await?;
+        if matches!(
+            reply,
+            MailboxReplyV1::SessionReady | MailboxReplyV1::SessionEnded
+        ) {
+            self.poisoned = true;
+            anyhow::bail!("unexpected mailbox session control");
+        }
+        Ok(reply)
+    }
+    async fn exchange(&mut self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        ensure!(!self.poisoned, "mailbox session unusable");
+        self.poisoned = true; // Also remains true if this future is cancelled.
+        self.stream.selected_path()?;
+        send(self.stream, &mut self.channel, &request, &mut self.sent).await?;
+        let reply = receive(self.stream, &mut self.channel, &mut self.received).await?;
+        self.stream.selected_path()?;
+        self.poisoned = false;
+        Ok(reply)
+    }
+    pub async fn finish(mut self) -> Result<()> {
+        ensure!(
+            matches!(
+                self.exchange(MailboxRequestV1::EndSession).await?,
+                MailboxReplyV1::SessionEnded
+            ),
+            "mailbox session end rejected"
+        );
+        self.stream.finish().await
+    }
+}
+
+/// NVMBOX02 accepts an explicit bounded session or an existing single-request
+/// client. No implicit fallback: BeginSession is rejected on NVMBOX01.
+/// The host supplies the unchanged signed-offer authority, checked per request.
+pub async fn serve_mailbox_session_v2(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    allowed: &[[u8; 32]],
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    ensure!(
+        identity.verifying_key() == service.signer.verifying_key(),
+        "mailbox service signer mismatch"
+    );
+    authority()?;
+    let (mut channel, _) = authenticate_allowed_service_client(
+        stream,
+        identity,
+        allowed,
+        &mut HandshakeReplayCacheV1::new(8),
+    )
+    .await?;
+    let (mut sent, mut received) = (0, 0);
+    let first: MailboxRequestV1 = receive(stream, &mut channel, &mut received).await?;
+    authority()?;
+    stream.selected_path()?;
+    if !matches!(&first, MailboxRequestV1::BeginSession) {
+        let reply = service.execute(first).await?;
+        authority()?;
+        stream.selected_path()?;
+        send(stream, &mut channel, &reply, &mut sent).await?;
+    } else {
+        send(
+            stream,
+            &mut channel,
+            &MailboxReplyV1::SessionReady,
+            &mut sent,
+        )
+        .await?;
+        for index in 0..=MAX_SESSION_REQUESTS_V2 {
+            let request: MailboxRequestV1 = receive(stream, &mut channel, &mut received).await?;
+            authority()?;
+            stream.selected_path()?;
+            if matches!(&request, MailboxRequestV1::EndSession) {
+                send(
+                    stream,
+                    &mut channel,
+                    &MailboxReplyV1::SessionEnded,
+                    &mut sent,
+                )
+                .await?;
+                break;
+            }
+            ensure!(
+                index < MAX_SESSION_REQUESTS_V2,
+                "mailbox session request budget"
+            );
+            ensure!(
+                !matches!(&request, MailboxRequestV1::BeginSession),
+                "mailbox session already active"
+            );
+            let reply = service.execute(request).await?;
+            authority()?;
+            stream.selected_path()?;
+            send(stream, &mut channel, &reply, &mut sent).await?;
+        }
+    }
+    authority()?;
+    stream.finish().await
 }
 
 #[cfg(test)]
@@ -591,4 +771,198 @@ mod notification_tests {
         Ok(())
     }
     use sha2::Digest;
+}
+
+#[cfg(test)]
+mod session_failure_tests {
+    use super::*;
+    use crate::iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1};
+    use std::{
+        sync::atomic::{AtomicBool, Ordering},
+        time::{Duration, Instant},
+    };
+    fn key(n: u8) -> SigningKey {
+        SigningKey::from_bytes(&[n; 32])
+    }
+    fn config() -> IrohConfigV1 {
+        IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
+            .unwrap()
+            .with_bind_address("127.0.0.1:0".parse().unwrap())
+            .unwrap()
+    }
+    fn control() -> IrohControlV1 {
+        IrohControlV1::new(Instant::now() + Duration::from_secs(10), || Ok(())).unwrap()
+    }
+    #[tokio::test]
+    async fn cancelled_wait_or_revoked_authority_cannot_reuse_session() -> Result<()> {
+        for cancel in [true, false] {
+            let dir = tempfile::tempdir()?;
+            let service = MailboxServiceV1::new(
+                MailboxStore::open(dir.path().join("session.db"), Default::default())?,
+                key(1),
+            );
+            let grant = MailboxGrant::generate()?;
+            service
+                .execute(MailboxRequestV1::Register {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                    write: *grant.write.as_bytes(),
+                    expires: now()? + 300,
+                })
+                .await?;
+            let cursor = match service
+                .execute(MailboxRequestV1::Watch {
+                    boxes: vec![MailboxWatchV1 {
+                        mailbox: grant.id,
+                        read: *grant.read.as_bytes(),
+                        after: None,
+                    }],
+                    wait_ms: 0,
+                })
+                .await?
+            {
+                MailboxReplyV1::Notice(n) => n[0].cursor,
+                _ => anyhow::bail!("fixture notice"),
+            };
+            let active = Arc::new(AtomicBool::new(true));
+            let host = active.clone();
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let server = with_iroh_scope_v1(config(), control(), move |scope| {
+                Box::pin(async move {
+                    tx.send(scope.address()?)
+                        .map_err(|_| anyhow::anyhow!("fixture address"))?;
+                    let mut stream = scope.accept_inbound().await?.into();
+                    let result = serve_mailbox_session_v2(
+                        &mut stream,
+                        &key(1),
+                        &[key(2).verifying_key().to_bytes()],
+                        &service,
+                        || {
+                            ensure!(host.load(Ordering::Acquire), "fixture revoked");
+                            Ok(())
+                        },
+                    )
+                    .await;
+                    drop(stream);
+                    Ok::<_, anyhow::Error>(result)
+                })
+            });
+            let client = with_iroh_scope_v1(config(), control(), move |scope| {
+                Box::pin(async move {
+                    let mut stream = scope.connect(&rx.await?).await?.into();
+                    let mut session = MailboxClientSessionV2::begin(
+                        &mut stream,
+                        &key(2),
+                        key(1).verifying_key().to_bytes(),
+                    )
+                    .await?;
+                    if cancel {
+                        assert!(tokio::time::timeout(
+                            Duration::from_millis(80),
+                            session.request(MailboxRequestV1::Watch {
+                                boxes: vec![MailboxWatchV1 {
+                                    mailbox: grant.id,
+                                    read: *grant.read.as_bytes(),
+                                    after: Some(cursor)
+                                }],
+                                wait_ms: 500,
+                            })
+                        )
+                        .await
+                        .is_err());
+                    } else {
+                        active.store(false, Ordering::Release);
+                        assert!(session
+                            .request(MailboxRequestV1::Fetch {
+                                mailbox: grant.id,
+                                read: *grant.read.as_bytes()
+                            })
+                            .await
+                            .is_err());
+                    }
+                    let error = session
+                        .request(MailboxRequestV1::Fetch {
+                            mailbox: grant.id,
+                            read: *grant.read.as_bytes(),
+                        })
+                        .await
+                        .err()
+                        .unwrap();
+                    ensure!(error.to_string() == "mailbox session unusable");
+                    assert!(session.finish().await.is_err());
+                    Ok::<_, anyhow::Error>(())
+                })
+            });
+            let (server, client) = tokio::join!(server, client);
+            client?;
+            assert!(server?.is_err());
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn repeated_envelope_after_negotiation_is_rejected_before_request() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let service = MailboxServiceV1::new(
+            MailboxStore::open(dir.path().join("session.db"), Default::default())?,
+            key(1),
+        );
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let server = with_iroh_scope_v1(config(), control(), move |scope| {
+            Box::pin(async move {
+                tx.send(scope.address()?)
+                    .map_err(|_| anyhow::anyhow!("fixture address"))?;
+                let mut stream = scope.accept_inbound().await?.into();
+                let result = serve_mailbox_session_v2(
+                    &mut stream,
+                    &key(1),
+                    &[key(2).verifying_key().to_bytes()],
+                    &service,
+                    || Ok(()),
+                )
+                .await;
+                drop(stream);
+                Ok::<_, anyhow::Error>(result)
+            })
+        });
+        let client = with_iroh_scope_v1(config(), control(), move |scope| {
+            Box::pin(async move {
+                let mut stream: CarrierStreamV1<'_> = scope.connect(&rx.await?).await?.into();
+                let mut channel = authenticate_bound_session(
+                    &mut stream,
+                    &key(2),
+                    key(1).verifying_key().to_bytes(),
+                    true,
+                    &mut HandshakeReplayCacheV1::new(8),
+                )
+                .await?;
+                let bytes = serde_json::to_vec(&MailboxRequestV1::BeginSession)?;
+                let body = [(bytes.len() as u32).to_be_bytes().as_slice(), &bytes].concat();
+                let frame = NovoRudpTransportFrameV0::new(
+                    NovoRudpTransportFrameKindV0::Data,
+                    channel.session_id(),
+                    STREAM,
+                    1,
+                    1,
+                    0,
+                    body,
+                );
+                let encoded = encode_iroh_envelope_v1(&channel.seal_novorudp_frame(&frame)?)?;
+                stream.write_frame(&encoded).await?;
+                ensure!(matches!(
+                    receive::<MailboxReplyV1>(&mut stream, &mut channel, &mut 0).await?,
+                    MailboxReplyV1::SessionReady
+                ));
+                stream.write_frame(&encoded).await?;
+                assert!(stream.read_frame().await.is_err());
+                Ok::<_, anyhow::Error>(())
+            })
+        });
+        let (server, client) = tokio::join!(server, client);
+        client?;
+        ensure!(server?
+            .unwrap_err()
+            .to_string()
+            .contains("mailbox sequence"));
+        Ok(())
+    }
 }

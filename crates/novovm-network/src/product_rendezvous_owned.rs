@@ -121,15 +121,24 @@ pub async fn run_self_owned_node_v1(
                             let mut stream: CarrierStreamV1<'_> = stream.into();
                             loop {
                                 let again = tokio::time::timeout(Duration::from_secs(30), async {
-                                    let (kind, store) = tokio::time::timeout(Duration::from_secs(3), serve_node_offer_selected_v1(&mut stream, || {
+                                    let (kind, (store, offer_until)) = tokio::time::timeout(Duration::from_secs(3), serve_node_offer_selected_v1(&mut stream, || {
                                         let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
-                                        Ok((host.offer_until(now_ms()?, current.expires_ms)?, current.store.clone()))
+                                        let offer = host.offer_until(now_ms()?, current.expires_ms)?;
+                                        let until = offer.lease.as_ref().map_or(0, |lease| lease.expires_at_ms);
+                                        Ok((offer, (current.store.clone(), until)))
                                     })).await??;
                                     match kind {
                                         NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
                                         NodeServiceV1::Mailbox | NodeServiceV1::MailboxRealtime => {
                                             let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
-                                            crate::mailbox_rpc::serve_mailbox_v1(&mut stream,key,clients,mailbox).await?;
+                                            if kind == NodeServiceV1::MailboxRealtime {
+                                                crate::mailbox_rpc::serve_mailbox_session_v2(&mut stream,key,clients,mailbox,|| {
+                                                    ensure!(now_ms()? < offer_until, "mailbox offered lease expired");
+                                                    Ok(())
+                                                }).await?;
+                                            } else {
+                                                crate::mailbox_rpc::serve_mailbox_v1(&mut stream,key,clients,mailbox).await?;
+                                            }
                                         }
                                     }
                                     Ok::<_,anyhow::Error>(kind == NodeServiceV1::MailboxRealtime)

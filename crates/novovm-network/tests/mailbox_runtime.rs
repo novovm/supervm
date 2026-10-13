@@ -231,6 +231,45 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                 _ => anyhow::bail!("unexpected mailbox response"),
             }
         }
+        // Explicit multi-request mode on the SAME transport after legacy streams.
+        endpoint
+            .with_reusable_operation(control(), 5, move |scope| {
+                Box::pin(async move {
+                    let raw = scope.connect(&route.address).await?;
+                    ensure!(raw.connection_reused(), "session rebuilt connection");
+                    let mut stream: CarrierStreamV1<'_> = raw.into();
+                    let offer = request_mailbox_offer_v2(&mut stream).await?;
+                    book.accept_offer(
+                        offer,
+                        key(1).verifying_key().to_bytes(),
+                        route.address.endpoint_key,
+                        route.instance,
+                        now_ms()?,
+                    )?;
+                    let mut session = MailboxClientSessionV2::begin(
+                        &mut stream,
+                        &key(2),
+                        key(1).verifying_key().to_bytes(),
+                    )
+                    .await?;
+                    for _ in 0..3 {
+                        ensure!(
+                            matches!(
+                                session
+                                    .request(MailboxRequestV1::Fetch {
+                                        mailbox: grant.id,
+                                        read: *grant.read.as_bytes(),
+                                    })
+                                    .await?,
+                                MailboxReplyV1::Empty
+                            ),
+                            "session response differs"
+                        );
+                    }
+                    session.finish().await
+                })
+            })
+            .await?;
         endpoint.close().await?;
         Ok::<_, anyhow::Error>(())
     };
@@ -444,6 +483,138 @@ async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full(
     assert!(matches!(
         rpc(service, 2, put()).await?,
         MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_preserves_chunk_counters_capabilities_revocation_and_budget() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let service = Arc::new(MailboxServiceV1::new(
+        MailboxStore::open(directory.path().join("session.db"), Limits::default())?,
+        key(1),
+    ));
+    let grant = MailboxGrant::generate()?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let server = with_iroh_scope_v1(config(), control(), move |scope| {
+        Box::pin(async move {
+            tx.send(scope.address()?)
+                .map_err(|_| anyhow::anyhow!("fixture address"))?;
+            let mut stream = scope.accept_inbound().await?.into();
+            serve_mailbox_session_v2(
+                &mut stream,
+                &key(1),
+                &[key(2).verifying_key().to_bytes()],
+                &service,
+                || Ok(()),
+            )
+            .await
+        })
+    });
+    let client = with_iroh_scope_v1(config(), control(), move |scope| {
+        Box::pin(async move {
+            let mut stream = scope.connect(&rx.await?).await?.into();
+            let mut session = MailboxClientSessionV2::begin(
+                &mut stream,
+                &key(2),
+                key(1).verifying_key().to_bytes(),
+            )
+            .await?;
+            let expires = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs()
+                + 300) as i64;
+            ensure!(matches!(
+                session.request(register(&grant, expires + 60)).await?,
+                MailboxReplyV1::Registered
+            ));
+            let data = vec![177; 65536];
+            for _ in 0..2 {
+                let MailboxReplyV1::Stored(receipt) = session
+                    .request(MailboxRequestV1::Put {
+                        mailbox: grant.id,
+                        write: *grant.write.as_bytes(),
+                        object: [42; 32],
+                        ciphertext: data.clone(),
+                        expires,
+                    })
+                    .await?
+                else {
+                    anyhow::bail!("missing store receipt")
+                };
+                receipt.verify(
+                    key(1).verifying_key().to_bytes(),
+                    grant.id,
+                    [42; 32],
+                    &data,
+                    expires,
+                )?;
+            }
+            ensure!(matches!(
+                session
+                    .request(MailboxRequestV1::Fetch {
+                        mailbox: grant.id,
+                        read: *grant.write.as_bytes(),
+                    })
+                    .await?,
+                MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+            ));
+            let MailboxReplyV1::Object { ciphertext, .. } = session
+                .request(MailboxRequestV1::Fetch {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                })
+                .await?
+            else {
+                anyhow::bail!("chunked reply missing")
+            };
+            ensure!(ciphertext == data);
+            ensure!(matches!(
+                session
+                    .request(MailboxRequestV1::Revoke {
+                        mailbox: grant.id,
+                        read: *grant.read.as_bytes(),
+                    })
+                    .await?,
+                MailboxReplyV1::Revoked
+            ));
+            while session.remaining_requests() > 0 {
+                ensure!(matches!(
+                    session
+                        .request(MailboxRequestV1::Fetch {
+                            mailbox: grant.id,
+                            read: *grant.read.as_bytes(),
+                        })
+                        .await?,
+                    MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+                ));
+            }
+            assert!(session
+                .request(MailboxRequestV1::Fetch {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes()
+                })
+                .await
+                .is_err());
+            session.finish().await
+        })
+    });
+    let (server, client) = tokio::join!(server, client);
+    server?;
+    client?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn old_service_rejects_session_negotiation_without_fallback() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let service = Arc::new(MailboxServiceV1::new(
+        MailboxStore::open(dir.path().join("old.db"), Limits::default())?,
+        key(1),
+    ));
+    assert!(matches!(
+        rpc(service, 2, MailboxRequestV1::BeginSession).await?,
+        MailboxReplyV1::Rejected(MailboxRejectionV1::Invalid)
     ));
     Ok(())
 }

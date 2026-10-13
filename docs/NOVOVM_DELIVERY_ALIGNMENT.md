@@ -1,5 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-14 信箱有界认证会话（组件交付，认领释放）：** NOVOCHAT 持续目标，输入
+本仓 `f42510b9` / NOVOCHAT `41c3f57`，main 与远端一致且干净。手机三条新消息
+及一次蜂窝中断恢复/重开保留通过；QUIC 复用只需毫秒，但每 RPC 新 Offer/Finished
+仍需数秒。限定 mailbox_rpc、原自主宿主及对应测试，在既有 NVMBOX02 内显式协商
+有界多请求会话，逐操作检查权限/期限，连续序号不重置，禁止错误后继续使用会话。
+不改金融/AOEM/共识，不扩大现行 30s 流期限；客户端接线仍归 NOVOCHAT。
+4 项真实 QUIC 集成、4 项通知/会话错误测试、scoped Clippy 通过；手机升级和延迟待验证。
+
+
 **2026-10-14 Mailbox Realtime Sync v1（组件已验证，手机接线中）：** NOVOCHAT 会话，输入本仓
 `a80306cc` / NOVOCHAT `1649293`，工作区原干净。限定既有 mailbox_store/rpc、
 Iroh 入站连接接续、service selector/自主节点宿主及相邻测试；聊天唯一 Application
