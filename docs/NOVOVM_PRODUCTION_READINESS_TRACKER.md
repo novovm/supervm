@@ -39,7 +39,11 @@ No mailbox reset, new enrollment or changed invitation. Node publication resumed
 NOVOCHAT `4a537fb` installed APK `9114cf8e...` then began a fresh bounded ten-minute
 engineering session on Wi-Fi/cellular phones. Original pending message17 recovered
 with inbox/device-receipt commits; a new message18 after session13 reached the
-recipient. Ongoing batch not yet a full ten-minute/long-term acceptance at writing.
+recipient. The full ten-minute grant then completed with 26 tasks on each phone
+and normal expired/tasksFinished=true; original17 and new18 sender Delivered
+states visually verified. One final cellular E8 had grant/task remaining=0.
+No outage injected in this batch; not a five-round or long-term gate. Node
+publication kept advancing.
 Android currently rejects six newly added fixed mailbox trace event names, losing
 the remainder of those drained batches; NOVOCHAT is fixing that contract before
 full timing/count acceptance. Partial traces must not imply absence of failures.
