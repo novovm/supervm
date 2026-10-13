@@ -69,6 +69,38 @@ fn self_owned_store_rotation_requires_fresh_signature_on_unchanged_transport() -
 }
 
 #[test]
+fn compacted_self_owned_journal_keeps_revocation_and_sequence_floors() -> Result<()> {
+    let dir = HostDirectory::new();
+    let mut b = own_book()?;
+    let bytes = b.checkpoint()?;
+    let file = ServiceLeaseFileV1::create(&dir.path(), zeroize::Zeroizing::new([91; 32]), &bytes)?;
+    b.attach_persistence(file.clone(), &bytes)?;
+    // Multiple compactions using signed test state, not production records.
+    for sequence in 2..=700 {
+        let now = 2000 + sequence;
+        accept(&mut b, record(2, sequence, now, now + 50_000), now)?;
+    }
+    let pin = key(2).verifying_key().to_bytes();
+    b.revoke_self_owned(pin, 4000)?;
+    let exact = b.checkpoint()?;
+    drop(b);
+    drop(file);
+    let raw = std::fs::read(dir.path())?;
+    assert!(u64::from_le_bytes(raw[8..16].try_into()?) >= 2);
+    let (file, saved) = ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
+    assert_eq!(saved, exact);
+    assert!(std::fs::metadata(dir.path())?.len() < 700_000);
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 5000)?;
+    restored.attach_persistence(file, &saved)?;
+    assert!(restored.routes(5000)?.is_empty());
+    assert!(restored.bootstrap_candidates(5000)?.is_empty());
+    assert!(restored
+        .replace_self_owned_records(vec![record(2, 999, 5000, 60_000)], 5000)
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn self_owned_does_not_need_publisher_but_does_need_confirmed_key() -> Result<()> {
     let mut b = own_book()?;
     assert!(b.sources().is_empty());

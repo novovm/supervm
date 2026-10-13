@@ -1,5 +1,36 @@
 # 自有寻址服务可执行入口
 
+## 2026-10-14 加密授权日志的有界压缩
+
+同一 `ServiceLeaseFileV1` 保留 API 和密钥托管来源，新增 NVLSJ002 本地格式；
+可读取旧 NVLSJ001，在达到 512 KiB 后的下一次 CAS 写入/确认中进行压缩。
+16 MiB 仍是读取的硬上限，不靠扩大上限维持服务。压缩复制完整最新检查点，
+不筛除过期历史，不改变签发序号、撤销墓碑、信任策略或旧 Publisher 迁移记录。
+新格式头含压缩代次及前一日志尾摘要，并纳入首帧 AEAD 认证；后续仍是随机
+XChaCha20 nonce 的链式加密帧。保留历史的安全状态与链摘要，不承诺保留每个
+旧版本检查点的完整审计正文；旧备份回滚仍需要外部新鲜度依据。
+
+写入顺序：验证当前全部日志及 expected → 私有同目录 `.compact` 文件写完整
+检查点 → sync → 回读验签及逐字节相等 → 保持独立 `.lock` 所有权、关闭数据
+句柄 → 同目录替换 → 刷元数据 → 重新打开/独占/验签 → 才继续追加新的授权。
+Windows 复用固定 `atomicwrites=0.4.4` 的 write-through 替换；Unix 使用 rename
+及父目录 sync。任何不确定写入停止当前 owner，不能返回新的签发结果。
+`.compact` 从不作为恢复源；主文件丢失或损坏时拒绝启动，不能挑旧副本恢复。
+只有主文件已完整验签后，才清理未发布的暂存文件。`.lock` 不随进程退出删除。
+
+升级必须先停止旧二进制；原平台 owner 锁与新版日志锁共同保护唯一写者。
+禁止混合新旧文件写者并发；旧二进制不识别 NVLSJ002，不能降级回写。平台目录
+继续要求私有 ACL/无 reparse point。原身份、撤销和已签发历史不重置。
+
+本机组件验证：54 项授权/持久化回归通过，覆盖六个真实子进程中断点（非掉电
+模拟）、跨进程独占、重复压缩、有界大小、损坏/缺失主文件、失败后冻结和真实
+签名状态的撤销恢复；scoped Clippy 通过。Windows 初次编译被 unsafe 禁令拒绝，
+改用开源文件适配；随后实测发现打开的数据句柄使替换失败，关闭句柄且保持
+稳定所有权后通过。两项测试误用第二句柄读取被锁文件也已修正，未降低锁。
+这些结果不等于所有文件系统上的突然断电验收，实际节点升级/持续运行另记台账。
+实现参考：[atomicwrites 0.4.4](https://docs.rs/crate/atomicwrites/0.4.4/source/src/lib.rs)、
+[Windows MoveFileExW](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)。
+
 **后续增量：** [独立签名发布进程](NOVOVM_BOOTSTRAP_PUBLISHER.md)已接线，
 可在本机自动授权新任期；Windows 系统密钥托管、常驻 owner 与提前准备下一任期已接线；
 [运行与验收边界](NOVOVM_RENDEZVOUS_WINDOWS_OWNER.md)。下文保留原有界入口的

@@ -8,6 +8,42 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Bounded service journal compaction and installed migration
+
+Input `92e56e83`, networking only. ServiceLeaseFileV1 now reads NVLSJ001/002,
+compacts at512KiB while keeping the original16MiB read limit. Exact latest
+checkpoint plus authenticated predecessor digest/generation replaces redundant
+old snapshots; no sequence, revocation, trust or migration-state reset. Stable
+owner lock spans same-directory publication and reopening; uncertain writes
+freeze the owner. Staging is never a recovery fallback. Old binaries must stop
+before upgrade and cannot write new format. No parallel store/authority.
+
+54 service-lease/file tests passed52.46s, including six real child exit points,
+four repeated compactions, single writer, missing/corrupt primary refusal and
+700 signed renewals followed by durable revocation. Seven Windows owner-process
+tests passed175.16s, including source migration, two instance rotations, custody
+restarts and revocation. Scoped Clippy -D warnings passed32.71s. Repro:
+`cargo test --locked -p novovm-network --features iroh-transport,tls-transport --lib product_service_lease -- --test-threads=1`
+and `cargo test --locked -p novovm-relay --features iroh-transport --test rendezvous_owner_process -- --test-threads=1`.
+
+Original installed node was stopped, encrypted journal backed up locally, then
+upgraded under same config/custody. Before16,239,293bytes/3097frames/sequence22941;
+after18,648bytes/sequence22943. First new checkpoint exactly matches previous
+latest plaintext hash, new anchor matches prior chain tail. Trust/revocations/
+prior endorsement and four protected files unchanged. Restarted the same node
+again; no re-enrollment or phone identity replacement. Mailbox data not rewritten.
+Evidence: artifacts/service-compaction-{before,migration,protected-before,
+protected-after,node-process}.json, encrypted before.journal, node stdout/stderr,
+tests[-v2..v5].log, windows-rename.log, clippy[-v2].log, owner-tests.log.
+
+Failures retained: direct Win32 unsafe code rejected by crate policy, replaced
+with pinned atomicwrites0.4.4; open data handles denied replacement even unlocked,
+confirmed standalone before closing them under stable ownership; two assertions
+wrongly opened locked files and were corrected without weakening locks. One
+immediate stopped-node copy met delayed OS lock release; later authenticated
+backup succeeded before upgrade. No claim of power-cut/all-filesystem testing,
+freshness against full old backup replay, long-term production or anonymity.
+
 ## 2026-10-14 Android bounded mailbox session gate
 
 SUPERVM network `9333e9df`, merged build `c0d3d01f`; NOVOCHAT `bf86aec`.
