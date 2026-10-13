@@ -9,8 +9,12 @@
   expired grants; migrate protected policies with explicit provenance and retain
   revocation/history. Reuse one NOVOVM UCA account for NOVOCHAT, wallet and L4,
   with purpose/device keys and separate spend authority; local root ownership
-  is not proof of an existing/on-chain UCA binding. Phone relay/storage is opt-in
-  with durable resource limits. NOV rewards require actual verified contribution
+  is not proof of an existing/on-chain UCA binding. Latest user correction makes
+  bounded L4 contribution default-enabled for new installs, with clear status,
+  disable controls and durable limits; preserve explicit prior user opt-outs and
+  platform execution/permission gates. Uninitialized runtime still fails closed.
+  NOV reward policy belongs to genesis; proposed weights/prices are not approved
+  economic parameters. NOV rewards require actual verified contribution
   and NOVOVM settlement; no invented yield and no financial gate on free chat.
   This supersedes blanket independent-Publisher prerequisites and older next
   steps that would expand them. See `docs/NOVONET_SELF_SOVEREIGN_IDENTITY_V1.md`

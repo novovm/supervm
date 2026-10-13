@@ -13,3 +13,9 @@ Current authoritative documents:
 
 - `NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md`
 - `NOVOVM-DUAL-TRACK-SETTLEMENT-AND-MARKET-SYSTEM-P2A-2026-04-17.md`
+
+Proposals (not frozen genesis parameters or implemented settlement):
+
+- [NOVONET L3/L4 contribution rewards, 2026-10-13](NOVONET-CONTRIBUTION-REWARDS-DRAFT-2026-10-13.md).
+  The user confirmed default-enabled bounded L4 participation and genesis-defined
+  reward policy; allocation weights, release schedule and pricing remain proposals.
