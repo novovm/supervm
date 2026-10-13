@@ -1200,6 +1200,12 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
             "load must begin on fresh genesis"
         );
         phase = "timed HTTP admission and four-node finality observation";
+        if crate::native_pipeline::profile::enabled() {
+            evidence["profile_start"] = json!(startup
+                .iter()
+                .map(|s| &s["stage_profile"])
+                .collect::<Vec<_>>());
+        }
         let timing_start = Instant::now();
         let measured = timed_load(
             &mut nodes,
@@ -1218,6 +1224,13 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
             }).collect());
         }
         elapsed = Some(measured?);
+        if crate::native_pipeline::profile::enabled() {
+            evidence["profile_end"] = json!((0..4)
+                .map(|node| nodes
+                    .rpc(node, "nov_chainStatus", json!([]))
+                    .map(|s| s["stage_profile"].clone()))
+                .collect::<Result<Vec<_>>>()?);
+        }
         ensure!(
             counts.finalized_successful == TRANSACTIONS && counts.finalized_business_failed == 0,
             "success-only workload was not fully successful"

@@ -30,6 +30,31 @@ const MAX_POOL_BYTES: usize = 64 * 1024 * 1024;
 const RECENT_RECEIPTS: usize = 65_536;
 const MAX_SIGNERS: usize = 65_536;
 
+/// Bounded cooperative handoff after real progress, then the original sleep.
+/// Pending work alone cannot refresh the bound (offline peers/nonce gaps/slow
+/// native owners must not cause an indefinite busy loop).
+struct IdleBackoff {
+    since: Instant,
+    turns: u8,
+}
+impl IdleBackoff {
+    fn new(now: Instant) -> Self {
+        Self {
+            since: now,
+            turns: 0,
+        }
+    }
+    fn should_sleep(&mut self, now: Instant, progress: bool) -> bool {
+        if progress {
+            self.since = now;
+            self.turns = 0;
+            return false;
+        }
+        self.turns = self.turns.saturating_add(1);
+        self.turns >= 64 || now.saturating_duration_since(self.since) >= Duration::from_micros(250)
+    }
+}
+
 mod admission;
 mod gossip;
 mod history;
@@ -138,9 +163,15 @@ impl RpcLifecycle {
     }
 
     pub fn poll(&mut self, now: Instant) -> Result<()> {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::Lifecycle,
+        );
         self.node.poll(now)?;
         self.poll_balances()?;
         if self.projection_error.is_none() {
+            let _span = crate::native_pipeline::profile::span(
+                crate::native_pipeline::profile::Phase::Projection,
+            );
             if let Err(error) = self.poll_projection() {
                 self.projection_error = Some(format!("{error:#}"));
             }
@@ -149,7 +180,12 @@ impl RpcLifecycle {
         // Optional historical queries must not stall current-height selection.
         self.history.poll(&self.node.pipeline);
         self.poll_admission()?;
-        self.poll_gossip()?;
+        {
+            let _span = crate::native_pipeline::profile::span(
+                crate::native_pipeline::profile::Phase::Gossip,
+            );
+            self.poll_gossip()?;
+        }
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
             return Ok(());
         }
@@ -595,6 +631,7 @@ impl RpcLifecycle {
             "early_bind_reused":stats.early_bind_reused,"early_discarded":stats.early_discarded,
             "execution_failures":stats.execution_failures,"last_error":stats.last_error,
             "execution_backend":backend,
+            "stage_profile":crate::native_pipeline::profile::snapshot(),
             "business_vulkan_integer_active":stats.execution_gpu_rows_total > 0,
             "business_gpu_active":if matches!(self.node.pipeline.execution_backend(), crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks) { Some(false) } else { None },
             "physical_gpu_verified":false,
@@ -866,25 +903,62 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
     let batch_size = config.batch_size;
     let mut lifecycle = RpcLifecycle::new(ResidentNode::start(config, mode)?, batch_size)?;
     let started = Instant::now();
+    let mut idle = IdleBackoff::new(started);
     println!("resident_rpc_listening={}", rpc.local_addr()?);
     let result = (|| -> Result<()> {
         loop {
             let now = Instant::now();
+            let before = control_progress(&lifecycle);
             lifecycle.poll(now)?;
-            let rpc_progress = rpc.poll_deferred(&mut lifecycle)?;
+            let rpc_progress = {
+                let _span = crate::native_pipeline::profile::span(
+                    crate::native_pipeline::profile::Phase::Http,
+                );
+                rpc.poll_deferred(&mut lifecycle)?
+            };
             if run_for.is_some_and(|limit| started.elapsed() >= limit) {
                 break;
             }
-            // Signature waiting returns through consensus and HTTP every turn;
-            // waiting for the native owner must not become a control busy-spin.
-            if !rpc_progress && !lifecycle.admission.made_progress {
+            // HTTP silence is not controller idleness. Allow bounded handoff
+            // turns after actual progress, without changing protocol timers,
+            // queue bounds, durability or the ordinary 1ms idle sleep.
+            let progress = rpc_progress
+                || lifecycle.admission.made_progress
+                || before != control_progress(&lifecycle);
+            if idle.should_sleep(Instant::now(), progress) {
+                let _span = crate::native_pipeline::profile::span(
+                    crate::native_pipeline::profile::Phase::Idle,
+                );
                 std::thread::sleep(Duration::from_millis(1));
+            } else if !progress {
+                let _span = crate::native_pipeline::profile::span(
+                    crate::native_pipeline::profile::Phase::Yield,
+                );
+                std::thread::yield_now();
             }
         }
         Ok(())
     })();
     let drain = lifecycle.node.shutdown();
     result.and(drain)
+}
+
+/// O(1) scheduling hint, never an execution, publication or signing permit.
+fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 10] {
+    let controller = &lifecycle.node.controller;
+    let stats = controller.stats();
+    [
+        stats.executed_batches,
+        stats.durable_votes,
+        stats.durable_decisions,
+        stats.received_votes,
+        stats.head_advances,
+        stats.early_authentication_completed,
+        stats.successor_started,
+        stats.successor_reused,
+        controller.round(),
+        lifecycle.indexed_height,
+    ]
 }
 
 /// Explicit mode selection in the original novovm-node executable. No flag
@@ -923,6 +997,23 @@ pub fn run_from_env() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn idle_handoff_is_bounded_by_time_and_turns_and_only_progress_resets_it() {
+        let now = std::time::Instant::now();
+        let mut idle = super::IdleBackoff::new(now);
+        for _ in 0..63 {
+            assert!(!idle.should_sleep(now, false));
+        }
+        assert!(idle.should_sleep(now, false));
+        for _ in 0..300 {
+            assert!(idle.should_sleep(now, false));
+        }
+        assert!(!idle.should_sleep(now, true));
+        assert!(!idle.should_sleep(now + std::time::Duration::from_micros(249), false));
+        assert!(idle.should_sleep(now + std::time::Duration::from_micros(250), false));
+        assert!(!idle.should_sleep(now + std::time::Duration::from_millis(3), true));
+    }
+
     use super::*;
 
     #[test]

@@ -366,6 +366,9 @@ fn authenticate(
     config: &ComputeConfig,
     request: AuthenticateRequest,
 ) -> Result<NovTransferBody> {
+    let _span = crate::native_pipeline::profile::span(
+        crate::native_pipeline::profile::Phase::Authentication,
+    );
     let batch = authenticate_source_batch(
         session,
         config.domain.chain_id,
@@ -383,7 +386,12 @@ fn execute(
     input: NovCapturedInput,
 ) -> Result<ComputedCandidate> {
     domain_matches(config.domain, input.plan().context())?;
-    let input = input.finalize_capture()?;
+    let input = {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::FinalizeCapture,
+        );
+        input.finalize_capture()?
+    };
     let executed = match integers {
         Some(resources) => {
             input.execute_with_integer_resources(session, resources, config.timeout)?
@@ -391,6 +399,8 @@ fn execute(
         None => input.execute(session, config.timeout)?,
     };
     let observation = *executed.observation();
+    let _span =
+        crate::native_pipeline::profile::span(crate::native_pipeline::profile::Phase::Packet);
     let (packet, seed) =
         PreparedCandidate::from_executed_with_seed(executed, config.packet, config.capture)?;
     Ok(ComputedCandidate {
@@ -411,6 +421,9 @@ fn run_owner(
     while let Ok(command) = receiver.recv() {
         match command {
             Command::Admission { inputs, reply } => {
+                let _span = crate::native_pipeline::profile::span(
+                    crate::native_pipeline::profile::Phase::Admission,
+                );
                 let result = run_checked(&mut panicked, || {
                     authenticate_admission_rows(
                         session,
@@ -427,6 +440,9 @@ fn run_owner(
                 let _ = reply.send(result);
             }
             Command::Bind { request, reply } => {
+                let _span = crate::native_pipeline::profile::span(
+                    crate::native_pipeline::profile::Phase::Bind,
+                );
                 let result = run_checked(&mut panicked, || {
                     domain_matches(config.domain, &request.context)?;
                     request.body.bind(request.context)

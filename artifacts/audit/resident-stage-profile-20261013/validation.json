@@ -1,0 +1,1523 @@
+{
+  "schema": "novovm-resident-stage-profile-v1",
+  "source_base": "41986d75",
+  "baseline_product_source": "b097c195bd7ec21941de3e2c0f76a05df024ae9d",
+  "environment": "Windows Release; Core Ultra 9 275HX; four actual original-node processes and independent AOEM databases; one original product RPC",
+  "measurement": "65536 pre-signed successful transfers; 1024 senders x 64 nonces; shared recipient; batch 1024; in-flight 8192; strict signatures/APFL/nonce/fees and 4-node final receipt HTTP observation; startup/signing/cold audits excluded from TPS",
+  "stage_semantics": "Optional process-local inclusive wall time, overlapping/nested, not CPU utilization or additive critical path; profile start/end collected around original timed load; maxima are lifetime not interval maxima",
+  "accepted_change": "bounded cooperative handoff after real HTTP/admission/controller progress; stops on either 64 no-progress turns or 250us; preserves existing 1ms idle sleep and all protocol timers/budgets",
+  "rejected_change": "unpark notifications + park_timeout(1ms); removed after throughput and whole-fixture regressions; local experimental diff retained target/validation/rejected-event-wake-20261013.patch",
+  "baseline_combined_successful_tps": 7814.684562122605,
+  "final_combined_successful_tps": 8985.248636414894,
+  "change_percent": 14.979031654917407,
+  "pooled_latency_computed": false,
+  "rows": [
+    {
+      "name": "profile-before",
+      "source": "artifacts/audit/resident-rpc-load/6284-1791873016725667500/result.json",
+      "report_sha256": "B5CFADE63A64AE4550ABC8849A6E5005B75F16F2D16CEE4E5A47B1DC72EEB2E1",
+      "binary_sha256": "0xc84632b6d5ae020025dd4d0a51dc889f7d5c53a59c38b38108d5e08b31ecadd8",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 8162.315698383902,
+      "seconds": 8.029094,
+      "p95_us": 1173625,
+      "p99_us": 1284019,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1016832,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 253,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        24,
+        24,
+        21,
+        21
+      ],
+      "observations_file": "observations.json",
+      "report": "profile-before.json",
+      "phase_deltas": [
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 257.1106
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 287.6718
+          },
+          "bind": {
+            "calls": 25,
+            "inclusive_wall_ms": 22.2938
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 839.9566
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 291.5895
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 813.1124
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 723.4437
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 436.005
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 583.7389
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.459
+          },
+          "io_metadata_read": {
+            "calls": 327,
+            "inclusive_wall_ms": 5.5579
+          },
+          "io_metadata_write": {
+            "calls": 257,
+            "inclusive_wall_ms": 436.3421
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1069.8732
+          },
+          "lifecycle": {
+            "calls": 7616,
+            "inclusive_wall_ms": 1010.8362
+          },
+          "consensus": {
+            "calls": 7616,
+            "inclusive_wall_ms": 147.6883
+          },
+          "projection": {
+            "calls": 7616,
+            "inclusive_wall_ms": 365.1427
+          },
+          "gossip": {
+            "calls": 7616,
+            "inclusive_wall_ms": 41.754
+          },
+          "http": {
+            "calls": 7616,
+            "inclusive_wall_ms": 1482.8841
+          },
+          "idle": {
+            "calls": 3303,
+            "inclusive_wall_ms": 5549.4658
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 299.9899
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 297.4115
+          },
+          "bind": {
+            "calls": 25,
+            "inclusive_wall_ms": 22.9766
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 872.767
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 290.8036
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 829.0608
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 719.8665
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 437.0284
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 590.6377
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 4.0736
+          },
+          "io_metadata_read": {
+            "calls": 345,
+            "inclusive_wall_ms": 5.4664
+          },
+          "io_metadata_write": {
+            "calls": 271,
+            "inclusive_wall_ms": 451.9385
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1094.6606
+          },
+          "lifecycle": {
+            "calls": 6113,
+            "inclusive_wall_ms": 900.1955
+          },
+          "consensus": {
+            "calls": 6113,
+            "inclusive_wall_ms": 154.0025
+          },
+          "projection": {
+            "calls": 6113,
+            "inclusive_wall_ms": 369.0054
+          },
+          "gossip": {
+            "calls": 6113,
+            "inclusive_wall_ms": 0.3077
+          },
+          "http": {
+            "calls": 6113,
+            "inclusive_wall_ms": 1261.9043
+          },
+          "idle": {
+            "calls": 3502,
+            "inclusive_wall_ms": 5880.8936
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 294.1574
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 297.3053
+          },
+          "bind": {
+            "calls": 25,
+            "inclusive_wall_ms": 22.6295
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 862.7593
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 296.4584
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 816.7674
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 720.2875
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 440.5266
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 589.4319
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.499
+          },
+          "io_metadata_read": {
+            "calls": 309,
+            "inclusive_wall_ms": 4.6512
+          },
+          "io_metadata_write": {
+            "calls": 262,
+            "inclusive_wall_ms": 454.6465
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1081.5291
+          },
+          "lifecycle": {
+            "calls": 6181,
+            "inclusive_wall_ms": 856.3616
+          },
+          "consensus": {
+            "calls": 6181,
+            "inclusive_wall_ms": 159.5125
+          },
+          "projection": {
+            "calls": 6181,
+            "inclusive_wall_ms": 364.8538
+          },
+          "gossip": {
+            "calls": 6181,
+            "inclusive_wall_ms": 0.2526
+          },
+          "http": {
+            "calls": 6181,
+            "inclusive_wall_ms": 1326.5603
+          },
+          "idle": {
+            "calls": 3542,
+            "inclusive_wall_ms": 5860.406
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 306.7136
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 291.0358
+          },
+          "bind": {
+            "calls": 25,
+            "inclusive_wall_ms": 22.7427
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 866.9914
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 298.9229
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 830.6018
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 724.7221
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 438.5385
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 594.2377
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.2013
+          },
+          "io_metadata_read": {
+            "calls": 318,
+            "inclusive_wall_ms": 4.8456
+          },
+          "io_metadata_write": {
+            "calls": 264,
+            "inclusive_wall_ms": 479.9897
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1063.0936
+          },
+          "lifecycle": {
+            "calls": 6178,
+            "inclusive_wall_ms": 919.6794
+          },
+          "consensus": {
+            "calls": 6178,
+            "inclusive_wall_ms": 168.467
+          },
+          "projection": {
+            "calls": 6178,
+            "inclusive_wall_ms": 378.8359
+          },
+          "gossip": {
+            "calls": 6178,
+            "inclusive_wall_ms": 0.2765
+          },
+          "http": {
+            "calls": 6178,
+            "inclusive_wall_ms": 1340.3716
+          },
+          "idle": {
+            "calls": 3533,
+            "inclusive_wall_ms": 5783.3597
+          }
+        }
+      ]
+    },
+    {
+      "name": "profile-bounded-cpu",
+      "source": "artifacts/audit/resident-rpc-load/27428-1791873355486190000/result.json",
+      "report_sha256": "169EF5B4B5ED601A37611572BC645E25EFB85E412947DBC84A463A9B9A434626",
+      "binary_sha256": "0x58d03750f25cc727b7dfc2a266b9eb4db6726bc37b7015f6aa402c2bdffe1054",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 9002.30538469347,
+      "seconds": 7.279913,
+      "p95_us": 1180420,
+      "p99_us": 1343856,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 840704,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 210,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        19,
+        24,
+        24,
+        21
+      ],
+      "observations_file": "observations.json",
+      "report": "profile-bounded-cpu.json",
+      "phase_deltas": [
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 236.6361
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 302.4633
+          },
+          "bind": {
+            "calls": 23,
+            "inclusive_wall_ms": 20.3002
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 873.4779
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 293.9586
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 815.1828
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 722.1456
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 440.2064
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 580.3408
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.5123
+          },
+          "io_metadata_read": {
+            "calls": 255,
+            "inclusive_wall_ms": 3.5794
+          },
+          "io_metadata_write": {
+            "calls": 264,
+            "inclusive_wall_ms": 484.0404
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1064.39
+          },
+          "io_recover": {
+            "calls": 85,
+            "inclusive_wall_ms": 824.087
+          },
+          "lifecycle": {
+            "calls": 47255,
+            "inclusive_wall_ms": 1184.4866
+          },
+          "consensus": {
+            "calls": 47255,
+            "inclusive_wall_ms": 236.7836
+          },
+          "projection": {
+            "calls": 47255,
+            "inclusive_wall_ms": 385.8128
+          },
+          "gossip": {
+            "calls": 47255,
+            "inclusive_wall_ms": 49.0393
+          },
+          "http": {
+            "calls": 47255,
+            "inclusive_wall_ms": 1365.187
+          },
+          "idle": {
+            "calls": 2772,
+            "inclusive_wall_ms": 4649.3092
+          },
+          "yield": {
+            "calls": 39637,
+            "inclusive_wall_ms": 86.4061
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 304.675
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 290.1153
+          },
+          "bind": {
+            "calls": 23,
+            "inclusive_wall_ms": 20.4637
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 883.7356
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 294.6095
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 832.0715
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 730.6778
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 444.4242
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 598.8595
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.7369
+          },
+          "io_metadata_read": {
+            "calls": 279,
+            "inclusive_wall_ms": 3.6366
+          },
+          "io_metadata_write": {
+            "calls": 266,
+            "inclusive_wall_ms": 500.4185
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1110.8695
+          },
+          "io_recover": {
+            "calls": 93,
+            "inclusive_wall_ms": 901.1432
+          },
+          "lifecycle": {
+            "calls": 43668,
+            "inclusive_wall_ms": 979.8939
+          },
+          "consensus": {
+            "calls": 43668,
+            "inclusive_wall_ms": 223.8032
+          },
+          "projection": {
+            "calls": 43668,
+            "inclusive_wall_ms": 385.0008
+          },
+          "gossip": {
+            "calls": 43668,
+            "inclusive_wall_ms": 1.2629
+          },
+          "http": {
+            "calls": 43668,
+            "inclusive_wall_ms": 1182.6695
+          },
+          "idle": {
+            "calls": 2993,
+            "inclusive_wall_ms": 5023.6684
+          },
+          "yield": {
+            "calls": 37690,
+            "inclusive_wall_ms": 96.6293
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 297.9263
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 296.5535
+          },
+          "bind": {
+            "calls": 24,
+            "inclusive_wall_ms": 20.5435
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 880.2803
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 295.6072
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 832.8526
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 733.0366
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 448.3272
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 598.0736
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.2378
+          },
+          "io_metadata_read": {
+            "calls": 267,
+            "inclusive_wall_ms": 3.7064
+          },
+          "io_metadata_write": {
+            "calls": 264,
+            "inclusive_wall_ms": 533.8574
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1096.4312
+          },
+          "io_recover": {
+            "calls": 89,
+            "inclusive_wall_ms": 863.4649
+          },
+          "lifecycle": {
+            "calls": 43592,
+            "inclusive_wall_ms": 958.8229
+          },
+          "consensus": {
+            "calls": 43592,
+            "inclusive_wall_ms": 194.7869
+          },
+          "projection": {
+            "calls": 43592,
+            "inclusive_wall_ms": 389.4399
+          },
+          "gossip": {
+            "calls": 43592,
+            "inclusive_wall_ms": 1.271
+          },
+          "http": {
+            "calls": 43592,
+            "inclusive_wall_ms": 1196.5294
+          },
+          "idle": {
+            "calls": 2988,
+            "inclusive_wall_ms": 5007.7892
+          },
+          "yield": {
+            "calls": 37589,
+            "inclusive_wall_ms": 112.2288
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 297.4044
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 304.1209
+          },
+          "bind": {
+            "calls": 23,
+            "inclusive_wall_ms": 19.84
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 883.7477
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 292.6245
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "inclusive_wall_ms": 811.1901
+          },
+          "execute_integer": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 722.0558
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 441.2299
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 600.2846
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.984
+          },
+          "io_metadata_read": {
+            "calls": 255,
+            "inclusive_wall_ms": 3.562
+          },
+          "io_metadata_write": {
+            "calls": 257,
+            "inclusive_wall_ms": 491.3472
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1100.8922
+          },
+          "io_recover": {
+            "calls": 85,
+            "inclusive_wall_ms": 826.4742
+          },
+          "lifecycle": {
+            "calls": 42726,
+            "inclusive_wall_ms": 955.5637
+          },
+          "consensus": {
+            "calls": 42726,
+            "inclusive_wall_ms": 227.211
+          },
+          "projection": {
+            "calls": 42726,
+            "inclusive_wall_ms": 359.4369
+          },
+          "gossip": {
+            "calls": 42726,
+            "inclusive_wall_ms": 1.2344
+          },
+          "http": {
+            "calls": 42726,
+            "inclusive_wall_ms": 1206.224
+          },
+          "idle": {
+            "calls": 2986,
+            "inclusive_wall_ms": 5003.3367
+          },
+          "yield": {
+            "calls": 36696,
+            "inclusive_wall_ms": 121.4428
+          }
+        }
+      ]
+    },
+    {
+      "name": "baseline-cpu-1",
+      "source": "artifacts/audit/resident-rpc-load/25380-1791873722898963700/result.json",
+      "report_sha256": "98F06943A3F63D385E7E12AEB56B91EAD6E4E4F3A8936B673025C9C82CAE035B",
+      "binary_sha256": "0x99d04143573e94b6f4322d5dad3296c9e985a6b7841b84c60bd46a16d2a36ebd",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 7719.0435858123465,
+      "seconds": 8.490171,
+      "p95_us": 1315612,
+      "p99_us": 1501751,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1070080,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 270,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        21,
+        24,
+        24,
+        20
+      ],
+      "observations_file": "observations.json",
+      "report": "baseline-cpu-1.json"
+    },
+    {
+      "name": "rejected-event-wake-1",
+      "source": "artifacts/audit/resident-rpc-load/8024-1791873786357106100/result.json",
+      "report_sha256": "8A64DC8D2079B5A89BAF9E720983D6E78B83610CFF1A7888D2D802E766126AEE",
+      "binary_sha256": "0xe5365836514d4e1f4db0e713b1fae7b923fdb8dec1b3bc196ed8de5b5fe08c88",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 7478.061094490282,
+      "seconds": 8.763769,
+      "p95_us": 1304389,
+      "p99_us": 1457604,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 828416,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 208,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        23,
+        24,
+        24,
+        24
+      ],
+      "observations_file": "observations.json",
+      "report": "rejected-event-wake-1.json"
+    },
+    {
+      "name": "rejected-event-wake-2",
+      "source": "artifacts/audit/resident-rpc-load/22068-1791874020222383600/result.json",
+      "report_sha256": "C48906E53BEB57230ECE4572318968056BE3ABB7770B952FB4CCEB68D6078289",
+      "binary_sha256": "0xe5365836514d4e1f4db0e713b1fae7b923fdb8dec1b3bc196ed8de5b5fe08c88",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 7193.889233688776,
+      "seconds": 9.109954,
+      "p95_us": 1515808,
+      "p99_us": 1816899,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 836608,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 211,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        24,
+        24,
+        24,
+        24
+      ],
+      "observations_file": "observations.json",
+      "report": "rejected-event-wake-2.json"
+    },
+    {
+      "name": "baseline-cpu-2",
+      "source": "artifacts/audit/resident-rpc-load/27776-1791874256595738400/result.json",
+      "report_sha256": "10C8FB90894E9D4D548BC2BF6CD8125D5A397537514E4AB2EB0C88A6438714C2",
+      "binary_sha256": "0x99d04143573e94b6f4322d5dad3296c9e985a6b7841b84c60bd46a16d2a36ebd",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 7912.725305785612,
+      "seconds": 8.282355,
+      "p95_us": 1539485,
+      "p99_us": 1588945,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1008640,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 255,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        24,
+        16,
+        21,
+        20
+      ],
+      "observations_file": "observations.json",
+      "report": "baseline-cpu-2.json"
+    },
+    {
+      "name": "final-cpu-1",
+      "source": "artifacts/audit/resident-rpc-load/28120-1791874473644290100/result.json",
+      "report_sha256": "9DCBF437BDDA57515F10641E51561C1726833B9FE00543E30C788D5F20BFAA26",
+      "binary_sha256": "0x6420d6c0ef3d319ce9bb1507be25e763f2e9b2c328f42041a198bfe6a7ec30fb",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 9232.389944505076,
+      "seconds": 7.098487,
+      "p95_us": 1152006,
+      "p99_us": 1192190,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 816128,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 205,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        24,
+        24,
+        24,
+        24
+      ],
+      "observations_file": "observations.json",
+      "report": "final-cpu-1.json"
+    },
+    {
+      "name": "final-cpu-2",
+      "source": "artifacts/audit/resident-rpc-load/3040-1791874522537061600/result.json",
+      "report_sha256": "BBFD0DAA4526FCBC7C9652826C64B1812E3C42D128B27EA86B4771AF18CCB922",
+      "binary_sha256": "0x6420d6c0ef3d319ce9bb1507be25e763f2e9b2c328f42041a198bfe6a7ec30fb",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 8750.99379381272,
+      "seconds": 7.488978,
+      "p95_us": 1171079,
+      "p99_us": 1202007,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 884736,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 221,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        24,
+        24,
+        18,
+        24
+      ],
+      "observations_file": "observations.json",
+      "report": "final-cpu-2.json"
+    },
+    {
+      "name": "profile-integer",
+      "source": "artifacts/audit/resident-rpc-load/8572-1791874574583804900/result.json",
+      "report_sha256": "26F42FB4FF3E7AA8C7D0F0E8CA3C09226EE954031E2479A9F930BD6011C6809F",
+      "binary_sha256": "0x6420d6c0ef3d319ce9bb1507be25e763f2e9b2c328f42041a198bfe6a7ec30fb",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "passed": true,
+      "tps": 7132.005658940037,
+      "seconds": 9.189,
+      "p95_us": 1307559,
+      "p99_us": 1466614,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1111040,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 276,
+        "deadline_expirations": 0
+      },
+      "peaks": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "observations_file": "observations.json",
+      "report": "profile-integer.json",
+      "phase_deltas": [
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 253.0179
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 292.3366
+          },
+          "bind": {
+            "calls": 22,
+            "inclusive_wall_ms": 19.2819
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 842.7172
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 291.2577
+          },
+          "execute_cpu": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "execute_integer": {
+            "calls": 64,
+            "inclusive_wall_ms": 2751.2468
+          },
+          "integer_wire": {
+            "calls": 64,
+            "inclusive_wall_ms": 1867.3174
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 713.1376
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 441.7051
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 587.2996
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.1684
+          },
+          "io_metadata_read": {
+            "calls": 306,
+            "inclusive_wall_ms": 4.4624
+          },
+          "io_metadata_write": {
+            "calls": 260,
+            "inclusive_wall_ms": 1194.5246
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1284.3741
+          },
+          "io_recover": {
+            "calls": 102,
+            "inclusive_wall_ms": 983.2546
+          },
+          "lifecycle": {
+            "calls": 56160,
+            "inclusive_wall_ms": 1103.9784
+          },
+          "consensus": {
+            "calls": 56160,
+            "inclusive_wall_ms": 221.9652
+          },
+          "projection": {
+            "calls": 56160,
+            "inclusive_wall_ms": 378.1218
+          },
+          "gossip": {
+            "calls": 56160,
+            "inclusive_wall_ms": 55.9518
+          },
+          "http": {
+            "calls": 56160,
+            "inclusive_wall_ms": 1669.437
+          },
+          "idle": {
+            "calls": 3849,
+            "inclusive_wall_ms": 6336.6454
+          },
+          "yield": {
+            "calls": 46856,
+            "inclusive_wall_ms": 80.06
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 342.5059
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 302.4404
+          },
+          "bind": {
+            "calls": 22,
+            "inclusive_wall_ms": 19.3055
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 842.9162
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 289.772
+          },
+          "execute_cpu": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "execute_integer": {
+            "calls": 64,
+            "inclusive_wall_ms": 2856.5474
+          },
+          "integer_wire": {
+            "calls": 64,
+            "inclusive_wall_ms": 1968.7652
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 717.2532
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 439.6566
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 598.8385
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.7142
+          },
+          "io_metadata_read": {
+            "calls": 336,
+            "inclusive_wall_ms": 4.8872
+          },
+          "io_metadata_write": {
+            "calls": 270,
+            "inclusive_wall_ms": 1207.2007
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1345.7484
+          },
+          "io_recover": {
+            "calls": 112,
+            "inclusive_wall_ms": 1097.075
+          },
+          "lifecycle": {
+            "calls": 53853,
+            "inclusive_wall_ms": 1062.3626
+          },
+          "consensus": {
+            "calls": 53853,
+            "inclusive_wall_ms": 273.9995
+          },
+          "projection": {
+            "calls": 53853,
+            "inclusive_wall_ms": 384.9764
+          },
+          "gossip": {
+            "calls": 53853,
+            "inclusive_wall_ms": 1.6009
+          },
+          "http": {
+            "calls": 53853,
+            "inclusive_wall_ms": 1492.3847
+          },
+          "idle": {
+            "calls": 4050,
+            "inclusive_wall_ms": 6525.8563
+          },
+          "yield": {
+            "calls": 46050,
+            "inclusive_wall_ms": 98.9433
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 327.4006
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 301.9218
+          },
+          "bind": {
+            "calls": 21,
+            "inclusive_wall_ms": 18.0386
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 835.5559
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 297.7461
+          },
+          "execute_cpu": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "execute_integer": {
+            "calls": 64,
+            "inclusive_wall_ms": 2776.4452
+          },
+          "integer_wire": {
+            "calls": 64,
+            "inclusive_wall_ms": 1890.4972
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 713.2732
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 440.6361
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 593.0438
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.563
+          },
+          "io_metadata_read": {
+            "calls": 315,
+            "inclusive_wall_ms": 4.9247
+          },
+          "io_metadata_write": {
+            "calls": 265,
+            "inclusive_wall_ms": 1153.6111
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1318.3229
+          },
+          "io_recover": {
+            "calls": 105,
+            "inclusive_wall_ms": 1036.9103
+          },
+          "lifecycle": {
+            "calls": 53407,
+            "inclusive_wall_ms": 959.993
+          },
+          "consensus": {
+            "calls": 53407,
+            "inclusive_wall_ms": 246.5676
+          },
+          "projection": {
+            "calls": 53407,
+            "inclusive_wall_ms": 371.4339
+          },
+          "gossip": {
+            "calls": 53407,
+            "inclusive_wall_ms": 1.5367
+          },
+          "http": {
+            "calls": 53407,
+            "inclusive_wall_ms": 1483.6761
+          },
+          "idle": {
+            "calls": 4056,
+            "inclusive_wall_ms": 6582.5223
+          },
+          "yield": {
+            "calls": 45617,
+            "inclusive_wall_ms": 161.1938
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "inclusive_wall_ms": 346.796
+          },
+          "authentication": {
+            "calls": 64,
+            "inclusive_wall_ms": 300.0629
+          },
+          "bind": {
+            "calls": 21,
+            "inclusive_wall_ms": 17.9108
+          },
+          "capture": {
+            "calls": 26433,
+            "inclusive_wall_ms": 840.6761
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "inclusive_wall_ms": 293.5368
+          },
+          "execute_cpu": {
+            "calls": 0,
+            "inclusive_wall_ms": 0
+          },
+          "execute_integer": {
+            "calls": 64,
+            "inclusive_wall_ms": 2769.6278
+          },
+          "integer_wire": {
+            "calls": 64,
+            "inclusive_wall_ms": 1883.2611
+          },
+          "reduction": {
+            "calls": 64,
+            "inclusive_wall_ms": 712.1806
+          },
+          "state_tree": {
+            "calls": 64,
+            "inclusive_wall_ms": 439.7983
+          },
+          "packet": {
+            "calls": 64,
+            "inclusive_wall_ms": 596.8531
+          },
+          "io_nodes": {
+            "calls": 39,
+            "inclusive_wall_ms": 3.2146
+          },
+          "io_metadata_read": {
+            "calls": 273,
+            "inclusive_wall_ms": 4.1626
+          },
+          "io_metadata_write": {
+            "calls": 264,
+            "inclusive_wall_ms": 1223.8555
+          },
+          "io_persist": {
+            "calls": 8512,
+            "inclusive_wall_ms": 1275.5965
+          },
+          "io_recover": {
+            "calls": 91,
+            "inclusive_wall_ms": 900.6006
+          },
+          "lifecycle": {
+            "calls": 52468,
+            "inclusive_wall_ms": 1006.354
+          },
+          "consensus": {
+            "calls": 52468,
+            "inclusive_wall_ms": 249.3035
+          },
+          "projection": {
+            "calls": 52468,
+            "inclusive_wall_ms": 372.144
+          },
+          "gossip": {
+            "calls": 52468,
+            "inclusive_wall_ms": 4.1085
+          },
+          "http": {
+            "calls": 52468,
+            "inclusive_wall_ms": 1501.2977
+          },
+          "idle": {
+            "calls": 4061,
+            "inclusive_wall_ms": 6536.3563
+          },
+          "yield": {
+            "calls": 44712,
+            "inclusive_wall_ms": 145.5365
+          }
+        }
+      ]
+    }
+  ],
+  "acceptance": {
+    "million_finalized_tps": false,
+    "maximum_global_bottleneck_proven": false,
+    "gpu_acceleration": false,
+    "physical_gpu_identity_attested": false,
+    "business_zk_finality": false,
+    "production_release": false
+  },
+  "remaining": "Mainchain integration still has serial fee/state-tree finalization, capture/packet/archive materialization, durable metadata and RPC costs. IntegerWire includes exec encoding, AOEM dispatch/backend/wait/readback/decoding, not pure kernel time. Keep CPU default. Next inspect that unified wire boundary and existing batch semantics, not a new engine/consensus.",
+  "synchronized_before_commit": "5791a71b (two independent network/discovery fixes; measured binary built on 41986d75 plus this node patch)",
+  "tests": {
+    "native_pipeline": {
+      "passed": 390,
+      "failed": 0,
+      "ignored": 60
+    },
+    "release_build": true,
+    "release_lib_clippy_D_warnings": true,
+    "actual_product_cases": [
+      {
+        "name": "single-ingress",
+        "source": "target/resident-rpc-single-ingress-tests/4388-1791874863124290000/result.json",
+        "sha256": "65E5212070150C033AB1E70D7612B335B0D651D2756D3309FCD5676D17B53A29",
+        "passed": true
+      },
+      {
+        "name": "aab",
+        "source": "target/resident-rpc-aab-tests/24504-1791874864978899500/result.json",
+        "sha256": "4204D19DE34932AA8AC6BA1900D802C4ED3DE98F2003AECC3A26DD032EC2945E",
+        "passed": true
+      },
+      {
+        "name": "offline",
+        "source": "artifacts/audit/resident-rpc-offline/7652-1791874876266705500/result.json",
+        "sha256": "D58A832D9A48C9CCE2AF66DE6F47672242C176C46A9EDCB693B4579377BA9674",
+        "passed": true
+      }
+    ]
+  },
+  "drafts": {
+    "count": 49,
+    "changed": []
+  },
+  "observation_files": [
+    {
+      "path": "artifacts/audit/resident-rpc-load/6284-1791873016725667500/observations.json",
+      "sha256": "D8A2FE3C5DDEC6480E3CD9EDFD2B6E17293819D0611FBBFFBE07111D2D03A344",
+      "bytes": 40770561
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/27428-1791873355486190000/observations.json",
+      "sha256": "72AFA6F43D333060A164C09FFEA1C6FDEA3C95181BAEC5D5D1A8F5776938474C",
+      "bytes": 40768513
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/25380-1791873722898963700/observations.json",
+      "sha256": "DCC73998FEF654581541C60DDA58DB19698362D75BB8EB25B40A1EBBFB7862B9",
+      "bytes": 40770561
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/8024-1791873786357106100/observations.json",
+      "sha256": "5706FFE66EEB47D127FC5EB7E6FD9FDD2EEBF78559EA86F58E8CFBCAFA3DF8A7",
+      "bytes": 40777729
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/22068-1791874020222383600/observations.json",
+      "sha256": "7537CFBD53F6711DA88C67822B4F6EA44BB416606C4D139D9BC7F63423A83D0B",
+      "bytes": 40775681
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/27776-1791874256595738400/observations.json",
+      "sha256": "FB83D51A02668EB9DF1097B9B960B4573BB804E62783297F379433FA8EA8705C",
+      "bytes": 40766465
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/28120-1791874473644290100/observations.json",
+      "sha256": "5FC2EFE14192C7F9711499F95A405FCBD3AAB3A9430288FF7E8A7E59EF486052",
+      "bytes": 40770561
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/3040-1791874522537061600/observations.json",
+      "sha256": "A679730C8520460E7E5BE510F900BD108EBD25D6B5BEB7A4F1272D8F73FBF7E3",
+      "bytes": 40767489
+    },
+    {
+      "path": "artifacts/audit/resident-rpc-load/8572-1791874574583804900/observations.json",
+      "sha256": "A1C8C713ADC3F0EB27996DA38F38D475D76ACB13D2BB1E6C13C5E7702515EA8E",
+      "bytes": 40777729
+    }
+  ]
+}

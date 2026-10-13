@@ -106,6 +106,9 @@ impl NovTransferInput {
         resources: &mut ResidentTransferResources,
         timeout: Duration,
     ) -> Result<ExecutedNovBatch> {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::ExecuteInteger,
+        );
         let now = u128::from(self.input.plan().context().timestamp_unix_ms);
         let commitment = self.input.plan().commitment();
         let IntegerPredictions {
@@ -171,6 +174,9 @@ impl NovTransferInput {
         session: &mut ComputeSession,
         timeout: Duration,
     ) -> Result<ExecutedNovBatch> {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::ExecuteCpu,
+        );
         let now = u128::from(self.input.plan().context().timestamp_unix_ms);
         let commitment = self.input.plan().commitment();
         let prepared = Arc::new(self.prepared);
@@ -443,6 +449,8 @@ fn finish(
     components: Vec<Option<Vec<Prediction>>>,
     now: u128,
 ) -> Result<ExecutedNovBatch> {
+    let _span =
+        crate::native_pipeline::profile::span(crate::native_pipeline::profile::Phase::Reduction);
     let mut ordered: Vec<Option<Prediction>> = (0..prepared.requests.len()).map(|_| None).collect();
     for component in components {
         for prediction in component.context("missing NOV component results")? {
@@ -576,7 +584,12 @@ fn finish(
         .iter()
         .filter(|tx| tx.is_apfl_view())
         .count();
-    let effects = input.stage(&changes)?;
+    let effects = {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::StateTree,
+        );
+        input.stage(&changes)?
+    };
     let mut digest = Sha256::new();
     digest.update(b"novovm/replacement/nov-executed-batch/v1\0");
     digest.update(effects.plan_commitment());

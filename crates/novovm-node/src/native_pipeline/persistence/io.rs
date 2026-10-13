@@ -460,14 +460,23 @@ fn run_owner(
         if let Some(command) = command {
             match command.operation {
                 Operation::Recover { candidate, reply } => {
+                    let _span = crate::native_pipeline::profile::span(
+                        crate::native_pipeline::profile::Phase::IoRecover,
+                    );
                     let _ = reply.send(store.recover(candidate));
                     completed = true;
                 }
                 Operation::MetadataRead { keys, reply } => {
+                    let _span = crate::native_pipeline::profile::span(
+                        crate::native_pipeline::profile::Phase::IoMetadataRead,
+                    );
                     let _ = reply.send(store.read_metadata(&keys));
                     completed = true;
                 }
                 Operation::MetadataApply { transition, reply } => {
+                    let _span = crate::native_pipeline::profile::span(
+                        crate::native_pipeline::profile::Phase::IoMetadataWrite,
+                    );
                     let _ = reply.send(store.apply_metadata(&transition));
                     completed = true;
                 }
@@ -475,6 +484,9 @@ fn run_owner(
                     pending.push_back((packet, reply, command.permit))
                 }
                 Operation::Nodes { hashes, reply } => {
+                    let _span = crate::native_pipeline::profile::span(
+                        crate::native_pipeline::profile::Phase::IoNodes,
+                    );
                     let keys: Vec<_> = hashes
                         .iter()
                         .map(|hash| super::packet::node_key(*hash))
@@ -517,6 +529,9 @@ fn run_owner(
             }
         }
         if let Some(job) = &mut active {
+            let _span = crate::native_pipeline::profile::span(
+                crate::native_pipeline::profile::Phase::IoPersist,
+            );
             match job.progress.step(&store, &job.packet) {
                 Ok(None) => {}
                 result => {

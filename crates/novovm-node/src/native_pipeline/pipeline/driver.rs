@@ -202,6 +202,9 @@ fn advance(
     let (id, capture_observation) = progress;
     let (cache, usage) = locality;
     use super::compute::Submission as ComputeSubmission;
+    let _span = matches!(stage, Stage::Capture(_)).then(|| {
+        crate::native_pipeline::profile::span(crate::native_pipeline::profile::Phase::Capture)
+    });
     match stage {
         Stage::Admission(inputs) => Ok(match compute.try_admit_signatures(inputs)? {
             ComputeSubmission::Accepted(ticket) => pending(Stage::Admitting(ticket), true),

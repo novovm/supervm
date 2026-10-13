@@ -629,6 +629,9 @@ impl Controller {
     /// Bounded scheduling only. No wait/sleep/socket/full-body operation. The
     /// caller keeps servicing ingress/query paths while AOEM or storage runs.
     pub fn poll(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::Consensus,
+        );
         ensure!(
             self.recovery_failure.is_none(),
             "controller cold recovery failed; explicit restart required: {:?}",

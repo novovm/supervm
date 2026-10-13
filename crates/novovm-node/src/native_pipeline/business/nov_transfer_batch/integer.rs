@@ -87,7 +87,12 @@ impl ResidentTransferResources {
         }
         rows.resize(self.capacity, dummy);
         self.poisoned = true;
-        let batch = self.session.run(&self.resource, &rows)?;
+        let batch = {
+            let _span = crate::native_pipeline::profile::span(
+                crate::native_pipeline::profile::Phase::IntegerWire,
+            );
+            self.session.run(&self.resource, &rows)?
+        };
         ensure!(
             batch.rows.len() == self.capacity,
             "NOV integer result row count mismatch"
