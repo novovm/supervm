@@ -1,0 +1,80 @@
+{
+  "schema": "novovm/resident-product-rpc-load/v1",
+  "passed": false,
+  "execution_backend": "aoem_integer_v7",
+  "failure": "product node 1 exited; logs=D:\\WorksArea\\SUPERVM\\crates\\novovm-node\\../../artifacts/audit/resident-rpc-load\\23588-1791907418682811500",
+  "phase": "startup",
+  "evidence": {
+    "binary": "\\\\?\\D:\\WorksArea\\SUPERVM\\target\\validation\\composition-32aee585\\baseline-node.exe",
+    "binary_sha256": "0x63aaf36c3e83df08897a35784e8fe7685373405aff9f0d31d0be281f1337b106",
+    "aoem_sha256": "0xf85e7ebf1fa906984f66b6e9cc4ebc9005efe636f64304c04665a3f73cb352f7",
+    "timeout_seconds": 600,
+    "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+    "async_authentication_required": true,
+    "historical_receipt_probe_required": true
+  },
+  "topology": "one host; four actual novovm-node processes and independent AOEM stores; WSS/E2E relay",
+  "distribution": "one fixed HTTP submission node; peer propagation and four-node final receipt queries; no client transaction fanout",
+  "submission_mode": "single_ingress",
+  "ingress_node": 0,
+  "http_admission_targets": [
+    0
+  ],
+  "http_admissions_by_node": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "workload": {
+    "transactions": 65536,
+    "senders": 1024,
+    "nonces_per_sender": 64,
+    "shared_recipient": true,
+    "max_outstanding": 8192,
+    "http_batch_max": 1024,
+    "http_concurrency": 4,
+    "per_node_http_inflight": 1,
+    "submission_http_concurrency": 1,
+    "observation_http_concurrency": 4,
+    "submission_mode": "credit_first_bounded_single_ingress_v1",
+    "signatures_pregenerated": true,
+    "expected_business_failures": 0,
+    "actual_block_count_is_not_assumed": true
+  },
+  "counts": {
+    "admission_attempts": 0,
+    "admission_error_responses": 0,
+    "retryable_admission_responses": 0,
+    "permanent_admission_responses": 0,
+    "retry_attempts": 0,
+    "transport_errors": 0,
+    "observation_requests": 0,
+    "finalized_successful": 0,
+    "finalized_business_failed": 0,
+    "max_outstanding": 0,
+    "dispatch_rounds": 0,
+    "observation_rounds": 0,
+    "deadline_expirations": 0
+  },
+  "unique_submitted": 0,
+  "unsubmitted": 65536,
+  "unique_permanently_rejected": 0,
+  "unresolved_submitted": 0,
+  "elapsed_seconds": null,
+  "timed_loop_wall_seconds_including_failed_attempt": null,
+  "successful_tps": null,
+  "latency_us": {
+    "p95": null,
+    "p99": null,
+    "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+  },
+  "timing": "first HTTP submission to all unique four-node finalized receipts; signing/startup/cold oracle excluded",
+  "business_failure_load_exercised": false,
+  "production_acceptance": false,
+  "four_machine_test": false,
+  "events_file": "events.jsonl",
+  "event_count": 0,
+  "failure_event_logging": "bounded-memory JSONL flushed per HTTP round; logging overhead included in timer",
+  "all_transaction_observations_file": "observations.json"
+}

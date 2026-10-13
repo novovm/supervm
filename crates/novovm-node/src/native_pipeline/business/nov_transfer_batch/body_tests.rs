@@ -857,6 +857,78 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
     }
 
     // Per-transaction integer rounding, not a split of aggregate charged fees.
+    // Discriminating capacity counterexample: A's fee is 46, B's fee is 45.
+    // With only 45 units of capacity A cannot credit B, but B CAN pay its own
+    // fee. Its transfer fails only because A's speculative incoming funds did
+    // not become effective. This cannot pass merely because both fees fail.
+    let b =
+        Sha256::digest(SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes())[12..].to_vec();
+    let raw = vec![
+        signed_with(21, 0, |tx| {
+            tx.to = b.clone();
+            tx.amount = 10_000;
+        }),
+        signed_with(22, 0, |tx| tx.amount = 1),
+    ];
+    for capacity in [45u128, 91] {
+        let (mut memory, root) = parent(&raw, 100_000, 0);
+        let initial = FeeState {
+            accounting: FeeAccounting {
+                treasury_reserve_nov: Some(u128::MAX - capacity),
+                ..FeeAccounting::default()
+            },
+            ..FeeState::default()
+        };
+        let mut changes = fee_record_changes(&policy(), &initial)?;
+        changes.push(StateChange::Put {
+            key: balance_key(&Account::try_from(b.clone()).unwrap()),
+            value: 45u128.to_le_bytes().to_vec(),
+        });
+        let update = stage_state_update(&memory, root, &changes)?;
+        let root = update.root();
+        memory.0.extend(update.nodes().clone());
+        let cpu = body(&raw)
+            .bind(context(root))?
+            .capture(&memory, capture_budget())?
+            .execute_for_proof()?;
+        let gpu = body(&raw)
+            .bind(context(root))?
+            .capture(&memory, capture_budget())?
+            .execute_with_integer_resources(
+                &mut session,
+                &mut resources,
+                Duration::from_secs(10),
+            )?;
+        assert_same_execution(&cpu, &gpu);
+        let a = &gpu.receipts()[0];
+        let b = &gpu.receipts()[1];
+        assert_eq!(a.quote.as_ref().unwrap().nov_amount, 46);
+        assert_eq!(b.quote.as_ref().unwrap().nov_amount, 45);
+        assert!(b.fee_failure.is_none());
+        assert_eq!(b.delta.fee_funding_delta, 45);
+        assert!(b.journal.is_some());
+        assert_eq!((a.delta.nonce_after, b.delta.nonce_after), (1, 1));
+        if capacity == 45 {
+            assert_eq!(
+                a.fee_failure.as_ref().unwrap().code,
+                FeeFailureCode::AmountOverflow
+            );
+            assert_eq!(a.delta.recipient.after, 45);
+            assert!(matches!(b.failure, Some(crate::native_pipeline::business::quoted_transfer::TransferFailure::Business(crate::native_pipeline::business::quoted_transfer::TransferError::InsufficientFunds { available: 45, required: 46 }))));
+            assert_eq!(b.delta.payer.after, 0);
+            assert_eq!(gpu.fees().accounting.settlements, 1);
+            // Current baseline still repairs via finish. Full-plan integration
+            // must change this expectation to zero, not delete this scenario.
+            assert_eq!(gpu.observation().recomputed_transactions, 1);
+        } else {
+            assert!(a.failure.is_none() && b.failure.is_none());
+            assert_eq!(b.delta.payer.after, 9999);
+            assert_eq!(gpu.fees().accounting.settlements, 2);
+            assert_eq!(gpu.observation().recomputed_transactions, 0);
+        }
+    }
+
+    // Per-transaction integer rounding, not a split of aggregate charged fees.
     let raw = vec![signed(21, 0), signed(22, 0)];
     let (memory, root) = parent(&raw, 1000, 0);
     let cpu = body(&raw)

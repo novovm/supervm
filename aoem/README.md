@@ -3,15 +3,16 @@
 This directory is a single AOEM FULLMAX package for SUPERVM. It is not a
 Proof-only sub-package and it is not a separate platform service.
 
-## Current update: Windows integer input dataflow (2026-10-13)
+## Current update: Windows guarded integer composition (2026-10-13)
 
-Windows core/header now come from AOEM `6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423`.
-Normal original-node integer predictions use AOIP0 v9 input dependencies and
-AOIR0001 final results: typed rows without
+Windows core/header now come from AOEM `7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed`.
+Normal original-node integer predictions use AOIP0 v10 dependencies and
+AOIR0002 final exports; the channel supports distinct guarded small programs.
+Results are typed values without
 numeric JSON, context/resource/sequence-bound single take. This is not a complete
 business plan: global fees/effects still use the existing finishing path.
 AOEM-internal dependency levels still read back/bind/upload; no full device
-residency is claimed. The v7/v8 APIs remain supported compatibility contracts.
+residency is claimed. The v7/v8/v9 APIs remain supported compatibility contracts.
 Windows sidecars and the entire Linux bundle remain the original `1377cd1e`
 artifacts; this is not a same-version rebuild of all platforms. The complete
 FULLMAX feature set and sidecar files remain included. Exact hashes, provenance

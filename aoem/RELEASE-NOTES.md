@@ -1,5 +1,15 @@
 # AOEM FULLMAX SUPERVM Host Package
 
+## 2026-10-13: Guarded cross-program composition
+
+Windows core/header: `7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed`.
+Unified opcode113 AOIP0 v10 composes existing resident pure programs with
+explicit output references, Boolean execution guards and fallback values.
+Local signatures remain <=16; result exports use AOIR0002 through the same
+single-take/ownership channel. No NOV rule, new shader or callback interpreter.
+Node predictions now consume this channel; fee/effect finish remains pending.
+CPU default, prior supported versions, Linux and sidecars are preserved.
+
 ## 2026-10-13: Bounded integer input dataflow
 
 Windows core/header source: `6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423`.

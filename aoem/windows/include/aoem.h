@@ -2816,6 +2816,21 @@ AOEM_API int32_t aoem_execute_primitive_v1(
 AOEM_API void aoem_free(uint8_t* ptr, size_t len);
 
 // Integer binary result v1 (capability compute_checked_integer_binary_result_v1).
+// AOIP0 v10 (compute_checked_integer_composition_v1): same opcode113 Run,
+// numeric5, v8 header/sequence. rows is logical node count (1..65536).
+// Body: resource_count u32 (1..8), export_count u32 (1..65536), resource IDs
+// u64 (distinct, same context, first=header resource); then each node:
+// program table index u32, guard binding, input bindings, fallback bindings.
+// Input/output arities come from THAT program (unchanged local <=16 contract).
+// Binding: tag0 + 32 u32 limbs; tag1 + prior node u32 + output column u32;
+// tag2 + 4 u32 limbs (unsigned u128 zero-extended to i1024). Final export
+// bindings follow all nodes. Exact length; <=32MiB body, <=131072 intermediate
+// values. Guard must be Boolean. False skips execution and selects fallback;
+// true executes existing pure program. Active domain/fault rejection aborts
+// and latches all involved resources. Economic failure may be a valid output.
+// Result AOIR0002: magic[8], anchor u64, sequence u64, exports u32, limbs=32
+// u32, followed by exports*32 u32 limbs. No partial output. Uses the SAME take
+// and free contract below. No state effects or business policy in this adapter.
 // AOIP0 v9 (compute_checked_integer_dataflow_v1) extends the same Run/result
 // contract with bounded cross-row input bindings. Header/sequence match v8;
 // rows=logical rows (1..resident capacity, <=4096). Input body contains exactly

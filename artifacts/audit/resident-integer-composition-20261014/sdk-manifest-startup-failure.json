@@ -1,0 +1,22 @@
+{
+  "schema": "novovm/resident-product-rpc-single-ingress/v1",
+  "passed": false,
+  "execution_backend": "aoem_integer_v7",
+  "failure": "product node 2 exited; logs=D:\\WorksArea\\SUPERVM\\crates\\novovm-node\\../../target/resident-rpc-single-ingress-tests\\29600-1791907187527117500",
+  "phase": "startup",
+  "evidence": {
+    "round_zero_scheduled_proposer": 1
+  },
+  "product_binary": "\\\\?\\D:\\WorksArea\\SUPERVM\\target\\release\\novovm-node.exe",
+  "product_binary_sha256": "0x6527d5ad1fd3f45668154d79b834868b3f31a9a16463d5142942d875034b515f",
+  "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+  "distribution": "one fixed non-proposer HTTP ingress; peer raw transaction propagation; all four queried",
+  "expected_unique_finalized": 8,
+  "expected_successful": 7,
+  "expected_business_failed": 1,
+  "legacy_host_permission": false,
+  "pending_durable": false,
+  "performance_measured": false,
+  "four_machine_test": false,
+  "production_acceptance": false
+}

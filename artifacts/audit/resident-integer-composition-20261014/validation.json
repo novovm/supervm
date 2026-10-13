@@ -1,0 +1,95 @@
+{
+  "schema": "novovm/guarded-integer-composition-validation/v1",
+  "date": "2026-10-14",
+  "source": {
+    "supervm_base": "32aee5853774a75a797b9e880a05626e9594c977",
+    "aoem": "7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed"
+  },
+  "artifacts": {
+    "node_sha256": "6527d5ad1fd3f45668154d79b834868b3f31a9a16463d5142942d875034b515f",
+    "functional_driver_sha256": "7b40657f741feb3cf2907ff2e32318cc1ebe63b0aca45f77ca96ac1f14b67e94",
+    "frozen_load_driver_sha256": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "aoem_sha256": "d81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+    "aoem_bytes": 44530688
+  },
+  "contract": {
+    "entry": "original node -> exec -> bindings -> opcode113/AOIP0-v10 -> resident pure outcome programs",
+    "result": "AOIR0002; same context/resource/sequence take and AOEM free",
+    "local_signature_unchanged": true,
+    "guard_skips_execution": true,
+    "multi_program_supported": true,
+    "current_product_prediction_uses_one_program": true,
+    "numeric_json_hot_path": false,
+    "full_candidate_complete": false,
+    "finish_callback_removed": false,
+    "fee_effect_compiler_complete": false,
+    "device_resident_intermediates": false,
+    "nov_rules_in_aoem": false,
+    "proof_complete": false,
+    "production_accepted": false
+  },
+  "checks": {
+    "native_resource_tests": 17,
+    "exec_passed": 65,
+    "exec_ignored": 25,
+    "node_pipeline_passed": 395,
+    "node_pipeline_ignored": 60,
+    "fmt": "pass",
+    "scoped_clippy_deny_warnings": "pass",
+    "node_release_build": "pass",
+    "real_full_u128_oracle": "pass",
+    "discriminating_fee_dependency": "pass; negative requires finish recomputation=1, positive=0; not fee-plan completion",
+    "single_ingress": "single-ingress.json",
+    "aab": "aab.json",
+    "offline": "offline.json",
+    "sdk_checksum_entries": 117,
+    "sdk_checksum_mismatches": 0,
+    "linux_rebuilt": false,
+    "sidecars_rebuilt": false,
+    "remote_ci": "not yet verified for delivery"
+  },
+  "preserved_drafts": {
+    "reference": "../resident-integer-device-20261013/validation.json",
+    "files": 49,
+    "sha256_mismatches": 0
+  },
+  "benchmark": {
+    "environment": "Windows Release, AC before/after, diagnostics off, no concurrent builds/tests",
+    "transactions": 65536,
+    "batch": 1024,
+    "payers": 1024,
+    "nonces_per_payer": 64,
+    "recipient": "shared",
+    "max_inflight": 8192,
+    "rpc_ingress": 1,
+    "validators": 4,
+    "endpoint": "all four finalized receipts; economic/history/cold checks preserved",
+    "sample_count_per_cell": 1,
+    "reports": [
+      "baseline-cpu.json",
+      "final-cpu.json",
+      "baseline-integer.json",
+      "final-integer.json"
+    ],
+    "stable_acceleration_claim": false
+  },
+  "retained_failures": [
+    {
+      "file": "sdk-manifest-startup-failure.json",
+      "reason": "new DLL staged before trust manifest updated; corrected without weakening hash check"
+    },
+    {
+      "file": "baseline-layout-startup-failure.json",
+      "reason": "renamed frozen DLL did not match original manifest suffix, selected Linux entry; restored windows/core/bin suffix and reran"
+    },
+    {
+      "reason": "native 16 passed/1 failed for missing explicit GPU selector; unchanged17 test suite passed after selectors provided"
+    }
+  ],
+  "remaining": [
+    "compile quote refusal, settlement refusal and business failure with separate guarded effects",
+    "successors consume adjudicated state rather than predictions",
+    "remove finish business adjudication only when full contract parity holds",
+    "internal readback/device residency and complete proof remain separate"
+  ]
+}

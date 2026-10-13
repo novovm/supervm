@@ -1,6 +1,17 @@
 # AOEM FULLMAX Runtime Baseline
 
-## Current: 2026-10-13 Windows bounded integer dataflow
+## Current: 2026-10-13 Windows guarded integer composition
+
+Core/header AOEM `7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed`, same FULLMAX features;
+44,530,688 bytes, SHA256 `d81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2`.
+AOIP0 v10 / AOIR0002 reuse the existing unified entry, resident outcome resources
+and single-take/free contract. Local signatures are unchanged. This generic
+multi-program guard/value adapter does NOT complete NOV fee/effect compilation.
+17 native resource tests passed with explicit device selectors; product tests
+and performance are recorded separately in the readiness tracker.
+Linux and sidecars unchanged; no GPU-residency/proof/production signoff.
+
+## Previous: 2026-10-13 Windows bounded integer dataflow
 
 Core/header AOEM `6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423`, same FULLMAX features;
 44,470,784 bytes, SHA256 `f85e7ebf1fa906984f66b6e9cc4ebc9005efe636f64304c04665a3f73cb352f7`.

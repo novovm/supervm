@@ -1,10 +1,10 @@
 {
   "name": "aoem-fullmax-supervm-host",
-  "version": "1.5.0-supervm-fullmax-windows-core-v7-profile1",
+  "version": "1.5.0-supervm-fullmax-windows-core-composition1",
   "package_stage": "windows_core_upgrade_with_retained_components",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Windows bound-resource profile 2026-10-13",
+    "id": "AOEM FULLMAX Windows guarded integer composition 2026-10-13",
     "stage": "windows_core_only_scoped_validation",
     "document": "RUNTIME-BASELINE.md",
     "macos_pending_not_bundled": true
@@ -161,10 +161,11 @@
     "windows-x86_64": {
       "status": "included",
       "library": "windows/core/bin/aoem_ffi.dll",
-      "library_sha256": "f85e7ebf1fa906984f66b6e9cc4ebc9005efe636f64304c04665a3f73cb352f7",
-      "library_bytes": 44470784,
+      "library_sha256": "d81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "library_bytes": 44530688,
       "fullmax_sidecars": "included",
-      "source_commit": "6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423",
+      "source_commit": "7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed",
+      "checked_integer_composition_v1": true,
       "checked_integer_binary_result_v1": true,
       "checked_integer_dataflow_v1": true,
       "source_commit_scope": "core_and_public_header_only",

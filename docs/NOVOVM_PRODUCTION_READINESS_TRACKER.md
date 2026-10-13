@@ -8,6 +8,70 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Guarded cross-program composition (partial step 2; fee/effect compiler OPEN)
+
+Input SUPERVM `32aee585`; generic AOEM adapter committed/pushed as `7fae6f32`.
+Original node -> exec -> bindings -> opcode113 now uses AOIP0 v10 and AOIR0002
+for its existing integer prediction plan. The SAME resident pure programs can
+be composed with distinct signatures, prior-output references, Boolean execution
+guards and explicit fallback values. Local inputs+outputs<=16 is unchanged.
+False guards skip execution/domain checks, rather than evaluate both branches.
+Final exports use the same context/resource/sequence single-take/free contract.
+No NOV instruction, Host-loop callback, new shader, ledger or consensus was added.
+
+**Not complete:** current product predictions still use one Transfer program.
+Fees/window/diagnostics/settlement refusal and final effects remain in `finish()`;
+the second CPU callback remains. New cross-program capability is NOT evidence
+that those business rules have been compiled. Internal levels still read back,
+bind and upload; no continuous GPU residency or full business proof is claimed.
+Next work is directly the fee/conditional-effect compiler using this adapter,
+not another DAG, result channel, device diagnosis or network rewrite.
+
+The requested discriminating fixture now exists and passes on real AOEM:
+A->B10000 fee46; B starts45 and sends1 fee45. Treasury remaining45 rejects A,
+but B's own fee succeeds and its business fails for missing funds. Remaining91
+makes both succeed. Full balances/nonce/fees/diagnostics/receipts/root match CPU.
+**Negative case still records one finish repair; positive records zero.** This
+exposes the remaining work instead of hiding it behind two capacity refusals.
+
+Checks: 17 AOEM resource tests including actual skipped/selected divide-zero,
+failure latch, binary ownership, bounded distinct-arity parsing and compatibility;
+65 exec tests passed/25 ignored; node pipeline395 passed/60 ignored; Release
+node build, fmt and scoped Clippy -D warnings passed. Full-u128 oracle passed.
+Actual integer original-node single-ingress failure/restart5.74s, A/A/B14.07s
+(three honest original processes plus fault peer), offline quorum/catchup/restart
+48.52s passed. Windows SDK core/header updated,117 checksum entries verified;
+Linux and sidecars unchanged.49 drafts hash-identical.
+
+### Finite same-condition regression comparison (not stable speedup)
+
+Windows Release, AC before/after, diagnostics off, no concurrent builds/tests;
+single RPC, four original validators,65536 signed transactions,1024/batch,
+1024 payers x64 nonce, shared recipient,8192 inflight. Same frozen driver
+`07090a3c...`; old node `63aaf36c...`/DLL `f85e7ebf...`, final node
+`6527d5ad...`/DLL `d81cf004...`. Each row:65536 success,0 business failure,
+0 permanent reject,0 unresolved; economics/history/cold recovery passed.
+Business failures are exercised separately by correctness fixtures, not counted
+as successful TPS. P95/P99 include first submission to slowest-node receipt HTTP
+observation, not pure consensus/device latency. One sample per cell:
+
+| Path | Before TPS | After TPS | Before P95/P99 ms | After P95/P99 ms |
+| --- | ---: | ---: | --- | --- |
+| CPU default | 9894.86 | 9646.13 | 1009.732 / 1154.621 | 1113.256 / 1136.245 |
+| Integer | 7975.13 | 8302.40 | 1211.984 / 1451.224 | 1292.362 / 1487.775 |
+
+CPU -2.51%, integer +4.10%; tails are mixed/worse. No stable acceleration
+signoff and no resolution of earlier CPU variation. Do not compare the single
+integer sample to historical best as an equivalent benchmark.
+
+Failed setup evidence retained: first product run rejected the not-yet-updated
+SDK trust manifest; frozen integer run initially used a renamed DLL path that
+selected the Linux manifest entry. Corrected manifests/path matching (no hash
+checks bypassed), then reran successfully. An initial native test lacked the
+required device selector; unchanged suite passed after explicit selectors.
+Reports and exact artifacts: [validation](../artifacts/audit/resident-integer-composition-20261014/validation.json).
+New delivery CI is separate from local checks; no mainnet/complete-plan signoff.
+
 ## 2026-10-13 Explicit integer dependency plan (partial step 2, NOT complete candidate execution)
 
 Input SUPERVM `c48dd7bd`; AOEM generic adapter pushed as `6cedc1e3`.

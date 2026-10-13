@@ -2,19 +2,19 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Windows integer input dataflow 2026-10-13",
+    "id": "AOEM FULLMAX Windows guarded integer composition 2026-10-13",
     "stage": "windows_core_only_scoped_validation",
     "document": "RUNTIME-BASELINE.md",
     "macos_pending_not_bundled": true
   },
   "entry": "aoem_execute_ops_wire_v1",
   "output": "aoem_state_read_v1",
-  "integer_binary_output": "aoem_integer_result_take_v1/AOIR0001",
+  "integer_binary_output": "aoem_integer_result_take_v1/AOIR0001,AOIR0002",
   "runtime_canon_changed": true,
   "public_ffi_abi_changed": true,
   "source_artifacts": {
     "source_layout": "mixed_component_provenance",
-    "windows_core_and_header_commit": "6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423",
+    "windows_core_and_header_commit": "7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed",
     "windows_sidecars_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "linux_bundle_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "retained_component_provenance": "platform_manifests_and_historical_runtime_baseline",
@@ -41,8 +41,8 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "f85e7ebf1fa906984f66b6e9cc4ebc9005efe636f64304c04665a3f73cb352f7",
-      "source_commit": "6cedc1e35da0fbc456f9cd8b8cec8a1afb5af423",
+      "sha256": "d81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "source_commit": "7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
@@ -50,7 +50,8 @@
         "storage_provider_wire_v1": true,
         "compute_checked_integer_resources_v7": true,
         "compute_checked_integer_binary_result_v1": true,
-        "compute_checked_integer_dataflow_v1": true
+        "compute_checked_integer_dataflow_v1": true,
+        "compute_checked_integer_composition_v1": true
       }
     }
   ],

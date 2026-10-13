@@ -29,6 +29,10 @@ pub enum AoemIntegerInputV1 {
     Output { row: u32, column: u32 },
 }
 
+#[path = "semantic_integer_composition.rs"]
+mod composition;
+pub use composition::AoemIntegerPlanNodeV1;
+
 impl AoemInteger1024V1 {
     pub fn from_u128(value: u128) -> Self {
         let mut limbs = [0; 32];
@@ -489,6 +493,7 @@ pub struct AoemIntegerResourceSessionV7 {
     profile_supported: bool,
     binary_supported: bool,
     dataflow_supported: bool,
+    composition_supported: bool,
 }
 
 /// Local measurements only. Never include these in business or consensus commitments.
@@ -559,6 +564,9 @@ impl AoemExecFacade {
             })
             .map_err(|_| anyhow::anyhow!("integer resource owner sequence exhausted"))?;
         Ok(AoemIntegerResourceSessionV7 {
+            composition_supported: self.capabilities_json()?
+                ["compute_checked_integer_composition_v1"]
+                == true,
             dataflow_supported: self.capabilities_json()?["compute_checked_integer_dataflow_v1"]
                 == true,
             binary_supported: self.capabilities_json()?["compute_checked_integer_binary_result_v1"]
@@ -580,6 +588,23 @@ impl AoemExecFacade {
 }
 
 impl AoemIntegerResourceSessionV7 {
+    pub fn supports_composition_v1(&self) -> bool {
+        self.binary_supported && self.composition_supported
+    }
+
+    /// One guarded multi-program delegation through opcode113. Only explicitly
+    /// selected final values return; local APFLOU signatures remain unchanged.
+    pub fn run_composition_v1(
+        &mut self,
+        resources: &[&AoemIntegerResourceV7],
+        nodes: &[AoemIntegerPlanNodeV1],
+        outputs: &[AoemIntegerInputV1],
+    ) -> Result<Vec<AoemInteger1024V1>> {
+        if !self.supports_composition_v1() {
+            bail!("AOEM integer composition unsupported; no fallback");
+        }
+        self.inner.run_composition(resources, nodes, outputs)
+    }
     pub fn supports_dataflow_v1(&self) -> bool {
         self.binary_supported && self.dataflow_supported
     }

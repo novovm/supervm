@@ -12,7 +12,8 @@ use anyhow::{ensure, Result};
 use novovm_exec::resident::AoemInteger1024V1;
 use novovm_exec::resident::{
     AoemExecOpenOptions, AoemIntegerInputV1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
-    AoemIntegerResourceSessionV7, AoemIntegerResourceV7, AoemLibrarySelection,
+    AoemIntegerOutcomeRowV1, AoemIntegerPlanNodeV1, AoemIntegerResourceSessionV7,
+    AoemIntegerResourceV7, AoemLibrarySelection,
 };
 use std::path::Path;
 
@@ -40,8 +41,8 @@ impl ResidentTransferResources {
         let facade = selection.open_wire_facade()?;
         let mut session = facade.create_integer_resource_session_v7("novovm/native-transfer")?;
         ensure!(
-            session.supports_dataflow_v1(),
-            "NOV integer execution requires AOEM dataflow v1; update SDK, no fallback"
+            session.supports_composition_v1(),
+            "NOV integer execution requires AOEM composition v1; update SDK, no fallback"
         );
         let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, max_rows)?;
         Ok(Self {
@@ -65,7 +66,50 @@ impl ResidentTransferResources {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::IntegerWire,
         );
-        let batch = self.session.run_dataflow_v1(&self.resource, rows)?;
+        // Same existing transfer program for now. The bounded composition
+        // channel supports distinct programs/guards without changing its local
+        // signature. This wiring alone does NOT move fee adjudication out of finish.
+        let literal = |n| {
+            novovm_exec::resident::AoemIntegerInputV1::Literal(
+                novovm_exec::resident::AoemInteger1024V1::from_u128(n),
+            )
+        };
+        let nodes: Vec<_> = rows
+            .iter()
+            .map(|inputs| AoemIntegerPlanNodeV1 {
+                program: 0,
+                guard: literal(1),
+                inputs: inputs.clone(),
+                otherwise: vec![literal(0); OUTPUTS],
+            })
+            .collect();
+        let exports: Vec<_> = (0..rows.len())
+            .flat_map(|row| {
+                (0..OUTPUTS).map(move |column| AoemIntegerInputV1::Output {
+                    row: row as u32,
+                    column: column as u32,
+                })
+            })
+            .collect();
+        let values = self
+            .session
+            .run_composition_v1(&[&self.resource], &nodes, &exports)?;
+        ensure!(
+            values.len() == rows.len() * OUTPUTS,
+            "NOV composition export count"
+        );
+        let batch = AoemIntegerOutcomeBatchV1 {
+            rows: values
+                .chunks_exact(OUTPUTS)
+                .map(|values| AoemIntegerOutcomeRowV1 {
+                    outcome: AoemIntegerOutcomeKindV1::Value,
+                    fault: 0,
+                    component: None,
+                    failed_instruction: None,
+                    values: values.to_vec(),
+                })
+                .collect(),
+        };
         ensure!(batch.rows.len() == rows.len(), "NOV dataflow result count");
         for row in &batch.rows {
             ensure!(
