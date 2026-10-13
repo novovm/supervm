@@ -1,0 +1,267 @@
+{
+  "schema": "novovm/complete-nov-algebraic-effects/v1",
+  "date": "2026-10-14",
+  "scope": "Original product NOV Transfer business-decision integration; integer performance regression remains; not production acceptance",
+  "baseline": {
+    "supervm": "a80306cc381d7aa6cdcba175e748e7b3a1d6d8b0",
+    "development_parent": "f42510b94a0e8146607fc0376db1aaa97e3437ae",
+    "aoem": "7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed",
+    "remote_delta": "e073bca2 mailbox and independent documentation fast-forwarded; no finance overlap",
+    "node_sha256": "6527d5ad1fd3f45668154d79b834868b3f31a9a16463d5142942d875034b515f"
+  },
+  "final": {
+    "root": "D:/WorksArea/SUPERVM",
+    "parent": "f42510b94a0e8146607fc0376db1aaa97e3437ae",
+    "source_files": [
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/direct_nov_fee/prepared.rs",
+        "sha256": "607cf0ef7b1f6a78d6c969dd77a86ea044942ce856320eb3778f70e11c165415"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch.rs",
+        "sha256": "d7b17f13bfe5e444df0797cc5333ab03f41da6ffded9dd3ed304262a8764ebf2"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/body_tests.rs",
+        "sha256": "857e8c6d57e13bcc9d5597cca2147a6105f2c78478ca582d3ca910512998e00e"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/checked_integer_asset.rs",
+        "sha256": "c4a32eac1ee148078b28f062b361e2b513a38b428c5cbeff6ad1ccc5d720e4b4"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs",
+        "sha256": "3b9c16c463e31728e6edc4ceef36800f1da124be35da41d509730d5b48c6bcef"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs",
+        "sha256": "d7556fa5e1d10335896d8d74f96a941824507ee51eabbdaadf29755ab9020038"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs",
+        "sha256": "5d4ad67d2f608f805b22d112ad3598dc507974a41c418d01c7e949341fb49e3e"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/effect_assets.rs",
+        "sha256": "35357c8dc64c94ba7b4fc934c65c43d276e3ce4f400e4c6de055152a8c1e40db"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+        "sha256": "3e4d0d025bbbe94e87962e91a88bad185515442d8566288549b1ae9aca2acaab"
+      }
+    ],
+    "node_sha256": "d254ad719a20be8fc1dc32b3ce964784bb553b9d3b61bf540684a4a118777a8c",
+    "test_sha256": "23ab95c1b4aca50db6c36337000767539088de0f9aa4112be627de7b15fa79c2",
+    "aoem_sha256": "d81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2"
+  },
+  "implementation": {
+    "owner": "novovm-node/native_pipeline/business/nov_transfer_batch/full_effects",
+    "route": "node -> exec -> bindings -> opcode113 AOIP0 v10 -> AOIR0002",
+    "programs": 8,
+    "local_signature_max": 16,
+    "integer_business_delegations_per_candidate": 1,
+    "integer_finish_callback": false,
+    "host_post_result_business_repair": false,
+    "cpu_default_retained": true,
+    "aoem_source_or_dll_changed": false,
+    "normal_numeric_json": false,
+    "complete_business_relation_proof": false,
+    "continuous_gpu_residency": false,
+    "mutable_effects": [
+      "effective balances and nonce",
+      "fee refusal priority and actual charged prefix",
+      "treasury counters and individually rounded buckets",
+      "daily window refresh",
+      "saturating diagnostics and last diagnostic selectors",
+      "ordered receipt numeric fields"
+    ],
+    "retained_host_work": [
+      "immutable quotation and compilation",
+      "authentication and exact-parent capture",
+      "result identity and tag validation",
+      "canonical result materialization",
+      "existing SHA256 tree staging and publication"
+    ],
+    "parallel_optimization": "conservative immutable all-quote capacity bound, rechecked by AOEM and mandatory exported validity bit; otherwise ordered monetary/count prefix",
+    "removed": "superseded dataflow.rs and run_plan prediction wrapper; available in Git; CPU finish and test-only legacy row oracle retained"
+  },
+  "work_removed": {
+    "identical_quote_split": "1024 equal-quote transactions share one AOEM rounded split, individual actual settlement selects each effect; split resource capacity 1 instead of padded 1024",
+    "algebraic_simplification": "zero vectors, pure identity/select expressions, provably inapplicable diagnostics and unconditional threshold checks; no mutable outcome computed in host"
+  },
+  "tests": {
+    "format": "cargo fmt --all -- --check passed",
+    "clippy": "cargo clippy --release --locked -p novovm-node --lib --target-dir target -- -D warnings passed",
+    "build": "original novovm-node Release build and lib test build passed",
+    "pipeline": {
+      "passed": 395,
+      "ignored": 61,
+      "scope": "native_pipeline filter; six relevant native ignored tests executed separately"
+    },
+    "actual_native": [
+      "delivery-resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair.log",
+      "delivery-resident_complete_plan_windows_diagnostics_and_capacity_edges.log",
+      "delivery-resident_integer_rows_match_current_quoted_transfer_full_u128.log",
+      "delivery-single-ingress.json",
+      "delivery-aab.json",
+      "delivery-offline.json"
+    ],
+    "dependency_counterexample": "capacity45: A fee46 rejected, B fee45 settles but B transfer1 fails from balance45; capacity91: both succeed; all effects/receipts/roots equal CPU, recomputation0",
+    "negative_development_observation": "Initial pure split used exact-div opcode3; actual domain rejection exposed error; corrected to existing floor-div opcode7. No validation relaxation."
+  },
+  "performance_contract": {
+    "platform": "Windows Release; AC online before and after each run; no simultaneous compiler/test workload",
+    "topology": "one host, four real original-node processes and independent AOEM stores",
+    "submission": "single original RPC node0, peer propagation, four-node final receipt HTTP completion",
+    "transactions": 65536,
+    "batch_max": 1024,
+    "senders": 1024,
+    "nonces_per_sender": 64,
+    "shared_recipient": true,
+    "max_outstanding": 8192,
+    "diagnostics_enabled": false,
+    "signing_startup_and_cold_checks_in_timer": false,
+    "full_economic_history_and_cold_checks": true,
+    "driver_sha256": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "latency_scope": "first submit to slowest node final receipt HTTP response, including bounded observation scheduling",
+    "business_failure_load": false,
+    "business_failure_tests": "separate native dependency/edge/RPC negative cases",
+    "stable_throughput_claim": false
+  },
+  "preserved_drafts": {
+    "reference": "../resident-integer-device-20261013/validation.json",
+    "files": 49,
+    "changed": 0
+  },
+  "limitations": [
+    "Integer full-plan throughput regressed; do not promote to default or production",
+    "AOEM internal per-level upload/readback still present; no claim all regression time assigned to it",
+    "No new physical-device attestation: diagnostic disabled; device selection preference is not proof",
+    "Maximum 4096-row complete candidate not accepted; existing graph/export/wire budgets fail closed",
+    "No Linux, independent-machine, full-business ZK or million-TPS signoff",
+    "Raw per-transaction observations and process databases remain in original ignored fixture paths referenced by reports; committed result snapshots do not contain all those files"
+  ],
+  "production_acceptance": false,
+  "performance_samples": [
+    {
+      "sample": "baseline-cpu",
+      "report": "baseline-cpu.json",
+      "node_sha256": "0x6527d5ad1fd3f45668154d79b834868b3f31a9a16463d5142942d875034b515f",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 9176.667940892714,
+      "seconds": 7.14159,
+      "p95_ms": 1172.938,
+      "p99_ms": 1304.601,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "final-cpu",
+      "report": "final-cpu.json",
+      "node_sha256": "0x073a98db0123095853e9affd8d9ecaa031c5e004541ddfdfd739b326f811a27d",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 9244.823626663507,
+      "seconds": 7.08894,
+      "p95_ms": 1255.026,
+      "p99_ms": 1464.472,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "optimized-cpu",
+      "report": "optimized-cpu.json",
+      "node_sha256": "0x18374f6b518908841d7ebdf652e7166d43dc51b8f7ff3c709ae19bed6721423e",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 10351.516564464078,
+      "seconds": 6.331053,
+      "p95_ms": 1040.957,
+      "p99_ms": 1046.734,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "delivery-cpu",
+      "report": "delivery-cpu.json",
+      "node_sha256": "0xd254ad719a20be8fc1dc32b3ce964784bb553b9d3b61bf540684a4a118777a8c",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 9284.456765918949,
+      "seconds": 7.058679,
+      "p95_ms": 1041.128,
+      "p99_ms": 1161.087,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "baseline-integer",
+      "report": "baseline-integer.json",
+      "node_sha256": "0x6527d5ad1fd3f45668154d79b834868b3f31a9a16463d5142942d875034b515f",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 7572.044532902045,
+      "seconds": 8.654994,
+      "p95_ms": 1425.183,
+      "p99_ms": 1602.043,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "final-integer",
+      "report": "final-integer.json",
+      "node_sha256": "0x073a98db0123095853e9affd8d9ecaa031c5e004541ddfdfd739b326f811a27d",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 1688.5097345409997,
+      "seconds": 38.812924,
+      "p95_ms": 5314.951,
+      "p99_ms": 5627.737,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "optimized-integer",
+      "report": "optimized-integer.json",
+      "node_sha256": "0x18374f6b518908841d7ebdf652e7166d43dc51b8f7ff3c709ae19bed6721423e",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 2792.509464922274,
+      "seconds": 23.468497,
+      "p95_ms": 3512.175,
+      "p99_ms": 3577.222,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "delivery-integer",
+      "report": "delivery-integer.json",
+      "node_sha256": "0xd254ad719a20be8fc1dc32b3ce964784bb553b9d3b61bf540684a4a118777a8c",
+      "aoem_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 2777.705959716991,
+      "seconds": 23.59357,
+      "p95_ms": 3354.283,
+      "p99_ms": 3602.785,
+      "successes": 65536,
+      "failures": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    }
+  ]
+}

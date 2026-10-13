@@ -592,7 +592,7 @@ impl RpcLifecycle {
                 "aoem_semantic_v2_cpu_callbacks"
             }
             crate::native_pipeline::pipeline::ExecutionBackend::AoemIntegerV7 => {
-                "aoem_integer_v7_vulkan_prediction_cpu_settlement"
+                "aoem_integer_v10_complete_effect_composition"
             }
         };
         let leader = self
@@ -629,6 +629,7 @@ impl RpcLifecycle {
             "execution_peak_callbacks":stats.execution_peak_callbacks,
             "execution_integer_rows_total":stats.execution_gpu_rows_total,
             "execution_integer_waves_total":stats.execution_gpu_waves_total,
+            "execution_integer_waves_scope":"legacy field: complete composition delegations, not physical GPU dispatches",
             "execution_recomputed_transactions_total":stats.execution_recomputed_transactions_total,
             "apfl_view_transactions_total":stats.apfl_view_transactions_total,
             "apfl_transport":apfl_transport,

@@ -3,9 +3,10 @@
 //! This is a new complete direct-NOV economic effect layout, not the old Store,
 //! per-transaction root/seal, or receipt codec. A private compiled input binds
 //! the installed program, all resolved fee policy, body and exact parent input.
-//! Independent dependency components run on AOEM; the last callback performs
-//! ordered settlement/repair and one batch tree update. No host-computed final
-//! monetary patch is submitted as if it were parallel business execution.
+//! CPU reference components run on AOEM with ordered settlement/repair. The
+//! resident integer path compiles effective fees/accounts/diagnostics into one
+//! typed composition; it never calls that repair callback. Both reuse original
+//! batch tree staging and publication, not a second authority.
 //!
 //! Outputs remain tentative. No persistent admission, validity proof, cumulative
 //! receipt tree, canonical publication or finality is established here.
@@ -26,7 +27,9 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) mod checked_integer_asset;
+mod effect_assets;
 mod execution;
+mod full_effects;
 mod integer;
 pub use execution::{ExecutedNovBatch, ExecutionObservation, NovTransferReceipt};
 pub(crate) use integer::ResidentTransferResources;
