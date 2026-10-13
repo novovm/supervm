@@ -1,5 +1,12 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-13 Self-Owned Discovery v1 运行时认领（进行中）：** NOVOCHAT 会话，
+输入 SUPERVM `c7b32c93` / NOVOCHAT `6879b89`；已核对实际 main、远端与干净工作区。
+限定 network 既有 service lease/checkpoint/host、自主来源接入及相邻真实载体测试，
+必要 relay 入口、手机 Application 受保护配置与对应验收记录。自主信任显式建模，
+不把 Publisher 门限设为零、不静默转换旧来源、不改身份/消息/撤销历史，不改
+金融/AOEM/共识。两手机与第三方 Relay 依赖分别记录；组件通过不签收实机目标。
+
 **2026-10-13 自主入网/UCA/L4 定向复核（文档范围，已完成）：** 输入
 `4670da2c` / NOVOCHAT `3cbe565`，实际两仓 main 与 origin/main 一致且干净。
 用户确认不引入官方/开发者准入、统一复用 UCA、手机自愿贡献并按真实服务
