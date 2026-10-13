@@ -752,11 +752,11 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
             )?;
         assert_same_execution(&cpu, &gpu);
         assert_eq!(gpu.observation().gpu_rows, raw.len());
-        assert_eq!(gpu.observation().gpu_waves, 2);
+        assert_eq!(gpu.observation().gpu_waves, 1);
         assert_eq!(gpu.observation().recomputed_transactions, 0);
         assert_eq!(cpu.observation().gpu_rows, 0);
         assert_eq!(cpu.observation().gpu_waves, 0);
-        assert!(gpu.observation().peak_callbacks > 0);
+        assert_eq!(gpu.observation().peak_callbacks, 0);
     }
 
     // Four dependent rows in ONE candidate: incoming funds, consecutive nonce,
@@ -793,7 +793,7 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
         .capture(&memory, capture_budget())?
         .execute_with_integer_resources(&mut session, &mut resources, Duration::from_secs(10))?;
     assert_same_execution(&cpu, &gpu);
-    assert_eq!(gpu.observation().gpu_waves, 4);
+    assert_eq!(gpu.observation().gpu_waves, 1);
     assert_eq!(gpu.observation().gpu_rows, 4);
     assert_eq!(gpu.observation().recomputed_transactions, 0);
     assert_eq!(gpu.receipts()[2].delta.nonce_after, 2);
@@ -835,8 +835,8 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
     assert_same_execution(&cpu, &gpu);
     assert_eq!(gpu.observation().components, 1);
     assert_eq!(gpu.observation().gpu_rows, 2);
-    assert_eq!(gpu.observation().gpu_waves, 2);
-    assert_eq!(gpu.observation().recomputed_transactions, 1);
+    assert_eq!(gpu.observation().gpu_waves, 1);
+    assert_eq!(gpu.observation().recomputed_transactions, 0);
     assert_eq!(
         gpu.receipts()[0].fee_failure.as_ref().unwrap().code,
         FeeFailureCode::AmountOverflow
@@ -917,9 +917,8 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
             assert!(matches!(b.failure, Some(crate::native_pipeline::business::quoted_transfer::TransferFailure::Business(crate::native_pipeline::business::quoted_transfer::TransferError::InsufficientFunds { available: 45, required: 46 }))));
             assert_eq!(b.delta.payer.after, 0);
             assert_eq!(gpu.fees().accounting.settlements, 1);
-            // Current baseline still repairs via finish. Full-plan integration
-            // must change this expectation to zero, not delete this scenario.
-            assert_eq!(gpu.observation().recomputed_transactions, 1);
+            // Refused credit propagates inside the plan without node repair.
+            assert_eq!(gpu.observation().recomputed_transactions, 0);
         } else {
             assert!(a.failure.is_none() && b.failure.is_none());
             assert_eq!(b.delta.payer.after, 9999);
@@ -948,5 +947,101 @@ fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repai
         ),
         (62, 18, 10)
     );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires trusted AOEM and Vulkan; full-plan windows/diagnostics parity"]
+fn resident_complete_plan_windows_diagnostics_and_capacity_edges() -> Result<()> {
+    use crate::native_pipeline::business::direct_nov_fee::{
+        ClearingFailure, FeeFailure, FeeFailureCode,
+    };
+    use novovm_exec::resident::ComputeSession;
+    use std::time::Duration;
+    let library = std::path::PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY").context("AOEM library required")?,
+    );
+    let mut session = ComputeSession::open(&library, 4)?;
+    let mut resources = ResidentTransferResources::new(&library, 4, 7)?;
+    for case in 0..9 {
+        let mut policy = policy();
+        policy.resolution_source = "default_fallback_test".into();
+        policy.settlement_paused = case == 0;
+        policy.clearing_require_healthy_risk_buffer = true;
+        policy.min_reserve_bucket_nov = 40;
+        policy.min_fee_bucket_nov = 10;
+        if case == 6 {
+            policy.clearing_daily_nov_hard_limit = u128::MAX;
+        }
+        let raw = vec![
+            signed_with(21, 0, |tx| {
+                if case <= 2 {
+                    tx.fee_policy.max_pay_amount = 1;
+                }
+            }),
+            signed_with(21, 1, |tx| {
+                if case == 2 {
+                    tx.fee_policy.max_pay_amount = 1;
+                }
+            }),
+        ];
+        let (mut memory, root) = parent(&raw, if case == 1 { 0 } else { 1000 }, 0);
+        let mut initial = FeeState::default();
+        initial.accounting.daily_window_day = if case == 6 { 2 } else { 1 };
+        initial.accounting.daily_nov_used = u128::MAX;
+        if case == 3 {
+            initial.accounting.settlements = u64::MAX;
+        }
+        if case == 4 {
+            initial.accounting.reserve_bucket_nov = u128::MAX;
+            initial.accounting.risk_buffer_nov = 1;
+        }
+        if case == 7 {
+            initial.accounting.journal_next_seq = u64::MAX - 1;
+        }
+        if case == 8 {
+            initial.accounting.settled_by_asset_nov = Some(u128::MAX - 45);
+        }
+        let d = &mut initial.diagnostics;
+        d.quote_max_pay_exceeded = u64::MAX;
+        d.settlement_policy_fallback = u64::MAX - 1;
+        d.settlement_paused = u64::MAX;
+        d.settlement_amount_overflow = u64::MAX;
+        d.clearing_quote_expired = u64::MAX;
+        d.clearing_insufficient_user_balance = u64::MAX;
+        d.last_clearing_failure = Some(ClearingFailure {
+            unix_ms: 17,
+            failure: FeeFailure {
+                code: FeeFailureCode::QuoteExpired,
+                reason: "fee.clearing.quote_expired: historical".into(),
+            },
+        });
+        let update = stage_state_update(&memory, root, &fee_record_changes(&policy, &initial)?)?;
+        let root = update.root();
+        memory.0.extend(update.nodes().clone());
+        let mut ctx = context(root);
+        ctx.effect_contract = effect_contract(&policy)?;
+        let make = || {
+            NovTransferBody::prepare(checked(&raw), policy.clone(), budget())?
+                .bind(ctx.clone())?
+                .capture(&memory, capture_budget())
+        };
+        let cpu = make()?.execute_for_proof()?;
+        let gpu = make()?.execute_with_integer_resources(
+            &mut session,
+            &mut resources,
+            Duration::from_secs(10),
+        )?;
+        assert_same_execution(&cpu, &gpu);
+        assert_eq!(gpu.observation().recomputed_transactions, 0, "case {case}");
+        assert_eq!(gpu.observation().peak_callbacks, 0, "case {case}");
+        assert_eq!(gpu.observation().gpu_waves, 1, "case {case}");
+        assert_eq!(gpu.receipts()[1].delta.nonce_after, 2);
+        if case == 2 {
+            assert_eq!(gpu.fees().accounting.daily_window_day, 1);
+        } else {
+            assert_eq!(gpu.fees().accounting.daily_window_day, 2);
+        }
+    }
     Ok(())
 }

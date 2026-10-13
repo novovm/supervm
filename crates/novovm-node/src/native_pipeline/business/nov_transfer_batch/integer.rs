@@ -1,4 +1,4 @@
-//! One owner-thread resource, one fixed row shape, no per-batch device setup.
+//! One owner-thread session, eight bounded pure programs, no per-batch setup.
 
 use super::checked_integer_asset::{transfer_asset, INPUTS, OUTPUTS};
 #[cfg(test)]
@@ -8,20 +8,20 @@ use crate::native_pipeline::business::quoted_transfer::{
 #[cfg(test)]
 use anyhow::Context;
 use anyhow::{ensure, Result};
-#[cfg(test)]
-use novovm_exec::resident::AoemInteger1024V1;
 use novovm_exec::resident::{
-    AoemExecOpenOptions, AoemIntegerInputV1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
-    AoemIntegerOutcomeRowV1, AoemIntegerPlanNodeV1, AoemIntegerResourceSessionV7,
+    AoemExecOpenOptions, AoemIntegerInputV1, AoemIntegerPlanNodeV1, AoemIntegerResourceSessionV7,
     AoemIntegerResourceV7, AoemLibrarySelection,
 };
+#[cfg(test)]
+use novovm_exec::resident::{AoemInteger1024V1, AoemIntegerOutcomeKindV1};
 use std::path::Path;
 
 /// Lives and is destroyed on the original compute owner. Its native context
-/// owns the sole program/shape until drop; no authority/store is added here.
+/// owns the program/shape table until drop; no authority/store is added here.
 pub(crate) struct ResidentTransferResources {
     session: AoemIntegerResourceSessionV7,
     resource: AoemIntegerResourceV7,
+    effects: Vec<AoemIntegerResourceV7>,
     capacity: usize,
     poisoned: bool,
 }
@@ -45,9 +45,25 @@ impl ResidentTransferResources {
             "NOV integer execution requires AOEM composition v1; update SDK, no fallback"
         );
         let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, max_rows)?;
+        let effects = super::effect_assets::assets()
+            .into_iter()
+            .zip(super::effect_assets::SHAPES)
+            .enumerate()
+            .map(|(index, (asset, (inputs, outputs)))| {
+                // Program 5 consumes memoized invariant quotations, not one
+                // row per transaction. Never pad one division to a full batch.
+                session.open(
+                    &asset,
+                    inputs,
+                    outputs,
+                    if index == 4 { 1 } else { max_rows },
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             session,
             resource,
+            effects,
             capacity: max_rows,
             poisoned: false,
         })
@@ -57,71 +73,34 @@ impl ResidentTransferResources {
         self.capacity
     }
 
-    pub(super) fn run_plan(
+    pub(super) fn poison(&mut self) {
+        self.poisoned = true;
+    }
+
+    pub(super) fn run_effects(
         &mut self,
-        rows: &[Vec<AoemIntegerInputV1>],
-    ) -> Result<AoemIntegerOutcomeBatchV1> {
+        nodes: &[AoemIntegerPlanNodeV1],
+        exports: &[AoemIntegerInputV1],
+    ) -> Result<Vec<u128>> {
         ensure!(!self.poisoned, "NOV integer resource poisoned");
         self.poisoned = true;
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::IntegerWire,
         );
-        // Same existing transfer program for now. The bounded composition
-        // channel supports distinct programs/guards without changing its local
-        // signature. This wiring alone does NOT move fee adjudication out of finish.
-        let literal = |n| {
-            novovm_exec::resident::AoemIntegerInputV1::Literal(
-                novovm_exec::resident::AoemInteger1024V1::from_u128(n),
-            )
-        };
-        let nodes: Vec<_> = rows
-            .iter()
-            .map(|inputs| AoemIntegerPlanNodeV1 {
-                program: 0,
-                guard: literal(1),
-                inputs: inputs.clone(),
-                otherwise: vec![literal(0); OUTPUTS],
-            })
+        let programs: Vec<_> = std::iter::once(&self.resource)
+            .chain(&self.effects)
             .collect();
-        let exports: Vec<_> = (0..rows.len())
-            .flat_map(|row| {
-                (0..OUTPUTS).map(move |column| AoemIntegerInputV1::Output {
-                    row: row as u32,
-                    column: column as u32,
-                })
-            })
-            .collect();
-        let values = self
-            .session
-            .run_composition_v1(&[&self.resource], &nodes, &exports)?;
+        let values = self.session.run_composition_v1(&programs, nodes, exports)?;
         ensure!(
-            values.len() == rows.len() * OUTPUTS,
-            "NOV composition export count"
+            values.len() == exports.len(),
+            "NOV effect export count mismatch"
         );
-        let batch = AoemIntegerOutcomeBatchV1 {
-            rows: values
-                .chunks_exact(OUTPUTS)
-                .map(|values| AoemIntegerOutcomeRowV1 {
-                    outcome: AoemIntegerOutcomeKindV1::Value,
-                    fault: 0,
-                    component: None,
-                    failed_instruction: None,
-                    values: values.to_vec(),
-                })
-                .collect(),
-        };
-        ensure!(batch.rows.len() == rows.len(), "NOV dataflow result count");
-        for row in &batch.rows {
-            ensure!(
-                row.outcome == AoemIntegerOutcomeKindV1::Value
-                    && row.fault == 0
-                    && row.component.is_none()
-                    && row.failed_instruction.is_none(),
-                "NOV dataflow rejected row"
-            );
-        }
+        let values = values
+            .iter()
+            .map(|v| v.try_to_u128())
+            .collect::<Result<Vec<_>>>()?;
         self.poisoned = false;
-        Ok(batch)
+        Ok(values)
     }
 
     #[cfg(test)]

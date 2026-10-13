@@ -37,8 +37,8 @@ pub struct ExecutionObservation {
     /// Business rows completed by the resident Vulkan integer asset; excludes
     /// padding. This count is not physical GPU device attestation.
     pub gpu_rows: usize,
-    /// Fixed-shape Vulkan integer dispatches, not physical GPU attestation,
-    /// callback counts or finalized transaction counts.
+    /// Complete composition delegations (legacy field name). Not physical GPU
+    /// dispatch count, callback count or finalized transaction count.
     pub gpu_waves: usize,
     /// Natural overlap, not a benchmark or mainchain transaction throughput.
     pub peak_callbacks: usize,
@@ -52,7 +52,7 @@ pub struct ExecutedNovBatch {
     fees: FeeState,
     receipt_batch_commitment: NodeHash,
     statement_commitment: NodeHash,
-    observation: ExecutionObservation,
+    pub(super) observation: ExecutionObservation,
 }
 
 impl ExecutedNovBatch {
@@ -97,61 +97,26 @@ struct Completion {
 }
 
 impl NovTransferInput {
-    /// Mixed execution on the original compute owner: resident GPU business
-    /// predictions, then the unchanged AOEM callback's ordered fees and bounded
-    /// invalidated-row repair. Device/resource errors never invoke CPU fallback.
-    /// `timeout` bounds the final callback wait, not synchronous GPU cancellation.
+    /// One complete typed composition on the resident owner. No node-side
+    /// economic repair or second business callback. The retained session and
+    /// timeout parameters belong to the common caller, not GPU cancellation.
     pub(crate) fn execute_with_integer_resources(
         self,
-        session: &mut ComputeSession,
+        _session: &mut ComputeSession,
         resources: &mut ResidentTransferResources,
-        timeout: Duration,
+        _timeout: Duration,
     ) -> Result<ExecutedNovBatch> {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::ExecuteInteger,
         );
         let now = u128::from(self.input.plan().context().timestamp_unix_ms);
-        let commitment = self.input.plan().commitment();
-        let IntegerPredictions {
-            components: predictions,
-            rows: gpu_rows,
-            waves: gpu_waves,
-        } = speculate_integer(&self.prepared, resources, now)?;
-        let output: Arc<Mutex<Option<ExecutedNovBatch>>> = Arc::new(Mutex::new(None));
-        let completed = Arc::clone(&output);
-        let report = session.execute(
-            vec![Box::new(move || {
-                // The !Send resident resource stays on its owner. Only bounded,
-                // completed predictions cross into the existing AOEM CPU callback.
-                let mut result = finish(self.input, &self.prepared, predictions, now)?;
-                result.observation.gpu_rows = gpu_rows;
-                result.observation.gpu_waves = gpu_waves;
-                let digest = result.statement_commitment;
-                *completed
-                    .lock()
-                    .map_err(|_| anyhow::anyhow!("NOV output poisoned"))? = Some(result);
-                Ok(digest.to_vec())
-            })],
-            timeout,
-        )?;
-        let mut result = output
-            .lock()
-            .map_err(|_| anyhow::anyhow!("NOV output poisoned"))?
-            .take()
-            .context("missing NOV integer business output")?;
-        ensure!(
-            result.effects.plan_commitment() == commitment,
-            "NOV output bound to another plan"
-        );
-        ensure!(
-            report.processed == 1
-                && report.failed == 0
-                && report.outputs.len() == 1
-                && report.outputs[0].as_slice() == result.statement_commitment,
-            "NOV integer reduction result mismatch"
-        );
-        result.observation.peak_callbacks = report.peak_inflight;
-        Ok(result)
+        let result = super::full_effects::execute(self.input, &self.prepared, resources, now);
+        if result.is_err() {
+            // Includes projection/identity failures after native completion:
+            // the owner must be explicitly recovered, never reuse stale output.
+            resources.poison();
+        }
+        result
     }
 
     /// Deterministic proof-side scheduling of the SAME component computation
@@ -263,7 +228,7 @@ impl NovTransferInput {
     }
 }
 
-fn intent(
+pub(super) fn intent(
     prepared: &Prepared,
     index: usize,
     fee: &PreparedTransferFee,
@@ -331,16 +296,6 @@ fn speculate(
     }
     Ok(predictions)
 }
-
-struct IntegerPredictions {
-    components: Vec<Option<Vec<Prediction>>>,
-    rows: usize,
-    waves: usize,
-}
-
-#[path = "dataflow.rs"]
-mod dataflow;
-use dataflow::speculate as speculate_integer;
 
 fn finish(
     input: SignatureCheckedInput,
@@ -449,6 +404,22 @@ fn finish(
         });
         fees = fee.after_fee_state;
     }
+    stage_results(
+        input, prepared, balances, nonces, fees, receipts, recomputed,
+    )
+}
+
+/// Encoding, commitment and original tree staging only. Business decisions are
+/// already complete in either the CPU reference or the AOEM composition.
+pub(super) fn stage_results(
+    input: SignatureCheckedInput,
+    prepared: &Prepared,
+    balances: BTreeMap<Account, Option<u128>>,
+    nonces: BTreeMap<[u8; 32], u64>,
+    fees: FeeState,
+    receipts: Vec<NovTransferReceipt>,
+    recomputed: usize,
+) -> Result<ExecutedNovBatch> {
     fees.validate()?;
     let mut changes =
         record_pages::record_changes(FEE_PREFIX, &postcard::to_allocvec(&fees)?, FEE_BYTES)?;

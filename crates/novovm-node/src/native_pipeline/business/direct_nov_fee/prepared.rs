@@ -38,6 +38,10 @@ pub(in crate::native_pipeline::business) struct PreparedTransferFee {
 }
 
 impl PreparedTransferFee {
+    /// Immutable candidate-bound quote, not a balance or settlement approval.
+    pub fn quotation(&self) -> &std::result::Result<FeeQuote, FeeFailure> {
+        &self.quotation
+    }
     pub fn intent_terms(&self) -> (u128, u128, Option<String>) {
         match &self.quotation {
             Ok(quote) => (quote.nov_amount, quote.max_pay_amount, None),

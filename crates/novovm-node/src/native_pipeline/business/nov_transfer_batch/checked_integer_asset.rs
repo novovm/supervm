@@ -1,10 +1,11 @@
 //! NOV-owned checked transfer algebra for the existing unified AOEM wire.
-//! The identical asset is used by product prediction and the historical row oracle.
-//! Authentication, quotation and ordered global settlement remain outside this asset.
+//! The identical asset is used by effective plan rows and the historical oracle.
+//! Authentication and quotation remain compiler inputs; fee adjudication is
+//! composed by full_effects before this local program, not hidden in a callback.
 
 pub(crate) const INPUTS: usize = 10;
 pub(crate) const OUTPUTS: usize = 5;
-const CONSTANTS: [i128; 9] = [0, 1, 2, 3, 4, 5, 6, i128::MAX, u64::MAX as i128];
+const CONSTANTS: [i128; 10] = [0, 1, 2, 3, 4, 5, 6, i128::MAX, u64::MAX as i128, 10_000];
 
 // Inputs: payer, recipient, amount, approved fee, effective cap, supplied nonce,
 // expected nonce, nonempty identity, self transfer, existing quote rejection.
@@ -19,13 +20,13 @@ fn words(bytes: &mut Vec<u8>, values: &[u32]) {
     }
 }
 
-struct Bank {
+pub(super) struct Bank {
     inputs: usize,
     steps: Vec<[u32; 4]>,
 }
 
 impl Bank {
-    fn new(inputs: usize) -> Self {
+    pub(super) fn new(inputs: usize) -> Self {
         assert!(inputs <= 16);
         Self {
             inputs,
@@ -33,12 +34,12 @@ impl Bank {
         }
     }
 
-    fn constant(&self, index: usize) -> u32 {
+    pub(super) fn constant(&self, index: usize) -> u32 {
         assert!(index < CONSTANTS.len());
         (self.inputs + index) as u32
     }
 
-    fn op(&mut self, opcode: u32, left: u32, right: u32) -> u32 {
+    pub(super) fn op(&mut self, opcode: u32, left: u32, right: u32) -> u32 {
         let register = (self.inputs + CONSTANTS.len() + self.steps.len()) as u32;
         assert!(left < register && right < register && opcode <= 11);
         assert!(self.steps.len() < 32, "APFLINT4 Bank instruction limit");
@@ -46,7 +47,7 @@ impl Bank {
         register
     }
 
-    fn select(&mut self, flag: u32, yes: u32, no: u32) -> u32 {
+    pub(super) fn select(&mut self, flag: u32, yes: u32, no: u32) -> u32 {
         // All instructions run. i1024 safely represents negative scratch values
         // and sums beyond u128::MAX; no wrapping/overflow is used as a branch.
         let difference = self.op(1, yes, no);
@@ -54,7 +55,7 @@ impl Bank {
         self.op(0, no, selected)
     }
 
-    fn max_u128(&mut self) -> u32 {
+    pub(super) fn max_u128(&mut self) -> u32 {
         // Constants are signed i128 but AOIP0 v5 executes in signed i1024.
         let twice = self.op(0, self.constant(7), self.constant(7));
         self.op(0, twice, self.constant(1))
@@ -87,14 +88,14 @@ impl Bank {
     }
 }
 
-struct Graph {
+pub(super) struct Graph {
     inputs: usize,
     published: usize,
     calls: Vec<(Vec<u8>, Vec<u32>)>,
 }
 
 impl Graph {
-    fn new(inputs: usize) -> Self {
+    pub(super) fn new(inputs: usize) -> Self {
         Self {
             inputs,
             published: 0,
@@ -102,7 +103,7 @@ impl Graph {
         }
     }
 
-    fn call(&mut self, bank: Bank, arguments: Vec<u32>, outputs: &[u32]) -> Vec<u32> {
+    pub(super) fn call(&mut self, bank: Bank, arguments: Vec<u32>, outputs: &[u32]) -> Vec<u32> {
         assert_eq!(bank.inputs, arguments.len());
         let start = self.inputs + self.published;
         assert!(arguments.iter().all(|r| (*r as usize) < start));
@@ -112,7 +113,7 @@ impl Graph {
         (start as u32..(start + outputs.len()) as u32).collect()
     }
 
-    fn encode(self, outputs: &[u32]) -> Vec<u8> {
+    pub(super) fn encode(self, outputs: &[u32]) -> Vec<u8> {
         assert!(outputs
             .iter()
             .all(|r| (*r as usize) < self.inputs + self.published));
@@ -146,6 +147,23 @@ fn predicate(inputs: usize, build: impl FnOnce(&mut Bank) -> u32) -> Vec<u8> {
     let mut graph = Graph::new(inputs);
     let result = graph.call(bank, (0..inputs as u32).collect(), &[output]);
     graph.encode(&result)
+}
+
+/// Small pure NOV-compiled program. Each program retains its own typed signature;
+/// it has no pointers, callbacks or mutable Host state. Conditions/effects are
+/// explicit values in the enclosing guarded composition.
+pub(super) fn pure_asset(inputs: usize, outputs: usize, graph: Vec<u8>) -> Vec<u8> {
+    assert!(inputs + outputs <= 16);
+    let mut bytes = b"APFLOU01".to_vec();
+    words(
+        &mut bytes,
+        &[2, inputs as u32, outputs as u32, 0, 0, 1, 1024],
+    );
+    for graph in [graph, predicate(inputs + outputs, |b| b.constant(1))] {
+        words(&mut bytes, &[graph.len() as u32]);
+        bytes.extend(graph);
+    }
+    bytes
 }
 
 fn computation() -> Vec<u8> {
