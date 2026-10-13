@@ -3,6 +3,7 @@
 use super::*;
 
 const REQUEST_V2: &[u8; 8] = b"NVLSRQ02";
+const MAILBOX_REQUEST_V1: &[u8; 8] = b"NVMBOX01";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
 
@@ -354,8 +355,22 @@ fn encode(offer: &ServiceLeaseOfferV2) -> Result<Vec<u8>> {
 pub async fn request_service_offer_v2(
     stream: &mut CarrierStreamV1<'_>,
 ) -> Result<ServiceLeaseOfferV2> {
+    request_offer(stream, REQUEST_V2).await
+}
+
+/// Explicit mailbox selection on the same service endpoint; old servers reject
+/// this prelude. Never probe or fall back to the rendezvous payload protocol.
+pub async fn request_mailbox_offer_v1(
+    stream: &mut CarrierStreamV1<'_>,
+) -> Result<ServiceLeaseOfferV2> {
+    request_offer(stream, MAILBOX_REQUEST_V1).await
+}
+async fn request_offer(
+    stream: &mut CarrierStreamV1<'_>,
+    request: &[u8; 8],
+) -> Result<ServiceLeaseOfferV2> {
     stream
-        .write_frame(REQUEST_V2)
+        .write_frame(request)
         .await
         .context(ServiceOfferStepV2::Write)?;
     let bytes = stream
@@ -407,6 +422,31 @@ pub async fn serve_service_offer_selected_v2<T>(
     let (offer, selected) = select()?;
     stream.write_frame(&encode(&offer)?).await?;
     Ok(selected)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum NodeServiceV1 {
+    Rendezvous,
+    Mailbox,
+}
+
+/// The bounded service selector only chooses a protocol, never trust or privacy.
+/// Both paths still require the unchanged offer verification and Finished binding.
+pub async fn serve_node_offer_selected_v1<T>(
+    stream: &mut CarrierStreamV1<'_>,
+    select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
+) -> Result<(NodeServiceV1, T)> {
+    let request = stream.read_frame().await?;
+    let kind = if request.as_slice() == REQUEST_V2 {
+        NodeServiceV1::Rendezvous
+    } else if request.as_slice() == MAILBOX_REQUEST_V1 {
+        NodeServiceV1::Mailbox
+    } else {
+        anyhow::bail!("unknown node service version");
+    };
+    let (offer, selected) = select()?;
+    stream.write_frame(&encode(&offer)?).await?;
+    Ok((kind, selected))
 }
 
 /// Source-only distributor using the existing V2 prelude. Its owner supplies a

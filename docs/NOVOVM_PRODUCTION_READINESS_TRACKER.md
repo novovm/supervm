@@ -8,6 +8,67 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 Distributed Mailbox v1: shared native runtime, not Android acceptance
+
+Input `57869267` / NOVOCHAT `ab84a8b`. The existing bounded SQLite mailbox
+prototype moves from NOVOCHAT to `novovm-network/src/mailbox_store.rs`; the app
+re-exports it rather than maintaining a second server implementation.
+
+Runtime chain: `rendezvous_self_owned_owner::run` -> `run_self_owned_node_v1`
+-> the existing stable Iroh listener -> explicit `NVMBOX01` service selection
+-> existing V2 signed offer and Finished-bound peer authentication ->
+`mailbox_rpc::serve_mailbox_v1` -> the single bounded durable store worker.
+The existing `NVLSRQ02` rendezvous protocol remains unchanged. Unknown service
+versions fail, without probing another protocol or dropping identity binding.
+The same service accepts a platform-owned L3 or L4 store. Android contribution
+lifecycle/admission is not yet wired; no new global registration authority exists.
+
+- Register retries retain the client-generated mailbox and capabilities; Put
+  retries retain object/digest/absolute expiry. Fetch does not delete. Consume
+  requires the device's read capability and matching digest; duplicate Consume
+  is idempotent. Renew changes mailbox retention only, never object TTL.
+- `StoreReceiptV1` signs the exact committed object/expiry after SQLite commit.
+  It is storage evidence, not a device receipt, future uptime or NOV entitlement.
+- Limits: 64 KiB/object, 2 MiB/256 objects per mailbox, 64 MiB/8192 objects and
+  256 mailboxes per node. Consumed tombstones count against object quotas until
+  original expiry + 300s; these conservative v1 limits require product sizing.
+  Disk is capped at 128 MiB plus a bounded rollback journal; FULL is strengthened
+  to SQLite EXTRA. Private directories are supplied by the platform owner.
+- Sweeps and reads reject expired objects; backward local clock readings fail.
+  No claim of detection of a restored valid disk backup or physical flash erasure.
+  Payloads are E2EE ciphertext; node-side metadata wrapping/secure key deletion
+  remains a production gap rather than being implied by SQLite secure_delete.
+- `mailbox_replicas` selects at most two durable failure-domain-independent
+  candidates plus one opportunity. Unknown/correlated operator, device, network
+  or power domains cannot satisfy redundancy. This requires owner-established
+  evidence, not trusting self-reported IPs or claiming physical HA from fixtures.
+- Optional `mailbox-seal` uses [RFC 9180](https://www.rfc-editor.org/rfc/rfc9180.html)
+  through [hpke 0.13](https://docs.rs/hpke/0.13.0/hpke/), classical
+  X25519/HKDF-SHA256/ChaCha20Poly1305 with replica-bound AAD. This library states
+  it has not been audited. No PQ, ratchet forward secrecy, anonymity or completed
+  cryptographic review is asserted; the app must authenticate mailbox key ownership.
+
+Validation: eight dedicated component/integration tests passed, covering real
+loopback QUIC through the existing self-owned host, offline store/reopen/fetch,
+lost-ACK duplicate operations, full quota, wrong capability/digest, revocation,
+injected SQLite write failure without StoreReceipt, TTL, HPKE tampering and
+failure-domain selection. Native Windows relay compilation and network clippy
+passed, as did 47 existing service-lease regression tests. All identities/payloads are explicit fixtures. Logs are ignored local
+`artifacts/mailbox-suite-final.log`, `mailbox-clippy-final.log`,
+`mailbox-relay-check.log` and `mailbox-lease-regression.log`.
+
+Reproduce with `CARGO_TARGET_DIR=<SUPERVM>/target/runtime-rebuild`:
+`cargo test -p novovm-network --locked --features iroh-transport,mailbox-seal
+--test mailbox_runtime --test mailbox_store --test mailbox_seal
+--test mailbox_replicas -j 1 -- --test-threads=1`.
+
+Remaining gates: existing Android owner mailbox key/bundle exchange and automatic
+deposit/claim/receipt loop; physical L3+L3+L4 copies and repair; process/power-loss
+tests; disk wrapping/rotation and online resource policy; Privacy-qualified paths;
+latency distributions. The running laptop and phones have not been upgraded by
+this component validation. Mailbox then content-free Push is the mainline;
+neither further rendezvous latency tuning nor L2/L1 rollout is a prerequisite.
+
 ## 2026-10-13 Android cross-task reuse closure and L3/L4 mailbox direction
 
 Transport input `2a0f8442`, NOVOCHAT product commit `ab84a8b`. The existing

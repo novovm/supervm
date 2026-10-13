@@ -10,7 +10,7 @@ use novovm_network::{
     iroh_transport::IrohConfigV1,
     product_directory::sign_relay_record_v1,
     product_rendezvous_daemon::now_ms,
-    product_rendezvous_owned::run_self_owned_rendezvous_v1,
+    product_rendezvous_owned::run_self_owned_node_v1,
     product_service_lease::{
         SelfOwnedTrustV1, ServiceLeaseBookV1, ServiceLeaseFileV1, ServiceLeaseHostV1,
         ServiceLeasePersistenceV1,
@@ -243,7 +243,20 @@ impl Owner {
         }
         let key = self.key.clone();
         let publish_root = config.root.clone();
-        let result = run_self_owned_rendezvous_v1(carrier, key, config.allowed_clients.clone(), stop,
+        let mailbox_path = config.root.join("mailbox.sqlite");
+        let mailbox_started = config.root.join("mailbox.started");
+        check_path(&mailbox_path)?;
+        if mailbox_started.try_exists()? {
+            ensure!(mailbox_path.is_file(), "missing enrolled mailbox storage");
+        } else {
+            ensure!(!mailbox_path.try_exists()?, "unrecognized mailbox storage");
+            create(&mailbox_started, b"NOVONET shared mailbox v1")?;
+        }
+        let mailbox = Arc::new(novovm_network::mailbox_rpc::MailboxServiceV1::new(
+            novovm_network::mailbox_store::MailboxStore::open(&mailbox_path, Default::default())?,
+            key.clone(),
+        ));
+        let result = run_self_owned_node_v1(carrier, key, config.allowed_clients.clone(), stop,Some(mailbox),
             move |endpoint, expires| {
                 let path = self.policy.config.root.join("service.journal");
                 let previous = if path.try_exists()? { Some(ServiceLeaseFileV1::open(&path, self.storage.clone())?) } else { None };

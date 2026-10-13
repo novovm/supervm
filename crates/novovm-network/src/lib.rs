@@ -22,6 +22,13 @@ pub mod eth_selection_config;
 pub mod gossip;
 #[cfg(feature = "iroh-transport")]
 pub mod iroh_transport;
+pub mod mailbox_receipt;
+pub mod mailbox_replicas;
+#[cfg(feature = "iroh-transport")]
+pub mod mailbox_rpc;
+#[cfg(feature = "mailbox-seal")]
+pub mod mailbox_seal;
+pub mod mailbox_store;
 pub mod novorudp;
 pub mod opaque_rendezvous;
 pub mod overlay;

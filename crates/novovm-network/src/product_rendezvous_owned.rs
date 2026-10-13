@@ -7,7 +7,7 @@ use crate::{
     product_directory::PeerSignedRelayRecordV1,
     product_rendezvous_daemon::now_ms,
     product_service_lease::{
-        serve_service_offer_selected_v2, IrohServiceEndpointV1, ServiceLeaseHostV1,
+        serve_node_offer_selected_v1, IrohServiceEndpointV1, NodeServiceV1, ServiceLeaseHostV1,
     },
 };
 use anyhow::{ensure, Result};
@@ -38,6 +38,20 @@ pub async fn run_self_owned_rendezvous_v1(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
+    run_self_owned_node_v1(carrier, key, clients, stop, None, activate, publish).await
+}
+
+/// Same stable listener/identity for L3 or L4. Platform owner decides resource
+/// admission and supplies the shared persistent store; no chat server or epoch DB.
+pub async fn run_self_owned_node_v1(
+    carrier: IrohConfigV1,
+    key: SigningKey,
+    clients: BTreeSet<[u8; 32]>,
+    stop: Arc<AtomicBool>,
+    mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
+    activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<()> {
     ensure!(
         (1..=16).contains(&clients.len()) && !clients.contains(&key.verifying_key().to_bytes()),
         "local client resource policy"
@@ -64,6 +78,7 @@ pub async fn run_self_owned_rendezvous_v1(
             expires_ms,
         }));
         let mut rotate_at = Instant::now() + Duration::from_secs(60);
+        let mut sweep_at = Instant::now();
         let mut active = FuturesUnordered::new();
         let mut incoming = Box::pin(scope.accept_inbound());
         let mut maintenance = tokio::time::interval(Duration::from_millis(200));
@@ -74,6 +89,10 @@ pub async fn run_self_owned_rendezvous_v1(
                 _ = maintenance.tick() => {
                     if stop.load(Ordering::Acquire) { break; }
                     let now = Instant::now();
+                    if now>=sweep_at {
+                        if let Some(mailbox)=&mailbox { mailbox.sweep().await?; }
+                        sweep_at=now+Duration::from_secs(1);
+                    }
                     if now >= rotate_at {
                         endpoint.instance = rand::random();
                         let expiry = now_ms()?.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
@@ -97,13 +116,21 @@ pub async fn run_self_owned_rendezvous_v1(
                         let generation = generation.clone();
                         let key = &key;
                         let clients = &clients;
+                        let mailbox=mailbox.clone();
                         active.push(tokio::time::timeout(Duration::from_secs(30), async move {
                             let mut stream: CarrierStreamV1<'_> = stream.into();
-                            let store = tokio::time::timeout(Duration::from_secs(3), serve_service_offer_selected_v2(&mut stream, || {
+                            let (kind,store) = tokio::time::timeout(Duration::from_secs(3), serve_node_offer_selected_v1(&mut stream, || {
                                 let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
                                 Ok((host.offer_until(now_ms()?, current.expires_ms)?, current.store.clone()))
                             })).await??;
-                            crate::discovery_control::serve_rendezvous(&mut stream, key, clients, store).await
+                            match kind {
+                                NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
+                                NodeServiceV1::Mailbox => {
+                                    let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
+                                    crate::mailbox_rpc::serve_mailbox_v1(&mut stream,key,clients,mailbox).await?;
+                                }
+                            }
+                            Ok::<_,anyhow::Error>(())
                         }));
                     }
                 }
