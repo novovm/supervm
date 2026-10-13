@@ -20,7 +20,7 @@ impl StateNodeReader for Memory {
     }
 }
 
-fn policy() -> DirectNovFeePolicy {
+pub(super) fn policy() -> DirectNovFeePolicy {
     DirectNovFeePolicy {
         quote_ttl_ms: 15_000,
         policy_version: 1,

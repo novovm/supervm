@@ -1,0 +1,10 @@
+
+running 3 tests
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::complete_plan_work_shares_values_not_transaction_effects ... plan_work={"diverse":false,"unshared_original_tiles":{"nodes":22521,"exports":16405,"nodes_by_program":[1024,18435,1,0,1024,1,2036,0],"levels":28,"dispatch_upper_bound":60,"padded_rows_upper_bound":60417,"resource_rows":[1024,1024,1024,1024,1024,1,1024,1024]},"shared_original_tiles":{"nodes":6689,"exports":16405,"nodes_by_program":[1,5662,1,0,1,1,1023,0],"levels":28,"dispatch_upper_bound":50,"padded_rows_upper_bound":50177,"resource_rows":[1024,1024,1024,1024,1024,1,1024,1024]},"shared_bounded_tiles":{"nodes":6689,"exports":16405,"nodes_by_program":[1,5662,1,0,1,1,1023,0],"levels":28,"dispatch_upper_bound":90,"padded_rows_upper_bound":11266,"resource_rows":[128,128,1,1,128,1,128,128]}}
+plan_work={"diverse":true,"unshared_original_tiles":{"nodes":22227,"exports":16405,"nodes_by_program":[1024,18139,1,0,1024,3,2036,0],"levels":28,"dispatch_upper_bound":62,"padded_rows_upper_bound":60419,"resource_rows":[1024,1024,1024,1024,1024,1,1024,1024]},"shared_original_tiles":{"nodes":20572,"exports":16405,"nodes_by_program":[1024,16484,1,0,1024,3,2036,0],"levels":28,"dispatch_upper_bound":61,"padded_rows_upper_bound":59395,"resource_rows":[1024,1024,1024,1024,1024,1,1024,1024]},"shared_bounded_tiles":{"nodes":20572,"exports":16405,"nodes_by_program":[1024,16484,1,0,1024,3,2036,0],"levels":28,"dispatch_upper_bound":193,"padded_rows_upper_bound":24196,"resource_rows":[128,128,1,1,128,1,128,128]}}
+ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::pure_sharing_binds_program_guard_full_width_and_dependency_identity ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::resident_shared_and_unshared_complete_plans_match_every_export ... ignored, requires trusted AOEM and Vulkan; shared/unshared complete plans
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 1582 filtered out; finished in 0.33s
+

@@ -16,6 +16,16 @@ use novovm_exec::resident::{
 use novovm_exec::resident::{AoemInteger1024V1, AoemIntegerOutcomeKindV1};
 use std::path::Path;
 
+// Resource rows are dispatch tiles, not the candidate limit. AOEM's existing
+// composition chunks each (level, program) group and pads its final chunk.
+// Sparse levels must not read back a whole candidate's worth of padding.
+// Capacity has one invocation; the actual-fee decision is a serial prefix;
+// quotation splits are already invariant-shared. Keep these three at one row.
+pub(super) fn composition_resource_rows(capacity: usize) -> [usize; 8] {
+    let tile = capacity.min(128);
+    [tile, tile, 1, 1, tile, 1, tile, tile]
+}
+
 /// Lives and is destroyed on the original compute owner. Its native context
 /// owns the program/shape table until drop; no authority/store is added here.
 pub(crate) struct ResidentTransferResources {
@@ -44,20 +54,14 @@ impl ResidentTransferResources {
             session.supports_composition_v1(),
             "NOV integer execution requires AOEM composition v1; update SDK, no fallback"
         );
-        let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, max_rows)?;
+        let shapes = composition_resource_rows(max_rows);
+        let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, shapes[0])?;
         let effects = super::effect_assets::assets()
             .into_iter()
             .zip(super::effect_assets::SHAPES)
             .enumerate()
             .map(|(index, (asset, (inputs, outputs)))| {
-                // Program 5 consumes memoized invariant quotations, not one
-                // row per transaction. Never pad one division to a full batch.
-                session.open(
-                    &asset,
-                    inputs,
-                    outputs,
-                    if index == 4 { 1 } else { max_rows },
-                )
+                session.open(&asset, inputs, outputs, shapes[index + 1])
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
@@ -142,7 +146,11 @@ impl ResidentTransferResources {
                 .collect(),
             );
         }
-        rows.resize(self.capacity, dummy);
+        // Standalone row oracle is test-only; composition handles its own
+        // tiling. Its test cases fit this resource's fixed tile.
+        let tile = composition_resource_rows(self.capacity)[0];
+        ensure!(inputs.len() <= tile, "standalone integer test exceeds tile");
+        rows.resize(tile, dummy);
         self.poisoned = true;
         let batch = {
             let _span = crate::native_pipeline::profile::span(
@@ -150,18 +158,14 @@ impl ResidentTransferResources {
             );
             if crate::native_pipeline::profile::enabled() {
                 let (batch, profile) = self.session.run_profiled(&self.resource, &rows)?;
-                crate::native_pipeline::profile::record_integer(
-                    &profile,
-                    inputs.len(),
-                    self.capacity,
-                );
+                crate::native_pipeline::profile::record_integer(&profile, inputs.len(), tile);
                 batch
             } else {
                 self.session.run_binary_v1(&self.resource, &rows)?
             }
         };
         ensure!(
-            batch.rows.len() == self.capacity,
+            batch.rows.len() == tile,
             "NOV integer result row count mismatch"
         );
         let mut outcomes = Vec::with_capacity(inputs.len());
