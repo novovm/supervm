@@ -1,5 +1,20 @@
 # Agent Highest Law
 
+- 2026-10-14 user clarification: permissionless NOVONET participation, identity
+  authentication, node-owned resource limits and paid service entitlements are
+  separate concerns. Basic connectivity must not depend on periodic network
+  licenses, an official Publisher, registration or NOV balance. Healthy
+  authenticated service connections must survive ordinary signed locator/service
+  declaration renewal. Do not keep increasing 30/90/120-second lease constants.
+  Use an explicit protocol/lifecycle version to separate discovery freshness,
+  live peer authentication, local resource admission and bounded operations;
+  old expired credentials still fail under the old contract. Preserve replay,
+  revocation, identity, privacy and storage TTL checks. Respect a provider's
+  voluntary scope/quotas and a recipient's capabilities; commercial NOVOCHAT
+  subscriptions are not network-wide admission. Keep the same owner/transport/
+  mailbox and verify actual Android continuity; architecture is not acceptance.
+  See the latest section of `docs/NOVONET_TRANSPORT_POLICY_V1.md`.
+
 - 2026-10-13 latest commercial clarification: after a 1-3 month trial, NOVOCHAT
   prices and accepts payment only in NOV; USD is a reference. A paid monthly
   subscription must budget founder proceeds worth at least USD 5 at the defined
