@@ -1,8 +1,13 @@
 # Agent Highest Law
 
-- 2026-10-13 latest commercial clarification: NOVOCHAT is a paid service after a
-  1-3 month trial, with USD 5-20 monthly subscriptions and/or metered service
-  usage. Permissionless network participation does not mean all services must
+- 2026-10-13 latest commercial clarification: after a 1-3 month trial, NOVOCHAT
+  prices and accepts payment only in NOV; USD is a reference. A paid monthly
+  subscription must budget founder proceeds worth at least USD 5 at the defined
+  quote/settlement point, plus node rewards and service costs. Recalculate the
+  earlier USD 5-20 tier idea; no fixed NOV amount can guarantee a perpetual USD
+  floor under arbitrary price changes. No real USD value guarantee without
+  verified price/liquidity; no automatic foreign-asset collection/conversion.
+  Permissionless network participation does not mean all services must
   be free. Use one UCA, locally verified bounded service entitlements and NOV
   settlement, not a mandatory official account server or per-message chain RPC.
   Reward policy is genesis-defined; fee-funded task rewards must stay below
