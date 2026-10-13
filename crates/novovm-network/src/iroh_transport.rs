@@ -58,6 +58,19 @@ pub struct IrohStreamIoFailureV1(#[source] anyhow::Error);
 #[error("carrier frame operation reached its original deadline")]
 pub struct IrohFrameDeadlineV1(());
 
+/// Only this carrier's original finite scope deadline constructs this marker,
+/// after the caller's current authority check has succeeded. It terminates the
+/// old scope; it grants neither a new lease nor permission to bypass identity.
+#[derive(Debug, thiserror::Error)]
+#[error("carrier scope expired")]
+pub struct IrohScopeDeadlineV1(());
+
+/// Recognize this carrier's own scope timer, never arbitrary error text or
+/// nested authentication/local failures. A new operation needs new checks.
+pub fn is_iroh_scope_deadline_v1(error: &anyhow::Error) -> bool {
+    error.is::<IrohScopeDeadlineV1>()
+}
+
 /// Only a timeout/reset during an actual outbound handshake. Local policy,
 /// capacity, TLS authentication and protocol errors never carry this marker.
 #[derive(Debug, thiserror::Error)]
@@ -222,10 +235,9 @@ impl IrohControlV1 {
 
     fn check(&self) -> Result<()> {
         (self.check)()?;
-        ensure!(
-            self.deadline.is_none_or(|end| Instant::now() < end),
-            "carrier scope expired"
-        );
+        if self.deadline.is_some_and(|end| Instant::now() >= end) {
+            return Err(IrohScopeDeadlineV1(()).into());
+        }
         Ok(())
     }
 
@@ -1459,6 +1471,93 @@ mod tests {
     }
     fn control() -> IrohControlV1 {
         IrohControlV1::new(Instant::now() + Duration::from_secs(8), || Ok(())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn finite_scope_deadline_is_typed_without_reclassifying_security_errors() {
+        use crate::{
+            bound_session::BoundSessionError, discovery_control::is_service_deadline_failure,
+        };
+        let _permit = SERIAL.acquire().await.unwrap();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+            .await
+            .unwrap();
+        let gate =
+            IrohControlV1::new(Instant::now() + Duration::from_millis(80), || Ok(())).unwrap();
+        let result = owner
+            .with_operation(gate.clone(), |scope| {
+                Box::pin(async move { scope.accept_inbound().await.map(|_| ()) })
+            })
+            .await;
+        let error = result.unwrap_err();
+        assert!(is_iroh_scope_deadline_v1(&error));
+        assert!(is_service_deadline_failure(&error));
+        assert!(!crate::carrier_stream::is_carrier_io_failure(&error));
+        assert_eq!(owner.snapshot().active_operations, 0);
+        assert!(!owner.snapshot().closed);
+        // Every marker below comes from the same actually elapsed control.
+        assert!(is_service_deadline_failure(
+            &BoundSessionError::Transport(gate.check().unwrap_err()).into()
+        ));
+        for error in [
+            BoundSessionError::Authentication(gate.check().unwrap_err()),
+            BoundSessionError::Local(gate.check().unwrap_err()),
+            BoundSessionError::Transport(
+                BoundSessionError::Authentication(gate.check().unwrap_err()).into(),
+            ),
+            BoundSessionError::Transport(
+                BoundSessionError::Local(gate.check().unwrap_err()).into(),
+            ),
+        ] {
+            let error = error.into();
+            assert!(!is_service_deadline_failure(&error));
+            assert!(!is_iroh_scope_deadline_v1(&error));
+        }
+        assert!(!is_service_deadline_failure(&anyhow::anyhow!(
+            "carrier scope expired"
+        )));
+        #[derive(Debug, thiserror::Error)]
+        #[error("fixture local failure")]
+        struct LocalFailure(#[source] anyhow::Error);
+        assert!(!is_service_deadline_failure(
+            &LocalFailure(gate.check().unwrap_err()).into()
+        ));
+        owner.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn expired_scope_preserves_callback_rejection_before_local_timer() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+            .await
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_millis(30);
+        let gate = IrohControlV1::new(deadline, || {
+            Err(
+                crate::bound_session::BoundSessionError::Authentication(anyhow::anyhow!(
+                    "fixture revoked identity"
+                ))
+                .into(),
+            )
+        })
+        .unwrap();
+        tokio::time::sleep_until(deadline.into()).await;
+        let error = owner
+            .with_operation::<(), _>(gate, |_| {
+                Box::pin(async { panic!("revoked scope entered operation") })
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<crate::bound_session::BoundSessionError>(),
+            Some(crate::bound_session::BoundSessionError::Authentication(_))
+        ));
+        assert!(!is_iroh_scope_deadline_v1(&error));
+        assert!(!crate::discovery_control::is_service_deadline_failure(
+            &error
+        ));
+        assert_eq!(owner.snapshot().operations_started, 0);
+        owner.close().await.unwrap();
     }
 
     #[derive(Debug, thiserror::Error)]

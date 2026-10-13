@@ -89,18 +89,24 @@ pub fn is_service_transport_failure(error: &anyhow::Error) -> bool {
     error.is::<DiscoveryServiceTransportFailure>() || is_carrier_io_failure(error)
 }
 
-/// A frame operation reached the carrier's original LOCAL deadline. Do not
+/// A frame operation or scope reached the carrier's original LOCAL deadline. Do not
 /// inspect arbitrary sources: authentication/local wrappers stay terminal even
 /// when they contain an old timer error. This never extends the expired stream.
 pub fn is_service_deadline_failure(error: &anyhow::Error) -> bool {
-    use crate::{bound_session::BoundSessionError, iroh_transport::IrohFrameDeadlineV1};
+    use crate::{
+        bound_session::BoundSessionError,
+        iroh_transport::{is_iroh_scope_deadline_v1, IrohFrameDeadlineV1},
+    };
+    let is_deadline = |error: &anyhow::Error| {
+        error.is::<IrohFrameDeadlineV1>() || is_iroh_scope_deadline_v1(error)
+    };
     if let Some(error) = error.downcast_ref::<BoundSessionError>() {
         return match error {
-            BoundSessionError::Transport(source) => source.is::<IrohFrameDeadlineV1>(),
+            BoundSessionError::Transport(source) => is_deadline(source),
             _ => false,
         };
     }
-    error.is::<IrohFrameDeadlineV1>()
+    is_deadline(error)
 }
 
 // One fixed, canonical header. `slot` carries a response digest; unused fields
