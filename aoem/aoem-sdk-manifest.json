@@ -1,11 +1,11 @@
 {
   "name": "aoem-fullmax-supervm-host",
-  "version": "1.5.0-supervm-fullmax-private-proof-containment",
-  "package_stage": "scoped-private-proof-containment",
+  "version": "1.5.0-supervm-fullmax-windows-core-v7",
+  "package_stage": "windows_core_upgrade_with_retained_components",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX security correction 2026-10-04",
-    "stage": "scoped_containment_and_host_regression",
+    "id": "AOEM FULLMAX Windows core resources 2026-10-13",
+    "stage": "windows_core_only_scoped_validation",
     "document": "RUNTIME-BASELINE.md",
     "macos_pending_not_bundled": true
   },
@@ -23,6 +23,17 @@
     "linux_library": "linux/core/bin/libaoem_ffi.so",
     "header_windows": "windows/include/aoem.h",
     "header_linux": "linux/include/aoem.h"
+  },
+  "checked_integer_resources_v7": {
+    "capability_flag": "compute_checked_integer_resources_v7",
+    "entry": "aoem_execute_ops_wire_v1",
+    "output": "aoem_state_read_v1",
+    "availability": "per_platform_core_not_package_wide",
+    "contract": "windows/ai-sgm-infer-wire-v1-capability.json",
+    "unsupported_library_behavior": "reject_without_fallback",
+    "mainchain_cpu_route_changed": false,
+    "nov_business_execution_integrated": false,
+    "business_validity_proof": false
   },
   "semantic_graph_v3": {
     "entry": "aoem_submit_semantic_graph_v3",
@@ -142,11 +153,18 @@
     "windows-x86_64": {
       "status": "included",
       "library": "windows/core/bin/aoem_ffi.dll",
-      "library_sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
+      "library_sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "library_bytes": 44412416,
       "fullmax_sidecars": "included",
-      "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+      "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+      "source_commit_scope": "core_and_public_header_only",
+      "sidecars_source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+      "sidecars_status": "retained_unchanged_not_rebuilt",
       "source_bundle": "windows/manifest.json",
-      "semantic_graph_v3_verified": true
+      "checked_integer_resources_v7": true,
+      "semantic_graph_v3_verified": false,
+      "semantic_graph_v3_verification_status": "not_requalified_by_resident_compute_v2_and_storage_tests_symbol_retained",
+      "historical_qualification": "RUNTIME-BASELINE.md"
     },
     "linux-x86_64": {
       "status": "included",
@@ -155,6 +173,8 @@
       "fullmax_sidecars": "included",
       "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
       "source_bundle": "linux/manifest.json",
+      "current_update": "unchanged_1377cd1e_bundle",
+      "checked_integer_resources_v7": false,
       "semantic_graph_v3_verified": true,
       "risc0_guest_methods": "embedded_by_canonical_aoem_build"
     },
@@ -193,7 +213,7 @@
     "host_binding_symbols_retained": true,
     "removed_legacy_unbound_symbol": "aoem_apfl_native_transfer_execute_v1",
     "opcode_114_distinct_from_removed_symbol": true,
-    "ai_sgm_infer_payload": "versioned model-session; legacy AOAI v0 not supported",
+    "ai_sgm_infer_payload": "versioned model-session or checked-program; AOIP0 v7 availability is per-platform; legacy AOAI v0 not supported",
     "whole_product_requalified": false
   },
   "proof_security": {

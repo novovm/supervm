@@ -1,12 +1,28 @@
 {
-  "stamp": "20261004-120246",
-  "release_version": "1.5.0+1377cd1e-private-proof-containment",
-  "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+  "stamp": "20261013-integer-resources-core-1bfa7037",
+  "release_version": "1.5.0+1bfa7037-windows-core-v7",
+  "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+  "source_commit_scope": "core_and_public_header_only",
   "platform": "windows",
   "profile": "fullmax",
   "bundle_dir": ".",
   "core_dll": "core/bin/aoem_ffi.dll",
+  "core_sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+  "core_bytes": 44412416,
   "public_header": "include/aoem.h",
+  "retained_sidecars": {
+    "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+    "source_bundle_stamp": "20261004-120246",
+    "paths": ["core/plugins/", "kms-hsm-plugin/"],
+    "status": "unchanged_from_previous_fullmax_bundle",
+    "rebuilt_for_this_update": false,
+    "provenance": "previous_windows_manifest_and_runtime_baseline"
+  },
+  "previous_core": {
+    "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+    "sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
+    "baseline": "../RUNTIME-BASELINE.md"
+  },
   "plugins": [
     "aoem_ffi_crypto_hsm.dll",
     "aoem_ffi_crypto_kms.dll",
@@ -49,8 +65,17 @@
     "compute_request_name": "compute.ai.sgm_infer_v1",
     "entry": "aoem_execute_ops_wire_v1",
     "result": "aoem_state_read_v1",
-    "payload_contract": "versioned_model_session_binary",
+    "payload_contract": "versioned_model_session_or_checked_program_binary",
     "model_asset_required": true,
+    "model_asset_required_scope": "model_session_payloads_only",
+    "checked_integer_resources_v7": {
+      "included": true,
+      "capability_flag": "compute_checked_integer_resources_v7",
+      "lifecycle": "context_owned_open_run_close",
+      "numeric_versions": [4, 5],
+      "model_asset_required": false,
+      "fallback": false
+    },
     "legacy_aoai_v0_supported": false,
     "teacher_runtime_used": false,
     "source_runtime_used": false,
@@ -73,7 +98,23 @@
     "runtime_canon_changed": true
   },
   "checksums": "CHECKSUMS.sha256",
-  "notes": "Canonical FULLMAX source with retired unsound op98 private profile 3. Public envelope diagnostics are not ZK. Includes later generic privacy JSON v2 and AORCP002 support; neither enables NOV business proofs. No new GPU/TPS or whole-product qualification.",
+  "notes": "Windows FULLMAX core/header upgraded to 1bfa7037; sidecars remain the unchanged 1377cd1e artifacts. Generic AOIP0 v7 is available through the existing wire/state entry, not an activated NOV business or proof route. Private profile 3 remains withdrawn. Linux and historical qualification are not promoted by this Windows-only update.",
+  "current_update_validation": {
+    "generic_v7_real_rtx_5090": "passed",
+    "original_node_four_process_cold_recovery": "passed",
+    "retired_private_profile_rejection": "passed",
+    "packaged_pq_regression": "passed_90_pinned_applicable_vectors",
+    "resident_bindings_regression": "passed_32_including_pure_and_mock_cases_not_proof_qualification",
+    "cpu_load_regression": "passed_65536_success_with_cache_eviction_and_two_cold_restarts",
+    "cpu_load_new_core_tps": 8474.3275,
+    "cpu_load_previous_core_tps": 8712.032,
+    "performance_sample_scope": "one_run_per_dll_same_existing_node_and_test_executables_no_stable_speedup_claim",
+    "new_core_retained_sidecar_combination": "all_modes_probe_timed_out_new_and_previous_core_not_qualified",
+    "all_sidecar_requalification": false,
+    "whole_product_requalified": false,
+    "evidence_scope": "../RUNTIME-BASELINE.md",
+    "evidence_directory": "../../artifacts/audit/aoem-integer-resource-v7-20261013/"
+  },
   "semantic_batch": {
     "entry": "aoem_execute_semantic_batch_v1",
     "nonblocking_entry": "aoem_submit_semantic_batch_v1",

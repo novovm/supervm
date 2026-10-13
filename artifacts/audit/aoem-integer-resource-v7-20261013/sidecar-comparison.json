@@ -1,0 +1,110 @@
+{
+  "schema": "aoem-sidecar-comparison-observation/v1",
+  "record_type": "summary_from_observed_process_outcomes",
+  "is_successful_probe_report": false,
+  "accepted": false,
+  "scope": "One bounded old/new Windows FULLMAX core comparison with all six retained sidecar modes enabled; not full sidecar qualification.",
+  "probe": {
+    "source": "crates/aoem-bindings/examples/ffi_install_probe.rs",
+    "binary": "target/debug/examples/ffi_install_probe.exe",
+    "sha256": "d4f536237d6a1361b9c54b41629348bcaac1e42fb16789ad70187f6a4f907bd0",
+    "same_binary_for_both_runs": true,
+    "common_arguments": ["--txs", "1", "--batch", "1", "--key-space", "1", "--rw", "0.5"],
+    "different_arguments": ["--dll pinned core path", "--out distinct new report path"],
+    "manifest_required": true,
+    "manifest_scope": "Separate candidate and old-core manifests pin their observed SHA256 and ABI=1; validation was not disabled."
+  },
+  "environment_modes": {
+    "AOEM_FFI_PERSIST_BACKEND": "rocksdb",
+    "AOEM_FFI_WASM_RUNTIME": "wasmtime",
+    "AOEM_FFI_ZKVM_MODE": "executor",
+    "AOEM_FFI_MLDSA_MODE": "enabled",
+    "AOEM_FFI_KMS_MODE": "plugin",
+    "AOEM_FFI_HSM_MODE": "plugin"
+  },
+  "plugins": [
+    {
+      "environment": "AOEM_FFI_PERSIST_PLUGIN",
+      "path": "aoem/windows/core/plugins/aoem_ffi_persist_rocksdb.dll",
+      "sha256": "3ea939e444e15f4e3bd2c1fd8afd13b81b378978b51e6b72fbfefd3139408cb9"
+    },
+    {
+      "environment": "AOEM_FFI_WASM_PLUGIN",
+      "path": "aoem/windows/core/plugins/aoem_ffi_runtime_wasm_wasmtime.dll",
+      "sha256": "ee71cea00aea820d0c4080866050062a2cdbf7e76dd35bd1f8d62f89e96b02e5"
+    },
+    {
+      "environment": "AOEM_FFI_ZKVM_PLUGIN",
+      "path": "aoem/windows/core/plugins/aoem_ffi_zkvm_executor.dll",
+      "sha256": "50d972dfc88343aea5321e412bf7a3d4fb1723733d3b151d1d8f0613f7056eef"
+    },
+    {
+      "environment": "AOEM_FFI_MLDSA_PLUGIN",
+      "path": "aoem/windows/core/plugins/aoem_ffi_crypto_mldsa.dll",
+      "sha256": "23687ae780eaf7954ac50835d1354c50b217c3936e19be69985c92aa55e8a213"
+    },
+    {
+      "environment": "AOEM_FFI_KMS_PLUGIN",
+      "path": "aoem/windows/core/plugins/aoem_ffi_crypto_kms.dll",
+      "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+    },
+    {
+      "environment": "AOEM_FFI_HSM_PLUGIN",
+      "path": "aoem/windows/core/plugins/aoem_ffi_crypto_hsm.dll",
+      "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+    }
+  ],
+  "plugin_selection": "All six paths were resolved to absolute paths inside the SUPERVM checkout and supplied explicitly in both processes. No plugin binary was rebuilt or replaced by this comparison.",
+  "runs": [
+    {
+      "label": "candidate_core",
+      "library": "D:/WorksArea/AOEM/cargo-target-ci-local/release/aoem_ffi.dll",
+      "sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "bytes": 44412416,
+      "source_commit_reported_by_builder": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+      "manifest": "target/validation/aoem-c040a30c-manifest.json",
+      "launch": "cargo run -p aoem-bindings --example ffi_install_probe --locked -- --dll <candidate> --out <candidate-report> --txs 1 --batch 1 --key-space 1 --rw 0.5",
+      "task_owned_pid": 19668,
+      "completed_before_stop": false,
+      "elapsed_seconds_at_observation_and_stop": 61.4,
+      "observed_cpu_seconds": 0.0,
+      "native_stdout_stderr_before_stop": "no output observed through the captured process session",
+      "requested_report": "target/validation/c040a30c-retained-sidecar-install-probe.json",
+      "requested_report_created": false,
+      "manual_stop": "Stop-Process after checking PID 19668 still named the exact task-owned ffi_install_probe.exe path",
+      "native_exit_code_after_stop": "0xffffffff",
+      "cargo_wrapper_exit_code": 1,
+      "accepted": false
+    },
+    {
+      "label": "old_core_control",
+      "library": "target/validation/old-core.dll",
+      "sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
+      "bytes": 44048384,
+      "source": ".git/lfs/objects/01/77/01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
+      "source_and_copy_hashes_verified": true,
+      "manifest": "target/validation/aoem-01779fe4-old-manifest.json",
+      "launch": "Same compiled ffi_install_probe.exe, hidden process, --dll <old-core> --out <old-report> --txs 1 --batch 1 --key-space 1 --rw 0.5",
+      "task_owned_pid": 1324,
+      "deadline_seconds": 60,
+      "completed_before_deadline": false,
+      "elapsed_seconds_including_stop": 60.0657826,
+      "observed_cpu_seconds": 0.0,
+      "stdout": "target/validation/01779fe4-retained-sidecar-probe.stdout.log",
+      "stderr": "target/validation/01779fe4-retained-sidecar-probe.stderr.log",
+      "stdout_bytes": 0,
+      "stderr_bytes": 0,
+      "requested_report": "target/validation/01779fe4-retained-sidecar-install-probe.json",
+      "requested_report_created": false,
+      "manual_stop": "Task-authored 60-second bounded wrapper called Stop-Process after checking PID 1324 still named the exact task-owned ffi_install_probe.exe path",
+      "native_exit_code_after_stop": -1,
+      "accepted": false
+    }
+  ],
+  "conclusion": "Both candidate and old core stalled under the same all-sidecars-enabled diagnostic. This supports an inherited mixed-plugin qualification gap, not a demonstrated candidate regression. It does not qualify any unexecuted plugin functionality.",
+  "root_cause": "unknown; no stack capture or definitive lock diagnosis was performed",
+  "source_or_feature_flags_modified": false,
+  "additional_benchmarks_run": false,
+  "comparison_processes_left_running": false,
+  "independent_candidate_results_unchanged": "The completed v7/v5 integer fixtures, resident 32-test suite, pinned ML-DSA 90-case subset and parent-run mainchain CPU tests are separate evidence and are not invalidated or expanded by this diagnostic."
+}

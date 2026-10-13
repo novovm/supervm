@@ -8,6 +8,68 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 AOEM 通用常驻整数资源与原 exec 门面
+
+用户明确授权的通用适配已提交 AOEM `1bfa70372e2e60851c6d0ab972dea19678b0fa8c`
+（XujueKing SSH，main）。保持 `aoem_execute_ops_wire_v1` opcode 113，新增 AOIP v7
+Open/Run/Close，复用既有 APFL 整数结果算子、Vulkan/SPIR-V 与会话注册表；不加入
+NOV 余额/费用/nonce 规则，不新增 C 导出、调度器或 CUDA 后端。旧 v1–v6 保留。
+
+原 `novovm-exec` 增加独占常驻门面：严格检查实际 DLL 能力、程序/输入形状、
+owner/resource ID 和完整 i1024 结果；共用固定结果键，不按批重建 GPU 设备。
+未知调用、读回或结果格式失败后停止复用，不重试、不读取旧结果、不静默转 CPU。
+原 CPU 交易路径不变；**本片没有让真实主链候选调用 v7，也没有接通完整业务证明**。
+下一接合点是原常驻 compute owner 的依赖组件/业务计划，而非 RPC 控制循环；
+需保留精确父状态、冲突顺序、费用归并与业务失败语义，不能把依赖交易误当独立行。
+
+Windows FULLMAX 核心和头文件更新自上述 AOEM 提交，核心 SHA256
+`c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539`。
+Windows 旧插件和 Linux 包保留各自来源与哈希；Linux 尚不包含 v7。严格 capability
+拒绝旧库，不用“源代码已支持”冒充所有机器均已更新；本次不是全平台发布。
+各组件及旧资格证据边界见 [SDK 当前基线](../aoem/RUNTIME-BASELINE.md)。
+
+实测与限制：
+
+- AOEM 18 项整数回归、1 项未发布 Vulkan buffer 清理测试及无特性能力测试通过；
+  FULLMAX 构建通过。清理测试是合成调用记录，不是物理设备丢失注入。
+  AOEM 严格 Clippy 被 199 项既有 C raw-pointer lint 阻断；仅命令行允许该项后通过，
+  仍有 25 项既有警告，不记作严格检查全绿。
+- exec 59 单测、1 个不可跨线程所有权 doctest 和严格 Clippy 通过。旧 DLL 拒绝测试通过；
+  新 DLL 在 RTX 5090 Laptop 上的 v7 重复输入/完整宽度/拒绝/关闭及旧 v5 回归各通过 1 项。
+  bindings resident 32 项通过（其中 receipt mock 不算真实证明）；固定 ML-DSA 6 组
+  90 向量全部通过，不扩大为 FIPS 认证或主链 PQ 集成。已退役私有 profile 的 op98/op99
+  仍在零工作、零输出边界拒绝，不将公开 envelope 当 ZK。
+- 同一 256 行整数资产，五组交替 v5/v7 测量的重复调用中位数 **111.024ms → 1.811ms**；
+  首次 Open **3182.145ms** 单列。计时含 wire、状态写/读及 JSON 解码，不含输入编码。
+  这是生命周期成本对照，不是 kernel 性能、业务 TPS、ZK 或 CPU/GPU 相对提速。
+- 与上节历史回执节点相同的 Release 节点/测试二进制，新 DLL 单入口四进程功能通过
+  （2.33s）。同条件 65,536 笔、1,024 付款方各 64 nonce、共同收款方、批 1,024、
+  在途 8,192，四节点成功最终回执 **7.733475s / 8,474.328 TPS**；P95 **1,144,044µs**、
+  P99 **1,162,076µs**，成功 **65,536**、业务失败 **0**、拒绝/重试/传输错误 **0**。
+  四库全量经济/QC/状态根、冷恢复，以及计时外 1,024 笔造成的真实缓存淘汰和再次恢复通过。
+  整个夹具 62.31s 不是 TPS 分母。旧 DLL 本轮一份样本为 8,712.032 TPS，当前约低 2.73%；
+  每版仅一轮，不据此宣称稳定提速、稳定容量或已证明无性能退化。
+- 直接加载已复制的 SDK DLL 后，实际 A/A/B 分票/重启/后继回归通过（11.16s），
+  离线 peer/健康法定人数/追平/重启回归通过（48.00s 全夹具）。没有降低票数、
+  清锁、改变超时或复用测试预造的诚实签名；不是物理多机或生产网络验收。
+- v7 每 context 的 64MiB 限制只覆盖驻留程序和逻辑 GPU 缓冲区；不覆盖驱动开销或
+  原有全进程结果状态。每个 exec owner 复用一个键，但不断创建新 owner 仍会保留最后结果，
+  不能宣称全进程内存完全有界。生命周期采用常驻 owner，不用频繁重建规避失败。
+- 现有安装探针强制同时启用六个保留插件时，新核心 61.4s、旧核心 60.066s 均无输出
+  超时，已核实并停止本次测试进程；不是生产服务。两次使用相同探针/插件/模式，
+  仅核心路径与 hash 改变。保留为继承的全插件组合资格缺口，未查明具体等待原因；
+  不据此声称新核心回归，也不把未通过配置签收。正常主链配置不强制开启所有插件。
+
+原始 [负载](../artifacts/audit/aoem-integer-resource-v7-20261013/load-result.json)、
+[功能](../artifacts/audit/aoem-integer-resource-v7-20261013/single-ingress-result.json)、
+[ML-DSA](../artifacts/audit/aoem-integer-resource-v7-20261013/mldsa-acvp.json)、
+[A/A/B](../artifacts/audit/aoem-integer-resource-v7-20261013/aab-result.json)、
+[离线恢复](../artifacts/audit/aoem-integer-resource-v7-20261013/offline-result.json)。
+逐笔观察在本机 `artifacts/audit/resident-rpc-load/29112-1791867004081517600/observations.json`，
+SHA256 `06727e122158c52696bb1925c2feb62faa59037787346eaad77c4350ce6cb453`。
+没有上传密钥/数据库、修改旧签票日志、启动真实主网或签收隐私/GPU业务/完整证明。
+R1/R2、原多资产与 Execute 等目标继续保留；生产发布目标仍进行中。
+
 ## 2026-10-13 主链历史回执与真实缓存淘汰恢复
 
 输入 `main@0688b760`，保持原 `novovm-node/native_pipeline → novovm-exec → AOEM`

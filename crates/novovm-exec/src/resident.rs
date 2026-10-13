@@ -17,7 +17,8 @@
 pub use crate::{
     AoemCapabilityContract, AoemExecFacade, AoemExecOpenOptions, AoemExecSession,
     AoemInteger1024V1, AoemIntegerOutcomeBatchV1, AoemIntegerOutcomeKindV1,
-    AoemIntegerOutcomeRequestV1, AoemIntegerOutcomeRowV1, AoemRuntimeConfig,
+    AoemIntegerOutcomeRequestV1, AoemIntegerOutcomeRowV1, AoemIntegerResourceSessionV7,
+    AoemIntegerResourceV7, AoemRuntimeConfig,
 };
 use anyhow::{ensure, Context, Result};
 pub use aoem_bindings::resident::{

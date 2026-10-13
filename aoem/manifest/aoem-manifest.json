@@ -2,8 +2,8 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX security correction 2026-10-04",
-    "stage": "scoped_containment_and_host_regression",
+    "id": "AOEM FULLMAX Windows core resources 2026-10-13",
+    "stage": "windows_core_only_scoped_validation",
     "document": "RUNTIME-BASELINE.md",
     "macos_pending_not_bundled": true
   },
@@ -12,7 +12,11 @@
   "runtime_canon_changed": true,
   "public_ffi_abi_changed": true,
   "source_artifacts": {
-    "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+    "source_layout": "mixed_component_provenance",
+    "windows_core_and_header_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+    "windows_sidecars_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+    "linux_bundle_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+    "retained_component_provenance": "platform_manifests_and_historical_runtime_baseline",
     "windows_fullmax_bundle": "windows/manifest.json",
     "linux_fullmax_bundle": "linux/manifest.json",
     "proof_engine_host_integration": "host-integration/",
@@ -36,23 +40,29 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "01779fe4fc77535749d265f9ffc233d9c1486e526d9f5d0dc34fc6d49a056674",
+      "sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
         "semantic_graph_v3": true,
-        "storage_provider_wire_v1": true
+        "storage_provider_wire_v1": true,
+        "compute_checked_integer_resources_v7": true
       }
     }
   ],
   "platforms": {
     "windows-x86_64": {
       "status": "included",
-      "source_bundle": "windows/manifest.json"
+      "source_bundle": "windows/manifest.json",
+      "checked_integer_resources_v7": true,
+      "current_update": "core_and_header_only_retained_sidecars"
     },
     "linux-x86_64": {
       "status": "included",
-      "source_bundle": "linux/manifest.json"
+      "source_bundle": "linux/manifest.json",
+      "checked_integer_resources_v7": false,
+      "current_update": "unchanged_1377cd1e_bundle"
     },
     "macos-universal": {
       "status": "pending_rebuild_not_bundled"
@@ -205,7 +215,7 @@
     "host_binding_symbols_retained": true,
     "removed_legacy_unbound_symbol": "aoem_apfl_native_transfer_execute_v1",
     "opcode_114_distinct_from_removed_symbol": true,
-    "ai_sgm_infer_payload": "versioned model-session; legacy AOAI v0 not supported",
+    "ai_sgm_infer_payload": "versioned model-session or checked-program; AOIP0 v7 availability is per-platform; legacy AOAI v0 not supported",
     "whole_product_requalified": false
   },
   "proof_security": {

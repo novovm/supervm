@@ -1,6 +1,88 @@
 # AOEM FULLMAX Runtime Baseline
 
-## Current: 2026-10-04 private-profile containment
+## Current: 2026-10-13 Windows core-only integer resources
+
+Only the Windows FULLMAX core and its public header advance to AOEM main
+`1bfa70372e2e60851c6d0ab972dea19678b0fa8c`. This is a mixed-source package,
+not a claim that every component or platform was rebuilt from that commit.
+
+| Component | Source and scope |
+| --- | --- |
+| Windows core and header | `1bfa70372e2e60851c6d0ab972dea19678b0fa8c`; generic AOIP0 v7 available |
+| Windows core/plugins and kms-hsm-plugin | Unchanged `1377cd1e7c1d43a4bf81cb16a169319772cf3e84` bundle, stamp `20261004-120246`, as recorded by the previous Windows manifest and baseline below |
+| Linux core, header and sidecars | Entire `1377cd1e7c1d43a4bf81cb16a169319772cf3e84` bundle retained; no AOIP0 v7 upgrade or new Linux qualification |
+| macOS | Still not bundled |
+
+Windows core: 44,412,416 bytes, SHA256
+`c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539`.
+The replacement core retains the complete FULLMAX feature set:
+`apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2`.
+All existing sidecar files and capability families remain included. Their
+retention is not a new all-sidecar qualification. Core and header provenance
+must not be applied to those unchanged binaries or to Linux.
+
+AOIP0 v7 adds bounded, context-owned Open/Run/Close resources for the existing
+generic checked i128/i1024 operator through opcode 113 and AOEM state readback.
+It requires an explicit true `compute_checked_integer_resources_v7` capability
+and the wire/state symbols. An unsupported library is rejected, with no older
+payload, CPU or alternate-device fallback. See the
+[Windows capability contract](windows/ai-sgm-infer-wire-v1-capability.json).
+The existing mainchain CPU route is unchanged; this generic resource facade
+does not activate GPU NOV business execution, establish a business-validity
+proof, restore private proving, or qualify transaction throughput.
+
+### Current scoped verification
+
+- Generic v7 and existing v5 execution on the real NVIDIA RTX 5090 Laptop
+  Vulkan device: one actual-backend test passed for each route.
+- Original node four-process single-ingress functional regression: passed,
+  2.33 seconds.
+- Retired private-profile rejection regression: passed; the security boundary
+  below remains in force.
+- Replacement-core packaged PQ regression: 90/90 pinned applicable ML-DSA
+  vectors passed. This is not FIPS certification or a new independent-interop
+  qualification.
+- Replacement-core resident bindings regression: 32/32 passed, including
+  pure/mock cases. Mock receipt acceptance is not cryptographic proof evidence.
+- CPU load regression: 65,536 successful transactions, zero business failures
+  and zero rejected retries, plus recent-cache eviction and two cold recoveries;
+  62.31 seconds overall. The reported execution interval was 7.733475 seconds.
+
+The comparison used the same existing node/test executables and one load run
+per DLL. These observations are not a stable throughput change or GPU speedup:
+
+| Core | Reported TPS | Reported P95 (us) | Reported P99 (us) |
+| --- | ---: | ---: | ---: |
+| Previous `1377cd1e` | 8712.032 | 1105661 | 1262310 |
+| Replacement `1bfa7037` | 8474.3275 | 1144044 | 1162076 |
+
+The replacement sample was about 2.73% lower in TPS. Neither this single-pair
+comparison nor the generic GPU tests establishes improved mainchain performance.
+Current evidence: [load and recovery](../artifacts/audit/aoem-integer-resource-v7-20261013/load-result.json),
+[single ingress](../artifacts/audit/aoem-integer-resource-v7-20261013/single-ingress-result.json),
+and [pinned ML-DSA vectors](../artifacts/audit/aoem-integer-resource-v7-20261013/mldsa-acvp.json).
+
+The all-six-sidecars-enabled installation probe timed out without output for
+both cores: 61.4 seconds for the replacement and 60.066 seconds for the previous
+core. The same probe executable and explicit retained plugin paths/modes were
+used; only core path/hash changed. Only these test-owned processes were stopped.
+This is an unqualified, inherited configuration boundary, not proof of a new
+core regression or a diagnosed deadlock. See the
+[observed comparison](../artifacts/audit/aoem-integer-resource-v7-20261013/sidecar-comparison.json).
+The normal mainchain CPU/core configuration passed the tests above; it does not
+force all plugins enabled. Source-level compatibility does not sign off that
+all-plugin combination. Earlier PQ, resident, Linux and
+performance evidence below belongs to its exact historical artifacts. No
+all-sidecar, whole-product, cross-platform or production-performance sign-off
+is implied by this scoped Windows update.
+
+After copying the core into the SDK, original-node A/A/B recovery passed
+(11.16 seconds) and offline-peer/quorum/catchup/restart passed (48.00 seconds
+for the whole fixture). These are controlled local process tests, not physical
+multi-machine deployment. The resident 32-case suite covers compute v2 and
+storage, not a fresh semantic-graph-v3 qualification; that symbol is retained.
+
+## Historical: 2026-10-04 private-profile containment
 
 The previous `56e9da15` qualification below is historical, not a qualification of
 this replacement binary. AOEM code source `1377cd1e7c1d43a4bf81cb16a169319772cf3e84`
