@@ -8,6 +8,45 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Mailbox maintenance and queued-client progress
+
+Input `f9baf7a8`, network-only. The installed relay-only node process remained
+alive but status/source publication stopped at 03:06 local and both Android
+clients subsequently failed to connect. Absence of UDP is expected in relay-only
+mode and is NOT evidence of endpoint loss. No process-stack capture was taken.
+
+The actual MailboxServiceV1 fair one-permit store queue reproduces an owner
+deadlock: a request queues before sweep; a worker releases its permit to that
+request; the owner awaits sweep inside its timer branch without polling the
+request. This source condition is consistent with the observed total stall,
+not a claim of a captured historic thread stack. The existing owned listener now
+polls ONE borrowed sweeping future beside incoming/active requests and maintenance.
+No detached scheduler, concurrent sweeps, authority extension or protocol change;
+cleanup errors remain fatal and owner stop drops the future.
+
+Five mailbox_rpc tests passed (1.18s), including deterministic queue contention,
+notification races, cancellation/revocation and session replay. Four mailbox_runtime
+real QUIC tests passed (8.85s), including existing owned listener dispatch,
+persistent offline fetch/restart/full storage, legacy refusal and session budget.
+Scoped network/relay Clippy `-D warnings` passed (23.05s); node binary built.
+Reproduce with `cargo test --locked -p novovm-network --features iroh-transport,tls-transport --lib mailbox_rpc -- --test-threads=1`
+and the same package/features `--test mailbox_runtime -- --test-threads=1`.
+Evidence: artifacts/mailbox-maintenance-{all-tests,runtime-tests,clippy,build}.log.
+
+Same original notebook node/config restarted with the fix at 03:39 local;
+keys.dpapi, self-owned-policy.dpapi, identity.json and owner.journal hashes unchanged.
+No mailbox reset, new enrollment or changed invitation. Node publication resumed.
+NOVOCHAT `4a537fb` installed APK `9114cf8e...` then began a fresh bounded ten-minute
+engineering session on Wi-Fi/cellular phones. Original pending message17 recovered
+with inbox/device-receipt commits; a new message18 after session13 reached the
+recipient. Ongoing batch not yet a full ten-minute/long-term acceptance at writing.
+Android currently rejects six newly added fixed mailbox trace event names, losing
+the remainder of those drained batches; NOVOCHAT is fixing that contract before
+full timing/count acceptance. Partial traces must not imply absence of failures.
+Local node process metadata and custody comparison: artifacts/mailbox-maintenance-*,
+phone traces/screens in NOVOCHAT artifacts/mailbox-maintenance-*.
+Still a third-party Iroh relay path; no self-owned transport/anonymity/P95 claim.
+
 ## 2026-10-14 Bounded service journal compaction and installed migration
 
 Input `92e56e83`, networking only. ServiceLeaseFileV1 now reads NVLSJ001/002,

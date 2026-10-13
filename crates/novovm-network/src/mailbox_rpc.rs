@@ -658,6 +658,56 @@ pub async fn serve_mailbox_session_v2(
 #[cfg(test)]
 mod notification_tests {
     use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn maintenance_must_poll_queued_clients_while_waiting_for_store() -> Result<()> {
+        // Deterministic reproduction of the old node loop's inline sweep await.
+        // Actual service admission and SQLite workers, with a held first permit
+        // forcing the otherwise timing-dependent client-before-maintenance order.
+        let dir = tempfile::tempdir()?;
+        let service = MailboxServiceV1::new(
+            MailboxStore::open(dir.path().join("contention.db"), Default::default())?,
+            SigningKey::from_bytes(&[2; 32]),
+        );
+        let held = service.slots.clone().acquire_owned().await?;
+        let request = service.execute(MailboxRequestV1::Register {
+            mailbox: [3; 32],
+            write: [4; 32],
+            read: [5; 32],
+            expires: now()? + 600,
+        });
+        tokio::pin!(request);
+        assert!(futures_util::poll!(&mut request).is_pending());
+        let sweeping = service.sweep();
+        tokio::pin!(sweeping);
+        assert!(futures_util::poll!(&mut sweeping).is_pending());
+        drop(held);
+        // Releasing the worker alone cannot resolve an inline sweep await.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), &mut sweeping)
+                .await
+                .is_err()
+        );
+        // The node's existing select loop must keep polling both operations.
+        let (reply, swept) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            tokio::join!(&mut request, &mut sweeping)
+        })
+        .await?;
+        assert!(matches!(reply?, MailboxReplyV1::Registered));
+        swept?;
+        assert_eq!(service.slots.available_permits(), 1);
+        // A subsequent request and cleanup still use the same live service.
+        assert!(matches!(
+            service
+                .execute(MailboxRequestV1::Fetch {
+                    mailbox: [3; 32],
+                    read: [5; 32]
+                })
+                .await?,
+            MailboxReplyV1::Empty
+        ));
+        service.sweep().await?;
+        Ok(())
+    }
     #[tokio::test]
     async fn commit_before_and_during_watch_is_caught_and_bad_cursor_or_key_rejected() -> Result<()>
     {

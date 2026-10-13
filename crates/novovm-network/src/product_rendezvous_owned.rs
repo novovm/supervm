@@ -78,9 +78,23 @@ pub async fn run_self_owned_node_v1(
             expires_ms,
         }));
         let mut rotate_at = Instant::now() + Duration::from_secs(60);
-        let mut sweep_at = Instant::now();
         let mut active = FuturesUnordered::new();
         let mut incoming = Box::pin(scope.accept_inbound());
+        // Poll store maintenance alongside client futures. Awaiting sweep in
+        // the timer branch can deadlock the fair storage semaphore: a queued
+        // client is assigned its permit but cannot run until this loop polls it.
+        // One borrowed future, no detached worker, overlapping sweeps or new owner.
+        let sweep_service = mailbox.clone();
+        let sweeping = async move {
+            if let Some(service) = sweep_service {
+                loop {
+                    service.sweep().await?;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+            std::future::pending::<Result<()>>().await
+        };
+        tokio::pin!(sweeping);
         let mut maintenance = tokio::time::interval(Duration::from_millis(200));
         maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -89,10 +103,6 @@ pub async fn run_self_owned_node_v1(
                 _ = maintenance.tick() => {
                     if stop.load(Ordering::Acquire) { break; }
                     let now = Instant::now();
-                    if now>=sweep_at {
-                        if let Some(mailbox)=&mailbox { mailbox.sweep().await?; }
-                        sweep_at=now+Duration::from_secs(1);
-                    }
                     if now >= rotate_at {
                         endpoint.instance = rand::random();
                         let expiry = now_ms()?.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
@@ -108,6 +118,7 @@ pub async fn run_self_owned_node_v1(
                     }
                     host.check_route(endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
                 }
+                result = &mut sweeping => { result?; unreachable!("mailbox maintenance is continuous"); }
                 Some(_) = active.next(), if !active.is_empty() => {}
                 accepted = &mut incoming, if active.len() < 4 => {
                     incoming = Box::pin(scope.accept_inbound());
