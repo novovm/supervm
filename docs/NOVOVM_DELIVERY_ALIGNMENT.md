@@ -1,5 +1,15 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-13 Persistent Mobile Transport v1 认领（进行中）：** NOVOCHAT 会话，
+输入 SUPERVM `191f5f89`（从 `0688b760` 快进，已核对实际远端）/ NOVOCHAT
+`63425e7`，工作区原干净。限定 `crates/novovm-network/src/iroh_transport.rs`
+及相邻通用载体测试、必要导出与本交付记录；手机 Application owner/受保护
+连接接线归 NOVOCHAT。将长期本地端点与有限业务 scope 授权分开，复用已有
+CarrierStreamV1，保持不同对端身份绑定、撤销/Privacy/原截止及关闭屏障。
+不扩大短任务预算或新建协议/调度器，不改主链、AOEM、账户、NOV 结算；
+与下方主链 RPC/数值资源工作无文件重叠。两手机保留原数据，分段延迟、
+失败率、资源和外部 Relay 依赖分别验收，5s/10s P95 仅为目标。
+
 **2026-10-13 主链闭环继续开发（进行中）：** 用户授权快进同步；本机已从
 `5dc902e3` 快进到 `0688b760`，49 项既有 legacy/runtime 草稿逐文件 SHA256
 核对未变。保持原 node/exec/AOEM 与已接回 CPU 快路径；不改聊天服务或生产
