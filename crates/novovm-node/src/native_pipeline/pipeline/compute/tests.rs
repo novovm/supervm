@@ -304,6 +304,7 @@ fn real_resident_owner_authenticates_and_executes_repeated_owned_captures() -> R
             .context("explicit trusted AOEM library required")?
             .into(),
         workers: 2,
+        execution_backend: Default::default(),
         queue_capacity: 2,
         authentication: AuthenticationBudget {
             transactions: 16,
@@ -370,5 +371,37 @@ fn real_resident_owner_authenticates_and_executes_repeated_owned_captures() -> R
     );
     assert_eq!(first.packet.records(), second.packet.records());
     owner.shutdown()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_OLD_TEST_LIBRARY without v7; real startup fail-closed"]
+fn real_compute_owner_gpu_selection_rejects_old_library_without_cpu_fallback() -> Result<()> {
+    let cfg = crate::native_pipeline::pipeline::tests::config(PathBuf::from("unused-storage"));
+    let config = ComputeConfig {
+        library: std::env::var_os("NOVOVM_AOEM_OLD_TEST_LIBRARY")
+            .context("explicit old AOEM library required")?
+            .into(),
+        workers: cfg.workers,
+        execution_backend: crate::native_pipeline::pipeline::ExecutionBackend::AoemIntegerV7,
+        queue_capacity: cfg.max_batches,
+        authentication: cfg.authentication,
+        plan: cfg.plan,
+        packet: cfg.store.packet_budget,
+        capture: cfg.capture,
+        timeout: cfg.compute_timeout,
+        domain: cfg.store.domain,
+    };
+    let error = match ComputeOwner::start(config, None) {
+        Ok(owner) => {
+            owner.shutdown()?;
+            anyhow::bail!("old library unexpectedly started the explicitly GPU owner");
+        }
+        Err(error) => error,
+    };
+    ensure!(
+        format!("{error:#}").contains("does not support checked integer resources v7"),
+        "wrong reason for startup rejection: {error:#}"
+    );
     Ok(())
 }

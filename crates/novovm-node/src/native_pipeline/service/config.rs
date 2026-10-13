@@ -33,6 +33,9 @@ pub struct ResidentConfig {
     pub relay: ProductRelayClientConfigV1,
     pub genesis: GenesisConfig,
     pub workers: u32,
+    /// Local explicit backend; old configurations preserve the measured CPU path.
+    #[serde(default)]
+    pub execution_backend: crate::native_pipeline::pipeline::ExecutionBackend,
     pub batch_size: usize,
 }
 
@@ -493,6 +496,27 @@ mod tests {
     }
 
     #[test]
+    fn execution_backend_is_explicit_and_never_auto_falls_back() {
+        use crate::native_pipeline::pipeline::ExecutionBackend;
+        #[derive(Deserialize)]
+        struct Selection {
+            #[serde(default)]
+            execution_backend: ExecutionBackend,
+        }
+        let default: Selection = serde_json::from_str("{}").unwrap();
+        assert_eq!(default.execution_backend, ExecutionBackend::CpuCallbacks);
+        let gpu: Selection =
+            serde_json::from_str(r#"{"execution_backend":"aoem_integer_v7"}"#).unwrap();
+        assert_eq!(gpu.execution_backend, ExecutionBackend::AoemIntegerV7);
+        for value in ["auto", "gpu", "cuda", "aoem_integer_v5"] {
+            assert!(serde_json::from_value::<Selection>(
+                serde_json::json!({"execution_backend": value}),
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
     #[ignore = "requires explicit trusted NOVOVM_AOEM_TEST_LIBRARY; opens a real fresh AOEM database"]
     fn real_resident_startup_reopen_preserves_genesis_and_refuses_recreate() -> Result<()> {
         use super::super::{ResidentNode, StartMode};
@@ -532,6 +556,7 @@ mod tests {
             },
             genesis,
             workers: 2,
+            execution_backend: Default::default(),
             batch_size: 2,
         };
         let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;

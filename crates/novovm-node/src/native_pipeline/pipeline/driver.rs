@@ -32,6 +32,7 @@ pub(super) fn start(
             ComputeConfig {
                 library: config.store.library.clone(),
                 workers: config.workers,
+                execution_backend: config.execution_backend,
                 queue_capacity: config.max_batches,
                 authentication: config.authentication,
                 plan: config.plan,

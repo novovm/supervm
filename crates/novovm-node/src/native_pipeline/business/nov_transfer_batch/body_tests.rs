@@ -703,3 +703,138 @@ fn native_apfl_views_match_raw_execution_failures_fees_nonce_and_proof_input() -
         .is_err());
     Ok(())
 }
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY and Vulkan; complete mixed-backend effects, not TPS"]
+fn resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair() -> Result<()> {
+    use crate::native_pipeline::business::direct_nov_fee::{FeeAccounting, FeeFailureCode};
+    use novovm_exec::resident::ComputeSession;
+    use std::time::Duration;
+    let library = std::path::PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY required")?,
+    );
+    let mut session = ComputeSession::open(&library, 4)?;
+    // One shape across all parents/batches. More components than capacity and
+    // dependent tails exercise chunking, valid padding and fresh-input reuse.
+    let mut resources = ResidentTransferResources::new(&library, 4, 2)?;
+    let raw = vec![
+        signed(21, 3),
+        signed(22, 5),
+        signed(23, 0),
+        signed_with(21, 4, |tx| {
+            tx.amount = u128::MAX;
+            tx.to = vec![82; 20];
+        }),
+        signed_with(24, 0, |tx| tx.fee_policy.max_pay_amount = 1),
+        signed_with(25, 0, |tx| {
+            tx.amount = 0;
+            tx.to = tx.from.clone();
+        }),
+        signed_with(26, 0, |tx| {
+            tx.to = vec![81; 32];
+            tx.amount = 0;
+        }),
+    ];
+    for balance in [10_000, 0, u128::MAX, 10_000] {
+        let (memory, root) = parent(&raw, balance, 0);
+        let cpu = body(&raw)
+            .bind(context(root))?
+            .capture(&memory, capture_budget())?
+            .execute(&mut session, Duration::from_secs(10))?;
+        let gpu = body(&raw)
+            .bind(context(root))?
+            .capture(&memory, capture_budget())?
+            .execute_with_integer_resources(
+                &mut session,
+                &mut resources,
+                Duration::from_secs(10),
+            )?;
+        assert_same_execution(&cpu, &gpu);
+        assert_eq!(gpu.observation().gpu_rows, raw.len());
+        assert_eq!(gpu.observation().gpu_waves, 4);
+        assert_eq!(gpu.observation().recomputed_transactions, 0);
+        assert_eq!(cpu.observation().gpu_rows, 0);
+        assert_eq!(cpu.observation().gpu_waves, 0);
+        assert!(gpu.observation().peak_callbacks > 0);
+    }
+
+    let b =
+        Sha256::digest(SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes())[12..].to_vec();
+    let raw = vec![
+        signed_with(21, 0, |tx| {
+            tx.to = b.clone();
+            tx.amount = 100;
+        }),
+        signed_with(22, 0, |tx| tx.amount = 1),
+    ];
+    let (mut memory, root) = parent(&raw, 1000, 0);
+    let fees = FeeState {
+        accounting: FeeAccounting {
+            treasury_reserve_nov: Some(u128::MAX),
+            ..FeeAccounting::default()
+        },
+        ..FeeState::default()
+    };
+    let mut changes = fee_record_changes(&policy(), &fees)?;
+    changes.push(StateChange::Put {
+        key: balance_key(&Account::try_from(b).unwrap()),
+        value: 0u128.to_le_bytes().to_vec(),
+    });
+    let update = stage_state_update(&memory, root, &changes)?;
+    let root = update.root();
+    memory.0.extend(update.nodes().clone());
+    let cpu = body(&raw)
+        .bind(context(root))?
+        .capture(&memory, capture_budget())?
+        .execute(&mut session, Duration::from_secs(10))?;
+    let gpu = body(&raw)
+        .bind(context(root))?
+        .capture(&memory, capture_budget())?
+        .execute_with_integer_resources(&mut session, &mut resources, Duration::from_secs(10))?;
+    assert_same_execution(&cpu, &gpu);
+    assert_eq!(gpu.observation().components, 1);
+    assert_eq!(gpu.observation().gpu_rows, 2);
+    assert_eq!(gpu.observation().gpu_waves, 2);
+    assert_eq!(gpu.observation().recomputed_transactions, 1);
+    assert_eq!(
+        gpu.receipts()[0].fee_failure.as_ref().unwrap().code,
+        FeeFailureCode::AmountOverflow
+    );
+    assert_eq!(
+        gpu.receipts()[1].fee_failure.as_ref().unwrap().code,
+        FeeFailureCode::InsufficientUserBalance
+    );
+    for receipt in gpu.receipts() {
+        assert_eq!(receipt.delta.nonce_after, 1);
+        assert_eq!(receipt.delta.payer.before, receipt.delta.payer.after);
+        assert_eq!(
+            receipt.delta.recipient.before,
+            receipt.delta.recipient.after
+        );
+        assert_eq!(receipt.delta.fee_funding_delta, 0);
+        assert!(receipt.journal.is_none());
+    }
+
+    // Per-transaction integer rounding, not a split of aggregate charged fees.
+    let raw = vec![signed(21, 0), signed(22, 0)];
+    let (memory, root) = parent(&raw, 1000, 0);
+    let cpu = body(&raw)
+        .bind(context(root))?
+        .capture(&memory, capture_budget())?
+        .execute_for_proof()?;
+    let gpu = body(&raw)
+        .bind(context(root))?
+        .capture(&memory, capture_budget())?
+        .execute_with_integer_resources(&mut session, &mut resources, Duration::from_secs(10))?;
+    assert_same_execution(&cpu, &gpu);
+    assert_eq!(
+        (
+            gpu.fees().accounting.reserve_bucket_nov,
+            gpu.fees().accounting.fee_bucket_nov,
+            gpu.fees().accounting.risk_buffer_nov
+        ),
+        (62, 18, 10)
+    );
+    Ok(())
+}

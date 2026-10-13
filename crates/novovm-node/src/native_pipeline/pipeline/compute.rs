@@ -6,6 +6,7 @@
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::nov_transfer_batch::{
     ExecutionObservation, NovCapturedInput, NovTransferBody, NovTransferPlan,
+    ResidentTransferResources,
 };
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
 use crate::native_pipeline::ingress::batch::{
@@ -24,6 +25,7 @@ use std::time::Duration;
 pub(crate) struct ComputeConfig {
     pub library: PathBuf,
     pub workers: u32,
+    pub execution_backend: super::ExecutionBackend,
     pub queue_capacity: usize,
     pub authentication: AuthenticationBudget,
     pub plan: PlanBudget,
@@ -205,10 +207,30 @@ impl ComputeOwner {
             .spawn(move || {
                 // Unexpected unwinding/disconnection must wake control as well.
                 let notification = Notification(notify);
-                match ComputeSession::open(&config.library, config.workers) {
-                    Ok(mut session) => {
+                let owners = (|| {
+                    let session = ComputeSession::open(&config.library, config.workers)?;
+                    let integers = match config.execution_backend {
+                        super::ExecutionBackend::CpuCallbacks => None,
+                        super::ExecutionBackend::AoemIntegerV7 => {
+                            Some(ResidentTransferResources::new(
+                                &config.library,
+                                config.workers,
+                                config.plan.transactions,
+                            )?)
+                        }
+                    };
+                    Ok::<_, anyhow::Error>((session, integers))
+                })();
+                match owners {
+                    Ok((mut session, mut integers)) => {
                         if ready_tx.send(Ok(())).is_ok() {
-                            run_owner(&mut session, &config, receiver, &notification);
+                            run_owner(
+                                &mut session,
+                                &mut integers,
+                                &config,
+                                receiver,
+                                &notification,
+                            );
                         }
                     }
                     Err(error) => {
@@ -356,11 +378,18 @@ fn authenticate(
 
 fn execute(
     session: &mut ComputeSession,
+    integers: &mut Option<ResidentTransferResources>,
     config: &ComputeConfig,
     input: NovCapturedInput,
 ) -> Result<ComputedCandidate> {
     domain_matches(config.domain, input.plan().context())?;
-    let executed = input.finalize_capture()?.execute(session, config.timeout)?;
+    let input = input.finalize_capture()?;
+    let executed = match integers {
+        Some(resources) => {
+            input.execute_with_integer_resources(session, resources, config.timeout)?
+        }
+        None => input.execute(session, config.timeout)?,
+    };
     let observation = *executed.observation();
     let (packet, seed) =
         PreparedCandidate::from_executed_with_seed(executed, config.packet, config.capture)?;
@@ -373,6 +402,7 @@ fn execute(
 
 fn run_owner(
     session: &mut ComputeSession,
+    integers: &mut Option<ResidentTransferResources>,
     config: &ComputeConfig,
     receiver: mpsc::Receiver<Command>,
     notification: &Notification,
@@ -408,7 +438,8 @@ fn run_owner(
                 let _ = reply.send(result);
             }
             Command::Execute { input, reply } => {
-                let result = run_checked(&mut panicked, || execute(session, config, *input));
+                let result =
+                    run_checked(&mut panicked, || execute(session, integers, config, *input));
                 let _ = reply.send(result);
             }
             #[cfg(test)]

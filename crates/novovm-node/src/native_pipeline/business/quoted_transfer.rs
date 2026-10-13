@@ -176,6 +176,83 @@ pub struct TransferOutcome {
 }
 
 impl TransferOutcome {
+    /// Decode only the fixed NOV APFLOU01 asset's checked Value output. This is
+    /// crate-internal trusted execution readback, not a caller-supplied patch.
+    /// Arithmetic/result priority is executed on AOEM, not recomputed here.
+    pub(super) fn from_checked_integer_values(
+        intent: &TransferIntent,
+        state: &TransferSnapshot,
+        quote_rejection: Option<&str>,
+        [payer_after, recipient_after, nonce_after, charged, code]: [u128; 5],
+    ) -> anyhow::Result<Self> {
+        use anyhow::{bail, ensure, Context};
+        let nonce_after = u64::try_from(nonce_after).context("GPU nonce exceeds u64")?;
+        ensure!(
+            nonce_after == next_nonce(intent, state)?,
+            "GPU nonce mismatch"
+        );
+        ensure!(
+            intent.from != intent.to
+                || (state.payer_balance == state.recipient_balance
+                    && payer_after == recipient_after),
+            "GPU self-transfer mismatch"
+        );
+        ensure!(
+            code <= 6
+                && charged
+                    == if code == 0 || code > 3 {
+                        intent.approved_fee
+                    } else {
+                        0
+                    },
+            "GPU transfer result code/fee mismatch"
+        );
+        ensure!(
+            quote_rejection.is_some() == (code == 1),
+            "GPU quote rejection mismatch"
+        );
+        let failure = match code {
+            0 => None,
+            1 => Some(TransferFailure::Fee(quote_rejection.context("missing quote rejection")?.to_owned())),
+            2 => Some(TransferFailure::Fee(format!(
+                "fee.quote.max_pay_exceeded: approved_fee={} max_pay_amount={} pay_asset=NOV",
+                intent.approved_fee, intent.fee_cap))),
+            3 => Some(TransferFailure::Fee(format!(
+                "fee.clearing.insufficient_user_balance: nov_fee_asset_debit_failed: account={} requested={} available={}",
+                intent.from.hex(), intent.approved_fee, state.payer_balance))),
+            4 => Some(TransferFailure::Business(TransferError::DebitOverflow)),
+            5 => Some(TransferFailure::Business(TransferError::InsufficientFunds {
+                available: state.payer_balance,
+                // The amount is needed for the canonical error, not to decide
+                // success or calculate after-balances a second time.
+                required: intent.amount.checked_add(intent.approved_fee)
+                    .context("GPU insufficient-funds diagnostic overflow")?,
+            })),
+            6 => Some(TransferFailure::Business(TransferError::RecipientOverflow)),
+            _ => bail!("unknown GPU transfer result code"),
+        };
+        Ok(Self {
+            delta: TransferDelta {
+                tx_hash: intent.tx_hash,
+                payer: BalanceDelta {
+                    account: intent.from.clone(),
+                    before: state.payer_balance,
+                    after: payer_after,
+                },
+                recipient: BalanceDelta {
+                    account: intent.to.clone(),
+                    before: state.recipient_balance,
+                    after: recipient_after,
+                },
+                nonce_identity: intent.nonce_identity.clone(),
+                nonce_before: state.next_nonce,
+                nonce_after,
+                fee_funding_delta: charged,
+            },
+            failure,
+        })
+    }
+
     pub fn delta(&self) -> &TransferDelta {
         &self.delta
     }

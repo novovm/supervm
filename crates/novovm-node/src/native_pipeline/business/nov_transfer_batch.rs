@@ -25,8 +25,11 @@ use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(crate) mod checked_integer_asset;
 mod execution;
+mod integer;
 pub use execution::{ExecutedNovBatch, ExecutionObservation, NovTransferReceipt};
+pub(crate) use integer::ResidentTransferResources;
 
 const POLICY_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v1/policy";
 const FEE_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v1/fees";

@@ -1,0 +1,1343 @@
+{
+  "schema": "novovm/resident-integer-business-validation/v1",
+  "date": "2026-10-13",
+  "result": "functional integration passed; acceleration and CPU performance preservation NOT ACCEPTED",
+  "source": {
+    "input": "58d7381d56051eae1e8d99cd96c903e3c86b5fdf",
+    "base": "96ee12a8dd72555917d1c50175d02cd28b15ddae",
+    "aoem": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
+    "lockFix": "f125f6466d707717e932507c86ea3292e8159cda",
+    "productChanges": "the commit containing this report, original node only"
+  },
+  "authority": {
+    "product": "crates/novovm-node/native_pipeline",
+    "execution": "novovm-exec/resident -> aoem-bindings -> aoem_execute_ops_wire_v1 opcode 113 / AOIP v7",
+    "consensus": "novovm-consensus/round_bft/journal",
+    "defaultBackend": "cpu_callbacks",
+    "optionalBackend": "aoem_integer_v7",
+    "newNode": false,
+    "newSigner": false,
+    "newAuthorityHead": false,
+    "aoemNovBusinessAdded": false,
+    "legacyHostPermission": false
+  },
+  "provenance": {
+    "aoemLibrary": "aoem/windows/core/bin/aoem_ffi.dll",
+    "aoemSha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+    "frozen": {
+      "node": "target/validation/gpu-business-baseline-58d7381d/novovm-node.exe",
+      "nodeSha256": "f6b470d6723d447fe7b9e336fc8434ccae5a0496bd82408093c550ea219cafc6",
+      "testSha256": "2a1e80a8f9359ce8f0311f3bf7eac4be7f084a94f9fc185d15280b9cc6152886",
+      "note": "Previously built historical-receipt original node preserved before rebuilding. Hash matches the 191f5f89 delivery record. NOT freshly rebuilt at 58d7381d; directory name is not commit provenance."
+    },
+    "initial": {
+      "nodeSha256": "18352bc54355b5d74a10c68b44b1433996375a23cfdae72ca5c05c816a82aa8d",
+      "testSha256": "822a9308f6366410fc1c8714594d685d04609e3a01edba85988b8cfe49cd425a",
+      "note": "96ee12a8 plus initial integration, with an unnecessary CPU speculate refactor; all initial samples retained."
+    },
+    "final": {
+      "nodeSha256": "99d04143573e94b6f4322d5dad3296c9e985a6b7841b84c60bd46a16d2a36ebd",
+      "testSha256": "34d8654511861e6f147a82035c14af8edb69ee64da5b2ff5de7e99a2207a69bc",
+      "note": "96ee12a8 plus final integration. CPU speculate restored byte-for-byte to input; this is not evidence that the performance difference was located."
+    }
+  },
+  "environment": {
+    "cpu": "Intel Core Ultra 9 275HX",
+    "logicalProcessors": 24,
+    "availableGpu": "NVIDIA GeForce RTX 5090 Laptop GPU",
+    "driver": "592.01",
+    "memoryMiB": 24463,
+    "requestedSelectors": {
+      "AOEM_GPU_VK_DEVICE_NAME": "5090",
+      "AOEM_GPU_VK_VENDOR_ID": "0x10de"
+    },
+    "physicalResourceIdentityAttested": false,
+    "os": "Windows",
+    "build": "release",
+    "topology": "one host; four independent original-node processes/stores; one HTTP ingress; WSS/E2E relay",
+    "workersPerNode": 4
+  },
+  "configuration": {
+    "execution_backend": "aoem_integer_v7 only in explicit integer runs",
+    "NOVOVM_RESIDENT_RPC_LOAD_MODE": "single_ingress",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_HISTORY": "1",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_APFL": "1",
+    "NOVOVM_RESIDENT_RPC_REQUIRE_ASYNC_AUTH": "1",
+    "batchCapacity": 1024,
+    "inflightTransactions": 8192
+  },
+  "tests": [
+    {
+      "name": "native_pipeline pure suite",
+      "passed": 388,
+      "ignored": 60,
+      "failed": 0
+    },
+    {
+      "name": "full u128 checked integer rows and complete CPU/integer effects including fee rounding/overflow dependent repair",
+      "passed": 2,
+      "ignoredTestsExplicitlyRun": true
+    },
+    {
+      "name": "old DLL without v7 rejected at configured integer owner startup",
+      "passed": 1
+    },
+    {
+      "name": "final original single-ingress real RPC, signature/nonce/replay/business failure/economics and cold successor",
+      "passed": true,
+      "fixtureSeconds": 4.48,
+      "report": "final-integer-functional.json",
+      "successful": 7,
+      "businessFailed": 1
+    },
+    {
+      "name": "final original A/A/B recovery and cold successor",
+      "passed": true,
+      "fixtureSeconds": 13.91,
+      "report": "final-integer-aab.json",
+      "topology": "three honest original processes plus one controlled faulty peer; no external honest votes/QC, no lock/signer reset"
+    },
+    {
+      "name": "final original offline peer, online quorum, archive catchup, cold restart and successor",
+      "passed": true,
+      "fixtureSeconds": 48.76,
+      "report": "final-integer-offline.json",
+      "onlineQuorumPublicationMs": 41437,
+      "onlineIncludingReceiptsAndEconomicsMs": 41725,
+      "maxObservedNoProgressMs": 10235,
+      "fourthCatchupMs": 2436,
+      "coldRestartMs": 1982,
+      "postRestartSuccessorMs": 518,
+      "restartAndSuccessorMs": 2841,
+      "propagationMs": 65,
+      "successful": 34,
+      "businessFailed": 0
+    },
+    {
+      "name": "strict Clippy",
+      "command": "cargo clippy -p novovm-node --lib --tests --locked -- -D warnings",
+      "passed": true
+    },
+    {
+      "name": "release product node and lib test executable builds",
+      "passed": true
+    },
+    {
+      "name": "native-auth independent host lock repair",
+      "hostTestsPassed": 9,
+      "strictHostClippyPassed": true,
+      "guestLockedOfflineMetadataPassed": true,
+      "guestProofExecuted": false,
+      "ciRun": 38350151227,
+      "ciConclusion": "success"
+    }
+  ],
+  "measuredWorkload": {
+    "signedTransactionsPerRound": 65536,
+    "senders": 1024,
+    "noncePerSender": 64,
+    "sharedRecipient": true,
+    "conflictModel": "separate sender components; shared recipient pure-credit reduction; ordered per-sender nonce across heights",
+    "timer": "first HTTP submission to all four nodes' successful final receipt HTTP responses",
+    "excludes": [
+      "wallet signature generation",
+      "startup",
+      "cold recovery",
+      "extra 1024 cache-eviction/history transactions"
+    ],
+    "latency": "per-transaction first dispatch to slowest final receipt response; nearest-rank P95/P99 includes observation scheduling",
+    "successPerRound": 65536,
+    "businessFailedPerRound": 0,
+    "rejectionsPerRound": 0,
+    "retriesPerRound": 0,
+    "transportErrorsPerRound": 0,
+    "businessFailuresSeparatelyTested": true,
+    "fullFourStoreEconomicsAndColdRecoveryPassed": true,
+    "cacheEvictionHistoryProbePassed": true,
+    "perRoundPercentilesNotAveraged": true
+  },
+  "aggregates": [
+    {
+      "name": "old-cpu",
+      "samples": 4,
+      "tps": 9028.441049594845,
+      "seconds": 29.035356000000004
+    },
+    {
+      "name": "final-cpu",
+      "samples": 2,
+      "tps": 8337.823849094751,
+      "seconds": 15.720169000000002
+    },
+    {
+      "name": "initial-cpu",
+      "samples": 2,
+      "tps": 8218.323289496257,
+      "seconds": 15.948752
+    },
+    {
+      "name": "initial-integer",
+      "samples": 2,
+      "tps": 6233.426588385497,
+      "seconds": 21.027279
+    },
+    {
+      "name": "final-integer",
+      "samples": 1,
+      "tps": 6440.43005122587,
+      "seconds": 10.175718
+    }
+  ],
+  "comparisons": {
+    "finalCpu": 8337.823849094751,
+    "adjacentOldCpu": 8782.587277095077,
+    "deltaPercent": -5.064150391767419,
+    "allOldCpu": 9028.441049594845,
+    "deltaVsAllOldPercent": -7.649351606843413
+  },
+  "cpuInvestigation": {
+    "rootCause": "NOT LOCATED",
+    "defaultCreatesVulkanResource": false,
+    "algorithmAndBudgetsUnchanged": true,
+    "visibleChanges": "one Option branch per batch, 16 extra observation bytes, two zero counters per completed CPU batch; RPC backend fields read after timed load, not in normal receipt observation loop",
+    "observationRequestCounts": "recorded in each round; higher counts may be cause or consequence, not attributed as root cause",
+    "freezeOrRegressionAcceptance": false
+  },
+  "reports": [
+    {
+      "mode": "integer-functional",
+      "file": "integer-functional.json",
+      "localOriginal": "target/resident-rpc-single-ingress-tests/9348-1791869218324530000/result.json"
+    },
+    {
+      "mode": "old-cpu-1",
+      "file": "old-cpu-1.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/14192-1791869249762157700/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 9425.13927521519,
+        "seconds": 6.953319,
+        "latency": {
+          "p95": 1029395,
+          "p99": 1094073,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 803840,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 201,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0xf6b470d6723d447fe7b9e336fc8434ccae5a0496bd82408093c550ea219cafc6",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "new-cpu-1",
+      "file": "new-cpu-1.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/8600-1791869311795532600/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 7783.463512995757,
+        "seconds": 8.419902,
+        "latency": {
+          "p95": 1279676,
+          "p99": 1527999,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 1001472,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 254,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0x18352bc54355b5d74a10c68b44b1433996375a23cfdae72ca5c05c816a82aa8d",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "new-integer-1",
+      "file": "new-integer-1.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/4164-1791869375786509400/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 6062.3720547737385,
+        "seconds": 10.81029,
+        "latency": {
+          "p95": 1601488,
+          "p99": 1656948,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 1449984,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 361,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0x18352bc54355b5d74a10c68b44b1433996375a23cfdae72ca5c05c816a82aa8d",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "old-cpu-2",
+      "file": "old-cpu-2.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/28108-1791869451920520400/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 9155.679948521652,
+        "seconds": 7.157961,
+        "latency": {
+          "p95": 1099599,
+          "p99": 1173839,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 825344,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 208,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0xf6b470d6723d447fe7b9e336fc8434ccae5a0496bd82408093c550ea219cafc6",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "new-cpu-2",
+      "file": "new-cpu-2.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/28688-1791869514387010100/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 8704.649448454942,
+        "seconds": 7.52885,
+        "latency": {
+          "p95": 1129237,
+          "p99": 1151625,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 901120,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 224,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0x18352bc54355b5d74a10c68b44b1433996375a23cfdae72ca5c05c816a82aa8d",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "new-integer-2",
+      "file": "new-integer-2.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/2600-1791869577047134800/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 6414.414266277472,
+        "seconds": 10.216989,
+        "latency": {
+          "p95": 1493670,
+          "p99": 1556403,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 1350656,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 334,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0x18352bc54355b5d74a10c68b44b1433996375a23cfdae72ca5c05c816a82aa8d",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "final-integer-functional",
+      "file": "final-integer-functional.json",
+      "localOriginal": "target/resident-rpc-single-ingress-tests/23152-1791870002076266300/result.json"
+    },
+    {
+      "mode": "final-integer-aab",
+      "file": "final-integer-aab.json",
+      "localOriginal": "target/resident-rpc-aab-tests/28164-1791870006566339100/result.json"
+    },
+    {
+      "mode": "final-integer-offline",
+      "file": "final-integer-offline.json",
+      "localOriginal": "artifacts/audit/resident-rpc-offline/3376-1791870020491891800/result.json"
+    },
+    {
+      "mode": "final-cpu-1",
+      "file": "final-cpu-1.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/26528-1791870103064731300/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 8506.527802169232,
+        "seconds": 7.704201,
+        "latency": {
+          "p95": 1277214,
+          "p99": 1311364,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 971776,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 242,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0x99d04143573e94b6f4322d5dad3296c9e985a6b7841b84c60bd46a16d2a36ebd",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "old-cpu-3",
+      "file": "old-cpu-3.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/26436-1791870166526899800/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 9107.661520074489,
+        "seconds": 7.1957,
+        "latency": {
+          "p95": 1081414,
+          "p99": 1219867,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 786432,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 196,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0xf6b470d6723d447fe7b9e336fc8434ccae5a0496bd82408093c550ea219cafc6",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "final-cpu-2",
+      "file": "final-cpu-2.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/15848-1791870228823202300/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 8175.681340045268,
+        "seconds": 8.015968,
+        "latency": {
+          "p95": 1297353,
+          "p99": 1415816,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 970752,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 247,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0x99d04143573e94b6f4322d5dad3296c9e985a6b7841b84c60bd46a16d2a36ebd",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 0,
+            "execution_integer_waves_total": 0,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "old-cpu-4",
+      "file": "old-cpu-4.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/7128-1791870291635960300/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 8479.918678904856,
+        "seconds": 7.728376,
+        "latency": {
+          "p95": 1252464,
+          "p99": 1289510,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 856064,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 214,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0xf6b470d6723d447fe7b9e336fc8434ccae5a0496bd82408093c550ea219cafc6",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": null,
+            "execution_integer_waves_total": null,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    },
+    {
+      "mode": "final-integer-1",
+      "file": "final-integer-1.json",
+      "localOriginal": "artifacts/audit/resident-rpc-load/28680-1791870354894485000/result.json",
+      "summary": {
+        "passed": true,
+        "tps": 6440.43005122587,
+        "seconds": 10.175718,
+        "latency": {
+          "p95": 1565730,
+          "p99": 1763963,
+          "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+        },
+        "counts": {
+          "admission_attempts": 65536,
+          "admission_error_responses": 0,
+          "retryable_admission_responses": 0,
+          "permanent_admission_responses": 0,
+          "retry_attempts": 0,
+          "transport_errors": 0,
+          "observation_requests": 1334272,
+          "finalized_successful": 65536,
+          "finalized_business_failed": 0,
+          "max_outstanding": 8192,
+          "dispatch_rounds": 64,
+          "observation_rounds": 333,
+          "deadline_expirations": 0
+        },
+        "integer": [
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      },
+      "provenance": {
+        "binary_sha256": "0x99d04143573e94b6f4322d5dad3296c9e985a6b7841b84c60bd46a16d2a36ebd",
+        "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+        "genesis_commitment": "0xb8666fe10bc2303bd3f827e5eeba70b05e7684e49083293763b14376432beaba",
+        "integer": [
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          },
+          {
+            "execution_integer_rows_total": 65536,
+            "execution_integer_waves_total": 64,
+            "execution_recomputed_transactions_total": 0,
+            "execution_failures": 0
+          }
+        ]
+      }
+    }
+  ],
+  "evidenceFiles": [
+    {
+      "path": "integer-functional.json",
+      "bytes": 253705,
+      "sha256": "d39ae754fd437854bc957d38d2e91c19d124ae3b9cad19302c58d68dc1ad655a"
+    },
+    {
+      "path": "old-cpu-1.json",
+      "bytes": 716232,
+      "sha256": "625274ecb05a7bd8dad5202dbf888fe8607e09fef4f330eaa98167b1397fffa8"
+    },
+    {
+      "path": "new-cpu-1.json",
+      "bytes": 722516,
+      "sha256": "93d6e07442984a5ed7f076a7dbea68ac5d102bd5bc98d9f9b7d1456cf4bfed4c"
+    },
+    {
+      "path": "new-integer-1.json",
+      "bytes": 722793,
+      "sha256": "72812a88fbedf94c27f90593fdad81b85c62c9bd90166710f6463cc1ee6a6a9f"
+    },
+    {
+      "path": "old-cpu-2.json",
+      "bytes": 716121,
+      "sha256": "f9b917000394ec73575f1a5a57e5cbf07ff927f060410d137e17e0c1e45dc893"
+    },
+    {
+      "path": "new-cpu-2.json",
+      "bytes": 722422,
+      "sha256": "91c0af01451dab8aac726f8a3b0a7db7d0e47c1f7421a0605ad9072939ce98a1"
+    },
+    {
+      "path": "new-integer-2.json",
+      "bytes": 722776,
+      "sha256": "6464c463817f563d21a1a82d6415ed0f45eb85ad3816a05127d8ed4a2cba941a"
+    },
+    {
+      "path": "final-integer-functional.json",
+      "bytes": 253437,
+      "sha256": "376ad5630095d6711a032b84c5290500cd580e874b765c2fa6bf52eecf2edc6c"
+    },
+    {
+      "path": "final-integer-aab.json",
+      "bytes": 282564,
+      "sha256": "1634212a8d8102cc9ef11f8ee6562c8ffdd0e3b207a3db23ed16ee9ab6136748"
+    },
+    {
+      "path": "final-integer-offline.json",
+      "bytes": 901754,
+      "sha256": "46fb1047681a7af89b1d67f7e16d050eedb085127721a80e66d305c28305d5ae"
+    },
+    {
+      "path": "final-cpu-1.json",
+      "bytes": 722513,
+      "sha256": "622aad5bc84c997e878e1eebedd114b731aea46ad14adf6cab37d4829292c4ff"
+    },
+    {
+      "path": "old-cpu-3.json",
+      "bytes": 716161,
+      "sha256": "da686dc4bda3f233abba2f5924fea6c52999a28382233188df57526b59e0c37e"
+    },
+    {
+      "path": "final-cpu-2.json",
+      "bytes": 722473,
+      "sha256": "dbfeb8c2ac64a32f40b371cf6d05e88a531b9a57d6b9e060df51d36fff0459fb"
+    },
+    {
+      "path": "old-cpu-4.json",
+      "bytes": 716205,
+      "sha256": "f7501ed14afc3af17358f52e9c8b6b0eb724455f64fb310318e4fc729b7d9945"
+    },
+    {
+      "path": "final-integer-1.json",
+      "bytes": 722761,
+      "sha256": "f88ef179d88e435e19692a22955d641ec073ab8d2a27334c5b03f4562a5d73be"
+    }
+  ],
+  "localOnlyObservations": [
+    {
+      "mode": "old-cpu-1",
+      "path": "artifacts/audit/resident-rpc-load/14192-1791869249762157700/observations.json",
+      "sha256": "e5381d5e50b5847f5c3c7a84a3f0cd4d9ab8a9d3bdf6b55c4f2f2e59b8124522",
+      "bytes": 40765441
+    },
+    {
+      "mode": "new-cpu-1",
+      "path": "artifacts/audit/resident-rpc-load/8600-1791869311795532600/observations.json",
+      "sha256": "b07081644864f799ed3d9fce216a12e2f14a07ea48ed8e5760b02a48331528ca",
+      "bytes": 40775681
+    },
+    {
+      "mode": "new-integer-1",
+      "path": "artifacts/audit/resident-rpc-load/4164-1791869375786509400/observations.json",
+      "sha256": "00968e6e1c02dbdaa6f7d95d6abe69013b6d1232639ed34cb8948f3a16096612",
+      "bytes": 40809473
+    },
+    {
+      "mode": "old-cpu-2",
+      "path": "artifacts/audit/resident-rpc-load/28108-1791869451920520400/observations.json",
+      "sha256": "53a07cfdebcf88396aae1584ddb188063a81f4241c735b1a43e58268d2873d12",
+      "bytes": 40765441
+    },
+    {
+      "mode": "new-cpu-2",
+      "path": "artifacts/audit/resident-rpc-load/28688-1791869514387010100/observations.json",
+      "sha256": "f32f99f4e46252ca44eb72ac384486c2d71a9271ca95695515536426eaa2e7f6",
+      "bytes": 40770561
+    },
+    {
+      "mode": "new-integer-2",
+      "path": "artifacts/audit/resident-rpc-load/2600-1791869577047134800/observations.json",
+      "sha256": "49522e1fb99fc711fd1a23c30fb5c0ce96ba0d79c2ce218f998aecfbfe6312f2",
+      "bytes": 40786945
+    },
+    {
+      "mode": "final-cpu-1",
+      "path": "artifacts/audit/resident-rpc-load/26528-1791870103064731300/observations.json",
+      "sha256": "0e1e87fc37c21622db9def127843d85b227500dac0247e5680be3bed05e7cac1",
+      "bytes": 40770561
+    },
+    {
+      "mode": "old-cpu-3",
+      "path": "artifacts/audit/resident-rpc-load/26436-1791870166526899800/observations.json",
+      "sha256": "5dadf3c257a277e3541fbee4d5d794789d0afa353b659f46829cb10f9f258f19",
+      "bytes": 40770561
+    },
+    {
+      "mode": "final-cpu-2",
+      "path": "artifacts/audit/resident-rpc-load/15848-1791870228823202300/observations.json",
+      "sha256": "45553b32c9ec2495377836c934e0245251c6d8fdabd131b943bcf969953af4e8",
+      "bytes": 40769537
+    },
+    {
+      "mode": "old-cpu-4",
+      "path": "artifacts/audit/resident-rpc-load/7128-1791870291635960300/observations.json",
+      "sha256": "435a487c2a517eaf024847def89b3996e6580b925cb60e6a5a5c6a262c416c96",
+      "bytes": 40771585
+    },
+    {
+      "mode": "final-integer-1",
+      "path": "artifacts/audit/resident-rpc-load/28680-1791870354894485000/observations.json",
+      "sha256": "96a984a5a982c6e49c38ef6cf955c2fdaa55e335f2bbba7c0f3e8edab077d2be",
+      "bytes": 40790017
+    }
+  ],
+  "limits": [
+    "Vulkan integer backend executes actual transfer predictions. Ordered fee settlement, pure-credit rebasing, invalidated dependent-row repair and state tree remain in the original AOEM CPU callback.",
+    "vulkan_spirv backend label and requested vendor/name do not attest a physical GPU. SDK resource ABI lacks device identity; software Vulkan ICD cannot be excluded. RPC physical_gpu_verified=false and integer business_gpu_active=null.",
+    "GPU/device errors poison the resource and never silently fall back. Economic invalidation repair is separately counted and is not device-error fallback.",
+    "Fixed-shape capacity <=4096; dependent chains pad each wave, potentially amplifying work. No synchronous native cancellation/hard deadline.",
+    "Final integer sample is slower than CPU. CPU performance preservation also not accepted; root cause not identified.",
+    "Integer rows exclude padding but include completed stale candidates; never use them as finalized TPS numerator.",
+    "Linux packaged library lacks v7 and must fail closed if integer backend explicitly selected; not a cross-platform release.",
+    "No full business ZK/proof-finality, private assets, PQ mainchain integration, other product capabilities or physical multi-machine production signoff in this slice.",
+    "Received remains non-durable mempool acceptance. Do not claim cold recovery preserves unconfirmed received transactions.",
+    "49 pre-existing legacy/runtime drafts must remain unchanged. No signing keys, databases, private knowledge corpus or local observations uploaded."
+  ],
+  "next": "Locate measured costs in this same product path and expose generic actual device identity where authorized; optimize only measured costs, retain CPU default and all correctness/finality requirements. Do not replace existing unified ZK or invent a new executor."
+}

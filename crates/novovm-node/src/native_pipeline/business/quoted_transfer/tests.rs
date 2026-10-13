@@ -25,6 +25,62 @@ fn snapshot() -> TransferSnapshot {
 }
 
 #[test]
+fn checked_integer_readback_preserves_current_failure_encoding_and_rejects_malformed_values() {
+    let vectors = [
+        ([100, 20, 30, 7, 7], false, None, 0),
+        (
+            [0, u128::MAX, u128::MAX, 7, 0],
+            false,
+            Some("quoted-rejection"),
+            1,
+        ),
+        ([0, u128::MAX, u128::MAX, 7, 0], false, None, 2),
+        ([0, u128::MAX, u128::MAX, 7, 7], false, None, 3),
+        ([u128::MAX, 0, u128::MAX, 7, 7], false, None, 4),
+        ([20, u128::MAX, 20, 7, 7], false, None, 5),
+        ([100, u128::MAX, 30, 7, 7], false, None, 6),
+        ([100, 100, 30, 7, 7], true, None, 0),
+        ([20, 20, 20, 7, 7], true, None, 5),
+    ];
+    for ([payer, recipient, amount, fee, cap], own, rejection, code) in vectors {
+        let mut intent = intent();
+        intent.amount = amount;
+        intent.approved_fee = fee;
+        intent.fee_cap = cap;
+        if own {
+            intent.to = intent.from.clone();
+        }
+        let state = TransferSnapshot {
+            payer_balance: payer,
+            recipient_balance: recipient,
+            next_nonce: 0,
+        };
+        let expected = compute_outcome(&intent, &state, rejection).unwrap();
+        let delta = expected.delta();
+        let values = [
+            delta.payer.after,
+            delta.recipient.after,
+            u128::from(delta.nonce_after),
+            delta.fee_funding_delta,
+            code,
+        ];
+        assert_eq!(
+            TransferOutcome::from_checked_integer_values(&intent, &state, rejection, values)
+                .unwrap(),
+            expected
+        );
+        for (column, invalid) in [(2, u128::from(u64::MAX) + 1), (2, 0), (3, 999), (4, 7)] {
+            let mut malformed = values;
+            malformed[column] = invalid;
+            assert!(TransferOutcome::from_checked_integer_values(
+                &intent, &state, rejection, malformed
+            )
+            .is_err());
+        }
+    }
+}
+
+#[test]
 fn exact_account_width_and_owned_thread_bounds_are_preserved() {
     fn owned<T: Send + Sync + 'static>() {}
     owned::<TransferIntent>();

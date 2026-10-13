@@ -369,6 +369,7 @@ fn setup_with_genesis(
             .collect::<Result<Vec<_>>>()?,
     )?);
     let library = library()?;
+    let execution_backend = test_execution_backend()?;
     let relay_identity = SigningKey::from_bytes(&[91; 32]);
     let mut configs = Vec::new();
     let mut endpoints = Vec::new();
@@ -385,6 +386,7 @@ fn setup_with_genesis(
         let config = json!({
             "profile":PROFILE,"library":library,"database":directory.join(format!("validator-{index}.rocksdb")),
             "rpc_addr":address,"signing_key_file":key_path,"genesis":genesis,"workers":4,"batch_size":batch_size,
+            "execution_backend":execution_backend,
             "relay":{"endpoint":relay.endpoint,"expected_relay_peer_id":peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes()),
                 "connect_timeout_ms":2000,"read_timeout_ms":10,"tls_trust":{"explicit_ca":{"certificate_path":relay.certificate}}}
         });
@@ -408,6 +410,49 @@ fn setup_with_genesis(
         },
         set,
     ))
+}
+
+/// Test deployment selection only, serialized into the actual product config.
+/// CPU and GPU run the identical signed-input/RPC/network/durable fixture.
+fn test_execution_backend() -> Result<String> {
+    let value = std::env::var("NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND")
+        .unwrap_or_else(|_| "cpu_callbacks".into());
+    ensure!(
+        matches!(value.as_str(), "cpu_callbacks" | "aoem_integer_v7"),
+        "invalid explicit resident test execution backend"
+    );
+    Ok(value)
+}
+
+fn check_execution_backend(statuses: &[Value], expected_rows: u64) -> Result<()> {
+    let gpu = test_execution_backend()? == "aoem_integer_v7";
+    ensure!(!statuses.is_empty(), "missing actual backend observations");
+    for status in statuses {
+        let rows = status["execution_integer_rows_total"]
+            .as_u64()
+            .context("missing actual integer row observation")?;
+        let waves = status["execution_integer_waves_total"]
+            .as_u64()
+            .context("missing actual integer wave observation")?;
+        ensure!(
+            status["physical_gpu_verified"] == false
+                && if gpu {
+                    status["business_gpu_active"].is_null()
+                } else {
+                    status["business_gpu_active"] == false
+                },
+            "integer rows must not fabricate physical GPU device attestation"
+        );
+        ensure!(
+            if gpu {
+                rows >= expected_rows && waves > 0
+            } else {
+                rows == 0 && waves == 0
+            },
+            "actual execution backend differs from configured test backend"
+        );
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq, serde::Serialize)]
@@ -1204,6 +1249,7 @@ fn actual_product_rpc_single_ingress_gossip_failures_and_restart() -> Result<()>
             replay_status["transaction_gossip"]["outbound_batches_accepted"] == replay_counter,
             "finalized replay re-authorized propagation"
         );
+        check_execution_backend(&statuses, 6)?;
         evidence["before_restart_status"] = json!(statuses);
         let live_pids: Vec<_> = nodes.processes.iter().flatten().map(Child::id).collect();
         nodes.stop_all()?;
@@ -1258,6 +1304,7 @@ fn actual_product_rpc_single_ingress_gossip_failures_and_restart() -> Result<()>
         evidence["live_pids"] = json!(live_pids);
         evidence["cold_pids"] = json!(cold_pids);
         evidence["cold_status"] = json!(cold_status);
+        check_execution_backend(&final_status, 2)?;
         evidence["final_status"] = json!(final_status);
         evidence["receipts"] = json!(final_receipts[0]);
         evidence["balances_before_restart"] = json!(balances_before);
@@ -1269,6 +1316,7 @@ fn actual_product_rpc_single_ingress_gossip_failures_and_restart() -> Result<()>
         Ok(())
     })();
     let report = json!({"schema":"novovm/resident-product-rpc-single-ingress/v1","passed":result.is_ok(),
+        "execution_backend":test_execution_backend()?,
         "failure":result.as_ref().err().map(|e|format!("{e:#}")),"phase":phase,"evidence":evidence,
         "product_binary":binary,"product_binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
         "aoem_sha256":hex(&Sha256::digest(fs::read(library()?)?)),
