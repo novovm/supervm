@@ -21,6 +21,13 @@ Vulkan 后端，禁止 NOV 专属业务，源码、SDK 与主链接通分别验�
 补齐替代 GPU、业务证明、隐私/PQ 或最终吞吐交付。用户的生产发布目标仍在推进，
 本记录不是生产签收、真实主网启动或发行授权。
 
+本轮已推送主链历史回执 `191f5f89` 和 AOEM 通用资源 `1bfa7037`；原 exec 的
+常驻整数门面及 Windows FULLMAX core-only SDK 已完成有限互通/负载验证，Linux
+仍保留旧包且严格拒绝 v7。当前 CPU 两份样本为 8,712/8,474 TPS，不签收提速。
+GPU 资源生命周期缺口已补，不等于真实候选已使用 GPU；后续就在原 compute owner
+迁接有依赖的业务计划，保留原父绑定、费用/失败语义与常驻流水线，不另建执行器。
+具体实测、插件组合和发布限制见生产台账最上节，不能以该通用适配提前关闭目标。
+
 **2026-10-13 Self-Owned Discovery v1 运行时认领（阶段交付，已释放）：** NOVOCHAT 会话，
 输入 SUPERVM `c7b32c93` / NOVOCHAT `6879b89`；已核对实际 main、远端与干净工作区。
 限定 network 既有 service lease/checkpoint/host、自主来源接入及相邻真实载体测试，

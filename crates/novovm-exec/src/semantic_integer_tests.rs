@@ -283,3 +283,368 @@ fn integer_outcome_real_aoem_vulkan_full_width_and_typed_rejections() {
         .unwrap_err();
     assert!(format!("{error:#}").contains("no result read"));
 }
+
+fn opened(id: u64) -> Value {
+    json!({"kind":"compute.ai.sgm_infer_v1.integer_resource.result", "version":7,
+        "command":"open", "resource_id":id, "numeric_version":5,
+        "rows":1, "input_count":4, "output_count":1})
+}
+
+fn closed(id: u64) -> Value {
+    json!({"kind":"compute.ai.sgm_infer_v1.integer_resource.result", "version":7,
+        "command":"close", "resource_id":id})
+}
+
+fn resource_result(mut value: Value, id: u64) -> Value {
+    value["resident_resource_id"] = id.into();
+    value
+}
+
+struct MockResources {
+    responses: std::collections::VecDeque<Result<Value>>,
+    calls: Vec<(String, Vec<u8>)>,
+}
+
+impl ResourceTransport for MockResources {
+    fn exchange(&mut self, prefix: &str, payload: &[u8]) -> Result<Value> {
+        self.calls.push((prefix.to_owned(), payload.to_vec()));
+        self.responses.pop_front().expect("unexpected wire call")
+    }
+}
+
+fn mock_owner(responses: Vec<Result<Value>>) -> ResourceOwner<MockResources> {
+    ResourceOwner {
+        transport: MockResources {
+            responses: responses.into(),
+            calls: Vec::new(),
+        },
+        owner: 42,
+        prefix: "test/integer-resource/42".into(),
+        resources: BTreeMap::new(),
+        last_resource_id: 0,
+        poisoned: false,
+    }
+}
+
+#[test]
+fn integer_resources_require_explicit_capability_and_both_existing_symbols() {
+    let yes = json!({"compute_checked_integer_resources_v7":true});
+    assert!(resource_supported(&yes, true, true));
+    for (raw, wire, read) in [
+        (json!({}), true, true),
+        (json!({"execute_ops_wire_v1":true}), true, true),
+        (
+            json!({"compute_checked_integer_resources_v7":false}),
+            true,
+            true,
+        ),
+        (
+            json!({"compute_checked_integer_resources_v7":"true"}),
+            true,
+            true,
+        ),
+        (
+            json!({"compute_checked_integer_resources_v7":1}),
+            true,
+            true,
+        ),
+        (yes.clone(), false, true),
+        (yes, true, false),
+    ] {
+        assert!(!resource_supported(&raw, wire, read));
+    }
+    for prefix in ["", " bad", "bad ", "bad/", "bad\0key"] {
+        assert!(validate_prefix(prefix).is_err());
+    }
+    assert!(validate_prefix(&"x".repeat(257)).is_err());
+}
+
+#[test]
+fn integer_resource_wire_is_exact_fixed_shape_and_reuses_one_result_key() {
+    let request = request();
+    let rejection = metadata(json!([{"outcome":1,"fault":0,"component":0,
+        "failed_instruction":null,"values":[]} ]));
+    let mut owner = mock_owner(vec![
+        Ok(opened(10)),
+        Ok(resource_result(successful(), 10)),
+        Ok(resource_result(rejection, 10)),
+        Ok(resource_result(successful(), 10)),
+        Ok(closed(10)),
+    ]);
+    let lease = owner.open(&request.program, 4, 1, 1).unwrap();
+    assert_eq!(
+        owner.run(&lease, &request.rows).unwrap().rows[0].values[0]
+            .try_to_u128()
+            .unwrap(),
+        u128::MAX
+    );
+    assert_eq!(
+        owner.run(&lease, &request.rows).unwrap().rows[0].outcome,
+        AoemIntegerOutcomeKindV1::OutsideDomain
+    );
+    assert!(
+        owner.run(&lease, &request.rows).is_ok(),
+        "row rejection must not poison"
+    );
+    owner.close(&lease).unwrap();
+    assert!(owner.run(&lease, &request.rows).is_err());
+    assert!(owner.close(&lease).is_err());
+    assert_eq!(owner.transport.calls.len(), 5);
+    for (key, payload) in &owner.transport.calls {
+        assert_eq!(key, &owner.prefix);
+        assert_eq!(&payload[..8], b"AOIP0\0\0\0");
+        assert_eq!(word(payload, 8).unwrap(), 7);
+        assert_eq!(
+            payload.len(),
+            40 + word(payload, 32).unwrap() + word(payload, 36).unwrap()
+        );
+    }
+    let open = &owner.transport.calls[0].1;
+    assert_eq!(word(open, 12).unwrap(), 1);
+    assert_eq!(&open[16..24], &[0; 8]);
+    assert_eq!(word(open, 24).unwrap(), 5);
+    assert_eq!(word(open, 28).unwrap(), 1);
+    assert_eq!(&open[40..], request.program);
+    let run = &owner.transport.calls[1].1;
+    assert_eq!(word(run, 12).unwrap(), 2);
+    assert_eq!(&run[16..24], &10u64.to_le_bytes());
+    assert_eq!(word(run, 32).unwrap(), 0);
+    assert_eq!(word(run, 36).unwrap(), 4 * 128);
+    assert_eq!(&run[40..56], &u128::MAX.to_le_bytes());
+    assert!(run[56..168].iter().all(|v| *v == 0));
+    let close = &owner.transport.calls[4].1;
+    assert_eq!(word(close, 12).unwrap(), 3);
+    assert_eq!(close.len(), 40);
+    assert!(close[24..].iter().all(|v| *v == 0));
+}
+
+#[test]
+fn integer_resource_preflight_bounds_and_owner_checks_do_not_enter_wire() {
+    let request = request();
+    let mut owner = mock_owner(vec![Ok(opened(10))]);
+    for rows in [0, MAX_ROWS + 1] {
+        assert!(owner.open(&request.program, 4, 1, rows).is_err());
+    }
+    assert!(owner.open(&request.program, usize::MAX, 1, 1).is_err());
+    let lease = owner.open(&request.program, 4, 1, 1).unwrap();
+    assert!(owner.run(&lease, &[]).is_err());
+    assert!(owner.run(&lease, &[vec![]]).is_err());
+    let wrong = AoemIntegerResourceV7 { owner: 43, id: 10 };
+    assert!(owner.run(&wrong, &request.rows).is_err());
+    assert!(owner.close(&wrong).is_err());
+    assert!(!owner.poisoned);
+    assert_eq!(owner.transport.calls.len(), 1);
+    let shape = *owner.resources.get(&10).unwrap();
+    owner.resources = (1..=MAX_RESOURCE_HANDLES as u64)
+        .map(|id| (id, shape))
+        .collect();
+    assert!(owner.open(&request.program, 4, 1, 1).is_err());
+    assert_eq!(owner.transport.calls.len(), 1);
+}
+
+#[test]
+fn integer_resource_control_and_run_results_require_exact_identity_and_metadata() {
+    let (_, shape) = encode(&request()).unwrap();
+    let mut wide = AoemInteger1024V1::from_u128(0);
+    wide.0[4] = 1;
+    wide.0[30] = 0x8765_4321;
+    let mut full_width = resource_result(successful(), 10);
+    full_width["rows"][0]["values"][0] = json!(wide.0);
+    let decoded = decode_resource(full_width, 10, &shape).unwrap();
+    assert_eq!(decoded.rows[0].values[0], wide);
+    assert!(decoded.rows[0].values[0].try_to_u128().is_err());
+    for field in [
+        "kind",
+        "version",
+        "command",
+        "resource_id",
+        "numeric_version",
+        "rows",
+        "input_count",
+        "output_count",
+    ] {
+        let mut bad = opened(10);
+        bad[field] = Value::Null;
+        assert!(decode_control(bad, None, Some(&shape)).is_err(), "{field}");
+    }
+    let mut extra = opened(10);
+    extra["extra"] = true.into();
+    assert!(decode_control(extra, None, Some(&shape)).is_err());
+    assert!(decode_control(opened(0), None, Some(&shape)).is_err());
+    assert!(decode_control(closed(11), Some(10), None).is_err());
+    for value in [
+        successful(),
+        resource_result(successful(), 11),
+        resource_result(successful(), 0),
+    ] {
+        assert!(decode_resource(value, 10, &shape).is_err());
+    }
+    for (field, value) in [
+        ("version", json!(7)),
+        ("backend", json!("cpu")),
+        ("numeric_contract", json!("checked_i128_v1")),
+        ("extra", json!(true)),
+    ] {
+        let mut bad = resource_result(successful(), 10);
+        bad[field] = value;
+        assert!(decode_resource(bad, 10, &shape).is_err());
+    }
+    let mut bad = resource_result(successful(), 10);
+    bad["rows"][0]["values"][0][31] = json!(u64::MAX);
+    assert!(decode_resource(bad, 10, &shape).is_err());
+}
+
+#[test]
+fn integer_resource_uncertain_open_run_close_and_reused_id_poison_without_retry() {
+    let request = request();
+    for failure in [
+        Err(anyhow::anyhow!("native error")),
+        Ok(opened(0)),
+        Ok(Value::Null),
+    ] {
+        let mut owner = mock_owner(vec![failure]);
+        assert!(owner.open(&request.program, 4, 1, 1).is_err());
+        assert!(owner.open(&request.program, 4, 1, 1).is_err());
+        assert!(owner.poisoned);
+        assert_eq!(owner.transport.calls.len(), 1);
+    }
+    let mut owner = mock_owner(vec![
+        Ok(opened(10)),
+        Err(anyhow::anyhow!("readback failed")),
+    ]);
+    let lease = owner.open(&request.program, 4, 1, 1).unwrap();
+    assert!(owner.run(&lease, &request.rows).is_err());
+    assert!(owner.run(&lease, &request.rows).is_err());
+    assert!(owner.close(&lease).is_err());
+    assert_eq!(owner.transport.calls.len(), 2);
+    let mut owner = mock_owner(vec![Ok(opened(10)), Ok(closed(11))]);
+    let lease = owner.open(&request.program, 4, 1, 1).unwrap();
+    assert!(owner.close(&lease).is_err());
+    assert!(owner.poisoned);
+    let mut owner = mock_owner(vec![Ok(opened(10)), Ok(closed(10)), Ok(opened(10))]);
+    let lease = owner.open(&request.program, 4, 1, 1).unwrap();
+    owner.close(&lease).unwrap();
+    assert!(
+        owner.open(&request.program, 4, 1, 1).is_err(),
+        "closed generation must not be reused"
+    );
+    assert!(owner.poisoned);
+}
+
+#[test]
+fn integer_resource_incomplete_execution_never_reads_a_stale_result() {
+    let payload = resource_header(3, 10, 0, 0, 0);
+    for report in [
+        Err(anyhow::anyhow!("wire failed")),
+        Ok(AoemExecV2Result::default()),
+        Ok(AoemExecV2Result {
+            processed: 1,
+            success: 1,
+            failed_index: u32::MAX,
+            total_writes: 2,
+        }),
+    ] {
+        let result = resource_exchange(
+            "test/fixed",
+            &payload,
+            |_| report,
+            |_| panic!("failed operation must not read old state"),
+        );
+        assert!(result.is_err());
+    }
+}
+
+#[test]
+fn integer_resource_unwinding_keeps_the_owner_poisoned() {
+    struct PanickingTransport;
+    impl ResourceTransport for PanickingTransport {
+        fn exchange(&mut self, _: &str, _: &[u8]) -> Result<Value> {
+            panic!("simulated uncertain native boundary");
+        }
+    }
+    let mut owner = ResourceOwner {
+        transport: PanickingTransport,
+        owner: 42,
+        prefix: "test/unwind".into(),
+        resources: BTreeMap::new(),
+        last_resource_id: 0,
+        poisoned: false,
+    };
+    let request = request();
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        owner.open(&request.program, 4, 1, 1)
+    }))
+    .is_err());
+    assert!(owner.healthy().is_err());
+}
+
+fn explicit_facade(variable: &str) -> AoemExecFacade {
+    let library =
+        std::env::var_os(variable).unwrap_or_else(|| panic!("explicit {variable} required"));
+    assert!(std::path::Path::new(&library).is_file());
+    // Do not use open_with_runtime/apply_process_env: opt-in tests neither
+    // mutate global configuration nor silently select another library.
+    AoemExecFacade::open(library, crate::AoemExecOpenOptions::default()).unwrap()
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_OLD_TEST_LIBRARY lacking v7; no environment mutation"]
+fn integer_resource_old_loaded_library_rejects_without_fallback() {
+    let facade = explicit_facade("NOVOVM_AOEM_OLD_TEST_LIBRARY");
+    assert!(!facade.supports_checked_integer_resources_v7().unwrap());
+    assert!(facade
+        .create_integer_resource_session_v7("test/old-resource")
+        .is_err());
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_V7_TEST_LIBRARY and real Vulkan; no CPU fallback"]
+fn integer_resource_real_v7_repeats_full_width_rejections_and_close() {
+    let facade = explicit_facade("NOVOVM_AOEM_V7_TEST_LIBRARY");
+    assert!(facade.supports_checked_integer_resources_v7().unwrap());
+    let request = request();
+    let mut owner = facade
+        .create_integer_resource_session_v7("test/resident-integer")
+        .unwrap();
+    let first = owner.open(&request.program, 4, 1, 1).unwrap();
+    let alias = owner.open(&request.program, 4, 1, 1).unwrap();
+    for _ in 0..3 {
+        assert_eq!(
+            owner.run(&first, &request.rows).unwrap().rows[0].values[0]
+                .try_to_u128()
+                .unwrap(),
+            u128::MAX
+        );
+    }
+    let mut wide = request.rows.clone();
+    wide[0][1] = AoemInteger1024V1::from_u128(1);
+    wide[0][3] = AoemInteger1024V1([u32::MAX; 32]);
+    wide[0][3].0[31] = 0x7fff_ffff;
+    let output = owner.run(&first, &wide).unwrap();
+    let mut expected = AoemInteger1024V1::from_u128(0);
+    expected.0[4] = 1;
+    assert_eq!(output.rows[0].values[0], expected);
+    assert!(output.rows[0].values[0].try_to_u128().is_err());
+    let mut rejected = request.rows.clone();
+    rejected[0][0] = AoemInteger1024V1::from_i128(-1);
+    assert_eq!(
+        owner.run(&first, &rejected).unwrap().rows[0].outcome,
+        AoemIntegerOutcomeKindV1::OutsideDomain
+    );
+    assert!(owner.run(&first, &request.rows).is_ok());
+    let mut other = facade
+        .create_integer_resource_session_v7("test/resident-other")
+        .unwrap();
+    assert!(other.run(&first, &request.rows).is_err());
+    owner.close(&first).unwrap();
+    assert!(owner.run(&first, &request.rows).is_err());
+    assert!(
+        owner.run(&alias, &request.rows).is_ok(),
+        "another lease must survive close"
+    );
+    owner.close(&alias).unwrap();
+    let reopened = owner.open(&request.program, 4, 1, 1).unwrap();
+    assert_ne!(reopened.id, first.id);
+    assert!(owner.run(&reopened, &request.rows).is_ok());
+    owner.close(&reopened).unwrap();
+}

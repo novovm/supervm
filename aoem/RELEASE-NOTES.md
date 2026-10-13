@@ -1,5 +1,26 @@
 # AOEM FULLMAX SUPERVM Host Package
 
+## 2026-10-13: Windows core-only generic integer resources
+
+The Windows FULLMAX core and header advance to AOEM
+`1bfa70372e2e60851c6d0ab972dea19678b0fa8c`. Windows sidecars remain the original
+`1377cd1e` bundle and Linux remains entirely at `1377cd1e`; no cross-platform
+same-version or fresh sidecar qualification is claimed. All FULLMAX families
+and sidecar files are retained.
+
+AOIP0 v7 provides generic checked integer Open/Run/Close through the existing
+wire/state entry. The Host requires an explicit runtime capability and rejects
+unsupported libraries without fallback. Mainchain CPU execution is unchanged;
+this is not GPU business integration, a new proof service or a throughput claim.
+Real RTX 5090 v7/v5, original-node four-process cold recovery, retired-profile
+rejection, 90 pinned ML-DSA vectors and 32 resident bindings checks passed.
+The 65,536-transaction CPU run also covered recent-cache eviction and two cold
+recoveries. New/old DLL samples were 8474.3275/8712.032 TPS: one run each, not a
+stable improvement claim. The all-six-sidecars-enabled installation probe timed
+out with both old and new cores; that configuration is not qualified and its
+cause is not diagnosed. [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md) records
+the exact counts, limitations and evidence.
+
 ## Identity
 
 ```text
@@ -8,7 +29,7 @@ layout:  single-layer fullmax host package
 entry:   aoem_execute_ops_wire_v1
 output:  aoem_state_read_v1
 host:    SUPERVM
-stage:   scoped private-profile containment; see per-platform baseline
+stage:   Windows core-only upgrade with retained components; see per-platform baseline
 ```
 
 ## Platform Status
@@ -19,7 +40,7 @@ in [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md) and the
 Do not reuse older artifact qualifications or infer Linux success from Windows.
 Pending platform work is not passed. macOS remains unbundled.
 
-This release withdraws the publicly forgeable resident private profile 3;
+The retained 2026-10-04 correction withdrew the publicly forgeable resident private profile 3;
 profiles 1/2 retain public diagnostics only. It does not restore private ZK or
 qualify the whole product. Other AOEM backends remain capabilities, not a newly
 enabled backend-specific NOVOVM proof service.

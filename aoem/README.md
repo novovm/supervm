@@ -3,6 +3,20 @@
 This directory is a single AOEM FULLMAX package for SUPERVM. It is not a
 Proof-only sub-package and it is not a separate platform service.
 
+## Current update: Windows core-only resources (2026-10-13)
+
+Windows core/header now come from AOEM `1bfa70372e2e60851c6d0ab972dea19678b0fa8c`.
+Windows sidecars and the entire Linux bundle remain the original `1377cd1e`
+artifacts; this is not a same-version rebuild of all platforms. The complete
+FULLMAX feature set and sidecar files remain included. Exact hashes, provenance
+and passed/pending checks are in [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md).
+
+Generic AOIP0 v7 resources are available only from the new Windows core, through
+the existing wire/state entry. The Host requires explicit runtime capability
+support and rejects unsupported libraries without fallback. This does not change
+the mainchain CPU route or complete GPU business execution/private proving.
+Historical qualification below does not transfer to the replacement core.
+
 Security correction 2026-10-04: private resident profile 3 is withdrawn.
 Its old AORF envelope was publicly forgeable, not a ZK proof. Corrected
 producers and verifiers reject it; profiles 1/2 are public diagnostics only.
@@ -53,8 +67,8 @@ current FULLMAX output.
 The current source, hashes, build availability and **actual per-platform test
 results** are recorded in [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md),
 [the Windows manifest](windows/manifest.json) and
-[the Linux manifest](linux/manifest.json). This update is scoped private-profile
-containment, not whole-product or performance requalification. A bundled file
+[the Linux manifest](linux/manifest.json). The current update is a scoped Windows
+core upgrade, not whole-product or performance requalification. A bundled file
 or a Windows pass does not establish Linux validation; pending results must not
 be counted as passed. macOS remains unbundled.
 
@@ -140,10 +154,11 @@ ML-DSA support does not make the privacy proofs post-quantum.
 ## ML-DSA Qualification
 
 The retained ML-DSA implementation is pinned to `mldsa-native 2.0.0`.
-This update ran **3 Windows packaged regression tests** covering ML-DSA-44/65/87
+The 2026-10-04 update ran **3 Windows packaged regression tests** covering ML-DSA-44/65/87
 positive and negative cases. The 90-vector applicable NIST subset and 9-case
 independent interoperability results belong to the historical qualification;
-they were not rerun or transferred to the new artifacts by this update.
+they were not transferred to the 2026-10-13 replacement core. Current checks
+and pending results are recorded separately in the runtime baseline.
 This is not FIPS certification or a new main-chain authentication/seal sign-off.
 Raw/internal ABI framing is unchanged; the Host adds external-pure context
 framing exactly once. See [RUNTIME-BASELINE.md](RUNTIME-BASELINE.md) for current
@@ -187,7 +202,7 @@ can embed AOEM directly and do not need to deploy the worker.
 
 ```text
 additive public FFI ABI update for Semantic Graph V3
-APFL AI contract now requires versioned sealed model-session assets
+APFL model sessions require sealed model assets; checked programs use validated program assets
 not a standalone AOEM platform service
 not a generic arbitrary-circuit proof system
 not a performance-ready claim

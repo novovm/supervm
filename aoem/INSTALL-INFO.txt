@@ -1,11 +1,20 @@
 AOEM runtime in SUPERVM is packaged as one portable FULLMAX host bundle.
 
+Current update (2026-10-13):
+  Windows core/header: AOEM 1bfa70372e2e60851c6d0ab972dea19678b0fa8c.
+  Windows sidecars: retained 1377cd1e bundle, not rebuilt.
+  Linux core/header/sidecars: retained 1377cd1e bundle, not upgraded.
+  This is a mixed-source FULLMAX package, not a same-version platform rebuild.
+  AOIP0 v7 is available from the Windows core only. Require its explicit runtime
+  capability; unsupported libraries fail closed without fallback. The mainchain
+  CPU route is unchanged; generic v7 is not GPU business or proof completion.
+
 Runtime baseline:
   Current source, runtime hashes, build availability and executed test scope:
     aoem/RUNTIME-BASELINE.md
     aoem/windows/manifest.json
     aoem/linux/manifest.json
-  This update is scoped private-profile containment, not full qualification.
+  This update is a scoped Windows core upgrade, not full qualification.
   Do not infer Linux validation from Windows or count pending work as passed.
   macOS pending, not bundled, not advertised as available.
 
@@ -28,7 +37,8 @@ Resident proof security scope:
   No asset authorization or finality claim may rely on these envelopes.
 
 ML-DSA test scope:
-  This update ran 3 Windows packaged tests covering 44/65/87 positives/negatives.
+  The 2026-10-04 update ran 3 Windows tests covering 44/65/87 positives/negatives.
+  Do not transfer them to the replacement core; consult the current baseline.
   The 90-vector NIST subset and 9-case interoperability results are historical;
   they are not a rerun or new qualification of the replacement artifacts.
   Consult the current baseline for platform-specific results and limitations.

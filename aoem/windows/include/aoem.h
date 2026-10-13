@@ -2061,6 +2061,18 @@ AOEM_API int32_t aoem_ai_sgm_model_session_get_runtime_identity_v1(
   uint64_t session_id,
   aoem_ai_sgm_model_session_runtime_identity_v1* out_identity
 );
+// Observe newly generated token IDs during the existing synchronous wire call.
+// Token memory is borrowed only for the callback. Return 0 to continue, nonzero
+// to abort generation. Events are provisional, not conversation/Memory commits.
+// Callback and user_data must remain valid until unregistered (callback=NULL),
+// or session close. Do not call AOEM or unwind across C from the callback.
+// Calls for one session must be serialized, including registration/unregister.
+// Generation with an observer must run on the registering thread.
+// Returns 0 on success, -3 for unsupported/inactive session, -4 if already set.
+typedef int32_t (*aoem_model_token_observer_v1)(
+  const uint32_t* tokens, size_t token_count, void* user_data);
+AOEM_API int32_t aoem_ai_sgm_model_session_set_token_observer_v1(
+  uint64_t session_id, aoem_model_token_observer_v1 callback, void* user_data);
 // AI SGM training ABI: hard-token forward with a differentiable sparse top-k
 // surrogate backward path. The session must already own a Q4 vocabulary and
 // this policy must be selected before the first optimizer step.
@@ -2877,6 +2889,46 @@ AOEM_API const char* aoem_last_error(void* handle);
 // This kernel executes sealed predicates, not their logical derivations. Trusted
 // model compilation must bind refutations to the original goal; arbitrary supplied
 // predicates are not independently certified mathematical proofs by this ABI.
+
+// AOIP0 version=6 binds execution to an existing model session's device. Header:
+// magic[8], LE u32 version=6, rows, program_bytes, numeric_version (1..5),
+// LE u64 model_session_id (nonzero), then the exact program and inputs specified
+// by numeric_version. This does not change numeric or program semantics.
+// The entire request is validated before dispatch. An absent/closed session is
+// an error; no new device or different session is used as a fallback. Dispatch
+// and readback hold the session lock shared with generation and close. No model,
+// language KV, conversation or parameter state is changed by integer execution.
+// Results retain version=numeric_version and add resident_session_id. Standalone
+// versions1..5 remain supported and their result schema is unchanged.
+
+// AOIP0 version=7 retains a generic checked outcome program in its AOEM context.
+// Capability: compute_checked_integer_resources_v7 (requires apfl-model-session).
+// Header (40 bytes): magic[8], LE u32 version=7, command, LE u64 resource_id,
+// LE u32 numeric_version, rows, program_bytes, input_bytes; then exact body.
+// command=1 Open: resource_id=0, numeric_version=4 (APFLOU01 v1/i128) or 5
+// (APFLOU01 v2/i1024), rows1..4096, program_bytes1..4MiB, input_bytes=0;
+// body is the validated outcome program. No model package is needed.
+// command=2 Run: nonzero resource_id and exactly the opened numeric_version/rows,
+// program_bytes=0, input_bytes exactly rows*input_count*(16 or 128); body is
+// row-major LE signed input data. Each run replaces all inputs and outputs.
+// command=3 Close: nonzero resource_id; numeric_version, rows and both lengths=0.
+// Oversized, noncanonical and trailing bytes fail before device allocation.
+// IDs are process-unique opaque leases, valid only in the creating AOEM context.
+// Exact program bytes+numeric contract+rows share an operator, not their IDs.
+// Per-context limits: 64 leases, 8 distinct live programs, 64MiB retained program
+// bytes plus logical GPU program/input/output buffer extents. Driver allocation
+// padding, pipelines and transient staging are not part of this byte quota.
+// All aliases serialize upload/dispatch/readback; Close waits for accepted Run.
+// Last Close releases the program; aoem_destroy drains async work then releases
+// all leases and the lazy context-owned device. No live eviction or CPU fallback.
+// Open/Close write the existing integer_program/result key, kind
+// compute.ai.sgm_infer_v1.integer_resource.result, version=7, command=open/close,
+// resource_id; Open also reports numeric_version, rows, input_count, output_count.
+// Run keeps the version4/5 outcome schema and adds resident_resource_id.
+// Row faults are ordinary reusable outcomes. Upload/dispatch/readback failures
+// poison that program and fail closed; an uncertain/device-lost Vulkan runtime
+// remains fail-stop even after Close/Open and requires a new AOEM context.
+// Payload versions1..6 keep their existing semantics. This adds no C export.
 
 // Bounded integer-program search through the same compute.ai.sgm_infer_v1 entry.
 // Payload: "AOIS0\0\0\0", LE u32 version=1, queries1..64, asset_bytes<=65536,
