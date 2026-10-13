@@ -21,3 +21,5 @@ artifacts/audit/resident-integer-dataflow-20261013/** -text whitespace=blank-at-
 artifacts/audit/resident-complete-effects-20261014/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 # Raw test stdout intentionally includes the test harness final blank line.
 artifacts/audit/resident-complete-effects-20261014/*.log whitespace=-blank-at-eof,cr-at-eol
+artifacts/audit/resident-effect-sharing-20261014/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+artifacts/audit/resident-effect-sharing-20261014/*.log whitespace=-blank-at-eof,cr-at-eol

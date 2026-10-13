@@ -9,6 +9,11 @@ use crate::native_pipeline::business::direct_nov_fee::{
 };
 use crate::native_pipeline::business::quoted_transfer::{TransferOutcome, TransferSnapshot};
 use novovm_exec::resident::{AoemInteger1024V1, AoemIntegerInputV1 as V, AoemIntegerPlanNodeV1};
+use std::collections::HashMap;
+
+#[cfg(test)]
+#[path = "full_effects_tests.rs"]
+mod tests;
 
 fn lit(n: u128) -> V {
     V::Literal(AoemInteger1024V1::from_u128(n))
@@ -18,18 +23,61 @@ fn zero() -> Quad {
     std::array::from_fn(|_| lit(0))
 }
 
+// Candidate-local hash-consing of this compiler's eight PURE programs, not a
+// cache of state admission, quotes, effects, transactions or completed batches.
+// Exact equality (including all 1024 bits) resolves hash collisions. We never
+// iterate this table, so randomized hashing cannot change plan order/encoding.
+#[derive(Hash, PartialEq, Eq)]
+enum BindingKey {
+    Literal([u32; 32]),
+    Output(u32, u32),
+}
+impl From<&V> for BindingKey {
+    fn from(value: &V) -> Self {
+        match value {
+            V::Literal(value) => Self::Literal(value.0),
+            V::Output { row, column } => Self::Output(*row, *column),
+        }
+    }
+}
+#[derive(Hash, PartialEq, Eq)]
+struct ExpressionKey {
+    program: usize,
+    guard: BindingKey,
+    inputs: Vec<BindingKey>,
+    outputs: usize,
+}
+
 #[derive(Default)]
 struct Builder {
     nodes: Vec<AoemIntegerPlanNodeV1>,
+    expressions: HashMap<ExpressionKey, u32>,
+    #[cfg(test)]
+    unshared: bool,
 }
 impl Builder {
     fn call(&mut self, program: usize, guard: &V, inputs: Vec<V>, outputs: usize) -> Vec<V> {
-        let row = self.nodes.len() as u32;
-        self.nodes.push(AoemIntegerPlanNodeV1 {
+        let key = ExpressionKey {
             program,
-            guard: *guard,
-            inputs,
-            otherwise: vec![lit(0); outputs],
+            guard: guard.into(),
+            inputs: inputs.iter().map(BindingKey::from).collect(),
+            outputs,
+        };
+        let existing = self.expressions.get(&key).copied();
+        #[cfg(test)]
+        let existing = if self.unshared { None } else { existing };
+        let row = existing.unwrap_or_else(|| {
+            let row = self.nodes.len() as u32;
+            self.nodes.push(AoemIntegerPlanNodeV1 {
+                program,
+                guard: *guard,
+                inputs,
+                // Every call here has the same zero fallback for its arity.
+                // If nonzero fallbacks are added, they MUST enter the key too.
+                otherwise: vec![lit(0); outputs],
+            });
+            self.expressions.insert(key, row);
+            row
         });
         (0..outputs)
             .map(|column| V::Output {
@@ -285,13 +333,16 @@ struct Compiled {
 }
 
 fn compile(p: &Prepared, now: u128) -> Result<Compiled> {
+    compile_with_builder(p, now, Builder::default())
+}
+
+fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compiled> {
     let context = FeeQuotationContext::new(&p.policy, now)?;
     let quotes = p
         .requests
         .iter()
         .map(|r| context.prepare(r))
         .collect::<Result<Vec<_>>>()?;
-    let mut b = Builder::default();
     let a = &p.fees.accounting;
     let room = b.call(
         2,

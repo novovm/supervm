@@ -1,0 +1,364 @@
+{
+  "schema": "novovm/complete-effect-expression-sharing/v1",
+  "date": "2026-10-14",
+  "scope": "Original node complete NOV effect plan; pure common-expression sharing and resident dispatch tiling. Not production or overall performance acceptance.",
+  "baseline": {
+    "source": "a6ededc1d3de85365fff77c5c58a3e43586eb054",
+    "node_sha256": "0x02d86588f5718f511f828454a763a997e14bf4baade4ba2dd7cb9047bf52ed18",
+    "prior_finance_commit": "4c9e36e1f6a4398e469dfc57cf0c34658a5a7249",
+    "prior_ci": {
+      "run": 38439601146,
+      "conclusion": "cancelled"
+    }
+  },
+  "delivery": {
+    "parent": "f540d5c252a6b34f9ca63042837f0ec2a7ddcb82",
+    "remote_delta": "Two relay/Android documentation commits fast-forwarded after measurement; no novovm-node dependency changes.",
+    "node_sha256": "0x31f8c9f1a95b0ab6893f81b74357172dfcbef842b0b1c4cefaa71524f1c06052",
+    "unit_driver_sha256": "62e91459d90e0a037c62edc94926b0f004636e8e14dae027dace14c1efca909c",
+    "functional_driver_sha256": "c1f91b4002fdf9cee88afba0640dd6b85f43292835173e0a9259ed1f9c490321",
+    "functional_driver_note": "Same changes before final test-only formatting; final executable was used by all three product fault tests.",
+    "load_driver_sha256": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "sources": [
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/body_tests.rs",
+        "sha256": "ce8bc4097155125b4c3e02739c8390700987d88ca33f20b8058152aba8e75e77"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs",
+        "sha256": "3500a6f069228469755700e5ebb98518bab795fc099f836d26fbe90fe9e1405a"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs",
+        "sha256": "e6199dfa970304e94724c937085c7928a724cd29f176a8237451e3ad6870e157"
+      },
+      {
+        "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs",
+        "sha256": "87d81362e933b85cdab900d2a950f2765a88e4218ee36e3127531be1caeed239"
+      }
+    ]
+  },
+  "aoem": {
+    "source": "7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed",
+    "dll_sha256": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+    "modified": false,
+    "entry": "node -> exec -> bindings -> AOIP0 v10 composition / AOIR0002"
+  },
+  "semantic_guards": {
+    "pure_programs_only": true,
+    "exact_program_guard_inputs_arity_key": true,
+    "full_1024_bit_equality": true,
+    "no_hash_table_iteration_order": true,
+    "candidate_local_only": true,
+    "per_transaction_effect_multiplicity_retained": true,
+    "no_host_business_repair": true,
+    "no_json_hot_result": true,
+    "one_complete_candidate_delegation": true
+  },
+  "static_work": {
+    "scope": "1024-row compiler fixtures, not signed TPS; static scheduled-row/dispatch upper bounds, not measured device work/time",
+    "homogeneous": {
+      "nodes_before": 22521,
+      "nodes_after": 6689,
+      "exports_before": 16405,
+      "exports_after": 16405,
+      "padded_rows_before": 60417,
+      "padded_rows_after": 11266,
+      "dispatches_before": 60,
+      "dispatches_after": 90
+    },
+    "diverse": {
+      "nodes_before": 22227,
+      "nodes_after": 20572,
+      "exports_before": 16405,
+      "exports_after": 16405,
+      "padded_rows_before": 60419,
+      "padded_rows_after": 24196,
+      "dispatches_before": 62,
+      "dispatches_after": 193
+    },
+    "resource_rows": [
+      128,
+      128,
+      1,
+      1,
+      128,
+      1,
+      128,
+      128
+    ],
+    "candidate_limit_unchanged": true
+  },
+  "correctness": {
+    "pipeline_passed": 397,
+    "pipeline_ignored": 62,
+    "native_ignored_explicitly_run": 4,
+    "shared_unshared_all_export_parity": true,
+    "capacity_failure_positive_negative_dependency": true,
+    "windows_diagnostics_overflow": true,
+    "full_u128": true,
+    "real_single_ingress_failures_restart": true,
+    "real_aab_three_honest_plus_fault_peer": true,
+    "real_offline_quorum_catchup_restart": true,
+    "format": true,
+    "clippy_release_lib": true
+  },
+  "conditions": {
+    "os": "Windows",
+    "ac_checked_before_and_after_each_sample": true,
+    "profiling_formal": false,
+    "profiling_diagnostic": true,
+    "topology": "one host, four original node processes and four independent AOEM stores",
+    "entry": "single product RPC node0; other nodes independently receive/authenticate/execute",
+    "transactions": 65536,
+    "batch_max": 1024,
+    "payers": 1024,
+    "nonces_per_payer": 64,
+    "shared_recipient": true,
+    "outstanding_max": 8192,
+    "load": "real pregenerated signatures; signing/startup/cold oracle excluded from timed window",
+    "completion": "all four nodes return successful finalized receipts; complete economics/history and cold restart verified afterward",
+    "diagnostic_values_are_inclusive_nested_wall_time": true
+  },
+  "formal_order": [
+    "baseline-cpu-1",
+    "baseline-integer-1",
+    "final-integer-1",
+    "final-cpu-1",
+    "final-cpu-2",
+    "final-integer-2",
+    "baseline-integer-2",
+    "baseline-cpu-2"
+  ],
+  "formal_samples": [
+    {
+      "sample": "baseline-cpu-1",
+      "node": "0x02d86588f5718f511f828454a763a997e14bf4baade4ba2dd7cb9047bf52ed18",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 9258.250750601208,
+      "p95_ms": 1256.066,
+      "p99_ms": 1302.707,
+      "seconds": 7.078659,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "baseline-cpu-2",
+      "node": "0x02d86588f5718f511f828454a763a997e14bf4baade4ba2dd7cb9047bf52ed18",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 9486.21772820892,
+      "p95_ms": 1112.006,
+      "p99_ms": 1168.415,
+      "seconds": 6.908549,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "final-cpu-1",
+      "node": "0x31f8c9f1a95b0ab6893f81b74357172dfcbef842b0b1c4cefaa71524f1c06052",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 8843.810978654266,
+      "p95_ms": 1151.704,
+      "p99_ms": 1485.883,
+      "seconds": 7.41038,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "final-cpu-2",
+      "node": "0x31f8c9f1a95b0ab6893f81b74357172dfcbef842b0b1c4cefaa71524f1c06052",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 7988.15233753649,
+      "p95_ms": 1328.704,
+      "p99_ms": 1360.434,
+      "seconds": 8.20415,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "baseline-integer-1",
+      "node": "0x02d86588f5718f511f828454a763a997e14bf4baade4ba2dd7cb9047bf52ed18",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 2568.644894798674,
+      "p95_ms": 3757.416,
+      "p99_ms": 3852.025,
+      "seconds": 25.513842,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "baseline-integer-2",
+      "node": "0x02d86588f5718f511f828454a763a997e14bf4baade4ba2dd7cb9047bf52ed18",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 2739.9359842654358,
+      "p95_ms": 3563.104,
+      "p99_ms": 3614.185,
+      "seconds": 23.918807,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "final-integer-1",
+      "node": "0x31f8c9f1a95b0ab6893f81b74357172dfcbef842b0b1c4cefaa71524f1c06052",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 3177.928757195449,
+      "p95_ms": 2802.697,
+      "p99_ms": 3042.404,
+      "seconds": 20.622237,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    },
+    {
+      "sample": "final-integer-2",
+      "node": "0x31f8c9f1a95b0ab6893f81b74357172dfcbef842b0b1c4cefaa71524f1c06052",
+      "aoem": "0xd81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2",
+      "tps": 3367.438133164153,
+      "p95_ms": 2925.7,
+      "p99_ms": 2980.032,
+      "seconds": 19.461679,
+      "success": 65536,
+      "business_failure": 0,
+      "rejected": 0,
+      "unresolved": 0,
+      "passed": true
+    }
+  ],
+  "combined": {
+    "method": "sum(successes)/sum(timed seconds); quantiles NOT averaged",
+    "cpu": {
+      "before": 9370.84799196523,
+      "after": 8394.232807519662,
+      "delta_percent": -10.421844269408066
+    },
+    "integer": {
+      "before": 2651.5269290949796,
+      "after": 3269.9399928889184,
+      "delta_percent": 23.322903380997005
+    }
+  },
+  "cpu_diagnostic": [
+    {
+      "sample": "baseline-cpu-diagnostic",
+      "observations": 771072,
+      "successful_tps": 9605.510974313876,
+      "nodes": [
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 694.5853,
+          "tree_ms": 408.7786,
+          "persist_ms": 1097.7306,
+          "http_ms": 1552.4999,
+          "idle_ms": 5459.935
+        },
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 703.9334,
+          "tree_ms": 415.0963,
+          "persist_ms": 1146.3048,
+          "http_ms": 1391.918,
+          "idle_ms": 5660.0588
+        },
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 697.6431,
+          "tree_ms": 408.2184,
+          "persist_ms": 1141.5182,
+          "http_ms": 1428.1313,
+          "idle_ms": 5685.3423
+        },
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 683.459,
+          "tree_ms": 406.3998,
+          "persist_ms": 1205.598,
+          "http_ms": 1424.0874,
+          "idle_ms": 5683.0898
+        }
+      ]
+    },
+    {
+      "sample": "final-cpu-diagnostic",
+      "observations": 945152,
+      "successful_tps": 8533.171114194965,
+      "nodes": [
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 687.7985,
+          "tree_ms": 405.9428,
+          "persist_ms": 1080.432,
+          "http_ms": 1750.8701,
+          "idle_ms": 6128.5892
+        },
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 693.7814,
+          "tree_ms": 411.9364,
+          "persist_ms": 1115.9453,
+          "http_ms": 1621.091,
+          "idle_ms": 6335.2762
+        },
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 708.0833,
+          "tree_ms": 407.2013,
+          "persist_ms": 1100.8657,
+          "http_ms": 1641.0679,
+          "idle_ms": 6410.2652
+        },
+        {
+          "integer_calls": 0,
+          "integer_wire_calls": 0,
+          "cpu_ms": 693.8539,
+          "tree_ms": 405.3084,
+          "persist_ms": 1093.2142,
+          "http_ms": 1633.7166,
+          "idle_ms": 6332.3314
+        }
+      ]
+    }
+  ],
+  "cpu_regression": "Unresolved. Both formal pairs and the separate diagnostic pair are lower. Actual CPU path has zero integer execution/wire calls. CPU execution/tree/persistence inclusive timings do not show equivalent growth; larger query count and HTTP/idle totals are associations, not a proven root cause. Do not dismiss or merge with integer gains.",
+  "protected_drafts": {
+    "reference": "../resident-integer-device-20261013/validation.json",
+    "checked": 49,
+    "hash_drift": 0
+  },
+  "limitations": [
+    "CPU default unchanged; CPU throughput regression not signed off",
+    "Integer remains materially slower than CPU and earlier prediction-only path",
+    "128-row tiles reduce padding but increase dispatch count; diverse-input throughput not measured",
+    "AOEM inter-level readback/upload remains; not continuous GPU residency",
+    "Peak allocation and device command timing not measured in this slice",
+    "No complete business proof, million TPS, Linux execution, four-machine test, or production acceptance"
+  ],
+  "production_acceptance": false,
+  "overall_performance_acceptance": false
+}
