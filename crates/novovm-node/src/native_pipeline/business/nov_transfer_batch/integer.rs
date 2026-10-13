@@ -34,6 +34,10 @@ impl ResidentTransferResources {
         )?;
         let facade = selection.open_wire_facade()?;
         let mut session = facade.create_integer_resource_session_v7("novovm/native-transfer")?;
+        ensure!(
+            session.supports_binary_result_v1(),
+            "NOV integer execution requires AOEM binary result v1; update SDK, no JSON fallback"
+        );
         let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, max_rows)?;
         Ok(Self {
             session,
@@ -100,7 +104,7 @@ impl ResidentTransferResources {
                 );
                 batch
             } else {
-                self.session.run(&self.resource, &rows)?
+                self.session.run_binary_v1(&self.resource, &rows)?
             }
         };
         ensure!(

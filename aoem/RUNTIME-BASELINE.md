@@ -1,6 +1,17 @@
 # AOEM FULLMAX Runtime Baseline
 
-## Current: 2026-10-13 Windows bound-resource diagnostics and owned results
+## Current: 2026-10-13 Windows binary integer result
+
+Core/header AOEM `8f12c805122c6e59889ce4f3352aa0541f869593`, same FULLMAX features;
+44,429,824 bytes, SHA256 `9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9`.
+Normal integer execution uses original opcode113/AOIP0 v8 and AOIR0001 typed
+result handoff, no numeric JSON materialization. v7 compatibility and opt-in
+profile remain unchanged. CPU default is preserved. Linux and sidecars were not
+rebuilt. No complete business plan, proof or production signoff is implied.
+Current checks and remaining work are recorded in
+[the product tracker](../docs/NOVOVM_PRODUCTION_READINESS_TRACKER.md).
+
+## Previous: 2026-10-13 Windows bound-resource diagnostics and owned results
 
 Windows FULLMAX core/header source is AOEM main
 `5e555e1ab17f849a1a877fd09e24769eba06cddf`. Core size 44,400,128 bytes, SHA256

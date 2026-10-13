@@ -1,6 +1,8 @@
 //! Storage evidence only. A node signature never represents recipient delivery.
 use anyhow::{ensure, Result};
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
+#[cfg(feature = "iroh-transport")]
+use ed25519_dalek::{Signer, SigningKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -18,6 +20,7 @@ pub struct StoreReceiptV1 {
 }
 impl StoreReceiptV1 {
     // Called by the service ONLY after a successful store transaction.
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn committed(
         key: &SigningKey,
         mailbox: [u8; 32],

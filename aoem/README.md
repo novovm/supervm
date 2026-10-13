@@ -3,9 +3,12 @@
 This directory is a single AOEM FULLMAX package for SUPERVM. It is not a
 Proof-only sub-package and it is not a separate platform service.
 
-## Current update: Windows bound-resource diagnostics (2026-10-13)
+## Current update: Windows binary integer result (2026-10-13)
 
-Windows core/header now come from AOEM `5e555e1ab17f849a1a877fd09e24769eba06cddf`.
+Windows core/header now come from AOEM `8f12c805122c6e59889ce4f3352aa0541f869593`.
+Normal original-node integer results use AOIP0 v8 / AOIR0001: typed rows without
+numeric JSON, context/resource/sequence-bound single take. This is not a complete
+business plan. The following v7 APIs remain supported compatibility/diagnostics.
 Windows sidecars and the entire Linux bundle remain the original `1377cd1e`
 artifacts; this is not a same-version rebuild of all platforms. The complete
 FULLMAX feature set and sidecar files remain included. Exact hashes, provenance

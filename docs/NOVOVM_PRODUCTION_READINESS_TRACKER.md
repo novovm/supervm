@@ -8,6 +8,96 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 Unified integer binary result slice (not complete algebraic plan)
+
+User approved the four-part [mapping and order](NOVOVM_ALGEBRAIC_PLAN_INTEGRATION.md)
+before code changes. Input SUPERVM `8f8896b0`, AOEM `5e555e1a`; preserved remote
+SUPERVM changes through `57869267` during measurement, then fast-forwarded the
+independent mailbox commit `a53c9590` before delivery. AOEM adapter is pushed as
+`8f12c805`; no NOV business was added to AOEM. Original node/exec/controller,
+fees, state tree, consensus and publication algorithms were not replaced.
+
+The same opcode 113 now accepts explicit AOIP0 v8 Run against the existing
+resident i1024 resource. Native typed rows become bounded AOIR0001 bytes;
+exec consumes them through an exact context/resource/request-sequence single-take
+buffer with the existing DLL free contract. Normal integer execution no longer
+materializes, serializes or parses the numerical JSON result tree. Full 1024-bit
+values, shape/tags/fault locations, execution completion and failure poisoning
+remain checked. A 1024-row/five-output binary result is 671,784 bytes. This is
+not zero-copy: native rows, binary buffer and final typed rows still exist.
+No allocation/peak-memory reduction or new facade timing was measured.
+
+The existing `aoem_integer_v7` configuration names the resource lifecycle;
+its normal Run explicitly uses v8. Old v7 and opt-in profile JSON remain
+compatible, not a silent fallback. Missing binary capability fails explicitly.
+CPU remains the default. Windows FULLMAX SDK was updated (DLL SHA256
+`9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9`);
+Linux packaging was not changed. All 117 SDK checksum entries match.
+
+### Real product comparison and regression boundary
+
+All eight [raw reports and validation](../artifacts/audit/resident-integer-binary-20261013/validation.json)
+are retained. Windows Release, AC confirmed before/after, diagnostics off,
+four original node processes/databases, single RPC, 65,536 pre-signed transfers,
+1024 payers × 64 nonces, shared recipient, batch 1024, in-flight 8192.
+Unchanged endpoint: four matching final receipts plus economics/cold recovery.
+No concurrent builds/tests during formal runs. Two baseline/final interleaved
+pairs per mode; measured candidate node hash `4a03f542…`, frozen baseline
+`92160d3e…`. These eight samples precede the final mailbox fast-forward;
+they must not be relabeled as measurements of the subsequent rebuilt binary.
+
+| Mode / pair | Old → new successful TPS | Old → new P95 ms | Old → new P99 ms |
+| --- | --- | --- | --- |
+| CPU 1 | 9914.85 → 8363.96 | 1176.607 → 1437.937 | 1269.597 → 1474.296 |
+| CPU 2 | 8987.36 → 8818.61 | 1099.813 → 1275.586 | 1276.841 → 1408.067 |
+| Integer 1 | 7267.56 → 8859.44 | 1382.070 → 1152.529 | 1427.110 → 1419.153 |
+| Integer 2 | 7718.82 → 9689.84 | 1387.718 → 945.039 | 1442.117 → 1411.415 |
+
+Total successes / total time: integer **7486.39 → 9256.05 TPS (+23.64%)**;
+CPU **9428.35 → 8585.27 TPS (-8.94%)**. Every run completed 65,536 successes,
+zero business failures, permanent rejects or unresolved transactions. One old
+integer run recorded one transport error; retained, not hidden. Business
+failures are tested separately. P95/P99 include four-node HTTP receipt observation.
+Integer improvement is a finite paired result, not stable capacity. CPU regression
+is observed and unexplained; unchanged CPU source is not proof of no regression.
+Do not attribute it to power, Windows or unrelated commits without evidence.
+
+### Correctness and remaining work
+
+- Format and strict node/exec/bindings Clippy pass; exec 63 pass / 25 ignored;
+  node pipeline 395 pass / 60 ignored. AOEM resource suite 12 pass includes
+  actual GPU v8/no-JSON, context identity, single take and old lifecycle tests.
+- Installed DLL binary/JSON parity and full-u128 business parity pass; malformed
+  length, shape, identity, fault and padding negatives plus poison/no-fallback
+  tests retained. No economic width or failure-prefix rules were reduced.
+- Final packaged binary single-ingress failure/restart test passed (5.79s),
+  three honest original processes plus one fault-peer A/A/B passed (13.28s),
+  offline quorum/catch-up/restart passed (48.42s). These are same-host functional
+  checks, not multi-machine or production acceptance; all raw reports retained.
+- 49 pre-existing legacy/runtime drafts have unchanged hashes. Incoming network
+  work preserved. Final remote CI is not yet verified; local tests are not CI.
+
+**Not complete:** node still advances component states between integer waves;
+`finish` still runs fee settlement, prefix repair and state/receipt staging in
+an AOEM CPU callback. No Host loop was moved into AOEM. Next integration must
+express these dependencies, conditional effects and failures as a readable
+generic plan, then bind its result to the existing candidate/publication path.
+This result-channel slice does not sign off complete GPU business execution,
+business proof, million-TPS capacity or production readiness.
+
+Final mailbox integration note: `a53c9590` changed dependency feature resolution
+and the linked node hash. Its private `StoreReceiptV1::committed` was only used
+by Iroh RPC but compiled without that feature, failing default strict Clippy.
+Gate the private function/imports with the existing `iroh-transport` feature;
+no mailbox protocol or behavior change. Strict node/exec/bindings Clippy then
+passed. The performance table remains the pre-fast-forward checkpoint, not a
+claim of remeasured final-mailbox-build throughput. Final build/smoke identity
+is separately recorded in validation JSON.
+The delivered node hash is `dca03e2e…`; the retained original test driver
+`07090a3c…` launched that exact binary and passed single-ingress failure/restart
+(5.84s), A/A/B (13.90s), and offline catch-up/restart (48.30s) again. These
+`delivery-*.json` reports supplement rather than overwrite the measured checkpoint.
+
 ## 2026-10-13 Distributed Mailbox v1: shared native runtime, not Android acceptance
 
 Input `57869267` / NOVOCHAT `ab84a8b`. The existing bounded SQLite mailbox

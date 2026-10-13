@@ -1,14 +1,22 @@
 {
-  "stamp": "20261013-integer-profile-core-5e555e1a",
-  "release_version": "1.5.0+5e555e1a-windows-core-v7-profile1",
-  "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
+  "stamp": "20261013-integer-binary-core-8f12c805",
+  "release_version": "1.5.0+8f12c805-windows-core-integer-binary1",
+  "source_commit": "8f12c805122c6e59889ce4f3352aa0541f869593",
   "source_commit_scope": "core_and_public_header_only",
   "platform": "windows",
   "profile": "fullmax",
   "bundle_dir": ".",
   "core_dll": "core/bin/aoem_ffi.dll",
-  "core_sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
-  "core_bytes": 44400128,
+  "core_sha256": "9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9",
+  "core_bytes": 44429824,
+  "integer_binary_result_v1": {
+    "capability_flag": "compute_checked_integer_binary_result_v1",
+    "execution": "aoem_execute_ops_wire_v1/opcode113/AOIP0-v8",
+    "result": "aoem_integer_result_take_v1/AOIR0001",
+    "numeric_json_materialization": false,
+    "context_resource_sequence_bound": true,
+    "complete_business_plan": false
+  },
   "public_header": "include/aoem.h",
   "retained_sidecars": {
     "source_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
@@ -22,8 +30,8 @@
     "provenance": "previous_windows_manifest_and_runtime_baseline"
   },
   "previous_core": {
-    "source_commit": "1bfa70372e2e60851c6d0ab972dea19678b0fa8c",
-    "sha256": "c040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+    "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
+    "sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
     "baseline": "../RUNTIME-BASELINE.md"
   },
   "plugins": [
@@ -116,8 +124,8 @@
     "runtime_canon_changed": true
   },
   "checksums": "CHECKSUMS.sha256",
-  "notes": "Windows FULLMAX core/header advanced to 5e555e1a. Bound integer resource profiling is opt-in through the original wire/state semantic path; ordinary v7 schemas unchanged. Result Value ownership removes deep copies. NOV prediction is an explicit experimental original-node consumer; AOEM contains no NOV policy. Sidecars remain unchanged 1377cd1e; Linux not upgraded. Historical validation below is not current qualification.",
-  "current_update_validation": {
+  "notes": "Windows FULLMAX core/header advanced to 8f12c805. Integer numeric results use versioned binary handoff through the existing execution owner. v7 compatibility/profile schemas unchanged. No NOV policy in AOEM; no complete plan or TPS signoff. Sidecars/Linux unchanged. Current scoped validation is in RUNTIME-BASELINE.md; historical validation below is not current qualification.",
+  "previous_update_validation": {
     "bound_resource_driver_identity": "NVIDIA GeForce RTX 5090 Laptop GPU; vendor 0x10de; device 0x2c58; discrete type 2; queue 0",
     "device_timestamp": "64 valid bits; 1 ns/tick; 64 completed samples per original node in diagnostic workload",
     "generic_fullmax_integer_tests": "19 passed; 1 benchmark ignored",

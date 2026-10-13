@@ -16,3 +16,4 @@ artifacts/audit/aoem-private-proof-containment-20261004/** -text
 artifacts/audit/mainchain-receipt-history-20261013/** -text
 artifacts/audit/aoem-integer-resource-v7-20261013/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 artifacts/audit/resident-integer-device-20261013/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+artifacts/audit/resident-integer-binary-20261013/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

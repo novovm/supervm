@@ -1,0 +1,232 @@
+{
+  "schema": "novovm/resident-integer-binary-result-validation/v1",
+  "date": "2026-10-13",
+  "scope": "First binary result integration slice only; not complete algebraic plan, production acceptance, stable capacity or business proof.",
+  "source": {
+    "supervm_input": "8f8896b06f521fe58611e975a08cf47a34c49e61",
+    "measurement_supervm_preserved_remote": "578692670a6934d5498fe3106fa0f88dab4cd3b7",
+    "delivery_supervm_preserved_remote": "a53c9590936fa24c6d0a32df4309c95e6f4ca404",
+    "aoem": "8f12c805122c6e59889ce4f3352aa0541f869593"
+  },
+  "artifacts": {
+    "scope": "Measured checkpoint; post-mailbox rebuilt delivery binary recorded separately",
+    "node_sha256": "4a03f54241d60fba091299f8c5a65ef41519fb0f88e9de2200614832cf4eb751",
+    "node_test_sha256": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "aoem_dll_sha256": "9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9",
+    "aoem_dll_bytes": 44429824
+  },
+  "post_mailbox_delivery": {
+    "node_sha256": "dca03e2eb2602be6307e62f152d7fec55862badf887d5fd18a7358277f807a08",
+    "driver_sha256": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "driver_scope": "Retained original test runner launching final rebuilt original node processes",
+    "build": "passed",
+    "single_ingress_failures_and_restart": "delivery-single-ingress.json (passed, 5.84s)",
+    "aab_three_honest_processes_one_fault_peer": "delivery-aab.json (passed, 13.90s)",
+    "offline_quorum_catchup_and_restart": "delivery-offline.json (passed, 48.30s)",
+    "strict_clippy": "passed after gating existing Iroh-only private receipt signer/imports",
+    "performance": "not remeasured; eight formal samples belong to the earlier checkpoint"
+  },
+  "contract": {
+    "execution": "node -> exec -> bindings -> opcode 113 / AOIP0 v8 Run on existing resident i1024 resource",
+    "result": "AOIR0001, context/resource/sequence-bound single take, aoem_free",
+    "json_numeric_hot_path": false,
+    "old_v7_profile_json_compatibility": true,
+    "nov_business_in_aoem": false,
+    "full_algebraic_plan_complete": false,
+    "node_wave_control_removed": false,
+    "finish_callback_removed": false,
+    "zero_copy": false,
+    "result_bytes_1024_rows_5_outputs": 671784
+  },
+  "validation": {
+    "fmt": "passed",
+    "clippy_node_exec_bindings_deny_warnings": "passed",
+    "exec": {
+      "passed": 63,
+      "ignored": 25
+    },
+    "node_native_pipeline": {
+      "passed": 395,
+      "ignored": 60
+    },
+    "aoem_resource_tests": {
+      "passed": 12,
+      "real_gpu_included": true,
+      "latency_benchmark_excluded": true
+    },
+    "installed_dll_binary_parity": "passed",
+    "full_u128_business_parity": "passed",
+    "single_ingress_failures_and_restart": "final-single-ingress.json",
+    "aab_three_honest_processes_one_fault_peer": "final-aab.json",
+    "offline_quorum_catchup_and_restart": "final-offline.json",
+    "sdk_checksum_entries": 117,
+    "sdk_checksum_mismatches": 0,
+    "linux_binary_updated": false,
+    "remote_ci": "not verified for final commit"
+  },
+  "preserved_drafts": {
+    "count": 49,
+    "changed_hashes": 0,
+    "reference": "../resident-integer-device-20261013/validation.json"
+  },
+  "benchmark": {
+    "environment": "Windows Release; external AC at start/end; diagnostics disabled; no concurrent builds/tests",
+    "transactions": 65536,
+    "batch": 1024,
+    "payers": 1024,
+    "nonces_per_payer": 64,
+    "recipient": "shared",
+    "inflight": 8192,
+    "ingress": 1,
+    "validators": 4,
+    "completion": "all four final receipts plus economic and cold restart verification",
+    "order": [
+      "baseline-cpu_callbacks-1",
+      "final-cpu_callbacks-1",
+      "baseline-aoem_integer_v7-1",
+      "final-aoem_integer_v7-1",
+      "baseline-cpu_callbacks-2",
+      "final-cpu_callbacks-2",
+      "baseline-aoem_integer_v7-2",
+      "final-aoem_integer_v7-2"
+    ],
+    "runs": [
+      {
+        "run": "baseline-aoem_integer_v7-1",
+        "passed": true,
+        "tps": 7267.557590093163,
+        "p95_us": 1382070,
+        "p99_us": 1427110,
+        "elapsed": 9.01761,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 1,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+        "aoem_sha": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43"
+      },
+      {
+        "run": "baseline-aoem_integer_v7-2",
+        "passed": true,
+        "tps": 7718.8162989797565,
+        "p95_us": 1387718,
+        "p99_us": 1442117,
+        "elapsed": 8.490421,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 0,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+        "aoem_sha": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43"
+      },
+      {
+        "run": "baseline-cpu_callbacks-1",
+        "passed": true,
+        "tps": 9914.847232591792,
+        "p95_us": 1176607,
+        "p99_us": 1269597,
+        "elapsed": 6.609885,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 0,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+        "aoem_sha": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43"
+      },
+      {
+        "run": "baseline-cpu_callbacks-2",
+        "passed": true,
+        "tps": 8987.361248971136,
+        "p95_us": 1099813,
+        "p99_us": 1276841,
+        "elapsed": 7.292018,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 0,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x92160d3efe6ae4eec65cfafd4b2ac7cba87d5fb803d5cd00d4aff375f774090e",
+        "aoem_sha": "0x3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43"
+      },
+      {
+        "run": "final-aoem_integer_v7-1",
+        "passed": true,
+        "tps": 8859.441531822531,
+        "p95_us": 1152529,
+        "p99_us": 1419153,
+        "elapsed": 7.397306,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 0,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x4a03f54241d60fba091299f8c5a65ef41519fb0f88e9de2200614832cf4eb751",
+        "aoem_sha": "0x9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9"
+      },
+      {
+        "run": "final-aoem_integer_v7-2",
+        "passed": true,
+        "tps": 9689.83680484965,
+        "p95_us": 945039,
+        "p99_us": 1411415,
+        "elapsed": 6.763375,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 0,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x4a03f54241d60fba091299f8c5a65ef41519fb0f88e9de2200614832cf4eb751",
+        "aoem_sha": "0x9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9"
+      },
+      {
+        "run": "final-cpu_callbacks-1",
+        "passed": true,
+        "tps": 8363.957743737657,
+        "p95_us": 1437937,
+        "p99_us": 1474296,
+        "elapsed": 7.835525,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 0,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x4a03f54241d60fba091299f8c5a65ef41519fb0f88e9de2200614832cf4eb751",
+        "aoem_sha": "0x9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9"
+      },
+      {
+        "run": "final-cpu_callbacks-2",
+        "passed": true,
+        "tps": 8818.6131729649,
+        "p95_us": 1275586,
+        "p99_us": 1408067,
+        "elapsed": 7.431554,
+        "success": 65536,
+        "business_failed": 0,
+        "transport_errors": 0,
+        "unresolved": 0,
+        "rejected": 0,
+        "node_sha": "0x4a03f54241d60fba091299f8c5a65ef41519fb0f88e9de2200614832cf4eb751",
+        "aoem_sha": "0x9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9"
+      }
+    ],
+    "combined": {
+      "aggregation": "total successful transactions divided by total elapsed, not arithmetic average of TPS",
+      "cpu_before": 9428.349485678327,
+      "cpu_after": 8585.270306127322,
+      "cpu_percent": -8.941959362363939,
+      "integer_before": 7486.39295875133,
+      "integer_after": 9256.05202179189,
+      "integer_percent": 23.63834055720906
+    },
+    "limits": [
+      "CPU regression observed in both pairs; cause not established, no stable speedup signoff.",
+      "One baseline integer transport error retained; no unresolved or permanently rejected transactions.",
+      "Normal load has zero business failures; failure semantics exercised separately.",
+      "No new binary facade/device timing or allocation/peak-memory measurement.",
+      "Version label aoem_integer_v7 denotes resource profile; normal Run is explicit v8 binary, not silently changed v7."
+    ]
+  }
+}

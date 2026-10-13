@@ -1,6 +1,146 @@
 use super::*;
 use serde_json::{json, Value};
 
+fn binary_fixture(
+    tag: u32,
+    fault: u32,
+    component: u32,
+    instruction: u32,
+    value: [u32; 32],
+) -> Vec<u8> {
+    let mut bytes = b"AOIR0001".to_vec();
+    bytes.extend(7u64.to_le_bytes());
+    bytes.extend(9u64.to_le_bytes());
+    words(
+        &mut bytes,
+        [1, 1, 32, 0, tag, fault, component, instruction],
+    );
+    words(&mut bytes, value);
+    bytes
+}
+
+#[test]
+fn binary_integer_wrong_result_latches_owner_and_does_not_retry_or_fall_back() {
+    struct WrongResult(usize);
+    impl ResourceTransport for WrongResult {
+        fn exchange(&mut self, _: &str, _: &[u8]) -> Result<Value> {
+            panic!("numeric JSON fallback");
+        }
+        fn exchange_binary(
+            &mut self,
+            _: &str,
+            payload: &[u8],
+            id: u64,
+            sequence: u64,
+        ) -> Result<Vec<u8>> {
+            self.0 += 1;
+            assert_eq!(word(payload, 8)?, 8);
+            assert_eq!(payload.len(), 48 + 4 * 128);
+            assert_eq!(&payload[16..24], &id.to_le_bytes());
+            assert_eq!(&payload[40..48], &sequence.to_le_bytes());
+            Ok(vec![0; 40]) // Completed exchange with malformed result must poison too.
+        }
+    }
+    let req = request();
+    let shape = validate_program(&req.program, 4, 1, 1).unwrap();
+    let mut owner = ResourceOwner {
+        transport: WrongResult(0),
+        owner: 42,
+        prefix: "test/binary".into(),
+        resources: BTreeMap::from([(7, shape)]),
+        last_resource_id: 7,
+        poisoned: false,
+    };
+    let resource = AoemIntegerResourceV7 { owner: 42, id: 7 };
+    assert!(owner.run_binary(&resource, &req.rows).is_err());
+    assert!(owner.poisoned);
+    assert!(owner.run_binary(&resource, &req.rows).is_err());
+    assert_eq!(owner.transport.0, 1);
+}
+
+#[test]
+fn binary_integer_decoder_preserves_contract_without_json_intermediate() {
+    let req = request();
+    let shape = validate_program(&req.program, 4, 1, 1).unwrap();
+    let bytes = binary_fixture(
+        0,
+        0,
+        u32::MAX,
+        u32::MAX,
+        AoemInteger1024V1::from_u128(u128::MAX).0,
+    );
+    assert_eq!(
+        decode_binary(&bytes, 7, 9, &shape).unwrap(),
+        decode(successful(), &shape).unwrap()
+    );
+    for (tag, fault, c, i) in [
+        (1, 0, 0, u32::MAX),
+        (2, 0, 1, u32::MAX),
+        (3, 0, 3, u32::MAX),
+        (3, 2, 2, 511),
+    ] {
+        let wire = binary_fixture(tag, fault, c, i, [0; 32]);
+        let json = metadata(json!([{"outcome":tag,"fault":fault,"component":c,
+            "failed_instruction": if i == u32::MAX { Value::Null } else { i.into() }, "values":[]}]));
+        assert_eq!(
+            decode_binary(&wire, 7, 9, &shape).unwrap(),
+            decode(json, &shape).unwrap()
+        );
+    }
+    for n in 0..bytes.len() {
+        assert!(decode_binary(&bytes[..n], 7, 9, &shape).is_err());
+    }
+    for offset in [0, 8, 16, 24, 28, 32, 36, 40, 44, 48, 52] {
+        let mut bad = bytes.clone();
+        bad[offset] ^= 0x80;
+        assert!(
+            decode_binary(&bad, 7, 9, &shape).is_err(),
+            "offset {offset}"
+        );
+    }
+    let mut extra = bytes.clone();
+    extra.push(0);
+    assert!(decode_binary(&extra, 7, 9, &shape).is_err());
+    let mut rejected = binary_fixture(1, 0, 0, u32::MAX, [0; 32]);
+    rejected[56] = 1;
+    assert!(decode_binary(&rejected, 7, 9, &shape).is_err());
+    let wide = binary_fixture(0, 0, u32::MAX, u32::MAX, [u32::MAX; 32]);
+    assert_eq!(
+        decode_binary(&wide, 7, 9, &shape).unwrap().rows[0].values[0].0,
+        [u32::MAX; 32]
+    );
+}
+
+#[test]
+#[ignore = "requires explicit new AOEM DLL and Vulkan; binary/legacy real parity"]
+fn integer_binary_real_resource_parity_and_fail_closed() {
+    let facade = explicit_facade("NOVOVM_AOEM_V7_TEST_LIBRARY");
+    let req = request();
+    let mut owner = facade
+        .create_integer_resource_session_v7("test/binary-real")
+        .unwrap();
+    assert!(owner.supports_binary_result_v1());
+    let resource = owner.open(&req.program, 4, 1, 1).unwrap();
+    let mut rows = req.rows;
+    for a in [
+        AoemInteger1024V1::from_u128(u128::MAX),
+        AoemInteger1024V1::from_i128(-1),
+        AoemInteger1024V1::from_u128(0),
+    ] {
+        rows[0][0] = a;
+        assert_eq!(
+            owner.run(&resource, &rows).unwrap(),
+            owner.run_binary_v1(&resource, &rows).unwrap()
+        );
+    }
+    let mut other = facade
+        .create_integer_resource_session_v7("test/binary-other")
+        .unwrap();
+    assert!(other.run_binary_v1(&resource, &rows).is_err());
+    owner.close(&resource).unwrap();
+    assert!(owner.run_binary_v1(&resource, &rows).is_err());
+}
+
 fn words(bytes: &mut Vec<u8>, values: impl IntoIterator<Item = u32>) {
     for value in values {
         bytes.extend_from_slice(&value.to_le_bytes());

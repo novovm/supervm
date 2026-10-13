@@ -1,7 +1,9 @@
 AOEM runtime in SUPERVM is packaged as one portable FULLMAX host bundle.
 
 Current update (2026-10-13):
-  Windows core/header: AOEM 5e555e1ab17f849a1a877fd09e24769eba06cddf.
+  Windows core/header: AOEM 8f12c805122c6e59889ce4f3352aa0541f869593.
+  Normal integer execution requires binary result v1 (AOIP0 v8/AOIR0001).
+  Execution still enters through the unified wire. v7 diagnostic compatibility remains.
   Windows sidecars: retained 1377cd1e bundle, not rebuilt.
   Linux core/header/sidecars: retained 1377cd1e bundle, not upgraded.
   This is a mixed-source FULLMAX package, not a same-version platform rebuild.

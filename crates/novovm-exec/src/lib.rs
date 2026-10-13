@@ -2184,6 +2184,9 @@ impl AoemExecFacade {
 }
 
 impl AoemExecSession {
+    pub fn integer_result_take_v1(&self, resource: u64, sequence: u64) -> Result<Vec<u8>> {
+        self.handle.integer_result_take_v1(resource, sequence)
+    }
     pub fn execute_ops_v2(&self, ops: &[AoemOpV2]) -> Result<AoemExecV2Result> {
         self.handle.execute_ops_v2(ops)
     }

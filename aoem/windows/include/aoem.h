@@ -2814,6 +2814,23 @@ AOEM_API int32_t aoem_execute_primitive_v1(
 // Production ABI: memory release and per-handle error inspection.
 // Any AOEM-owned output buffer returned by this header must be released with aoem_free.
 AOEM_API void aoem_free(uint8_t* ptr, size_t len);
+
+// Integer binary result v1 (capability compute_checked_integer_binary_result_v1).
+// Execute through opcode 113, AOIP0 version 8, command 2: same v7 Run header,
+// input_bytes excludes the u64 LE monotonic nonzero sequence inserted at byte 40.
+// i1024 only. Open/close retain strict v7; no numeric JSON state is materialized.
+// One transient result per context, invalidated by the next v8 attempt. The result
+// belongs to the same context/resource/sequence, can be taken once, and cannot be
+// taken after close. Caller must check complete execution before taking a result.
+// AOIR0001: magic[8], resource u64, sequence u64, rows u32, outputs u32,
+// limbs=32 u32, reserved=0 u32; rows of outcome/fault/component/instruction u32
+// (absent indices UINT32_MAX), then outputs*32 u32 LE limbs. Rejected rows have
+// zero padding, not values. Bounds: rows<=4096, outputs<=16, exact length.
+// All integers little-endian. No business policy or device identity in this wire.
+// Output is reset on error and freed with aoem_free; take never executes work.
+AOEM_API int32_t aoem_integer_result_take_v1(
+    void* handle, uint64_t resource, uint64_t sequence,
+    uint8_t** output_ptr, size_t* output_len);
 AOEM_API const char* aoem_last_error(void* handle);
 
 // Checked integer SSA execution through compute.ai.sgm_infer_v1 (no new C entry).

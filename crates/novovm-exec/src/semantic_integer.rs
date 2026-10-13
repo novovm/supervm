@@ -219,6 +219,119 @@ fn optional_index(value: &serde_json::Value, bound: usize) -> Result<Option<usiz
     Ok(Some(index as usize))
 }
 
+fn validate_outcome(
+    shape: &Shape,
+    tag: u32,
+    fault: u32,
+    component: Option<usize>,
+    failed: Option<usize>,
+    values: usize,
+) -> Result<AoemIntegerOutcomeKindV1> {
+    let body = shape.domains + shape.refutations;
+    if component.is_some_and(|c| c >= body + 1 + shape.postconditions)
+        || failed.is_some_and(|i| i >= 512)
+    {
+        bail!("integer outcome index is outside bounds");
+    }
+    let kind = match tag {
+        0 if fault == 0 && component.is_none() && failed.is_none() && values == shape.outputs => {
+            AoemIntegerOutcomeKindV1::Value
+        }
+        1 if fault == 0 && component.is_some_and(|c| c < shape.domains) && failed.is_none() => {
+            AoemIntegerOutcomeKindV1::OutsideDomain
+        }
+        2 if fault == 0
+            && component.is_some_and(|c| c >= shape.domains && c < body)
+            && failed.is_none() =>
+        {
+            AoemIntegerOutcomeKindV1::Refuted
+        }
+        3 if (fault == 0 && component.is_some_and(|c| c > body) && failed.is_none())
+            || ((2..=7).contains(&fault)
+                && component.is_some_and(|c| c < shape.domains || c >= body)
+                && failed.is_some()) =>
+        {
+            AoemIntegerOutcomeKindV1::ExecutionFailure
+        }
+        _ => bail!("integer outcome tag/fault/component mismatch"),
+    };
+    if kind != AoemIntegerOutcomeKindV1::Value && values != 0 {
+        bail!("integer rejected row must not contain values");
+    }
+    Ok(kind)
+}
+
+fn decode_binary(
+    bytes: &[u8],
+    id: u64,
+    sequence: u64,
+    shape: &Shape,
+) -> Result<AoemIntegerOutcomeBatchV1> {
+    if !(1..=MAX_ROWS).contains(&shape.rows) || !(1..=16).contains(&shape.outputs) {
+        bail!("integer binary shape exceeds bounds");
+    }
+    let stride = 16 + shape.outputs * 128;
+    if !(1..=MAX_ROWS).contains(&shape.rows)
+        || !(1..=16).contains(&shape.outputs)
+        || bytes.len() != 40 + shape.rows * stride
+        || &bytes[..8] != b"AOIR0001"
+        || u64::from_le_bytes(bytes[8..16].try_into()?) != id
+        || id == 0
+        || u64::from_le_bytes(bytes[16..24].try_into()?) != sequence
+        || sequence == 0
+        || word(bytes, 24)? != shape.rows
+        || word(bytes, 28)? != shape.outputs
+        || word(bytes, 32)? != 32
+        || word(bytes, 36)? != 0
+    {
+        bail!("integer binary result identity/shape/length mismatch");
+    }
+    let mut rows = Vec::with_capacity(shape.rows);
+    for raw in bytes[40..].chunks_exact(stride) {
+        let tag = word(raw, 0)? as u32;
+        let fault = word(raw, 4)? as u32;
+        let optional = |at| -> Result<Option<usize>> {
+            let n = word(raw, at)?;
+            Ok((n != u32::MAX as usize).then_some(n))
+        };
+        let component = optional(8)?;
+        let failed_instruction = optional(12)?;
+        let outcome = validate_outcome(
+            shape,
+            tag,
+            fault,
+            component,
+            failed_instruction,
+            if tag == 0 { shape.outputs } else { 0 },
+        )?;
+        let values = if outcome == AoemIntegerOutcomeKindV1::Value {
+            raw[16..]
+                .chunks_exact(128)
+                .map(|value| {
+                    let mut limbs = [0; 32];
+                    for (limb, raw) in limbs.iter_mut().zip(value.chunks_exact(4)) {
+                        *limb = u32::from_le_bytes(raw.try_into().unwrap());
+                    }
+                    AoemInteger1024V1(limbs)
+                })
+                .collect()
+        } else {
+            if raw[16..].iter().any(|b| *b != 0) {
+                bail!("integer binary rejected row has nonzero padding");
+            }
+            Vec::new()
+        };
+        rows.push(AoemIntegerOutcomeRowV1 {
+            outcome,
+            fault,
+            component,
+            failed_instruction,
+            values,
+        });
+    }
+    Ok(AoemIntegerOutcomeBatchV1 { rows })
+}
+
 fn decode(mut value: serde_json::Value, shape: &Shape) -> Result<AoemIntegerOutcomeBatchV1> {
     let object = value
         .as_object()
@@ -284,40 +397,14 @@ fn decode(mut value: serde_json::Value, shape: &Shape) -> Result<AoemIntegerOutc
         let raw: RawRow = serde_json::from_value(value)?;
         let component = optional_index(&raw.component, components)?;
         let failed_instruction = optional_index(&raw.failed_instruction, 512)?;
-        let outcome = match raw.outcome {
-            0 if raw.fault == 0
-                && component.is_none()
-                && failed_instruction.is_none()
-                && raw.values.len() == shape.outputs =>
-            {
-                AoemIntegerOutcomeKindV1::Value
-            }
-            1 if raw.fault == 0
-                && component.is_some_and(|c| c < shape.domains)
-                && failed_instruction.is_none() =>
-            {
-                AoemIntegerOutcomeKindV1::OutsideDomain
-            }
-            2 if raw.fault == 0
-                && component.is_some_and(|c| c >= shape.domains && c < body)
-                && failed_instruction.is_none() =>
-            {
-                AoemIntegerOutcomeKindV1::Refuted
-            }
-            3 if (raw.fault == 0
-                && component.is_some_and(|c| c > body)
-                && failed_instruction.is_none())
-                || ((2..=7).contains(&raw.fault)
-                    && component.is_some_and(|c| c < shape.domains || c >= body)
-                    && failed_instruction.is_some()) =>
-            {
-                AoemIntegerOutcomeKindV1::ExecutionFailure
-            }
-            _ => bail!("integer outcome tag/fault/component mismatch"),
-        };
-        if outcome != AoemIntegerOutcomeKindV1::Value && !raw.values.is_empty() {
-            bail!("integer rejected row must not contain values");
-        }
+        let outcome = validate_outcome(
+            shape,
+            raw.outcome,
+            raw.fault,
+            component,
+            failed_instruction,
+            raw.values.len(),
+        )?;
         result.push(AoemIntegerOutcomeRowV1 {
             outcome,
             fault: raw.fault,
@@ -393,6 +480,7 @@ pub struct AoemIntegerResourceV7 {
 pub struct AoemIntegerResourceSessionV7 {
     inner: ResourceOwner<AoemExecSession>,
     profile_supported: bool,
+    binary_supported: bool,
 }
 
 /// Local measurements only. Never include these in business or consensus commitments.
@@ -463,6 +551,9 @@ impl AoemExecFacade {
             })
             .map_err(|_| anyhow::anyhow!("integer resource owner sequence exhausted"))?;
         Ok(AoemIntegerResourceSessionV7 {
+            binary_supported: self.capabilities_json()?["compute_checked_integer_binary_result_v1"]
+                == true
+                && self.dynlib.supports_integer_result_take_v1(),
             profile_supported: self.capabilities_json()?
                 ["compute_checked_integer_resource_profile_v1"]
                 == true,
@@ -479,6 +570,21 @@ impl AoemExecFacade {
 }
 
 impl AoemIntegerResourceSessionV7 {
+    pub fn supports_binary_result_v1(&self) -> bool {
+        self.binary_supported
+    }
+
+    /// Same resident operator; v8 numeric result bytes, no Value tree or state read.
+    pub fn run_binary_v1(
+        &mut self,
+        resource: &AoemIntegerResourceV7,
+        rows: &[Vec<AoemInteger1024V1>],
+    ) -> Result<AoemIntegerOutcomeBatchV1> {
+        if !self.binary_supported {
+            bail!("loaded AOEM library lacks binary integer result v1; no fallback");
+        }
+        self.inner.run_binary(resource, rows)
+    }
     /// Opens a fixed APFLOU01 v2 i1024 asset/row shape, without running inputs.
     /// AOEM owns SSA validation, GPU allocation and bounded program sharing.
     pub fn open(
@@ -537,7 +643,9 @@ fn resource_header(
     input_bytes: usize,
 ) -> Vec<u8> {
     // Callers have already checked all sizes against the bounded asset/shape.
-    let mut payload = Vec::with_capacity(40 + program_bytes + input_bytes);
+    // Reserve the optional v8 sequence without growing a complete input batch.
+    // These extra bytes are not emitted by released v7 commands.
+    let mut payload = Vec::with_capacity(48 + program_bytes + input_bytes);
     payload.extend_from_slice(b"AOIP0\0\0\0");
     payload.extend_from_slice(&7u32.to_le_bytes());
     payload.extend_from_slice(&command.to_le_bytes());
@@ -608,6 +716,15 @@ fn decode_resource(
 
 trait ResourceTransport {
     fn exchange(&mut self, prefix: &str, payload: &[u8]) -> Result<serde_json::Value>;
+    fn exchange_binary(
+        &mut self,
+        _prefix: &str,
+        _payload: &[u8],
+        _id: u64,
+        _sequence: u64,
+    ) -> Result<Vec<u8>> {
+        bail!("binary integer result transport unsupported")
+    }
 }
 
 fn resource_exchange(
@@ -635,6 +752,35 @@ fn resource_exchange(
 }
 
 impl ResourceTransport for AoemExecSession {
+    fn exchange_binary(
+        &mut self,
+        prefix: &str,
+        payload: &[u8],
+        id: u64,
+        sequence: u64,
+    ) -> Result<Vec<u8>> {
+        let mut wire = OpsWireV1Builder::new();
+        wire.push(OpsWireOp {
+            opcode: 113,
+            flags: 0,
+            reserved: 0,
+            key: prefix.as_bytes(),
+            value: payload,
+            delta: 0,
+            expect_version: None,
+            plan_id: 0,
+        })?;
+        let report = self.execute_ops_wire_v1(&wire.finish().bytes)?;
+        // Binary output is transient, not a state-store write.
+        if report.processed != 1
+            || report.success != 1
+            || report.failed_index != u32::MAX
+            || report.total_writes != 0
+        {
+            bail!("AOEM binary integer execution incomplete; no result read");
+        }
+        self.integer_result_take_v1(id, sequence)
+    }
     fn exchange(&mut self, prefix: &str, payload: &[u8]) -> Result<serde_json::Value> {
         resource_exchange(
             prefix,
@@ -655,6 +801,35 @@ struct ResourceOwner<T> {
 }
 
 impl<T: ResourceTransport> ResourceOwner<T> {
+    fn run_binary(
+        &mut self,
+        resource: &AoemIntegerResourceV7,
+        rows: &[Vec<AoemInteger1024V1>],
+    ) -> Result<AoemIntegerOutcomeBatchV1> {
+        let shape = self.shape(resource)?;
+        validate_rows(rows, &shape)?;
+        let sequence = REQUEST_SEQUENCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .map_err(|_| anyhow::anyhow!("integer request sequence exhausted"))?
+            + 1;
+        let mut payload = resource_header(
+            2,
+            resource.id,
+            shape.rows,
+            0,
+            shape.rows * shape.inputs * 128,
+        );
+        payload[8..12].copy_from_slice(&8u32.to_le_bytes());
+        payload.extend_from_slice(&sequence.to_le_bytes());
+        append_rows(&mut payload, rows);
+        self.poisoned = true;
+        let bytes =
+            self.transport
+                .exchange_binary(&self.prefix, &payload, resource.id, sequence)?;
+        let output = decode_binary(&bytes, resource.id, sequence, &shape)?;
+        self.poisoned = false;
+        Ok(output)
+    }
     fn healthy(&self) -> Result<()> {
         if self.poisoned {
             bail!("integer resource owner poisoned; drop context for explicit recovery");

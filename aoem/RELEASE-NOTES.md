@@ -1,5 +1,15 @@
 # AOEM FULLMAX SUPERVM Host Package
 
+## 2026-10-13: Binary integer result v1
+
+Windows core/header: AOEM `8f12c805122c6e59889ce4f3352aa0541f869593`.
+Existing unified execution accepts versioned AOIP0 v8 Run; context-bound
+`aoem_integer_result_take_v1` consumes AOIR0001 bytes, not JSON. No new executor,
+shader, arithmetic or NOV policy. Old v7 remains compatible, including opt-in
+JSON diagnostics. Original-node normal integer mode requires the new capability;
+unsupported packages fail closed. CPU default, Linux and sidecars are unchanged.
+Complete algebraic business plan and performance qualification remain separate.
+
 ## 2026-10-13: Bound integer resource profile v1 and owned results
 
 Windows core/header advance to AOEM `5e555e1ab17f849a1a877fd09e24769eba06cddf`;

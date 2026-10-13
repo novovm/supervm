@@ -2,18 +2,19 @@
   "package": "aoem-fullmax-supervm-host",
   "layout": "single_layer_fullmax_package",
   "runtime_baseline": {
-    "id": "AOEM FULLMAX Windows bound-resource profile 2026-10-13",
+    "id": "AOEM FULLMAX Windows integer binary result 2026-10-13",
     "stage": "windows_core_only_scoped_validation",
     "document": "RUNTIME-BASELINE.md",
     "macos_pending_not_bundled": true
   },
   "entry": "aoem_execute_ops_wire_v1",
   "output": "aoem_state_read_v1",
+  "integer_binary_output": "aoem_integer_result_take_v1/AOIR0001",
   "runtime_canon_changed": true,
   "public_ffi_abi_changed": true,
   "source_artifacts": {
     "source_layout": "mixed_component_provenance",
-    "windows_core_and_header_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
+    "windows_core_and_header_commit": "8f12c805122c6e59889ce4f3352aa0541f869593",
     "windows_sidecars_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "linux_bundle_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
     "retained_component_provenance": "platform_manifests_and_historical_runtime_baseline",
@@ -40,14 +41,15 @@
       "name": "core",
       "platform": "windows-x86_64",
       "dll": "windows/core/bin/aoem_ffi.dll",
-      "sha256": "3c65bd83fa22e50c50d2a5c1615f17d22bd47bcfe00d9da630cabb14f8936f43",
-      "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
+      "sha256": "9e39b9d93542f73a04cd8305bfc8d04539d6a11175f4c549276b5660959bf0c9",
+      "source_commit": "8f12c805122c6e59889ce4f3352aa0541f869593",
       "abi_expected": 1,
       "capabilities_required": {
         "execute_ops_v2": true,
         "semantic_graph_v3": true,
         "storage_provider_wire_v1": true,
-        "compute_checked_integer_resources_v7": true
+        "compute_checked_integer_resources_v7": true,
+        "compute_checked_integer_binary_result_v1": true
       }
     }
   ],

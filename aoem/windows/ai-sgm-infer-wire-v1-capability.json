@@ -1,10 +1,20 @@
 {
-  "source_commit": "5e555e1ab17f849a1a877fd09e24769eba06cddf",
+  "source_commit": "8f12c805122c6e59889ce4f3352aa0541f869593",
+  "checked_integer_binary_result_v1": {
+    "included": true,
+    "capability_flag": "compute_checked_integer_binary_result_v1",
+    "payload_version": 8,
+    "result_entry": "aoem_integer_result_take_v1",
+    "result_magic": "AOIR0001",
+    "numeric_json": false,
+    "complete_business_plan": false
+  },
   "source_commit_scope": "windows_core_only_not_retained_sidecars_or_linux",
   "capability": "compute.ai.sgm_infer_v1",
   "status": "production_model_session_capability",
   "entry": "aoem_execute_ops_wire_v1",
   "result": "aoem_state_read_v1",
+  "result_scope": "legacy/model/diagnostic contracts; integer v8 uses checked_integer_binary_result_v1",
   "payload_contract": "versioned_model_session_or_checked_program_binary",
   "model_asset_required": true,
   "model_asset_required_scope": "model_session_payloads_only",
