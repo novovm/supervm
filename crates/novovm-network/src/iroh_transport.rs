@@ -34,6 +34,9 @@ pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
 /// handshakes. This is NOT iroh's internal pending-Incoming queue limit.
 pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
 
+#[path = "iroh_connection_reuse.rs"]
+mod reuse;
+
 static FORCED_DRAINS: AtomicU64 = AtomicU64::new(0);
 static BINDS_COMPLETED: AtomicU64 = AtomicU64::new(0);
 
@@ -356,6 +359,7 @@ pub struct IrohScopeV1 {
     connections: Arc<tokio::sync::Semaphore>,
     accept_consumer: Arc<tokio::sync::Mutex<()>>,
     listener_budget: Option<Duration>,
+    reuse: Option<(Arc<reuse::Pool>, u8)>,
 }
 
 /// Process-local diagnostics, not identifiers, receipts or permission to retry.
@@ -409,9 +413,10 @@ impl Drop for EndpointOperationGuard {
 
 /// A platform-owned transport endpoint, retained on ONE live Tokio runtime.
 /// The platform must keep that runtime alive until `close()` completes. This
-/// type does not create a runtime, renew authorization, or cache QUIC sessions.
-/// Each operation requires a new finite control and each connect creates a new
-/// authenticated connection. Its retained transport key can be linkable and is
+/// type does not create a runtime or renew authorization. Normal operations
+/// close their connections; opt-in purpose lanes retain only completed healthy
+/// QUIC connections, never application authorization. Each new stream is guarded
+/// by its new finite operation. Its retained transport key can be linkable and is
 /// not an anonymous route; callers must apply their policy before binding.
 ///
 /// The owner-wide admission and accept mutex apply across nested scopes. There
@@ -429,6 +434,7 @@ pub struct IrohEndpointOwnerV1 {
     service_identity: Option<EndpointId>,
     connections: Arc<tokio::sync::Semaphore>,
     accept_consumer: Arc<tokio::sync::Mutex<()>>,
+    reuse: Arc<reuse::Pool>,
     close_gate: tokio::sync::Mutex<()>,
     close_started: AtomicBool,
     permit: std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
@@ -492,6 +498,7 @@ impl IrohEndpointOwnerV1 {
             relay_only: config.relay_only,
             connections: Arc::new(tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1)),
             accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
+            reuse: Arc::new(reuse::Pool::default()),
             close_gate: tokio::sync::Mutex::new(()),
             close_started: AtomicBool::new(false),
             permit: std::sync::Mutex::new(Some(permit)),
@@ -546,6 +553,35 @@ impl IrohEndpointOwnerV1 {
     where
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
+        self.operation_with_lane(control, None, operation).await
+    }
+
+    /// Opt-in transport reuse for a caller-defined, fixed purpose lane. A new
+    /// stream always has NEW operation authority, and application authentication
+    /// must run again. This never reuses a business channel or its replay state.
+    pub async fn with_reusable_operation<T, F>(
+        &self,
+        control: IrohControlV1,
+        lane: u8,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
+    {
+        ensure!((1..=8).contains(&lane), "invalid retained connection lane");
+        self.operation_with_lane(control, Some(lane), operation)
+            .await
+    }
+
+    async fn operation_with_lane<T, F>(
+        &self,
+        control: IrohControlV1,
+        lane: Option<u8>,
+        operation: F,
+    ) -> Result<T>
+    where
+        F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
+    {
         self.check_runtime()?;
         control.io_deadline()?;
         control.check()?;
@@ -572,7 +608,10 @@ impl IrohEndpointOwnerV1 {
             connections: self.connections.clone(),
             accept_consumer: self.accept_consumer.clone(),
             listener_budget: None,
+            reuse: lane.map(|lane| (self.reuse.clone(), lane)),
         };
+        let mut reuse_guard =
+            reuse::OperationGuard::new(scope.reuse.as_ref().map(|(pool, _)| pool.clone()));
         let result = tokio::select! {
             biased;
             error = scope.control.revoked() => Err(error),
@@ -581,7 +620,11 @@ impl IrohEndpointOwnerV1 {
         // Preserve the operation's first failure (including authentication
         // rejection). A later cancellation must not reclassify it as a fresh
         // operation boundary; only a successful result needs the final check.
-        result.and_then(|value| scope.control.check().map(|()| value))
+        let result = result.and_then(|value| scope.control.check().map(|()| value));
+        if result.is_ok() {
+            reuse_guard.commit();
+        }
+        result
     }
 
     /// Forward a platform-observed network change on this owner's runtime.
@@ -592,8 +635,10 @@ impl IrohEndpointOwnerV1 {
     /// The endpoint identity and owner stay intact; Iroh may update its existing
     /// transports after discovering an actual interface/route change.
     pub async fn network_change(&self, control: IrohControlV1) -> Result<()> {
-        self.with_operation(control, |scope| {
+        let pool = self.reuse.clone();
+        self.with_operation(control, move |scope| {
             Box::pin(async move {
+                pool.clear()?;
                 scope.endpoint.network_change().await;
                 scope.control.check()
             })
@@ -608,6 +653,7 @@ impl IrohEndpointOwnerV1 {
     pub async fn close(&self) -> Result<()> {
         self.check_runtime()?;
         self.state.closing.store(true, Ordering::SeqCst);
+        self.reuse.clear()?;
         tokio::time::timeout(Duration::from_secs(5), async {
             let _close = self.close_gate.lock().await;
             if self.state.closed.load(Ordering::Acquire) {
@@ -811,6 +857,7 @@ where
         connections: Arc::new(tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1)),
         accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
         listener_budget,
+        reuse: None,
     };
     let result = tokio::select! {
         biased;
@@ -927,11 +974,15 @@ impl IrohScopeV1 {
             "service listener cannot initiate connections"
         );
         let address = self.peer_address(peer)?;
+        if let Some(stream) = self.retained(peer.endpoint_key, true).await? {
+            return Ok(stream);
+        }
         // Reserve before dialing: outbound work shares the same active budget
         // as inbound TLS handshakes and streams, without a waiting queue.
         let admission = self
             .connections
-            .try_acquire()
+            .clone()
+            .try_acquire_owned()
             .context("carrier connection limit")?;
         let connection = self
             .endpoint
@@ -958,6 +1009,9 @@ impl IrohScopeV1 {
     pub async fn accept(&self, expected_endpoint: [u8; 32]) -> Result<IrohStreamV1<'_>> {
         self.control.check()?;
         EndpointId::from_bytes(&expected_endpoint)?;
+        if let Some(stream) = self.retained_inner(expected_endpoint, false, true).await? {
+            return Ok(stream);
+        }
         self.accept_inner(Some(expected_endpoint)).await
     }
 
@@ -973,6 +1027,10 @@ impl IrohScopeV1 {
     /// The three-second budget starts when an Incoming is dequeued, and covers
     /// TLS plus opening the first bidirectional stream, not application auth.
     pub async fn accept_inbound(&self) -> Result<IrohStreamV1<'_>> {
+        ensure!(
+            self.reuse.is_none(),
+            "unbound inbound cannot retain connections"
+        );
         self.accept_inner(None).await
     }
 
@@ -982,13 +1040,17 @@ impl IrohScopeV1 {
             .accept_consumer
             .try_lock()
             .context("carrier accept already pending")?;
+        self.accept_inner_locked(expected).await
+    }
+
+    async fn accept_inner_locked(&self, expected: Option<[u8; 32]>) -> Result<IrohStreamV1<'_>> {
         // The same consumer guard covers both accept APIs and is released on
         // cancellation. Concurrent callers must not steal and reject peers.
         for _ in 0..8 {
             self.control.check()?;
             let incoming = self.endpoint.accept().await.context("endpoint closed")?;
             self.control.check()?;
-            let admission = match self.connections.try_acquire() {
+            let admission = match self.connections.clone().try_acquire_owned() {
                 Ok(admission) => admission,
                 Err(error) => {
                     incoming.refuse();
@@ -1027,7 +1089,7 @@ impl IrohScopeV1 {
         mut pending: PendingConnection,
         expected: [u8; 32],
         initiator: bool,
-        admission: tokio::sync::SemaphorePermit<'a>,
+        admission: tokio::sync::OwnedSemaphorePermit,
     ) -> Result<IrohStreamV1<'a>> {
         let connection = pending
             .connection
@@ -1063,7 +1125,9 @@ impl IrohScopeV1 {
             recv,
             failed: AtomicBool::new(false),
             initiator,
-            _admission: admission,
+            _admission: Some(admission),
+            finished: false,
+            reused: false,
         })
     }
 }
@@ -1100,7 +1164,9 @@ pub struct IrohStreamV1<'a> {
     recv: RecvStream,
     failed: AtomicBool,
     initiator: bool,
-    _admission: tokio::sync::SemaphorePermit<'a>,
+    _admission: Option<tokio::sync::OwnedSemaphorePermit>,
+    finished: bool,
+    reused: bool,
 }
 
 /// A borrowed framed writer. The parent stream and its authorized scope remain
@@ -1317,6 +1383,11 @@ impl IrohStreamV1<'_> {
         Ok(binding?)
     }
 
+    /// True only when this new stream borrowed an already authenticated QUIC connection.
+    pub fn connection_reused(&self) -> bool {
+        self.reused
+    }
+
     pub fn selected_path(&self) -> Result<&'static str> {
         self.check()?;
         for path in self.connection.paths().iter() {
@@ -1380,12 +1451,25 @@ impl IrohStreamV1<'_> {
         .map_err(|_| IrohFrameDeadlineV1(()))??;
         self.check()?;
         guard.complete = true;
+        self.finished = true;
         Ok(())
     }
 }
 
 impl Drop for IrohStreamV1<'_> {
     fn drop(&mut self) {
+        if self.finished
+            && !self.failed.load(Ordering::Acquire)
+            && self.io_control.check().is_ok()
+            && self.connection.close_reason().is_none()
+        {
+            if let (Some((pool, lane)), Some(permit)) = (&self.scope.reuse, self._admission.take())
+            {
+                if pool.put(*lane, self.connection.clone(), permit).is_ok() {
+                    return;
+                }
+            }
+        }
         self.connection.close(0u32.into(), b"scope finished");
     }
 }
@@ -1394,7 +1478,7 @@ impl Drop for IrohStreamV1<'_> {
 mod tests {
     use super::*;
     use tokio::sync::oneshot;
-    static SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+    pub(super) static SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
     #[test]
     fn fixed_connection_diagnostics_do_not_grant_retries_or_match_text() {

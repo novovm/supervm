@@ -8,6 +8,27 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-13 Bounded cross-operation QUIC retention
+
+Input `8f8896b0` / NOVOCHAT `c640c6f`; only generic transport and adjacent tests.
+`IrohEndpointOwnerV1::with_reusable_operation` opts into fixed purpose lanes.
+The existing total admission limit stays 4; at most 2 idle connections retain
+those permits. Complete frames, FIN, send completion and current authorization
+are required before retention. Each new scope/stream has its own deadline and
+requires fresh application authentication. No business channel, replay state or
+signing lease is inherited. Failure/cancellation/network change evicts the pool;
+owner expiry still closes real sockets. `retained` never dials a cached address;
+ordinary authenticated-address `accept` can race a fresh dial with idle accept_bi.
+
+Windows serial Iroh regression: 45 passed (23.87s), final accept-race wiring
+followed by all 3 adjacent reuse tests passing (0.39s). Tests cover purpose,
+operation expiry, cancellation, rejection, owner revocation and network change;
+existing partial-frame, FIN and socket-close regressions passed. Ignored local
+logs: artifacts/cross-task-transport-tests.log and cross-task-reuse-tests.log.
+Phone cross-task delivery, latency, anonymity and independence are NOT signed
+off by these component tests. After bounded product verification, development
+moves to Distributed Mailbox v1 instead of indefinite rendezvous optimization.
+
 ## 2026-10-13 统一整数资源实机诊断与结果所有权交接
 
 输入主链 `ead86349`，快进保留独立手机文档 `a7379623`；AOEM 输入 `1bfa7037`。
