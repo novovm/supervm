@@ -566,7 +566,10 @@ impl IrohEndpointOwnerV1 {
             error = scope.control.revoked() => Err(error),
             result = operation(&scope) => result,
         };
-        scope.control.check().and(result)
+        // Preserve the operation's first failure (including authentication
+        // rejection). A later cancellation must not reclassify it as a fresh
+        // operation boundary; only a successful result needs the final check.
+        result.and_then(|value| scope.control.check().map(|()| value))
     }
 
     /// Forward a platform-observed network change on this owner's runtime.
@@ -802,8 +805,9 @@ where
         error = scope.control.revoked() => Err(error),
         result = operation(&scope) => result,
     };
-    // Include post-operation authorization: a late success cannot revive a scope.
-    let result = scope.control.check().and(result);
+    // A late success cannot revive a scope, but a late revocation must not
+    // replace an operation's already-returned authentication or protocol error.
+    let result = result.and_then(|value| scope.control.check().map(|()| value));
     if result.is_err() {
         // Failed operations never gain success from endpoint cleanup.
         drop(scope);
@@ -1455,6 +1459,87 @@ mod tests {
     }
     fn control() -> IrohControlV1 {
         IrohControlV1::new(Instant::now() + Duration::from_secs(8), || Ok(())).unwrap()
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("fixture operation authority revoked")]
+    struct OperationRevoked;
+
+    fn revocable_control(revoked: Arc<AtomicBool>) -> IrohControlV1 {
+        IrohControlV1::new(Instant::now() + Duration::from_secs(8), move || {
+            if revoked.load(Ordering::Acquire) {
+                return Err(OperationRevoked.into());
+            }
+            Ok(())
+        })
+        .unwrap()
+    }
+
+    // Set revocation in the same poll that returns the operation's result:
+    // this deterministically exercises the final check, not a timer race.
+    fn finish_and_revoke(revoked: &AtomicBool, reject: bool) -> Result<()> {
+        revoked.store(true, Ordering::Release);
+        if reject {
+            Err(
+                crate::bound_session::BoundSessionError::Authentication(anyhow::anyhow!(
+                    "fixture authentication rejection"
+                ))
+                .into(),
+            )
+        } else {
+            Ok(())
+        }
+    }
+
+    fn assert_final_result(error: &anyhow::Error, reject: bool) {
+        if reject {
+            assert!(matches!(
+                error.downcast_ref::<crate::bound_session::BoundSessionError>(),
+                Some(crate::bound_session::BoundSessionError::Authentication(_))
+            ));
+            assert!(!error.is::<OperationRevoked>());
+        } else {
+            assert!(error.is::<OperationRevoked>(), "late success was accepted");
+        }
+    }
+
+    #[tokio::test]
+    async fn persistent_operation_preserves_first_error_and_checks_late_success() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+            .await
+            .unwrap();
+        let port = owner.endpoint.bound_sockets()[0];
+        for reject in [true, false] {
+            let revoked = Arc::new(AtomicBool::new(false));
+            let gate = revocable_control(revoked.clone());
+            let result = owner
+                .with_operation(gate, move |_| {
+                    Box::pin(async move { finish_and_revoke(&revoked, reject) })
+                })
+                .await;
+            assert_final_result(&result.unwrap_err(), reject);
+            assert_eq!(owner.snapshot().active_operations, 0);
+            assert!(!owner.snapshot().closed);
+        }
+        owner.close().await.unwrap();
+        assert!(owner.snapshot().closed);
+        assert!(std::net::UdpSocket::bind(port).is_ok());
+    }
+
+    #[tokio::test]
+    async fn temporary_operation_preserves_first_error_and_checks_late_success() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        for reject in [true, false] {
+            let revoked = Arc::new(AtomicBool::new(false));
+            let gate = revocable_control(revoked.clone());
+            let result = with_iroh_scope_v1(local_config(), gate, move |_| {
+                Box::pin(async move { finish_and_revoke(&revoked, reject) })
+            })
+            .await;
+            assert_final_result(&result.unwrap_err(), reject);
+            assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 4);
+        }
     }
 
     #[tokio::test]

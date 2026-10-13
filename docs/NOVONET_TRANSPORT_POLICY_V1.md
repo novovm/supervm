@@ -462,3 +462,7 @@ Android 的系统网络代次还须传入长期端点：`IrohEndpointOwnerV1::ne
 在同 runtime 和原 `IrohControlV1` 下请求底层重查接口。产品对成功通知的代次
 去重，不能用它延长旧操作或证明 Relay 已就绪。Iroh Android netwatch 不会
 自动接收全部 Java 网络事件；本片补通知，不修改 vendor 的重连退避。
+
+操作已经返回的认证/协议错误须保留为首错，不能被随后出现的网络撤销替换
+成可重试结果。仅在操作返回成功时补做最后验权，失效的成功仍拒绝。本规则
+同时适用于长期 owner 与临时 scope，不取消既有端点清理要求。
