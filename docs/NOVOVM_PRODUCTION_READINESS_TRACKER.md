@@ -8,6 +8,41 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Mailbox continuous connection and durable notification positions
+
+Input `a80306cc`; implementation `e073bca2`. No finance/AOEM/consensus changes.
+Existing self-owned listener selects explicit `NVMBOX02` for continuous mailbox
+transport; `NVMBOX01` remains supported without silent client fallback. A completed
+inbound stream hands its admitted QUIC connection to the next independent operation.
+Idle wait is bounded at 60s; each new stream retains its own 30s IO budget, signed
+service offer and Finished-bound authentication. This is sequential stream reuse,
+not unrestricted multiplexing or indefinite business authorization.
+
+Store schema 0 migrates to 1 transactionally without replacing existing objects,
+capabilities or TTL. Each new Put advances a private mailbox sequence in the same
+transaction. Duplicate Put does not advance it. Recreation changes generation;
+future positions in the same generation reject. Watch proves read capability,
+accepts at most four distinct boxes and waits at most 10s. It subscribes before
+the durable snapshot, wakes after commit and rechecks expiry/revocation. Waiting
+holds no storage lock. Notify is advisory: Fetch, device durable receipt, dedup
+and fixed TTL remain authoritative. No global traffic counter or chat identity is
+sent to subscribers. Do not write schema-1 files using the old schema-0 binary.
+
+Validation: mailbox_runtime 2 (including seven sequential real QUIC operations
+on one connection), mailbox_store 5 (migration, restart, failed transaction,
+dedup, TTL/recreation), notification 2 (commit before/during wait, wrong capability,
+future cursor, cancellation and live revocation), existing connection-reuse 3;
+scoped Clippy -D warnings passed. Ignored local logs: mailbox-realtime-tests.log,
+mailbox-notify-tests.log, mailbox-reuse-tests.log, mailbox-realtime-clippy.log.
+The first reuse filter selected zero tests; corrected iroh_transport::reuse
+actually executed all three. Android deployment and latency pending at this commit.
+
+Not production/privacy signoff. Node admission still bounds four connections
+and existing approved clients. Scale/fairness, journal rotation, independent
+L3/L4 replicas, self-owned carriers and qualified anonymity remain open. During
+sync the remote AOEM LFS download stalled; its financial DLL is an unhydrated
+pointer, not verified by these network-only tests.
+
 ## 2026-10-14 Guarded cross-program composition (partial step 2; fee/effect compiler OPEN)
 
 Input SUPERVM `32aee585`; generic AOEM adapter committed/pushed as `7fae6f32`.
