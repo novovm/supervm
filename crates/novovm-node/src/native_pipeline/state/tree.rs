@@ -104,8 +104,24 @@ enum Node {
     },
 }
 
+// Immutable codec identity, not a cache of any account or candidate state.
+// Traversal/branch validation calls this for every edge: recomputing the same
+// SHA-256 there does no authentication work. The domain is pinned by a test.
+const EMPTY_ROOT_V1: NodeHash = [
+    0x6c, 0x01, 0xd2, 0x25, 0x3f, 0x58, 0x22, 0x38, 0x5d, 0x8d, 0xc8, 0x29, 0x8f, 0x1b, 0xf4, 0x78,
+    0xe7, 0xfa, 0x62, 0x1d, 0xaa, 0x75, 0x2c, 0xfe, 0xda, 0x2e, 0x31, 0x8d, 0xa0, 0xef, 0xe7, 0x2c,
+];
+
+#[cfg(test)]
+thread_local! {
+    static EMPTY_ROOT_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static REACHABILITY_DECODES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 pub fn empty_root() -> NodeHash {
-    Sha256::digest(b"novovm-state-patricia-v1:empty\0").into()
+    #[cfg(test)]
+    EMPTY_ROOT_LOOKUPS.with(|count| count.set(count.get() + 1));
+    EMPTY_ROOT_V1
 }
 
 fn digest_key(key: &[u8]) -> Result<NodeHash> {
@@ -416,6 +432,8 @@ impl<'a> Planner<'a> {
             if !reachable.insert(hash) {
                 continue;
             }
+            #[cfg(test)]
+            REACHABILITY_DECODES.with(|count| count.set(count.get() + 1));
             if let Node::Branch { left, right, .. } = Node::decode(bytes)? {
                 stack.push(left);
                 stack.push(right);
@@ -444,6 +462,7 @@ pub fn stage_state_update(
     let mut planner = Planner::new(reader);
     let mut root = parent_root;
     let mut remaining = changes;
+    let mut final_put_tree = false;
     while !remaining.is_empty() {
         let run_len = remaining
             .iter()
@@ -459,6 +478,11 @@ pub fn stage_state_update(
         }
         let (run, rest) = remaining.split_at(run_len);
         if let Some(puts) = batch::unique_puts(run)? {
+            // One distinct-put run builds each changed subtree only once from
+            // its final children. Every staged node is reachable by construction;
+            // there are no intermediate versions to prune. Ordered duplicates,
+            // deletes and mixed runs still require the original reachability pass.
+            final_put_tree = run.len() == changes.len();
             #[cfg(test)]
             {
                 planner.max_batched_puts = planner.max_batched_puts.max(puts.len());
@@ -480,7 +504,9 @@ pub fn stage_state_update(
         }
         remaining = rest;
     }
-    planner.retain_reachable(root)?;
+    if !final_put_tree {
+        planner.retain_reachable(root)?;
+    }
     Ok(StagedStateUpdate {
         parent_root,
         root,

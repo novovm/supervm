@@ -1,0 +1,676 @@
+{
+  "schema": "novovm-resident-tree-final-puts-validation/v1",
+  "input_commit": "bba8945bac7028566693ab3cf6ba9c70c325f9fe",
+  "environment": "Windows Release, one computer, four actual original novovm-node processes and independent AOEM stores; original single-ingress RPC",
+  "workload": {
+    "signed_transfers": 65536,
+    "senders": 1024,
+    "nonces_per_sender": 64,
+    "shared_recipient": true,
+    "batch": 1024,
+    "inflight": 8192,
+    "completion": "all four independently returned identical finalized successful receipts; signing/startup/cold audit outside timed window",
+    "formal_profile_enabled": false
+  },
+  "change": {
+    "mechanism": "Reuse immutable empty-root codec commitment; skip reachability decoding only for a single distinct-put final construction. Deletes/duplicates/mixed runs retain pruning; all parent authentication and budgets preserved.",
+    "test_fixture": {
+      "puts": 2048,
+      "parent_reads": 4095,
+      "final_nodes": 4095,
+      "empty_root_hashes_removed_at_least": 8189,
+      "reachability_decodes_removed": 4095
+    },
+    "aoem_scope": "Existing AOEM callback and unified integer paths unchanged. No new algebraic lowering or GPU tree executor.",
+    "device_identity": "NOT VERIFIED: inspected existing ApflResidentModelDevice::runtime_identity and integer owner; resource v7 wire response does not expose bound identity. No SDK/AOEM source change in this cut."
+  },
+  "power_evidence": {
+    "before_user_plug": {
+      "ACLineStatus": 0,
+      "BatteryLifePercent": 49,
+      "SystemStatusFlag": 0
+    },
+    "after_user_plug": {
+      "ACLineStatus": 1,
+      "BatteryLifePercent": 49
+    },
+    "plan": "Balanced (read-only; no power settings modified)",
+    "formal_pairs": "Each paired run explicitly checked ACLineStatus=1 before and after.",
+    "limitations": "Earlier historical runs have no power evidence. Present plug-in transition supports an environment effect but does not establish the cause of all historical variance, separate CPU frequency from scheduling, or measure physical storage latency."
+  },
+  "cpu_summary": {
+    "before": 8569.588943221766,
+    "after": 8766.202714424922,
+    "changePercent": 2.294319745157325
+  },
+  "samples": [
+    {
+      "name": "frozen-58a-battery-1",
+      "local_directory": "artifacts/audit/resident-rpc-load/25268-1791883471837862900",
+      "report": "frozen-58a-battery-1.json",
+      "report_sha256": "48212A5D97D761A9AE1AA872AAC94A119AB1D9C10FAA0CF197484214B24CC037",
+      "observations_sha256": "95D7AD42309F098B3CF9A385B5555217A8BFFD1DC554EF933D511143623645D2",
+      "power": "battery",
+      "profile": false,
+      "successful_tps": 6761.398046152402,
+      "elapsed_seconds": 9.69267,
+      "latency_us": {
+        "p95": 1397047,
+        "p99": 1427146,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 724992,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 180,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x6420d6c0ef3d319ce9bb1507be25e763f2e9b2c328f42041a198bfe6a7ec30fb",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "frozen-58a-battery-2",
+      "local_directory": "artifacts/audit/resident-rpc-load/9788-1791883590977978700",
+      "report": "frozen-58a-battery-2.json",
+      "report_sha256": "5F84872F81ABFDA11B22F0A40CCBDA65FE61C4B97BFB2E0F04F7F5287AAFE042",
+      "observations_sha256": "E284DAEFA942261004250CAC58183697FD2CFC27F2EA40BBE1934CE6765B7A30",
+      "power": "battery",
+      "profile": false,
+      "successful_tps": 6238.901688271396,
+      "elapsed_seconds": 10.504413,
+      "latency_us": {
+        "p95": 1530044,
+        "p99": 1659221,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 858112,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 216,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x6420d6c0ef3d319ce9bb1507be25e763f2e9b2c328f42041a198bfe6a7ec30fb",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "frozen-58a-ac-1",
+      "local_directory": "artifacts/audit/resident-rpc-load/24096-1791883825050559300",
+      "report": "frozen-58a-ac-1.json",
+      "report_sha256": "1CEA6CF0B4811FB6D84A33DF54F4FD440529935C269E8DFCF28643E05D8AFEBC",
+      "observations_sha256": "C79B68C2B70B9561FFC7572793065E06F2C85B036F2BAC27E0B2929F962B45EB",
+      "power": "AC",
+      "profile": false,
+      "successful_tps": 8100.79917765813,
+      "elapsed_seconds": 8.090066,
+      "latency_us": {
+        "p95": 1188946,
+        "p99": 1337447,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1016832,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 259,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x6420d6c0ef3d319ce9bb1507be25e763f2e9b2c328f42041a198bfe6a7ec30fb",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "frozen-58a-ac-diagnostic",
+      "local_directory": "artifacts/audit/resident-rpc-load/7196-1791883887226260200",
+      "report": "frozen-58a-ac-diagnostic.json",
+      "report_sha256": "5010581ED0238BB4A8803FC18751F30AF1311ED3C9FBE8E599CED2E501969E20",
+      "observations_sha256": "AFA8E29D0CE3CAC9FC77D78C33617A193222DEC79734C5921B6F3881AA8E0E72",
+      "power": "AC",
+      "profile": true,
+      "successful_tps": 8583.864127238601,
+      "elapsed_seconds": 7.63479,
+      "latency_us": {
+        "p95": 1240638,
+        "p99": 1310579,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 950272,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 240,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x6420d6c0ef3d319ce9bb1507be25e763f2e9b2c328f42041a198bfe6a7ec30fb",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": [
+        {
+          "node": 0,
+          "execute_cpu": 830.1705,
+          "reduction": 722.8148,
+          "state_tree": 439.577,
+          "io_persist": 1071.4338,
+          "authentication": 294.3648,
+          "http": 1393.4333,
+          "idle": 4940.4315
+        },
+        {
+          "node": 1,
+          "execute_cpu": 826.2626,
+          "reduction": 724.9359,
+          "state_tree": 441.1913,
+          "io_persist": 1108.313,
+          "authentication": 283.2872,
+          "http": 1318.794,
+          "idle": 5154.8345
+        },
+        {
+          "node": 2,
+          "execute_cpu": 820.89,
+          "reduction": 726.7091,
+          "state_tree": 440.9132,
+          "io_persist": 1094.8721,
+          "authentication": 285.9225,
+          "http": 1272.2468,
+          "idle": 5217.9718
+        },
+        {
+          "node": 3,
+          "execute_cpu": 815.2093,
+          "reduction": 722.266,
+          "state_tree": 439.1849,
+          "io_persist": 1109.4785,
+          "authentication": 297.0217,
+          "http": 1338.3342,
+          "idle": 5191.624
+        }
+      ]
+    },
+    {
+      "name": "before-cpu-1",
+      "local_directory": "artifacts/audit/resident-rpc-load/11820-1791884235823211500",
+      "report": "before-cpu-1.json",
+      "report_sha256": "49E79AD99A23D1B819012C63348389F7886E85F13949D8DB30A164A1229CD013",
+      "observations_sha256": "37EA01E1EAA3FA3B844CEF3B35DA12762434C7107BA8678072DF0178665FD317",
+      "power": "AC",
+      "profile": false,
+      "successful_tps": 8915.270243449073,
+      "elapsed_seconds": 7.350983,
+      "latency_us": {
+        "p95": 1130641,
+        "p99": 1342651,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 863232,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 218,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x8bde9888d5d8ab8fdef4ad9d2a995b5fa4d9de0de4eae694fb71757184a0df4e",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "after-cpu-1",
+      "local_directory": "artifacts/audit/resident-rpc-load/26892-1791884314503219900",
+      "report": "after-cpu-1.json",
+      "report_sha256": "7D438039CBE659FCFEDCC393B00DAED9C5AE0AB1D719D6F72285F24CE4BB39AA",
+      "observations_sha256": "F9FE4422C426D8FFE966458EE63D21563A51E62653ABA68F1D0B4AA9DBAA4987",
+      "power": "AC",
+      "profile": false,
+      "successful_tps": 8700.03529875772,
+      "elapsed_seconds": 7.532843,
+      "latency_us": {
+        "p95": 1251902,
+        "p99": 1271964,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 907264,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 230,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "before-cpu-2",
+      "local_directory": "artifacts/audit/resident-rpc-load/6644-1791884364124614200",
+      "report": "before-cpu-2.json",
+      "report_sha256": "7B8366CF2C9B0DE29DA5E7D7886DF4ABBF0EC87408FAA1A282E529E4213026A0",
+      "observations_sha256": "17FE78D679AC8FE4E2F9AFA4A406C5A5508DA2B0E33F93FB3C6690831EFCF5E2",
+      "power": "AC",
+      "profile": false,
+      "successful_tps": 8249.71396770381,
+      "elapsed_seconds": 7.944033,
+      "latency_us": {
+        "p95": 1401480,
+        "p99": 1618047,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1002496,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 253,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x8bde9888d5d8ab8fdef4ad9d2a995b5fa4d9de0de4eae694fb71757184a0df4e",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "after-cpu-2",
+      "local_directory": "artifacts/audit/resident-rpc-load/22268-1791884414185757600",
+      "report": "after-cpu-2.json",
+      "report_sha256": "F621113753853F8ABA75C2AA4FBC88C2875D9DED42B221416586431C1AC7ABA7",
+      "observations_sha256": "15FBD5A52E8EF78F7FC3334E2E69065FB1A28D89590C64D8C6337A720A6EE05C",
+      "power": "AC",
+      "profile": false,
+      "successful_tps": 8833.384305188469,
+      "elapsed_seconds": 7.419127,
+      "latency_us": {
+        "p95": 1153809,
+        "p99": 1477689,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 880640,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 224,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "before-integer",
+      "local_directory": "artifacts/audit/resident-rpc-load/30372-1791884465324670700",
+      "report": "before-integer.json",
+      "report_sha256": "36F878D3F51FD3E8B8FA8456C73A8BD0513B313CA178839EDD91E42D93BBFDFE",
+      "observations_sha256": "11CCDCB1073F86E699BAAFC05781019CBD97DBDCDE3CDCD5B18712C13E914047",
+      "power": "AC",
+      "profile": false,
+      "successful_tps": 6682.915756470863,
+      "elapsed_seconds": 9.806498,
+      "latency_us": {
+        "p95": 1596866,
+        "p99": 1872734,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1211392,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 304,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x8bde9888d5d8ab8fdef4ad9d2a995b5fa4d9de0de4eae694fb71757184a0df4e",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "after-integer",
+      "local_directory": "artifacts/audit/resident-rpc-load/24712-1791884526779951100",
+      "report": "after-integer.json",
+      "report_sha256": "54FE5D87C0A56383EA46C4614745282D687CAAA62B9ECD4C3B9F560EFF751C08",
+      "observations_sha256": "C4B2633DA3848D9448142E9DF19322110B68BB98DCBFB79C5102E70340A2626D",
+      "power": "AC",
+      "profile": false,
+      "successful_tps": 7936.066805562368,
+      "elapsed_seconds": 8.257995,
+      "latency_us": {
+        "p95": 1205711,
+        "p99": 1267452,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 838656,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 208,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": []
+    },
+    {
+      "name": "before-diagnostic",
+      "local_directory": "artifacts/audit/resident-rpc-load/30400-1791884583609144900",
+      "report": "before-diagnostic.json",
+      "report_sha256": "47647BE49ECB823701AA3DC354321848ED3E3A694D15BFA9B4B9966C77B0D7E5",
+      "observations_sha256": "2D93C2007FD6F7F7A9E5FBBB79271164453AD3E2E2FDA7F38A5624B6139D17BB",
+      "power": "AC",
+      "profile": true,
+      "successful_tps": 9543.380910442265,
+      "elapsed_seconds": 6.867168,
+      "latency_us": {
+        "p95": 1159320,
+        "p99": 1221669,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 730112,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 186,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x8bde9888d5d8ab8fdef4ad9d2a995b5fa4d9de0de4eae694fb71757184a0df4e",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": [
+        {
+          "node": 0,
+          "execute_cpu": 732.2678,
+          "reduction": 632.108,
+          "state_tree": 441.2991,
+          "io_persist": 1170.8159,
+          "authentication": 279.6876,
+          "http": 1301.3375,
+          "idle": 4279.6762
+        },
+        {
+          "node": 1,
+          "execute_cpu": 731.518,
+          "reduction": 630.8115,
+          "state_tree": 442.3756,
+          "io_persist": 1182.8102,
+          "authentication": 287.6865,
+          "http": 1061.8379,
+          "idle": 4623.0959
+        },
+        {
+          "node": 2,
+          "execute_cpu": 731.7401,
+          "reduction": 631.9871,
+          "state_tree": 443.0965,
+          "io_persist": 1092.3307,
+          "authentication": 287.4534,
+          "http": 1124.3954,
+          "idle": 4609.1696
+        },
+        {
+          "node": 3,
+          "execute_cpu": 727.5445,
+          "reduction": 632.9655,
+          "state_tree": 446.7383,
+          "io_persist": 1087.892,
+          "authentication": 280.7827,
+          "http": 1133.2244,
+          "idle": 4571.1401
+        }
+      ]
+    },
+    {
+      "name": "after-diagnostic",
+      "local_directory": "artifacts/audit/resident-rpc-load/25508-1791884628320862100",
+      "report": "after-diagnostic.json",
+      "report_sha256": "E1EA3D9F8550F12C7FFAA19C5DF758F59FF9A8E2FD59267F1A77BB0D2C1D305D",
+      "observations_sha256": "395F0E0E22412110C29DBF835C2EBE5E901311E3D94B8C0AD5D6C13ADF944D04",
+      "power": "AC",
+      "profile": true,
+      "successful_tps": 9571.756774322641,
+      "elapsed_seconds": 6.84681,
+      "latency_us": {
+        "p95": 1030320,
+        "p99": 1119978,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 738304,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 194,
+        "deadline_expirations": 0
+      },
+      "node_sha256": "0x50b5234bf39ec106f066d37b7c29f261ab91f1f5e49f042c57bde235b0dcb9d9",
+      "aoem_sha256": "0xc040a30cce119c6d8da7b6609ec1302d9210a708a70cae3ace75a99008eb0539",
+      "phases_ms": [
+        {
+          "node": 0,
+          "execute_cpu": 705.2446,
+          "reduction": 593.1253,
+          "state_tree": 409.0297,
+          "io_persist": 1089.3712,
+          "authentication": 285.7321,
+          "http": 1206.9119,
+          "idle": 4411.1845
+        },
+        {
+          "node": 1,
+          "execute_cpu": 695.29,
+          "reduction": 593.2955,
+          "state_tree": 411.3621,
+          "io_persist": 1128.0411,
+          "authentication": 295.8909,
+          "http": 1070.7249,
+          "idle": 4659.5334
+        },
+        {
+          "node": 2,
+          "execute_cpu": 689.8988,
+          "reduction": 593.3633,
+          "state_tree": 411.1915,
+          "io_persist": 1090.8608,
+          "authentication": 290.2321,
+          "http": 1165.1329,
+          "idle": 4645.8375
+        },
+        {
+          "node": 3,
+          "execute_cpu": 683.0362,
+          "reduction": 588.0949,
+          "state_tree": 409.3919,
+          "io_persist": 1114.5226,
+          "authentication": 282.422,
+          "http": 1107.0452,
+          "idle": 4662.096
+        }
+      ]
+    }
+  ],
+  "client_window_analysis": [
+    {
+      "dir": "11820-1791884235823211500",
+      "mean_latency_us": 861306.3125,
+      "mean_client_unfinished": 7678.778538326099,
+      "window_full_fraction": 0.791765672699828,
+      "peak": 8192,
+      "scope": "offline analysis of first-submit to all-four receipt observation; not node execution latency or capacity"
+    },
+    {
+      "dir": "26892-1791884314503219900",
+      "mean_latency_us": 883420.578125,
+      "mean_client_unfinished": 7685.790213336452,
+      "window_full_fraction": 0.79508095416299,
+      "peak": 8192,
+      "scope": "offline analysis of first-submit to all-four receipt observation; not node execution latency or capacity"
+    },
+    {
+      "dir": "6644-1791884364124614200",
+      "mean_latency_us": 931242.671875,
+      "mean_client_unfinished": 7682.485677489003,
+      "window_full_fraction": 0.7928628947034837,
+      "peak": 8192,
+      "scope": "offline analysis of first-submit to all-four receipt observation; not node execution latency or capacity"
+    },
+    {
+      "dir": "22268-1791884414185757600",
+      "mean_latency_us": 868717.3125,
+      "mean_client_unfinished": 7673.713873883005,
+      "window_full_fraction": 0.779247612286459,
+      "peak": 8192,
+      "scope": "offline analysis of first-submit to all-four receipt observation; not node execution latency or capacity"
+    }
+  ],
+  "tests": {
+    "native_pipeline": {
+      "passed": 395,
+      "ignored": 60,
+      "failed": 0
+    },
+    "release_build": "pass",
+    "clippy_lib_tests_warnings_denied": "pass",
+    "single_ingress": {
+      "report": "single-ingress.json",
+      "seconds": 1.69
+    },
+    "aab": {
+      "report": "aab.json",
+      "seconds": 11.52,
+      "scope": "three actual honest nodes plus controlled fault peer; finalized-height restart and successor, not mid-write crash"
+    },
+    "offline": {
+      "report": "offline.json",
+      "seconds": 48.15
+    },
+    "real_aoem_integer_economic_parity": {
+      "seconds": 3.29,
+      "status": "pass"
+    },
+    "note": "AAB/integer parity and offline functional fixtures overlapped; formal/diagnostic performance runs had no compiler or concurrent fixtures."
+  },
+  "drafts": {
+    "count": 49,
+    "unchanged": true
+  },
+  "files": [
+    {
+      "path": "crates/novovm-node/src/native_pipeline/state/tree.rs",
+      "sha256": "1517EA783ED7C80C039AB45615BD93057FFA53BE400C15E079541245CDBE3CBD"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/state/tree/batch_conformance.rs",
+      "sha256": "7E00CE92CECE82E6CA38B4F68D71327D956AA64B7DE994EABC2CD7BEABBC1852"
+    },
+    {
+      "path": "target/release/novovm-node.exe",
+      "sha256": "50B5234BF39EC106F066D37B7C29F261AB91F1F5E49F042C57BDE235B0DCB9D9"
+    },
+    {
+      "path": "target/release/deps/novovm_node-54e8d64d0bc52c1f.exe",
+      "sha256": "B0ED7C40D7A8500728751F520F66ACAC7618E92A8552CCBE07CC8B0EA310B843"
+    },
+    {
+      "path": "aoem/windows/core/bin/aoem_ffi.dll",
+      "sha256": "C040A30CCE119C6D8DA7B6609EC1302D9210A708A70CAE3ACE75A99008EB0539"
+    }
+  ],
+  "remaining": [
+    "stable sustained mainchain capacity",
+    "actual integer resource device identity via original AOEM semantic contract",
+    "device-only time vs host waits",
+    "GPU/full business proof and broader product integration"
+  ],
+  "ci": {
+    "previous_run": "38374221621",
+    "last_observed": "in_progress; not signoff"
+  }
+}

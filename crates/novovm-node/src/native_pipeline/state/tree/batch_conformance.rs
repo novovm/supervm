@@ -20,6 +20,60 @@ fn put(key: u32, value: u64) -> StateChange {
     }
 }
 
+#[test]
+fn shared_empty_commitment_removes_per_edge_hashing_without_changing_codec() {
+    let original: NodeHash = Sha256::digest(b"novovm-state-patricia-v1:empty\0").into();
+    assert_eq!(empty_root(), original);
+    assert_eq!(EMPTY_ROOT_V1, original);
+    let mut memory = Memory::default();
+    let initial: Vec<_> = (0..2048).map(|key| put(key, 1)).collect();
+    let parent = stage_state_update(&memory, original, &initial).unwrap();
+    let root = parent.root;
+    memory.0.extend(parent.nodes);
+    let changes: Vec<_> = (0..2048).map(|key| put(key, 2)).collect();
+    EMPTY_ROOT_LOOKUPS.with(|count| count.set(0));
+    REACHABILITY_DECODES.with(|count| count.set(0));
+    let actual = stage_state_update(&memory, root, &changes).unwrap();
+    let removed_hashes = EMPTY_ROOT_LOOKUPS.with(|count| count.get());
+    assert_eq!(REACHABILITY_DECODES.with(|count| count.get()), 0);
+    // Before this change each lookup executed SHA-256 on exactly the domain
+    // checked above. No node/content hash or authenticated-edge check is removed.
+    assert!(removed_hashes > changes.len() * 3);
+    same(&actual, &ordered(&memory, root, &changes).unwrap());
+    assert_eq!(actual.loaded_nodes(), 4095);
+    assert_eq!(actual.nodes().len(), 4095);
+    // Independently traverse the finished result. The production distinct-put
+    // path skips this decode/allocation/set pass, not parent authentication.
+    let mut pruned = Planner::new(&memory);
+    pruned.nodes = actual.nodes.clone();
+    REACHABILITY_DECODES.with(|count| count.set(0));
+    pruned.retain_reachable(actual.root).unwrap();
+    assert_eq!(REACHABILITY_DECODES.with(|count| count.get()), 4095);
+    assert_eq!(pruned.nodes, actual.nodes);
+    eprintln!("batch-tree 2048 final puts: removed_empty_hashes={removed_hashes}, parent_reads={}, staged_nodes={}", actual.loaded_nodes(), actual.nodes().len());
+}
+
+#[test]
+fn intermediate_versions_still_use_reachability_pruning() {
+    for changes in [
+        vec![put(1, 1), put(2, 1), put(1, 2)],
+        vec![
+            put(1, 1),
+            StateChange::Delete {
+                key: 1u32.to_be_bytes().to_vec(),
+            },
+            put(2, 2),
+        ],
+    ] {
+        let memory = Memory::default();
+        let parent = empty_root();
+        REACHABILITY_DECODES.with(|count| count.set(0));
+        let actual = stage_state_update(&memory, parent, &changes).unwrap();
+        assert!(REACHABILITY_DECODES.with(|count| count.get()) > 0);
+        same(&actual, &ordered(&memory, parent, &changes).unwrap());
+    }
+}
+
 // Deliberately keep the old sequence of change calls: comparing two invocations
 // of the new public batch entry point would not be an independent oracle.
 fn ordered(
