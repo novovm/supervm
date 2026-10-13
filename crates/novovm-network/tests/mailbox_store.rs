@@ -12,8 +12,10 @@ fn durable_cursor_migration_commit_atomicity_and_recreation() {
     drop(store);
     // Exact prior schema with a real committed envelope, not an empty replacement.
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.execute_batch("DROP TABLE mailbox_revisions; PRAGMA user_version=0;")
-        .unwrap();
+    db.execute_batch(
+        "DROP TABLE mailbox_revisions; DROP TABLE mailbox_contribution; PRAGMA user_version=0;",
+    )
+    .unwrap();
     drop(db);
     let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
     let (before, pending) = store.observe(&grant.id, &grant.read, 1000).unwrap();
@@ -60,6 +62,158 @@ fn durable_cursor_migration_commit_atomicity_and_recreation() {
     let recreated = store.observe(&grant.id, &grant.read, 2000).unwrap();
     assert_ne!(recreated.0.generation, before.generation);
     assert!(!recreated.1);
+}
+
+#[test]
+fn contributor_choice_survives_restart_without_losing_retention_or_limits() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("contributor.db");
+    let limits = Limits {
+        object_bytes: 8,
+        mailbox_bytes: 8,
+        mailbox_objects: 2,
+        total_bytes: 12,
+        total_objects: 3,
+        mailboxes: 2,
+    };
+    let mut store = MailboxStore::open_contributor(&path, limits, true).unwrap();
+    assert!(store.contribution_status(1000).unwrap().enabled);
+    assert!(matches!(store.create(1000, 600), Err(StoreError::Quota)));
+    store.set_resources_available(true);
+    let phone = store.create(1000, 600).unwrap();
+    let tablet = store.create(1000, 600).unwrap();
+    store
+        .put(&phone.id, &phone.write, &[1; 32], &[7; 8], 1300, 1000)
+        .unwrap();
+    store
+        .put(&tablet.id, &tablet.write, &[2; 32], &[8; 4], 1400, 1000)
+        .unwrap();
+    let cursor = store.observe(&phone.id, &phone.read, 1000).unwrap().0;
+    store.set_contribution_enabled(false, 1001).unwrap();
+    assert!(matches!(
+        store.renew(&phone.id, &phone.read, 1001, 900),
+        Err(StoreError::Quota)
+    ));
+    // Lost ACK reconciliation is not a new storage obligation.
+    store.register(&phone, 1001, 1600).unwrap();
+    store.renew(&phone.id, &phone.read, 1001, 60).unwrap();
+    assert_eq!(
+        store
+            .put(&phone.id, &phone.write, &[1; 32], &[7; 8], 1300, 1001)
+            .unwrap(),
+        PutResult::Duplicate
+    );
+    drop(store);
+    let mut store = MailboxStore::open_contributor(&path, limits, true).unwrap();
+    let state = store.contribution_status(1002).unwrap();
+    assert!(!state.enabled && !state.resources_available);
+    assert_eq!(
+        (
+            state.retained_objects,
+            state.retained_bytes,
+            state.retain_until
+        ),
+        (2, 12, Some(1400))
+    );
+    assert_eq!(
+        store.observe(&phone.id, &phone.read, 1002).unwrap().0,
+        cursor
+    );
+    let row = store.fetch(&phone.id, &phone.read, 1002).unwrap().remove(0);
+    assert_eq!(
+        (row.id, row.expires, row.ciphertext),
+        ([1; 32], 1300, vec![7; 8])
+    );
+    store.set_resources_available(true);
+    assert!(matches!(
+        store.put(&tablet.id, &tablet.write, &[3; 32], &[9], 1350, 1002),
+        Err(StoreError::Quota)
+    ));
+    store
+        .consume(&phone.id, &phone.read, &[1; 32], &row.digest, 1002)
+        .unwrap();
+    assert_eq!(
+        store.fetch(&tablet.id, &tablet.read, 1002).unwrap().len(),
+        1
+    );
+    store.set_contribution_enabled(true, 1003).unwrap();
+    store
+        .put(&tablet.id, &tablet.write, &[3; 32], &[9; 4], 1350, 1003)
+        .unwrap();
+    assert!(matches!(
+        store.put(&tablet.id, &tablet.write, &[4; 32], &[9], 1350, 1003),
+        Err(StoreError::Quota)
+    ));
+    assert!(matches!(
+        store.put(&phone.id, &phone.write, &[1; 32], &[7; 8], 1300, 1003),
+        Err(StoreError::Consumed)
+    ));
+    store.set_resources_available(false);
+    assert_eq!(
+        store.fetch(&tablet.id, &tablet.read, 1003).unwrap().len(),
+        2
+    );
+    store.set_contribution_enabled(false, 1004).unwrap();
+    store.sweep(1400).unwrap();
+    let state = store.contribution_status(1400).unwrap();
+    assert_eq!(
+        (
+            state.retained_objects,
+            state.retained_bytes,
+            state.retain_until
+        ),
+        (0, 0, None)
+    );
+    assert!(matches!(
+        store.set_contribution_enabled(true, 1399),
+        Err(StoreError::ClockRollback)
+    ));
+    assert!(!store.contribution_status(1400).unwrap().enabled);
+}
+
+#[test]
+fn contribution_migration_preserves_v1_and_missing_or_failed_policy_is_not_reset() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    let grant = store.create(1000, 600).unwrap();
+    store
+        .put(&grant.id, &grant.write, &[1; 32], &[8; 8], 1300, 1000)
+        .unwrap();
+    let cursor = store.observe(&grant.id, &grant.read, 1000).unwrap().0;
+    drop(store);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("DROP TABLE mailbox_contribution; PRAGMA user_version=1;")
+        .unwrap();
+    drop(db);
+    let mut store = MailboxStore::open_contributor(&path, Limits::default(), false).unwrap();
+    assert!(!store.contribution_status(1000).unwrap().enabled);
+    assert_eq!(
+        store.observe(&grant.id, &grant.read, 1000).unwrap().0,
+        cursor
+    );
+    let row = store.fetch(&grant.id, &grant.read, 1000).unwrap().remove(0);
+    assert_eq!(
+        (row.id, row.expires, row.ciphertext),
+        ([1; 32], 1300, vec![8; 8])
+    );
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_choice BEFORE UPDATE ON mailbox_contribution BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(store.set_contribution_enabled(true, 1000).is_err());
+    assert!(!store.contribution_status(1000).unwrap().enabled);
+    drop(store);
+    db.execute_batch("DROP TRIGGER fail_choice; DELETE FROM mailbox_contribution;")
+        .unwrap();
+    assert!(MailboxStore::open_contributor(&path, Limits::default(), true).is_err());
+    assert!(MailboxStore::open(&path, Limits::default()).is_err());
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM envelopes", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    db.execute_batch("DROP TABLE mailbox_contribution;")
+        .unwrap();
+    assert!(MailboxStore::open_contributor(&path, Limits::default(), true).is_err());
 }
 
 #[test]

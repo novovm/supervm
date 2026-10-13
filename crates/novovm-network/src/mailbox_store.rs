@@ -107,12 +107,45 @@ pub struct MailboxCursorV1 {
     pub sequence: u64,
 }
 
+/// Local owner status only, never a peer-declared durability/reward proof.
+/// Turning off new obligations does not delete committed objects. Serving
+/// existing objects still requires the platform's live execution/path authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContributionStatusV1 {
+    pub enabled: bool,
+    pub resources_available: bool,
+    pub retained_objects: u64,
+    pub retained_bytes: u64,
+    pub retain_until: Option<i64>,
+}
+
 pub struct MailboxStore {
     db: Connection,
     limits: Limits,
+    resources_available: bool,
 }
 impl MailboxStore {
     pub fn open(path: impl AsRef<Path>, limits: Limits) -> Result<Self, StoreError> {
+        Self::open_inner(path.as_ref(), limits, true, true)
+    }
+
+    /// Same store/schema for an opportunistic contributor. Existing durable
+    /// choice wins over the install default. Execution/resource readiness is
+    /// deliberately unavailable on every open until the local platform checks it.
+    pub fn open_contributor(
+        path: impl AsRef<Path>,
+        limits: Limits,
+        initially_enabled: bool,
+    ) -> Result<Self, StoreError> {
+        Self::open_inner(path.as_ref(), limits, initially_enabled, false)
+    }
+
+    fn open_inner(
+        path: &Path,
+        limits: Limits,
+        initially_enabled: bool,
+        resources_available: bool,
+    ) -> Result<Self, StoreError> {
         if limits.object_bytes == 0
             || limits.object_bytes > 65536
             || limits.mailbox_bytes == 0
@@ -126,7 +159,6 @@ impl MailboxStore {
         {
             return Err(StoreError::Invalid);
         }
-        let path = path.as_ref();
         let exists = path.try_exists().map_err(|_| StoreError::Invalid)?;
         if exists {
             let metadata = std::fs::symlink_metadata(path).map_err(|_| StoreError::Invalid)?;
@@ -191,7 +223,33 @@ impl MailboxStore {
                 PRAGMA user_version=1;",
             )?;
             tx.commit()?;
-        } else if version != 1 {
+        } else if version != 1 && version != 2 {
+            return Err(StoreError::Invalid);
+        }
+        if version <= 1 {
+            // Version 0's preceding revision migration is independently safe.
+            // A crash before this transaction leaves version 1; a retry neither
+            // deletes content nor resets any established contribution choice.
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(
+                "CREATE TABLE mailbox_contribution (
+                 id INTEGER PRIMARY KEY CHECK(id=1),
+                 enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));",
+            )?;
+            tx.execute(
+                "INSERT INTO mailbox_contribution VALUES(1,?1)",
+                [initially_enabled],
+            )?;
+            tx.execute_batch("PRAGMA user_version=2;")?;
+            tx.commit()?;
+        }
+        let valid: bool = db.query_row(
+            "SELECT count(*)=1 AND coalesce(min(id=1 AND enabled IN (0,1)),0)
+             FROM mailbox_contribution",
+            [],
+            |r| r.get(0),
+        )?;
+        if !valid {
             return Err(StoreError::Invalid);
         }
         let missing: i64 = db.query_row(
@@ -204,7 +262,11 @@ impl MailboxStore {
         if missing != 0 {
             return Err(StoreError::Invalid);
         }
-        Ok(Self { db, limits })
+        Ok(Self {
+            db,
+            limits,
+            resources_available,
+        })
     }
     fn begin(&mut self, now: i64) -> Result<Transaction<'_>, StoreError> {
         if !(0..=i64::MAX - MAX_TTL - REPLAY_WINDOW).contains(&now) {
@@ -240,6 +302,51 @@ impl MailboxStore {
         Ok(())
     }
 
+    /// Owner-only durable choice. Serialize through the SAME store owner as
+    /// Put: successful return is the barrier after which no new obligation is
+    /// accepted while disabled. An already committed Put remains committed.
+    pub fn set_contribution_enabled(&mut self, enabled: bool, now: i64) -> Result<(), StoreError> {
+        let tx = self.begin(now)?;
+        if tx.execute(
+            "UPDATE mailbox_contribution SET enabled=?1 WHERE id=1",
+            [enabled],
+        )? != 1
+        {
+            return Err(StoreError::Invalid);
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Transient local resource readiness, never a peer assertion or a grant
+    /// to run in the background. Changing it does not alter retained ciphertext.
+    pub fn set_resources_available(&mut self, available: bool) {
+        self.resources_available = available;
+    }
+
+    pub fn contribution_status(&mut self, now: i64) -> Result<ContributionStatusV1, StoreError> {
+        let resources_available = self.resources_available;
+        let tx = self.begin(now)?;
+        let enabled = contribution_enabled(&tx)?;
+        let (retained_objects, retained_bytes, retain_until): (i64, i64, Option<i64>) = tx
+            .query_row(
+                "SELECT count(*),coalesce(sum(length(payload)),0),max(expires)
+             FROM envelopes WHERE consumed=0 AND expires>?1",
+                [now],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+        tx.commit()?;
+        Ok(ContributionStatusV1 {
+            enabled,
+            resources_available,
+            retained_objects: retained_objects
+                .try_into()
+                .map_err(|_| StoreError::Invalid)?,
+            retained_bytes: retained_bytes.try_into().map_err(|_| StoreError::Invalid)?,
+            retain_until,
+        })
+    }
+
     pub fn create(&mut self, now: i64, ttl: i64) -> Result<MailboxGrant, StoreError> {
         if !(60..=MAX_TTL).contains(&ttl) {
             return Err(StoreError::Invalid);
@@ -268,6 +375,7 @@ impl MailboxStore {
             return Err(StoreError::Invalid);
         }
         let limit = self.limits.mailboxes;
+        let resources_available = self.resources_available;
         let tx = self.begin(now)?;
         let existing: Option<(Vec<u8>, Vec<u8>, i64)> = tx
             .query_row(
@@ -286,6 +394,7 @@ impl MailboxStore {
             tx.commit()?;
             return Ok(());
         }
+        admit_new_obligation(&tx, resources_available)?;
         let count =
             tx.query_row("SELECT count(*) FROM mailboxes", [], |r| r.get::<_, u32>(0))? as usize;
         if count >= limit {
@@ -318,8 +427,12 @@ impl MailboxStore {
         if !(60..=MAX_TTL).contains(&ttl) {
             return Err(StoreError::Invalid);
         }
+        let resources_available = self.resources_available;
         let tx = self.begin(now)?;
-        authorize(&tx, id, read, false, now)?;
+        let previous = authorize(&tx, id, read, false, now)?;
+        if now + ttl > previous {
+            admit_new_obligation(&tx, resources_available)?;
+        }
         tx.execute(
             "UPDATE mailboxes SET expires=max(expires,?2) WHERE id=?1",
             params![id, now + ttl],
@@ -337,6 +450,7 @@ impl MailboxStore {
         now: i64,
     ) -> Result<PutResult, StoreError> {
         let limits = self.limits;
+        let resources_available = self.resources_available;
         if *object == [0; 32]
             || ciphertext.is_empty()
             || ciphertext.len() > limits.object_bytes
@@ -368,6 +482,7 @@ impl MailboxStore {
             tx.commit()?;
             return Ok(PutResult::Duplicate);
         }
+        admit_new_obligation(&tx, resources_available)?;
         let (box_count, box_bytes): (usize, usize) = tx.query_row(
             "SELECT count(*),coalesce(sum(length(payload)),0) FROM envelopes WHERE mailbox=?1",
             [mailbox],
@@ -498,6 +613,26 @@ impl MailboxStore {
         tx.commit()?;
         Ok(())
     }
+}
+fn contribution_enabled(tx: &Transaction<'_>) -> Result<bool, StoreError> {
+    let enabled: i64 = tx.query_row(
+        "SELECT enabled FROM mailbox_contribution WHERE id=1",
+        [],
+        |r| r.get(0),
+    )?;
+    match enabled {
+        0 => Ok(false),
+        1 => Ok(true),
+        _ => Err(StoreError::Invalid),
+    }
+}
+fn admit_new_obligation(tx: &Transaction<'_>, resources_available: bool) -> Result<(), StoreError> {
+    // Existing Quota response expresses zero available new capacity; no new
+    // wire protocol or user-identifying contribution metadata is introduced.
+    if !contribution_enabled(tx)? || !resources_available {
+        return Err(StoreError::Quota);
+    }
+    Ok(())
 }
 fn authorize(
     tx: &Transaction<'_>,

@@ -8,6 +8,50 @@
 
 历史起点：开发分支 `feature/treasury-balance-backed-v2`，基线 `8025fd7`；该分支已获用户授权合入 main 并删除。当前只使用 main，新建分支须用户明确授权。
 
+## 2026-10-14 Shared L3/L4 mailbox contribution admission and retention
+
+Input `f540d5c2`, network/store only. `MailboxStore::open_contributor` uses the
+existing SQLite mailbox, with a durable enabled choice and transient resource
+readiness initially false on EVERY contributor open. The install default only
+applies when creating the choice; an existing opt-out wins. `open` retains the
+L3 ready default but likewise cannot override a persisted opt-out.
+
+Schema 1 to 2 migration is transactional and preserves payloads, IDs, original
+expiry, capability hashes, replay tombstones, clock guard and notification
+positions. Missing/corrupt version-2 policy is an error, not reenrollment.
+Upgrade must stop the prior store owner first; old binaries must not write the
+new schema. No running node database was migrated in this round.
+
+Local `MailboxServiceV1` owner updates use the SAME fair commit queue as RPC.
+After disable acknowledges, new Register/Put/retention-extending Renew returns
+the existing Quota response (zero available new capacity). Exact retries of
+already committed registration/Put still reconcile lost ACKs; Fetch, Watch,
+Consume, Revoke and original-TTL sweep remain available under live execution
+authority. No wire message, global permission, monetary ledger or background
+execution authorization was added. Resource readiness cannot undo user opt-out.
+Retention counters are local status, not verified service rewards or evidence
+of an independent durable replica. Owners must keep polling queued RPC and
+control futures together; failure/cancellation is not an acknowledged update.
+
+Verification on Windows, `iroh-transport,tls-transport`, serial tests:
+- mailbox_store: 7 PASS (0.68s), including old-schema real-content migration,
+  failed update, missing policy, restart, limits, per-device retention, exact
+  expiry, no consumed-object resurrection and clock rollback rejection.
+- mailbox_rpc unit: 6 PASS (1.49s). Forced BOTH orders on the actual SQLite
+  commit queue: stop first rejects; Put first retains a verifiable StoreReceipt.
+- mailbox_runtime: 6 PASS (85.22s). Actual localhost QUIC peers use the SAME
+  authenticated RPC before/after contribution opt-out and service/store reopen;
+  a departed sender is not needed for either recipient mailbox to fetch/consume.
+  Wrong capabilities remain rejected. Existing signed-window, revocation,
+  framing, request-cap and no-downgrade cases also PASS.
+- Scoped lib/test Clippy with `-D warnings` PASS. Initial compile rejected a
+  u64 SQLite read; now reads signed SQLite integers with checked conversion.
+
+Android contribution platform/owner/UI wiring, mobile inbound reachability,
+actual third-device forwarding/storage, independent replicas and repair remain
+unaccepted. The currently installed own node/phone packages are unchanged;
+this component gate is not phone deployment, privacy or production acceptance.
+
 ## 2026-10-14 Lease-bounded authenticated mailbox window
 
 Android follow-through (NOVOCHAT regular APK d87c7e24): existing pending48

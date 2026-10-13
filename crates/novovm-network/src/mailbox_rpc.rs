@@ -6,7 +6,9 @@ use crate::{
     duplex::{HandshakeReplayCacheV1, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
     iroh_transport::{decode_iroh_envelope_v1, encode_iroh_envelope_v1},
     mailbox_receipt::StoreReceiptV1,
-    mailbox_store::{Capability, MailboxCursorV1, MailboxGrant, MailboxStore, StoreError},
+    mailbox_store::{
+        Capability, ContributionStatusV1, MailboxCursorV1, MailboxGrant, MailboxStore, StoreError,
+    },
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Result};
@@ -147,6 +149,46 @@ impl MailboxServiceV1 {
             slots: Arc::new(tokio::sync::Semaphore::new(1)),
             changed: tokio::sync::watch::channel(0).0,
         }
+    }
+
+    /// Local platform control, not remotely callable. Uses the same fair store
+    /// queue as RPC commits: once this completes, later new obligations are
+    /// refused. Prior committed objects/read capabilities remain intact.
+    pub async fn set_contribution_enabled(&self, enabled: bool) -> Result<()> {
+        self.owner_update(move |store| Ok(store.set_contribution_enabled(enabled, now()?)?))
+            .await
+    }
+
+    /// Local foreground/power/network/thermal decision. This controls NEW
+    /// storage obligations only; the existing transport authority separately
+    /// controls whether any service may execute. Never accepts peer claims.
+    pub async fn set_resources_available(&self, available: bool) -> Result<()> {
+        self.owner_update(move |store| {
+            store.set_resources_available(available);
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn contribution_status(&self) -> Result<ContributionStatusV1> {
+        self.owner_update(|store| Ok(store.contribution_status(now()?)?))
+            .await
+    }
+
+    async fn owner_update<T: Send + 'static>(
+        &self,
+        update: impl FnOnce(&mut MailboxStore) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let permit = self.slots.clone().acquire_owned().await?;
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let mut store = store
+                .lock()
+                .map_err(|_| anyhow::anyhow!("mailbox store unavailable"))?;
+            update(&mut store)
+        })
+        .await?
     }
     pub async fn sweep(&self) -> Result<()> {
         let permit = self.slots.clone().acquire_owned().await?;
@@ -719,6 +761,92 @@ async fn serve_session(
 #[cfg(test)]
 mod notification_tests {
     use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn contribution_stop_orders_with_real_commits_and_preserves_lost_ack_recovery(
+    ) -> Result<()> {
+        for stop_first in [true, false] {
+            let dir = tempfile::tempdir()?;
+            let mut store = MailboxStore::open_contributor(
+                dir.path().join("contribution.db"),
+                Default::default(),
+                true,
+            )?;
+            store.set_resources_available(true);
+            let expiry = now()? + 600;
+            let grant = store.create(now()?, 900)?;
+            let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+            let put = || MailboxRequestV1::Put {
+                mailbox: grant.id,
+                write: *grant.write.as_bytes(),
+                object: [3; 32],
+                ciphertext: vec![4; 8],
+                expires: expiry,
+            };
+            // Force both possible orders on the real fair commit queue. No sleeps
+            // or assumed worker scheduling determine which operation wins.
+            let held = service.slots.clone().acquire_owned().await?;
+            let stopping = service.set_contribution_enabled(false);
+            let writing = service.execute(put());
+            tokio::pin!(stopping, writing);
+            if stop_first {
+                assert!(futures_util::poll!(&mut stopping).is_pending());
+                assert!(futures_util::poll!(&mut writing).is_pending());
+            } else {
+                assert!(futures_util::poll!(&mut writing).is_pending());
+                assert!(futures_util::poll!(&mut stopping).is_pending());
+            }
+            drop(held);
+            let (stopped, written) =
+                tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                    tokio::join!(&mut stopping, &mut writing)
+                })
+                .await?;
+            stopped?;
+            let written = written?;
+            if stop_first {
+                assert!(matches!(
+                    written,
+                    MailboxReplyV1::Rejected(MailboxRejectionV1::Quota)
+                ));
+            } else {
+                let MailboxReplyV1::Stored(receipt) = written else {
+                    anyhow::bail!("committed Put lost")
+                };
+                receipt.verify(
+                    SigningKey::from_bytes(&[1; 32]).verifying_key().to_bytes(),
+                    grant.id,
+                    [3; 32],
+                    &[4; 8],
+                    expiry,
+                )?;
+                // Owner stop cannot invalidate a committed receipt, even if its
+                // first response was lost. The original commitment is replayed.
+                assert!(matches!(
+                    service.execute(put()).await?,
+                    MailboxReplyV1::Stored(_)
+                ));
+            }
+            let state = service.contribution_status().await?;
+            assert!(!state.enabled);
+            assert_eq!(state.retained_objects, u64::from(!stop_first));
+            assert_eq!(state.retained_bytes, if stop_first { 0 } else { 8 });
+            assert!(matches!(
+                service
+                    .execute(MailboxRequestV1::Put {
+                        mailbox: grant.id,
+                        write: *grant.write.as_bytes(),
+                        object: [5; 32],
+                        ciphertext: vec![6; 8],
+                        expires: expiry,
+                    })
+                    .await?,
+                MailboxReplyV1::Rejected(MailboxRejectionV1::Quota)
+            ));
+            assert_eq!(service.slots.available_permits(), 1);
+        }
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn maintenance_must_poll_queued_clients_while_waiting_for_store() -> Result<()> {
         // Deterministic reproduction of the old node loop's inline sweep await.

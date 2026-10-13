@@ -444,6 +444,178 @@ async fn authenticated_window_rejects_expiry_revocation_and_wrong_identity() -> 
 }
 
 #[tokio::test]
+async fn contributor_same_authenticated_protocol_retains_objects_across_opt_out_and_restart(
+) -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("contributor.db");
+    let open = || -> Result<Arc<MailboxServiceV1>> {
+        Ok(Arc::new(MailboxServiceV1::new(
+            MailboxStore::open_contributor(&path, Limits::default(), true)?,
+            key(1),
+        )))
+    };
+    let service = open()?;
+    let expiry = (novovm_network::product_rendezvous_daemon::now_ms()? / 1000) as i64 + 600;
+    let phone = MailboxGrant::generate()?;
+    let tablet = MailboxGrant::generate()?;
+    assert!(matches!(
+        rpc(service.clone(), 3, register(&phone, expiry)).await?,
+        MailboxReplyV1::Rejected(MailboxRejectionV1::Quota)
+    ));
+    service.set_resources_available(true).await?;
+    let data = vec![73; 64]; // Transport/storage fixture, not an E2EE claim.
+    let put = |grant: &MailboxGrant, object| MailboxRequestV1::Put {
+        mailbox: grant.id,
+        write: *grant.write.as_bytes(),
+        object,
+        ciphertext: data.clone(),
+        expires: expiry,
+    };
+    for grant in [&phone, &tablet] {
+        assert!(matches!(
+            rpc(service.clone(), 3, register(grant, expiry)).await?,
+            MailboxReplyV1::Registered
+        ));
+        let MailboxReplyV1::Stored(receipt) = rpc(service.clone(), 2, put(grant, [8; 32])).await?
+        else {
+            anyhow::bail!("contributor did not commit")
+        };
+        receipt.verify(
+            key(1).verifying_key().to_bytes(),
+            grant.id,
+            [8; 32],
+            &data,
+            expiry,
+        )?;
+    }
+    service.set_resources_available(false).await?;
+    assert!(matches!(
+        rpc(service.clone(), 2, put(&phone, [9; 32])).await?,
+        MailboxReplyV1::Rejected(MailboxRejectionV1::Quota)
+    ));
+    service.set_contribution_enabled(false).await?;
+    drop(service);
+    let service = open()?;
+    let state = service.contribution_status().await?;
+    assert!(!state.enabled && !state.resources_available);
+    assert_eq!(
+        (
+            state.retained_objects,
+            state.retained_bytes,
+            state.retain_until
+        ),
+        (2, 128, Some(expiry))
+    );
+    // Readiness does not silently override the user's persisted opt-out.
+    service.set_resources_available(true).await?;
+    assert!(matches!(
+        rpc(service.clone(), 2, put(&phone, [9; 32])).await?,
+        MailboxReplyV1::Rejected(MailboxRejectionV1::Quota)
+    ));
+    assert!(matches!(
+        rpc(service.clone(), 3, register(&phone, expiry)).await?,
+        MailboxReplyV1::Registered
+    ));
+    let MailboxReplyV1::Stored(receipt) = rpc(service.clone(), 2, put(&phone, [8; 32])).await?
+    else {
+        anyhow::bail!("lost ACK cannot be reconciled after opt-out")
+    };
+    receipt.verify(
+        key(1).verifying_key().to_bytes(),
+        phone.id,
+        [8; 32],
+        &data,
+        expiry,
+    )?;
+    assert!(matches!(
+        rpc(
+            service.clone(),
+            3,
+            MailboxRequestV1::Fetch {
+                mailbox: phone.id,
+                read: *phone.write.as_bytes(),
+            }
+        )
+        .await?,
+        MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+    ));
+    // Sender has left. Each recipient still fetches independently through the
+    // SAME authenticated service; acknowledging phone cannot consume tablet.
+    for grant in [&phone, &tablet] {
+        let MailboxReplyV1::Notice(notices) = rpc(
+            service.clone(),
+            3,
+            MailboxRequestV1::Watch {
+                boxes: vec![MailboxWatchV1 {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                    after: None,
+                }],
+                wait_ms: 0,
+            },
+        )
+        .await?
+        else {
+            anyhow::bail!("retained notification missing")
+        };
+        assert!(notices[0].pending);
+        let MailboxReplyV1::Object {
+            object,
+            ciphertext,
+            expires,
+            ..
+        } = rpc(
+            service.clone(),
+            3,
+            MailboxRequestV1::Fetch {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+            },
+        )
+        .await?
+        else {
+            anyhow::bail!("retained object missing")
+        };
+        assert_eq!(
+            (object, ciphertext, expires),
+            ([8; 32], data.clone(), expiry)
+        );
+        assert!(matches!(
+            rpc(
+                service.clone(),
+                3,
+                MailboxRequestV1::Consume {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                    object,
+                    digest: Sha256::digest(&data).into(),
+                }
+            )
+            .await?,
+            MailboxReplyV1::Consumed
+        ));
+    }
+    assert_eq!(service.contribution_status().await?.retained_objects, 0);
+    service.set_contribution_enabled(true).await?;
+    assert!(matches!(
+        rpc(service.clone(), 2, put(&phone, [8; 32])).await?,
+        MailboxReplyV1::Rejected(MailboxRejectionV1::Consumed)
+    ));
+    let MailboxReplyV1::Stored(receipt) = rpc(service.clone(), 2, put(&phone, [9; 32])).await?
+    else {
+        anyhow::bail!("explicit resume did not restore admission")
+    };
+    receipt.verify(
+        key(1).verifying_key().to_bytes(),
+        phone.id,
+        [9; 32],
+        &data,
+        expiry,
+    )?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("mailbox.db");
