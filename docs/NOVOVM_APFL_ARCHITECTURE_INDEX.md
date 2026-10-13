@@ -1,6 +1,25 @@
 # NOVOVM APFL Architecture Index
 
-## Current product wiring — 2026-10-04
+## Current product wiring — 2026-10-13
+
+The same original-node profile now has an **explicit**, optional
+`execution_backend: "aoem_integer_v7"`. Its resident compute owner submits the
+existing checked full-width Transfer asset through `novovm-exec/resident` ->
+`aoem_execute_ops_wire_v1` opcode 113 / AOIP v7. One persistent program/resource
+is reused; dependent transactions advance in ordered waves, while independent
+components share a wave. The original AOEM CPU callback still owns ordered fee
+settlement, pure-credit rebasing, bounded invalidated-row repair and state-tree
+construction. This is a mixed execution path, not an all-GPU business claim.
+
+The default remains `cpu_callbacks`. Missing v7 or native execution/readback
+failure fails closed, without silently selecting CPU. Both configurations use
+the SAME RPC, signed input, candidate, consensus journal and publication path.
+The resource ABI confirms `vulkan_spirv`, but does not return the physical
+device identity: the RPC therefore exposes integer completion counters and
+leaves physical GPU verification unclaimed. A Vulkan label alone is insufficient
+to exclude a software ICD. Batch capacity is explicitly limited to 4,096 rows;
+fixed-shape padding and dependent waves remain measured costs, not transactions.
+Synchronous v7 execution has no cancellation deadline contract.
 
 The original node's experimental `native-resident-v1` profile now uses
 `native_pipeline/ingress/apfl.rs`: `NVAPFLV3`, codec version 1, shared/dictionary/
@@ -13,8 +32,9 @@ All participating nodes need the new decoder; old tags remain readable.
 APFL views reach the resident AOEM authentication owner and the existing business
 compiler. Packet/proof compatibility still materializes canonical V3 at plan bind;
 RPC pending and gossip admission also retain original raw bytes. This is NOT
-zero-expansion execution, opcode-114 full-NOV acceptance, GPU execution or ZK
-completion. See the [current measured scope](NOVOVM_PRODUCTION_READINESS_TRACKER.md).
+zero-expansion execution or opcode-114 full-NOV acceptance. The optional integer
+path above does not imply full business ZK or proof finality. See the
+[current measured scope](NOVOVM_PRODUCTION_READINESS_TRACKER.md).
 
 The historical gate below is a reuse reference, not an interchangeable V3 codec:
 its old 32-byte fixture signature lane and `Execute treasury.deposit_reserve`

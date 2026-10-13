@@ -26,6 +26,7 @@ pub(super) fn config(database: PathBuf) -> PipelineConfig {
             packet_budget: PacketBudget::default(),
         },
         workers: 2,
+        execution_backend: Default::default(),
         max_batches: 1,
         max_retained_bytes: 128 * 1024 * 1024,
         authentication: AuthenticationBudget {
@@ -479,6 +480,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
             },
             library: cfg.store.library.clone(),
             workers: cfg.workers,
+            execution_backend: cfg.execution_backend,
             queue_capacity: cfg.max_batches,
             authentication: cfg.authentication,
             plan: cfg.plan,

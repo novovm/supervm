@@ -110,6 +110,10 @@ pub struct ControllerStats {
     /// Maximum observed simultaneous AOEM business callbacks in a batch. This
     /// is neither the configured worker count nor a unique-thread measurement.
     pub execution_peak_callbacks: usize,
+    /// Actual non-padding typed integer rows/waves in completed candidates,
+    /// including stale candidates. Not GPU finality, proof or unique TPS.
+    pub execution_gpu_rows_total: u64,
+    pub execution_gpu_waves_total: u64,
     /// Fixed-size scalar copy of the last successful execution observation;
     /// it can describe a stale candidate and confers no finality authority.
     pub last_execution_observation: Option<ExecutionObservation>,
@@ -155,6 +159,10 @@ impl ControllerStats {
         self.execution_peak_callbacks = self
             .execution_peak_callbacks
             .max(observation.peak_callbacks);
+        self.execution_observation_saturated |=
+            accumulate_observed(&mut self.execution_gpu_rows_total, observation.gpu_rows);
+        self.execution_observation_saturated |=
+            accumulate_observed(&mut self.execution_gpu_waves_total, observation.gpu_waves);
         self.last_execution_observation = Some(observation);
     }
 

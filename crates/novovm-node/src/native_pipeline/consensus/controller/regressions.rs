@@ -48,6 +48,8 @@ fn execution_observations_accumulate_scalars_and_maximum_without_claiming_worker
         recomputed_transactions: 3,
         apfl_view_transactions: 7,
         peak_callbacks: 4,
+        gpu_rows: 7,
+        gpu_waves: 2,
     };
     let last = ExecutionObservation {
         components: 3,
@@ -55,6 +57,8 @@ fn execution_observations_accumulate_scalars_and_maximum_without_claiming_worker
         recomputed_transactions: 2,
         apfl_view_transactions: 0,
         peak_callbacks: 1,
+        gpu_rows: 3,
+        gpu_waves: 1,
     };
     stats.observe_execution(first);
     stats.observe_execution(last);
@@ -63,6 +67,8 @@ fn execution_observations_accumulate_scalars_and_maximum_without_claiming_worker
     assert_eq!(stats.execution_recomputed_transactions_total, 5);
     assert_eq!(stats.apfl_view_transactions_total, 7);
     assert_eq!(stats.execution_peak_callbacks, 4);
+    assert_eq!(stats.execution_gpu_rows_total, 10);
+    assert_eq!(stats.execution_gpu_waves_total, 3);
     assert_eq!(stats.last_execution_observation, Some(last));
     assert!(!stats.execution_observation_saturated);
     assert_eq!(
@@ -82,6 +88,8 @@ fn execution_observation_overflow_is_explicit_and_does_not_wrap() {
         execution_credit_only_accounts_total: u64::MAX,
         execution_recomputed_transactions_total: u64::MAX - 2,
         apfl_view_transactions_total: u64::MAX - 1,
+        execution_gpu_rows_total: u64::MAX - 1,
+        execution_gpu_waves_total: u64::MAX - 1,
         ..ControllerStats::default()
     };
     let observation = ExecutionObservation {
@@ -90,12 +98,16 @@ fn execution_observation_overflow_is_explicit_and_does_not_wrap() {
         recomputed_transactions: 3,
         apfl_view_transactions: 2,
         peak_callbacks: 1,
+        gpu_rows: 3,
+        gpu_waves: 2,
     };
     stats.observe_execution(observation);
     assert_eq!(stats.execution_components_total, u64::MAX);
     assert_eq!(stats.execution_credit_only_accounts_total, u64::MAX);
     assert_eq!(stats.execution_recomputed_transactions_total, u64::MAX);
     assert_eq!(stats.apfl_view_transactions_total, u64::MAX);
+    assert_eq!(stats.execution_gpu_rows_total, u64::MAX);
+    assert_eq!(stats.execution_gpu_waves_total, u64::MAX);
     assert!(stats.execution_observation_saturated);
     assert_eq!(stats.last_execution_observation, Some(observation));
     stats.observe_execution(ExecutionObservation {
@@ -104,6 +116,8 @@ fn execution_observation_overflow_is_explicit_and_does_not_wrap() {
         recomputed_transactions: 0,
         apfl_view_transactions: 0,
         peak_callbacks: 0,
+        gpu_rows: 0,
+        gpu_waves: 0,
     });
     assert!(
         stats.execution_observation_saturated,

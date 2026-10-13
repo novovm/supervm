@@ -1227,6 +1227,7 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         let before = nodes.wait_ready(&[0, 1, 2, 3])?;
         // Preserve real counters even when the additional early-reuse gate fails.
         evidence["live_status"] = json!(before);
+        check_execution_backend(&before, TRANSACTIONS as u64)?;
         evidence["async_authentication"] = json!({
             "explicitly_required":require_async_auth,
             "per_node":before.iter().map(|status|status["rpc_authentication"].clone()).collect::<Vec<_>>(),
@@ -1325,6 +1326,7 @@ fn actual_product_rpc_65536_signed_transfers_finality_and_cold_economics() -> Re
         .filter(|o| o.first_submit_us.is_some())
         .count();
     let report = json!({"schema":"novovm/resident-product-rpc-load/v1","passed":result.is_ok(),
+        "execution_backend":test_execution_backend()?,
         "failure":result.as_ref().err().map(|e|format!("{e:#}")),"phase":phase,"evidence":evidence,
         "topology":"one host; four actual novovm-node processes and independent AOEM stores; WSS/E2E relay",
         "distribution":mode.description(),"submission_mode":mode.name(),"ingress_node":mode.entry(),

@@ -47,15 +47,28 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 /// Local operational bounds, not production protocol activation parameters.
+/// Backends must implement the same signed business relation. Selecting GPU is
+/// explicit and fails closed on missing resources; it never changes finality.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionBackend {
+    #[default]
+    CpuCallbacks,
+    AoemIntegerV7,
+}
+
 #[derive(Clone)]
 pub struct PipelineConfig {
     pub store: StoreConfig,
     pub workers: u32,
+    pub execution_backend: ExecutionBackend,
     pub max_batches: usize,
     pub max_retained_bytes: usize,
     pub authentication: AuthenticationBudget,
     pub plan: PlanBudget,
     pub capture: CaptureBudget,
+    /// AOEM CPU graph deadline. The v7 synchronous Vulkan ABI has no cancel
+    /// contract; this does not invent a GPU deadline or permit session restart.
     pub compute_timeout: Duration,
     /// Internal capture/write quota. Public queries use a separate quota of
     /// `requests` tickets and at most `requests * 545` logical bytes, sharing the
@@ -79,6 +92,11 @@ impl PipelineConfig {
         ensure!(
             self.workers > 0 && !self.compute_timeout.is_zero(),
             "invalid computation configuration"
+        );
+        ensure!(
+            self.execution_backend != ExecutionBackend::AoemIntegerV7
+                || self.plan.transactions <= 4096,
+            "GPU business batch exceeds the existing integer resource row bound"
         );
         ensure!(
             self.capture.keys > 0 && self.capture.nodes > 0 && self.capture.bytes > 0,
@@ -387,6 +405,10 @@ pub struct CandidatePipeline {
 }
 
 impl CandidatePipeline {
+    pub fn execution_backend(&self) -> ExecutionBackend {
+        self.config.execution_backend
+    }
+
     /// Blocking startup before network activation. Each native session is opened
     /// once inside its dedicated owner. No engine is initialized in try_submit.
     pub fn start(config: PipelineConfig, mode: OpenMode) -> Result<Self> {

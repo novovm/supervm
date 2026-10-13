@@ -34,6 +34,12 @@ pub struct ExecutionObservation {
     pub components: usize,
     pub credit_only_accounts: usize,
     pub recomputed_transactions: usize,
+    /// Business rows completed by the resident Vulkan integer asset; excludes
+    /// padding. This count is not physical GPU device attestation.
+    pub gpu_rows: usize,
+    /// Fixed-shape Vulkan integer dispatches, not physical GPU attestation,
+    /// callback counts or finalized transaction counts.
+    pub gpu_waves: usize,
     /// Natural overlap, not a benchmark or mainchain transaction throughput.
     pub peak_callbacks: usize,
 }
@@ -90,6 +96,60 @@ struct Completion {
 }
 
 impl NovTransferInput {
+    /// Mixed execution on the original compute owner: resident GPU business
+    /// predictions, then the unchanged AOEM callback's ordered fees and bounded
+    /// invalidated-row repair. Device/resource errors never invoke CPU fallback.
+    /// `timeout` bounds the final callback wait, not synchronous GPU cancellation.
+    pub(crate) fn execute_with_integer_resources(
+        self,
+        session: &mut ComputeSession,
+        resources: &mut ResidentTransferResources,
+        timeout: Duration,
+    ) -> Result<ExecutedNovBatch> {
+        let now = u128::from(self.input.plan().context().timestamp_unix_ms);
+        let commitment = self.input.plan().commitment();
+        let IntegerPredictions {
+            components: predictions,
+            rows: gpu_rows,
+            waves: gpu_waves,
+        } = speculate_integer(&self.prepared, resources, now)?;
+        let output: Arc<Mutex<Option<ExecutedNovBatch>>> = Arc::new(Mutex::new(None));
+        let completed = Arc::clone(&output);
+        let report = session.execute(
+            vec![Box::new(move || {
+                // The !Send resident resource stays on its owner. Only bounded,
+                // completed predictions cross into the existing AOEM CPU callback.
+                let mut result = finish(self.input, &self.prepared, predictions, now)?;
+                result.observation.gpu_rows = gpu_rows;
+                result.observation.gpu_waves = gpu_waves;
+                let digest = result.statement_commitment;
+                *completed
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("NOV output poisoned"))? = Some(result);
+                Ok(digest.to_vec())
+            })],
+            timeout,
+        )?;
+        let mut result = output
+            .lock()
+            .map_err(|_| anyhow::anyhow!("NOV output poisoned"))?
+            .take()
+            .context("missing NOV integer business output")?;
+        ensure!(
+            result.effects.plan_commitment() == commitment,
+            "NOV output bound to another plan"
+        );
+        ensure!(
+            report.processed == 1
+                && report.failed == 0
+                && report.outputs.len() == 1
+                && report.outputs[0].as_slice() == result.statement_commitment,
+            "NOV integer reduction result mismatch"
+        );
+        result.observation.peak_callbacks = report.peak_inflight;
+        Ok(result)
+    }
+
     /// Deterministic proof-side scheduling of the SAME component computation
     /// and ordered settlement used by native execution. No AOEM callback or
     /// publication authority is fabricated; this remains crate-internal.
@@ -259,6 +319,124 @@ fn speculate(prepared: &Prepared, component: usize, now: u128) -> Result<Vec<Pre
     Ok(predictions)
 }
 
+struct ComponentState {
+    balances: BTreeMap<Account, u128>,
+    nonces: BTreeMap<[u8; 32], u64>,
+}
+
+impl ComponentState {
+    fn new(prepared: &Prepared, component: usize) -> Self {
+        let mut state = Self {
+            balances: BTreeMap::new(),
+            nonces: BTreeMap::new(),
+        };
+        for &index in &prepared.components[component] {
+            let request = &prepared.requests[index];
+            for account in [&request.payer, &request.recipient] {
+                state
+                    .balances
+                    .insert(account.clone(), prepared.balances[account].unwrap_or(0));
+            }
+            state.nonces.insert(
+                prepared.identities[index],
+                prepared.nonces[&prepared.identities[index]],
+            );
+        }
+        state
+    }
+
+    fn snapshot(&self, prepared: &Prepared, index: usize) -> TransferSnapshot {
+        let request = &prepared.requests[index];
+        TransferSnapshot {
+            payer_balance: self.balances[&request.payer],
+            recipient_balance: self.balances[&request.recipient],
+            next_nonce: self.nonces[&prepared.identities[index]],
+        }
+    }
+
+    fn advance(&mut self, prepared: &Prepared, index: usize, outcome: &TransferOutcome) {
+        let request = &prepared.requests[index];
+        self.balances
+            .insert(request.payer.clone(), outcome.delta().payer.after);
+        self.balances
+            .insert(request.recipient.clone(), outcome.delta().recipient.after);
+        self.nonces
+            .insert(prepared.identities[index], outcome.delta().nonce_after);
+    }
+}
+
+struct IntegerPredictions {
+    components: Vec<Option<Vec<Prediction>>>,
+    rows: usize,
+    waves: usize,
+}
+
+fn speculate_integer(
+    prepared: &Prepared,
+    resources: &mut ResidentTransferResources,
+    now: u128,
+) -> Result<IntegerPredictions> {
+    ensure!(!prepared.components.is_empty(), "empty NOV component plan");
+    let mut states: Vec<_> = (0..prepared.components.len())
+        .map(|component| ComponentState::new(prepared, component))
+        .collect();
+    let mut predictions: Vec<Vec<Prediction>> = prepared
+        .components
+        .iter()
+        .map(|indices| Vec::with_capacity(indices.len()))
+        .collect();
+    // One row per independent component per wave. Re-enqueue only components
+    // with work left, avoiding O(component_count * longest_component) scans.
+    let mut active: Vec<usize> = (0..states.len()).collect();
+    let mut rows = 0;
+    let mut waves = 0;
+    while !active.is_empty() {
+        let mut next = Vec::with_capacity(active.len());
+        for chunk in active.chunks(resources.capacity()) {
+            let mut inputs = Vec::with_capacity(chunk.len());
+            for &component in chunk {
+                let index = prepared.components[component][predictions[component].len()];
+                let (intent, rejection) = intent(prepared, index, now)?;
+                inputs.push((
+                    intent,
+                    states[component].snapshot(prepared, index),
+                    rejection,
+                ));
+            }
+            let outcomes = resources.run(&inputs)?;
+            ensure!(
+                outcomes.len() == chunk.len(),
+                "NOV integer wave coverage mismatch"
+            );
+            rows += chunk.len();
+            waves += 1;
+            for ((&component, (_, snapshot, _)), outcome) in chunk.iter().zip(inputs).zip(outcomes)
+            {
+                let index = prepared.components[component][predictions[component].len()];
+                states[component].advance(prepared, index, &outcome);
+                predictions[component].push(Prediction {
+                    index,
+                    snapshot,
+                    outcome,
+                });
+                if predictions[component].len() < prepared.components[component].len() {
+                    next.push(component);
+                }
+            }
+        }
+        active = next;
+    }
+    ensure!(
+        rows == prepared.requests.len(),
+        "NOV integer prediction coverage mismatch"
+    );
+    Ok(IntegerPredictions {
+        components: predictions.into_iter().map(Some).collect(),
+        rows,
+        waves,
+    })
+}
+
 fn finish(
     input: SignatureCheckedInput,
     prepared: &Prepared,
@@ -415,6 +593,8 @@ fn finish(
             components: prepared.components.len(),
             credit_only_accounts: prepared.credit_only.len(),
             recomputed_transactions: recomputed,
+            gpu_rows: 0,
+            gpu_waves: 0,
             peak_callbacks: 0,
         },
     })

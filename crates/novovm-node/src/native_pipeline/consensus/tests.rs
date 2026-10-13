@@ -127,6 +127,7 @@ fn pipeline_config(directory: &Path) -> Result<PipelineConfig> {
     Ok(PipelineConfig {
         store: store_config(directory)?,
         workers: 4,
+        execution_backend: Default::default(),
         max_batches: 2,
         max_retained_bytes: 256 * 1024 * 1024,
         authentication: AuthenticationBudget {

@@ -71,6 +71,7 @@ fn config(size: usize) -> ResidentConfig {
         signing_key_file: "not-read-test-key".into(),
         rpc_addr: "127.0.0.1:0".parse().unwrap(),
         workers: 1,
+        execution_backend: Default::default(),
         batch_size: size,
         relay: ProductRelayClientConfigV1 {
             endpoint: "wss://127.0.0.1:9/not-opened".into(),
@@ -90,6 +91,27 @@ fn config(size: usize) -> ResidentConfig {
             policy,
         },
     }
+}
+
+#[test]
+fn gpu_deployment_selection_reaches_the_same_original_pipeline_without_protocol_change() {
+    let cpu = config(1024);
+    let mut gpu = cpu.clone();
+    gpu.execution_backend = crate::native_pipeline::pipeline::ExecutionBackend::AoemIntegerV7;
+    let cpu_pipeline = pipeline_config(&cpu);
+    let gpu_pipeline = pipeline_config(&gpu);
+    assert_eq!(gpu_pipeline.execution_backend, gpu.execution_backend);
+    assert_eq!(cpu_pipeline.store.domain, gpu_pipeline.store.domain);
+    assert_eq!(
+        cpu_pipeline.plan.transactions,
+        gpu_pipeline.plan.transactions
+    );
+    assert_eq!(cpu_pipeline.workers, gpu_pipeline.workers);
+    assert_eq!(cpu_pipeline.store.library, gpu_pipeline.store.library);
+    assert_eq!(
+        serde_json::to_value(cpu.genesis).unwrap(),
+        serde_json::to_value(gpu.genesis).unwrap()
+    );
 }
 
 #[test]

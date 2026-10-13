@@ -551,6 +551,14 @@ impl RpcLifecycle {
     pub fn status(&self) -> Value {
         let controller = &self.node.controller;
         let stats = controller.stats();
+        let backend = match self.node.pipeline.execution_backend() {
+            crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks => {
+                "aoem_semantic_v2_cpu_callbacks"
+            }
+            crate::native_pipeline::pipeline::ExecutionBackend::AoemIntegerV7 => {
+                "aoem_integer_v7_vulkan_prediction_cpu_settlement"
+            }
+        };
         let leader = self
             .node
             .validators
@@ -575,6 +583,8 @@ impl RpcLifecycle {
             "execution_components_total":stats.execution_components_total,
             "execution_credit_only_accounts_total":stats.execution_credit_only_accounts_total,
             "execution_peak_callbacks":stats.execution_peak_callbacks,
+            "execution_integer_rows_total":stats.execution_gpu_rows_total,
+            "execution_integer_waves_total":stats.execution_gpu_waves_total,
             "execution_recomputed_transactions_total":stats.execution_recomputed_transactions_total,
             "apfl_view_transactions_total":stats.apfl_view_transactions_total,
             "apfl_transport":apfl_transport,
@@ -584,8 +594,12 @@ impl RpcLifecycle {
             "early_authentication_completed_before_parent":stats.early_authentication_completed_before_parent,
             "early_bind_reused":stats.early_bind_reused,"early_discarded":stats.early_discarded,
             "execution_failures":stats.execution_failures,"last_error":stats.last_error,
-            "execution_backend":"aoem_semantic_v2_cpu_callbacks",
-            "business_gpu_active":false,"business_proof_required":false,"business_proof_verified":false,
+            "execution_backend":backend,
+            "business_vulkan_integer_active":stats.execution_gpu_rows_total > 0,
+            "business_gpu_active":if matches!(self.node.pipeline.execution_backend(), crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks) { Some(false) } else { None },
+            "physical_gpu_verified":false,
+            "integer_observation_scope":"AOEM Vulkan non-padding predictions in completed candidates, including stale; fees/ordered repairs remain AOEM CPU; resource ABI does not attest physical device identity",
+            "business_proof_required":false,"business_proof_verified":false,
             "mempool_gossip":true,"gossip_delivery":"best_effort_not_durable",
             "transaction_gossip":self.node.controller.transactions_stats(),
             "input_availability":controller.input_availability(),
