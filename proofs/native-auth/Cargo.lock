@@ -537,9 +537,11 @@ name = "novovm-adapter-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ed25519-dalek",
  "postcard",
  "serde",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
