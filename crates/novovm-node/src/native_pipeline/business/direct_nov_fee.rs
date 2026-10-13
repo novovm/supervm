@@ -17,12 +17,20 @@ use super::quoted_transfer::Account;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
+mod prepared;
+pub(super) use prepared::{FeeQuotationContext, PreparedTransferFee};
+
 pub const JOURNAL_RETAIN_LAST: usize = 512;
 const BPS: u128 = 10_000;
 const RATE_PPM: u128 = 1_000_000;
 const DAY_MS: u128 = 86_400_000;
 const MAX_POLICY_TEXT: usize = 128;
 const MAX_REASON_TEXT: usize = 512;
+
+#[cfg(test)]
+std::thread_local! {
+    static QUOTE_EVALUATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Complete resolved inputs to NOV settlement and its policy attribution. No
 /// defaults or environment fallback occur here. `resolution_source` preserves
@@ -445,6 +453,16 @@ pub fn quote_transfer(
     now: u128,
 ) -> Result<std::result::Result<FeeQuote, FeeFailure>> {
     policy.validate()?;
+    quote_transfer_validated(request, policy, now)
+}
+
+fn quote_transfer_validated(
+    request: &TransferFeeRequest,
+    policy: &DirectNovFeePolicy,
+    now: u128,
+) -> Result<std::result::Result<FeeQuote, FeeFailure>> {
+    #[cfg(test)]
+    QUOTE_EVALUATIONS.with(|count| count.set(count.get() + 1));
     validate_request(request)?;
     // Every interpolated value is fixed NOV, canonical hexadecimal, or decimal
     // digits, so this is byte-identical to the old ordered serde JSON struct.
@@ -601,6 +619,21 @@ pub fn plan_settlement(
         expected.as_ref().ok() == Some(quote),
         "prepared fee quote/request/policy mismatch"
     );
+    settle_verified_quote(request, quote, policy, before, payer_before, now, None)
+}
+
+// Only canonical public quotation validation or the private, bound quotation
+// token can enter here. Monetary preflight and prefix-dependent diagnostics
+// remain per transaction; no batch-total rounding replaces these rules.
+fn settle_verified_quote(
+    request: &TransferFeeRequest,
+    quote: &FeeQuote,
+    policy: &DirectNovFeePolicy,
+    before: &FeeState,
+    payer_before: u128,
+    now: u128,
+    attribution: Option<(&str, &str)>,
+) -> Result<FeeEffects> {
     let mut effects = FeeEffects {
         after_fee_state: before.clone(),
         payer_after: payer_before,
@@ -681,8 +714,12 @@ pub fn plan_settlement(
         fee_bucket_delta_nov: fee,
         risk_buffer_delta_nov: risk,
         policy_version: policy.policy_version,
-        policy_source: policy.normalized_source(),
-        policy_contract_id: policy.contract_id(),
+        policy_source: attribution.map_or_else(
+            || policy.normalized_source(),
+            |(source, _)| source.to_owned(),
+        ),
+        policy_contract_id: attribution
+            .map_or_else(|| policy.contract_id(), |(_, contract)| contract.to_owned()),
         policy_threshold_state: threshold_state,
         policy_constrained_strategy: policy.clearing_constrained_strategy.clone(),
     });

@@ -46,6 +46,120 @@ fn quote(request: &TransferFeeRequest, policy: &DirectNovFeePolicy, now: u128) -
 }
 
 #[test]
+fn prepared_quotation_removes_requoting_not_prefix_capacity_checks() {
+    let p = policy();
+    let r = request();
+    let state = FeeState::default();
+    QUOTE_EVALUATIONS.with(|count| count.set(0));
+    quote_transfer(&r, &p, 1).unwrap().unwrap(); // former prediction
+    let expected = quote_and_settle(&r, &p, &state, 1000, 1).unwrap();
+    assert_eq!(QUOTE_EVALUATIONS.with(|count| count.get()), 3);
+
+    QUOTE_EVALUATIONS.with(|count| count.set(0));
+    let context = FeeQuotationContext::new(&p, 1).unwrap();
+    let token = context.prepare(&r).unwrap();
+    assert_eq!(token.intent_terms(), (45, 45, None));
+    assert_eq!(token.settle(&r, &p, &state, 1000, 1).unwrap(), expected);
+    let mut overflow = state;
+    overflow.accounting.treasury_reserve_nov = Some(u128::MAX);
+    assert_eq!(
+        token
+            .settle(&r, &p, &overflow, 1000, 1)
+            .unwrap()
+            .failure
+            .unwrap()
+            .code,
+        FeeFailureCode::AmountOverflow
+    );
+    assert_eq!(QUOTE_EVALUATIONS.with(|count| count.get()), 1);
+}
+
+#[test]
+fn prepared_quotation_reuses_only_invariants_and_matches_ordered_fee_effects() {
+    for paused in [false, true] {
+        for fallback in [false, true] {
+            let mut p = policy();
+            p.settlement_paused = paused;
+            if fallback {
+                p.resolution_source = "default_fallback_partial_env".into();
+                p.policy_source = " DEFAULT ".into();
+            }
+            for now in [0, DAY_MS, u128::MAX] {
+                let context = FeeQuotationContext::new(&p, now).unwrap();
+                for seed in 0..8 {
+                    let mut state = FeeState::default();
+                    match seed {
+                        1 => state.accounting.treasury_reserve_nov = Some(u128::MAX - 45),
+                        2 => state.accounting.settlements = u64::MAX - 1,
+                        3 => state.accounting.journal_next_seq = u64::MAX,
+                        4 => state.accounting.fee_bucket_nov = u128::MAX,
+                        5 => state.accounting.settled_nov_total = u128::MAX,
+                        6 => state.accounting.daily_nov_used = u128::MAX,
+                        7 => state.diagnostics.quote_max_pay_exceeded = u64::MAX,
+                        _ => {}
+                    }
+                    for index in 0..24 {
+                        let mut r = request();
+                        r.tx_hash = [index; 32];
+                        r.amount = if index % 2 == 0 { 1 } else { u128::MAX };
+                        r.max_pay_amount = if index % 3 == 0 { 1 } else { 0 };
+                        r.slippage_bps = if index % 5 == 0 { u32::MAX } else { 1 };
+                        if index % 2 == 1 {
+                            r.recipient = [2; 32].into();
+                        }
+                        let token = context.prepare(&r).unwrap();
+                        let payer = if index % 4 == 0 { 0 } else { u128::MAX };
+                        let expected = quote_and_settle(&r, &p, &state, payer, now).unwrap();
+                        let actual = token.settle(&r, &p, &state, payer, now).unwrap();
+                        assert_eq!(actual, expected);
+                        // The same quotation must still re-evaluate a changed
+                        // balance/treasury prefix; it is not settlement approval.
+                        assert_eq!(
+                            token.settle(&r, &p, &state, 0, now).unwrap(),
+                            quote_and_settle(&r, &p, &state, 0, now).unwrap()
+                        );
+                        state = actual.after_fee_state;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn prepared_quotation_rejects_rebinding_and_invalid_inputs() {
+    let p = policy();
+    let r = request();
+    let state = FeeState::default();
+    let context = FeeQuotationContext::new(&p, 1).unwrap();
+    let token = context.prepare(&r).unwrap();
+    for field in 0..9 {
+        let mut other = r.clone();
+        match field {
+            0 => other.tx_hash[31] ^= 1, // quote's short hash prefix is unchanged
+            1 => other.payer = [3; 20].into(),
+            2 => other.recipient = [4; 20].into(),
+            3 => other.amount += 1, // same JSON length and quoted fee
+            4 => other.max_pay_amount = 1000,
+            5 => other.slippage_bps += 1,
+            6 => other.asset = "nov".into(),
+            7 => other.pay_asset = "NOV ".into(),
+            _ => other.recipient = [4; 32].into(),
+        }
+        assert!(token.settle(&other, &p, &state, 1000, 1).is_err());
+    }
+    let mut other_policy = p.clone();
+    other_policy.quote_ttl_ms += 1; // excluded from legacy human contract id
+    assert!(token.settle(&r, &other_policy, &state, 1000, 1).is_err());
+    assert!(token.settle(&r, &p, &state, 1000, 2).is_err());
+    other_policy.reserve_share_bps = 0;
+    assert!(FeeQuotationContext::new(&other_policy, 1).is_err());
+    let mut invalid = r;
+    invalid.asset = "USDT".into();
+    assert!(context.prepare(&invalid).is_err());
+}
+
+#[test]
 fn quote_preserves_frozen_transfer_projection_cost_and_unsigned_cap_sentinel() {
     let p = policy();
     let mut r = request();

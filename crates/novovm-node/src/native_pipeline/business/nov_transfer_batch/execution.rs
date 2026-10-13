@@ -1,6 +1,6 @@
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::{
-    quote_and_settle, quote_transfer, FeeFailure, FeeJournalEntry, FeeQuote,
+    FeeFailure, FeeJournalEntry, FeeQuotationContext, FeeQuote, PreparedTransferFee,
 };
 use crate::native_pipeline::business::quoted_transfer::{
     compute_outcome, TransferDelta, TransferFailure, TransferIntent, TransferOutcome,
@@ -87,6 +87,7 @@ struct Prediction {
     index: usize,
     snapshot: TransferSnapshot,
     outcome: TransferOutcome,
+    fee: PreparedTransferFee,
 }
 
 struct Completion {
@@ -160,8 +161,9 @@ impl NovTransferInput {
         let now = u128::from(self.input.plan().context().timestamp_unix_ms);
         let count = self.prepared.components.len();
         ensure!(count > 0, "empty NOV component plan");
+        let quotation = FeeQuotationContext::new(&self.prepared.policy, now)?;
         let predictions = (0..count)
-            .map(|component| speculate(&self.prepared, component, now).map(Some))
+            .map(|component| speculate(&self.prepared, component, &quotation).map(Some))
             .collect::<Result<Vec<_>>>()?;
         finish(self.input, &self.prepared, predictions, now)
     }
@@ -180,6 +182,7 @@ impl NovTransferInput {
         let now = u128::from(self.input.plan().context().timestamp_unix_ms);
         let commitment = self.input.plan().commitment();
         let prepared = Arc::new(self.prepared);
+        let quotation = FeeQuotationContext::new(&prepared.policy, now)?;
         let count = prepared.components.len();
         ensure!(count > 0, "empty NOV component plan");
         let completion = Arc::new(Mutex::new(Completion {
@@ -193,8 +196,9 @@ impl NovTransferInput {
                 let prepared = Arc::clone(&prepared);
                 let completion = Arc::clone(&completion);
                 let output = Arc::clone(&output);
+                let quotation = Arc::clone(&quotation);
                 Box::new(move || {
-                    let predictions = speculate(&prepared, component_index, now)?;
+                    let predictions = speculate(&prepared, component_index, &quotation)?;
                     let reduce = {
                         let mut state = completion
                             .lock()
@@ -262,13 +266,10 @@ impl NovTransferInput {
 fn intent(
     prepared: &Prepared,
     index: usize,
-    now: u128,
+    fee: &PreparedTransferFee,
 ) -> Result<(TransferIntent, Option<String>)> {
     let request = &prepared.requests[index];
-    let (approved_fee, fee_cap, rejection) = match quote_transfer(request, &prepared.policy, now)? {
-        Ok(quote) => (quote.nov_amount, quote.max_pay_amount, None),
-        Err(error) => (0, 0, Some(error.to_string())),
-    };
+    let (approved_fee, fee_cap, rejection) = fee.intent_terms();
     use std::fmt::Write;
     let mut identity = String::with_capacity(64);
     for byte in &prepared.identities[index] {
@@ -289,7 +290,11 @@ fn intent(
     ))
 }
 
-fn speculate(prepared: &Prepared, component: usize, now: u128) -> Result<Vec<Prediction>> {
+fn speculate(
+    prepared: &Prepared,
+    component: usize,
+    quotation: &Arc<FeeQuotationContext>,
+) -> Result<Vec<Prediction>> {
     // Only this component's accounts are copied, never the whole batch N times.
     let mut balances = BTreeMap::new();
     let mut nonces = BTreeMap::new();
@@ -306,7 +311,8 @@ fn speculate(prepared: &Prepared, component: usize, now: u128) -> Result<Vec<Pre
     let mut predictions = Vec::with_capacity(prepared.components[component].len());
     for &index in &prepared.components[component] {
         let request = &prepared.requests[index];
-        let (intent, rejection) = intent(prepared, index, now)?;
+        let fee = quotation.prepare(request)?;
+        let (intent, rejection) = intent(prepared, index, &fee)?;
         let snapshot = TransferSnapshot {
             payer_balance: balances[&request.payer],
             recipient_balance: balances[&request.recipient],
@@ -320,6 +326,7 @@ fn speculate(prepared: &Prepared, component: usize, now: u128) -> Result<Vec<Pre
             index,
             snapshot,
             outcome,
+            fee,
         });
     }
     Ok(predictions)
@@ -383,6 +390,7 @@ fn speculate_integer(
     now: u128,
 ) -> Result<IntegerPredictions> {
     ensure!(!prepared.components.is_empty(), "empty NOV component plan");
+    let quotation = FeeQuotationContext::new(&prepared.policy, now)?;
     let mut states: Vec<_> = (0..prepared.components.len())
         .map(|component| ComponentState::new(prepared, component))
         .collect();
@@ -400,9 +408,12 @@ fn speculate_integer(
         let mut next = Vec::with_capacity(active.len());
         for chunk in active.chunks(resources.capacity()) {
             let mut inputs = Vec::with_capacity(chunk.len());
+            let mut fees = Vec::with_capacity(chunk.len());
             for &component in chunk {
                 let index = prepared.components[component][predictions[component].len()];
-                let (intent, rejection) = intent(prepared, index, now)?;
+                let fee = quotation.prepare(&prepared.requests[index])?;
+                let (intent, rejection) = intent(prepared, index, &fee)?;
+                fees.push(fee);
                 inputs.push((
                     intent,
                     states[component].snapshot(prepared, index),
@@ -416,7 +427,8 @@ fn speculate_integer(
             );
             rows += chunk.len();
             waves += 1;
-            for ((&component, (_, snapshot, _)), outcome) in chunk.iter().zip(inputs).zip(outcomes)
+            for (((&component, (_, snapshot, _)), outcome), fee) in
+                chunk.iter().zip(inputs).zip(outcomes).zip(fees)
             {
                 let index = prepared.components[component][predictions[component].len()];
                 states[component].advance(prepared, index, &outcome);
@@ -424,6 +436,7 @@ fn speculate_integer(
                     index,
                     snapshot,
                     outcome,
+                    fee,
                 });
                 if predictions[component].len() < prepared.components[component].len() {
                     next.push(component);
@@ -486,10 +499,13 @@ fn finish(
             // One bounded repair per transaction, never replay whole suffixes.
             // This covers earlier global fee rejection erasing predicted money.
             recomputed += 1;
-            let (intent, rejection) = intent(prepared, index, now)?;
+            let (intent, rejection) = intent(prepared, index, &prediction.fee)?;
             compute_outcome(&intent, &actual, rejection.as_deref())?
         };
-        let fee = quote_and_settle(request, &prepared.policy, &fees, actual.payer_balance, now)?;
+        let fee =
+            prediction
+                .fee
+                .settle(request, &prepared.policy, &fees, actual.payer_balance, now)?;
         if let Some(failure) = &fee.failure {
             ensure!(
                 fee.payer_after == actual.payer_balance && fee.charged_fee() == 0,
