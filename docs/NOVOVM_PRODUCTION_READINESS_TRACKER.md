@@ -10,6 +10,12 @@
 
 ## 2026-10-13 移动端长期 Iroh Endpoint：通用载体节点
 
+补充 Android 网络变化接口：`IrohEndpointOwnerV1::network_change(control)`
+保留端点，由原短操作授权提交接口重查请求。两项新增及扩展的跨 runtime
+测试通过；本地真实 QUIC 在通知前后继续传帧，端口、身份与绑定计数不变，
+关闭后端口可重新绑定。check、严格 Clippy、fmt 通过。通知成功不等于网络
+在线，也不会保证立即打断既有 Relay 退避；手机对照性能另行验收。
+
 输入 `main@95e33995`（含其他机器的主链回执更新 `191f5f89`），仅修改
 `crates/novovm-network/src/iroh_transport.rs` 及本轮网络文档。没有修改 AOEM、
 账本、共识、UCA 或交易执行。产品边界见

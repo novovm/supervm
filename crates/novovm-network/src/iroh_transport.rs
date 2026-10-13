@@ -569,6 +569,23 @@ impl IrohEndpointOwnerV1 {
         scope.control.check().and(result)
     }
 
+    /// Forward a platform-observed network change on this owner's runtime.
+    /// This is a finite, independently authorized maintenance operation: it
+    /// neither extends an old scope nor establishes peer/application trust.
+    /// Success means Iroh accepted a request to inspect the current interfaces,
+    /// not that a relay is online or that the asynchronous inspection finished.
+    /// The endpoint identity and owner stay intact; Iroh may update its existing
+    /// transports after discovering an actual interface/route change.
+    pub async fn network_change(&self, control: IrohControlV1) -> Result<()> {
+        self.with_operation(control, |scope| {
+            Box::pin(async move {
+                scope.endpoint.network_change().await;
+                scope.control.check()
+            })
+        })
+        .await
+    }
+
     /// Stop admission, await all borrowed operations, then join QUIC/actor and
     /// OS socket closure on the owning runtime. Cleanup has its own bounded
     /// budget and grants no message or authorization success. A cancelled or
@@ -1441,6 +1458,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persistent_network_change_preserves_socket_and_active_stream() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let server = Arc::new(
+            IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+                .await
+                .unwrap(),
+        );
+        let client = Arc::new(
+            IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+                .await
+                .unwrap(),
+        );
+        let before = [server.snapshot(), client.snapshot()];
+        let ports = [
+            server.endpoint.bound_sockets()[0],
+            client.endpoint.bound_sockets()[0],
+        ];
+        let (server_tx, server_rx) = oneshot::channel();
+        let (client_tx, client_rx) = oneshot::channel();
+        let listener = server.with_operation(control(), |scope| {
+            Box::pin(async move {
+                server_tx.send(scope.address()?).unwrap();
+                let peer: IrohAddressV1 = client_rx.await?;
+                let mut stream = scope.accept(peer.endpoint_key).await?;
+                ensure!(stream.read_frame().await? == b"before", "before fixture");
+                stream.write_frame(b"ready").await?;
+                ensure!(stream.read_frame().await? == b"after", "after fixture");
+                stream.write_frame(b"still open").await?;
+                stream.finish().await
+            })
+        });
+        let changed = client.clone();
+        let connector = client.with_operation(control(), |scope| {
+            Box::pin(async move {
+                client_tx.send(scope.address()?).unwrap();
+                let peer = server_rx.await?;
+                let mut stream = scope.connect(&peer).await?;
+                let binding = stream.binding_material()?;
+                stream.write_frame(b"before").await?;
+                ensure!(stream.read_frame().await? == b"ready", "ready fixture");
+                changed.network_change(control()).await?;
+                // Real local QUIC traffic after the notification. This does not
+                // simulate an OS interface change or prove mobile relay recovery.
+                stream.write_frame(b"after").await?;
+                ensure!(
+                    stream.read_frame().await? == b"still open",
+                    "notification closed stream"
+                );
+                assert_eq!(stream.binding_material()?, binding);
+                stream.finish().await
+            })
+        });
+        let (a, b) = tokio::join!(listener, connector);
+        a.unwrap();
+        b.unwrap();
+        for (index, owner) in [&server, &client].into_iter().enumerate() {
+            assert_eq!(owner.snapshot().instance, before[index].instance);
+            assert_eq!(
+                owner.snapshot().binds_completed,
+                before[index].binds_completed
+            );
+            assert_eq!(owner.endpoint.bound_sockets()[0], ports[index]);
+            assert_eq!(owner.snapshot().active_operations, 0);
+            assert!(!owner.snapshot().closing);
+        }
+        assert_eq!(server.snapshot().operations_started, 1);
+        assert_eq!(client.snapshot().operations_started, 2);
+        let (a, b) = tokio::join!(server.close(), client.close());
+        a.unwrap();
+        b.unwrap();
+        for port in ports {
+            assert!(std::net::UdpSocket::bind(port).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn persistent_network_change_rejects_expired_operation_and_revoked_owner() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let revoked = Arc::new(AtomicBool::new(false));
+        let check = revoked.clone();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), move || {
+            ensure!(!check.load(Ordering::Acquire), "revoked fixture owner");
+            Ok(())
+        })
+        .await
+        .unwrap();
+        let until = Instant::now() + Duration::from_millis(5);
+        let expired = IrohControlV1::new(until, || Ok(())).unwrap();
+        tokio::time::sleep_until(until.into()).await;
+        assert!(owner
+            .network_change(expired)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("scope expired"));
+        let denied = IrohControlV1::new(Instant::now() + Duration::from_secs(1), || {
+            bail!("revoked fixture operation")
+        })
+        .unwrap();
+        assert!(owner.network_change(denied).await.is_err());
+        assert_eq!(owner.snapshot().operations_started, 0);
+        assert!(!owner.snapshot().closing);
+        owner.network_change(control()).await.unwrap();
+        revoked.store(true, Ordering::Release);
+        assert!(owner.network_change(control()).await.is_err());
+        revoked.store(false, Ordering::Release);
+        assert!(owner.network_change(control()).await.is_err());
+        assert_eq!(owner.snapshot().operations_started, 1);
+        assert_eq!(owner.snapshot().active_operations, 0);
+        assert!(owner.snapshot().closing);
+        owner.close().await.unwrap();
+        assert!(owner.network_change(control()).await.is_err());
+    }
+
+    #[tokio::test]
     async fn persistent_endpoint_nested_connections_keep_control_alive_and_bind_independently() {
         let _permit = SERIAL.acquire().await.unwrap();
         let server = Arc::new(
@@ -1828,6 +1960,11 @@ mod tests {
             }))
             .unwrap_err();
         assert!(error.to_string().contains("runtime changed"));
+        assert!(second
+            .block_on(owner.network_change(control()))
+            .unwrap_err()
+            .to_string()
+            .contains("runtime changed"));
         assert!(second
             .block_on(owner.close())
             .unwrap_err()
