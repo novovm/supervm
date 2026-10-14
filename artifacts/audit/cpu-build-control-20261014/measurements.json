@@ -1,0 +1,1270 @@
+{
+  "schema": "cpu-build-negative-control/v1",
+  "binaries": [
+    {
+      "path": "aoem/windows/core/bin/aoem_ffi.dll",
+      "sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+      "bytes": 44705792,
+      "sections": [
+        {
+          "name": ".text",
+          "rva": 4096,
+          "offset": 1024,
+          "size": 22239232,
+          "sha256": "a18c11e3ceaf76550c7e66c1ab463f946a73413318809e5566b63372eea61063"
+        },
+        {
+          "name": ".rdata",
+          "rva": 22245376,
+          "offset": 22240256,
+          "size": 21074944,
+          "sha256": "eba2a339e15e35494a8ed1c5402dd234c7fb703d67e1de81107503275202210e"
+        },
+        {
+          "name": ".data",
+          "rva": 43323392,
+          "offset": 43315200,
+          "size": 297984,
+          "sha256": "36ac392dcac8587363590c0f43e5ced313ac05b936d3ffdb3a561f33f2c5544c"
+        },
+        {
+          "name": ".pdata",
+          "rva": 43651072,
+          "offset": 43613184,
+          "size": 1020928,
+          "sha256": "aa6a0bb026c56253a09f4093b39de0768d3030ceccadd55adf59ef6f43a1cb76"
+        },
+        {
+          "name": ".eh_fram",
+          "rva": 44675072,
+          "offset": 44634112,
+          "size": 1024,
+          "sha256": "584357508140d242c1e4e45006793bd0b70a4e9dd4bd09819ea7817caea56756"
+        },
+        {
+          "name": ".reloc",
+          "rva": 44679168,
+          "offset": 44635136,
+          "size": 70656,
+          "sha256": "33b8194a0f0994344a469c417cc083ac63da4eef17263c6d400fd81029c4f819"
+        }
+      ],
+      "ignored_metadata": [
+        {
+          "offset": 288,
+          "bytes": 4,
+          "kind": "COFF timestamp"
+        },
+        {
+          "offset": 39414644,
+          "bytes": 4,
+          "kind": "debug timestamp"
+        },
+        {
+          "offset": 39534296,
+          "bytes": 16,
+          "kind": "CodeView PDB GUID"
+        },
+        {
+          "offset": 39414672,
+          "bytes": 4,
+          "kind": "debug timestamp"
+        },
+        {
+          "offset": 39414700,
+          "bytes": 4,
+          "kind": "debug timestamp"
+        }
+      ],
+      "normalized_sha256": "0ccdc466fbf4b12d94ef2b2e20428c90705db1d3cf6f731a143da8682e33b8ff"
+    },
+    {
+      "path": "target/validation/cpu-build-control-20261014/rebuilt.dll",
+      "sha256": "9d0294f12c39664dae729499ec08c8a6a417ba0a10d70cfc7f1af32b06b65559",
+      "bytes": 44705792,
+      "sections": [
+        {
+          "name": ".text",
+          "rva": 4096,
+          "offset": 1024,
+          "size": 22239232,
+          "sha256": "a18c11e3ceaf76550c7e66c1ab463f946a73413318809e5566b63372eea61063"
+        },
+        {
+          "name": ".rdata",
+          "rva": 22245376,
+          "offset": 22240256,
+          "size": 21074944,
+          "sha256": "0d023b79b1ce98fea595ef974befa8182c443027e36513503b60ec87b646b1fa"
+        },
+        {
+          "name": ".data",
+          "rva": 43323392,
+          "offset": 43315200,
+          "size": 297984,
+          "sha256": "36ac392dcac8587363590c0f43e5ced313ac05b936d3ffdb3a561f33f2c5544c"
+        },
+        {
+          "name": ".pdata",
+          "rva": 43651072,
+          "offset": 43613184,
+          "size": 1020928,
+          "sha256": "aa6a0bb026c56253a09f4093b39de0768d3030ceccadd55adf59ef6f43a1cb76"
+        },
+        {
+          "name": ".eh_fram",
+          "rva": 44675072,
+          "offset": 44634112,
+          "size": 1024,
+          "sha256": "584357508140d242c1e4e45006793bd0b70a4e9dd4bd09819ea7817caea56756"
+        },
+        {
+          "name": ".reloc",
+          "rva": 44679168,
+          "offset": 44635136,
+          "size": 70656,
+          "sha256": "33b8194a0f0994344a469c417cc083ac63da4eef17263c6d400fd81029c4f819"
+        }
+      ],
+      "ignored_metadata": [
+        {
+          "offset": 288,
+          "bytes": 4,
+          "kind": "COFF timestamp"
+        },
+        {
+          "offset": 39414644,
+          "bytes": 4,
+          "kind": "debug timestamp"
+        },
+        {
+          "offset": 39534296,
+          "bytes": 16,
+          "kind": "CodeView PDB GUID"
+        },
+        {
+          "offset": 39414672,
+          "bytes": 4,
+          "kind": "debug timestamp"
+        },
+        {
+          "offset": 39414700,
+          "bytes": 4,
+          "kind": "debug timestamp"
+        }
+      ],
+      "normalized_sha256": "0ccdc466fbf4b12d94ef2b2e20428c90705db1d3cf6f731a143da8682e33b8ff"
+    }
+  ],
+  "samples": [
+    {
+      "name": "old-1",
+      "diagnostic": false,
+      "seconds": 7.608302,
+      "tps": 8613.748507879945,
+      "latency_us": {
+        "p95": 1270550,
+        "p99": 1424111,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 919552,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 234,
+        "deadline_expirations": 0
+      },
+      "phases": null
+    },
+    {
+      "name": "rebuilt-1",
+      "diagnostic": false,
+      "seconds": 6.874622,
+      "tps": 9533.033234409108,
+      "latency_us": {
+        "p95": 1024355,
+        "p99": 1137666,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 775168,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 193,
+        "deadline_expirations": 0
+      },
+      "phases": null
+    },
+    {
+      "name": "rebuilt-2",
+      "diagnostic": false,
+      "seconds": 6.785118,
+      "tps": 9658.785595180512,
+      "latency_us": {
+        "p95": 1060278,
+        "p99": 1139010,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 716800,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 180,
+        "deadline_expirations": 0
+      },
+      "phases": null
+    },
+    {
+      "name": "old-2",
+      "diagnostic": false,
+      "seconds": 7.407315,
+      "tps": 8847.470372192893,
+      "latency_us": {
+        "p95": 1277606,
+        "p99": 1450068,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 859136,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 220,
+        "deadline_expirations": 0
+      },
+      "phases": null
+    },
+    {
+      "name": "old-diagnostic",
+      "diagnostic": true,
+      "seconds": 7.197668,
+      "tps": 9105.171286033199,
+      "latency_us": {
+        "p95": 1141960,
+        "p99": 1176090,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 793600,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 200,
+        "deadline_expirations": 0
+      },
+      "phases": [
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 220.8328,
+            "lifetime_max_ms": 4.9198
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 285.9887,
+            "lifetime_max_ms": 8.2002
+          },
+          "bind": {
+            "calls": 22,
+            "wall_ms": 19.2641,
+            "lifetime_max_ms": 1.0812
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 728.4409,
+            "lifetime_max_ms": 5.2583
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 280.941,
+            "lifetime_max_ms": 5.2512
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 708.8985,
+            "lifetime_max_ms": 14.6914
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 609.5323,
+            "lifetime_max_ms": 13.0062
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 417.3572,
+            "lifetime_max_ms": 8.5913
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 573.8858,
+            "lifetime_max_ms": 11.8744
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 4.0846,
+            "lifetime_max_ms": 0.2691
+          },
+          "io_metadata_read": {
+            "calls": 279,
+            "wall_ms": 4.1987,
+            "lifetime_max_ms": 0.2171
+          },
+          "io_metadata_write": {
+            "calls": 272,
+            "wall_ms": 548.4575,
+            "lifetime_max_ms": 64.6828
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1176.7979,
+            "lifetime_max_ms": 89.8327
+          },
+          "io_recover": {
+            "calls": 93,
+            "wall_ms": 910.7142,
+            "lifetime_max_ms": 13.9427
+          },
+          "lifecycle": {
+            "calls": 43563,
+            "wall_ms": 1232.9423,
+            "lifetime_max_ms": 13.8404
+          },
+          "consensus": {
+            "calls": 43563,
+            "wall_ms": 241.6183,
+            "lifetime_max_ms": 6.1866
+          },
+          "projection": {
+            "calls": 43563,
+            "wall_ms": 408.3643,
+            "lifetime_max_ms": 12.3665
+          },
+          "gossip": {
+            "calls": 43563,
+            "wall_ms": 65.137,
+            "lifetime_max_ms": 7.2429
+          },
+          "http": {
+            "calls": 43563,
+            "wall_ms": 1379.416,
+            "lifetime_max_ms": 16.4288
+          },
+          "idle": {
+            "calls": 2696,
+            "wall_ms": 4506.4732,
+            "lifetime_max_ms": 8.0153
+          },
+          "yield": {
+            "calls": 36264,
+            "wall_ms": 85.7352,
+            "lifetime_max_ms": 6.4455
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 266.8025,
+            "lifetime_max_ms": 7.3661
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 279.4364,
+            "lifetime_max_ms": 8.107
+          },
+          "bind": {
+            "calls": 21,
+            "wall_ms": 18.3861,
+            "lifetime_max_ms": 1.0716
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 721.3285,
+            "lifetime_max_ms": 3.3748
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 278.0601,
+            "lifetime_max_ms": 5.8115
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 703.5197,
+            "lifetime_max_ms": 15.7271
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 603.7725,
+            "lifetime_max_ms": 12.1538
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 417.7019,
+            "lifetime_max_ms": 8.3374
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 566.9574,
+            "lifetime_max_ms": 11.3403
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 3.8286,
+            "lifetime_max_ms": 0.226
+          },
+          "io_metadata_read": {
+            "calls": 246,
+            "wall_ms": 3.2578,
+            "lifetime_max_ms": 0.0507
+          },
+          "io_metadata_write": {
+            "calls": 259,
+            "wall_ms": 450.0458,
+            "lifetime_max_ms": 9.15
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1180.5073,
+            "lifetime_max_ms": 68.1176
+          },
+          "io_recover": {
+            "calls": 82,
+            "wall_ms": 786.2791,
+            "lifetime_max_ms": 13.7393
+          },
+          "lifecycle": {
+            "calls": 43064,
+            "wall_ms": 1000.1353,
+            "lifetime_max_ms": 14.4437
+          },
+          "consensus": {
+            "calls": 43064,
+            "wall_ms": 208.6834,
+            "lifetime_max_ms": 6.0231
+          },
+          "projection": {
+            "calls": 43064,
+            "wall_ms": 395.7375,
+            "lifetime_max_ms": 11.8325
+          },
+          "gossip": {
+            "calls": 43064,
+            "wall_ms": 3.9186,
+            "lifetime_max_ms": 2.4757
+          },
+          "http": {
+            "calls": 43064,
+            "wall_ms": 1227.2474,
+            "lifetime_max_ms": 15.4707
+          },
+          "idle": {
+            "calls": 2913,
+            "wall_ms": 4894.8859,
+            "lifetime_max_ms": 9.1258
+          },
+          "yield": {
+            "calls": 37243,
+            "wall_ms": 75.8374,
+            "lifetime_max_ms": 8.4917
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 298.5868,
+            "lifetime_max_ms": 8.0629
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 292.431,
+            "lifetime_max_ms": 9.3748
+          },
+          "bind": {
+            "calls": 22,
+            "wall_ms": 19.8559,
+            "lifetime_max_ms": 1.25
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 708.2654,
+            "lifetime_max_ms": 6.0924
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 283.3873,
+            "lifetime_max_ms": 5.5781
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 701.4365,
+            "lifetime_max_ms": 16.7648
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 600.6371,
+            "lifetime_max_ms": 12.9182
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 418.1342,
+            "lifetime_max_ms": 8.1018
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 570.9441,
+            "lifetime_max_ms": 11.1292
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 3.3421,
+            "lifetime_max_ms": 0.1474
+          },
+          "io_metadata_read": {
+            "calls": 255,
+            "wall_ms": 3.9435,
+            "lifetime_max_ms": 0.2211
+          },
+          "io_metadata_write": {
+            "calls": 257,
+            "wall_ms": 618.3635,
+            "lifetime_max_ms": 92.8792
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1109.4037,
+            "lifetime_max_ms": 15.5767
+          },
+          "io_recover": {
+            "calls": 85,
+            "wall_ms": 835.7932,
+            "lifetime_max_ms": 13.4712
+          },
+          "lifecycle": {
+            "calls": 41799,
+            "wall_ms": 985.7863,
+            "lifetime_max_ms": 16.9717
+          },
+          "consensus": {
+            "calls": 41799,
+            "wall_ms": 225.1382,
+            "lifetime_max_ms": 8.5021
+          },
+          "projection": {
+            "calls": 41799,
+            "wall_ms": 400.1972,
+            "lifetime_max_ms": 14.0425
+          },
+          "gossip": {
+            "calls": 41799,
+            "wall_ms": 1.2292,
+            "lifetime_max_ms": 0.0112
+          },
+          "http": {
+            "calls": 41799,
+            "wall_ms": 1224.8039,
+            "lifetime_max_ms": 16.1777
+          },
+          "idle": {
+            "calls": 2938,
+            "wall_ms": 4924.6672,
+            "lifetime_max_ms": 8.1806
+          },
+          "yield": {
+            "calls": 35966,
+            "wall_ms": 71.6451,
+            "lifetime_max_ms": 6.2906
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 282.2325,
+            "lifetime_max_ms": 8.7712
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 281.1757,
+            "lifetime_max_ms": 7.1482
+          },
+          "bind": {
+            "calls": 22,
+            "wall_ms": 19.7617,
+            "lifetime_max_ms": 1.5666
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 723.3009,
+            "lifetime_max_ms": 5.2606
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 279.8033,
+            "lifetime_max_ms": 5.7276
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 706.3198,
+            "lifetime_max_ms": 17.0768
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 609.1937,
+            "lifetime_max_ms": 12.5271
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 423.0416,
+            "lifetime_max_ms": 9.0524
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 575.3697,
+            "lifetime_max_ms": 13.2967
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 3.7239,
+            "lifetime_max_ms": 0.4764
+          },
+          "io_metadata_read": {
+            "calls": 264,
+            "wall_ms": 3.8595,
+            "lifetime_max_ms": 0.3906
+          },
+          "io_metadata_write": {
+            "calls": 266,
+            "wall_ms": 575.4599,
+            "lifetime_max_ms": 64.173
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1189.8314,
+            "lifetime_max_ms": 78.4599
+          },
+          "io_recover": {
+            "calls": 88,
+            "wall_ms": 846.2689,
+            "lifetime_max_ms": 13.8486
+          },
+          "lifecycle": {
+            "calls": 41638,
+            "wall_ms": 1018.9127,
+            "lifetime_max_ms": 17.1598
+          },
+          "consensus": {
+            "calls": 41638,
+            "wall_ms": 249.1975,
+            "lifetime_max_ms": 7.1829
+          },
+          "projection": {
+            "calls": 41638,
+            "wall_ms": 383.1262,
+            "lifetime_max_ms": 13.8821
+          },
+          "gossip": {
+            "calls": 41638,
+            "wall_ms": 1.1757,
+            "lifetime_max_ms": 0.0013
+          },
+          "http": {
+            "calls": 41638,
+            "wall_ms": 1186.2544,
+            "lifetime_max_ms": 17.5744
+          },
+          "idle": {
+            "calls": 2950,
+            "wall_ms": 4916.3488,
+            "lifetime_max_ms": 8.7468
+          },
+          "yield": {
+            "calls": 35830,
+            "wall_ms": 79.2404,
+            "lifetime_max_ms": 8.2038
+          }
+        }
+      ]
+    },
+    {
+      "name": "rebuilt-diagnostic",
+      "diagnostic": true,
+      "seconds": 6.676083,
+      "tps": 9816.53463565387,
+      "latency_us": {
+        "p95": 1049511,
+        "p99": 1075861,
+        "scope": "first client submission dispatch to receipt HTTP response completion on all four nodes; nearest-rank; includes HTTP and bounded observation scheduling"
+      },
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 711680,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 180,
+        "deadline_expirations": 0
+      },
+      "phases": [
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 247.4684,
+            "lifetime_max_ms": 9.6767
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 291.847,
+            "lifetime_max_ms": 10.1197
+          },
+          "bind": {
+            "calls": 18,
+            "wall_ms": 15.8554,
+            "lifetime_max_ms": 1.2505
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 709.3788,
+            "lifetime_max_ms": 5.6308
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 277.5808,
+            "lifetime_max_ms": 7.1532
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 693.2381,
+            "lifetime_max_ms": 20.0689
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 584.5013,
+            "lifetime_max_ms": 11.2918
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 407.1319,
+            "lifetime_max_ms": 7.6681
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 557.8828,
+            "lifetime_max_ms": 14.2748
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 3.794,
+            "lifetime_max_ms": 0.236
+          },
+          "io_metadata_read": {
+            "calls": 240,
+            "wall_ms": 3.1414,
+            "lifetime_max_ms": 0.1774
+          },
+          "io_metadata_write": {
+            "calls": 262,
+            "wall_ms": 487.5263,
+            "lifetime_max_ms": 8.0431
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1230.0601,
+            "lifetime_max_ms": 160.6344
+          },
+          "io_recover": {
+            "calls": 80,
+            "wall_ms": 763.0085,
+            "lifetime_max_ms": 13.9524
+          },
+          "lifecycle": {
+            "calls": 45693,
+            "wall_ms": 1099.5464,
+            "lifetime_max_ms": 18.4453
+          },
+          "consensus": {
+            "calls": 45693,
+            "wall_ms": 179.1426,
+            "lifetime_max_ms": 3.8801
+          },
+          "projection": {
+            "calls": 45693,
+            "wall_ms": 384.5915,
+            "lifetime_max_ms": 10.252
+          },
+          "gossip": {
+            "calls": 45693,
+            "wall_ms": 44.4984,
+            "lifetime_max_ms": 1.5811
+          },
+          "http": {
+            "calls": 45693,
+            "wall_ms": 1231.7326,
+            "lifetime_max_ms": 18.4454
+          },
+          "idle": {
+            "calls": 2498,
+            "wall_ms": 4264.4519,
+            "lifetime_max_ms": 9.2986
+          },
+          "yield": {
+            "calls": 38756,
+            "wall_ms": 87.2548,
+            "lifetime_max_ms": 9.6466
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 291.0157,
+            "lifetime_max_ms": 14.3947
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 286.106,
+            "lifetime_max_ms": 10.1836
+          },
+          "bind": {
+            "calls": 19,
+            "wall_ms": 16.5065,
+            "lifetime_max_ms": 0.9993
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 707.2366,
+            "lifetime_max_ms": 2.9535
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 273.4135,
+            "lifetime_max_ms": 4.9739
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 693.2439,
+            "lifetime_max_ms": 13.8397
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 590.2425,
+            "lifetime_max_ms": 11.2581
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 409.4619,
+            "lifetime_max_ms": 7.8242
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 565.167,
+            "lifetime_max_ms": 11.9875
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 3.4202,
+            "lifetime_max_ms": 0.1686
+          },
+          "io_metadata_read": {
+            "calls": 255,
+            "wall_ms": 3.3227,
+            "lifetime_max_ms": 0.0471
+          },
+          "io_metadata_write": {
+            "calls": 272,
+            "wall_ms": 520.5508,
+            "lifetime_max_ms": 10.7747
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1257.4565,
+            "lifetime_max_ms": 180.1708
+          },
+          "io_recover": {
+            "calls": 85,
+            "wall_ms": 811.9755,
+            "lifetime_max_ms": 17.7823
+          },
+          "lifecycle": {
+            "calls": 41615,
+            "wall_ms": 954.3533,
+            "lifetime_max_ms": 15.0552
+          },
+          "consensus": {
+            "calls": 41615,
+            "wall_ms": 166.5096,
+            "lifetime_max_ms": 4.8178
+          },
+          "projection": {
+            "calls": 41615,
+            "wall_ms": 384.4541,
+            "lifetime_max_ms": 11.5303
+          },
+          "gossip": {
+            "calls": 41615,
+            "wall_ms": 4.2952,
+            "lifetime_max_ms": 3.1846
+          },
+          "http": {
+            "calls": 41615,
+            "wall_ms": 999.105,
+            "lifetime_max_ms": 17.3416
+          },
+          "idle": {
+            "calls": 2686,
+            "wall_ms": 4681.0531,
+            "lifetime_max_ms": 14.4252
+          },
+          "yield": {
+            "calls": 36277,
+            "wall_ms": 41.4439,
+            "lifetime_max_ms": 5.372
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 298.2322,
+            "lifetime_max_ms": 14.4521
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 297.5599,
+            "lifetime_max_ms": 11.0326
+          },
+          "bind": {
+            "calls": 19,
+            "wall_ms": 16.214,
+            "lifetime_max_ms": 0.9701
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 710.0314,
+            "lifetime_max_ms": 4.6057
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 280.0454,
+            "lifetime_max_ms": 7.3393
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 696.2762,
+            "lifetime_max_ms": 15.4107
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 590.7081,
+            "lifetime_max_ms": 10.8355
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 412.6767,
+            "lifetime_max_ms": 7.6043
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 556.3122,
+            "lifetime_max_ms": 11.4941
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 3.2402,
+            "lifetime_max_ms": 0.2244
+          },
+          "io_metadata_read": {
+            "calls": 240,
+            "wall_ms": 3.5031,
+            "lifetime_max_ms": 0.1777
+          },
+          "io_metadata_write": {
+            "calls": 261,
+            "wall_ms": 525.9085,
+            "lifetime_max_ms": 50.4363
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1216.0151,
+            "lifetime_max_ms": 127.0776
+          },
+          "io_recover": {
+            "calls": 80,
+            "wall_ms": 761.2143,
+            "lifetime_max_ms": 15.2674
+          },
+          "lifecycle": {
+            "calls": 42181,
+            "wall_ms": 965.2124,
+            "lifetime_max_ms": 14.8491
+          },
+          "consensus": {
+            "calls": 42181,
+            "wall_ms": 189.4904,
+            "lifetime_max_ms": 5.6383
+          },
+          "projection": {
+            "calls": 42181,
+            "wall_ms": 392.9375,
+            "lifetime_max_ms": 14.7942
+          },
+          "gossip": {
+            "calls": 42181,
+            "wall_ms": 1.1579,
+            "lifetime_max_ms": 0.0055
+          },
+          "http": {
+            "calls": 42181,
+            "wall_ms": 1084.2457,
+            "lifetime_max_ms": 13.2758
+          },
+          "idle": {
+            "calls": 2677,
+            "wall_ms": 4557.1108,
+            "lifetime_max_ms": 14.122
+          },
+          "yield": {
+            "calls": 36806,
+            "wall_ms": 70.462,
+            "lifetime_max_ms": 9.1608
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "wall_ms": 328.4454,
+            "lifetime_max_ms": 14.4341
+          },
+          "authentication": {
+            "calls": 64,
+            "wall_ms": 289.1823,
+            "lifetime_max_ms": 7.5866
+          },
+          "bind": {
+            "calls": 17,
+            "wall_ms": 14.5729,
+            "lifetime_max_ms": 0.962
+          },
+          "capture": {
+            "calls": 26433,
+            "wall_ms": 719.2247,
+            "lifetime_max_ms": 3.6214
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "wall_ms": 279.6559,
+            "lifetime_max_ms": 6.5207
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "wall_ms": 690.6656,
+            "lifetime_max_ms": 15.7488
+          },
+          "execute_integer": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "wall_ms": 0,
+            "lifetime_max_ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "wall_ms": 591.2484,
+            "lifetime_max_ms": 11.9468
+          },
+          "state_tree": {
+            "calls": 64,
+            "wall_ms": 410.0444,
+            "lifetime_max_ms": 7.4779
+          },
+          "packet": {
+            "calls": 64,
+            "wall_ms": 555.3117,
+            "lifetime_max_ms": 11.0895
+          },
+          "io_nodes": {
+            "calls": 39,
+            "wall_ms": 2.9137,
+            "lifetime_max_ms": 0.1183
+          },
+          "io_metadata_read": {
+            "calls": 231,
+            "wall_ms": 3.6175,
+            "lifetime_max_ms": 0.3955
+          },
+          "io_metadata_write": {
+            "calls": 259,
+            "wall_ms": 439.2442,
+            "lifetime_max_ms": 8.3946
+          },
+          "io_persist": {
+            "calls": 8512,
+            "wall_ms": 1117.8002,
+            "lifetime_max_ms": 26.8269
+          },
+          "io_recover": {
+            "calls": 77,
+            "wall_ms": 722.9293,
+            "lifetime_max_ms": 12.9594
+          },
+          "lifecycle": {
+            "calls": 42239,
+            "wall_ms": 973.462,
+            "lifetime_max_ms": 19.8394
+          },
+          "consensus": {
+            "calls": 42239,
+            "wall_ms": 220.0332,
+            "lifetime_max_ms": 6.1476
+          },
+          "projection": {
+            "calls": 42239,
+            "wall_ms": 391.5913,
+            "lifetime_max_ms": 16.3534
+          },
+          "gossip": {
+            "calls": 42239,
+            "wall_ms": 1.1377,
+            "lifetime_max_ms": 0.0058
+          },
+          "http": {
+            "calls": 42239,
+            "wall_ms": 1089.5181,
+            "lifetime_max_ms": 17.6833
+          },
+          "idle": {
+            "calls": 2663,
+            "wall_ms": 4531.4624,
+            "lifetime_max_ms": 11.2409
+          },
+          "yield": {
+            "calls": 36845,
+            "wall_ms": 89.0733,
+            "lifetime_max_ms": 14.2077
+          }
+        }
+      ]
+    }
+  ],
+  "combined_tps": {
+    "old": 8729.045233372695,
+    "rebuilt": 9595.497425280422
+  },
+  "combined_change_percent": 9.926082048413786,
+  "formal_min_tps": 8613.748507879945,
+  "formal_max_tps": 9658.785595180512,
+  "preserved_drafts": 49,
+  "scope": "Frozen original node and driver; same runtime source; only PE timestamps/PDB GUID differ. Inclusive nested wall phases are not additive CPU time. Negative control does not exonerate rejected GPU patches."
+}

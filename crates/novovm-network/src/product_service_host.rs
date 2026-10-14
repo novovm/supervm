@@ -471,21 +471,33 @@ pub async fn request_mailbox_multiplex_v5<'scope>(
 }
 
 pub async fn request_mailbox_multiplex_lane_v5(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
-    ensure!(stream.is_multiplexed(), "multiplex lane requires shared carrier");
+    ensure!(
+        stream.is_multiplexed(),
+        "multiplex lane requires shared carrier"
+    );
     request_multiplex_selector(stream).await
 }
 
 async fn request_multiplex_selector(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
     stream.write_frame(MAILBOX_REQUEST_V5).await?;
-    ensure!(stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V5,
-        "mailbox multiplex version rejected");
+    ensure!(
+        stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V5,
+        "mailbox multiplex version rejected"
+    );
     Ok(())
 }
 
-pub(crate) async fn accept_mailbox_multiplex_lane_v5(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
-    ensure!(stream.is_multiplexed(), "multiplex lane requires shared carrier");
-    ensure!(stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V5,
-        "mailbox multiplex lane version rejected");
+pub(crate) async fn accept_mailbox_multiplex_lane_v5(
+    stream: &mut CarrierStreamV1<'_>,
+) -> Result<()> {
+    ensure!(
+        stream.is_multiplexed(),
+        "multiplex lane requires shared carrier"
+    );
+    ensure!(
+        stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V5,
+        "mailbox multiplex lane version rejected"
+    );
     stream.write_frame(MAILBOX_REQUEST_V5).await
 }
 

@@ -1,0 +1,36 @@
+{
+  "scope": "Bounded negative control for unresolved CPU regressions; no production code change",
+  "workspace_source": "59ab066e2d7a83c352d62019c8b18c3852447d78",
+  "aoem_source": "94c214e1c078fd31fd028d22bae3e640cf5ea540",
+  "runtime_source_equivalent_to": "aab3f8bb8cf5c685b8314a08378e8763fbbe83ab",
+  "build": "cargo build --release --locked -p aoem-ffi --features apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02), x86_64-pc-windows-msvc, LLVM 21.1.8",
+  "build_result": "passed, 21.11 seconds; existing unrelated warnings",
+  "node_binary": "Frozen 4d6f4bbc8c85174d5d2b809781380335be74e8490845aff52510239bb77fd8f8; not a rebuild of current network changes",
+  "sequence": ["old-1", "rebuilt-1", "rebuilt-2", "old-2", "old-diagnostic", "rebuilt-diagnostic"],
+  "binary_control": "All bytes identical after masking COFF timestamp, parsed IMAGE_DEBUG_DIRECTORY timestamps and RSDS PDB GUID; only 28 raw bytes differ. No arbitrary section excluded from equality check.",
+  "measurements": "measurements.json",
+  "conditions": "AC Windows; four original node processes/four AOEM stores; single RPC; 65536 signed transfers; 1024 payers x 64 nonces; shared recipient; batch1024; window8192; all-four successful final receipt HTTP response completion; signing/startup/cold audit excluded",
+  "results": "Six loads passed, each 65536 successful, 0 business failures/permanent refusals/unresolved/measurement transport errors; original economic, cold recovery and historical receipt checks passed",
+  "source_checks": [
+    "CPU owner uses explicit resident NativeSession and worker configuration, not install-profile recommendation",
+    "CPU backend creates no ResidentTransferResources; diagnostics show zero integer/wire calls",
+    "Rejected da80f306 changes GPU adapter/composition/cache, not semantic_graph_v2 CPU scheduler; unchanged source alone does not exclude binary/layout/runtime effects"
+  ],
+  "interpretation": "Same machine-code negative control shows +9.93 percent grouped difference. No algorithm gain. Does not prove rejected candidates harmless and does not relax performance gate. Runtime/system/observation cause remains unresolved.",
+  "limitations": [
+    "DLL load locations and PE identities differ; no isolated path/loader/OS-scheduling intervention",
+    "Only four formal and two diagnostic rounds, not a stable capacity estimate or statistical equivalence proof",
+    "Stage times are inclusive nested/concurrent wall time, not additive critical path or CPU utilization",
+    "No retired GPU candidate was rerun or promoted",
+    "No new failure-load, A/A/B, physical multi-machine, Linux, proof or million-TPS acceptance",
+    "No production runtime or SDK update; protected 49 drafts hash checked"
+  ],
+  "ci_input": {"run": 38506419662, "conclusion": "cancelled"},
+  "ci_synced_head": {
+    "run": 38522021023,
+    "conclusion": "failure",
+    "cause": "Format check in product_service_host.rs and product_service_lease.rs; mainchain test step not reached",
+    "repair": "rustfmt-equivalent whitespace only; cargo fmt --all -- --check rerun; new CI separately required"
+  }
+}
