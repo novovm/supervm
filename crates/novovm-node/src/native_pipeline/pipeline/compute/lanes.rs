@@ -2,6 +2,7 @@
 //! Each native context is opened, used and dropped on its own thread. The CPU
 //! session and integer context already existed; no native context is added.
 //! One shared queue budget and the original pipeline permits bound both lanes.
+//! CPU-only mode has one bounded channel and needs no shared queue permit.
 use super::*;
 use std::sync::atomic::AtomicUsize;
 
@@ -33,7 +34,7 @@ impl Drop for Slot {
 }
 pub(super) struct Queued {
     command: Command,
-    slot: Slot,
+    slot: Option<Slot>,
 }
 impl Queued {
     pub(super) fn into_command(self) -> Command {
@@ -44,7 +45,7 @@ impl Queued {
 }
 pub(super) struct Sender {
     sender: mpsc::SyncSender<Queued>,
-    budget: Arc<Budget>,
+    budget: Option<Arc<Budget>>,
     failed: Arc<AtomicBool>,
 }
 impl Sender {
@@ -52,8 +53,12 @@ impl Sender {
         if self.failed.load(Ordering::Acquire) {
             return Err(mpsc::TrySendError::Disconnected(command));
         }
-        let Some(slot) = self.budget.acquire() else {
-            return Err(mpsc::TrySendError::Full(command));
+        let slot = match &self.budget {
+            Some(budget) => match budget.acquire() {
+                Some(slot) => Some(slot),
+                None => return Err(mpsc::TrySendError::Full(command)),
+            },
+            None => None,
         };
         self.sender
             .try_send(Queued { command, slot })
@@ -73,7 +78,25 @@ pub(super) fn channel(
     (
         Sender {
             sender,
-            budget,
+            budget: Some(budget),
+            failed,
+        },
+        receiver,
+    )
+}
+
+/// The channel itself enforces the queue cap when no peer lane exists. Keep the
+/// same failure latch and ownership/error contract, without redundant shared
+/// permit CAS, Arc clone/drop and release RMW on each CPU-only command.
+pub(super) fn single_channel(
+    capacity: usize,
+    failed: Arc<AtomicBool>,
+) -> (Sender, mpsc::Receiver<Queued>) {
+    let (sender, receiver) = mpsc::sync_channel(capacity);
+    (
+        Sender {
+            sender,
+            budget: None,
             failed,
         },
         receiver,

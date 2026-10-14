@@ -1,0 +1,38 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `release` profile [optimized] target(s) in 2m 23s
+     Running unittests src\lib.rs (target\release\deps\novovm_node-3fdab5433ef50d79.exe)
+
+running 12 tests
+
+thread '<unnamed>' (19792) panicked at crates\novovm-node\src\native_pipeline\pipeline\compute\lanes\tests.rs:108:9:
+outer unwind
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test native_pipeline::pipeline::compute::tests::real_compute_owner_gpu_selection_rejects_old_library_without_cpu_fallback ... ignored, requires explicit NOVOVM_AOEM_OLD_TEST_LIBRARY without v7; real startup fail-closed
+
+thread 'native_pipeline::pipeline::compute::tests::ordinary_rejection_does_not_latch_but_unwind_rejects_all_later_work' (8388) panicked at crates\novovm-node\src\native_pipeline\pipeline\compute\tests.rs:170:49:
+intentional owner unwind
+test native_pipeline::pipeline::compute::tests::all_cross_owner_payloads_are_owned_send_types ... ok
+test native_pipeline::pipeline::compute::tests::real_integer_lane_does_not_block_authentication_and_drains_accepted_work ... ignored, requires real AOEM/Vulkan; held integer lane, real concurrent authentication and drain
+test native_pipeline::pipeline::compute::tests::real_resident_owner_authenticates_and_executes_repeated_owned_captures ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; resident owner, not node/TPS evidence
+
+thread 'native_pipeline::pipeline::compute::tests::ordinary_rejection_does_not_latch_but_unwind_rejects_all_later_work' (8388) panicked at crates\novovm-node\src\native_pipeline\pipeline\compute\tests.rs:186:49:
+Box<dyn Any>
+test native_pipeline::pipeline::compute::lanes::tests::both_lanes_share_queue_cap_and_release_on_consume_or_disconnect ... ok
+
+thread 'native_pipeline::pipeline::compute::lanes::tests::peer_unwind_latches_all_work_and_discards_racing_success' (2968) panicked at crates\novovm-node\src\native_pipeline\pipeline\compute\lanes\tests.rs:83:39:
+injected lane unwind
+test native_pipeline::pipeline::compute::tests::configured_domain_cannot_be_replaced_by_request_or_capture ... ok
+test native_pipeline::pipeline::compute::lanes::tests::single_channel_is_bounded_without_shared_permits_and_keeps_failure_latch ... ok
+test native_pipeline::pipeline::compute::tests::full_channel_returns_the_original_allocation_without_running_a_session ... ok
+test native_pipeline::pipeline::compute::tests::tickets_are_nonblocking_and_consumed_exactly_once_even_on_error ... ok
+test native_pipeline::pipeline::compute::tests::ordinary_rejection_does_not_latch_but_unwind_rejects_all_later_work ... ok
+test native_pipeline::pipeline::compute::lanes::tests::peer_unwind_latches_all_work_and_discards_racing_success ... ok
+test native_pipeline::pipeline::compute::lanes::tests::outer_lane_unwind_is_latched_but_normal_exit_is_not ... ok
+
+test result: ok. 9 passed; 0 failed; 3 ignored; 0 measured; 1580 filtered out; finished in 0.00s
+

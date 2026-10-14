@@ -217,17 +217,24 @@ impl ComputeOwner {
             "invalid compute owner configuration"
         );
         let config = Arc::new(config);
-        let budget = lanes::Budget::new(config.queue_capacity);
         let failed = Arc::new(AtomicBool::new(false));
-        let (sender, receiver) = lanes::channel(Arc::clone(&budget), Arc::clone(&failed));
-        let integer = match config.execution_backend {
-            super::ExecutionBackend::CpuCallbacks => None,
-            super::ExecutionBackend::AoemIntegerV7 => Some(lanes::IntegerLane::start(
-                Arc::clone(&config),
-                budget,
-                Arc::clone(&failed),
-                notify.clone(),
-            )?),
+        let (sender, receiver, integer) = match config.execution_backend {
+            super::ExecutionBackend::CpuCallbacks => {
+                let (sender, receiver) =
+                    lanes::single_channel(config.queue_capacity, Arc::clone(&failed));
+                (sender, receiver, None)
+            }
+            super::ExecutionBackend::AoemIntegerV7 => {
+                let budget = lanes::Budget::new(config.queue_capacity);
+                let (sender, receiver) = lanes::channel(Arc::clone(&budget), Arc::clone(&failed));
+                let integer = lanes::IntegerLane::start(
+                    Arc::clone(&config),
+                    budget,
+                    Arc::clone(&failed),
+                    notify.clone(),
+                )?;
+                (sender, receiver, Some(integer))
+            }
         };
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()

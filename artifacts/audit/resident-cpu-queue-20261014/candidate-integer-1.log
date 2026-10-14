@@ -1,0 +1,36 @@
+
+Algorithm : SHA256
+Hash      : 31306037D7E764BD93E493FF61D4C69952ED1FFC18C2663B5D2C806D815E8947
+Path      : D:\WorksArea\SUPERVM\aoem\windows\core\bin\aoem_ffi.dll
+
+Algorithm : SHA256
+Hash      : 81DA45094CB6EEEF5419EBB3AF32264ECB3FD9450FDA7E3B9E76BF4948E5C98F
+Path      : D:\WorksArea\SUPERVM\target\validation\resident-cpu-queue-20261014\candidate-node.exe
+
+
+
+running 1 test
+real 65,536 RPC workload artifacts=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-load\9552-1791983610731336000
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay stopped: reason=external_request elapsed_ms=57565
+real RPC load report=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-load\9552-1791983610731336000\result.json
+test native_pipeline::consensus::tests::resident_rpc_process::load::actual_product_rpc_65536_signed_transfers_finality_and_cold_economics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1580 filtered out; finished in 61.92s
+
+power_after=Online

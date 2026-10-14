@@ -89,8 +89,7 @@ pub(crate) fn control_test_request(root: NodeHash) -> PrepareRequest {
 
 #[test]
 fn full_channel_returns_the_original_allocation_without_running_a_session() {
-    let (sender, receiver) =
-        lanes::channel(lanes::Budget::new(1), Arc::new(AtomicBool::new(false)));
+    let (sender, receiver) = lanes::single_channel(1, Arc::new(AtomicBool::new(false)));
     let owner = ComputeOwner {
         sender,
         worker: thread::spawn(|| {}),

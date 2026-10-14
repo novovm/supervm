@@ -1,0 +1,110 @@
+{
+  "schema": "resident-cpu-queue-20261014-v1",
+  "source": "7d8ff5a7c6e684b211b9838e87755b0c0dfcc5fa",
+  "summary": "summary.json",
+  "hashes": {
+    "node": "81da45094cb6eeef5419ebb3af32264ecb3fd9450fda7e3b9e76bf4948e5c98f",
+    "driver": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "tests": "551d212392e4dab7fdfdd4b5b084e59ff48b14ed3bc499eba828cc53c85f124b"
+  },
+  "sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "sdk_changed": false,
+  "extra_native_context": false,
+  "cpu_default_unchanged": true,
+  "cpu_algorithm_unchanged": true,
+  "cpu_queue_wrapper_changed": true,
+  "gpu_device_residency_changed": false,
+  "stable_tps_improvement_accepted": false,
+  "production_accepted": false,
+  "independent_bigint_oracle_rerun": false,
+  "source_files": [
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute.rs",
+      "sha256": "c7180c9c16131000a1394860947753ee45ba2b878096f5439378f047e5283e54"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs",
+      "sha256": "91f0bde3fcc648dadeaea6d7076879e0f5299529803466d73f9bfa1f51792f5a"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/lanes.rs",
+      "sha256": "fa24026ced1cb79d90e8a32487dbc4649fb87eeea8cba0f839c84e30d52e275e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/lanes/tests.rs",
+      "sha256": "04c300e301b83f97ea5ab16bfc4d036e7716fd0db98d98eec52c9c0344e98956"
+    }
+  ],
+  "preserved_drafts": {
+    "count": 49,
+    "drift": []
+  },
+  "explicit_regressions": [
+    {
+      "name": "actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers.log",
+      "sha256": "d8ffef3f395533b7c21281ca9b208123c780bdf32b077f3cfd037213d3175a17",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 14.49s"
+    },
+    {
+      "name": "actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart.log",
+      "sha256": "c01cc41d223fb8344934d29d284ec8696782f2b3a46c3fae3980a1ae17da6171",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 48.99s"
+    },
+    {
+      "name": "actual_product_rpc_single_ingress_gossip_failures_and_restart.log",
+      "sha256": "9eac51af8c5421b4685f846bcfa7c765f1a9c76b9c828230f8d12ea4732bdd7e",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 4.08s"
+    },
+    {
+      "name": "real_integer_lane_does_not_block_authentication_and_drains_accepted_work.log",
+      "sha256": "3ee139fdc29726cad61a0dcd4ff1dbee9cf542f7d46e78e69ef89a13b234107a",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 3.45s"
+    },
+    {
+      "name": "real_resident_owner_authenticates_and_executes_repeated_owned_captures.log",
+      "sha256": "ee1fc43d709a0ceb50f713adc06661609c27599eaf8502b3cff71c66a997fa19",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.01s"
+    },
+    {
+      "name": "resident_complete_plan_windows_diagnostics_and_capacity_edges.log",
+      "sha256": "4a8dcaaab0fe447bfe82896f84867b8bbc67ef47a1f7e85b66c8a4670d586161",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.32s"
+    },
+    {
+      "name": "resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair.log",
+      "sha256": "f05dba4c6fc0bc2f940eb18e6ced8ab14bc81b5f04aefe0b269dbbcb74d69a3c",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.33s"
+    },
+    {
+      "name": "resident_integer_rows_match_current_quoted_transfer_full_u128.log",
+      "sha256": "906993ae4cd43c702a6a3acacb4600f8485a5efde08c1ef808ac42b45e409345",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.29s"
+    },
+    {
+      "name": "resident_shared_and_unshared_complete_plans_match_every_export.log",
+      "sha256": "57234716791eced30261bed48383a06518c520f0147d57f48513ff357b94d575",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.85s"
+    }
+  ],
+  "pipeline": "test result: ok. 403 passed; 0 failed; 63 ignored; 0 measured; 1126 filtered out; finished in 1.71s",
+  "clippy": {
+    "command": "cargo clippy --release --locked --target-dir target -p novovm-node --lib -- -D warnings",
+    "passed": true,
+    "log_sha256": "167870d976ef9976da9602fe16bb86f49b18babf01e1bfa05619f04ee5acebcc"
+  },
+  "fmt": {
+    "command": "cargo fmt --all -- --check",
+    "passed": true
+  },
+  "prior_delivery_ci": {
+    "sha": "da93a4dcdbcf4140243b70636921f14723b7b206",
+    "run": 38563008376,
+    "conclusion": "cancelled"
+  },
+  "delivery_ci": "pending push; not verified",
+  "limitations": [
+    "Local Windows only; four processes are not four physical devices",
+    "Removal of redundant CPU queue permit operations does not establish cause of earlier 3.11 percent regression",
+    "No GPU algorithm or proof capability improvement claimed"
+  ]
+}

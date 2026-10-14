@@ -8,6 +8,35 @@ fn hold() -> Command {
 }
 
 #[test]
+fn single_channel_is_bounded_without_shared_permits_and_keeps_failure_latch() {
+    let failed = Arc::new(AtomicBool::new(false));
+    let (sender, receiver) = single_channel(1, Arc::clone(&failed));
+    assert!(sender.budget.is_none());
+    assert!(sender.try_send(hold()).is_ok());
+    assert!(matches!(
+        sender.try_send(hold()),
+        Err(mpsc::TrySendError::Full(_))
+    ));
+    let queued = receiver.recv().unwrap();
+    assert!(queued.slot.is_none());
+    drop(queued.into_command());
+    assert!(sender.try_send(hold()).is_ok());
+    // Already accepted work remains owned, but no new work enters a failed owner.
+    failed.store(true, Ordering::Release);
+    assert!(matches!(
+        sender.try_send(hold()),
+        Err(mpsc::TrySendError::Disconnected(_))
+    ));
+    assert!(receiver.recv().unwrap().slot.is_none());
+    failed.store(false, Ordering::Release); // Test fixture only, not runtime recovery.
+    drop(receiver);
+    assert!(matches!(
+        sender.try_send(hold()),
+        Err(mpsc::TrySendError::Disconnected(_))
+    ));
+}
+
+#[test]
 fn both_lanes_share_queue_cap_and_release_on_consume_or_disconnect() {
     let budget = Budget::new(2);
     let failed = Arc::new(AtomicBool::new(false));
