@@ -1,0 +1,11 @@
+{
+  "source": "7d8ff5a7",
+  "sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "formal_order": ["baseline-cpu-1", "candidate-cpu-1", "preoverlap-cpu-1", "baseline-integer-1", "candidate-integer-1", "candidate-cpu-2", "baseline-cpu-2", "preoverlap-cpu-2", "candidate-integer-2", "baseline-integer-2"],
+  "load": "AC Windows, four original nodes/stores, single RPC, 65536 real presigned transfers, 1024 payers x 64 nonce/shared recipient, candidate 1024, inflight 8192; integer nodes share the selected 5090",
+  "completion": "All four final successful receipt HTTP responses; economics/history/cold recovery unchanged",
+  "formal_profile_stages": false,
+  "scope": "CPU-only owner uses its existing bounded channel without redundant shared queue permits; integer overlap/shared budget and all health/semantic/storage rules retained. Same SDK, no AOEM code changes.",
+  "preoverlap_reference": "Frozen 0f7babce node 6c4c7235, CPU only, secondary control for the prior regression, not a replacement production architecture",
+  "decision": "Keep all results. Compare baseline vs candidate separately for CPU/integer; two preoverlap CPU rounds are a secondary control, never pooled with baseline. Total success / total elapsed. No pre-attribution of historical regression, no best-of, no stable claim from opposite directions."
+}

@@ -1,0 +1,6 @@
+
+running 1 test
+test native_pipeline::pipeline::compute::tests::real_resident_owner_authenticates_and_executes_repeated_owned_captures ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.01s
+

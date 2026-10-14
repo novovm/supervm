@@ -1,0 +1,8 @@
+
+running 1 test
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::resident_shared_and_unshared_complete_plans_match_every_export ... export_projection={"diverse":false,"logical_exports":16405,"unique_exports":2582,"value_payload_bytes_before":2099840,"value_payload_bytes_after":330496,"nodes_unchanged":6689}
+export_projection={"diverse":true,"logical_exports":16405,"unique_exports":13834,"value_payload_bytes_before":2099840,"value_payload_bytes_after":1770752,"nodes_unchanged":20572}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1591 filtered out; finished in 0.85s
+
