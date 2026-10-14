@@ -1,0 +1,47 @@
+[
+  {
+    "sha256": "f59aef7a947621bc8beaeeab3a439b83e852563445fdf6928b0e603ae46ac741",
+    "name": "real_integer_lane_does_not_block_authentication_and_drains_accepted_work",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 3.31s"
+  },
+  {
+    "sha256": "0b0cc1724065608fb13004b2f923984d5edff136ef971294248ae7ddbaee6d37",
+    "name": "real_resident_owner_authenticates_and_executes_repeated_owned_captures",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.01s"
+  },
+  {
+    "sha256": "2db61429d6b14dccc2d98300a51e3c15cb89bd400c8f8d5cdddb8a5fb74954cd",
+    "name": "resident_shared_and_unshared_complete_plans_match_every_export",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.86s"
+  },
+  {
+    "sha256": "25e33c96312359a84149c1261e882f0bc1f8eb496d2ba5d5b17aa0768d781358",
+    "name": "resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.34s"
+  },
+  {
+    "sha256": "6e4d5e1e871158690911b4ce6ab6e9a6acc377d9776e6c29810afb5d42eb7074",
+    "name": "resident_complete_plan_windows_diagnostics_and_capacity_edges",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.32s"
+  },
+  {
+    "sha256": "d39a6a66e51c1c0cca94fa3859464f4adcbe36bc77fd8b496c32314b0e264fee",
+    "name": "resident_integer_rows_match_current_quoted_transfer_full_u128",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.29s"
+  },
+  {
+    "sha256": "c5affed5118085b1fcf893cca192be9716cee25ccb40a5f5a283e0e9e8e198f8",
+    "name": "actual_product_rpc_single_ingress_gossip_failures_and_restart",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 4.10s"
+  },
+  {
+    "sha256": "33c7f58588d8f2f26b158058f647147759cbef967a05f6b5d978416b15b6bde3",
+    "name": "actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 14.28s"
+  },
+  {
+    "sha256": "bd559155652e218caf11b7e8806c4e4d31ddfedc60726f39f0bce426223da670",
+    "name": "actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart",
+    "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 48.94s"
+  }
+]

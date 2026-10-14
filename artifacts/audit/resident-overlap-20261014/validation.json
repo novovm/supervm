@@ -1,0 +1,127 @@
+{
+  "schema": "resident-overlap-20261014-v1",
+  "source": "0f7babce20a5231ac4e5891b19cb491f38f31f2f",
+  "summary": "summary.json",
+  "hashes": {
+    "node": "77a504eb520b66f66f9e8c21f90ea97ab72f517a41afd0ebfd539679dab2ff62",
+    "driver": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "tests": "1fb3d6f54d98abbbe879a3551bf4ae843df3ad3f27ebb9feee6dc658d5c5da7b"
+  },
+  "sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "sdk_changed": false,
+  "extra_native_context": false,
+  "cpu_default_unchanged": true,
+  "cpu_algorithm_unchanged": true,
+  "cpu_queue_wrapper_changed": true,
+  "gpu_device_residency_changed": false,
+  "stable_tps_improvement_accepted": false,
+  "production_accepted": false,
+  "independent_bigint_oracle_rerun": false,
+  "source_files": [
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute.rs",
+      "sha256": "4bfd430b7af0c7bf7f43812d66f8139886a404260175bdee83402b145d5bfb19"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs",
+      "sha256": "b240efd45e746e410eb08cbc7c7c70e96521cfd4bd7d733df662e449d29702bd"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/lanes.rs",
+      "sha256": "646a242b4474b93b2da6b458ada2a4e44a9367d1a934bf658c9c4d435ea9a891"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/lanes/tests.rs",
+      "sha256": "275de97925224999a00163ea3c7634eee970c4906337bc8d08aaf3ceaa7b7710"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs",
+      "sha256": "624466436a8d68ed42b2b1f5ca1fe9a1d5954b4ad8d9778aebe1747027ac0c70"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs",
+      "sha256": "22b69ee6dba8dd9bdccac7b038346ce063ce54ad86ab6e0915830b412608d6f7"
+    },
+    {
+      "path": "crates/novovm-relay/src/rendezvous_self_owned_owner.rs",
+      "sha256": "d4e75b8503cc928c3c92b0423d75604b32c3e3f62e0003410d044b522e4dd2ab"
+    }
+  ],
+  "preserved_drafts": {
+    "count": 49,
+    "drift": []
+  },
+  "explicit_regressions": [
+    {
+      "sha256": "f59aef7a947621bc8beaeeab3a439b83e852563445fdf6928b0e603ae46ac741",
+      "name": "real_integer_lane_does_not_block_authentication_and_drains_accepted_work",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 3.31s"
+    },
+    {
+      "sha256": "0b0cc1724065608fb13004b2f923984d5edff136ef971294248ae7ddbaee6d37",
+      "name": "real_resident_owner_authenticates_and_executes_repeated_owned_captures",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.01s"
+    },
+    {
+      "sha256": "2db61429d6b14dccc2d98300a51e3c15cb89bd400c8f8d5cdddb8a5fb74954cd",
+      "name": "resident_shared_and_unshared_complete_plans_match_every_export",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.86s"
+    },
+    {
+      "sha256": "25e33c96312359a84149c1261e882f0bc1f8eb496d2ba5d5b17aa0768d781358",
+      "name": "resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.34s"
+    },
+    {
+      "sha256": "6e4d5e1e871158690911b4ce6ab6e9a6acc377d9776e6c29810afb5d42eb7074",
+      "name": "resident_complete_plan_windows_diagnostics_and_capacity_edges",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.32s"
+    },
+    {
+      "sha256": "d39a6a66e51c1c0cca94fa3859464f4adcbe36bc77fd8b496c32314b0e264fee",
+      "name": "resident_integer_rows_match_current_quoted_transfer_full_u128",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 0.29s"
+    },
+    {
+      "sha256": "c5affed5118085b1fcf893cca192be9716cee25ccb40a5f5a283e0e9e8e198f8",
+      "name": "actual_product_rpc_single_ingress_gossip_failures_and_restart",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 4.10s"
+    },
+    {
+      "sha256": "33c7f58588d8f2f26b158058f647147759cbef967a05f6b5d978416b15b6bde3",
+      "name": "actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 14.28s"
+    },
+    {
+      "sha256": "bd559155652e218caf11b7e8806c4e4d31ddfedc60726f39f0bce426223da670",
+      "name": "actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 48.94s"
+    }
+  ],
+  "pipeline": "test result: ok. 402 passed; 0 failed; 63 ignored; 0 measured; 1126 filtered out; finished in 1.63s",
+  "clippy": {
+    "command": "cargo clippy --release --locked --target-dir target -p novovm-node --lib -- -D warnings",
+    "passed": true,
+    "log_sha256": "532a04bf2bd7136e352332e1c74cbf155a5e49704eba4e2d42675b46750e2862"
+  },
+  "fmt": {
+    "command": "cargo fmt --all -- --check",
+    "passed": true
+  },
+  "input_main_ci": {
+    "sha": "0f7babce20a5231ac4e5891b19cb491f38f31f2f",
+    "run": 38547158541,
+    "conclusion": "failure",
+    "scope": "relay formatting; mainchain integration not reached; formatting corrected without logic change"
+  },
+  "delivery_ci": "pending push; not verified",
+  "known_failures": [
+    "Initial test build used AdmissionRow.checked instead of result; corrected; failed build log retained"
+  ],
+  "limitations": [
+    "Local Windows only; four processes are not four physical devices",
+    "Fixed integer-lane hold proves independent authentication progress, not simultaneous hardware utilization",
+    "Shared panic latch does not replace native resource error poisoning",
+    "No GPU algorithm or proof capability improvement claimed"
+  ]
+}

@@ -19,7 +19,9 @@ use anyhow::{ensure, Context, Result};
 use novovm_exec::resident::ComputeSession;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread::{self, JoinHandle, Thread};
 use std::time::{Duration, Instant};
 
@@ -128,9 +130,12 @@ enum Command {
 }
 
 pub(crate) struct ComputeOwner {
-    sender: mpsc::SyncSender<Command>,
+    sender: lanes::Sender,
     worker: JoinHandle<()>,
+    integer: Option<lanes::IntegerLane>,
 }
+
+mod lanes;
 
 impl ComputeOwner {
     pub(crate) fn try_admit_signatures(
@@ -211,7 +216,19 @@ impl ComputeOwner {
                 && config.domain.protocol_commitment != [0; 32],
             "invalid compute owner configuration"
         );
-        let (sender, receiver) = mpsc::sync_channel(config.queue_capacity);
+        let config = Arc::new(config);
+        let budget = lanes::Budget::new(config.queue_capacity);
+        let failed = Arc::new(AtomicBool::new(false));
+        let (sender, receiver) = lanes::channel(Arc::clone(&budget), Arc::clone(&failed));
+        let integer = match config.execution_backend {
+            super::ExecutionBackend::CpuCallbacks => None,
+            super::ExecutionBackend::AoemIntegerV7 => Some(lanes::IntegerLane::start(
+                Arc::clone(&config),
+                budget,
+                Arc::clone(&failed),
+                notify.clone(),
+            )?),
+        };
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("novovm-compute-owner".into())
@@ -219,30 +236,11 @@ impl ComputeOwner {
             .spawn(move || {
                 // Unexpected unwinding/disconnection must wake control as well.
                 let notification = Notification(notify);
-                let owners = (|| {
-                    let session = ComputeSession::open(&config.library, config.workers)?;
-                    let integers = match config.execution_backend {
-                        super::ExecutionBackend::CpuCallbacks => None,
-                        super::ExecutionBackend::AoemIntegerV7 => {
-                            Some(ResidentTransferResources::new(
-                                &config.library,
-                                config.workers,
-                                config.plan.transactions,
-                            )?)
-                        }
-                    };
-                    Ok::<_, anyhow::Error>((session, integers))
-                })();
-                match owners {
-                    Ok((mut session, mut integers)) => {
+                let _fault = lanes::UnwindLatch(Arc::clone(&failed));
+                match ComputeSession::open(&config.library, config.workers) {
+                    Ok(mut session) => {
                         if ready_tx.send(Ok(())).is_ok() {
-                            run_owner(
-                                &mut session,
-                                &mut integers,
-                                &config,
-                                receiver,
-                                &notification,
-                            );
+                            run_owner(&mut session, &config, receiver, &notification, &failed);
                         }
                     }
                     Err(error) => {
@@ -250,15 +248,34 @@ impl ComputeOwner {
                     }
                 }
             })
-            .context("start resident compute owner")?;
+            .context("start resident compute owner");
+        let worker = match worker {
+            Ok(worker) => worker,
+            Err(error) => {
+                if let Some(integer) = integer {
+                    let _ = integer.shutdown();
+                }
+                return Err(error);
+            }
+        };
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self { sender, worker }),
+            Ok(Ok(())) => Ok(Self {
+                sender,
+                worker,
+                integer,
+            }),
             Ok(Err(error)) => {
                 let _ = worker.join();
+                if let Some(integer) = integer {
+                    let _ = integer.shutdown();
+                }
                 Err(error.context("initialize resident compute owner"))
             }
             Err(error) => {
                 let _ = worker.join();
+                if let Some(integer) = integer {
+                    let _ = integer.shutdown();
+                }
                 Err(error).context("compute owner failed during initialization")
             }
         }
@@ -291,7 +308,11 @@ impl ComputeOwner {
         input: NovCapturedInput,
     ) -> Result<Submission<NovCapturedInput, ComputedCandidate>> {
         let (reply, receiver) = mpsc::channel();
-        match self.sender.try_send(Command::Execute {
+        let sender = self
+            .integer
+            .as_ref()
+            .map_or(&self.sender, |lane| &lane.sender);
+        match sender.try_send(Command::Execute {
             queued: profile::mark(),
             input: Box::new(input),
             reply,
@@ -328,9 +349,11 @@ impl ComputeOwner {
     /// detaches the thread; it does not block control or cancel accepted work.
     pub(crate) fn shutdown(self) -> Result<()> {
         drop(self.sender);
-        self.worker
-            .join()
-            .map_err(|_| anyhow::anyhow!("compute owner panicked"))
+        let cpu = self.worker.join();
+        let integer = self.integer.map(lanes::IntegerLane::shutdown).transpose();
+        cpu.map_err(|_| anyhow::anyhow!("compute owner panicked"))?;
+        integer?;
+        Ok(())
     }
 }
 
@@ -395,7 +418,6 @@ fn authenticate(
 
 fn execute(
     session: &mut ComputeSession,
-    integers: &mut Option<ResidentTransferResources>,
     config: &ComputeConfig,
     input: NovCapturedInput,
 ) -> Result<ComputedCandidate> {
@@ -406,12 +428,14 @@ fn execute(
         );
         input.finalize_capture()?
     };
-    let executed = match integers {
-        Some(resources) => {
-            input.execute_with_integer_resources(session, resources, config.timeout)?
-        }
-        None => input.execute(session, config.timeout)?,
-    };
+    let executed = input.execute(session, config.timeout)?;
+    packet(config, executed)
+}
+
+fn packet(
+    config: &ComputeConfig,
+    executed: crate::native_pipeline::business::nov_transfer_batch::ExecutedNovBatch,
+) -> Result<ComputedCandidate> {
     let observation = *executed.observation();
     let _span =
         crate::native_pipeline::profile::span(crate::native_pipeline::profile::Phase::Packet);
@@ -426,13 +450,13 @@ fn execute(
 
 fn run_owner(
     session: &mut ComputeSession,
-    integers: &mut Option<ResidentTransferResources>,
     config: &ComputeConfig,
-    receiver: mpsc::Receiver<Command>,
+    receiver: mpsc::Receiver<lanes::Queued>,
     notification: &Notification,
+    failed: &AtomicBool,
 ) {
-    let mut panicked = false;
-    while let Ok(command) = receiver.recv() {
+    while let Ok(queued) = receiver.recv() {
+        let command = queued.into_command();
         match command {
             Command::Admission {
                 queued,
@@ -443,7 +467,7 @@ fn run_owner(
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Admission,
                 );
-                let result = run_checked(&mut panicked, || {
+                let result = lanes::checked(failed, || {
                     authenticate_admission_rows(
                         session,
                         config.domain.chain_id,
@@ -460,7 +484,7 @@ fn run_owner(
                 reply,
             } => {
                 profile::elapsed(profile::Phase::QueueCandidate, queued);
-                let result = run_checked(&mut panicked, || authenticate(session, config, *request));
+                let result = lanes::checked(failed, || authenticate(session, config, *request));
                 let _ = reply.send(result);
             }
             Command::Bind {
@@ -472,7 +496,7 @@ fn run_owner(
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Bind,
                 );
-                let result = run_checked(&mut panicked, || {
+                let result = lanes::checked(failed, || {
                     domain_matches(config.domain, &request.context)?;
                     request.body.bind(request.context)
                 });
@@ -484,7 +508,7 @@ fn run_owner(
                 reply,
             } => {
                 profile::elapsed(profile::Phase::QueueCandidate, queued);
-                let result = run_checked(&mut panicked, || prepare(session, config, *request));
+                let result = lanes::checked(failed, || prepare(session, config, *request));
                 let _ = reply.send(result);
             }
             Command::Execute {
@@ -493,8 +517,7 @@ fn run_owner(
                 reply,
             } => {
                 profile::elapsed(profile::Phase::QueueCandidate, queued);
-                let result =
-                    run_checked(&mut panicked, || execute(session, integers, config, *input));
+                let result = lanes::checked(failed, || execute(session, config, *input));
                 let _ = reply.send(result);
             }
             #[cfg(test)]

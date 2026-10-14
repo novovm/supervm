@@ -1,0 +1,24 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error[E0609]: no field `checked` on type `ingress::batch::AdmissionRow`
+   --> crates\novovm-node\src\native_pipeline\pipeline\compute\tests.rs:347:30
+    |
+347 |     assert!(admitted.rows[0].checked.is_ok());
+    |                              ^^^^^^^ unknown field
+    |
+    = note: available fields are: `input`, `result`
+
+error[E0609]: no field `checked` on type `ingress::batch::AdmissionRow`
+   --> crates\novovm-node\src\native_pipeline\pipeline\compute\tests.rs:354:50
+    |
+354 |     assert!(bounded_take(&mut rejected)?.rows[0].checked.is_err());
+    |                                                  ^^^^^^^ unknown field
+    |
+    = note: available fields are: `input`, `result`
+
+For more information about this error, try `rustc --explain E0609`.
+error: could not compile `novovm-node` (lib test) due to 2 previous errors

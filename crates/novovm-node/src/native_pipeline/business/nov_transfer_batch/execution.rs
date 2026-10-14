@@ -100,11 +100,21 @@ impl NovTransferInput {
     /// One complete typed composition on the resident owner. No node-side
     /// economic repair or second business callback. The retained session and
     /// timeout parameters belong to the common caller, not GPU cancellation.
+    #[cfg(test)]
     pub(crate) fn execute_with_integer_resources(
         self,
         _session: &mut ComputeSession,
         resources: &mut ResidentTransferResources,
         _timeout: Duration,
+    ) -> Result<ExecutedNovBatch> {
+        self.execute_integer_plan(resources)
+    }
+
+    /// The complete semantic plan does not use the CPU callback session. Keep
+    /// its owner-thread resources local; only captured inputs/results cross lanes.
+    pub(crate) fn execute_integer_plan(
+        self,
+        resources: &mut ResidentTransferResources,
     ) -> Result<ExecutedNovBatch> {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::ExecuteInteger,

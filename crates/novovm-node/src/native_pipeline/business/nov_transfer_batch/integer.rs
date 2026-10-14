@@ -26,7 +26,7 @@ pub(super) fn composition_resource_rows(capacity: usize) -> [usize; 8] {
     [tile, tile, 1, 1, tile, 1, tile, tile]
 }
 
-/// Lives and is destroyed on the original compute owner. Its native context
+/// Lives and is destroyed on the integer lane of the original compute owner. Its native context
 /// owns the program/shape table until drop; no authority/store is added here.
 pub(crate) struct ResidentTransferResources {
     session: AoemIntegerResourceSessionV7,

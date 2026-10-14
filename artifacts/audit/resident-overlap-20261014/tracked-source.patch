@@ -1,0 +1,456 @@
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs
+index cd690c76..7c3d15f9 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs
+@@ -100,11 +100,21 @@ impl NovTransferInput {
+     /// One complete typed composition on the resident owner. No node-side
+     /// economic repair or second business callback. The retained session and
+     /// timeout parameters belong to the common caller, not GPU cancellation.
++    #[cfg(test)]
+     pub(crate) fn execute_with_integer_resources(
+         self,
+         _session: &mut ComputeSession,
+         resources: &mut ResidentTransferResources,
+         _timeout: Duration,
++    ) -> Result<ExecutedNovBatch> {
++        self.execute_integer_plan(resources)
++    }
++
++    /// The complete semantic plan does not use the CPU callback session. Keep
++    /// its owner-thread resources local; only captured inputs/results cross lanes.
++    pub(crate) fn execute_integer_plan(
++        self,
++        resources: &mut ResidentTransferResources,
+     ) -> Result<ExecutedNovBatch> {
+         let _span = crate::native_pipeline::profile::span(
+             crate::native_pipeline::profile::Phase::ExecuteInteger,
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs
+index 30e44042..e97f87cd 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs
+@@ -26,7 +26,7 @@ pub(super) fn composition_resource_rows(capacity: usize) -> [usize; 8] {
+     [tile, tile, 1, 1, tile, 1, tile, tile]
+ }
+ 
+-/// Lives and is destroyed on the original compute owner. Its native context
++/// Lives and is destroyed on the integer lane of the original compute owner. Its native context
+ /// owns the program/shape table until drop; no authority/store is added here.
+ pub(crate) struct ResidentTransferResources {
+     session: AoemIntegerResourceSessionV7,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+index e0fb6441..90c5d2ef 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+@@ -19,7 +19,9 @@ use anyhow::{ensure, Context, Result};
+ use novovm_exec::resident::ComputeSession;
+ use std::panic::{catch_unwind, AssertUnwindSafe};
+ use std::path::PathBuf;
++use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::mpsc;
++use std::sync::Arc;
+ use std::thread::{self, JoinHandle, Thread};
+ use std::time::{Duration, Instant};
+ 
+@@ -128,10 +130,13 @@ enum Command {
+ }
+ 
+ pub(crate) struct ComputeOwner {
+-    sender: mpsc::SyncSender<Command>,
++    sender: lanes::Sender,
+     worker: JoinHandle<()>,
++    integer: Option<lanes::IntegerLane>,
+ }
+ 
++mod lanes;
++
+ impl ComputeOwner {
+     pub(crate) fn try_admit_signatures(
+         &self,
+@@ -211,7 +216,19 @@ impl ComputeOwner {
+                 && config.domain.protocol_commitment != [0; 32],
+             "invalid compute owner configuration"
+         );
+-        let (sender, receiver) = mpsc::sync_channel(config.queue_capacity);
++        let config = Arc::new(config);
++        let budget = lanes::Budget::new(config.queue_capacity);
++        let failed = Arc::new(AtomicBool::new(false));
++        let (sender, receiver) = lanes::channel(Arc::clone(&budget), Arc::clone(&failed));
++        let integer = match config.execution_backend {
++            super::ExecutionBackend::CpuCallbacks => None,
++            super::ExecutionBackend::AoemIntegerV7 => Some(lanes::IntegerLane::start(
++                Arc::clone(&config),
++                budget,
++                Arc::clone(&failed),
++                notify.clone(),
++            )?),
++        };
+         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+         let worker = thread::Builder::new()
+             .name("novovm-compute-owner".into())
+@@ -219,30 +236,11 @@ impl ComputeOwner {
+             .spawn(move || {
+                 // Unexpected unwinding/disconnection must wake control as well.
+                 let notification = Notification(notify);
+-                let owners = (|| {
+-                    let session = ComputeSession::open(&config.library, config.workers)?;
+-                    let integers = match config.execution_backend {
+-                        super::ExecutionBackend::CpuCallbacks => None,
+-                        super::ExecutionBackend::AoemIntegerV7 => {
+-                            Some(ResidentTransferResources::new(
+-                                &config.library,
+-                                config.workers,
+-                                config.plan.transactions,
+-                            )?)
+-                        }
+-                    };
+-                    Ok::<_, anyhow::Error>((session, integers))
+-                })();
+-                match owners {
+-                    Ok((mut session, mut integers)) => {
++                let _fault = lanes::UnwindLatch(Arc::clone(&failed));
++                match ComputeSession::open(&config.library, config.workers) {
++                    Ok(mut session) => {
+                         if ready_tx.send(Ok(())).is_ok() {
+-                            run_owner(
+-                                &mut session,
+-                                &mut integers,
+-                                &config,
+-                                receiver,
+-                                &notification,
+-                            );
++                            run_owner(&mut session, &config, receiver, &notification, &failed);
+                         }
+                     }
+                     Err(error) => {
+@@ -250,15 +248,34 @@ impl ComputeOwner {
+                     }
+                 }
+             })
+-            .context("start resident compute owner")?;
++            .context("start resident compute owner");
++        let worker = match worker {
++            Ok(worker) => worker,
++            Err(error) => {
++                if let Some(integer) = integer {
++                    let _ = integer.shutdown();
++                }
++                return Err(error);
++            }
++        };
+         match ready_rx.recv() {
+-            Ok(Ok(())) => Ok(Self { sender, worker }),
++            Ok(Ok(())) => Ok(Self {
++                sender,
++                worker,
++                integer,
++            }),
+             Ok(Err(error)) => {
+                 let _ = worker.join();
++                if let Some(integer) = integer {
++                    let _ = integer.shutdown();
++                }
+                 Err(error.context("initialize resident compute owner"))
+             }
+             Err(error) => {
+                 let _ = worker.join();
++                if let Some(integer) = integer {
++                    let _ = integer.shutdown();
++                }
+                 Err(error).context("compute owner failed during initialization")
+             }
+         }
+@@ -291,7 +308,11 @@ impl ComputeOwner {
+         input: NovCapturedInput,
+     ) -> Result<Submission<NovCapturedInput, ComputedCandidate>> {
+         let (reply, receiver) = mpsc::channel();
+-        match self.sender.try_send(Command::Execute {
++        let sender = self
++            .integer
++            .as_ref()
++            .map_or(&self.sender, |lane| &lane.sender);
++        match sender.try_send(Command::Execute {
+             queued: profile::mark(),
+             input: Box::new(input),
+             reply,
+@@ -328,9 +349,11 @@ impl ComputeOwner {
+     /// detaches the thread; it does not block control or cancel accepted work.
+     pub(crate) fn shutdown(self) -> Result<()> {
+         drop(self.sender);
+-        self.worker
+-            .join()
+-            .map_err(|_| anyhow::anyhow!("compute owner panicked"))
++        let cpu = self.worker.join();
++        let integer = self.integer.map(lanes::IntegerLane::shutdown).transpose();
++        cpu.map_err(|_| anyhow::anyhow!("compute owner panicked"))?;
++        integer?;
++        Ok(())
+     }
+ }
+ 
+@@ -395,7 +418,6 @@ fn authenticate(
+ 
+ fn execute(
+     session: &mut ComputeSession,
+-    integers: &mut Option<ResidentTransferResources>,
+     config: &ComputeConfig,
+     input: NovCapturedInput,
+ ) -> Result<ComputedCandidate> {
+@@ -406,12 +428,14 @@ fn execute(
+         );
+         input.finalize_capture()?
+     };
+-    let executed = match integers {
+-        Some(resources) => {
+-            input.execute_with_integer_resources(session, resources, config.timeout)?
+-        }
+-        None => input.execute(session, config.timeout)?,
+-    };
++    let executed = input.execute(session, config.timeout)?;
++    packet(config, executed)
++}
++
++fn packet(
++    config: &ComputeConfig,
++    executed: crate::native_pipeline::business::nov_transfer_batch::ExecutedNovBatch,
++) -> Result<ComputedCandidate> {
+     let observation = *executed.observation();
+     let _span =
+         crate::native_pipeline::profile::span(crate::native_pipeline::profile::Phase::Packet);
+@@ -426,13 +450,13 @@ fn execute(
+ 
+ fn run_owner(
+     session: &mut ComputeSession,
+-    integers: &mut Option<ResidentTransferResources>,
+     config: &ComputeConfig,
+-    receiver: mpsc::Receiver<Command>,
++    receiver: mpsc::Receiver<lanes::Queued>,
+     notification: &Notification,
++    failed: &AtomicBool,
+ ) {
+-    let mut panicked = false;
+-    while let Ok(command) = receiver.recv() {
++    while let Ok(queued) = receiver.recv() {
++        let command = queued.into_command();
+         match command {
+             Command::Admission {
+                 queued,
+@@ -443,7 +467,7 @@ fn run_owner(
+                 let _span = crate::native_pipeline::profile::span(
+                     crate::native_pipeline::profile::Phase::Admission,
+                 );
+-                let result = run_checked(&mut panicked, || {
++                let result = lanes::checked(failed, || {
+                     authenticate_admission_rows(
+                         session,
+                         config.domain.chain_id,
+@@ -460,7 +484,7 @@ fn run_owner(
+                 reply,
+             } => {
+                 profile::elapsed(profile::Phase::QueueCandidate, queued);
+-                let result = run_checked(&mut panicked, || authenticate(session, config, *request));
++                let result = lanes::checked(failed, || authenticate(session, config, *request));
+                 let _ = reply.send(result);
+             }
+             Command::Bind {
+@@ -472,7 +496,7 @@ fn run_owner(
+                 let _span = crate::native_pipeline::profile::span(
+                     crate::native_pipeline::profile::Phase::Bind,
+                 );
+-                let result = run_checked(&mut panicked, || {
++                let result = lanes::checked(failed, || {
+                     domain_matches(config.domain, &request.context)?;
+                     request.body.bind(request.context)
+                 });
+@@ -484,7 +508,7 @@ fn run_owner(
+                 reply,
+             } => {
+                 profile::elapsed(profile::Phase::QueueCandidate, queued);
+-                let result = run_checked(&mut panicked, || prepare(session, config, *request));
++                let result = lanes::checked(failed, || prepare(session, config, *request));
+                 let _ = reply.send(result);
+             }
+             Command::Execute {
+@@ -493,8 +517,7 @@ fn run_owner(
+                 reply,
+             } => {
+                 profile::elapsed(profile::Phase::QueueCandidate, queued);
+-                let result =
+-                    run_checked(&mut panicked, || execute(session, integers, config, *input));
++                let result = lanes::checked(failed, || execute(session, config, *input));
+                 let _ = reply.send(result);
+             }
+             #[cfg(test)]
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
+index 8c4b91c1..468605c4 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
+@@ -89,10 +89,12 @@ pub(crate) fn control_test_request(root: NodeHash) -> PrepareRequest {
+ 
+ #[test]
+ fn full_channel_returns_the_original_allocation_without_running_a_session() {
+-    let (sender, receiver) = mpsc::sync_channel(1);
++    let (sender, receiver) =
++        lanes::channel(lanes::Budget::new(1), Arc::new(AtomicBool::new(false)));
+     let owner = ComputeOwner {
+         sender,
+         worker: thread::spawn(|| {}),
++        integer: None,
+     };
+     let first = match owner.try_prepare(unverified_request(1)).unwrap() {
+         Submission::Accepted(ticket) => ticket,
+@@ -107,7 +109,8 @@ fn full_channel_returns_the_original_allocation_without_running_a_session() {
+     assert_eq!(retained.raw_transactions[0].as_ptr(), pointer);
+     assert_eq!(retained.raw_transactions, vec![vec![2; 64]]);
+     drop(first); // Notification loss does not remove the accepted command.
+-    let Command::Prepare { request, reply, .. } = receiver.try_recv().unwrap() else {
++    let Command::Prepare { request, reply, .. } = receiver.try_recv().unwrap().into_command()
++    else {
+         panic!("wrong accepted command")
+     };
+     assert_eq!(request.raw_transactions, vec![vec![1; 64]]);
+@@ -264,6 +267,109 @@ fn take_admitted<R, T>(
+     }
+ }
+ 
++fn bounded_take<T>(ticket: &mut ComputeTicket<T>) -> Result<T> {
++    let deadline = Instant::now() + Duration::from_secs(5);
++    loop {
++        if let Some(result) = ticket.try_take()? {
++            return Ok(result);
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "compute ticket did not progress independently"
++        );
++        thread::sleep(Duration::from_millis(1));
++    }
++}
++
++#[test]
++#[ignore = "requires real AOEM/Vulkan; held integer lane, real concurrent authentication and drain"]
++fn real_integer_lane_does_not_block_authentication_and_drains_accepted_work() -> Result<()> {
++    let cfg = crate::native_pipeline::pipeline::tests::config(PathBuf::from("unused-storage"));
++    let config = ComputeConfig {
++        library: std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
++            .context("explicit trusted AOEM required")?
++            .into(),
++        workers: cfg.workers,
++        execution_backend: super::super::ExecutionBackend::AoemIntegerV7,
++        queue_capacity: 2,
++        authentication: cfg.authentication,
++        plan: cfg.plan,
++        packet: cfg.store.packet_budget,
++        capture: cfg.capture,
++        timeout: cfg.compute_timeout,
++        domain: cfg.store.domain,
++    };
++    let owner = ComputeOwner::start(config, Some(thread::current()))?;
++    let mut changes = fee_record_changes(&policy(), &FeeState::default())?;
++    changes.push(StateChange::Put {
++        key: balance_key(&account(1)),
++        value: 10_000u128.to_le_bytes().to_vec(),
++    });
++    let update = stage_state_update(&Memory::default(), empty_root(), &changes)?;
++    let memory = Memory(update.nodes().clone());
++    let raw = signed(1, 100);
++    let request = || PrepareRequest {
++        raw_transactions: vec![raw.clone()].into(),
++        context: context(update.root()),
++        policy: policy(),
++    };
++    let first = capture(
++        take_admitted(request(), |r| owner.try_prepare(r))?.wait()?,
++        &memory,
++    )?;
++    let second = capture(
++        take_admitted(request(), |r| owner.try_prepare(r))?.wait()?,
++        &memory,
++    )?;
++    drop(memory);
++    let (entered, observed) = mpsc::channel();
++    let (release, held) = mpsc::channel();
++    ensure!(
++        owner
++            .integer
++            .as_ref()
++            .unwrap()
++            .sender
++            .try_send(Command::Hold {
++                entered,
++                release: held
++            })
++            .is_ok(),
++        "hold admission failed"
++    );
++    observed.recv_timeout(Duration::from_secs(5))?;
++    let mut execution = take_admitted(first, |r| owner.try_execute(r))?;
++    let mut auth = take_admitted(vec![AdmissionInput::Raw(raw.clone())], |r| {
++        owner.try_admit_signatures(r)
++    })?;
++    let admitted = bounded_take(&mut auth)?;
++    assert_eq!(admitted.rows.len(), 1);
++    assert!(admitted.rows[0].result.is_ok());
++    assert!(admitted.peak_callbacks > 0); // Actual AOEM worker, not fabricated ACK.
++    let mut bad = raw;
++    *bad.last_mut().unwrap() ^= 1;
++    let mut rejected = take_admitted(vec![AdmissionInput::Raw(bad)], |r| {
++        owner.try_admit_signatures(r)
++    })?;
++    assert!(bounded_take(&mut rejected)?.rows[0].result.is_err());
++    assert!(
++        execution.try_take()?.is_none(),
++        "held integer lane unexpectedly ran"
++    );
++    release.send(())?;
++    let first = bounded_take(&mut execution)?;
++    let second = take_admitted(second, |r| owner.try_execute(r))?;
++    owner.shutdown()?; // Accepted work is drained, even before taking its reply.
++    let second = second.wait()?;
++    assert_eq!(first.packet.records(), second.packet.records());
++    assert_eq!(first.packet.state_root(), second.packet.state_root());
++    assert_eq!(
++        first.packet.statement_commitment(),
++        second.packet.statement_commitment()
++    );
++    Ok(())
++}
++
+ fn capture(plan: NovTransferPlan, memory: &Memory) -> Result<NovCapturedInput> {
+     let mut capture = plan.begin_capture(CaptureBudget {
+         keys: 4096,
+diff --git a/crates/novovm-relay/src/rendezvous_self_owned_owner.rs b/crates/novovm-relay/src/rendezvous_self_owned_owner.rs
+index 0644b1c5..8a0aaa08 100644
+--- a/crates/novovm-relay/src/rendezvous_self_owned_owner.rs
++++ b/crates/novovm-relay/src/rendezvous_self_owned_owner.rs
+@@ -252,16 +252,21 @@ impl Owner {
+             ensure!(!mailbox_path.try_exists()?, "unrecognized mailbox storage");
+             create(&mailbox_started, b"NOVONET shared mailbox v1")?;
+         }
+-        let mailbox = Arc::new(novovm_network::mailbox_rpc::MailboxServiceV1::new(
+-            novovm_network::mailbox_store::MailboxStore::open(&mailbox_path, Default::default())?,
+-            key.clone(),
+-        )
+-        // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
+-        // conservative mobile default (2 requests/s for the entire node) makes
+-        // those lanes queue behind one another even on healthy connections.
+-        // This remains one shared budget; reconnecting cannot replenish it.
+-        // Keep storage, byte quotas and connection bounds unchanged.
+-        .with_continuous_request_rate_v4(64, 32)?);
++        let mailbox = Arc::new(
++            novovm_network::mailbox_rpc::MailboxServiceV1::new(
++                novovm_network::mailbox_store::MailboxStore::open(
++                    &mailbox_path,
++                    Default::default(),
++                )?,
++                key.clone(),
++            )
++            // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
++            // conservative mobile default (2 requests/s for the entire node) makes
++            // those lanes queue behind one another even on healthy connections.
++            // This remains one shared budget; reconnecting cannot replenish it.
++            // Keep storage, byte quotas and connection bounds unchanged.
++            .with_continuous_request_rate_v4(64, 32)?,
++        );
+         let result = run_self_owned_node_v1(carrier, key, config.allowed_clients.clone(), stop,Some(mailbox),
+             move |endpoint, expires| {
+                 let path = self.policy.config.root.join("service.journal");

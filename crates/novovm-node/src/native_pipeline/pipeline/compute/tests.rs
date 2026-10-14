@@ -89,10 +89,12 @@ pub(crate) fn control_test_request(root: NodeHash) -> PrepareRequest {
 
 #[test]
 fn full_channel_returns_the_original_allocation_without_running_a_session() {
-    let (sender, receiver) = mpsc::sync_channel(1);
+    let (sender, receiver) =
+        lanes::channel(lanes::Budget::new(1), Arc::new(AtomicBool::new(false)));
     let owner = ComputeOwner {
         sender,
         worker: thread::spawn(|| {}),
+        integer: None,
     };
     let first = match owner.try_prepare(unverified_request(1)).unwrap() {
         Submission::Accepted(ticket) => ticket,
@@ -107,7 +109,8 @@ fn full_channel_returns_the_original_allocation_without_running_a_session() {
     assert_eq!(retained.raw_transactions[0].as_ptr(), pointer);
     assert_eq!(retained.raw_transactions, vec![vec![2; 64]]);
     drop(first); // Notification loss does not remove the accepted command.
-    let Command::Prepare { request, reply, .. } = receiver.try_recv().unwrap() else {
+    let Command::Prepare { request, reply, .. } = receiver.try_recv().unwrap().into_command()
+    else {
         panic!("wrong accepted command")
     };
     assert_eq!(request.raw_transactions, vec![vec![1; 64]]);
@@ -262,6 +265,109 @@ fn take_admitted<R, T>(
         }
         thread::sleep(Duration::from_millis(1));
     }
+}
+
+fn bounded_take<T>(ticket: &mut ComputeTicket<T>) -> Result<T> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(result) = ticket.try_take()? {
+            return Ok(result);
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "compute ticket did not progress independently"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+#[ignore = "requires real AOEM/Vulkan; held integer lane, real concurrent authentication and drain"]
+fn real_integer_lane_does_not_block_authentication_and_drains_accepted_work() -> Result<()> {
+    let cfg = crate::native_pipeline::pipeline::tests::config(PathBuf::from("unused-storage"));
+    let config = ComputeConfig {
+        library: std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .context("explicit trusted AOEM required")?
+            .into(),
+        workers: cfg.workers,
+        execution_backend: super::super::ExecutionBackend::AoemIntegerV7,
+        queue_capacity: 2,
+        authentication: cfg.authentication,
+        plan: cfg.plan,
+        packet: cfg.store.packet_budget,
+        capture: cfg.capture,
+        timeout: cfg.compute_timeout,
+        domain: cfg.store.domain,
+    };
+    let owner = ComputeOwner::start(config, Some(thread::current()))?;
+    let mut changes = fee_record_changes(&policy(), &FeeState::default())?;
+    changes.push(StateChange::Put {
+        key: balance_key(&account(1)),
+        value: 10_000u128.to_le_bytes().to_vec(),
+    });
+    let update = stage_state_update(&Memory::default(), empty_root(), &changes)?;
+    let memory = Memory(update.nodes().clone());
+    let raw = signed(1, 100);
+    let request = || PrepareRequest {
+        raw_transactions: vec![raw.clone()].into(),
+        context: context(update.root()),
+        policy: policy(),
+    };
+    let first = capture(
+        take_admitted(request(), |r| owner.try_prepare(r))?.wait()?,
+        &memory,
+    )?;
+    let second = capture(
+        take_admitted(request(), |r| owner.try_prepare(r))?.wait()?,
+        &memory,
+    )?;
+    drop(memory);
+    let (entered, observed) = mpsc::channel();
+    let (release, held) = mpsc::channel();
+    ensure!(
+        owner
+            .integer
+            .as_ref()
+            .unwrap()
+            .sender
+            .try_send(Command::Hold {
+                entered,
+                release: held
+            })
+            .is_ok(),
+        "hold admission failed"
+    );
+    observed.recv_timeout(Duration::from_secs(5))?;
+    let mut execution = take_admitted(first, |r| owner.try_execute(r))?;
+    let mut auth = take_admitted(vec![AdmissionInput::Raw(raw.clone())], |r| {
+        owner.try_admit_signatures(r)
+    })?;
+    let admitted = bounded_take(&mut auth)?;
+    assert_eq!(admitted.rows.len(), 1);
+    assert!(admitted.rows[0].result.is_ok());
+    assert!(admitted.peak_callbacks > 0); // Actual AOEM worker, not fabricated ACK.
+    let mut bad = raw;
+    *bad.last_mut().unwrap() ^= 1;
+    let mut rejected = take_admitted(vec![AdmissionInput::Raw(bad)], |r| {
+        owner.try_admit_signatures(r)
+    })?;
+    assert!(bounded_take(&mut rejected)?.rows[0].result.is_err());
+    assert!(
+        execution.try_take()?.is_none(),
+        "held integer lane unexpectedly ran"
+    );
+    release.send(())?;
+    let first = bounded_take(&mut execution)?;
+    let second = take_admitted(second, |r| owner.try_execute(r))?;
+    owner.shutdown()?; // Accepted work is drained, even before taking its reply.
+    let second = second.wait()?;
+    assert_eq!(first.packet.records(), second.packet.records());
+    assert_eq!(first.packet.state_root(), second.packet.state_root());
+    assert_eq!(
+        first.packet.statement_commitment(),
+        second.packet.statement_commitment()
+    );
+    Ok(())
 }
 
 fn capture(plan: NovTransferPlan, memory: &Memory) -> Result<NovCapturedInput> {

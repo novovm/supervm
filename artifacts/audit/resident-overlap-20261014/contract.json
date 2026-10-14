@@ -1,0 +1,10 @@
+{
+  "source": "0f7babce",
+  "sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "formal_order": ["baseline-integer-1", "candidate-integer-1", "baseline-cpu-1", "candidate-cpu-1", "candidate-integer-2", "baseline-integer-2", "candidate-cpu-2", "baseline-cpu-2"],
+  "load": "AC Windows, four original nodes/stores on one 5090, single RPC, 65536 signed, 1024 payers x 64 nonce/shared recipient, candidate 1024, inflight 8192",
+  "completion": "All four final successful receipt HTTP responses; economics/history/cold recovery unchanged",
+  "formal_profile_stages": false,
+  "scope": "Existing CPU session and integer resource context on two fixed lanes under the same ComputeOwner; shared queue cap, lifecycle and original admission permits. No extra native context, executor, GPU algorithm or SDK change.",
+  "decision": "Keep all rounds, total successful / total elapsed, no best-of. Diagnose separately. Do not claim stable improvement from opposite-direction pairs or GPU kernel speedup from host overlap. Regressions must not be hidden by changing load/window/finality."
+}
