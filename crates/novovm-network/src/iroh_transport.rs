@@ -1647,6 +1647,76 @@ impl<'scope> IrohStreamV1<'scope> {
         Ok(())
     }
 
+    /// NVMBOX06 marks a completed authenticated exchange idle. This must run
+    /// before its original deadline; an expired/failed operation is never revived.
+    /// Ordinary framed IO still requires a finite deadline and cannot run idle.
+    pub(crate) fn complete_service_request_v6(&mut self) -> Result<()> {
+        self.check()?;
+        ensure!(
+            self.continuous_service
+                && !self.finished
+                && !self.handed_off
+                && self.io_control.deadline.is_some(),
+            "service idle outside completed request"
+        );
+        self.io_control.deadline = None;
+        Ok(())
+    }
+
+    pub(crate) fn service_request_deadline_v6(&self) -> Result<Instant> {
+        self.check()?;
+        ensure!(self.continuous_service, "service request outside session");
+        self.io_control.io_deadline()
+    }
+
+    /// Wait for the first byte of an authenticated service's next request.
+    /// Idle retains live owner checks and the existing connection/stream slots.
+    /// First byte starts ONE 30s budget for all framing and service execution;
+    /// partial frames, cancellation and revocation remain terminal.
+    pub(crate) async fn read_idle_service_frame_v6(&mut self) -> Result<Vec<u8>> {
+        self.check()?;
+        ensure!(
+            self.continuous_service
+                && self.io_control.deadline.is_none()
+                && !self.finished
+                && !self.handed_off,
+            "service read outside idle boundary"
+        );
+        let mut guard = FrameIoGuard {
+            connection: &self.connection,
+            failed: &self.failed,
+            complete: false,
+        };
+        let mut length = [0u8; 4];
+        tokio::select! {
+            biased;
+            error = self.io_control.revoked() => return Err(error),
+            result = self.recv.read_exact(&mut length[..1]) => {
+                result.map_err(|error| IrohStreamIoFailureV1(error.into()))?;
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        self.io_control.deadline = Some(deadline);
+        check_frame_io(&self.io_control, &self.connection, &self.failed)?;
+        tokio::time::timeout_at(deadline.into(), self.recv.read_exact(&mut length[1..]))
+            .await
+            .map_err(|_| IrohFrameDeadlineV1(()))?
+            .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
+        let length = u32::from_be_bytes(length) as usize;
+        ensure!(
+            length > 0 && length <= IROH_MAX_FRAME_V1,
+            "carrier frame limit"
+        );
+        let mut bytes = vec![0; length];
+        tokio::time::timeout_at(deadline.into(), self.recv.read_exact(&mut bytes))
+            .await
+            .map_err(|_| IrohFrameDeadlineV1(()))?
+            .map_err(|error| IrohStreamIoFailureV1(error.into()))?;
+        check_frame_io(&self.io_control, &self.connection, &self.failed)?;
+        guard.complete = true;
+        Ok(bytes)
+    }
+
     /// Internal admission seam, used only AFTER the selected service verifies
     /// Finished and its BeginSession. The deadline is derived once from the
     /// already issued lease, never renewed by activity. Outbound/finite scopes,
@@ -3193,6 +3263,14 @@ mod tests {
                     stream.begin_service_request_v4().is_err(),
                     "finite IO deadline reset"
                 );
+                ensure!(
+                    stream.complete_service_request_v6().is_err(),
+                    "finite scope gained idle authority"
+                );
+                ensure!(
+                    stream.read_idle_service_frame_v6().await.is_err(),
+                    "finite scope gained unbounded receive"
+                );
                 let binding = stream.binding_material()?;
                 let _proof = stream.binding()?;
                 // Transport-only test bytes; no application identity or access
@@ -3880,3 +3958,7 @@ mod tests {
         b.unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "iroh_idle_tests.rs"]
+mod idle_tests;

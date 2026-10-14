@@ -639,13 +639,25 @@ async fn receive<T: serde::de::DeserializeOwned>(
     channel: &mut BoundSecureChannelV1,
     received: &mut u64,
 ) -> Result<T> {
+    receive_with_first(stream, channel, received, None).await
+}
+async fn receive_with_first<T: serde::de::DeserializeOwned>(
+    stream: &mut CarrierStreamV1<'_>,
+    channel: &mut BoundSecureChannelV1,
+    received: &mut u64,
+    mut first: Option<Vec<u8>>,
+) -> Result<T> {
     let mut body = Zeroizing::new(Vec::new());
     let mut total = 0;
     for chunk in 0..MAX_WIRE.div_ceil(CHUNK) {
         let sequence = received
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("mailbox sequence exhausted"))?;
-        let envelope = decode_iroh_envelope_v1(&stream.read_frame().await?)?;
+        let bytes = match first.take() {
+            Some(bytes) => bytes,
+            None => stream.read_frame().await?,
+        };
+        let envelope = decode_iroh_envelope_v1(&bytes)?;
         ensure!(envelope.sequence == sequence, "mailbox sequence");
         let mut frame = channel.open_novorudp_frame(&envelope)?;
         let result = (|| {
@@ -824,6 +836,9 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
         if continuous {
             session.stream.admit_continuous_service_v4()?;
             session.continuous = true;
+            if prefetch {
+                session.stream.complete_service_request_v6()?;
+            }
         }
         Ok(session)
     }
@@ -877,9 +892,13 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
             self.stream.begin_service_request_v4()?;
         }
         self.stream.selected_path()?;
+        let ending = matches!(&request, MailboxRequestV1::EndSession);
         send(self.stream, &mut self.channel, &request, &mut self.sent).await?;
         let reply = receive(self.stream, &mut self.channel, &mut self.received).await?;
         self.stream.selected_path()?;
+        if self.continuous && self.prefetch && !ending {
+            self.stream.complete_service_request_v6()?;
+        }
         self.poisoned = false;
         Ok(reply)
     }
@@ -1179,15 +1198,29 @@ async fn serve_session(
         .await?;
         let mut index = 0;
         loop {
-            // Each request keeps the old 30s maximum IO budget, including its
-            // bounded Watch and durable work. Activity cannot slide the window.
-            let done = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            // V6 separates idle from request IO; all remaining chunks, quota
+            // waiting, durable work and reply share the first-byte deadline.
+            // V1-V5 retain their original bounded lifecycle.
+            let first = if prefetch {
+                stream.complete_service_request_v6()?;
+                Some(stream.read_idle_service_frame_v6().await?)
+            } else {
+                None
+            };
+            let deadline = if prefetch {
+                stream.service_request_deadline_v6()?
+            } else {
+                std::time::Instant::now() + std::time::Duration::from_secs(30)
+            };
+            let done = tokio::time::timeout_at(deadline.into(), async {
                 if continuous {
-                    stream.begin_service_request_v4()?;
+                    if !prefetch {
+                        stream.begin_service_request_v4()?;
+                    }
                     service.admit_request_v4().await?;
                 }
                 let request: MailboxRequestV1 =
-                    receive(stream, &mut channel, &mut received).await?;
+                    receive_with_first(stream, &mut channel, &mut received, first).await?;
                 authority()?;
                 stream.selected_path()?;
                 if matches!(&request, MailboxRequestV1::EndSession) {
@@ -1879,3 +1912,7 @@ mod prefetch_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "mailbox_idle_tests.rs"]
+mod idle_tests;

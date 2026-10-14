@@ -123,6 +123,33 @@ impl CarrierStreamV1<'_> {
     }
 
     #[cfg(feature = "iroh-transport")]
+    pub(crate) fn complete_service_request_v6(&mut self) -> anyhow::Result<()> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => stream.complete_service_request_v6(),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no continuous idle service"),
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn service_request_deadline_v6(&mut self) -> anyhow::Result<std::time::Instant> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => stream.service_request_deadline_v6(),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no continuous idle service"),
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) async fn read_idle_service_frame_v6(&mut self) -> anyhow::Result<Vec<u8>> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => stream.read_idle_service_frame_v6().await,
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no continuous idle service"),
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn admit_service_window(
         &mut self,
         deadline: std::time::Instant,

@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 continuous mailbox idle lifecycle (claim released):** input f0a73d7b.
+NVMBOX06 now distinguishes authenticated idle from a bounded active request;
+first incoming byte starts the original 30s frame/chunk/work/reply budget.
+V1-V5 remain finite. Four real QUIC idle tests, 13 mailbox regressions and strict
+Clippy pass. Finite-scope test first timed out, unchanged repeat passed: not a
+long-run stability claim. Android idle-then-send remains pending downstream.
+No protocol wire, identity, quota, financial/runtime/AOEM changes. See tracker.
+
 **2026-10-14 CPU资源预算归因（有限核对完成，认领释放）：** 输入cd0f0932；
 同一旧库16a303d0/节点81da4509，24-worker两轮8238/10205，6-worker8441/8096。
 合并9117→8265，减少worker无稳定收益，不改默认。产品workers=4实际只控制

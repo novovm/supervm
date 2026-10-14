@@ -602,3 +602,25 @@ Android 的系统网络代次还须传入长期端点：`IrohEndpointOwnerV1::ne
 均不能变成截止事实。上层仍须结束旧任务，再按原总许可、身份和 Privacy
 授权新的操作，不能延长旧 scope。本片真实短 scope 和安全负例通过，不据此
 宣称手机连续恢复已签收。
+
+
+## 2026-10-15 NVMBOX06 idle connection versus active request
+
+A successfully authenticated and completed V6 exchange transitions to idle.
+Idle is not an active resource operation or an expired permission: it retains
+node connection/stream limits, live local authority and existing QUIC keepalive.
+Only the next request's first byte starts the unchanged 30-second deadline for
+header, body chunks, admission wait, durable execution and response. Chunks do
+not reset it. A cancelled/partial/expired frame still poisons the original stream;
+an expired operation cannot call the completed-exchange transition to revive it.
+
+The wire selector, secure channel, signatures, sequence numbers, capabilities,
+StoreReceipt, TTL and device receipt are unchanged. V1-V5 keep their existing
+finite behavior. This is an explicit V6 implementation lifecycle correction,
+not a new transport, periodic license, fake heartbeat or longer retry window.
+Old V6 servers can still close idle connections; interoperability does not prove
+that a mixed deployment has the corrected idle behavior. L4 hosts and clients
+must both contain this correction for idle-then-send acceptance.
+
+Tests and Android evidence are tracked in NOVOVM_PRODUCTION_READINESS_TRACKER.md;
+implementation alone is not low-latency or autonomous-routing acceptance.
