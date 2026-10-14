@@ -553,12 +553,30 @@ impl MailboxStore {
         read: &Capability,
         now: i64,
     ) -> Result<Vec<StoredEnvelope>, StoreError> {
+        self.fetch_bounded(id, read, now, 32)
+    }
+    /// One retained object for a wire response; avoid allocating 32 payloads.
+    pub fn fetch_one(
+        &mut self,
+        id: &Id,
+        read: &Capability,
+        now: i64,
+    ) -> Result<Option<StoredEnvelope>, StoreError> {
+        Ok(self.fetch_bounded(id, read, now, 1)?.into_iter().next())
+    }
+    fn fetch_bounded(
+        &mut self,
+        id: &Id,
+        read: &Capability,
+        now: i64,
+        limit: u8,
+    ) -> Result<Vec<StoredEnvelope>, StoreError> {
         let tx = self.begin(now)?;
         authorize(&tx, id, read, false, now)?;
         let rows = {
-            let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 ORDER BY expires,id LIMIT 32")?;
+            let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 ORDER BY expires,id LIMIT ?3")?;
             let result = statement
-                .query_map(params![id, now], |r| {
+                .query_map(params![id, now, limit], |r| {
                     Ok(StoredEnvelope {
                         id: r.get(0)?,
                         ciphertext: r.get(1)?,

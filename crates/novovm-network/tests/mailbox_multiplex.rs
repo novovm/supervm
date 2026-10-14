@@ -32,6 +32,13 @@ impl Drop for Stop {
 
 #[tokio::test]
 async fn three_clients_six_authenticated_lanes_share_three_connections() -> Result<()> {
+    three_clients(false).await
+}
+#[tokio::test]
+async fn v6_pushes_retained_ciphertext_on_authenticated_notification_lane() -> Result<()> {
+    three_clients(true).await
+}
+async fn three_clients(prefetch: bool) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let journal = dir.path().join("authority.bin");
     let service = Arc::new(MailboxServiceV1::new(
@@ -97,24 +104,46 @@ async fn three_clients_six_authenticated_lanes_share_three_connections() -> Resu
                             Box::pin(async move {
                                 let mut operation: CarrierStreamV1<'_> =
                                     scope.connect(&address).await?.into();
-                                let connection =
-                                    request_mailbox_multiplex_v5(&mut operation).await?;
+                                let connection = if prefetch {
+                                    request_mailbox_multiplex_v6(&mut operation).await?
+                                } else {
+                                    request_mailbox_multiplex_v5(&mut operation).await?
+                                };
                                 let mut notification = connection.open().await?;
-                                request_mailbox_multiplex_lane_v5(&mut notification).await?;
+                                if prefetch {
+                                    request_mailbox_multiplex_lane_v6(&mut notification).await?;
+                                } else {
+                                    request_mailbox_multiplex_lane_v5(&mut notification).await?;
+                                }
                                 let identity = key(n);
                                 let pin = key(1).verifying_key().to_bytes();
-                                let (mut op, mut notify) = tokio::try_join!(
-                                    MailboxClientSessionV2::begin_continuous_v4(
-                                        &mut operation,
-                                        &identity,
-                                        pin
-                                    ),
-                                    MailboxClientSessionV2::begin_continuous_v4(
-                                        &mut notification,
-                                        &identity,
-                                        pin
-                                    ),
-                                )?;
+                                let (mut op, mut notify) = if prefetch {
+                                    tokio::try_join!(
+                                        MailboxClientSessionV2::begin_continuous_v6(
+                                            &mut operation,
+                                            &identity,
+                                            pin
+                                        ),
+                                        MailboxClientSessionV2::begin_continuous_v6(
+                                            &mut notification,
+                                            &identity,
+                                            pin
+                                        )
+                                    )?
+                                } else {
+                                    tokio::try_join!(
+                                        MailboxClientSessionV2::begin_continuous_v4(
+                                            &mut operation,
+                                            &identity,
+                                            pin
+                                        ),
+                                        MailboxClientSessionV2::begin_continuous_v4(
+                                            &mut notification,
+                                            &identity,
+                                            pin
+                                        )
+                                    )?
+                                };
                                 // All SIX independently authenticated sessions must coexist.
                                 barrier.wait().await;
                                 let grant = MailboxGrant::generate()?;
@@ -163,12 +192,40 @@ async fn three_clients_six_authenticated_lanes_share_three_connections() -> Resu
                                     Ok::<_, anyhow::Error>(())
                                 };
                                 let notice = async {
-                                    match notify.request(watch(Some(before), 10_000)).await? {
-                                        MailboxReplyV1::Notice(items) => ensure!(
+                                    let request = if prefetch {
+                                        MailboxRequestV1::WatchFetchV6 {
+                                            boxes: vec![MailboxWatchV1 {
+                                                mailbox: grant.id,
+                                                read: *grant.read.as_bytes(),
+                                                after: Some(before),
+                                            }],
+                                            wait_ms: 10_000,
+                                        }
+                                    } else {
+                                        watch(Some(before), 10_000)
+                                    };
+                                    match notify.request(request).await? {
+                                        MailboxReplyV1::Notice(items) if !prefetch => ensure!(
                                             items.len() == 1
                                                 && items[0].pending
                                                 && items[0].cursor != before
                                         ),
+                                        MailboxReplyV1::NoticeObjectV6 {
+                                            notices,
+                                            object: Some(object),
+                                        } if prefetch => {
+                                            ensure!(
+                                                notices.len() == 1
+                                                    && notices[0].pending
+                                                    && notices[0].cursor != before
+                                            );
+                                            ensure!(
+                                                object.box_index == 0
+                                                    && object.object == [n; 32]
+                                                    && object.ciphertext == data
+                                                    && object.expires == expires
+                                            );
+                                        }
                                         _ => anyhow::bail!("notification missing"),
                                     }
                                     Ok::<_, anyhow::Error>(())
@@ -244,6 +301,13 @@ async fn three_clients_six_authenticated_lanes_share_three_connections() -> Resu
 
 #[tokio::test]
 async fn multiplex_rejects_legacy_finite_bad_child_identity_and_revocation() -> Result<()> {
+    negative(false).await
+}
+#[tokio::test]
+async fn v6_rejects_legacy_finite_bad_child_identity_and_revocation() -> Result<()> {
+    negative(true).await
+}
+async fn negative(prefetch: bool) -> Result<()> {
     for case in [
         "legacy",
         "finite",
@@ -284,18 +348,39 @@ async fn multiplex_rejects_legacy_finite_bad_child_identity_and_revocation() -> 
                             || Ok(()),
                         )
                         .await?;
-                        ensure!(kind == NodeServiceV1::MailboxMultiplex);
-                        serve_mailbox_multiplex_v5(
-                            stream,
-                            &key(1),
-                            &[key(2).verifying_key().to_bytes()],
-                            &service,
-                            || {
-                                ensure!(check.load(Ordering::Acquire), "fixture revoked");
-                                Ok(())
-                            },
-                        )
-                        .await
+                        ensure!(
+                            kind == if prefetch {
+                                NodeServiceV1::MailboxPrefetch
+                            } else {
+                                NodeServiceV1::MailboxMultiplex
+                            }
+                        );
+                        let pins = [key(2).verifying_key().to_bytes()];
+                        let policy =
+                            novovm_network::bound_session::ServicePeerPolicyV1::Pinned(&pins);
+                        let check = || {
+                            ensure!(check.load(Ordering::Acquire), "fixture revoked");
+                            Ok(())
+                        };
+                        if prefetch {
+                            serve_mailbox_multiplex_with_policy_v6(
+                                stream,
+                                &key(1),
+                                policy,
+                                &service,
+                                check,
+                            )
+                            .await
+                        } else {
+                            serve_mailbox_multiplex_with_policy_v5(
+                                stream,
+                                &key(1),
+                                policy,
+                                &service,
+                                check,
+                            )
+                            .await
+                        }
                     };
                     // Preserve the listener while the client observes its terminal error.
                     let _ = wait_done.await;
@@ -308,12 +393,17 @@ async fn multiplex_rejects_legacy_finite_bad_child_identity_and_revocation() -> 
         async fn operation(
             scope: &IrohScopeV1,
             case: &'static str,
+            prefetch: bool,
             rx: tokio::sync::oneshot::Receiver<IrohAddressV1>,
             done: tokio::sync::oneshot::Sender<()>,
             allowed: Arc<AtomicBool>,
         ) -> Result<()> {
             let mut root: CarrierStreamV1<'_> = scope.connect(&rx.await?).await?.into();
-            let connection = request_mailbox_multiplex_v5(&mut root).await;
+            let connection = if prefetch {
+                request_mailbox_multiplex_v6(&mut root).await
+            } else {
+                request_mailbox_multiplex_v5(&mut root).await
+            };
             if matches!(case, "legacy" | "finite") {
                 ensure!(connection.is_err(), "old or finite scope gained multiplex");
                 drop(connection);
@@ -324,8 +414,11 @@ async fn multiplex_rejects_legacy_finite_bad_child_identity_and_revocation() -> 
             let connection = connection?;
             let identity = key(2);
             let pin = key(1).verifying_key().to_bytes();
-            let mut op =
-                MailboxClientSessionV2::begin_continuous_v4(&mut root, &identity, pin).await?;
+            let mut op = if prefetch {
+                MailboxClientSessionV2::begin_continuous_v6(&mut root, &identity, pin).await?
+            } else {
+                MailboxClientSessionV2::begin_continuous_v4(&mut root, &identity, pin).await?
+            };
             let mut child = connection.open().await?;
             if case == "child_version" {
                 ensure!(
@@ -333,19 +426,32 @@ async fn multiplex_rejects_legacy_finite_bad_child_identity_and_revocation() -> 
                     "child silently downgraded"
                 );
             } else {
-                request_mailbox_multiplex_lane_v5(&mut child).await?;
+                if prefetch {
+                    request_mailbox_multiplex_lane_v6(&mut child).await?;
+                } else {
+                    request_mailbox_multiplex_lane_v5(&mut child).await?;
+                }
                 let child_identity = key(if case == "child_identity" { 3 } else { 2 });
                 let child_pin = if case == "child_pin" {
                     key(4).verifying_key().to_bytes()
                 } else {
                     pin
                 };
-                let session = MailboxClientSessionV2::begin_continuous_v4(
-                    &mut child,
-                    &child_identity,
-                    child_pin,
-                )
-                .await;
+                let session = if prefetch {
+                    MailboxClientSessionV2::begin_continuous_v6(
+                        &mut child,
+                        &child_identity,
+                        child_pin,
+                    )
+                    .await
+                } else {
+                    MailboxClientSessionV2::begin_continuous_v4(
+                        &mut child,
+                        &child_identity,
+                        child_pin,
+                    )
+                    .await
+                };
                 if matches!(case, "child_identity" | "child_pin") {
                     ensure!(session.is_err(), "child borrowed root identity");
                 } else {
@@ -418,14 +524,14 @@ async fn multiplex_rejects_legacy_finite_bad_child_identity_and_revocation() -> 
                 owner
                     .with_operation(
                         IrohControlV1::new(Instant::now() + Duration::from_secs(10), || Ok(()))?,
-                        move |scope| Box::pin(operation(scope, case, rx, done, allowed)),
+                        move |scope| Box::pin(operation(scope, case, prefetch, rx, done, allowed)),
                     )
                     .await
             } else {
                 owner
                     .with_continuous_service_v4(
                         || Ok(()),
-                        move |scope| Box::pin(operation(scope, case, rx, done, allowed)),
+                        move |scope| Box::pin(operation(scope, case, prefetch, rx, done, allowed)),
                     )
                     .await
             }

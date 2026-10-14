@@ -50,6 +50,29 @@ u128、单入口失败与重启、实际A/A/B（14.68秒）、离线隔离/追�
 后继修复回归3.31s通过。只移除试验candidate.dll和专用composition.spv，历史
 实现和全部证据可保留复用，未删除运行数据。详见同目录restored-binary.json。
 
+## 2026-10-14 NVMBOX06 有界密文通知与 Android 实测
+
+通讯实现 4af93ea6，合并主线 f4ebf9f3 保留其他机器计算工作且通讯输入树不变。
+原 Mailbox 的持续操作/通知流显式协商 V6，WatchFetch 最多附带一个 64KiB 密文，
+验证全部能力/游标后通过原 store.fetch_one 读取，通知不删除对象、不冒充送达。
+V5 保留且拒绝 V6 操作；重启/丢通知后仍可 Fetch，TTL、逐信箱 Consume 和撤销保持。
+11 项共享单测及4项真实QUIC多流/拒绝回归通过，NOVOCHAT 7项客户端回归、严格
+Clippy、25项工具检查通过。release 构建3m14s，原Windows托管节点同身份升级，
+两部原正式安装覆盖新APK并核对完整哈希，无清数据/改邀请/ADB业务隧道。
+
+普通输入框9033–9036四条双向消息取得持久设备回执，均实际使用通知附带对象。
+Put→收件持久Inbox有界投影约1.55–1.65/1.00–1.10/2.37–2.47/1.77–1.88秒；
+Put→发送方DeviceReceipt为3027/2449/4479/4064ms。不是UI首绘或P95，仍未达到
+300ms/整体即时性。Wi-Fi direct，蜂窝经 euc1-1 外部Iroh Relay；当前路径平滑RTT
+重复观测 direct90次均值10.146ms，relay83次均值893.954ms、最大1323.103ms。
+节点Put/Fetch/Consume最大48.229/16.102/17.555ms，准入无等待。省去首对象Fetch
+不等于无后续空查，更不能把外部Relay算成自主传输或低延迟通过。
+
+原始证据：artifacts/watch-fetch-{unit,multiplex}-tests.log、watch-fetch-release-build.log、
+node-watch-fetch-vsix-deployment.json、node-watch-fetch-metrics-final.json；客户端
+完整样本/时钟边界见 NOVOCHAT 的 AUTOMATIC_RECOVERY.md 最新记录。下一片在原
+Application owner 接 Android L4 服务；通用协议保持，不改金融/AOEM/共识。
+
 ## 2026-10-14 完整计划行块实测：不调整生产默认
 
 输入577ab6f6，已快进保留通讯更新。沿原node的完整费用计划、exec统一入口和
