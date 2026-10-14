@@ -1,0 +1,1261 @@
+{
+  "input_commit": "577ab6f6",
+  "sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "scope": "Single-resource complete-plan experiment, two fixed fixtures, original unified binary path. Warmup before every measured execution; creation, compilation, consensus and persistence outside timing.",
+  "outputs_equal": true,
+  "production_tile_changed": false,
+  "production_tps_measured": false,
+  "static_counts_are_not_executed_dispatch_counts": true,
+  "groups": [
+    {
+      "diverse": false,
+      "tile": 32,
+      "elapsed_us": [
+        45059,
+        43437
+      ],
+      "mean_us": 44248,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 242,
+        "padded_rows_upper_bound": 7682,
+        "resource_rows": [
+          32,
+          32,
+          1,
+          1,
+          32,
+          1,
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "tile": 64,
+      "elapsed_us": [
+        33212,
+        34539
+      ],
+      "mean_us": 33875.5,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 140,
+        "padded_rows_upper_bound": 8834,
+        "resource_rows": [
+          64,
+          64,
+          1,
+          1,
+          64,
+          1,
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "tile": 128,
+      "elapsed_us": [
+        30442,
+        27717
+      ],
+      "mean_us": 29079.5,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 90,
+        "padded_rows_upper_bound": 11266,
+        "resource_rows": [
+          128,
+          128,
+          1,
+          1,
+          128,
+          1,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "tile": 256,
+      "elapsed_us": [
+        33213,
+        34567
+      ],
+      "mean_us": 33890,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 64,
+        "padded_rows_upper_bound": 15874,
+        "resource_rows": [
+          256,
+          256,
+          1,
+          1,
+          256,
+          1,
+          256,
+          256
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "tile": 512,
+      "elapsed_us": [
+        45203,
+        45630
+      ],
+      "mean_us": 45416.5,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 53,
+        "padded_rows_upper_bound": 26114,
+        "resource_rows": [
+          512,
+          512,
+          1,
+          1,
+          512,
+          1,
+          512,
+          512
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "tile": 1024,
+      "elapsed_us": [
+        87711,
+        87946
+      ],
+      "mean_us": 87828.5,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 50,
+        "padded_rows_upper_bound": 49154,
+        "resource_rows": [
+          1024,
+          1024,
+          1,
+          1,
+          1024,
+          1,
+          1024,
+          1024
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "tile": 32,
+      "elapsed_us": [
+        134786,
+        126931
+      ],
+      "mean_us": 130858.5,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 672,
+        "padded_rows_upper_bound": 21380,
+        "resource_rows": [
+          32,
+          32,
+          1,
+          1,
+          32,
+          1,
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "tile": 64,
+      "elapsed_us": [
+        87749,
+        91412
+      ],
+      "mean_us": 89580.5,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 352,
+        "padded_rows_upper_bound": 22276,
+        "resource_rows": [
+          64,
+          64,
+          1,
+          1,
+          64,
+          1,
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "tile": 128,
+      "elapsed_us": [
+        82218,
+        75454
+      ],
+      "mean_us": 78836,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 193,
+        "padded_rows_upper_bound": 24196,
+        "resource_rows": [
+          128,
+          128,
+          1,
+          1,
+          128,
+          1,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "tile": 256,
+      "elapsed_us": [
+        77429,
+        66798
+      ],
+      "mean_us": 72113.5,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 114,
+        "padded_rows_upper_bound": 28164,
+        "resource_rows": [
+          256,
+          256,
+          1,
+          1,
+          256,
+          1,
+          256,
+          256
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "tile": 512,
+      "elapsed_us": [
+        80630,
+        80653
+      ],
+      "mean_us": 80641.5,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 77,
+        "padded_rows_upper_bound": 37380,
+        "resource_rows": [
+          512,
+          512,
+          1,
+          1,
+          512,
+          1,
+          512,
+          512
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "tile": 1024,
+      "elapsed_us": [
+        127256,
+        129014
+      ],
+      "mean_us": 128135,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 61,
+        "padded_rows_upper_bound": 58372,
+        "resource_rows": [
+          1024,
+          1024,
+          1,
+          1,
+          1024,
+          1,
+          1024,
+          1024
+        ]
+      }
+    }
+  ],
+  "samples": [
+    {
+      "diverse": false,
+      "sweep": 0,
+      "tile": 32,
+      "elapsed_us": 45059,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 242,
+        "padded_rows_upper_bound": 7682,
+        "resource_rows": [
+          32,
+          32,
+          1,
+          1,
+          32,
+          1,
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 0,
+      "tile": 64,
+      "elapsed_us": 33212,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 140,
+        "padded_rows_upper_bound": 8834,
+        "resource_rows": [
+          64,
+          64,
+          1,
+          1,
+          64,
+          1,
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 0,
+      "tile": 128,
+      "elapsed_us": 30442,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 90,
+        "padded_rows_upper_bound": 11266,
+        "resource_rows": [
+          128,
+          128,
+          1,
+          1,
+          128,
+          1,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 0,
+      "tile": 256,
+      "elapsed_us": 33213,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 64,
+        "padded_rows_upper_bound": 15874,
+        "resource_rows": [
+          256,
+          256,
+          1,
+          1,
+          256,
+          1,
+          256,
+          256
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 0,
+      "tile": 512,
+      "elapsed_us": 45203,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 53,
+        "padded_rows_upper_bound": 26114,
+        "resource_rows": [
+          512,
+          512,
+          1,
+          1,
+          512,
+          1,
+          512,
+          512
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 0,
+      "tile": 1024,
+      "elapsed_us": 87711,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 50,
+        "padded_rows_upper_bound": 49154,
+        "resource_rows": [
+          1024,
+          1024,
+          1,
+          1,
+          1024,
+          1,
+          1024,
+          1024
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 1,
+      "tile": 1024,
+      "elapsed_us": 87946,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 50,
+        "padded_rows_upper_bound": 49154,
+        "resource_rows": [
+          1024,
+          1024,
+          1,
+          1,
+          1024,
+          1,
+          1024,
+          1024
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 1,
+      "tile": 512,
+      "elapsed_us": 45630,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 53,
+        "padded_rows_upper_bound": 26114,
+        "resource_rows": [
+          512,
+          512,
+          1,
+          1,
+          512,
+          1,
+          512,
+          512
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 1,
+      "tile": 256,
+      "elapsed_us": 34567,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 64,
+        "padded_rows_upper_bound": 15874,
+        "resource_rows": [
+          256,
+          256,
+          1,
+          1,
+          256,
+          1,
+          256,
+          256
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 1,
+      "tile": 128,
+      "elapsed_us": 27717,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 90,
+        "padded_rows_upper_bound": 11266,
+        "resource_rows": [
+          128,
+          128,
+          1,
+          1,
+          128,
+          1,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 1,
+      "tile": 64,
+      "elapsed_us": 34539,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 140,
+        "padded_rows_upper_bound": 8834,
+        "resource_rows": [
+          64,
+          64,
+          1,
+          1,
+          64,
+          1,
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "diverse": false,
+      "sweep": 1,
+      "tile": 32,
+      "elapsed_us": 43437,
+      "unique_exports": 2582,
+      "static_upper_bound": {
+        "nodes": 6689,
+        "exports": 16405,
+        "nodes_by_program": [
+          1,
+          5662,
+          1,
+          0,
+          1,
+          1,
+          1023,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 242,
+        "padded_rows_upper_bound": 7682,
+        "resource_rows": [
+          32,
+          32,
+          1,
+          1,
+          32,
+          1,
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 0,
+      "tile": 32,
+      "elapsed_us": 134786,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 672,
+        "padded_rows_upper_bound": 21380,
+        "resource_rows": [
+          32,
+          32,
+          1,
+          1,
+          32,
+          1,
+          32,
+          32
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 0,
+      "tile": 64,
+      "elapsed_us": 87749,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 352,
+        "padded_rows_upper_bound": 22276,
+        "resource_rows": [
+          64,
+          64,
+          1,
+          1,
+          64,
+          1,
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 0,
+      "tile": 128,
+      "elapsed_us": 82218,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 193,
+        "padded_rows_upper_bound": 24196,
+        "resource_rows": [
+          128,
+          128,
+          1,
+          1,
+          128,
+          1,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 0,
+      "tile": 256,
+      "elapsed_us": 77429,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 114,
+        "padded_rows_upper_bound": 28164,
+        "resource_rows": [
+          256,
+          256,
+          1,
+          1,
+          256,
+          1,
+          256,
+          256
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 0,
+      "tile": 512,
+      "elapsed_us": 80630,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 77,
+        "padded_rows_upper_bound": 37380,
+        "resource_rows": [
+          512,
+          512,
+          1,
+          1,
+          512,
+          1,
+          512,
+          512
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 0,
+      "tile": 1024,
+      "elapsed_us": 127256,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 61,
+        "padded_rows_upper_bound": 58372,
+        "resource_rows": [
+          1024,
+          1024,
+          1,
+          1,
+          1024,
+          1,
+          1024,
+          1024
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 1,
+      "tile": 1024,
+      "elapsed_us": 129014,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 61,
+        "padded_rows_upper_bound": 58372,
+        "resource_rows": [
+          1024,
+          1024,
+          1,
+          1,
+          1024,
+          1,
+          1024,
+          1024
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 1,
+      "tile": 512,
+      "elapsed_us": 80653,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 77,
+        "padded_rows_upper_bound": 37380,
+        "resource_rows": [
+          512,
+          512,
+          1,
+          1,
+          512,
+          1,
+          512,
+          512
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 1,
+      "tile": 256,
+      "elapsed_us": 66798,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 114,
+        "padded_rows_upper_bound": 28164,
+        "resource_rows": [
+          256,
+          256,
+          1,
+          1,
+          256,
+          1,
+          256,
+          256
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 1,
+      "tile": 128,
+      "elapsed_us": 75454,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 193,
+        "padded_rows_upper_bound": 24196,
+        "resource_rows": [
+          128,
+          128,
+          1,
+          1,
+          128,
+          1,
+          128,
+          128
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 1,
+      "tile": 64,
+      "elapsed_us": 91412,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 352,
+        "padded_rows_upper_bound": 22276,
+        "resource_rows": [
+          64,
+          64,
+          1,
+          1,
+          64,
+          1,
+          64,
+          64
+        ]
+      }
+    },
+    {
+      "diverse": true,
+      "sweep": 1,
+      "tile": 32,
+      "elapsed_us": 126931,
+      "unique_exports": 13834,
+      "static_upper_bound": {
+        "nodes": 20572,
+        "exports": 16405,
+        "nodes_by_program": [
+          1024,
+          16484,
+          1,
+          0,
+          1024,
+          3,
+          2036,
+          0
+        ],
+        "levels": 28,
+        "dispatch_upper_bound": 672,
+        "padded_rows_upper_bound": 21380,
+        "resource_rows": [
+          32,
+          32,
+          1,
+          1,
+          32,
+          1,
+          32,
+          32
+        ]
+      }
+    }
+  ]
+}
