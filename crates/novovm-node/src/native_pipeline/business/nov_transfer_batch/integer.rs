@@ -38,6 +38,20 @@ pub(crate) struct ResidentTransferResources {
 
 impl ResidentTransferResources {
     pub(crate) fn new(library: &Path, workers: u32, max_rows: usize) -> Result<Self> {
+        Self::with_shapes(
+            library,
+            workers,
+            max_rows,
+            composition_resource_rows(max_rows),
+        )
+    }
+
+    fn with_shapes(
+        library: &Path,
+        workers: u32,
+        max_rows: usize,
+        shapes: [usize; 8],
+    ) -> Result<Self> {
         ensure!(
             (1..=4096).contains(&max_rows),
             "NOV integer row capacity must be 1..=4096"
@@ -54,7 +68,6 @@ impl ResidentTransferResources {
             session.supports_composition_v1(),
             "NOV integer execution requires AOEM composition v1; update SDK, no fallback"
         );
-        let shapes = composition_resource_rows(max_rows);
         let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, shapes[0])?;
         let effects = super::effect_assets::assets()
             .into_iter()
@@ -71,6 +84,12 @@ impl ResidentTransferResources {
             capacity: max_rows,
             poisoned: false,
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_test_tile(library: &Path, tile: usize) -> Result<Self> {
+        ensure!((1..=1024).contains(&tile), "invalid diagnostic tile");
+        Self::with_shapes(library, 4, 1024, [tile, tile, 1, 1, tile, 1, tile, tile])
     }
 
     pub(super) fn capacity(&self) -> usize {

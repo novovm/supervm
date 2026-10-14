@@ -1,5 +1,51 @@
 use super::*;
 
+// Same complete graph/exports, only the existing resource's dispatch tile changes.
+// This is an isolated scheduling experiment, NOT finalized transaction TPS.
+#[test]
+#[ignore = "requires trusted AOEM and Vulkan; complete-plan tile cost experiment"]
+fn resident_complete_plan_tile_cost_and_output_equivalence() -> Result<()> {
+    let library = std::path::PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .context("explicit trusted AOEM library required")?,
+    );
+    for diverse in [false, true] {
+        let plan = compile(&prepared(1024, diverse), 172_800_123)?;
+        let projection = ExportProjection::new(&plan.exports);
+        let mut reference = None;
+        // Reverse the second sweep to retain ordering/thermal effects rather
+        // than select the fastest sample. Resource creation is outside timing.
+        for (sweep, tiles) in [[32, 64, 128, 256, 512, 1024], [1024, 512, 256, 128, 64, 32]]
+            .into_iter()
+            .enumerate()
+        {
+            for tile in tiles {
+                let mut resources =
+                    super::super::integer::ResidentTransferResources::with_test_tile(
+                        &library, tile,
+                    )?;
+                let warm = resources.run_effects(&plan.nodes, &projection.unique)?;
+                if let Some(expected) = &reference {
+                    assert_eq!(&warm, expected);
+                } else {
+                    reference = Some(warm);
+                }
+                let start = std::time::Instant::now();
+                let output = resources.run_effects(&plan.nodes, &projection.unique)?;
+                let elapsed_us = start.elapsed().as_micros();
+                assert_eq!(&output, reference.as_ref().unwrap());
+                println!(
+                    "tile_cost={}",
+                    serde_json::json!({"diverse":diverse,"sweep":sweep,"tile":tile,
+                    "elapsed_us":elapsed_us,"unique_exports":projection.unique.len(),
+                    "static_upper_bound":work(&plan,[tile,tile,1,1,tile,1,tile,tile])})
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn compiler_symbols_are_compact_exact_full_width_and_candidate_local() {
     let mut symbols = BindingSymbols::default();
