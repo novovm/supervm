@@ -1023,7 +1023,7 @@ fn resident_complete_plan_windows_diagnostics_and_capacity_edges() -> Result<()>
         ctx.effect_contract = effect_contract(&policy)?;
         let make = || {
             NovTransferBody::prepare(checked(&raw), policy.clone(), budget())?
-                .bind(ctx.clone())?
+                .bind(ctx)?
                 .capture(&memory, capture_budget())
         };
         let cpu = make()?.execute_for_proof()?;

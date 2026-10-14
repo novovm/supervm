@@ -1,0 +1,10 @@
+
+running 5 tests
+test ai_checked_integer_program::resources::tests::binary_result_real_wire_has_no_json_materialization_and_is_single_take ... ok
+test ai_checked_integer_program::resources::tests::composition_alias_chunks_guards_and_failure_latch ... ok
+test ai_checked_integer_program::resources::tests::composition_real_wire_skips_invalid_branch_and_binds_distinct_programs ... ok
+test ai_checked_integer_program::resources::tests::composition_resident_values_survive_reuse_and_reject_hidden_faults ... ok
+test ai_checked_integer_program::resources::tests::dataflow_real_wire_executes_dependencies_without_consumer_roundtrips ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 269 filtered out; finished in 4.34s
+

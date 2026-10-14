@@ -1,0 +1,176 @@
+   Compiling aoem-gpu-kernels v1.0.0 (D:\WorksArea\AOEM\crates\backend\aoem-backend-gpu\aoem-gpu-kernels)
+   Compiling aoem-gpu-device v1.0.0 (D:\WorksArea\AOEM\crates\backend\aoem-backend-gpu\aoem-gpu-device)
+warning: value assigned to `reduce_dispatch_gpu_us` is never read
+     --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\spirv_backend.rs:17002:43
+      |
+17002 |     let mut reduce_dispatch_gpu_us: u64 = 0;
+      |                                           ^
+      |
+      = help: maybe it is overwritten before being read?
+      = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: associated function `dispatch_batch_oversized_item` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\ash_backend.rs:4141:8
+     |
+1163 | impl AshVulkanRuntime {
+     | --------------------- associated function in this implementation
+...
+4141 |     fn dispatch_batch_oversized_item(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `ntt` is never read
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\spirv_backend.rs:5350:5
+     |
+5346 | struct PrimitiveTransitionPackJson {
+     |        --------------------------- field in this struct
+...
+5350 |     ntt: PrimitiveTransitionPackEntryJson,
+     |     ^^^
+     |
+     = note: `PrimitiveTransitionPackJson` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: associated function `parse` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\spirv_backend.rs:5584:8
+     |
+5583 | impl PrimitiveNttTransitionProvider {
+     | ----------------------------------- associated function in this implementation
+5584 |     fn parse(raw: &str) -> Option<Self> {
+     |        ^^^^^
+
+warning: function `parse_primitive_ntt_transition_provider_len_map` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\spirv_backend.rs:5604:4
+     |
+5604 | fn parse_primitive_ntt_transition_provider_len_map(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `primitive_ntt_transition_provider_override` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\spirv_backend.rs:5627:4
+     |
+5627 | fn primitive_ntt_transition_provider_override() -> Option<PrimitiveNttTransitionProvider> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `primitive_ntt_transition_provider_len_map_override` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\spirv_backend.rs:5633:4
+     |
+5633 | fn primitive_ntt_transition_provider_len_map_override(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `pump_hash_worker_once` and `pump_ntt_to_done_worker_once` are never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-device\src\pipeline\persistent_executor.rs:4060:8
+     |
+ 365 | impl PersistentVulkanExecutor {
+     | ----------------------------- methods in this implementation
+...
+4060 |     fn pump_hash_worker_once(&mut self) -> Result<(), String> {
+     |        ^^^^^^^^^^^^^^^^^^^^^
+...
+4084 |     fn pump_ntt_to_done_worker_once(&mut self) -> Result<(), String> {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `aoem-gpu-device` (lib) generated 8 warnings
+warning: method `other` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2804:8
+     |
+2796 | impl MsmRadixEmbeddedRoute {
+     | -------------------------- method in this implementation
+...
+2804 |     fn other(self) -> Self {
+     |        ^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `MsmRadixRoutePerf` is never constructed
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2814:8
+     |
+2814 | struct MsmRadixRoutePerf {
+     |        ^^^^^^^^^^^^^^^^^
+
+warning: struct `MsmRadixRouteKey` is never constructed
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2822:8
+     |
+2822 | struct MsmRadixRouteKey {
+     |        ^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_route_cache` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2830:4
+     |
+2830 | fn msm_radix_route_cache() -> &'static Mutex<HashMap<MsmRadixRouteKey, [MsmRadixRoutePerf; 2]>> {
+     |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_route_env_override` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2889:4
+     |
+2889 | fn msm_radix_route_env_override() -> Option<MsmRadixEmbeddedRoute> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_enabled` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2900:4
+     |
+2900 | fn msm_radix_auto_route_enabled() -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_min_samples` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2911:4
+     |
+2911 | fn msm_radix_auto_route_min_samples() -> u32 {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_fail_limit` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2920:4
+     |
+2920 | fn msm_radix_auto_route_fail_limit() -> u32 {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_len_bucket` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2928:4
+     |
+2928 | fn msm_radix_len_bucket(len: usize) -> usize {
+     |    ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_route_key` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2940:4
+     |
+2940 | fn msm_radix_route_key(
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `route_idx` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2964:4
+     |
+2964 | fn route_idx(route: MsmRadixEmbeddedRoute) -> usize {
+     |    ^^^^^^^^^
+
+warning: function `route_avg_ms` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2972:4
+     |
+2972 | fn route_avg_ms(perf: MsmRadixRoutePerf) -> f64 {
+     |    ^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_pick` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:2981:4
+     |
+2981 | fn msm_radix_auto_route_pick(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_auto_route_record` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:3026:4
+     |
+3026 | fn msm_radix_auto_route_record(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `msm_radix_route_gpu_quality_ok` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:4139:4
+     |
+4139 | fn msm_radix_route_gpu_quality_ok(run: &MsmRadixSortRun) -> bool {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `aoem-gpu-kernels` (lib test) generated 15 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 50s
+     Running unittests src\lib.rs (cargo-target-ci-local\debug\deps\aoem_gpu_kernels-f7caad6ff4d2b33f.exe)
+
+running 1 test
+test integer_outcome::tests::multilimb_arithmetic_matches_independent_bigint_and_keeps_faults_typed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 249 filtered out; finished in 7.18s
+

@@ -1,0 +1,142 @@
+   Compiling aoem-gpu-kernels v1.0.0 (D:\WorksArea\AOEM\crates\backend\aoem-backend-gpu\aoem-gpu-kernels)
+   Compiling aoem-gpu-device v1.0.0 (D:\WorksArea\AOEM\crates\backend\aoem-backend-gpu\aoem-gpu-device)
+warning: unused imports: `parse_metric_from_stage_summary` and `strategy_env_var`
+     --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:10193:9
+      |
+10193 |         parse_metric_from_stage_summary, strategy_env_var, MsmKernelError,
+      |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^
+      |
+      = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `item_count`
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:7515:9
+     |
+7515 |     let item_count = accumulate_output_words.len() / RINGCT_ED25519_MSM_ACCUM_WORDS;
+     |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_item_count`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `item_count`
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:7589:9
+     |
+7589 |     let item_count = reduce_output_words.len() / RINGCT_ED25519_MSM_REDUCE_WORDS;
+     |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_item_count`
+
+warning: function `parse_metric_from_stage_summary` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:5705:4
+     |
+5705 | fn parse_metric_from_stage_summary(summary: &str, key: &str) -> Option<u64> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `parse_text_from_stage_summary` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:5713:4
+     |
+5713 | fn parse_text_from_stage_summary(summary: &str, key: &str) -> Option<String> {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_lr_transcript_hash_words_to_bytes` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6664:4
+     |
+6664 | fn ringct_lr_transcript_hash_words_to_bytes(words: &[u32]) -> [u8; 64] {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_batch_verifiable_sha256_words_to_bytes` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6876:4
+     |
+6876 | fn ringct_batch_verifiable_sha256_words_to_bytes(words: &[u32]) -> [u8; 32] {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_checked_expanded_point_from_words` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6888:4
+     |
+6888 | fn ringct_checked_expanded_point_from_words(words: &[u32]) -> RingctCheckedExpandedPoint {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_coeff_from_words` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6910:4
+     |
+6910 | fn ringct_ed25519_msm_coeff_from_words(words: &[u32]) -> RingctEd25519MsmCoeffOutput {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_bucket_count_index` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6929:4
+     |
+6929 | fn ringct_ed25519_msm_bucket_count_index(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_bucket_offset_index` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6941:4
+     |
+6941 | fn ringct_ed25519_msm_bucket_offset_index(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_scatter_item_index` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6953:4
+     |
+6953 | fn ringct_ed25519_msm_scatter_item_index(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_digit_from_packed` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6966:4
+     |
+6966 | fn ringct_ed25519_msm_digit_from_packed(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_routing_from_words` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:6974:4
+     |
+6974 | fn ringct_ed25519_msm_routing_from_words(words: &[u32]) -> RingctEd25519MsmRoutingRun {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_aggregate_result_from_words` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:7169:4
+     |
+7169 | fn ringct_ed25519_msm_aggregate_result_from_words(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ringct_ed25519_msm_final_combine_from_words` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:7191:4
+     |
+7191 | fn ringct_ed25519_msm_final_combine_from_words(words: &[u32]) -> RingctEd25519MsmFinalCombineRun {
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ring_signature_verify_lane_lr_dedicated_profile_from_stage_summary` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:9731:4
+     |
+9731 | fn ring_signature_verify_lane_lr_dedicated_profile_from_stage_summary(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `RingSignatureVerifyLaneLrShaderCounters` is never constructed
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:9794:8
+     |
+9794 | struct RingSignatureVerifyLaneLrShaderCounters {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `nonzero_nibbles` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:9806:4
+     |
+9806 | fn nonzero_nibbles(words: &[u32]) -> u64 {
+     |    ^^^^^^^^^^^^^^^
+
+warning: function `popcount_words` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:9821:4
+     |
+9821 | fn popcount_words(words: &[u32]) -> u64 {
+     |    ^^^^^^^^^^^^^^
+
+warning: function `ring_signature_verify_lane_lr_shader_counters` is never used
+    --> crates\backend\aoem-backend-gpu\aoem-gpu-kernels\src\msm_bucket_accumulate.rs:9825:4
+     |
+9825 | fn ring_signature_verify_lane_lr_shader_counters(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `aoem-gpu-kernels` (lib test) generated 21 warnings (run `cargo fix --lib -p aoem-gpu-kernels --tests` to apply 3 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4m 02s
+     Running unittests src\lib.rs (cargo-target-ci-local\debug\deps\aoem_gpu_kernels-6a4c00510203e53e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.00s
+

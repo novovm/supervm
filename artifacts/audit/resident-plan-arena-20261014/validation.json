@@ -1,0 +1,67 @@
+{
+  "scope": "Existing AOIP0 v10 composition: device-resident values, guards and cross-program bindings; AOIR0002 final export",
+  "product_source": "f1bbf47d2d9a4fa1449e1076e2115abb7d255da0",
+  "aoem_reference_source": "0273655d",
+  "status": "rejected_cpu_gate_sdk_unchanged",
+  "candidate_history": "da80f30654c7ce60ab6c6f73333cf0cbb5657d18",
+  "aoem_final_source": "94c214e1c078fd31fd028d22bae3e640cf5ea540",
+  "withdrawal": {
+    "runtime_sources": "restored byte-for-byte to AOEM 0273655d; only portable regression and historical report retained",
+    "sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+    "candidate_artifacts": "test DLLs, generated composition shaders and this round's affected debug build caches removed; accepted release DLLs restored",
+    "restored_regression": "composition_multilevel_values_and_unexported_faults passed on restored runtime, 3.39 seconds",
+    "preserved": "49 draft hashes unchanged, historical code and all raw reports retained; no runtime database removed"
+  },
+  "decision": "integer +15.53 percent; CPU -3.99 percent with both throughput pairs negative and mixed tails. Cause unresolved, not promoted. No extra favorable samples selected",
+  "transport_observation": "candidate integer round 1 recorded two transport errors; all accepted transactions finalized and cold checks passed. Not omitted from elapsed time or counts",
+  "features": "apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "preformat_dll_sha256": "92180570520c74738e6fdd4bc757e90b36acc0b5ccf85a6a07a1aa990dfd661f",
+  "final_candidate_dll_sha256": "9d78d398f6bc286f20fc02fb11b4514f2d1774cfc2f2b446f4a13c5ce6466135",
+  "measurements": "measurements.json",
+  "work_reduction": {
+    "before": "one upload-dispatch-download submission per active program chunk, CPU guard/reference binding between levels",
+    "after_warmup": "one input upload, statically ordered device levels, one export projection, one terminal download and completion wait per plan",
+    "intermediate_numeric_readback_upload": "removed for v10; guards/fallbacks and producer references execute in device slots",
+    "retained": "CPU plan validation/lowering, level synchronization barriers, final binary result materialization and original node state tree/publication",
+    "implementation_reuse": "existing checked-i1024 outcome evaluator, resident dispatch, Vulkan command runtime, context cache, byte budget and failure latch",
+    "new_generic_adapter": "device composition layout and shader; no new business arithmetic, C entry or NOV instruction",
+    "memory_tradeoff": "additional bounded arena and staging memory; no measured allocation or peak-memory improvement claimed",
+    "cold_setup": "separate resource creation/program upload; not claimed to be one physical submission"
+  },
+  "correctness": {
+    "resource_tests": "11 normal tests passed; 5 explicitly ignored Vulkan tests passed; microbenchmark excluded",
+    "composition": "cross-program guards, aliases, chunks, 3/65/3 layer resize/reuse, full i1024 changed inputs, skipped domain, hidden active fault, failure latch, close releases budget",
+    "bigint_oracle": "12 arithmetic families, signed boundaries, typed faults, repeated exchange and malformed lengths; actual spirv-vulkan debug test passed",
+    "final_original_node_filters": "7 passed: every-export parity, fee-failure successor repair, windows/diagnostics/capacity, full u128, single-ingress/restart, A/A/B, offline/catchup/restart",
+    "aab_scope": "three honest original processes plus controlled faulty peer; not four physical machines",
+    "build": "Windows release FULLMAX passed",
+    "retained_failed_attempts": "first shared-evaluator function form failed Vulkan pipeline creation; lexical shared include passed. Initial oracle command omitted spirv-vulkan and matched zero tests, not counted as a pass",
+    "final_build": "format-normalized build changed DLL hash; seven original-node filters rerun with final hash before formal loads"
+  },
+  "performance_contract": {
+    "samples": 8,
+    "machine": "Windows AC, NVIDIA GeForce RTX 5090 Laptop GPU selected, same frozen node and drivers",
+    "transactions": 65536,
+    "batch": 1024,
+    "inflight": 8192,
+    "conflicts": "1024 payers each with 64 sequential nonces; shared recipient",
+    "entry": "single original node RPC; four independent validators and stores",
+    "endpoint": "all four final successful receipt HTTP responses; includes observation delay",
+    "excluded_timing": "wallet signing, startup and subsequent cold economic/history verification",
+    "profiling": false,
+    "default_cpu": "unchanged"
+  },
+  "ci_baseline": {
+    "run": 38501072228,
+    "conclusion": "failure",
+    "cause": "body_tests.rs:1026 clone_on_copy; artifact upload failure followed skipped gates",
+    "repair": "equivalent ctx Copy in test only; strict node lib/tests Clippy passed; no lint relaxation; new CI separately required"
+  },
+  "limitations": [
+    "Not a new complete business proof or million-TPS signoff",
+    "Linux and plugins not rebuilt or requalified",
+    "GPU barriers and final host result/state publication remain",
+    "No blanket mainnet or heterogeneous portability claim",
+    "Local validation does not imply remote CI success"
+  ]
+}

@@ -1,0 +1,82 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking subtle v2.6.1
+    Checking foldhash v0.2.0
+   Compiling zerocopy v0.8.47
+    Checking windows-sys v0.61.2
+    Checking hashbrown v0.17.1
+    Checking ff v0.13.1
+   Compiling cc v1.2.57
+   Compiling windows_x86_64_msvc v0.52.6
+   Compiling pkg-config v0.3.32
+   Compiling vcpkg v0.2.15
+    Checking group v0.13.0
+   Compiling num-traits v0.2.19
+    Checking crypto-bigint v0.5.5
+    Checking sec1 v0.7.3
+    Checking digest v0.10.7
+    Checking universal-hash v0.5.1
+    Checking fallible-streaming-iterator v0.1.9
+    Checking fallible-iterator v0.3.0
+    Checking tokio v1.50.0
+    Checking novovm-udp-batch v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-udp-batch)
+    Checking windows-targets v0.52.6
+    Checking windows-sys v0.52.0
+    Checking indexmap v2.14.2
+    Checking hashlink v0.12.2
+    Checking poly1305 v0.8.0
+    Checking sha2 v0.10.9
+    Checking signature v2.2.0
+    Checking hmac v0.12.1
+    Checking curve25519-dalek v4.1.3
+    Checking sha3 v0.10.8
+    Checking sha1 v0.10.6
+    Checking hkdf v0.12.4
+    Checking rfc6979 v0.4.0
+    Checking ed25519 v2.2.3
+    Checking chacha20poly1305 v0.10.1
+    Checking novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+   Compiling cmake v0.1.58
+    Checking chrono v0.4.44
+   Compiling ring v0.17.14
+   Compiling librocksdb-sys v0.16.0+8.10.0
+   Compiling libsqlite3-sys v0.38.2
+    Checking serde_json v1.0.149
+   Compiling aws-lc-sys v0.45.0
+    Checking ed25519-dalek v2.2.0
+    Checking elliptic-curve v0.13.8
+    Checking novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+    Checking ecdsa v0.16.9
+    Checking aoem-bindings v0.1.0 (D:\WorksArea\SUPERVM\crates\aoem-bindings)
+    Checking novovm-governance-observability v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-governance-observability)
+    Checking k256 v0.13.4
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+    Checking rusqlite v0.40.2
+    Checking schannel v0.1.29
+    Checking tempfile v3.27.0
+    Checking mio v1.1.1
+    Checking socket2 v0.6.3
+    Checking atomicwrites v0.4.4
+    Checking native-tls v0.2.18
+    Checking rustls-native-certs v0.8.4
+    Checking lettre v0.11.22
+    Checking ppv-lite86 v0.2.21
+    Checking rand_chacha v0.3.1
+    Checking rand v0.8.5
+    Checking rcgen v0.12.1
+    Checking web30-core v0.1.0 (D:\WorksArea\SUPERVM\vendor\web30-core)
+    Checking novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+    Checking novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+   Compiling aws-lc-rs v1.18.1
+   Compiling rustls v0.23.45
+    Checking rustls-webpki v0.103.15
+    Checking ureq v2.12.1
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking rocksdb v0.22.0
+    Checking novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 17s
