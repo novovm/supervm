@@ -107,7 +107,7 @@ fn full_channel_returns_the_original_allocation_without_running_a_session() {
     assert_eq!(retained.raw_transactions[0].as_ptr(), pointer);
     assert_eq!(retained.raw_transactions, vec![vec![2; 64]]);
     drop(first); // Notification loss does not remove the accepted command.
-    let Command::Prepare { request, reply } = receiver.try_recv().unwrap() else {
+    let Command::Prepare { request, reply, .. } = receiver.try_recv().unwrap() else {
         panic!("wrong accepted command")
     };
     assert_eq!(request.raw_transactions, vec![vec![1; 64]]);

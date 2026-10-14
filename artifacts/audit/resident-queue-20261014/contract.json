@@ -1,0 +1,15 @@
+{
+  "source": "6f60edd1b95f408c49665e548d3dca449920035e",
+  "purpose": "Candidate-local compact compiler symbols; queue/compile diagnostic attribution, not new executor or GPU arithmetic",
+  "baseline": "Current parent plus identical optional timing fields, same build toolchain as candidate",
+  "sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "formal_order": ["baseline-integer-1", "candidate-integer-1", "baseline-cpu-1", "candidate-cpu-1", "candidate-integer-2", "baseline-integer-2", "candidate-cpu-2", "baseline-cpu-2"],
+  "formal_profile_stages": false,
+  "transactions": 65536,
+  "candidate_max": 1024,
+  "window": 8192,
+  "topology": "AC Windows, four original nodes/stores, one shared GPU, one RPC ingress, unchanged frozen load driver",
+  "completion": "All four final successful receipt HTTP responses; economics, historical query and cold recovery separately checked",
+  "decision": "Do not declare improvement from diagnostics. Preserve every round; report total successful / total elapsed and all tails. Negative integer or CPU outcome cannot be hidden by the other mode. No additional best-of sample selection.",
+  "diagnostic_scope": "Queue admission is synchronous compute command enqueue to dequeue, excluding pipeline admission and service work; compile includes complete plan and export projection; integer_projection excludes stage_results. Inclusive wall times may overlap; not additive chain critical path or GPU kernel time."
+}

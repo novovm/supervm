@@ -1,0 +1,360 @@
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs
+index 08ab66cd..48078a7f 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs
+@@ -27,16 +27,26 @@ fn zero() -> Quad {
+ // cache of state admission, quotes, effects, transactions or completed batches.
+ // Exact equality (including all 1024 bits) resolves hash collisions. We never
+ // iterate this table, so randomized hashing cannot change plan order/encoding.
+-#[derive(Hash, PartialEq, Eq)]
++#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+ enum BindingKey {
+-    Literal([u32; 32]),
++    Literal(u32),
+     Output(u32, u32),
+ }
+-impl From<&V> for BindingKey {
+-    fn from(value: &V) -> Self {
++// Compiler-local symbols only. Preserve all 1024 bits in the intern table;
++// do not replace emitted AOEM literals or evaluate a business expression here.
++// An Output key must not reserve space for a 128-byte literal at every use.
++#[derive(Default)]
++struct BindingSymbols {
++    literals: HashMap<[u32; 32], u32>,
++}
++impl BindingSymbols {
++    fn key(&mut self, value: &V) -> BindingKey {
+         match value {
+-            V::Literal(value) => Self::Literal(value.0),
+-            V::Output { row, column } => Self::Output(*row, *column),
++            V::Literal(value) => {
++                let next = u32::try_from(self.literals.len()).expect("bounded candidate literals");
++                BindingKey::Literal(*self.literals.entry(value.0).or_insert(next))
++            }
++            V::Output { row, column } => BindingKey::Output(*row, *column),
+         }
+     }
+ }
+@@ -53,11 +63,12 @@ struct ExportProjection {
+ impl ExportProjection {
+     fn new(exports: &[V]) -> Self {
+         let mut indices = HashMap::<BindingKey, usize>::new();
++        let mut symbols = BindingSymbols::default();
+         let mut unique = Vec::new();
+         let slots = exports
+             .iter()
+             .map(|value| {
+-                *indices.entry(value.into()).or_insert_with(|| {
++                *indices.entry(symbols.key(value)).or_insert_with(|| {
+                     let slot = unique.len();
+                     unique.push(*value);
+                     slot
+@@ -95,6 +106,7 @@ struct ExpressionKey {
+ struct Builder {
+     nodes: Vec<AoemIntegerPlanNodeV1>,
+     expressions: HashMap<ExpressionKey, u32>,
++    symbols: BindingSymbols,
+     #[cfg(test)]
+     unshared: bool,
+ }
+@@ -102,8 +114,8 @@ impl Builder {
+     fn call(&mut self, program: usize, guard: &V, inputs: Vec<V>, outputs: usize) -> Vec<V> {
+         let key = ExpressionKey {
+             program,
+-            guard: guard.into(),
+-            inputs: inputs.iter().map(BindingKey::from).collect(),
++            guard: self.symbols.key(guard),
++            inputs: inputs.iter().map(|v| self.symbols.key(v)).collect(),
+             outputs,
+         };
+         let existing = self.expressions.get(&key).copied();
+@@ -732,9 +744,18 @@ pub(super) fn execute(
+         !prepared.requests.is_empty() && prepared.requests.len() <= resources.capacity(),
+         "NOV effect candidate capacity"
+     );
+-    let plan = compile(prepared, now)?;
+-    let projection = ExportProjection::new(&plan.exports);
++    let (plan, projection) = {
++        let _span = crate::native_pipeline::profile::span(
++            crate::native_pipeline::profile::Phase::IntegerCompile,
++        );
++        let plan = compile(prepared, now)?;
++        let projection = ExportProjection::new(&plan.exports);
++        (plan, projection)
++    };
+     let unique = resources.run_effects(&plan.nodes, &projection.unique)?;
++    let projection_span = crate::native_pipeline::profile::span(
++        crate::native_pipeline::profile::Phase::IntegerProjection,
++    );
+     let values = projection.expand(&unique)?;
+     let n = prepared.requests.len();
+     ensure!(
+@@ -877,6 +898,7 @@ pub(super) fn execute(
+             unix_ms: now,
+         });
+     }
++    drop(projection_span);
+     let mut result =
+         super::execution::stage_results(input, prepared, balances, nonces, fees, receipts, 0)?;
+     result.observation.gpu_rows = n;
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs
+index 249e1b6b..f95bedf5 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs
+@@ -1,5 +1,35 @@
+ use super::*;
+ 
++#[test]
++fn compiler_symbols_are_compact_exact_full_width_and_candidate_local() {
++    let mut symbols = BindingSymbols::default();
++    let low = lit(7);
++    let first = symbols.key(&low);
++    assert!(matches!(first, BindingKey::Literal(0)));
++    assert!(first == symbols.key(&low));
++    for limb in 1..32 {
++        let mut wide = AoemInteger1024V1::from_u128(7);
++        wide.0[limb] = 9;
++        let wide = V::Literal(wide);
++        let key = symbols.key(&wide);
++        assert!(key != first);
++        assert!(key == symbols.key(&wide));
++    }
++    assert_eq!(symbols.literals.len(), 32);
++    assert!(first != symbols.key(&V::Output { row: 0, column: 0 }));
++    assert!(
++        symbols.key(&V::Output { row: 0, column: 1 })
++            != symbols.key(&V::Output { row: 1, column: 0 })
++    );
++    assert_eq!(
++        symbols.literals.len(),
++        32,
++        "references do not intern values"
++    );
++    assert!(std::mem::size_of::<BindingKey>() <= 12);
++    assert!(BindingSymbols::default().literals.is_empty());
++}
++
+ #[test]
+ fn export_projection_preserves_width_reference_identity_order_and_multiplicity() {
+     let mut high = AoemInteger1024V1::from_u128(7);
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+index 6d9d35b7..e0fb6441 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+@@ -14,13 +14,14 @@ use crate::native_pipeline::ingress::batch::{
+     AuthenticationBudget, BatchSource,
+ };
+ use crate::native_pipeline::persistence::{PacketBudget, PreparedCandidate, StorageDomain};
++use crate::native_pipeline::profile;
+ use anyhow::{ensure, Context, Result};
+ use novovm_exec::resident::ComputeSession;
+ use std::panic::{catch_unwind, AssertUnwindSafe};
+ use std::path::PathBuf;
+ use std::sync::mpsc;
+ use std::thread::{self, JoinHandle, Thread};
+-use std::time::Duration;
++use std::time::{Duration, Instant};
+ 
+ pub(crate) struct ComputeConfig {
+     pub library: PathBuf,
+@@ -95,22 +96,27 @@ impl<T> ComputeTicket<T> {
+ 
+ enum Command {
+     Admission {
++        queued: Option<Instant>,
+         inputs: Vec<AdmissionInput>,
+         reply: mpsc::Sender<Result<AdmissionRows>>,
+     },
+     Authenticate {
++        queued: Option<Instant>,
+         request: Box<AuthenticateRequest>,
+         reply: mpsc::Sender<Result<NovTransferBody>>,
+     },
+     Bind {
++        queued: Option<Instant>,
+         request: Box<BindRequest>,
+         reply: mpsc::Sender<Result<NovTransferPlan>>,
+     },
+     Prepare {
++        queued: Option<Instant>,
+         request: Box<PrepareRequest>,
+         reply: mpsc::Sender<Result<NovTransferPlan>>,
+     },
+     Execute {
++        queued: Option<Instant>,
+         input: Box<NovCapturedInput>,
+         reply: mpsc::Sender<Result<ComputedCandidate>>,
+     },
+@@ -132,7 +138,11 @@ impl ComputeOwner {
+         inputs: Vec<AdmissionInput>,
+     ) -> Result<Submission<Vec<AdmissionInput>, AdmissionRows>> {
+         let (reply, receiver) = mpsc::channel();
+-        match self.sender.try_send(Command::Admission { inputs, reply }) {
++        match self.sender.try_send(Command::Admission {
++            queued: profile::mark(),
++            inputs,
++            reply,
++        }) {
+             Ok(()) => Ok(Submission::Accepted(ComputeTicket {
+                 receiver,
+                 consumed: false,
+@@ -151,6 +161,7 @@ impl ComputeOwner {
+     ) -> Result<Submission<AuthenticateRequest, NovTransferBody>> {
+         let (reply, receiver) = mpsc::channel();
+         match self.sender.try_send(Command::Authenticate {
++            queued: profile::mark(),
+             request: Box::new(request),
+             reply,
+         }) {
+@@ -172,6 +183,7 @@ impl ComputeOwner {
+     ) -> Result<Submission<BindRequest, NovTransferPlan>> {
+         let (reply, receiver) = mpsc::channel();
+         match self.sender.try_send(Command::Bind {
++            queued: profile::mark(),
+             request: Box::new(request),
+             reply,
+         }) {
+@@ -258,6 +270,7 @@ impl ComputeOwner {
+     ) -> Result<Submission<PrepareRequest, NovTransferPlan>> {
+         let (reply, receiver) = mpsc::channel();
+         match self.sender.try_send(Command::Prepare {
++            queued: profile::mark(),
+             request: Box::new(request),
+             reply,
+         }) {
+@@ -279,6 +292,7 @@ impl ComputeOwner {
+     ) -> Result<Submission<NovCapturedInput, ComputedCandidate>> {
+         let (reply, receiver) = mpsc::channel();
+         match self.sender.try_send(Command::Execute {
++            queued: profile::mark(),
+             input: Box::new(input),
+             reply,
+         }) {
+@@ -420,7 +434,12 @@ fn run_owner(
+     let mut panicked = false;
+     while let Ok(command) = receiver.recv() {
+         match command {
+-            Command::Admission { inputs, reply } => {
++            Command::Admission {
++                queued,
++                inputs,
++                reply,
++            } => {
++                profile::elapsed(profile::Phase::QueueAdmission, queued);
+                 let _span = crate::native_pipeline::profile::span(
+                     crate::native_pipeline::profile::Phase::Admission,
+                 );
+@@ -435,11 +454,21 @@ fn run_owner(
+                 });
+                 let _ = reply.send(result);
+             }
+-            Command::Authenticate { request, reply } => {
++            Command::Authenticate {
++                queued,
++                request,
++                reply,
++            } => {
++                profile::elapsed(profile::Phase::QueueCandidate, queued);
+                 let result = run_checked(&mut panicked, || authenticate(session, config, *request));
+                 let _ = reply.send(result);
+             }
+-            Command::Bind { request, reply } => {
++            Command::Bind {
++                queued,
++                request,
++                reply,
++            } => {
++                profile::elapsed(profile::Phase::QueueCandidate, queued);
+                 let _span = crate::native_pipeline::profile::span(
+                     crate::native_pipeline::profile::Phase::Bind,
+                 );
+@@ -449,11 +478,21 @@ fn run_owner(
+                 });
+                 let _ = reply.send(result);
+             }
+-            Command::Prepare { request, reply } => {
++            Command::Prepare {
++                queued,
++                request,
++                reply,
++            } => {
++                profile::elapsed(profile::Phase::QueueCandidate, queued);
+                 let result = run_checked(&mut panicked, || prepare(session, config, *request));
+                 let _ = reply.send(result);
+             }
+-            Command::Execute { input, reply } => {
++            Command::Execute {
++                queued,
++                input,
++                reply,
++            } => {
++                profile::elapsed(profile::Phase::QueueCandidate, queued);
+                 let result =
+                     run_checked(&mut panicked, || execute(session, integers, config, *input));
+                 let _ = reply.send(result);
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
+index b45f8282..8c4b91c1 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
+@@ -107,7 +107,7 @@ fn full_channel_returns_the_original_allocation_without_running_a_session() {
+     assert_eq!(retained.raw_transactions[0].as_ptr(), pointer);
+     assert_eq!(retained.raw_transactions, vec![vec![2; 64]]);
+     drop(first); // Notification loss does not remove the accepted command.
+-    let Command::Prepare { request, reply } = receiver.try_recv().unwrap() else {
++    let Command::Prepare { request, reply, .. } = receiver.try_recv().unwrap() else {
+         panic!("wrong accepted command")
+     };
+     assert_eq!(request.raw_transactions, vec![vec![1; 64]]);
+diff --git a/crates/novovm-node/src/native_pipeline/profile.rs b/crates/novovm-node/src/native_pipeline/profile.rs
+index 6ce7d247..2a7350e1 100644
+--- a/crates/novovm-node/src/native_pipeline/profile.rs
++++ b/crates/novovm-node/src/native_pipeline/profile.rs
+@@ -31,8 +31,12 @@ pub(crate) enum Phase {
+     Http,
+     Idle,
+     Yield,
++    QueueAdmission,
++    QueueCandidate,
++    IntegerCompile,
++    IntegerProjection,
+ }
+-const NAMES: [&str; 23] = [
++const NAMES: [&str; 27] = [
+     "admission",
+     "authentication",
+     "bind",
+@@ -56,6 +60,10 @@ const NAMES: [&str; 23] = [
+     "http",
+     "idle",
+     "yield",
++    "queue_admission",
++    "queue_candidate",
++    "integer_compile",
++    "integer_projection",
+ ];
+ struct Counter {
+     calls: AtomicU64,
+@@ -143,8 +151,14 @@ pub(crate) fn enabled() -> bool {
+     *ENABLED.get_or_init(|| std::env::var("NOVOVM_PROFILE_STAGES").ok().as_deref() == Some("1"))
+ }
+ pub(crate) struct Span(Phase, Option<Instant>);
++pub(crate) fn mark() -> Option<Instant> {
++    enabled().then(Instant::now)
++}
++pub(crate) fn elapsed(phase: Phase, start: Option<Instant>) {
++    drop(Span(phase, start));
++}
+ pub(crate) fn span(phase: Phase) -> Span {
+-    Span(phase, enabled().then(Instant::now))
++    Span(phase, mark())
+ }
+ impl Drop for Span {
+     fn drop(&mut self) {
+@@ -196,6 +210,6 @@ mod tests {
+         counter.record(1);
+         assert_eq!(counter.ns.load(Ordering::Relaxed), u64::MAX);
+         assert_eq!(counter.max_ns.load(Ordering::Relaxed), u64::MAX);
+-        assert_eq!(Phase::Yield as usize + 1, NAMES.len());
++        assert_eq!(Phase::IntegerProjection as usize + 1, NAMES.len());
+     }
+ }

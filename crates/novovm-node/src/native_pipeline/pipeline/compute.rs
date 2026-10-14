@@ -14,13 +14,14 @@ use crate::native_pipeline::ingress::batch::{
     AuthenticationBudget, BatchSource,
 };
 use crate::native_pipeline::persistence::{PacketBudget, PreparedCandidate, StorageDomain};
+use crate::native_pipeline::profile;
 use anyhow::{ensure, Context, Result};
 use novovm_exec::resident::ComputeSession;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread::{self, JoinHandle, Thread};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(crate) struct ComputeConfig {
     pub library: PathBuf,
@@ -95,22 +96,27 @@ impl<T> ComputeTicket<T> {
 
 enum Command {
     Admission {
+        queued: Option<Instant>,
         inputs: Vec<AdmissionInput>,
         reply: mpsc::Sender<Result<AdmissionRows>>,
     },
     Authenticate {
+        queued: Option<Instant>,
         request: Box<AuthenticateRequest>,
         reply: mpsc::Sender<Result<NovTransferBody>>,
     },
     Bind {
+        queued: Option<Instant>,
         request: Box<BindRequest>,
         reply: mpsc::Sender<Result<NovTransferPlan>>,
     },
     Prepare {
+        queued: Option<Instant>,
         request: Box<PrepareRequest>,
         reply: mpsc::Sender<Result<NovTransferPlan>>,
     },
     Execute {
+        queued: Option<Instant>,
         input: Box<NovCapturedInput>,
         reply: mpsc::Sender<Result<ComputedCandidate>>,
     },
@@ -132,7 +138,11 @@ impl ComputeOwner {
         inputs: Vec<AdmissionInput>,
     ) -> Result<Submission<Vec<AdmissionInput>, AdmissionRows>> {
         let (reply, receiver) = mpsc::channel();
-        match self.sender.try_send(Command::Admission { inputs, reply }) {
+        match self.sender.try_send(Command::Admission {
+            queued: profile::mark(),
+            inputs,
+            reply,
+        }) {
             Ok(()) => Ok(Submission::Accepted(ComputeTicket {
                 receiver,
                 consumed: false,
@@ -151,6 +161,7 @@ impl ComputeOwner {
     ) -> Result<Submission<AuthenticateRequest, NovTransferBody>> {
         let (reply, receiver) = mpsc::channel();
         match self.sender.try_send(Command::Authenticate {
+            queued: profile::mark(),
             request: Box::new(request),
             reply,
         }) {
@@ -172,6 +183,7 @@ impl ComputeOwner {
     ) -> Result<Submission<BindRequest, NovTransferPlan>> {
         let (reply, receiver) = mpsc::channel();
         match self.sender.try_send(Command::Bind {
+            queued: profile::mark(),
             request: Box::new(request),
             reply,
         }) {
@@ -258,6 +270,7 @@ impl ComputeOwner {
     ) -> Result<Submission<PrepareRequest, NovTransferPlan>> {
         let (reply, receiver) = mpsc::channel();
         match self.sender.try_send(Command::Prepare {
+            queued: profile::mark(),
             request: Box::new(request),
             reply,
         }) {
@@ -279,6 +292,7 @@ impl ComputeOwner {
     ) -> Result<Submission<NovCapturedInput, ComputedCandidate>> {
         let (reply, receiver) = mpsc::channel();
         match self.sender.try_send(Command::Execute {
+            queued: profile::mark(),
             input: Box::new(input),
             reply,
         }) {
@@ -420,7 +434,12 @@ fn run_owner(
     let mut panicked = false;
     while let Ok(command) = receiver.recv() {
         match command {
-            Command::Admission { inputs, reply } => {
+            Command::Admission {
+                queued,
+                inputs,
+                reply,
+            } => {
+                profile::elapsed(profile::Phase::QueueAdmission, queued);
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Admission,
                 );
@@ -435,11 +454,21 @@ fn run_owner(
                 });
                 let _ = reply.send(result);
             }
-            Command::Authenticate { request, reply } => {
+            Command::Authenticate {
+                queued,
+                request,
+                reply,
+            } => {
+                profile::elapsed(profile::Phase::QueueCandidate, queued);
                 let result = run_checked(&mut panicked, || authenticate(session, config, *request));
                 let _ = reply.send(result);
             }
-            Command::Bind { request, reply } => {
+            Command::Bind {
+                queued,
+                request,
+                reply,
+            } => {
+                profile::elapsed(profile::Phase::QueueCandidate, queued);
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Bind,
                 );
@@ -449,11 +478,21 @@ fn run_owner(
                 });
                 let _ = reply.send(result);
             }
-            Command::Prepare { request, reply } => {
+            Command::Prepare {
+                queued,
+                request,
+                reply,
+            } => {
+                profile::elapsed(profile::Phase::QueueCandidate, queued);
                 let result = run_checked(&mut panicked, || prepare(session, config, *request));
                 let _ = reply.send(result);
             }
-            Command::Execute { input, reply } => {
+            Command::Execute {
+                queued,
+                input,
+                reply,
+            } => {
+                profile::elapsed(profile::Phase::QueueCandidate, queued);
                 let result =
                     run_checked(&mut panicked, || execute(session, integers, config, *input));
                 let _ = reply.send(result);

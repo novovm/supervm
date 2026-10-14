@@ -27,16 +27,26 @@ fn zero() -> Quad {
 // cache of state admission, quotes, effects, transactions or completed batches.
 // Exact equality (including all 1024 bits) resolves hash collisions. We never
 // iterate this table, so randomized hashing cannot change plan order/encoding.
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 enum BindingKey {
-    Literal([u32; 32]),
+    Literal(u32),
     Output(u32, u32),
 }
-impl From<&V> for BindingKey {
-    fn from(value: &V) -> Self {
+// Compiler-local symbols only. Preserve all 1024 bits in the intern table;
+// do not replace emitted AOEM literals or evaluate a business expression here.
+// An Output key must not reserve space for a 128-byte literal at every use.
+#[derive(Default)]
+struct BindingSymbols {
+    literals: HashMap<[u32; 32], u32>,
+}
+impl BindingSymbols {
+    fn key(&mut self, value: &V) -> BindingKey {
         match value {
-            V::Literal(value) => Self::Literal(value.0),
-            V::Output { row, column } => Self::Output(*row, *column),
+            V::Literal(value) => {
+                let next = u32::try_from(self.literals.len()).expect("bounded candidate literals");
+                BindingKey::Literal(*self.literals.entry(value.0).or_insert(next))
+            }
+            V::Output { row, column } => BindingKey::Output(*row, *column),
         }
     }
 }
@@ -53,11 +63,12 @@ struct ExportProjection {
 impl ExportProjection {
     fn new(exports: &[V]) -> Self {
         let mut indices = HashMap::<BindingKey, usize>::new();
+        let mut symbols = BindingSymbols::default();
         let mut unique = Vec::new();
         let slots = exports
             .iter()
             .map(|value| {
-                *indices.entry(value.into()).or_insert_with(|| {
+                *indices.entry(symbols.key(value)).or_insert_with(|| {
                     let slot = unique.len();
                     unique.push(*value);
                     slot
@@ -95,6 +106,7 @@ struct ExpressionKey {
 struct Builder {
     nodes: Vec<AoemIntegerPlanNodeV1>,
     expressions: HashMap<ExpressionKey, u32>,
+    symbols: BindingSymbols,
     #[cfg(test)]
     unshared: bool,
 }
@@ -102,8 +114,8 @@ impl Builder {
     fn call(&mut self, program: usize, guard: &V, inputs: Vec<V>, outputs: usize) -> Vec<V> {
         let key = ExpressionKey {
             program,
-            guard: guard.into(),
-            inputs: inputs.iter().map(BindingKey::from).collect(),
+            guard: self.symbols.key(guard),
+            inputs: inputs.iter().map(|v| self.symbols.key(v)).collect(),
             outputs,
         };
         let existing = self.expressions.get(&key).copied();
@@ -732,9 +744,18 @@ pub(super) fn execute(
         !prepared.requests.is_empty() && prepared.requests.len() <= resources.capacity(),
         "NOV effect candidate capacity"
     );
-    let plan = compile(prepared, now)?;
-    let projection = ExportProjection::new(&plan.exports);
+    let (plan, projection) = {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::IntegerCompile,
+        );
+        let plan = compile(prepared, now)?;
+        let projection = ExportProjection::new(&plan.exports);
+        (plan, projection)
+    };
     let unique = resources.run_effects(&plan.nodes, &projection.unique)?;
+    let projection_span = crate::native_pipeline::profile::span(
+        crate::native_pipeline::profile::Phase::IntegerProjection,
+    );
     let values = projection.expand(&unique)?;
     let n = prepared.requests.len();
     ensure!(
@@ -877,6 +898,7 @@ pub(super) fn execute(
             unix_ms: now,
         });
     }
+    drop(projection_span);
     let mut result =
         super::execution::stage_results(input, prepared, balances, nonces, fees, receipts, 0)?;
     result.observation.gpu_rows = n;

@@ -1,0 +1,27 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error[E0027]: pattern does not mention field `queued`
+   --> crates\novovm-node\src\native_pipeline\pipeline\compute\tests.rs:110:9
+    |
+110 |     let Command::Prepare { request, reply } = receiver.try_recv().unwrap() else {
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing field `queued`
+    |
+help: include the missing field in the pattern
+    |
+110 |     let Command::Prepare { request, reply, queued } = receiver.try_recv().unwrap() else {
+    |                                          ++++++++
+help: if you don't care about this missing field, you can explicitly ignore it
+    |
+110 |     let Command::Prepare { request, reply, queued: _ } = receiver.try_recv().unwrap() else {
+    |                                          +++++++++++
+help: or always ignore missing fields here
+    |
+110 |     let Command::Prepare { request, reply, .. } = receiver.try_recv().unwrap() else {
+    |                                          ++++
+
+For more information about this error, try `rustc --explain E0027`.
+error: could not compile `novovm-node` (lib test) due to 1 previous error

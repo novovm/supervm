@@ -31,8 +31,12 @@ pub(crate) enum Phase {
     Http,
     Idle,
     Yield,
+    QueueAdmission,
+    QueueCandidate,
+    IntegerCompile,
+    IntegerProjection,
 }
-const NAMES: [&str; 23] = [
+const NAMES: [&str; 27] = [
     "admission",
     "authentication",
     "bind",
@@ -56,6 +60,10 @@ const NAMES: [&str; 23] = [
     "http",
     "idle",
     "yield",
+    "queue_admission",
+    "queue_candidate",
+    "integer_compile",
+    "integer_projection",
 ];
 struct Counter {
     calls: AtomicU64,
@@ -143,8 +151,14 @@ pub(crate) fn enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("NOVOVM_PROFILE_STAGES").ok().as_deref() == Some("1"))
 }
 pub(crate) struct Span(Phase, Option<Instant>);
+pub(crate) fn mark() -> Option<Instant> {
+    enabled().then(Instant::now)
+}
+pub(crate) fn elapsed(phase: Phase, start: Option<Instant>) {
+    drop(Span(phase, start));
+}
 pub(crate) fn span(phase: Phase) -> Span {
-    Span(phase, enabled().then(Instant::now))
+    Span(phase, mark())
 }
 impl Drop for Span {
     fn drop(&mut self) {
@@ -196,6 +210,6 @@ mod tests {
         counter.record(1);
         assert_eq!(counter.ns.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(counter.max_ns.load(Ordering::Relaxed), u64::MAX);
-        assert_eq!(Phase::Yield as usize + 1, NAMES.len());
+        assert_eq!(Phase::IntegerProjection as usize + 1, NAMES.len());
     }
 }
