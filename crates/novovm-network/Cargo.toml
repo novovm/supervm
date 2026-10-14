@@ -58,3 +58,7 @@ rustix = { version = "1.1", features = ["fs"] }
 tempfile = "3.23"
 rcgen = "=0.12.1"
 socket2 = "0.6"
+
+[[example]]
+name = "mailbox_peer_probe"
+required-features = ["iroh-transport"]

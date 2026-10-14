@@ -3,6 +3,42 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 Android L4 真实入站寄存/领取：direct 与 relay 对照
+
+在通讯输入 4fd28feb、NOVOCHAT e36c4fd 的两部原正式安装上，使用新增通用客户端
+示例 `crates/novovm-network/examples/mailbox_peer_probe.rs` 调用已有 NVMBOX06；
+没有新增宿主、账号、许可、网络协议或运行时。客户端校验从手机原 MethodChannel
+读取的新鲜签名记录，节点公钥固定到该记录，Relay 由本机参数明确批准。随机
+能力和探测数据只驻内存，数据先 AEAD 加密；节点不持有解密密钥。费用未接线。
+
+两机均成功：Register、Put、验证 StoreReceipt、重复 Put 幂等；关闭发送端
+Endpoint 后，使用新的 Endpoint/用途签名者读取，错误能力被拒绝，正确能力返回
+原密文/对象/期限，Consume 后为空，最终解密匹配。两个客户端顺序运行在同一
+探测进程，不冒称独立物理客户端或独立进程。实际宿主是手机原私有 SQLite，
+不是临时宿主；没有 ADB 业务转发。读取记录短暂使用的调试转发在业务前全部移除。
+
+|宿主|实际路径|建连至认证（不含 bind）|Register+Put+存储签名核验|四步领取检查*|
+|---|---|---:|---:|---:|
+|PKL110，Wi-Fi|direct，笔记本同局域网|103ms|68ms|87ms|
+|PCLM50，Wi-Fi关闭/蜂窝|外部 Iroh Relay|5211ms|1929ms|2107ms|
+
+*错误能力 Fetch、正确 Fetch、Consume、空 Fetch；新 reader 认证分别103/7620ms。
+仅各一次样本，不是P95、A→B手机聊天时延或300ms验收。笔记本探测进程沿当前
+系统网络策略，未增加VPN分流规则；原NOVOVM节点直连规则/Codex VPN保持。
+Wi-Fi手机显式结束进程再打开后 L4 自动恢复，原身份/联系人/历史未清理；蜂窝
+手机不重启。原聊天任务仍有运行事件，但本轮未新增聊天消息或重测五轮恢复。
+
+结论：Android L4 已有真实外部入站服务证据；仅换为L4并不保证更快，必须区分
+直达与外部Relay。尚未签收手机A自动向手机B寄存、联系人内的可信节点交换、
+自动质量选路、独立多副本、奖励、匿名或自主传输。现有聊天信箱仍选已配置节点。
+下一片应在原Application owner接加密且有序的手机节点元数据及候选选择，不能
+改写已有日级不可变信箱声明的固定nonce载荷，也不能用收件手机替代唯一离线副本。
+
+验证：示例构建与严格Clippy通过；首次编译rand 0.8不支持64字节数组random，
+改为OsRng.fill_bytes后通过。证据：SUPERVM artifacts/l4-peer-probe-{build,
+build-fixed,clippy}.log；NOVOCHAT artifacts/l4-{cell,wifi}-probe.log 和
+l4-peer-after-*.log。签名地址记录/调试VM令牌留在忽略目录，不提交。
+
 ## 2026-10-14 NVMBOX06 有界密文通知与 Android 实测
 
 通讯实现 4af93ea6，合并主线 f4ebf9f3 保留其他机器计算工作且通讯输入树不变。
