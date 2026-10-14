@@ -1,6 +1,44 @@
 use super::*;
 
 #[test]
+fn export_projection_preserves_width_reference_identity_order_and_multiplicity() {
+    let mut high = AoemInteger1024V1::from_u128(7);
+    high.0[31] = 1;
+    let exports = vec![
+        lit(7),
+        V::Output { row: 0, column: 1 },
+        lit(7),
+        V::Literal(high),
+        V::Output { row: 1, column: 1 },
+        V::Output { row: 0, column: 0 },
+        V::Output { row: 0, column: 1 },
+    ];
+    let projection = ExportProjection::new(&exports);
+    assert_eq!(
+        projection.unique,
+        vec![exports[0], exports[1], exports[3], exports[4], exports[5]]
+    );
+    assert_eq!(projection.slots, vec![0, 1, 0, 2, 3, 4, 1]);
+    // Synthetic values test projection only; high bits are validated by the
+    // existing AOEM decoder/try_to_u128, never truncated by this projection.
+    assert_eq!(
+        projection.expand(&[7, 11, 13, 17, 19]).unwrap(),
+        vec![7, 11, 7, 13, 17, 19, 11]
+    );
+    assert!(projection.expand(&[7]).is_err());
+    assert!(projection.expand(&[7, 11, 13, 17, 19, 23]).is_err());
+    let again = ExportProjection::new(&exports);
+    assert_eq!(projection.unique, again.unique);
+    assert_eq!(projection.slots, again.slots);
+    assert!(ExportProjection::new(&[]).expand(&[]).unwrap().is_empty());
+    let invalid = ExportProjection {
+        unique: vec![lit(1)],
+        slots: vec![1],
+    };
+    assert!(invalid.expand(&[1]).is_err());
+}
+
+#[test]
 fn pure_sharing_binds_program_guard_full_width_and_dependency_identity() {
     let mut b = Builder::default();
     let a = b.call(1, &lit(1), vec![lit(7), lit(9), lit(0), lit(0)], 1);
@@ -186,6 +224,24 @@ fn resident_shared_and_unshared_complete_plans_match_every_export() -> Result<()
             "all effective state/receipt/diagnostic outputs; diverse={diverse}"
         );
         assert_eq!(new.exports.len(), 1024 * ROW + 21);
+        let projection = ExportProjection::new(&new.exports);
+        assert!(projection.unique.len() < new.exports.len());
+        let compact = resources.run_effects(&new.nodes, &projection.unique)?;
+        assert_eq!(
+            after,
+            projection.expand(&compact)?,
+            "every logical effect, including repetitions"
+        );
+        println!(
+            "export_projection={}",
+            serde_json::json!({
+                "diverse":diverse,"logical_exports":new.exports.len(),
+                "unique_exports":projection.unique.len(),
+                "value_payload_bytes_before":new.exports.len()*128,
+                "value_payload_bytes_after":projection.unique.len()*128,
+                "nodes_unchanged":new.nodes.len()
+            })
+        );
     }
     Ok(())
 }

@@ -40,6 +40,49 @@ impl From<&V> for BindingKey {
         }
     }
 }
+
+// A result projection, not a state transition. The complete plan still runs
+// every node; only repeated requests for the EXACT same typed value share an
+// export slot. Literals also travel through AOEM (no unchecked local output).
+// Distinct references are never merged merely because their values might be
+// equal at runtime. Slot order is first occurrence, independent of hash seeds.
+struct ExportProjection {
+    unique: Vec<V>,
+    slots: Vec<usize>,
+}
+impl ExportProjection {
+    fn new(exports: &[V]) -> Self {
+        let mut indices = HashMap::<BindingKey, usize>::new();
+        let mut unique = Vec::new();
+        let slots = exports
+            .iter()
+            .map(|value| {
+                *indices.entry(value.into()).or_insert_with(|| {
+                    let slot = unique.len();
+                    unique.push(*value);
+                    slot
+                })
+            })
+            .collect();
+        Self { unique, slots }
+    }
+
+    fn expand(&self, values: &[u128]) -> Result<Vec<u128>> {
+        ensure!(
+            values.len() == self.unique.len(),
+            "NOV unique effect export count mismatch"
+        );
+        self.slots
+            .iter()
+            .map(|&slot| {
+                values
+                    .get(slot)
+                    .copied()
+                    .context("NOV effect export projection out of bounds")
+            })
+            .collect()
+    }
+}
 #[derive(Hash, PartialEq, Eq)]
 struct ExpressionKey {
     program: usize,
@@ -690,7 +733,9 @@ pub(super) fn execute(
         "NOV effect candidate capacity"
     );
     let plan = compile(prepared, now)?;
-    let values = resources.run_effects(&plan.nodes, &plan.exports)?;
+    let projection = ExportProjection::new(&plan.exports);
+    let unique = resources.run_effects(&plan.nodes, &projection.unique)?;
+    let values = projection.expand(&unique)?;
     let n = prepared.requests.len();
     ensure!(
         values.len() == n * ROW + 21,
