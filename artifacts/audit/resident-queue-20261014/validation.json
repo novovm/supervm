@@ -1,0 +1,90 @@
+{
+  "source_patch_sha256": "9044f16104d7b0c8f35543407f1e9f765f781daeb9d4ee76f51f2937fd714ec2",
+  "clippy": {
+    "command": "cargo clippy --release --locked --target-dir target -p novovm-node --lib -- -D warnings",
+    "passed": true
+  },
+  "baseline_main_ci": {
+    "sha": "6f60edd1b95f408c49665e548d3dca449920035e",
+    "run": 38531288396,
+    "conclusion": "success"
+  },
+  "known_failures": [
+    "Initial test build missing queued field in destructuring; fixed with .., original log preserved",
+    "Initial summary expected profile_start on formal reports; use actual live_status stage_profile instead; raw reports unchanged"
+  ],
+  "fmt": {
+    "command": "cargo fmt --all -- --check",
+    "passed": true
+  },
+  "source": "6f60edd1b95f408c49665e548d3dca449920035e",
+  "gpu_device_residency_changed": false,
+  "cpu_default_unchanged": true,
+  "source_files": [
+    {
+      "sha256": "e17b9608e24b448fd0c2398be0014eaaa4d24ef98fa1cffdb5210a85b1d3a660",
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs"
+    },
+    {
+      "sha256": "dbdbe9142c0ec44824701332c55e424b38859a0a54c605871f0362540e414e15",
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs"
+    },
+    {
+      "sha256": "079ca405477246aa0a2555cd2d40e5c40a91dc86494f60971ad94cd0fb9f2c85",
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute.rs"
+    },
+    {
+      "sha256": "084243a19e10f1ec81b8ec8f0bdedbd795e6157ba13cf21bf7a058029f8a6675",
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs"
+    },
+    {
+      "sha256": "d309b6fa0857a3eee0b910275d868330eb4261166ce08f271331b8678e91b1ba",
+      "path": "crates/novovm-node/src/native_pipeline/profile.rs"
+    }
+  ],
+  "delivery_ci": "pending push; not yet verified",
+  "explicit_regressions": [
+    {
+      "sha256": "5d33ad54e2a95f97163af3d481e26051ed4059b646c3a6444829e89fa3c5dff2",
+      "name": "resident_shared_and_unshared_complete_plans_match_every_export",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1586 filtered out; finished in 3.81s"
+    },
+    {
+      "sha256": "cdbf38454e7f0cfd2e556cf0df309008c5e49a43d28daacce6cc6c6cf9d98d39",
+      "name": "resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1586 filtered out; finished in 0.33s"
+    },
+    {
+      "sha256": "5db31a2b02d3a9f3e7d12264a96b9d43bd66c8963028c033d3180068d5c4dba5",
+      "name": "resident_complete_plan_windows_diagnostics_and_capacity_edges",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1586 filtered out; finished in 0.32s"
+    },
+    {
+      "sha256": "c88e92186b934f7578743500fc0a8ccc2ee6dc316d302974aa5ab9e4f718c089",
+      "name": "resident_integer_rows_match_current_quoted_transfer_full_u128",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1586 filtered out; finished in 0.29s"
+    },
+    {
+      "sha256": "471490e0e9d7952a9f2b3a06f54ae6a841a385fbcde63461d2b0356093885127",
+      "name": "actual_product_rpc_single_ingress_gossip_failures_and_restart",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1586 filtered out; finished in 3.05s"
+    },
+    {
+      "sha256": "33672a0fb39c868128e6751d383cbc74d180fb6027d6791378476c636e2f68a8",
+      "name": "actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1586 filtered out; finished in 14.29s"
+    },
+    {
+      "sha256": "045222949c1b0de0d3b4999416bbc1ca2d28a3b3d06538d2d4ba3361fb4a9405",
+      "name": "actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart",
+      "result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1586 filtered out; finished in 48.49s"
+    }
+  ],
+  "stable_tps_improvement_accepted": false,
+  "sdk_changed": false,
+  "summary": "summary.json",
+  "pipeline": "test result: ok. 399 passed; 0 failed; 62 ignored; 0 measured; 1126 filtered out; finished in 1.65s",
+  "production_accepted": false,
+  "independent_bigint_oracle_rerun": false,
+  "schema": "resident-queue-20261014-v1"
+}

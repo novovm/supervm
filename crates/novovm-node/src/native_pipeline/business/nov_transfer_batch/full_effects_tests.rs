@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn compiler_symbols_are_compact_exact_full_width_and_candidate_local() {
+    let mut symbols = BindingSymbols::default();
+    let low = lit(7);
+    let first = symbols.key(&low);
+    assert!(matches!(first, BindingKey::Literal(0)));
+    assert!(first == symbols.key(&low));
+    for limb in 1..32 {
+        let mut wide = AoemInteger1024V1::from_u128(7);
+        wide.0[limb] = 9;
+        let wide = V::Literal(wide);
+        let key = symbols.key(&wide);
+        assert!(key != first);
+        assert!(key == symbols.key(&wide));
+    }
+    assert_eq!(symbols.literals.len(), 32);
+    assert!(first != symbols.key(&V::Output { row: 0, column: 0 }));
+    assert!(
+        symbols.key(&V::Output { row: 0, column: 1 })
+            != symbols.key(&V::Output { row: 1, column: 0 })
+    );
+    assert_eq!(
+        symbols.literals.len(),
+        32,
+        "references do not intern values"
+    );
+    assert!(std::mem::size_of::<BindingKey>() <= 12);
+    assert!(BindingSymbols::default().literals.is_empty());
+}
+
+#[test]
 fn export_projection_preserves_width_reference_identity_order_and_multiplicity() {
     let mut high = AoemInteger1024V1::from_u128(7);
     high.0[31] = 1;
