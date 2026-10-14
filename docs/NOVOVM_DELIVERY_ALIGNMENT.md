@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 mailbox live carrier observation (claim released):** NOVOCHAT session,
+input 627bef00. Scoped to mailbox_rpc.rs and mailbox_idle_tests.rs: expose the
+existing selected-path/smoothed-RTT snapshot on a healthy mailbox session.
+No probe, wire change, routing policy, authorization or financial changes.
+Two real QUIC idle/revocation tests pass (56.21s), strict Clippy passes.
+Mobile evidence must distinguish initial relay admission from later migration;
+this API does not implement routing policy or prove low latency.
+
 **2026-10-15 continuous mailbox idle lifecycle (claim released):** input f0a73d7b.
 NVMBOX06 now distinguishes authenticated idle from a bounded active request;
 first incoming byte starts the original 30s frame/chunk/work/reply budget.

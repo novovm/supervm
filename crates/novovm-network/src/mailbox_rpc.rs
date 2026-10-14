@@ -850,6 +850,21 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
         }
         MAX_SESSION_REQUESTS_V2.saturating_sub(self.requests)
     }
+    /// Passive observation of this session's current carrier, not its initial
+    /// admission path. No network probe, identity, liveness or delivery proof.
+    /// RTT is QUIC's smoothed estimate, not mailbox request completion time.
+    /// Unsupported/missing RTT remains None; it must not rank as zero latency.
+    pub fn carrier_observation_v1(&self) -> Result<(&'static str, Option<std::time::Duration>)> {
+        ensure!(!self.poisoned, "mailbox session unusable");
+        let path = self.stream.selected_path()?;
+        #[cfg(feature = "iroh-transport")]
+        if let Some((selected, rtt)) = self.stream.selected_rtt() {
+            // Read kind and RTT together: migration can occur after the live
+            // authority check above. Never pair a new RTT with the old kind.
+            return Ok((selected, Some(rtt)));
+        }
+        Ok((path, None))
+    }
     pub async fn request(&mut self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
         ensure!(
             self.prefetch || !matches!(&request, MailboxRequestV1::WatchFetchV6 { .. }),

@@ -4,6 +4,17 @@
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
 
+## 2026-10-15 信箱当前载体观测：组件通过，非选路优化
+
+输入627bef00。MailboxClientSessionV2::carrier_observation_v1读取既有连接
+的当前选中路径及QUIC平滑RTT；路径和RTT来自同一快照，缺失保持None。
+检查原流有效性与poison状态，不发探测、不建连接、不改变协议或准入。
+用于区分握手时Relay与后续路径迁移，不能将RTT等同寄存或端到端时延。
+原真实QUIC测试增加首次/31秒空闲后观察及撤销拒绝：2项通过56.21s，
+严格网络库Clippy通过。Android消费及真实路径数据由下游继续验收，
+本片不证明300ms、匿名、自主传输或路径择优完成。
+证据：target/mailbox-carrier-observation-{test,clippy}.log。
+
 ## 2026-10-15 手机自动L4空闲后双向寄存：本批通过，非300ms
 
 NOVOCHAT 84cf380 固定通讯输入98c72b5e，原两台正式安装覆盖/readback

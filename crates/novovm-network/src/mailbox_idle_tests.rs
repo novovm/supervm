@@ -78,6 +78,9 @@ async fn exercise(revoke: bool) -> Result<()> {
                     key(1).verifying_key().to_bytes(),
                 )
                 .await?;
+                let (path, rtt) = session.carrier_observation_v1()?;
+                assert_eq!(path, "direct");
+                assert!(rtt.is_some(), "real QUIC selected path has no RTT");
                 if revoke {
                     active.store(false, Ordering::Release);
                     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -88,6 +91,7 @@ async fn exercise(revoke: bool) -> Result<()> {
                         })
                         .await
                         .is_err());
+                    assert!(session.carrier_observation_v1().is_err());
                     assert!(
                         session
                             .request(MailboxRequestV1::Fetch {
@@ -101,6 +105,7 @@ async fn exercise(revoke: bool) -> Result<()> {
                     return Ok(());
                 }
                 tokio::time::sleep(Duration::from_secs(31)).await;
+                assert_eq!(session.carrier_observation_v1()?.0, "direct");
                 let data = vec![5; CHUNK * 2];
                 let expires = now()? + 60;
                 let reply = session
