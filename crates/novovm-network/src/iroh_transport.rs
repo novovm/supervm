@@ -359,6 +359,7 @@ pub struct IrohScopeV1 {
     connections: Arc<tokio::sync::Semaphore>,
     accept_consumer: Arc<tokio::sync::Mutex<()>>,
     listener_budget: Option<Duration>,
+    continuous_service: bool,
     reuse: Option<(Arc<reuse::Pool>, u8)>,
 }
 
@@ -553,7 +554,8 @@ impl IrohEndpointOwnerV1 {
     where
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
-        self.operation_with_lane(control, None, operation).await
+        self.operation_with_lane(control, None, false, operation)
+            .await
     }
 
     /// Opt-in transport reuse for a caller-defined, fixed purpose lane. A new
@@ -569,21 +571,49 @@ impl IrohEndpointOwnerV1 {
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
         ensure!((1..=8).contains(&lane), "invalid retained connection lane");
-        self.operation_with_lane(control, Some(lane), operation)
+        self.operation_with_lane(control, Some(lane), false, operation)
             .await
+    }
+
+    /// An owner-cancelled service scope for explicitly negotiated continuous
+    /// protocols. This is local execution ownership, NOT network admission.
+    /// Dial/setup and each stream initially have 30s IO budgets. Only this
+    /// crate's authenticated V4 service may advance request budgets; legacy
+    /// streams and finite operations cannot acquire continuous authority.
+    pub async fn with_continuous_service_v4<T, F>(
+        &self,
+        check: impl Fn() -> Result<()> + Send + Sync + 'static,
+        service: F,
+    ) -> Result<T>
+    where
+        F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
+    {
+        self.operation_with_lane(
+            IrohControlV1 {
+                check: Arc::new(check),
+                deadline: None,
+            },
+            None,
+            true,
+            service,
+        )
+        .await
     }
 
     async fn operation_with_lane<T, F>(
         &self,
         control: IrohControlV1,
         lane: Option<u8>,
+        continuous_service: bool,
         operation: F,
     ) -> Result<T>
     where
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
         self.check_runtime()?;
-        control.io_deadline()?;
+        if !continuous_service {
+            control.io_deadline()?;
+        }
         control.check()?;
         self.state.check()?;
         self.state.active.fetch_add(1, Ordering::SeqCst);
@@ -608,6 +638,7 @@ impl IrohEndpointOwnerV1 {
             connections: self.connections.clone(),
             accept_consumer: self.accept_consumer.clone(),
             listener_budget: None,
+            continuous_service,
             reuse: lane.map(|lane| (self.reuse.clone(), lane)),
         };
         let mut reuse_guard =
@@ -859,6 +890,7 @@ where
         connections: Arc::new(tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1)),
         accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
         listener_budget,
+        continuous_service: false,
         reuse: None,
     };
     let result = tokio::select! {
@@ -986,17 +1018,21 @@ impl IrohScopeV1 {
             .clone()
             .try_acquire_owned()
             .context("carrier connection limit")?;
-        let connection = self
-            .endpoint
-            .connect(address, IROH_ALPN_V1)
-            .await
-            .map_err(|error| {
-                if connect_unavailable(&error) {
-                    anyhow::Error::new(IrohConnectUnavailableV1(error.into()))
-                } else {
-                    error.into()
-                }
-            })?;
+        let connecting = self.endpoint.connect(address, IROH_ALPN_V1);
+        let connection = if self.continuous_service {
+            tokio::time::timeout(Duration::from_secs(30), connecting)
+                .await
+                .map_err(|_| IrohScopeDeadlineV1(()))?
+        } else {
+            connecting.await
+        }
+        .map_err(|error| {
+            if connect_unavailable(&error) {
+                anyhow::Error::new(IrohConnectUnavailableV1(error.into()))
+            } else {
+                error.into()
+            }
+        })?;
         let pending = PendingConnection::new(connection);
         tokio::time::timeout(
             INCOMING_SETUP_TIMEOUT,
@@ -1115,6 +1151,8 @@ impl IrohScopeV1 {
                 deadline: if let Some(budget) = self.listener_budget {
                     let until = Instant::now() + budget;
                     Some(self.control.deadline.map_or(until, |end| end.min(until)))
+                } else if self.continuous_service {
+                    Some(Instant::now() + Duration::from_secs(30))
                 } else {
                     self.control.deadline
                 },
@@ -1132,6 +1170,7 @@ impl IrohScopeV1 {
             reused: false,
             handed_off: false,
             service_window: false,
+            continuous_service: false,
         })
     }
 }
@@ -1173,6 +1212,7 @@ pub struct IrohStreamV1<'a> {
     reused: bool,
     handed_off: bool,
     service_window: bool,
+    continuous_service: bool,
 }
 
 /// A borrowed framed writer. The parent stream and its authorized scope remain
@@ -1484,6 +1524,37 @@ impl Drop for IrohStreamV1<'_> {
 }
 
 impl<'scope> IrohStreamV1<'scope> {
+    /// Called only after the V4 Finished-bound negotiation. No finite scope,
+    /// expired initial admission, or legacy window can be upgraded.
+    pub(crate) fn admit_continuous_service_v4(&mut self) -> Result<()> {
+        self.check()?;
+        ensure!(
+            self.scope.control.deadline.is_none()
+                && (self.scope.continuous_service || self.scope.listener_budget.is_some())
+                && !self.service_window
+                && !self.continuous_service
+                && !self.finished
+                && !self.handed_off,
+            "continuous service requires fresh owned scope"
+        );
+        self.continuous_service = true;
+        self.io_control.deadline = Some(Instant::now() + Duration::from_secs(30));
+        Ok(())
+    }
+
+    /// A synchronized request boundary, never a grant extension. The protocol
+    /// must have completed the previous request and retain its AEAD counters.
+    /// Abandoned/expired IO is terminal; it cannot be made usable here.
+    pub(crate) fn begin_service_request_v4(&mut self) -> Result<()> {
+        self.check()?;
+        ensure!(
+            self.continuous_service && !self.finished && !self.handed_off,
+            "continuous request outside session"
+        );
+        self.io_control.deadline = Some(Instant::now() + Duration::from_secs(30));
+        Ok(())
+    }
+
     /// Internal admission seam, used only AFTER the selected service verifies
     /// Finished and its BeginSession. The deadline is derived once from the
     /// already issued lease, never renewed by activity. Outbound/finite scopes,
@@ -1495,6 +1566,7 @@ impl<'scope> IrohStreamV1<'scope> {
                 && self.scope.listener_budget.is_some()
                 && self.scope.control.deadline.is_none()
                 && !self.service_window
+                && !self.continuous_service
                 && !self.finished
                 && !self.handed_off,
             "service window requires fresh owned inbound stream"
@@ -2148,6 +2220,36 @@ mod tests {
             IROH_MAX_CONNECTIONS_V1
         );
         owner.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn continuous_owner_close_interrupts_wait_and_releases_socket() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+            .await
+            .unwrap();
+        let port = owner.endpoint.bound_sockets()[0];
+        let (ready, started) = oneshot::channel();
+        let running = owner.with_continuous_service_v4(
+            || Ok(()),
+            move |scope| {
+                Box::pin(async move {
+                    ready.send(()).unwrap();
+                    let _stream = scope.accept_inbound().await?;
+                    Ok(())
+                })
+            },
+        );
+        let closing = async {
+            started.await.unwrap();
+            owner.close().await
+        };
+        let (running, closing) = tokio::join!(running, closing);
+        assert!(running.is_err());
+        closing.unwrap();
+        assert!(owner.snapshot().closed);
+        assert_eq!(owner.snapshot().active_operations, 0);
+        assert!(std::net::UdpSocket::bind(port).is_ok());
     }
 
     #[tokio::test]
@@ -2942,6 +3044,14 @@ mod tests {
                         .is_err(),
                     "finite inbound scope gained service authority"
                 );
+                ensure!(
+                    stream.admit_continuous_service_v4().is_err(),
+                    "finite inbound gained continuous authority"
+                );
+                ensure!(
+                    stream.begin_service_request_v4().is_err(),
+                    "finite IO deadline reset"
+                );
                 let binding = stream.binding_material()?;
                 let _proof = stream.binding()?;
                 // Transport-only test bytes; no application identity or access
@@ -2964,6 +3074,14 @@ mod tests {
                         .admit_service_window(Instant::now() + Duration::from_secs(60))
                         .is_err(),
                     "outbound scope gained service authority"
+                );
+                ensure!(
+                    stream.admit_continuous_service_v4().is_err(),
+                    "finite outbound gained continuous authority"
+                );
+                ensure!(
+                    stream.begin_service_request_v4().is_err(),
+                    "finite IO deadline reset"
                 );
                 let binding = stream.binding_material()?;
                 stream.write_frame(b"transport probe").await?;

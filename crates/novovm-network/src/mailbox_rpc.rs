@@ -29,6 +29,8 @@ const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array
 pub enum MailboxRequestV1 {
     /// Explicit opt-in on NVMBOX02; never a downgrade on an older service.
     BeginSession,
+    /// Explicit, Finished-protected NVMBOX04 negotiation. Legacy rejects it.
+    BeginContinuousV4,
     EndSession,
     /// Bounded notification wait; each position is private to an authorized box.
     /// The caller snapshots before Fetch, then watches from that position.
@@ -72,7 +74,10 @@ pub enum MailboxRequestV1 {
 impl Drop for MailboxRequestV1 {
     fn drop(&mut self) {
         match self {
-            Self::BeginSession | Self::EndSession | Self::Watch { .. } => {} // each item zeroizes its own read capability
+            Self::BeginSession
+            | Self::BeginContinuousV4
+            | Self::EndSession
+            | Self::Watch { .. } => {} // each item zeroizes its own read capability
             Self::Register { write, read, .. } => {
                 write.zeroize();
                 read.zeroize();
@@ -107,6 +112,7 @@ pub struct MailboxNoticeV1 {
 #[serde(deny_unknown_fields)]
 pub enum MailboxReplyV1 {
     SessionReady,
+    ContinuousReadyV4,
     SessionEnded,
     Notice(Vec<MailboxNoticeV1>),
     Registered,
@@ -140,6 +146,33 @@ pub struct MailboxServiceV1 {
     signer: SigningKey,
     slots: Arc<tokio::sync::Semaphore>,
     changed: tokio::sync::watch::Sender<u64>,
+    // Shared across V4 connections, so reconnecting cannot reset the budget.
+    request_budget: Mutex<RequestBudgetV4>,
+}
+
+struct RequestBudgetV4 {
+    tokens: u32,
+    updated: std::time::Instant,
+    burst: u16,
+    interval: std::time::Duration,
+}
+impl RequestBudgetV4 {
+    fn take(&mut self) -> Option<std::time::Duration> {
+        use std::time::Duration;
+        let elapsed = self.updated.elapsed();
+        let refill = elapsed.as_nanos() / self.interval.as_nanos();
+        if refill > 0 {
+            self.tokens = (u128::from(self.tokens) + refill).min(u128::from(self.burst)) as u32;
+            let remainder = elapsed.as_nanos() % self.interval.as_nanos();
+            self.updated += elapsed - Duration::from_nanos(remainder as u64);
+        }
+        if self.tokens > 0 {
+            self.tokens -= 1;
+            None
+        } else {
+            Some(self.interval.saturating_sub(self.updated.elapsed()))
+        }
+    }
 }
 impl MailboxServiceV1 {
     pub fn new(store: MailboxStore, signer: SigningKey) -> Self {
@@ -148,6 +181,49 @@ impl MailboxServiceV1 {
             signer,
             slots: Arc::new(tokio::sync::Semaphore::new(1)),
             changed: tokio::sync::watch::channel(0).0,
+            request_budget: Mutex::new(RequestBudgetV4 {
+                tokens: 64,
+                updated: std::time::Instant::now(),
+                burst: 64,
+                interval: std::time::Duration::from_millis(500),
+            }),
+        }
+    }
+
+    /// Local provider configuration, chosen before sharing this service owner.
+    /// It cannot be changed by RPC or reset by reconnecting. Storage/byte/frame
+    /// limits remain independent; these are request units, not NOV rewards.
+    pub fn with_continuous_request_rate_v4(mut self, burst: u16, per_second: u16) -> Result<Self> {
+        ensure!(
+            (1..=256).contains(&burst) && (1..=128).contains(&per_second),
+            "mailbox local rate bounds"
+        );
+        *self
+            .request_budget
+            .get_mut()
+            .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))? =
+            RequestBudgetV4 {
+                tokens: u32::from(burst),
+                burst,
+                interval: std::time::Duration::from_nanos(
+                    1_000_000_000u64.div_ceil(u64::from(per_second)),
+                ),
+                updated: std::time::Instant::now(),
+            };
+        Ok(self)
+    }
+
+    async fn admit_request_v4(&self) -> Result<()> {
+        loop {
+            let wait = self
+                .request_budget
+                .lock()
+                .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))?
+                .take();
+            match wait {
+                None => return Ok(()),
+                Some(wait) => tokio::time::sleep(wait).await,
+            }
         }
     }
 
@@ -219,9 +295,9 @@ impl MailboxServiceV1 {
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
-                    MailboxRequestV1::BeginSession | MailboxRequestV1::EndSession => {
-                        Err(StoreError::Invalid)
-                    }
+                    MailboxRequestV1::BeginSession
+                    | MailboxRequestV1::BeginContinuousV4
+                    | MailboxRequestV1::EndSession => Err(StoreError::Invalid),
                     MailboxRequestV1::Watch { .. } => {
                         unreachable!("watch dispatched before store worker")
                     }
@@ -546,12 +622,32 @@ pub struct MailboxClientSessionV2<'stream, 'scope> {
     received: u64,
     requests: u16,
     poisoned: bool,
+    continuous: bool,
 }
 impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
     pub async fn begin(
         stream: &'stream mut CarrierStreamV1<'scope>,
         identity: &SigningKey,
         pinned_node: [u8; 32],
+    ) -> Result<Self> {
+        Self::begin_inner(stream, identity, pinned_node, false).await
+    }
+
+    /// Requires a V4 selector and an owner-controlled continuous carrier scope.
+    /// Local peer trust/revocation and privacy remain the owner's live checks.
+    pub async fn begin_continuous_v4(
+        stream: &'stream mut CarrierStreamV1<'scope>,
+        identity: &SigningKey,
+        pinned_node: [u8; 32],
+    ) -> Result<Self> {
+        Self::begin_inner(stream, identity, pinned_node, true).await
+    }
+
+    async fn begin_inner(
+        stream: &'stream mut CarrierStreamV1<'scope>,
+        identity: &SigningKey,
+        pinned_node: [u8; 32],
+        continuous: bool,
     ) -> Result<Self> {
         let channel = authenticate_bound_session(
             stream,
@@ -568,36 +664,59 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
             received: 0,
             requests: 0,
             poisoned: false,
+            continuous: false,
         };
+        let reply = session
+            .exchange(if continuous {
+                MailboxRequestV1::BeginContinuousV4
+            } else {
+                MailboxRequestV1::BeginSession
+            })
+            .await?;
         ensure!(
             matches!(
-                session.exchange(MailboxRequestV1::BeginSession).await?,
-                MailboxReplyV1::SessionReady
+                (&reply, continuous),
+                (MailboxReplyV1::SessionReady, false) | (MailboxReplyV1::ContinuousReadyV4, true)
             ),
             "mailbox session negotiation rejected"
         );
+        if continuous {
+            session.stream.admit_continuous_service_v4()?;
+            session.continuous = true;
+        }
         Ok(session)
     }
     pub fn remaining_requests(&self) -> u16 {
+        // Continuous V4 uses the node-wide rate budget, not a lifetime cap.
+        // Kept for existing callers; they must opt into V4 explicitly.
+        if self.continuous {
+            return u16::MAX;
+        }
         MAX_SESSION_REQUESTS_V2.saturating_sub(self.requests)
     }
     pub async fn request(&mut self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
         ensure!(
             !matches!(
                 &request,
-                MailboxRequestV1::BeginSession | MailboxRequestV1::EndSession
+                MailboxRequestV1::BeginSession
+                    | MailboxRequestV1::BeginContinuousV4
+                    | MailboxRequestV1::EndSession
             ),
             "mailbox session control reserved"
         );
         ensure!(
-            self.requests < MAX_SESSION_REQUESTS_V2,
+            self.continuous || self.requests < MAX_SESSION_REQUESTS_V2,
             "mailbox session request budget"
         );
-        self.requests += 1;
+        if !self.continuous {
+            self.requests += 1;
+        }
         let reply = self.exchange(request).await?;
         if matches!(
             reply,
-            MailboxReplyV1::SessionReady | MailboxReplyV1::SessionEnded
+            MailboxReplyV1::SessionReady
+                | MailboxReplyV1::ContinuousReadyV4
+                | MailboxReplyV1::SessionEnded
         ) {
             self.poisoned = true;
             anyhow::bail!("unexpected mailbox session control");
@@ -607,6 +726,9 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
     async fn exchange(&mut self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
         ensure!(!self.poisoned, "mailbox session unusable");
         self.poisoned = true; // Also remains true if this future is cancelled.
+        if self.continuous {
+            self.stream.begin_service_request_v4()?;
+        }
         self.stream.selected_path()?;
         send(self.stream, &mut self.channel, &request, &mut self.sent).await?;
         let reply = receive(self.stream, &mut self.channel, &mut self.received).await?;
@@ -636,7 +758,15 @@ pub async fn serve_mailbox_session_v2(
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
-    serve_session(stream, identity, allowed, service, authority, None).await
+    serve_session(
+        stream,
+        identity,
+        allowed,
+        service,
+        authority,
+        SessionMode::Legacy,
+    )
+    .await
 }
 
 /// Explicit NVMBOX03 admission. The host derives this immutable monotonic
@@ -662,11 +792,42 @@ pub async fn serve_mailbox_window_v3(
             allowed,
             service,
             authority,
-            Some(deadline),
+            SessionMode::Window(deadline),
         ),
     )
     .await
     .map_err(|_| anyhow::anyhow!("mailbox window expired"))?
+}
+
+/// Node-owned resource service, independent of rendezvous declaration epochs.
+/// All waits are supervised for revocation, including storage and idle reads.
+/// The same identity handshake, operations, receipts and storage are reused.
+pub async fn serve_mailbox_continuous_v4(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    allowed: &[[u8; 32]],
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    let revoked = async {
+        loop {
+            if let Err(error) = authority() {
+                return error;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        error = revoked => Err(error),
+        result = serve_session(stream, identity, allowed, service, &authority, SessionMode::Continuous) => result,
+    }
+}
+
+enum SessionMode {
+    Legacy,
+    Window(std::time::Instant),
+    Continuous,
 }
 
 async fn serve_session(
@@ -675,7 +836,7 @@ async fn serve_session(
     allowed: &[[u8; 32]],
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
-    window: Option<std::time::Instant>,
+    mode: SessionMode,
 ) -> Result<()> {
     ensure!(
         identity.verifying_key() == service.signer.verifying_key(),
@@ -693,7 +854,7 @@ async fn serve_session(
     let first: MailboxRequestV1 = receive(stream, &mut channel, &mut received).await?;
     authority()?;
     stream.selected_path()?;
-    if let Some(deadline) = window {
+    if let SessionMode::Window(deadline) = mode {
         ensure!(
             matches!(&first, MailboxRequestV1::BeginSession),
             "mailbox window requires session"
@@ -702,7 +863,20 @@ async fn serve_session(
         // the listener's short unauthenticated admission into a service window.
         stream.admit_service_window(deadline)?;
     }
-    if !matches!(&first, MailboxRequestV1::BeginSession) {
+    let continuous = matches!(mode, SessionMode::Continuous);
+    if continuous {
+        ensure!(
+            matches!(&first, MailboxRequestV1::BeginContinuousV4),
+            "mailbox V4 negotiation required"
+        );
+        stream.admit_continuous_service_v4()?;
+    } else {
+        ensure!(
+            !matches!(&first, MailboxRequestV1::BeginContinuousV4),
+            "mailbox V4 not selected"
+        );
+    }
+    if !continuous && !matches!(&first, MailboxRequestV1::BeginSession) {
         let reply = service.execute(first).await?;
         authority()?;
         stream.selected_path()?;
@@ -711,14 +885,23 @@ async fn serve_session(
         send(
             stream,
             &mut channel,
-            &MailboxReplyV1::SessionReady,
+            &if continuous {
+                MailboxReplyV1::ContinuousReadyV4
+            } else {
+                MailboxReplyV1::SessionReady
+            },
             &mut sent,
         )
         .await?;
-        for index in 0..=MAX_SESSION_REQUESTS_V2 {
+        let mut index = 0;
+        loop {
             // Each request keeps the old 30s maximum IO budget, including its
             // bounded Watch and durable work. Activity cannot slide the window.
             let done = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                if continuous {
+                    stream.begin_service_request_v4()?;
+                    service.admit_request_v4().await?;
+                }
                 let request: MailboxRequestV1 =
                     receive(stream, &mut channel, &mut received).await?;
                 authority()?;
@@ -734,11 +917,14 @@ async fn serve_session(
                     return Ok::<_, anyhow::Error>(true);
                 }
                 ensure!(
-                    index < MAX_SESSION_REQUESTS_V2,
+                    continuous || index < MAX_SESSION_REQUESTS_V2,
                     "mailbox session request budget"
                 );
                 ensure!(
-                    !matches!(&request, MailboxRequestV1::BeginSession),
+                    !matches!(
+                        &request,
+                        MailboxRequestV1::BeginSession | MailboxRequestV1::BeginContinuousV4
+                    ),
                     "mailbox session already active"
                 );
                 let reply = service.execute(request).await?;
@@ -752,6 +938,9 @@ async fn serve_session(
             if done {
                 break;
             }
+            if !continuous {
+                index += 1;
+            }
         }
     }
     authority()?;
@@ -761,6 +950,112 @@ async fn serve_session(
 #[cfg(test)]
 mod notification_tests {
     use super::*;
+    #[tokio::test]
+    async fn continuous_replay_is_rejected_with_original_counters() -> Result<()> {
+        use crate::iroh_transport::{with_iroh_owned_listener_v1, IrohEndpointOwnerV1};
+        fn key(n: u8) -> SigningKey {
+            SigningKey::from_bytes(&[n; 32])
+        }
+        fn config() -> crate::iroh_transport::IrohConfigV1 {
+            crate::iroh_transport::IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
+                .unwrap()
+                .with_bind_address("127.0.0.1:0".parse().unwrap())
+                .unwrap()
+        }
+        let dir = tempfile::tempdir()?;
+        let service = MailboxServiceV1::new(
+            MailboxStore::open(dir.path().join("continuous.db"), Default::default())?,
+            key(1),
+        );
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let server = with_iroh_owned_listener_v1(
+            config().with_owned_service_identity(Zeroizing::new([90; 32]))?,
+            || Ok(()),
+            move |scope| {
+                Box::pin(async move {
+                    tx.send(scope.address()?)
+                        .map_err(|_| anyhow::anyhow!("fixture address"))?;
+                    let mut stream = scope.accept_inbound().await?.into();
+                    let result = serve_mailbox_continuous_v4(
+                        &mut stream,
+                        &key(1),
+                        &[key(2).verifying_key().to_bytes()],
+                        &service,
+                        || Ok(()),
+                    )
+                    .await;
+                    drop(stream);
+                    ensure!(result.unwrap_err().to_string().contains("mailbox sequence"));
+                    Ok(())
+                })
+            },
+        );
+        let owner = IrohEndpointOwnerV1::bind(config(), || Ok(())).await?;
+        let client = owner.with_continuous_service_v4(
+            || Ok(()),
+            move |scope| {
+                Box::pin(async move {
+                    let mut stream: CarrierStreamV1<'_> = scope.connect(&rx.await?).await?.into();
+                    let mut channel = authenticate_bound_session(
+                        &mut stream,
+                        &key(2),
+                        key(1).verifying_key().to_bytes(),
+                        true,
+                        &mut HandshakeReplayCacheV1::new(8),
+                    )
+                    .await?;
+                    let bytes = serde_json::to_vec(&MailboxRequestV1::BeginContinuousV4)?;
+                    let body = [(bytes.len() as u32).to_be_bytes().as_slice(), &bytes].concat();
+                    let frame = NovoRudpTransportFrameV0::new(
+                        NovoRudpTransportFrameKindV0::Data,
+                        channel.session_id(),
+                        STREAM,
+                        1,
+                        1,
+                        0,
+                        body,
+                    );
+                    let encoded = encode_iroh_envelope_v1(&channel.seal_novorudp_frame(&frame)?)?;
+                    stream.write_frame(&encoded).await?;
+                    ensure!(matches!(
+                        receive::<MailboxReplyV1>(&mut stream, &mut channel, &mut 0).await?,
+                        MailboxReplyV1::ContinuousReadyV4
+                    ));
+                    stream.admit_continuous_service_v4()?;
+                    stream.write_frame(&encoded).await?;
+                    ensure!(stream.read_frame().await.is_err());
+                    Ok(())
+                })
+            },
+        );
+        let (a, b) = tokio::join!(server, client);
+        a?;
+        b?;
+        owner.close().await?;
+        Ok(())
+    }
+    #[test]
+    fn continuous_budget_is_bounded_and_refills_without_lifetime_reset() {
+        let mut budget = RequestBudgetV4 {
+            tokens: 64,
+            updated: std::time::Instant::now(),
+            burst: 64,
+            interval: std::time::Duration::from_millis(500),
+        };
+        for _ in 0..64 {
+            assert!(budget.take().is_none());
+        }
+        assert!(budget.take().is_some());
+        budget.updated -= std::time::Duration::from_millis(1000);
+        assert!(budget.take().is_none());
+        assert!(budget.take().is_none());
+        assert!(budget.take().is_some());
+        budget.updated -= std::time::Duration::from_secs(120);
+        for _ in 0..64 {
+            assert!(budget.take().is_none());
+        }
+        assert!(budget.take().is_some());
+    }
     #[tokio::test(flavor = "current_thread")]
     async fn contribution_stop_orders_with_real_commits_and_preserves_lost_ack_recovery(
     ) -> Result<()> {

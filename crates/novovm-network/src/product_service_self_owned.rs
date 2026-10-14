@@ -45,6 +45,30 @@ struct State {
 }
 
 impl ServiceLeaseBookV1 {
+    /// NVMBOX04 live connection policy. This checks LOCAL pin ownership and
+    /// revocation, not the freshness of an opaque rendezvous locator. Callers
+    /// must still verify fresh Finished on the actual pinned carrier; this
+    /// method alone authenticates no peer and grants no mailbox capability.
+    /// Never available to the lease-bound, Publisher-endorsed policy.
+    pub fn check_continuous_peer_v4(
+        &mut self,
+        pin: [u8; 32],
+        endpoint: [u8; 32],
+        now: u64,
+    ) -> Result<()> {
+        self.observe(now)?;
+        ensure!(self.is_self_owned(), "continuous peer requires local trust");
+        let entry = self.entries.get(&pin).context("service revoked")?;
+        ensure!(
+            IrohServiceEndpointV1::from_record(&entry.current)?
+                .address
+                .endpoint_key
+                == endpoint,
+            "self-owned transport changed"
+        );
+        Ok(())
+    }
+
     /// Check the stable locator for a NEW handshake. Store instances may rotate
     /// behind that same pinned transport. Only accept_renewal authorizes the
     /// offered instance, after signature, freshness and sequence validation.

@@ -7,7 +7,7 @@ use crate::{
     product_directory::PeerSignedRelayRecordV1,
     product_rendezvous_daemon::now_ms,
     product_service_lease::{
-        serve_node_offer_selected_v1, IrohServiceEndpointV1, NodeServiceV1, ServiceLeaseHostV1,
+        serve_self_owned_node_selected_v4, IrohServiceEndpointV1, NodeServiceV1, ServiceLeaseHostV1,
     },
 };
 use anyhow::{ensure, Result};
@@ -128,16 +128,26 @@ pub async fn run_self_owned_node_v1(
                         let key = &key;
                         let clients = &clients;
                         let mailbox=mailbox.clone();
+                        let transport = endpoint.address.endpoint_key;
                         active.push(async move {
                             let mut stream: CarrierStreamV1<'_> = stream.into();
                             loop {
                                 let admitted_at = Instant::now();
-                                    let (kind, (store, offer_until)) = tokio::time::timeout(Duration::from_secs(3), serve_node_offer_selected_v1(&mut stream, || {
+                                    let (kind, selected) = tokio::time::timeout(Duration::from_secs(3), serve_self_owned_node_selected_v4(&mut stream, || {
                                         let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
                                         let offer = host.offer_until(now_ms()?, current.expires_ms)?;
                                         let until = offer.lease.as_ref().map_or(0, |lease| lease.expires_at_ms);
                                         Ok((offer, (current.store.clone(), until)))
-                                    })).await??;
+                                    }, || host.check_continuous_peer_v4(transport, now_ms()?))).await??;
+                                if kind == NodeServiceV1::MailboxContinuous {
+                                    let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
+                                    crate::mailbox_rpc::serve_mailbox_continuous_v4(
+                                        &mut stream, key, clients, mailbox,
+                                        || host.check_continuous_peer_v4(transport, now_ms()?),
+                                    ).await?;
+                                    break;
+                                }
+                                let (store, offer_until) = selected.ok_or_else(||anyhow::anyhow!("missing legacy service offer"))?;
                                 let legacy_until = admitted_at + Duration::from_secs(30);
                                 // The signed offer remains the authority. Its remaining wall
                                 // interval is anchored once to monotonic time, before Finished.
@@ -147,6 +157,7 @@ pub async fn run_self_owned_node_v1(
                                 let until = if kind == NodeServiceV1::MailboxWindow { window_until } else { legacy_until };
                                 let again = tokio::time::timeout_at(until.into(), async {
                                     match kind {
+                                        NodeServiceV1::MailboxContinuous => anyhow::bail!("continuous service in legacy dispatch"),
                                         NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
                                         NodeServiceV1::Mailbox | NodeServiceV1::MailboxRealtime | NodeServiceV1::MailboxWindow => {
                                             let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;

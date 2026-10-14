@@ -3,6 +3,48 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 NVMBOX04 持续认证信箱：组件通过，手机尚未切换
+
+输入 `35f60734`。本轮仅通用network；保留原mailbox、存储、Finished、节点owner。
+调用链：`run_self_owned_node_v1` → `serve_self_owned_node_selected_v4` →
+`ServiceLeaseHostV1::check_continuous_peer_v4` → `serve_mailbox_continuous_v4` →
+原`MailboxServiceV1::execute`/SQLite。客户端原Endpoint owner的
+`with_continuous_service_v4` → 同一CarrierStream → V4显式选择 → 原Finished →
+加密Begin/Ready → 原Put/Fetch/Watch/Consume。没有Publisher或短期Offer签发。
+
+本地pin与载体key绑定、撤销/失效owner仍检查；记录过期只失去新鲜定位声明资格，
+不能使旧版租约有效，也不能代替本次Finished。节点60/90秒寻址存储仍原样回收，
+健康V4信箱流不依赖其instance。旧01–03保留期限、64次会话上限及原签名流程。
+V4改用服务owner共享令牌桶（默认64突发、2请求/秒，提供者可配置有界参数），
+重连不清零；每请求含等待/帧/持久操作仍30秒，连续序号不归零；失败/取消终止流。
+平台停止、live撤销可中断Watch。能力/单消息TTL/StoreReceipt/DeviceReceipt未改。
+
+真实localhost QUIC结果（测试身份/载荷，**不是手机或匿名证据**）：
+- `mailbox_continuous` 2项通过，146.67秒：同一scope/同一认证流134.596秒，3个
+  正常声明代次，超过原90/120秒与64请求边界；70次初始Fetch后继续寄存/读取并
+  核验持久StoreReceipt。客户端原记录已过期，未导入新租约、未重新Finished。
+- 随后扩展负向集为7场景，定向1项13.32秒通过：错误客户端/节点pin、旧模式
+  Begin、旧selector拒绝V4、有限scope不能升级、Watch中撤销、取消后不能复用。
+- 新单元4项0.41秒通过：本地信任/旧声明/恢复撤销、共享速率界限、连续加密重放
+  拒绝、owner关闭中断等待并实际释放UDP。信任49项51.41秒、信箱单元8项1.61秒、
+  原信箱真实QUIC6项87.04秒通过；这些分组含重叠，不相加成独立总数。
+- network库/两项集成目标严格Clippy、relay实际Windows入口cargo check、定向格式
+  与diff检查通过。未运行金融测试，不据此评价远端node性能改动。
+
+可复现：显式CARGO_TARGET_DIR=本仓target/runtime-rebuild，`cargo test --locked
+-j 1 -p novovm-network --features iroh-transport,tls-transport --test mailbox_continuous
+-- --test-threads=1 --nocapture`；旧回归改为`--test mailbox_runtime`；单元采用`--lib`
+和`continuous`/`mailbox_rpc::`/`product_service_lease::tests::`对应筛选。
+
+首轮两项失败保留：测试主动停止被当错误、Watch未先取游标因而立即返回，不能
+验证等待中撤销。修正夹具为持久游标后重跑通过；不是放宽生产校验。实现过程中
+测试helper/lifetime编译问题和clone-on-Copy lint已修正，不计失败构建为通过。
+
+**仍未完成：** NOVOCHAT Application运行设置/跨任务会话迁移、双安卓原位升级及
+实际Wi-Fi/蜂窝连续性/延迟；在用节点与手机仍是旧二进制。现有最大4载体连接和
+保守请求速率只是有界组件配置，尚未作生产负载/公平性/密钥长期轮换验收。
+同一协议L4平台接线、独立多副本、自有载体/匿名仍待；没有新增官方通行许可。
+
 ## 2026-10-14 完整代数计划共享与行块：整数改善，CPU负向未关闭
 
 输入 `a6ededc1`，交付父提交 `f540d5c2`（两笔独立relay/手机更新已保留；未影响本轮

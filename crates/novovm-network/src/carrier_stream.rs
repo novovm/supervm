@@ -74,6 +74,24 @@ enum ReadHalf<'stream> {
 
 impl CarrierStreamV1<'_> {
     #[cfg(feature = "iroh-transport")]
+    pub(crate) fn admit_continuous_service_v4(&mut self) -> anyhow::Result<()> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => stream.admit_continuous_service_v4(),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no continuous service scope"),
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn begin_service_request_v4(&mut self) -> anyhow::Result<()> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => stream.begin_service_request_v4(),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no continuous service scope"),
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn admit_service_window(
         &mut self,
         deadline: std::time::Instant,

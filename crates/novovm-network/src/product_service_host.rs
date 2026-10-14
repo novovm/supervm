@@ -6,6 +6,7 @@ const REQUEST_V2: &[u8; 8] = b"NVLSRQ02";
 const MAILBOX_REQUEST_V1: &[u8; 8] = b"NVMBOX01";
 const MAILBOX_REQUEST_V2: &[u8; 8] = b"NVMBOX02";
 const MAILBOX_REQUEST_V3: &[u8; 8] = b"NVMBOX03";
+const MAILBOX_REQUEST_V4: &[u8; 8] = b"NVMBOX04";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
 
@@ -24,6 +25,14 @@ pub struct ServiceLeaseHostV1 {
 }
 
 impl ServiceLeaseHostV1 {
+    /// Local stable service identity supervision for the explicit V4 protocol.
+    /// It issues no lease, updates no locator and does not bypass tombstones.
+    pub fn check_continuous_peer_v4(&self, endpoint: [u8; 32], now: u64) -> Result<()> {
+        self.book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?
+            .check_continuous_peer_v4(self.key.verifying_key().to_bytes(), endpoint, now)
+    }
     /// Fast local supervision; does not renew or perform file/network IO.
     pub fn check_route(&self, endpoint: [u8; 32], instance: [u8; 32], now: u64) -> Result<()> {
         self.book
@@ -445,6 +454,40 @@ pub enum NodeServiceV1 {
     Mailbox,
     MailboxRealtime,
     MailboxWindow,
+    MailboxContinuous,
+}
+
+/// V4 selects the same mailbox operations under local peer trust, without a
+/// service lease. This prelude carries NO credentials or authority; fresh
+/// Finished plus encrypted BeginContinuousV4/ContinuousReadyV4 must follow.
+/// There is no negotiation fallback to the old lease-bound versions.
+pub async fn request_mailbox_continuous_v4(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    stream.write_frame(MAILBOX_REQUEST_V4).await?;
+    ensure!(
+        stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V4,
+        "mailbox continuous version rejected"
+    );
+    Ok(())
+}
+
+/// Only the self-owned runtime exposes V4. Selecting it performs local stable
+/// identity supervision, NOT offer issuance or rendezvous-store allocation.
+pub async fn serve_self_owned_node_selected_v4<T>(
+    stream: &mut CarrierStreamV1<'_>,
+    select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
+    continuous: impl FnOnce() -> Result<()>,
+) -> Result<(NodeServiceV1, Option<T>)> {
+    let request = stream.read_frame().await?;
+    if request.as_slice() == MAILBOX_REQUEST_V4 {
+        continuous()?;
+        stream.write_frame(MAILBOX_REQUEST_V4).await?;
+        Ok((NodeServiceV1::MailboxContinuous, None))
+    } else {
+        let kind = legacy_node_service(&request)?;
+        let (offer, selected) = select()?;
+        stream.write_frame(&encode(&offer)?).await?;
+        Ok((kind, Some(selected)))
+    }
 }
 
 /// The bounded service selector only chooses a protocol, never trust or privacy.
@@ -453,21 +496,25 @@ pub async fn serve_node_offer_selected_v1<T>(
     stream: &mut CarrierStreamV1<'_>,
     select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
 ) -> Result<(NodeServiceV1, T)> {
-    let request = stream.read_frame().await?;
-    let kind = if request.as_slice() == REQUEST_V2 {
+    let kind = legacy_node_service(&stream.read_frame().await?)?;
+    let (offer, selected) = select()?;
+    stream.write_frame(&encode(&offer)?).await?;
+    Ok((kind, selected))
+}
+
+fn legacy_node_service(request: &[u8]) -> Result<NodeServiceV1> {
+    let kind = if request == REQUEST_V2 {
         NodeServiceV1::Rendezvous
-    } else if request.as_slice() == MAILBOX_REQUEST_V1 {
+    } else if request == MAILBOX_REQUEST_V1 {
         NodeServiceV1::Mailbox
-    } else if request.as_slice() == MAILBOX_REQUEST_V2 {
+    } else if request == MAILBOX_REQUEST_V2 {
         NodeServiceV1::MailboxRealtime
-    } else if request.as_slice() == MAILBOX_REQUEST_V3 {
+    } else if request == MAILBOX_REQUEST_V3 {
         NodeServiceV1::MailboxWindow
     } else {
         anyhow::bail!("unknown node service version");
     };
-    let (offer, selected) = select()?;
-    stream.write_frame(&encode(&offer)?).await?;
-    Ok((kind, selected))
+    Ok(kind)
 }
 
 /// Source-only distributor using the existing V2 prelude. Its owner supplies a

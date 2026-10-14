@@ -12,6 +12,40 @@ fn own_book() -> Result<ServiceLeaseBookV1> {
 }
 
 #[test]
+fn continuous_peer_keeps_local_trust_not_expired_locator_authority() -> Result<()> {
+    let pin = key(2).verifying_key().to_bytes();
+    let endpoint = address(3).address.endpoint_key;
+    let mut b = own_book()?;
+    // A historical locator remains only a way to find the pinned transport.
+    b.check_continuous_peer_v4(pin, endpoint, 500_000)?;
+    assert!(b.routes(500_000)?.is_empty());
+    assert!(accept(&mut b, record(2, 2, 3000, 40_000), 500_000).is_err());
+    assert!(b.check_continuous_peer_v4(pin, [99; 32], 500_000).is_err());
+    assert!(b
+        .check_continuous_peer_v4([99; 32], endpoint, 500_000)
+        .is_err());
+    // Publisher-bound authority has no implicit conversion to local trust.
+    assert!(book()
+        .check_continuous_peer_v4(pin, endpoint, 3000)
+        .is_err());
+    b.revoke_self_owned(pin, 500_001)?;
+    let saved = b.checkpoint()?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 500_002)?;
+    assert!(reopened
+        .check_continuous_peer_v4(pin, endpoint, 500_002)
+        .is_err());
+    assert!(reopened
+        .replace_self_owned_records(vec![record(2, 5, 500_002, 530_000)], 500_002)
+        .is_err());
+    let mut retired = own_book()?;
+    retired.retire_for_policy_change();
+    assert!(retired
+        .check_continuous_peer_v4(pin, endpoint, 3000)
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn self_owned_store_rotation_requires_fresh_signature_on_unchanged_transport() -> Result<()> {
     let mut client = own_book()?;
     let mut endpoint = address(3);

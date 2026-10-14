@@ -527,7 +527,8 @@ pub use checkpoint::{ServiceLeasePersistenceV1, MAX_SERVICE_CHECKPOINT_BYTES};
 #[path = "product_service_host.rs"]
 mod host;
 pub use host::{
-    accept_service_offer_with_activation_v2, request_service_offer_v2, serve_bootstrap_sources_v2,
+    accept_service_offer_with_activation_v2, request_mailbox_continuous_v4,
+    request_service_offer_v2, serve_bootstrap_sources_v2, serve_self_owned_node_selected_v4,
     serve_service_offer_selected_v2, serve_service_offer_v2, ServiceLeaseHostV1,
     ServiceLeaseOfferV2, ServiceOfferStepV2,
 };
