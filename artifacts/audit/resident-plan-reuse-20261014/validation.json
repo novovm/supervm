@@ -1,0 +1,29 @@
+{
+  "status": "not_promoted_integer_end_to_end_gate",
+  "product_input": "85e3c10bd8a7f4b3a2d7db5b4ed74e9f044933d7",
+  "aoem_parent": "b6cc47f090a1b345a741cb1f46c1f41ccc1202fe",
+  "aoem_record_commit": "ee6cee6f",
+  "reused_source": "da80f30654c7ce60ab6c6f73333cf0cbb5657d18",
+  "source_identity": "All 12 runtime file blobs exactly match da80f306; current retained tests and b6cc47f0 model-context work preserved",
+  "build": "Both parent and candidate: rustc1.94.0, release locked FULLMAX, same target and features; DLLs in same validation directory",
+  "candidate_sha256": "2a2cc73077ee040e8fbae87b790c6923134680eb63a3aa5b2977ee78e88a83e3",
+  "parent_sha256": "d79417fe5710c9da118653f4858586c00552d490eb6b2fd742517e8f7d2c4bc6",
+  "formal_sequence": "contract.json, eight rounds completed without favorable appended rounds",
+  "measurements": "measurements.json",
+  "result": "Integer combined 5119.531 -> 5094.177 TPS (-0.495%); CPU 8685.820 -> 9775.554 (+12.546%). Integer paired directions and tails mixed. CPU is an observation, not an algorithm speedup claim or proof that earlier regressions were harmless.",
+  "correctness": "Seven original-node tests passed: full exports, fee failure and repaired successor, windows/diagnostics/capacity, u128, single ingress/restart, A/A/B, offline quorum/catchup/restart. 13 resource tests and 5 explicitly enabled Vulkan tests passed. Initial wrong filter matched zero, retained and not counted.",
+  "load_correctness": "All eight formal and two diagnostic rounds each 65536 successful, zero business failures/permanent refusals/unresolved/measurement transport errors; original full economics, historical receipts and four-store cold recovery passed",
+  "diagnostics": "Two supplemental existing stage-profile runs after formal rejection, not promotion samples; actual v10 binary composition, no legacy JSON row profiler. Nested/concurrent wall time cannot be added.",
+  "diagnostic_ranges_ms_per_node_64_batches": {
+    "integer_wire_baseline": [3671,3723], "integer_wire_candidate": [2179,2884],
+    "execute_integer_baseline": [5881,5974], "execute_integer_candidate": [4365,5090],
+    "state_tree_baseline": [405,434], "state_tree_candidate": [409,439],
+    "http_baseline": [1825,1991], "http_candidate": [2284,2380]
+  },
+  "interpretation": "Internal execution improved in the diagnostic pair but formal end-to-end did not. Does not establish HTTP or client feedback as the sole cause; same laptop's four processes share one GPU. No change to window, batch, consensus or confirmation endpoint.",
+  "disposition": "Withdraw active 12-file patch; existing da80f306 Git source remains reusable. Do not retain candidate DLL/shader/switch or replace SDK. Restore current b6cc47f0 runtime, not the older whole repository.",
+  "withdrawal_verified": "Runtime diff empty against b6cc47f0; rebuilt accepted library normalized PE bytes equal parent (restored-binary.json); restored multilevel/full-width/unexported-fault test passed in 3.47s; candidate test binary replaced by restored build, candidate DLL and generated composition shader removed; no data deleted",
+  "sdk": "Unchanged 31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947; CPU remains default",
+  "preserved_drafts": "49 hashes checked, unchanged",
+  "limits": "Frozen original node 4d6f4bbc and driver07090a3c; not a fresh build of latest Android network changes. No new Linux, physical multi-machine, business proof, million TPS or production signoff. No independent BigInt shader oracle rerun this round; shared evaluator byte-identical to previously tested candidate. Local tests do not imply CI success."
+}

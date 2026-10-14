@@ -1,0 +1,227 @@
+{
+  "samples": [
+    {
+      "name": "baseline-integer-1",
+      "backend": "integer",
+      "variant": "baseline",
+      "round": 1,
+      "tps": 5436.550365446581,
+      "seconds": 12.054703,
+      "p95_us": 1631036,
+      "p99_us": 1670346,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1214464,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 302,
+        "deadline_expirations": 0
+      }
+    },
+    {
+      "name": "baseline-integer-2",
+      "backend": "integer",
+      "variant": "baseline",
+      "round": 2,
+      "tps": 4837.446988929882,
+      "seconds": 13.547642,
+      "p95_us": 2150206,
+      "p99_us": 2197547,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1536000,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 382,
+        "deadline_expirations": 0
+      }
+    },
+    {
+      "name": "candidate-integer-1",
+      "backend": "integer",
+      "variant": "candidate",
+      "round": 1,
+      "tps": 5018.302530989948,
+      "seconds": 13.059396,
+      "p95_us": 1946261,
+      "p99_us": 2259117,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1798144,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 452,
+        "deadline_expirations": 0
+      }
+    },
+    {
+      "name": "candidate-integer-2",
+      "backend": "integer",
+      "variant": "candidate",
+      "round": 2,
+      "tps": 5172.382087312203,
+      "seconds": 12.670371,
+      "p95_us": 1933705,
+      "p99_us": 2112302,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 1565696,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 394,
+        "deadline_expirations": 0
+      }
+    },
+    {
+      "name": "baseline-cpu-1",
+      "backend": "cpu",
+      "variant": "baseline",
+      "round": 1,
+      "tps": 8958.611940067958,
+      "seconds": 7.315419,
+      "p95_us": 1285469,
+      "p99_us": 1343331,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 856064,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 218,
+        "deadline_expirations": 0
+      }
+    },
+    {
+      "name": "baseline-cpu-2",
+      "backend": "cpu",
+      "variant": "baseline",
+      "round": 2,
+      "tps": 8429.151002524397,
+      "seconds": 7.774923,
+      "p95_us": 1113554,
+      "p99_us": 1161539,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 956416,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 242,
+        "deadline_expirations": 0
+      }
+    },
+    {
+      "name": "candidate-cpu-1",
+      "backend": "cpu",
+      "variant": "candidate",
+      "round": 1,
+      "tps": 9340.720659061273,
+      "seconds": 7.016161,
+      "p95_us": 1157758,
+      "p99_us": 1277690,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 800768,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 202,
+        "deadline_expirations": 0
+      }
+    },
+    {
+      "name": "candidate-cpu-2",
+      "backend": "cpu",
+      "variant": "candidate",
+      "round": 2,
+      "tps": 10252.84970429346,
+      "seconds": 6.391979,
+      "p95_us": 885781,
+      "p99_us": 1010195,
+      "counts": {
+        "admission_attempts": 65536,
+        "admission_error_responses": 0,
+        "retryable_admission_responses": 0,
+        "permanent_admission_responses": 0,
+        "retry_attempts": 0,
+        "transport_errors": 0,
+        "observation_requests": 668672,
+        "finalized_successful": 65536,
+        "finalized_business_failed": 0,
+        "max_outstanding": 8192,
+        "dispatch_rounds": 64,
+        "observation_rounds": 167,
+        "deadline_expirations": 0
+      }
+    }
+  ],
+  "combined": {
+    "integer": {
+      "baseline": 5119.531042957198,
+      "candidate": 5094.17749488365,
+      "change_percent": -0.49523184566732104
+    },
+    "cpu": {
+      "baseline": 8685.820374382503,
+      "candidate": 9775.554252864305,
+      "change_percent": 12.546124965878924
+    }
+  },
+  "hashes": {
+    "node": "4d6f4bbc8c85174d5d2b809781380335be74e8490845aff52510239bb77fd8f8",
+    "driver": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a",
+    "tests": "0d49517c91f777a717f4edbc1535f9b08b20caa924bbd50c99e3f811af1ec5a4",
+    "baseline": "d79417fe5710c9da118653f4858586c00552d490eb6b2fd742517e8f7d2c4bc6",
+    "candidate": "2a2cc73077ee040e8fbae87b790c6923134680eb63a3aa5b2977ee78e88a83e3"
+  },
+  "preserved_drafts": {
+    "count": 49,
+    "drift": []
+  }
+}

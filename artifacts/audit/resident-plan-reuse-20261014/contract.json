@@ -1,0 +1,12 @@
+{
+  "status": "predeclared_not_accepted",
+  "source": "SUPERVM 85e3c10b; AOEM b6cc47f0 plus exact runtime patch from da80f306",
+  "reuse": "Existing complete v10 device-resident composition, not a new executor or business graph",
+  "baseline_build": "Current b6cc47f0, release locked FULLMAX, same toolchain and target as candidate",
+  "baseline_sha256": "d79417fe5710c9da118653f4858586c00552d490eb6b2fd742517e8f7d2c4bc6",
+  "sequence": ["baseline-integer-1", "candidate-integer-1", "baseline-cpu-1", "candidate-cpu-1", "candidate-integer-2", "baseline-integer-2", "candidate-cpu-2", "baseline-cpu-2"],
+  "promotion": "Correctness and cold economics pass; integer combined improves; CPU combined must not decline; consistent worsening of both tail pairs blocks promotion. No appended favorable samples or relaxed gate. Finite comparisons do not establish stable capacity.",
+  "controls": "Both DLLs in same validation directory; frozen original node 4d6f4bbc and driver 07090a3c; AC Windows; 5090; four original nodes/stores; single RPC; 65536 signed; 1024 payers x64 nonce/shared recipient; batch1024; inflight8192; all-four final receipt HTTP completion; profiling off",
+  "negative_result": "Separate existing stage diagnostics if CPU negative, then withdraw active candidate under AOEM rules; preserve Git code and raw reports",
+  "not_claimed": "No CPU causation from source similarity, no million TPS, no full proof, no physical multi-machine acceptance"
+}
