@@ -159,6 +159,19 @@ mod windows {
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
+        if args[0] == "--set-self-owned-carrier" {
+            use super::rendezvous_self_owned_owner::{CarrierMode, Config, Owner};
+            ensure!(
+                args.len() == 3,
+                "usage: --set-self-owned-carrier CONFIG automatic|relay-only"
+            );
+            let mode = match args[2].to_str() {
+                Some("automatic") => CarrierMode::Automatic,
+                Some("relay-only") => CarrierMode::RelayOnly,
+                _ => anyhow::bail!("unknown carrier mode"),
+            };
+            return Owner::open(Config::load(&path)?, false, None)?.set_carrier_mode(mode);
+        }
         if args[0] == "--migrate-self-owned" {
             ensure!(
                 args.len() == 3,

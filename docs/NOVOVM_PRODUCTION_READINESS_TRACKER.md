@@ -3,6 +3,38 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 自有节点自动载体选择与 VPN 保留
+
+输入2f53183f。现有节点原来relay_only=true，虽同Wi-Fi手机可本地访问，仍固定
+经外部Iroh Relay。新增原owner本机维护命令--set-self-owned-carrier；只在现有
+DPAPI policy内保存automatic/relay-only选择，同目录封装替换；不修改登记配置、
+客户端范围、节点/传输身份、撤销、journal、SQLite或手机Privacy。无新网络/许可。
+
+新增真实进程回归通过：运行中修改拒绝、无批准中继/未知模式拒绝且原policy不变；
+有效切换时原配置/keys/journal/mailbox字节不变，重启后节点和载体公钥不变并能
+真实收发。连同原自主新建和迁移/跨任期/重启，共3项通过171.27秒。首次编译
+共享helper导致mirror/publisher未使用告警，已将helper收回唯一owner，最终无该告警。
+保留工作区已有多bin路径告警。diff检查通过。
+
+20:34原Windows任务替换同一原生程序并切automatic，PID33556，11.154秒新序号
+serving；keys和节点公钥不变，切换瞬间journal/mailbox保持。EXE SHA256
+c84e709c888cbbafc24a11d3213fe197aa0c1a789585d1796a59abcdacd3eddf。
+签名定位声明含直接IP候选和原批准Relay；实际Wi-Fi手机自动恢复attempt10，
+认证path=direct，蜂窝attempt12仍relay。没有ADB forward/reverse，没有改VPN/TUN、
+默认路由、网卡、防火墙或手机安装。direct表示实测载体路径，不能据此宣称匿名。
+
+正式聊天9017-AUTO从Wi-Fi发送，原任务记录Put→StoreReceipt259ms、
+Put→DeviceReceipt4701ms；蜂窝真实inbox持久提交。单个样本不能推出P95或
+整体稳定性/速率提升。蜂窝侧仍外部Relay，整体秒级未达。反向9018工具因
+NOVOCHAT非前台在输入前拒绝；未替用户切走正在使用的应用，不计发送或双向通过。
+原APK/身份/联系人/数据不变。
+
+证据：artifacts/carrier-switch.json；NOVOCHAT artifacts/message-events-device/
+carrier-before.json、carrier-after.json、carrier-messages.json及test-enqueues账本。
+Windows异常退出自动重启缺口仍在，未因本片重新签收；下一片分开验证节点VPN分流
+可达性与蜂窝Relay延迟，保持Codex可用。旧EXE无法读取新增policy字段，回退只能
+用新版命令调整载体偏好，禁止恢复旧密钥/日志快照。
+
 ## 2026-10-14 当前用户节点登录启动与异常恢复缺口
 
 输入0f7babce。笔记本19:19重启使原前台节点消失，status.json旧serving不能作为

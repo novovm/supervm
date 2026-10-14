@@ -66,12 +66,23 @@ impl Config {
 #[serde(deny_unknown_fields)]
 struct Policy {
     config: Config,
+    // Config remains the immutable enrollment/trust baseline. Only an explicit
+    // local owner command can change this persisted transport preference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    carrier_mode: Option<CarrierMode>,
     node_pin: [u8; 32],
     sequence_floor: u64,
     legacy: Option<crate::rendezvous_owner::Config>,
     // Retain reserved sequence/enrollment provenance, including allocations
     // whose proposal never reached the old service journal.
     legacy_owner_checkpoint: Option<String>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CarrierMode {
+    Automatic,
+    RelayOnly,
 }
 
 pub struct Owner {
@@ -158,6 +169,7 @@ impl Owner {
             let (key, _) = read_keys(root)?;
             let policy = Policy {
                 config: config.clone(),
+                carrier_mode: None,
                 node_pin: key.verifying_key().to_bytes(),
                 sequence_floor,
                 legacy,
@@ -230,6 +242,33 @@ impl Owner {
         })
     }
 
+    /// Local owner maintenance only: the exclusive lock prevents live-policy
+    /// changes. No identity, peer admission, relay/DNS trust or history changes.
+    pub fn set_carrier_mode(mut self, mode: CarrierMode) -> Result<()> {
+        if matches!(mode, CarrierMode::RelayOnly) {
+            ensure!(
+                self.policy.config.bind_address.is_none(),
+                "relay-only cannot bind IP"
+            );
+            IrohConfigV1::new(&self.policy.config.relays, self.policy.config.nameserver)?
+                .with_relay_only()?;
+        }
+        self.policy.carrier_mode = Some(mode);
+        let mut bytes = Zeroizing::new(Vec::with_capacity(4096));
+        bytes.extend_from_slice(b"NVOWN002");
+        bytes.extend_from_slice(self.transport.as_ref());
+        bytes.extend_from_slice(&serde_json::to_vec(&self.policy)?);
+        let sealed = windows_custody::protect(&bytes)?;
+        ensure!(
+            *windows_custody::unprotect(&sealed)? == *bytes,
+            "custody roundtrip differs"
+        );
+        replace_protected(
+            &self.policy.config.root.join("self-owned-policy.dpapi"),
+            &sealed,
+        )
+    }
+
     pub async fn run(self, stop: Arc<AtomicBool>) -> Result<()> {
         let _running_lock = self._lock.clone();
         let config = self.policy.config.clone();
@@ -238,7 +277,12 @@ impl Owner {
         if let Some(bind) = config.bind_address {
             carrier = carrier.with_bind_address(bind)?;
         }
-        if config.relay_only {
+        let relay_only = match self.policy.carrier_mode {
+            Some(CarrierMode::Automatic) => false,
+            Some(CarrierMode::RelayOnly) => true,
+            None => config.relay_only,
+        };
+        if relay_only {
             carrier = carrier.with_relay_only()?;
         }
         let key = self.key.clone();
@@ -317,7 +361,7 @@ impl Owner {
                 Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
             }, move |record| {
                 atomic(&publish_root.join("self-owned-record.json"), &serde_json::to_vec(record)?)?;
-                atomic(&publish_root.join("status.json"), &serde_json::to_vec(&serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false}))?)
+                atomic(&publish_root.join("status.json"), &serde_json::to_vec(&serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if relay_only {"relay-only"} else {"automatic"}}))?)
             }).await;
         atomic(
             &config.root.join("status.json"),
@@ -347,4 +391,35 @@ fn read_keys(root: &Path) -> Result<(SigningKey, Zeroizing<[u8; 32]>)> {
         "independent owner keys"
     );
     Ok((SigningKey::from_bytes(&seed), storage))
+}
+
+/// Replace an already validated DPAPI blob under the exclusive owner lock.
+/// Both old and new contents are sealed; no raw key is written to disk. A
+/// same-directory rename is the sole commit point, with Windows write-through.
+fn replace_protected(path: &Path, sealed: &[u8]) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+    check_path(path)?;
+    ensure!(path.is_file(), "existing custody required");
+    let stage = path.with_extension(format!("{:016x}.pending", rand::random::<u64>()));
+    create(&stage, sealed)?;
+    let from: Vec<_> = stage.as_os_str().encode_wide().chain(Some(0)).collect();
+    let to: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: both zero-terminated paths are live; files are closed and synced,
+    // same-directory, checked for reparse points, and owned by the lock holder.
+    if unsafe {
+        MoveFileExW(
+            from.as_ptr(),
+            to.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(&stage);
+        return Err(error.into());
+    }
+    Ok(())
 }

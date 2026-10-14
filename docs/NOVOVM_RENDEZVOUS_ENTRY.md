@@ -176,3 +176,30 @@ Windows 任务计划在该用户登录后启动；无口令存储、无提权、
 网卡或防火墙。换程序路径后的入站防火墙适配、真实重启登录及长期恢复仍应单独验证。
 停任务是系统进程终止，依赖现有日志/SQLite 崩溃恢复，不声称优雅连接收尾。
 需不登录运行的设备仍走专用服务身份的明确密钥迁移，不能直接冒用当前用户 DPAPI。
+
+
+## 2026-10-14 原身份下调整载体偏好
+
+当前用户停止同一 owner 后，可运行新版入口：
+
+```powershell
+novovm-rendezvous-service.exe --set-self-owned-carrier <absolute-existing-config> automatic
+# 回到仅批准中继（仍使用新版程序）：
+novovm-rendezvous-service.exe --set-self-owned-carrier <absolute-existing-config> relay-only
+```
+
+这是本机运营者的载体选择，不是新的网络准入或授权系统。原 JSON 配置继续作为
+不可隐式变更的登记基线；选择记录在现有 DPAPI policy 中。命令先取得原 owner
+独占锁、验证托管身份及日志，再同目录写穿替换已封装文件；私钥不写入 JSON、
+命令行或日志。不更换节点/载体密钥，不改变客户端信任、撤销、信箱、TTL、
+批准的 Relay/DNS 集合或手机 Privacy。运行中的 owner、无批准 Relay 的
+relay-only、无历史/缺密钥或未知模式均拒绝。
+
+automatic 复用 Iroh 现有 IP/Relay 自动选路，允许地址发现和 IP 候选公布；它
+不证明直连成功，也不提供匿名保证。用于已允许普通工程路径的本机节点，不
+推翻手机 Privacy。状态中的 carrierMode 是实际偏好；配置原 relay_only 值
+单独不能再代表运行选择。旧 policy 无此字段时完全遵循原配置。
+
+回退载体偏好须用新版命令，不恢复旧 journal 或 DPAPI 快照。旧程序严格拒绝
+新增 policy 字段，不能仅替换成旧 EXE。此命令不修改 VPN/TUN、路由、网卡或
+防火墙；保留 VPN 的进程分流属于独立的实际可达性验证和配置工作。

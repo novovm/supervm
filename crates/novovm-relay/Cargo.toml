@@ -28,7 +28,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 mio = { version = "1.1.1", default-features = false, features = ["os-poll", "net"] }
 
 windows-service = "0.8.1"
-windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 rcgen = "0.12"

@@ -238,6 +238,86 @@ impl Fixture {
         anyhow::bail!("self-owned record not published")
     }
 }
+#[tokio::test(flavor = "current_thread")]
+async fn self_owned_process_carrier_change_preserves_identity_and_rejects_live_mutation(
+) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    let fixture = Fixture::new()?;
+    fixture.owned_config()?;
+    let owner = fixture.launch_owned("--provision-self-owned")?;
+    let first = fixture.owned_record(0).await?;
+    let policy_path = fixture.0.join("self-owned-policy.dpapi");
+    let policy = std::fs::read(&policy_path)?;
+    let change = |mode: &str| -> Result<std::process::Output> {
+        Ok(
+            Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"))
+                .arg("--set-self-owned-carrier")
+                .arg(fixture.0.join("owned.json"))
+                .arg(mode)
+                .stdin(Stdio::null())
+                .creation_flags(0x08000000)
+                .output()?,
+        )
+    };
+    let live = change("automatic")?;
+    assert!(!live.status.success());
+    assert!(String::from_utf8_lossy(&live.stderr).contains("owner already running"));
+    assert_eq!(std::fs::read(&policy_path)?, policy);
+    drop(owner);
+    // This fixture has an explicit IP bind and no approved relay. Refusing
+    // relay-only must not partially replace its protected policy.
+    assert!(!change("relay-only")?.status.success());
+    assert!(!change("invalid")?.status.success());
+    assert_eq!(std::fs::read(&policy_path)?, policy);
+    let preserved = [
+        "owned.json",
+        "keys.dpapi",
+        "service.journal",
+        "mailbox.sqlite",
+    ];
+    let before = preserved
+        .iter()
+        .map(|p| std::fs::read(fixture.0.join(p)))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let changed = change("automatic")?;
+    assert!(
+        changed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&changed.stderr)
+    );
+    for (name, bytes) in preserved.iter().zip(before) {
+        assert_eq!(
+            std::fs::read(fixture.0.join(name))?,
+            bytes,
+            "{name} changed"
+        );
+    }
+    let _restarted = fixture.launch_owned("--foreground")?;
+    let next = fixture.owned_record(first.sequence).await?;
+    assert_eq!(next.relay_public_key, first.relay_public_key);
+    assert_eq!(
+        IrohServiceEndpointV1::from_record(&next)?
+            .address
+            .endpoint_key,
+        IrohServiceEndpointV1::from_record(&first)?
+            .address
+            .endpoint_key
+    );
+    let history = ServiceLeaseBookV1::new_self_owned(
+        SelfOwnedTrustV1 {
+            version: 1,
+            node_pins: [first.relay_public_key].into(),
+        },
+        vec![next.clone()],
+        now_ms()?,
+    )?;
+    owned_exchange(&next, history).await?;
+    let status: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.0.join("status.json"))?)?;
+    assert_eq!(status["carrierMode"], "automatic");
+    Ok(())
+}
+
 async fn owned_exchange(
     record: &PeerSignedRelayRecordV1,
     mut history: ServiceLeaseBookV1,
