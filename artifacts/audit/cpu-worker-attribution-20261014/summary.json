@@ -1,0 +1,985 @@
+{
+  "scope": "Same accepted binary, different explicit worker budgets. Not a new-library attribution or algorithm speedup. Diagnostic wall durations overlap and must not be summed.",
+  "samples": [
+    {
+      "name": "workers24-1",
+      "workers": 24,
+      "tps": 8238.359307412638,
+      "seconds": 7.954982,
+      "p95_us": 1277061,
+      "p99_us": 1287663,
+      "observation_requests": 1005568,
+      "peak_callbacks": [
+        24,
+        24,
+        24,
+        24
+      ]
+    },
+    {
+      "name": "workers24-2",
+      "workers": 24,
+      "tps": 10205.432287324278,
+      "seconds": 6.421678,
+      "p95_us": 896326,
+      "p99_us": 1033404,
+      "observation_requests": 668672,
+      "peak_callbacks": [
+        24,
+        24,
+        24,
+        24
+      ]
+    },
+    {
+      "name": "workers6-1",
+      "workers": 6,
+      "tps": 8441.08154448505,
+      "seconds": 7.763934,
+      "p95_us": 1180185,
+      "p99_us": 1205981,
+      "observation_requests": 1073152,
+      "peak_callbacks": [
+        6,
+        6,
+        6,
+        6
+      ]
+    },
+    {
+      "name": "workers6-2",
+      "workers": 6,
+      "tps": 8095.861642989499,
+      "seconds": 8.095,
+      "p95_us": 1328405,
+      "p99_us": 1625531,
+      "observation_requests": 1158144,
+      "peak_callbacks": [
+        6,
+        6,
+        6,
+        6
+      ]
+    }
+  ],
+  "combined": {
+    "6": 8264.868243981593,
+    "24": 9116.999358682753
+  },
+  "diagnostics": [
+    {
+      "name": "workers24-diagnostic",
+      "workers": 24,
+      "tps": 9640.980285978285,
+      "seconds": 6.797649,
+      "p95_us": 953493,
+      "p99_us": 1023413,
+      "observation_requests": 770048,
+      "peak_callbacks": [
+        22,
+        24,
+        24,
+        24
+      ],
+      "nodes": [
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 245.2047
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 278.1783
+          },
+          "bind": {
+            "calls": 19,
+            "ms": 16.4485
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 722.8063
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 276.2617
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 683.9974
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 584.8499
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 405.1291
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 543.5929
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 3.4549
+          },
+          "io_metadata_read": {
+            "calls": 255,
+            "ms": 3.5593
+          },
+          "io_metadata_write": {
+            "calls": 264,
+            "ms": 521.3129
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1298.0978
+          },
+          "io_recover": {
+            "calls": 85,
+            "ms": 810.3501
+          },
+          "lifecycle": {
+            "calls": 44528,
+            "ms": 1130.31
+          },
+          "consensus": {
+            "calls": 44528,
+            "ms": 185.8615
+          },
+          "projection": {
+            "calls": 44528,
+            "ms": 389.8367
+          },
+          "gossip": {
+            "calls": 44528,
+            "ms": 55.1228
+          },
+          "http": {
+            "calls": 44528,
+            "ms": 1226.3354
+          },
+          "idle": {
+            "calls": 2543,
+            "ms": 4354.4322
+          },
+          "yield": {
+            "calls": 37480,
+            "ms": 71.1596
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 138.5262
+          },
+          "queue_candidate": {
+            "calls": 147,
+            "ms": 18.1022
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 300.2111
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 290.3978
+          },
+          "bind": {
+            "calls": 18,
+            "ms": 15.7963
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 717.7261
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 273.6909
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 682.805
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 584.1954
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 407.0381
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 554.8834
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 3.9228
+          },
+          "io_metadata_read": {
+            "calls": 243,
+            "ms": 3.4504
+          },
+          "io_metadata_write": {
+            "calls": 268,
+            "ms": 651.4417
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1328.3784
+          },
+          "io_recover": {
+            "calls": 81,
+            "ms": 765.6286
+          },
+          "lifecycle": {
+            "calls": 42296,
+            "ms": 974.57
+          },
+          "consensus": {
+            "calls": 42296,
+            "ms": 222.4568
+          },
+          "projection": {
+            "calls": 42296,
+            "ms": 372.7173
+          },
+          "gossip": {
+            "calls": 42296,
+            "ms": 3.5173
+          },
+          "http": {
+            "calls": 42296,
+            "ms": 1122.1296
+          },
+          "idle": {
+            "calls": 2722,
+            "ms": 4612.6644
+          },
+          "yield": {
+            "calls": 36740,
+            "ms": 85.5188
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 148.8608
+          },
+          "queue_candidate": {
+            "calls": 146,
+            "ms": 39.2085
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 312.2388
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 277.4116
+          },
+          "bind": {
+            "calls": 17,
+            "ms": 14.8136
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 706.7934
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 286.5875
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 694.378
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 586.5735
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 407.9871
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 546.2341
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 3.1887
+          },
+          "io_metadata_read": {
+            "calls": 255,
+            "ms": 4.1775
+          },
+          "io_metadata_write": {
+            "calls": 263,
+            "ms": 481.5762
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1429.603
+          },
+          "io_recover": {
+            "calls": 85,
+            "ms": 804.7539
+          },
+          "lifecycle": {
+            "calls": 43067,
+            "ms": 994.9688
+          },
+          "consensus": {
+            "calls": 43067,
+            "ms": 222.4404
+          },
+          "projection": {
+            "calls": 43067,
+            "ms": 396.8803
+          },
+          "gossip": {
+            "calls": 43067,
+            "ms": 1.1802
+          },
+          "http": {
+            "calls": 43067,
+            "ms": 1108.0233
+          },
+          "idle": {
+            "calls": 2725,
+            "ms": 4629.5216
+          },
+          "yield": {
+            "calls": 37483,
+            "ms": 66.0952
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 155.6237
+          },
+          "queue_candidate": {
+            "calls": 145,
+            "ms": 34.7421
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 319.6734
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 273.6548
+          },
+          "bind": {
+            "calls": 19,
+            "ms": 15.8372
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 710.8348
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 272.1893
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 677.222
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 588.9203
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 409.9774
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 546.1094
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 3.2402
+          },
+          "io_metadata_read": {
+            "calls": 261,
+            "ms": 3.5118
+          },
+          "io_metadata_write": {
+            "calls": 259,
+            "ms": 711.2217
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1328.4314
+          },
+          "io_recover": {
+            "calls": 87,
+            "ms": 826.2551
+          },
+          "lifecycle": {
+            "calls": 43390,
+            "ms": 954.4563
+          },
+          "consensus": {
+            "calls": 43390,
+            "ms": 217.6557
+          },
+          "projection": {
+            "calls": 43390,
+            "ms": 391.8133
+          },
+          "gossip": {
+            "calls": 43390,
+            "ms": 1.2641
+          },
+          "http": {
+            "calls": 43390,
+            "ms": 1160.9462
+          },
+          "idle": {
+            "calls": 2708,
+            "ms": 4581.7216
+          },
+          "yield": {
+            "calls": 37810,
+            "ms": 100.194
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 162.9007
+          },
+          "queue_candidate": {
+            "calls": 147,
+            "ms": 48.6065
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "workers6-diagnostic",
+      "workers": 6,
+      "tps": 8054.163066815289,
+      "seconds": 8.13691,
+      "p95_us": 1207732,
+      "p99_us": 1261801,
+      "observation_requests": 1145856,
+      "peak_callbacks": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "nodes": [
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 450.5317
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 551.1373
+          },
+          "bind": {
+            "calls": 29,
+            "ms": 25.7009
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 689.5559
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 279.1181
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 649.9945
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 581.6639
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 404.1799
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 543.3436
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 2.6927
+          },
+          "io_metadata_read": {
+            "calls": 258,
+            "ms": 3.6559
+          },
+          "io_metadata_write": {
+            "calls": 268,
+            "ms": 530.1314
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1058.6655
+          },
+          "io_recover": {
+            "calls": 86,
+            "ms": 821.4329
+          },
+          "lifecycle": {
+            "calls": 56430,
+            "ms": 1010.4722
+          },
+          "consensus": {
+            "calls": 56430,
+            "ms": 182.9423
+          },
+          "projection": {
+            "calls": 56430,
+            "ms": 339.8032
+          },
+          "gossip": {
+            "calls": 56430,
+            "ms": 48.755
+          },
+          "http": {
+            "calls": 56430,
+            "ms": 1568.6451
+          },
+          "idle": {
+            "calls": 3744,
+            "ms": 5529.3284
+          },
+          "yield": {
+            "calls": 47218,
+            "ms": 34.5171
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 205.8384
+          },
+          "queue_candidate": {
+            "calls": 157,
+            "ms": 32.9522
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 541.6982
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 552.7406
+          },
+          "bind": {
+            "calls": 30,
+            "ms": 27.3039
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 691.7898
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 273.9187
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 658.7952
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 583.5294
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 403.2081
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 560.1492
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 3.1007
+          },
+          "io_metadata_read": {
+            "calls": 258,
+            "ms": 3.7626
+          },
+          "io_metadata_write": {
+            "calls": 264,
+            "ms": 379.1027
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1113.7949
+          },
+          "io_recover": {
+            "calls": 86,
+            "ms": 826.5423
+          },
+          "lifecycle": {
+            "calls": 52752,
+            "ms": 897.7652
+          },
+          "consensus": {
+            "calls": 52752,
+            "ms": 169.7208
+          },
+          "projection": {
+            "calls": 52752,
+            "ms": 338.9897
+          },
+          "gossip": {
+            "calls": 52752,
+            "ms": 1.4703
+          },
+          "http": {
+            "calls": 52752,
+            "ms": 1456.7486
+          },
+          "idle": {
+            "calls": 3867,
+            "ms": 5743.5524
+          },
+          "yield": {
+            "calls": 45010,
+            "ms": 44.8121
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 230.3089
+          },
+          "queue_candidate": {
+            "calls": 158,
+            "ms": 62.4347
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 544.353
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 543.6167
+          },
+          "bind": {
+            "calls": 29,
+            "ms": 25.4562
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 681.3445
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 271.9139
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 653.5243
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 583.076
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 403.3231
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 538.6319
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 3.2555
+          },
+          "io_metadata_read": {
+            "calls": 252,
+            "ms": 3.9275
+          },
+          "io_metadata_write": {
+            "calls": 257,
+            "ms": 342.9784
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1089.3732
+          },
+          "io_recover": {
+            "calls": 84,
+            "ms": 789.575
+          },
+          "lifecycle": {
+            "calls": 53634,
+            "ms": 833.1139
+          },
+          "consensus": {
+            "calls": 53634,
+            "ms": 170.0392
+          },
+          "projection": {
+            "calls": 53634,
+            "ms": 330.7178
+          },
+          "gossip": {
+            "calls": 53634,
+            "ms": 2.0285
+          },
+          "http": {
+            "calls": 53634,
+            "ms": 1438.2446
+          },
+          "idle": {
+            "calls": 3931,
+            "ms": 5843.7044
+          },
+          "yield": {
+            "calls": 45887,
+            "ms": 28.0763
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 213.0603
+          },
+          "queue_candidate": {
+            "calls": 157,
+            "ms": 49.637
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        },
+        {
+          "admission": {
+            "calls": 64,
+            "ms": 535.9511
+          },
+          "authentication": {
+            "calls": 64,
+            "ms": 549.0816
+          },
+          "bind": {
+            "calls": 29,
+            "ms": 25.1892
+          },
+          "capture": {
+            "calls": 26433,
+            "ms": 687.706
+          },
+          "finalize_capture": {
+            "calls": 64,
+            "ms": 273.1284
+          },
+          "execute_cpu": {
+            "calls": 64,
+            "ms": 658.5743
+          },
+          "execute_integer": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_wire": {
+            "calls": 0,
+            "ms": 0
+          },
+          "reduction": {
+            "calls": 64,
+            "ms": 582.8827
+          },
+          "state_tree": {
+            "calls": 64,
+            "ms": 403.6775
+          },
+          "packet": {
+            "calls": 64,
+            "ms": 536.7387
+          },
+          "io_nodes": {
+            "calls": 39,
+            "ms": 2.7489
+          },
+          "io_metadata_read": {
+            "calls": 237,
+            "ms": 3.1565
+          },
+          "io_metadata_write": {
+            "calls": 254,
+            "ms": 349.3726
+          },
+          "io_persist": {
+            "calls": 8512,
+            "ms": 1199.0233
+          },
+          "io_recover": {
+            "calls": 79,
+            "ms": 759.1522
+          },
+          "lifecycle": {
+            "calls": 52477,
+            "ms": 817.8092
+          },
+          "consensus": {
+            "calls": 52477,
+            "ms": 165.8719
+          },
+          "projection": {
+            "calls": 52477,
+            "ms": 339.5899
+          },
+          "gossip": {
+            "calls": 52477,
+            "ms": 1.5228
+          },
+          "http": {
+            "calls": 52477,
+            "ms": 1451.572
+          },
+          "idle": {
+            "calls": 3928,
+            "ms": 5816.9008
+          },
+          "yield": {
+            "calls": 44777,
+            "ms": 57.3625
+          },
+          "queue_admission": {
+            "calls": 64,
+            "ms": 250.0674
+          },
+          "queue_candidate": {
+            "calls": 157,
+            "ms": 105.4081
+          },
+          "integer_compile": {
+            "calls": 0,
+            "ms": 0
+          },
+          "integer_projection": {
+            "calls": 0,
+            "ms": 0
+          }
+        }
+      ]
+    }
+  ]
+}

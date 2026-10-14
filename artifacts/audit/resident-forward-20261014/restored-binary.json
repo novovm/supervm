@@ -1,0 +1,7 @@
+{
+  "baseline": "16a303d055fce5408d486152f8ffc88555da6562c3073c4fcf0c063d8f8c2fd6",
+  "restored": "72bb4a166b6241d3d8d9198836716e9f2cf5967caf3fb718fe051e3befcae43f",
+  "normalized_equal": true,
+  "normalized_sha256": "bf6478ea4b00d5b7886857fa6e6a726e0035c51e0a2b2b630bc2a45ab3238e1c",
+  "mask": "parsed PE link/debug timestamps and CodeView GUID only"
+}

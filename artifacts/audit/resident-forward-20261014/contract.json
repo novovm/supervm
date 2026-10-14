@@ -1,0 +1,9 @@
+{
+  "source": "SUPERVM c043b8b1; AOEM ee6cee6f plus exact 12 runtime files from da80f306",
+  "reason": "Previous resident plan attempt predates authentication/integer owner overlap. Test that existing composition on the new pipeline, not a new executor.",
+  "baseline_sha256": "16a303d055fce5408d486152f8ffc88555da6562c3073c4fcf0c063d8f8c2fd6",
+  "node_sha256": "81da45094cb6eeef5419ebb3af32264ecb3fd9450fda7e3b9e76bf4948e5c98f",
+  "sequence": ["baseline-integer-1","candidate-integer-1","baseline-cpu-1","candidate-cpu-1","candidate-integer-2","baseline-integer-2","candidate-cpu-2","baseline-cpu-2"],
+  "promotion": "All correctness/recovery pass; combined integer improves, combined CPU must not decline; both paired tails consistently worsening blocks promotion. Retain every sample, do not append favorable samples to overturn failure.",
+  "controls": "AC Windows, selected 5090, four original nodes/stores, single RPC, 65536 signed transfers, 1024 payers/shared recipient, candidate1024, inflight8192, all four final successful receipts. Profiling disabled. No proof/TPS equivalence claims."
+}

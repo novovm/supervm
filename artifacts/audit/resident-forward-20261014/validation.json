@@ -1,0 +1,25 @@
+{
+  "status": "not_promoted_cpu_non_regression_gate_failed",
+  "candidate_source": "AOEM ee6cee6f plus exact twelve runtime files from da80f306",
+  "consumer_source": "SUPERVM c043b8b1; frozen product binary 81da4509",
+  "new_runtime_tests": 0,
+  "reused_product_cases_passed": [
+    "resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair",
+    "resident_shared_and_unshared_complete_plans_match_every_export",
+    "resident_complete_plan_windows_diagnostics_and_capacity_edges",
+    "resident_integer_rows_match_current_quoted_transfer_full_u128",
+    "actual_product_rpc_single_ingress_gossip_failures_and_restart",
+    "actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers",
+    "actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart"
+  ],
+  "first_case_evidence": "Executed explicitly against candidate 36d399de, one passed in 3.39s; terminal output, no separate log. Other six cases have saved logs.",
+  "formal_rounds": 8,
+  "successful_transfers_per_round": 65536,
+  "business_failures_per_round": 0,
+  "cold_economics_and_history_checks_all_passed": true,
+  "additional_favorable_rounds": 0,
+  "published_sdk_changed": false,
+  "published_sdk_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "causal_cpu_regression_explanation": "unresolved; two negative same-node pairs are a blocking observation, not proof of a specific mechanism",
+  "proof_or_million_tps_acceptance": false
+}

@@ -1,0 +1,12 @@
+{
+  "purpose": "Bounded CPU phase attribution, not resident promotion",
+  "source_parent": "c11238d50694b1df259564a27882af8de5218a8d",
+  "candidate": "parent plus the exact twelve resident runtime files from da80f306; unrelated current model changes preserved",
+  "node_sha256": "81da45094cb6eeef5419ebb3af32264ecb3fd9450fda7e3b9e76bf4948e5c98f",
+  "semantic_workers": 24,
+  "sequence": ["parent-profile-1", "candidate-profile-1", "candidate-profile-2", "parent-profile-2"],
+  "profiling": true,
+  "load": "Existing 65536 signed transfers, four original nodes, single RPC, batch1024, window8192, shared receiver; full finality, economics and cold recovery",
+  "interpretation": "Inclusive nested/concurrent wall times cannot be added or interpreted as CPU utilization. Diagnostic TPS is not a formal promotion result. No extra favorable samples. Prior failed CPU gate remains.",
+  "exit": "Withdraw temporary candidate and retain accepted source/library; no SDK replacement or new production mode. Fix only if a specific causal defect is established."
+}
