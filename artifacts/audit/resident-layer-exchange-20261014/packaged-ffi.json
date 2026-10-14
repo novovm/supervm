@@ -1,0 +1,12 @@
+{
+  "status": "ok",
+  "variant": "core",
+  "dll": "D:\\WorksArea\\SUPERVM\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "abi": 1,
+  "version": "aoem-1.0.0",
+  "execute_ops_v2": true,
+  "bundle_profile": "full",
+  "rocksdb_persistence": true,
+  "wasmtime_runtime": true
+}

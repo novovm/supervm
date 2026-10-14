@@ -1,9 +1,11 @@
 AOEM runtime in SUPERVM is packaged as one portable FULLMAX host bundle.
 
-Current update (2026-10-13):
-  Windows core/header: AOEM 7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed.
+Current update (2026-10-14):
+  Windows core/header: AOEM aab3f8bb8cf5c685b8314a08378e8763fbbe83ab.
   Normal integer execution requires composition v1 (AOIP0 v10/AOIR0002).
-  This removes node prediction-wave resubmission, not the global fee/effect finish.
+  Node compiles Transfer fees/conditions/effects; AOEM remains domain-neutral.
+  Active composition chunks reuse transfer buffers with one submission/wait.
+  Internal layer readback remains; this is not full device residency or proof.
   Execution still enters through the unified wire. v7 diagnostic compatibility remains.
   Windows sidecars: retained 1377cd1e bundle, not rebuilt.
   Linux core/header/sidecars: retained 1377cd1e bundle, not upgraded.

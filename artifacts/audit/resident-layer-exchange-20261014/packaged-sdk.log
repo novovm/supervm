@@ -1,0 +1,5 @@
+Exception: D:\WorksArea\SUPERVM\scripts\aoem\validate_fullmax_host_package.ps1:54
+Line |
+  54 |      throw "$Label must be false"
+     |      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | public_ffi_abi_changed must be false

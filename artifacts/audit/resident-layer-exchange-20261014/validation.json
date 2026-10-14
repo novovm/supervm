@@ -1,0 +1,49 @@
+{
+  "scope": "Existing AOEM v10 composition: resident upload/readback buffers and one ordered completion per active chunk",
+  "product_source": "6fbe812cfe36d7c5583742497b0a92a42814aedd",
+  "aoem_reference_source": "2c59a08f",
+  "aoem_delivered_source": "aab3f8bb8cf5c685b8314a08378e8763fbbe83ab",
+  "sdk": "Windows FULLMAX core only; Linux and plugins unchanged",
+  "features": "apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "hashes_and_measurements": "measurements.json",
+  "performance": {
+    "formal_samples": 15,
+    "successful_per_sample": 65536,
+    "business_failures_per_sample": 0,
+    "confirmation": "four original node processes, four durable stores, all final successful receipt HTTP responses",
+    "batch": 1024,
+    "window": 8192,
+    "conflict": "1024 payers with 64 sequential nonces each, shared recipient",
+    "diagnostics": false,
+    "power": "AC checked by run-load.ps1",
+    "cpu_regression_attribution": "unresolved; initial negative samples and all five attribution samples retained",
+    "final_build_separately_retested": true
+  },
+  "work_reduction": {
+    "submit_wait_per_active_chunk_before": 3,
+    "submit_wait_per_active_chunk_after": 1,
+    "transfer_buffer_allocations_per_chunk_before": 2,
+    "transfer_buffer_allocations_per_chunk_after_warmup": 0,
+    "layer_readback_upload_bytes_removed": false,
+    "resident_transfer_memory_included_in_budget": true
+  },
+  "correctness": {
+    "final_product_filters_passed": 7,
+    "initial_candidate_product_filters_passed": 7,
+    "aoem_resources": "13 passed, 4 ignored; three ignored wire cases separately passed; microbenchmark not run",
+    "gpu_bigint_oracle": "12 op families and typed faults, changed inputs and malformed lengths, real Vulkan debug test passed",
+    "release_kernel_libtest": "blocked by 17 pre-existing unrelated AI test compilation errors; not counted as pass",
+    "final_fullmax_build": "passed",
+    "legacy_package_validator": "checksum and Windows SHA checks passed, then rejected existing cumulative public_ffi_abi_changed=true; its old all-false contract is not current SDK acceptance, not relaxed",
+    "packaged_rpc_and_ffi_probe": "see packaged-rpc.log and packaged-ffi.json; proof/worker/privacy package smoke not run this slice",
+    "preserved_drafts": "49 hashes verified, zero drift, see measurements.json"
+  },
+  "limitations": [
+    "AOEM still resolves guards and value bindings on CPU between layers",
+    "No full device residency, new ABI, shader, NOV kernel instruction or GPU bypass",
+    "Integer remains slower than retained CPU default",
+    "No physical multi-machine, Linux new library, business proof or million-TPS signoff",
+    "Final DLL differs from first candidate; final metrics are not substituted with candidate metrics",
+    "Local tests do not imply remote CI success"
+  ]
+}

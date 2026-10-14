@@ -1,5 +1,13 @@
 # AOEM FULLMAX SUPERVM Host Package
 
+## 2026-10-14: Resident composition exchange
+
+Windows core: `aab3f8bb8cf5c685b8314a08378e8763fbbe83ab`. Existing unified
+v10 plan chunks reuse bounded transfer buffers and one ordered submission/wait.
+No NOV rules, new shader or C ABI. Internal layer readback is still present.
+CPU remains default; performance samples and unresolved CPU variation are in
+the runtime baseline and product readiness tracker. Linux/sidecars unchanged.
+
 ## 2026-10-13: Guarded cross-program composition
 
 Windows core/header: `7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed`.
