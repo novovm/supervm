@@ -3,6 +3,59 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 信箱节点处理分段与优化部署对照
+
+输入7d8ff5a7，NOVOCHAT c0524ff。用户批准仅节点进程分流直连并已打开两台原
+Android。不改VPN/TUN、节点策略、手机安装、联系人、消息、TTL、预算或隐私。
+此前托管节点来自target/debug，不能用未优化构建代表最终节点性能。
+
+原MailboxServiceV1增加固定本机原子计数，原Windows owner在既有定位声明发布
+回调输出status.json.mailboxTimings。没有逐请求日志、新RPC、计量结算或第二
+调度器；不保存内容、身份或能力。execute计时含排队、工作线程和存储提交，
+response_enqueue只测本地响应提交；不包含传输到达、解帧或对端收件。Watch
+本来就有等待，不能算成处理卡顿；中止可以发生在已落盘之后，不能当成未存。
+
+9项mailbox_rpc回归通过（22.77s），包括真实存储队列等待、错误领取能力仍拒绝，
+错误/取消不伪装成功。自主节点真实进程回归1项通过（12.86s），验证同身份恢复、
+运行中变更拒绝以及新版status计数。原多bin路径编译告警保留。
+
+21:19部署debug计时版本FD6F82A776FDD7F31DAF1D5BB2BD6FB34C8C5118A6B59928EBEE3BDEEA8E47A8，
+PID37876；停机期间keys/policy/journal/mailbox哈希一致，重启签名序号推进、原公钥
+和DPAPI保持。两机自行进入attempt2，Wi-Fi direct、蜂窝relay，无ADB业务隧道。
+9025/9026双向新消息真实inbox持久提交，Put至StoreReceipt为265/1747ms，
+Put至设备持久回执4453/3388ms；不是远端首次显示计时，也不是P95。
+节点同窗口Put4次最大50.726ms、Fetch8次最大40.654ms、Consume4次最大73.152ms；
+请求准入最大7us，响应入队最大5.033ms，无请求拒绝或中止。蜂窝17次完整RPC
+713–2490ms；由此能排除本批存储处理/资源队列的秒级阻塞，尚未精确划分载体
+等待、解帧和其他检查。该批同时进行release首次编译，不作为严格性能A/B基准。
+
+网络核心实时读回：节点TCP及UDP均ProcessPath→DIRECT，Codex仍SG代理，TUN=true。
+蜂窝仍经原批准外部Iroh Relay；分流不等于自主传输或秒级通过。
+证据：artifacts/mailbox-node-timings-tests.log、mailbox-node-timings-owner-test.log、
+node-debug-deployment.json、node-debug-metrics-after.json；NOVOCHAT
+artifacts/message-events-device/node-debug-ready.json、node-debug-messages.json及
+原test-enqueues。
+
+同源码release首次构建8m38s通过。21:28原任务部署优化产物
+391E6A681B1428B0D482A9A3B84624950E8571D8BA5D1835A39006064D919C4C，PID10244；
+同样验证停机期间四份持久状态字节不变、重启原密钥/公钥及新序号。两机原进程
+自行进入attempt3，未手动Connect，Wi-Fi direct/蜂窝relay保持。9027–9030四条
+新消息全部收件持久提交且有发送方设备回执；Put→StoreReceipt分别171/2022/
+228/2240ms，Put→DeviceReceipt分别8307/5694/3375/4484ms，方向交替Wi-Fi→
+蜂窝、蜂窝→Wi-Fi。前两条在节点重启恢复后，后两条为同健康会话继续发送。
+不能将前两条排除后声称性能提升，也不能将这些少量样本作P95/生产承诺。
+
+release同窗口累计Put8次/Fetch16次/Consume8次（包括设备回执对象），最大
+44.232/49.303/56.504ms；响应入队最大147us，资源准入低于计时微秒精度，
+无请求拒绝/中止。最初4次Put最大9.330ms，但后续存储耗时会变，不以最快值
+代表全批。手机普通RPC：Wi-Fi 30次11–133ms；蜂窝27次609–3420ms。
+优化部署降低部分节点处理成本，但本批整体投递没有已证明的改善；仍需细分
+蜂窝中继传输/接收与往返流程，不增加重试预算或放宽验签。保留release部署。
+
+新增证据node-release-deployment.json、node-release-metrics-first/after.json、
+mailbox-node-release-build.log；NOVOCHAT node-release-ready/messages/steady.json。
+Windows崩溃自动重启、L4实机寄存、独立冗余和整体生产目标仍未签收。
+
 ## 2026-10-14 自有节点自动载体选择与 VPN 保留
 
 输入2f53183f。现有节点原来relay_only=true，虽同Wi-Fi手机可本地访问，仍固定

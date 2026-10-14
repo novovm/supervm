@@ -311,6 +311,7 @@ impl Owner {
             // Keep storage, byte quotas and connection bounds unchanged.
             .with_continuous_request_rate_v4(64, 32)?,
         );
+        let mailbox_status = mailbox.clone();
         let result = run_self_owned_node_v1(carrier, key, config.allowed_clients.clone(), stop,Some(mailbox),
             move |endpoint, expires| {
                 let path = self.policy.config.root.join("service.journal");
@@ -361,7 +362,7 @@ impl Owner {
                 Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
             }, move |record| {
                 atomic(&publish_root.join("self-owned-record.json"), &serde_json::to_vec(record)?)?;
-                atomic(&publish_root.join("status.json"), &serde_json::to_vec(&serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if relay_only {"relay-only"} else {"automatic"}}))?)
+                atomic(&publish_root.join("status.json"), &serde_json::to_vec(&serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if relay_only {"relay-only"} else {"automatic"},"mailboxTimings":mailbox_status.timing_snapshot_v1()}))?)
             }).await;
         atomic(
             &config.root.join("status.json"),

@@ -315,6 +315,8 @@ async fn self_owned_process_carrier_change_preserves_identity_and_rejects_live_m
     let status: serde_json::Value =
         serde_json::from_slice(&std::fs::read(fixture.0.join("status.json"))?)?;
     assert_eq!(status["carrierMode"], "automatic");
+    assert_eq!(status["mailboxTimings"]["version"], 1);
+    assert!(status["mailboxTimings"]["fetch"]["started"].is_u64());
     Ok(())
 }
 

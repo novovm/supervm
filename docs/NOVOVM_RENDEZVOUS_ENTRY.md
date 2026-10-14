@@ -1,5 +1,25 @@
 # 自有寻址服务可执行入口
 
+## 2026-10-14 部署构建与信箱处理耗时
+
+长期手机联调使用同一原生入口的优化构建；先设置本仓 `CARGO_TARGET_DIR`、
+`CARGO_BUILD_JOBS=1`，执行
+`cargo build --release --locked -p novovm-relay --features iroh-transport --bin novovm-rendezvous-service`。
+安装脚本仍验证明确提供的产物 SHA256，不自行猜测或下载版本。下面旧有界入口的
+debug 构建记录不作为低延迟部署基准。release 保留仓库的 overflow checks，
+不关闭协议验证；替换可执行程序不重建密钥、配置、撤销历史或信箱。
+
+原 `MailboxServiceV1` 新增本机 `timing_snapshot_v1`，Windows 原 owner 在已有
+定位声明发布时一并写入 `status.json.mailboxTimings`，不增加远端 RPC、轮询任务
+或逐请求磁盘日志。固定原子计数记录准入等待、Put/Fetch/Consume/Watch/其他
+操作和响应入队耗时；操作耗时包含现有存储队列、工作线程及持久写入。没有对端、
+信箱、内容、能力、钱包或消息 ID 字段。
+
+这是进程内近似累计快照，正常发布周期之间可能滞后；重启归零，必须结合活进程
+和新序号判定在线。Watch 包含预期等待，响应入队不等于远端收到；interrupted
+包括错误或取消，也可能发生在存储已提交后。计数不能代替 StoreReceipt、
+设备持久回执、权限证明或贡献结算。实际手机延迟与部署结果见生产台账。
+
 ## 2026-10-14 平台持久端点上的原节点宿主
 
 `product_rendezvous_owned::run_self_owned_node_on_endpoint_v1` 接受平台已有的

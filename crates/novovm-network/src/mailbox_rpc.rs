@@ -20,6 +20,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use zeroize::{Zeroize, Zeroizing};
 
+#[path = "mailbox_rpc_metrics.rs"]
+mod metrics;
+pub use metrics::MailboxTimingsV1;
+
 pub const MAX_SESSION_REQUESTS_V2: u16 = 64;
 
 const STREAM: u64 = 0x4e564d424f5831;
@@ -151,6 +155,7 @@ pub struct MailboxServiceV1 {
     changed: tokio::sync::watch::Sender<u64>,
     // Shared across V4 connections, so reconnecting cannot reset the budget.
     request_budget: Mutex<RequestBudgetV4>,
+    timings: metrics::Timings,
 }
 
 struct RequestBudgetV4 {
@@ -184,6 +189,7 @@ impl MailboxServiceV1 {
             signer,
             slots: Arc::new(tokio::sync::Semaphore::new(1)),
             changed: tokio::sync::watch::channel(0).0,
+            timings: metrics::Timings::default(),
             request_budget: Mutex::new(RequestBudgetV4 {
                 tokens: 64,
                 updated: std::time::Instant::now(),
@@ -217,6 +223,7 @@ impl MailboxServiceV1 {
     }
 
     async fn admit_request_v4(&self) -> Result<()> {
+        let sample = self.timings.admission.start();
         loop {
             let wait = self
                 .request_budget
@@ -224,10 +231,19 @@ impl MailboxServiceV1 {
                 .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))?
                 .take();
             match wait {
-                None => return Ok(()),
+                None => {
+                    sample.complete(false);
+                    return Ok(());
+                }
                 Some(wait) => tokio::time::sleep(wait).await,
             }
         }
+    }
+
+    /// Local-only diagnostics, not a remote RPC or a service receipt. No
+    /// identifiers or request values are retained; snapshots never grant work.
+    pub fn timing_snapshot_v1(&self) -> MailboxTimingsV1 {
+        self.timings.snapshot()
     }
 
     /// Local platform control, not remotely callable. Uses the same fair store
@@ -283,6 +299,20 @@ impl MailboxServiceV1 {
         .await?
     }
     async fn execute(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        let counter = match &request {
+            MailboxRequestV1::Put { .. } => &self.timings.put,
+            MailboxRequestV1::Fetch { .. } => &self.timings.fetch,
+            MailboxRequestV1::Consume { .. } => &self.timings.consume,
+            MailboxRequestV1::Watch { .. } => &self.timings.watch,
+            _ => &self.timings.other,
+        };
+        let sample = counter.start();
+        let reply = self.execute_inner(request).await?;
+        sample.complete(matches!(&reply, MailboxReplyV1::Rejected(_)));
+        Ok(reply)
+    }
+
+    async fn execute_inner(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
         if let MailboxRequestV1::Watch { boxes, wait_ms } = &request {
             return self.watch(boxes, *wait_ms).await;
         }
@@ -1030,7 +1060,9 @@ async fn serve_session(
                 let reply = service.execute(request).await?;
                 authority()?;
                 stream.selected_path()?;
+                let writing = service.timings.response_enqueue.start();
                 send(stream, &mut channel, &reply, &mut sent).await?;
+                writing.complete(false);
                 Ok(false)
             })
             .await
@@ -1290,6 +1322,23 @@ mod notification_tests {
             MailboxReplyV1::Empty
         ));
         service.sweep().await?;
+        assert!(matches!(
+            service
+                .execute(MailboxRequestV1::Fetch {
+                    mailbox: [3; 32],
+                    read: [6; 32],
+                })
+                .await?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+        ));
+        // Timings include the real queue wait above and count a capability
+        // rejection separately; they never replace the actual storage result.
+        let measured = serde_json::to_value(service.timing_snapshot_v1())?;
+        assert_eq!(measured["other"]["completed"], 1);
+        assert!(measured["other"]["max_us"].as_u64().unwrap() >= 20_000);
+        assert_eq!(measured["fetch"]["completed"], 2);
+        assert_eq!(measured["fetch"]["rejected"], 1);
+        assert_eq!(measured["fetch"]["interrupted"], 0);
         Ok(())
     }
     #[tokio::test]
