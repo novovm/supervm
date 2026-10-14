@@ -10633,3 +10633,15 @@ CI 已将该用例独立执行并启用 `--nocapture` 与 backtrace，原候选�
   断言失败仍在此前抛出异常，没有降低负向用例要求。
 - Rust CI 新增完整 `native_block_seal` 回归；新提交的远程结果仍须独立验收，
   本机通过不能替代 Linux CI 或实体多机测试。
+
+## 2026-10-15: local capability client for shared L3/L4 mailbox
+
+- `MailboxServiceV1::request_local_v1` reuses the remote executor, node-wide
+  admission budget, durable store, capabilities, TTL and notifications. It does
+  not negotiate a network session or open another SQLite owner. Embedders retain
+  responsibility for live device/contact checks around the await.
+- Local/remote commit notification, OFF/reopen custody, wrong capability,
+  revocation and shared budget checks: 2 new tests PASS. Full mailbox RPC unit
+  regression: 13 PASS (`artifacts/l4-local-rpc-regression.log`).
+- This enables local L4 consumption; it does not prove Android adaptive routing
+  or 300 ms delivery. No financial runtime or deployed node changed.

@@ -26,6 +26,10 @@ pub use metrics::MailboxTimingsV1;
 
 pub const MAX_SESSION_REQUESTS_V2: u16 = 64;
 
+#[cfg(test)]
+#[path = "mailbox_local_tests.rs"]
+mod local_tests;
+
 const STREAM: u64 = 0x4e564d424f5831;
 const CHUNK: usize = 8192;
 const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array representation.
@@ -267,6 +271,27 @@ impl MailboxServiceV1 {
     /// identifiers or request values are retained; snapshots never grant work.
     pub fn timing_snapshot_v1(&self) -> MailboxTimingsV1 {
         self.timings.snapshot()
+    }
+
+    /// In-process capability client of the SAME mailbox owner. A phone may
+    /// receive its own stored ciphertext without dialing itself through a relay.
+    /// This is not a privileged database reader: capabilities, quotas, TTL,
+    /// tombstones, durable notifications and the node-wide request budget are
+    /// identical to remote operations. The embedding owner must check its live
+    /// identity/contact policy before and after awaiting this method.
+    /// Transport negotiation belongs to authenticated network streams only.
+    pub async fn request_local_v1(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        if matches!(
+            &request,
+            MailboxRequestV1::BeginSession
+                | MailboxRequestV1::BeginContinuousV4
+                | MailboxRequestV1::BeginContinuousV6
+                | MailboxRequestV1::EndSession
+        ) {
+            return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Invalid));
+        }
+        self.admit_request_v4().await?;
+        self.execute(request).await
     }
 
     /// Local platform control, not remotely callable. Uses the same fair store
