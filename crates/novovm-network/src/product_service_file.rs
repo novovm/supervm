@@ -74,8 +74,7 @@ impl ServiceLeaseFileV1 {
         let path = absolute_path(path)?;
         let owner = lock_owner(&path)?;
         let mut file = private_options().create_new(true).open(&path)?;
-        file.try_lock()
-            .map_err(|_| anyhow::anyhow!("journal already owned"))?;
+        lock_file(&file)?;
         let header = header(0, [0; 32]);
         file.write_all(&header)?;
         file.sync_all()?;
@@ -102,8 +101,7 @@ impl ServiceLeaseFileV1 {
         let owner = lock_owner(&path)?;
         check_file(&path)?;
         let mut file = private_options().open(&path)?;
-        file.try_lock()
-            .map_err(|_| anyhow::anyhow!("journal already owned"))?;
+        lock_file(&file)?;
         let cipher = cipher(material);
         let (last, tail, length, generation) = read(&mut file, &cipher)?;
         ensure!(!last.is_empty(), "journal has no enrolled state");
@@ -145,9 +143,7 @@ impl ServiceLeaseFileV1 {
             std::fs::remove_file(&staged_path)?;
         }
         let mut staged = private_options().create_new(true).open(&staged_path)?;
-        staged
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("staged journal owned"))?;
+        lock_file(&staged)?;
         hook(1)?;
         let generation = state
             .generation
@@ -178,9 +174,7 @@ impl ServiceLeaseFileV1 {
         sync_parent(&self.path)?;
         hook(5)?;
         let mut published = private_options().open(&self.path)?;
-        published
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("published journal owned"))?;
+        lock_file(&published)?;
         let (checked, checked_tail, checked_length, checked_generation) =
             read(&mut published, &self.cipher)?;
         ensure!(
@@ -232,10 +226,19 @@ fn lock_owner(path: &Path) -> Result<File> {
         check_file(&path)?;
     }
     let file = private_options().create(true).truncate(false).open(&path)?;
-    file.try_lock()
-        .map_err(|_| anyhow::anyhow!("journal already owned"))?;
+    lock_file(&file)?;
     check_file(&path)?;
     Ok(file)
+}
+
+fn lock_file(file: &File) -> Result<()> {
+    #[cfg(target_os = "android")]
+    rustix::fs::flock(file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
+        .context("journal exclusive lock unavailable")?;
+    #[cfg(not(target_os = "android"))]
+    file.try_lock()
+        .context("journal exclusive lock unavailable")?;
+    Ok(())
 }
 
 fn header(generation: u64, predecessor: [u8; 32]) -> Vec<u8> {
