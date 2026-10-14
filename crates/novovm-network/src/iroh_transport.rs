@@ -34,10 +34,10 @@ pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
 /// handshakes. This is NOT iroh's internal pending-Incoming queue limit.
 pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
 
-#[path = "iroh_connection_reuse.rs"]
-mod reuse;
 #[path = "iroh_multiplex.rs"]
 mod multiplex;
+#[path = "iroh_connection_reuse.rs"]
+mod reuse;
 pub use multiplex::{IrohMultiplexV1, IROH_MAX_MULTIPLEX_STREAMS_V1};
 
 static FORCED_DRAINS: AtomicU64 = AtomicU64::new(0);
@@ -557,7 +557,7 @@ impl IrohEndpointOwnerV1 {
     where
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
-        self.operation_with_lane(control, None, false, operation)
+        self.operation_with_lane(control, None, false, None, operation)
             .await
     }
 
@@ -574,7 +574,7 @@ impl IrohEndpointOwnerV1 {
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
         ensure!((1..=8).contains(&lane), "invalid retained connection lane");
-        self.operation_with_lane(control, Some(lane), false, operation)
+        self.operation_with_lane(control, Some(lane), false, None, operation)
             .await
     }
 
@@ -598,6 +598,39 @@ impl IrohEndpointOwnerV1 {
             },
             None,
             true,
+            None,
+            service,
+        )
+        .await
+    }
+
+    /// Host the existing inbound node protocols on this platform-owned endpoint.
+    /// The platform retains endpoint cleanup ownership. Stopping this listener
+    /// drops only its accepted connections; independently authorized outbound
+    /// operations can continue. The global accept queue is reserved for the
+    /// whole listener scope, so a second service/P2P consumer cannot steal peers.
+    /// This requires a protected stable transport identity and confers no peer
+    /// trust. The same connection cap and finite admission budget still apply.
+    pub async fn with_owned_listener_v1<T, F>(
+        &self,
+        check: impl Fn() -> Result<()> + Send + Sync + 'static,
+        service: F,
+    ) -> Result<T>
+    where
+        F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
+    {
+        ensure!(
+            self.service_identity.is_some(),
+            "listener requires protected service identity"
+        );
+        self.operation_with_lane(
+            IrohControlV1 {
+                check: Arc::new(check),
+                deadline: None,
+            },
+            None,
+            false,
+            Some(Duration::from_secs(30)),
             service,
         )
         .await
@@ -608,17 +641,30 @@ impl IrohEndpointOwnerV1 {
         control: IrohControlV1,
         lane: Option<u8>,
         continuous_service: bool,
+        listener_budget: Option<Duration>,
         operation: F,
     ) -> Result<T>
     where
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
         self.check_runtime()?;
-        if !continuous_service {
+        if !continuous_service && listener_budget.is_none() {
             control.io_deadline()?;
         }
         control.check()?;
         self.state.check()?;
+        // Reserve before entering the service callback and retain until all
+        // borrowed inbound work has ended. A scope-local mutex still prevents
+        // two accepts inside this listener from racing each other.
+        let _listener_admission = if listener_budget.is_some() {
+            Some(
+                self.accept_consumer
+                    .try_lock()
+                    .context("carrier accept already pending")?,
+            )
+        } else {
+            None
+        };
         self.state.active.fetch_add(1, Ordering::SeqCst);
         let _active = EndpointOperationGuard(self.state.clone());
         // Paired with close's SeqCst closing/admission reads. If close won the
@@ -639,8 +685,12 @@ impl IrohEndpointOwnerV1 {
             relays: self.relays.clone(),
             relay_only: self.relay_only,
             connections: self.connections.clone(),
-            accept_consumer: self.accept_consumer.clone(),
-            listener_budget: None,
+            accept_consumer: if listener_budget.is_some() {
+                Arc::new(tokio::sync::Mutex::new(()))
+            } else {
+                self.accept_consumer.clone()
+            },
+            listener_budget,
             continuous_service,
             reuse: lane.map(|lane| (self.reuse.clone(), lane)),
         };
@@ -1411,14 +1461,13 @@ impl IrohStreamV1<'_> {
         if self.shared.is_some() {
             context.extend_from_slice(b"/multiplex/1/");
             context.extend_from_slice(&u64::from(self.send.id()).to_be_bytes());
-            ensure!(self.send.id() == self.recv.id(), "carrier stream ID mismatch");
+            ensure!(
+                self.send.id() == self.recv.id(),
+                "carrier stream ID mismatch"
+            );
         }
         self.connection
-            .export_keying_material(
-                &mut material,
-                BOUND_TRANSPORT_EXPORTER_LABEL_V1,
-                &context,
-            )
+            .export_keying_material(&mut material, BOUND_TRANSPORT_EXPORTER_LABEL_V1, &context)
             .map_err(|_| anyhow::anyhow!("TLS binding export failed"))?;
         Ok(if self.initiator {
             (local, remote, material)
@@ -1613,7 +1662,9 @@ impl<'scope> IrohStreamV1<'scope> {
     pub async fn next_inbound(mut self) -> Result<IrohStreamV1<'scope>> {
         self.check()?;
         ensure!(
-            self.finished && !self.initiator && self.scope.listener_budget.is_some()
+            self.finished
+                && !self.initiator
+                && self.scope.listener_budget.is_some()
                 && self.shared.is_none(),
             "inbound continuation requires completed listener stream"
         );
@@ -3112,7 +3163,10 @@ mod tests {
                     stream.admit_continuous_service_v4().is_err(),
                     "finite inbound gained continuous authority"
                 );
-                ensure!(stream.multiplex_v1().is_err(), "finite inbound gained multiplex");
+                ensure!(
+                    stream.multiplex_v1().is_err(),
+                    "finite inbound gained multiplex"
+                );
                 ensure!(
                     stream.begin_service_request_v4().is_err(),
                     "finite IO deadline reset"
@@ -3144,7 +3198,10 @@ mod tests {
                     stream.admit_continuous_service_v4().is_err(),
                     "finite outbound gained continuous authority"
                 );
-                ensure!(stream.multiplex_v1().is_err(), "finite outbound gained multiplex");
+                ensure!(
+                    stream.multiplex_v1().is_err(),
+                    "finite outbound gained multiplex"
+                );
                 ensure!(
                     stream.begin_service_request_v4().is_err(),
                     "finite IO deadline reset"

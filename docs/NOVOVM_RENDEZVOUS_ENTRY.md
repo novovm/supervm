@@ -1,5 +1,28 @@
 # 自有寻址服务可执行入口
 
+## 2026-10-14 平台持久端点上的原节点宿主
+
+`product_rendezvous_owned::run_self_owned_node_on_endpoint_v1` 接受平台已有的
+`IrohEndpointOwnerV1`，与原 `run_self_owned_node_v1` 进入同一个 `Node::serve`。
+节点发现、NVMBOX01–05 分派、Finished、接收方能力、SQLite 落盘及维护均复用
+原实现；此入口不 bind、不创建 Tokio runtime，不分离启动第二个调度器。
+
+`IrohEndpointOwnerV1::with_owned_listener_v1` 要求平台托管的稳定传输密钥，
+为整个服务期独占原端点的入站队列；另一个入站消费者立即拒绝，而不是抢收
+彼此的连接。服务内部仍只允许一个待处理 accept。已独立授权的出站操作可并行，
+共享原四连接上限；平台节点宿主最多使用其中两条入站连接，为设备自身留出
+出站额度。专用 L3 入口仍保持原四连接边界，不降低已有容量。
+
+停止服务只回收该服务的连接，端点最终关闭仍归平台 owner。取消后释放入站
+所有权；端点 owner 被撤销后不可复活。30秒初始流预算没有变成网络通行许可，
+旧有限操作不能取得连续权限，新服务仍经原协议显式认证。
+
+该能力不自动将临时聊天端点升级为公开稳定节点，也不证明 UCA 已链上绑定。
+Android 接线仍须在现有 Application owner 内托管用途密钥/本地受保护目录，
+明确执行条件、贡献设置及身份曝光边界。贡献关闭/资源不足使用原
+`MailboxServiceV1` 关闭新增义务，保留已有密文的 Fetch/Consume/TTL；不能用
+停止监听或删除数据库冒充义务已经完成。实机 L4 和独立多副本另行验收。
+
 ## 2026-10-14 加密授权日志的有界压缩
 
 同一 `ServiceLeaseFileV1` 保留 API 和密钥托管来源，新增 NVLSJ002 本地格式；

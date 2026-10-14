@@ -1,8 +1,11 @@
 //! Self-owned lifecycle for the EXISTING rendezvous V2 offer and authenticated
-//! RPC. Stable listener; bounded rotating opaque stores and per-stream leases.
+//! RPC. Stable listener; rotating opaque stores and resource-bound mailbox sessions.
 use crate::{
     carrier_stream::CarrierStreamV1,
-    iroh_transport::{with_iroh_owned_listener_v1, IrohConfigV1},
+    iroh_transport::{
+        with_iroh_owned_listener_v1, IrohConfigV1, IrohEndpointOwnerV1, IrohScopeV1,
+        IROH_MAX_CONNECTIONS_V1,
+    },
     opaque_rendezvous::RendezvousStoreV1,
     product_directory::PeerSignedRelayRecordV1,
     product_rendezvous_daemon::now_ms,
@@ -52,29 +55,114 @@ pub async fn run_self_owned_node_v1(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
-    ensure!(
-        (1..=16).contains(&clients.len()) && !clients.contains(&key.verifying_key().to_bytes()),
-        "local client resource policy"
-    );
-    for pin in &clients {
+    let node = Node::new(key, clients, stop, mailbox, IROH_MAX_CONNECTIONS_V1)?;
+    let revoked = node.stop.clone();
+    with_iroh_owned_listener_v1(
+        carrier,
+        move || {
+            ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
+            Ok(())
+        },
+        move |scope| Box::pin(node.serve(scope, activate, publish)),
+    )
+    .await
+}
+
+/// The identical node dispatcher on an endpoint already held by the platform.
+/// No bind, runtime, scheduler or detached cleanup is created here. The caller
+/// must keep the endpoint owner alive, observe service termination, and close
+/// that owner after all borrowers have ended. Endpoint ownership is not a
+/// recipient capability or service identity; the original verifiers still run.
+/// At most two inbound connections are serviced, leaving two of the shared
+/// endpoint's four slots available for the device's own outbound work.
+pub async fn run_self_owned_node_on_endpoint_v1(
+    endpoint: &IrohEndpointOwnerV1,
+    key: SigningKey,
+    clients: BTreeSet<[u8; 32]>,
+    stop: Arc<AtomicBool>,
+    mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
+    activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<()> {
+    let node = Node::new(key, clients, stop, mailbox, 2)?;
+    let revoked = node.stop.clone();
+    endpoint
+        .with_owned_listener_v1(
+            move || {
+                ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
+                Ok(())
+            },
+            move |scope| Box::pin(node.serve(scope, activate, publish)),
+        )
+        .await
+}
+
+struct Node {
+    key: SigningKey,
+    clients: Vec<[u8; 32]>,
+    stop: Arc<AtomicBool>,
+    mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
+    max_connections: usize,
+}
+
+impl Node {
+    fn new(
+        key: SigningKey,
+        clients: BTreeSet<[u8; 32]>,
+        stop: Arc<AtomicBool>,
+        mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
+        max_connections: usize,
+    ) -> Result<Self> {
         ensure!(
-            !ed25519_dalek::VerifyingKey::from_bytes(pin)?.is_weak(),
-            "weak client key"
+            (1..=16).contains(&clients.len()) && !clients.contains(&key.verifying_key().to_bytes()),
+            "local client resource policy"
         );
+        for pin in &clients {
+            ensure!(
+                !ed25519_dalek::VerifyingKey::from_bytes(pin)?.is_weak(),
+                "weak client key"
+            );
+        }
+        Ok(Self {
+            key,
+            clients: clients.into_iter().collect(),
+            stop,
+            mailbox,
+            max_connections,
+        })
     }
-    let clients: Vec<_> = clients.into_iter().collect();
-    let revoked = stop.clone();
-    let result = with_iroh_owned_listener_v1(carrier, move || {
-        ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner"); Ok(())
-    }, move |scope| Box::pin(async move {
-        if scope.uses_relays() { tokio::time::timeout(Duration::from_secs(20), scope.online()).await??; }
-        let mut endpoint = IrohServiceEndpointV1 { instance: rand::random(), address: scope.address()? };
-        let expires_ms = now_ms()?.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
+
+    async fn serve(
+        self,
+        scope: &IrohScopeV1,
+        activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>>,
+        publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()>,
+    ) -> Result<()> {
+        let Self {
+            key,
+            clients,
+            stop,
+            mailbox,
+            max_connections,
+        } = self;
+        if scope.uses_relays() {
+            tokio::time::timeout(Duration::from_secs(20), scope.online()).await??;
+        }
+        let mut endpoint = IrohServiceEndpointV1 {
+            instance: rand::random(),
+            address: scope.address()?,
+        };
+        let expires_ms = now_ms()?
+            .checked_add(90_000)
+            .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
         let host = activate(&endpoint, expires_ms)?;
         let first = host.rotate_self_owned(&endpoint, now_ms()?, expires_ms)?;
         publish(&first)?;
         let generation = Arc::new(Mutex::new(Generation {
-            store: Arc::new(Mutex::new(RendezvousStoreV1::new(endpoint.instance, Instant::now() + Duration::from_secs(90))?)),
+            store: Arc::new(Mutex::new(RendezvousStoreV1::new(
+                endpoint.instance,
+                Instant::now() + Duration::from_secs(90),
+            )?)),
             expires_ms,
         }));
         let mut rotate_at = Instant::now() + Duration::from_secs(60);
@@ -120,7 +208,7 @@ pub async fn run_self_owned_node_v1(
                 }
                 result = &mut sweeping => { result?; unreachable!("mailbox maintenance is continuous"); }
                 Some(_) = active.next(), if !active.is_empty() => {}
-                accepted = &mut incoming, if active.len() < 4 => {
+                accepted = &mut incoming, if active.len() < max_connections => {
                     incoming = Box::pin(scope.accept_inbound());
                     if let Ok(stream) = accepted {
                         let host = host.clone();
@@ -196,8 +284,5 @@ pub async fn run_self_owned_node_v1(
         }
         drop(active);
         Ok(())
-    })).await;
-    // Local explicit stop is normal. Other errors remain observable to the
-    // owner, which must not silently restart corrupt or revoked histories.
-    result
+    }
 }
