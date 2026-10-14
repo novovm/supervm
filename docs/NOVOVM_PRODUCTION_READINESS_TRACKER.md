@@ -18,9 +18,20 @@ Rust依赖所需的rlib，由Cargo按图生成带hash文件；APP自身JNI/FFI�
 原始上游清单/哈希保留，补丁范围说明已更新；通用碰撞背景见Cargo #6313，
 本事故依据实际链接证据。失败EXE/PDB/map保留于NOVOCHAT忽略artifacts目录。
 
-本片共享真实平台owner4项0.63秒通过，编译1分35秒。APP回归及共享仓/APP
-交替构建正在继续，未以共享组件通过宣称APP故障关闭。Android安装与当前L3
-未改变，L4手机接线和原并发组合断言仍单独待验。
+修复提交 `b2f43844` 后共享真实平台owner4项0.63秒通过，APP owner7项
+0.58秒通过。实际新map仅含Tokio `a343ea2b4b26e36d`、netwatch
+`0010d46bd510e801`和带hash的Iroh `0036a5c503aed22e`。再次从SUPERVM
+编译（4项0.63秒），共享Iroh `48590cd38d223a0e`与APP Iroh文件SHA256均
+不变；回到APP移除临时link-map钩子并重新链接，7项1.80秒再次通过，严格
+Clippy含lib/tests通过。旧无hash库仍在target，没有删除依赖/清缓存。
+
+初次APP重试曾因 `cargo fmt --all`格式化路径依赖、触发已审核输入门禁而
+拒绝；已核对并仅撤回本次额外格式化，再完成上述验证，未绕过输入检查。
+原失败与最终日志/链接比较JSON在NOVOCHAT `artifacts/l4-reactor-failure/`
+及 `artifacts/l4-platform-*.log`，共享日志在 `artifacts/l4-platform-owner/`。
+这是本机双Tokio初始化缺陷的确定修复，不代表历史所有网络异常或另一项
+并发组合断言都已归因。Android标准构建另由产品仓记录；已装两机与当前L3
+未更换，L4手机接线、性能及独立副本仍待验。
 
 ## 2026-10-14 L4 平台宿主接缝：借用持久端点，沿用原信箱
 
