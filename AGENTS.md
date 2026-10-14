@@ -1,5 +1,18 @@
 # Agent Highest Law
 
+- 2026-10-14 latest economic decision supersedes free-service fallback: NOV is
+  the native main-chain token and sole NOVONET mainnet asset. New communication
+  service obligations require NOV-funded subscription/prepaid resources. Open
+  provider participation needs no official approval or prior NOV purchase;
+  sharing earns only for verified funded work, never merely being online.
+  Paid monthly subscriptions allocate at least USD 5 equivalent NOV at the
+  defined quote point to one designated founder/foundation beneficiary.
+  Promotion ends April 2027; new globally unique UCA accounts receive one month
+  of trial backed by actual sponsor NOV, not unfunded redeemable rewards.
+  Reuse one UCA and purpose keys; no second asset/account/admission authority.
+  Keep funding/settlement off the per-message hot path; do not alter financial
+  runtime here or claim billing already implemented. See service billing v1.
+
 - 2026-10-14 L4 clarification: ordinary mailbox clients must not require a
   developer approval or fixed public-key enrollment list. Use explicit open
   key-possession admission on the existing continuous mailbox protocol, with
