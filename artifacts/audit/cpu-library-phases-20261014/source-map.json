@@ -1,0 +1,54 @@
+{
+  "parent": "c11238d50694b1df259564a27882af8de5218a8d",
+  "reuse": "da80f30654c7ce60ab6c6f73333cf0cbb5657d18",
+  "files": [
+    {
+      "path": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs",
+      "blob": "a4abf1b6cb3a2a23db1e2044c91b5c945796e1a6"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs",
+      "blob": "de10647d4ce88e9686144947bd6bb1aa6ed75b6f"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_composition.rs",
+      "blob": "c5ecea2b6924f4dd36dd167e55dcb12484cd0272"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_outcome.rs",
+      "blob": "3acafcffecbad038c629fb1aa360e052f99dfe11"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/mod.rs",
+      "blob": "fb7f400a223a4d635d28eceea2513a7522fa3296"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/aoem-gpu-kernels/build.rs",
+      "blob": "8bbda2f74b356d043c33d246e7075c1634045649"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/integer_outcome.rs",
+      "blob": "feadcb282f37bd1eb11fd8d4040a7958208ea768"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/shaders/apfl_integer_composition.comp",
+      "blob": "22cc144808c6a198b49f2a2cdcbe44101150f0bd"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_eval.glsl",
+      "blob": "e5c4c0fcefa748a10bd620efdd029068adf9f2ef"
+    },
+    {
+      "path": "crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_v2.comp",
+      "blob": "071071902cbe5599af222931ae487ecb422e66d2"
+    },
+    {
+      "path": "crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs",
+      "blob": "2a2de931b5377b4f51655a2e4b62e7bbbd96c5a7"
+    },
+    {
+      "path": "crates/ffi/aoem-ffi/src/ai_checked_integer_resources.rs",
+      "blob": "88a2fd2d1201690b4e6a16fc375909f77a17c221"
+    }
+  ]
+}

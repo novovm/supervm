@@ -1,0 +1,8 @@
+{
+  "parent_sha256": "90792e9c0ce31093c798c6abe32a49f2f8620673dcfdf74491042e79a4a4952d",
+  "restored_sha256": "95b7133d5f04a10b2d782d06d57f208f8ef387e3131668418f7096f58d399307",
+  "normalized_equal": true,
+  "normalized_sha256": "bac9d63761b71309cec8f71cdaeb192dc6d13b84ca201b167c162d481926b90c",
+  "mask": "parsed PE link/debug timestamps and CodeView GUID only",
+  "protected_drafts_unchanged": 49
+}

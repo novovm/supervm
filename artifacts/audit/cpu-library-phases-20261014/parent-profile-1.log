@@ -1,0 +1,37 @@
+semantic_workers=24 profiling=True
+
+Algorithm : SHA256
+Hash      : 90792E9C0CE31093C798C6ABE32A49F2F8620673DCFDF74491042E79A4A4952D
+Path      : D:\WorksArea\SUPERVM\target\validation\cpu-library-phases-20261014\parent.dll
+
+Algorithm : SHA256
+Hash      : 81DA45094CB6EEEF5419EBB3AF32264ECB3FD9450FDA7E3B9E76BF4948E5C98F
+Path      : D:\WorksArea\SUPERVM\target\release\novovm-node.exe
+
+
+
+running 1 test
+real 65,536 RPC workload artifacts=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-load\26112-1791989802536467800
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay connection closed: 远程主机强迫关闭了一个现有的连接。 (os error 10054)
+product relay stopped: reason=external_request elapsed_ms=40349
+real RPC load report=D:\WorksArea\SUPERVM\crates\novovm-node\../../artifacts/audit/resident-rpc-load\26112-1791989802536467800\result.json
+test native_pipeline::consensus::tests::resident_rpc_process::load::actual_product_rpc_65536_signed_transfers_finality_and_cold_economics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1580 filtered out; finished in 44.66s
+
+power_after=Online

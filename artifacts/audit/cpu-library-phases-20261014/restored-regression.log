@@ -1,0 +1,6 @@
+
+running 1 test
+test native_pipeline::business::nov_transfer_batch::body_tests::resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY and Vulkan; complete mixed-backend effects, not TPS
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 1592 filtered out; finished in 0.00s
+
