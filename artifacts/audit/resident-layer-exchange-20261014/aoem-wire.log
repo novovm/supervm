@@ -1,0 +1,18 @@
+
+running 1 test
+test ai_checked_integer_program::resources::tests::composition_real_wire_skips_invalid_branch_and_binds_distinct_programs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 271 filtered out; finished in 0.26s
+
+
+running 1 test
+test ai_checked_integer_program::resources::tests::binary_result_real_wire_has_no_json_materialization_and_is_single_take ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 271 filtered out; finished in 0.25s
+
+
+running 1 test
+test ai_checked_integer_program::resources::tests::dataflow_real_wire_executes_dependencies_without_consumer_roundtrips ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 271 filtered out; finished in 0.25s
+

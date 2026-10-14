@@ -1,6 +1,18 @@
 # AOEM FULLMAX Runtime Baseline
 
-## Current: 2026-10-13 Windows guarded integer composition
+## Current: 2026-10-14 Windows resident integer exchange
+
+AOEM `aab3f8bb8cf5c685b8314a08378e8763fbbe83ab`, same FULLMAX features;
+44,705,792 bytes, SHA256 `31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947`.
+Same unified AOIP0 v10/AOIR0002 contract, no new C ABI. Active chunks combine
+upload/dispatch/readback into one wait with resident transfer buffers accounted
+against the original budget. Guards, failure latch and full precision retained.
+Final original-node load: CPU 9373.16 TPS, integer 4487.81; finite samples,
+CPU variance unresolved. Checkpoint results are distinct from this final binary.
+Full results: `../artifacts/audit/resident-layer-exchange-20261014/`.
+Linux/sidecars unchanged. Internal layer readbacks remain; no proof signoff.
+
+## Previous: 2026-10-13 Windows guarded integer composition
 
 Core/header AOEM `7fae6f32b7ef1c4063fe0a1f1c402a59ea6680ed`, same FULLMAX features;
 44,530,688 bytes, SHA256 `d81cf004f22a4e0ad1aa2e2e4dc5f1b85078a66d4af31c9828c306baaaefebd2`.
