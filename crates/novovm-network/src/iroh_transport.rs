@@ -1515,6 +1515,23 @@ impl IrohStreamV1<'_> {
         Ok("unknown")
     }
 
+    /// Local QUIC smoothed RTT, not a probe, identity or delivery proof.
+    pub(crate) fn selected_rtt(&self) -> Option<(&'static str, Duration)> {
+        self.connection.paths().iter().find_map(|path| {
+            if !path.is_selected() {
+                return None;
+            }
+            let kind = if path.is_ip() {
+                "direct"
+            } else if path.is_relay() {
+                "relay"
+            } else {
+                return None;
+            };
+            Some((kind, path.rtt()))
+        })
+    }
+
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
         write_frame_io(
             &self.io_control,
@@ -3132,6 +3149,11 @@ mod tests {
                     ensure!(stream.read_frame().await? == frame, "reliable echo differs");
                 }
                 let path = stream.selected_path()?;
+                let (observed_path, rtt) = stream.selected_rtt().context("selected RTT missing")?;
+                ensure!(
+                    observed_path == path && !rtt.is_zero(),
+                    "invalid selected RTT"
+                );
                 stream.finish().await?;
                 Ok((binding, path))
             })

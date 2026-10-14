@@ -85,6 +85,36 @@ pub(super) struct Timings {
     pub(super) watch: Counter,
     pub(super) other: Counter,
     pub(super) response_enqueue: Counter,
+    direct_rtt: Rtt,
+    relay_rtt: Rtt,
+}
+
+#[derive(Default)]
+struct Rtt {
+    samples: AtomicU64,
+    total_us: AtomicU64,
+    max_us: AtomicU64,
+}
+#[derive(Serialize)]
+struct RttSnapshot {
+    samples: u64,
+    total_us: u64,
+    max_us: u64,
+}
+impl Rtt {
+    fn record(&self, duration: std::time::Duration) {
+        let us = duration.as_micros().min(u64::MAX as u128) as u64;
+        add(&self.samples, 1);
+        add(&self.total_us, us);
+        self.max_us.fetch_max(us, Ordering::Relaxed);
+    }
+    fn snapshot(&self) -> RttSnapshot {
+        RttSnapshot {
+            samples: self.samples.load(Ordering::Relaxed),
+            total_us: self.total_us.load(Ordering::Relaxed),
+            max_us: self.max_us.load(Ordering::Relaxed),
+        }
+    }
 }
 
 /// Process-lifetime approximate atomic snapshots. Watch includes intentional
@@ -100,8 +130,17 @@ pub struct MailboxTimingsV1 {
     watch: TimingV1,
     other: TimingV1,
     response_enqueue: TimingV1,
+    direct_rtt: RttSnapshot,
+    relay_rtt: RttSnapshot,
 }
 impl Timings {
+    pub(super) fn carrier_rtt(&self, observed: Option<(&str, std::time::Duration)>) {
+        match observed {
+            Some(("direct", d)) => self.direct_rtt.record(d),
+            Some(("relay", d)) => self.relay_rtt.record(d),
+            _ => (),
+        }
+    }
     pub(super) fn snapshot(&self) -> MailboxTimingsV1 {
         MailboxTimingsV1 {
             version: 1,
@@ -112,6 +151,8 @@ impl Timings {
             watch: self.watch.snapshot(),
             other: self.other.snapshot(),
             response_enqueue: self.response_enqueue.snapshot(),
+            direct_rtt: self.direct_rtt.snapshot(),
+            relay_rtt: self.relay_rtt.snapshot(),
         }
     }
 }
@@ -138,7 +179,27 @@ mod tests {
         assert_eq!(s.fetch.started, 0);
         assert!(s.put.total_us >= s.put.max_us);
         let v = serde_json::to_value(s).unwrap();
-        assert_eq!(v.as_object().unwrap().len(), 8);
+        assert_eq!(v.as_object().unwrap().len(), 10);
         assert_eq!(v["put"].as_object().unwrap().len(), 6);
+    }
+    #[test]
+    fn rtt_is_separate_from_request_completion_and_missing_is_not_zero() {
+        let t = Timings::default();
+        t.carrier_rtt(None);
+        t.carrier_rtt(Some(("unknown", std::time::Duration::from_secs(9))));
+        t.carrier_rtt(Some(("direct", std::time::Duration::from_millis(5))));
+        t.carrier_rtt(Some(("relay", std::time::Duration::from_millis(800))));
+        t.carrier_rtt(Some(("relay", std::time::Duration::from_millis(600))));
+        let s = t.snapshot();
+        assert_eq!((s.direct_rtt.samples, s.direct_rtt.total_us), (1, 5000));
+        assert_eq!(
+            (
+                s.relay_rtt.samples,
+                s.relay_rtt.total_us,
+                s.relay_rtt.max_us
+            ),
+            (2, 1400000, 800000)
+        );
+        assert_eq!(s.put.completed, 0);
     }
 }

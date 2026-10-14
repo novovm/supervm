@@ -39,6 +39,39 @@
 源码适配、完整原始24样本见[实验汇总](../artifacts/audit/resident-tile-cost-20261014/summary.json)
 及同目录run.ps1、tile-cost.log；未将私有知识库或运行密钥纳入证据。
 
+## 2026-10-14 实际QUIC路径RTT与通知往返成本
+
+输入577ab6f6 / NOVOCHAT75e767f。在原IrohStream/CarrierStream读取当前选中
+路径的平滑RTT，原MailboxService响应阶段累计direct/relay固定计数，仍由既有
+status发布。无探测包、新服务、地址/身份字段或请求路径/权限改变。缺失观测
+不是零；RTT不是业务处理时间、签名回执、隐私凭证或独立样本P95。
+
+10项原信箱及计数回归通过15.57s；真实QUIC双向大帧/绑定用例6.43s通过，
+同时检查选中路径RTT存在且非零。不改原超时、IO失败锁存和认证。release构建
+2m34s通过，原任务部署7AC6717417370BE985D0594311147CF8B9EE8611F8755B03E454DB3415F310EF，
+PID36820；原keys/policy/journal/mailbox在替换时不变、同公钥新序号恢复。
+手机APK和进程不变，均自动进入attempt4；Wi-Fi direct、蜂窝relay。
+最终补充仅非Iroh构建的特性边界；TLS-only检查19.01s通过，无虚构RTT值。
+
+首份同窗口快照：direct17次平滑RTT观测平均5.752ms、最大6.158ms；relay17次
+平均1105.217ms、最大1402.693ms。节点Put/Fetch/Consume最大42.482/10.012/
+39.828ms，响应入队最大58us。证明本批蜂窝载体存在约一秒往返成本，不能再以
+节点几十毫秒处理解释主要等待；不据此断言所有地区/所有样本具有相同瓶颈。
+现有自动直连配置保留，节点程序TCP/UDP防火墙Public规则为Allow，无本轮修改。
+
+9031/9032双向新消息均持久收件并取得设备回执；同发送端Put起算StoreReceipt
+148/2420ms、DeviceReceipt3694/3864ms。没有ADB业务转发，未手动重连、未重建
+联系人/消息/TTL。仍非秒级或独立自主传输；原外部Relay参与。
+
+源码还确认现有Watch只返回Notice，客户端随后串行Fetch才能获得密文；在当前
+蜂窝RTT下，这一步有真实成本。下一片在同一信箱中显式版本协商“通知+有界密文”，
+消除一次领取往返，复用原存储/能力/去重/设备回执；保留旧版拒绝与兼容处理，
+不静默更改旧线格式。不将这一待实现优化当成已经改善延迟。
+
+证据artifacts/mailbox-rtt-tests.log、mailbox-rtt-carrier-test.log、mailbox-rtt-release-build.log、
+node-rtt-release-deployment.json、node-rtt-metrics-first.json；NOVOCHAT
+artifacts/message-events-device/rtt-ready.json、rtt-messages.json及test-enqueues。
+
 ## 2026-10-14 信箱节点处理分段与优化部署对照
 
 输入7d8ff5a7，NOVOCHAT c0524ff。用户批准仅节点进程分流直连并已打开两台原

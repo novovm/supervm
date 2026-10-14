@@ -1060,6 +1060,7 @@ async fn serve_session(
                 let reply = service.execute(request).await?;
                 authority()?;
                 stream.selected_path()?;
+                service.timings.carrier_rtt(stream.selected_rtt());
                 let writing = service.timings.response_enqueue.start();
                 send(stream, &mut channel, &reply, &mut sent).await?;
                 writing.complete(false);

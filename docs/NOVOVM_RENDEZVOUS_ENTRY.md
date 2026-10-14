@@ -20,6 +20,11 @@ debug 构建记录不作为低延迟部署基准。release 保留仓库的 overf
 包括错误或取消，也可能发生在存储已提交后。计数不能代替 StoreReceipt、
 设备持久回执、权限证明或贡献结算。实际手机延迟与部署结果见生产台账。
 
+`direct_rtt` / `relay_rtt` 在既有请求响应位置读取 Iroh 当前选中 QUIC 路径的
+平滑 RTT，只有样本数、总微秒及最大值；无主动探测或地址记录。没有路径观测
+不记录为零，TLS-only 不伪造 RTT。它们是重复读取的传输估计，不是独立探测分布、
+网络 P95 或消息时延，也不能证明没有中继、隐私资格或实际服务贡献。
+
 ## 2026-10-14 平台持久端点上的原节点宿主
 
 `product_rendezvous_owned::run_self_owned_node_on_endpoint_v1` 接受平台已有的

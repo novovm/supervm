@@ -162,6 +162,16 @@ impl CarrierStreamV1<'_> {
         }
     }
 
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn selected_rtt(&self) -> Option<(&'static str, std::time::Duration)> {
+        match &self.inner {
+            #[cfg(feature = "iroh-transport")]
+            Stream::Iroh(stream) => stream.selected_rtt(),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => None,
+        }
+    }
+
     pub async fn write_frame(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         match &mut self.inner {
             #[cfg(feature = "iroh-transport")]
