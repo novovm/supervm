@@ -146,3 +146,33 @@ selector 7 通过、TLS-only 编译通过、network/relay all-targets 严格 Cli
 - 监听端点持续存在；临时寻址存储 90 秒，每 60 秒切换；单个入站操作最多 30 秒。新请求选择实例和租约是原子步骤，旧实例随最后一个有界会话释放。原 TTL、去重与资源限制保持。
 - 本轮进程测试覆盖新节点、显式旧节点迁移、两次实例交接及重启。手机结果单独记录，不等于匿名或已摆脱外部 Iroh Relay。
 - 16 MiB 加密日志仍无安全轮转，到限停止；完整旧备份回滚仍需额外新鲜度机制。当前不承诺长期无人值守产品签收。
+
+## 2026-10-14 当前用户托管节点自动启动
+
+已有 v2 节点的 DPAPI 材料属于创建它的 Windows 用户。保持原身份的安装入口：
+
+```powershell
+./scripts/windows/install-novovm-rendezvous.ps1 -UserSession -Action Install `
+  -SourceBinary <windowless-native-exe> -ExpectedSha256 <verified-hash> `
+  -Configuration <existing-self-owned-v2-config>
+./scripts/windows/install-novovm-rendezvous.ps1 -UserSession -Action Status
+./scripts/windows/install-novovm-rendezvous.ps1 -UserSession -Action Uninstall
+```
+
+复用同一原生 `--foreground CONFIG` owner，安装到当前用户 LocalAppData/NOVOVM/
+Rendezvous，配置的原 root 不变，不复制或重建密钥/日志/信箱。无原 custody/history、
+错误哈希、其他任务所有者或不同安装配置均拒绝。原服务账号 v1 安装方式保持。
+
+Windows 任务计划在该用户登录后启动；无口令存储、无提权、无 Powershell 常驻循环。
+原生程序使用 Windows 无控制台子系统，任务直接持有进程而非无人监管的子进程。
+同一任务不重叠，向系统配置最多重启三次、间隔一分钟；没有执行时长上限。
+此为配置请求，不是恢复保证：本机实际异常退出测试在90秒内未自动重启，
+四个独立退出码1的任务对照亦未恢复，详见生产台账。当前崩溃自恢复未签收。
+安装只登记，不中断已运行的前台节点。首次接管须先确认原进程退出，再启动任务；
+节点原文件锁继续拒绝第二写入者。Status 同时报告真实进程计数，任务 Running
+和旧 status.json 都不独立证明网络在线。卸载停止该任务并移除自动启动，保留数据。
+
+这是**登录后启动**，不是未登录即运行或睡眠期间在线承诺；不修改 VPN、路由、
+网卡或防火墙。换程序路径后的入站防火墙适配、真实重启登录及长期恢复仍应单独验证。
+停任务是系统进程终止，依赖现有日志/SQLite 崩溃恢复，不声称优雅连接收尾。
+需不登录运行的设备仍走专用服务身份的明确密钥迁移，不能直接冒用当前用户 DPAPI。

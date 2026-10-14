@@ -1,5 +1,8 @@
 //! Windows SCM host for the existing NOVOVM rendezvous runtime. Foreground mode
 //! uses the same owner for bounded, independent-process acceptance tests.
+// Direct Windows task/service execution must not open an interactive console.
+// Redirected CLI handles continue to carry process-test diagnostics.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 #[cfg(windows)]
 mod rendezvous_owner;
 #[cfg(windows)]

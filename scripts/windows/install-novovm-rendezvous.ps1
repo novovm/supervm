@@ -6,10 +6,15 @@ param(
     [ValidateSet('Install','Status','Uninstall')][string]$Action = 'Status',
     [string]$SourceBinary,
     [string]$ExpectedSha256,
-    [string]$Configuration
+    [string]$Configuration,
+    [switch]$UserSession
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($UserSession) {
+    & (Join-Path $PSScriptRoot 'rendezvous-user-install.ps1') -Action $Action -SourceBinary $SourceBinary -ExpectedSha256 $ExpectedSha256 -Configuration $Configuration
+    return
+}
 $serviceName = 'NOVOVMRendezvous'
 $account = 'NT SERVICE\NOVOVMRendezvous'
 $programRoot = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NOVOVM\Rendezvous'

@@ -3,6 +3,43 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 当前用户节点登录启动与异常恢复缺口
+
+输入0f7babce。笔记本19:19重启使原前台节点消失，status.json旧serving不能作为
+健康证据。原v1专用服务账号安装器不能直接读取当前用户的v2 DPAPI材料。
+扩展原install-novovm-rendezvous.ps1的-UserSession分支：同一用户、原节点根，
+LocalAppData受限ACL下的固定二进制/配置，通过Windows任务计划登录启动。
+不改原信任、钱包、VPN、TTL或网络；没有第二运行循环/账号/网络许可。
+
+原生入口改Windows无控制台子系统，任务直接监管原生进程；重定向进程测试
+仍可读诊断。原生构建通过，既有自有节点真实进程回归2项通过（158.35秒），
+覆盖自主新建、旧身份迁移、跨实例、第二写入者拒绝、崩溃重启及缺历史拒绝。
+PowerShell解析/diff检查通过；安装实测拒绝错误SHA、旧控制台程序和改策略配置，
+原健康节点未受影响。首次Status误将TaskScheduler回显用户名与SID直接比较，
+已改为解析相同SID再比较；真实读回通过，不放宽身份或执行路径核对。
+
+系统任务已安装，交付EXE SHA256
+dc666d1c1cb221b78edcc1303dad3a663dc1ec2a3ab7bf3228e1dccc122d49ee。
+20:15原PID35600结束后，任务PID30352在约6.864秒重新serving；原keys.dpapi、
+self-owned-policy.dpapi字节不变，节点公钥不变且签名序号推进。原SQLite/撤销/聊天
+数据保留。任务按当前用户登录触发，无执行时长上限；没有重启电脑或模拟登录，
+因此真实开机登录启动仍待验，不承诺用户未登录或电脑睡眠时可用。
+
+**异常恢复失败必须保留：** 向Windows配置RestartCount3/Interval1分钟后，
+终止30352，92.3秒观察没有新进程，LastTaskResult=4294967295。20:17手动启动
+同一任务恢复PID28748，未回滚数据。随后独立四任务对照：定时/手动触发 ×
+UnifiedSchedulingEngine开/关，每个实际退出1，仅启动一次，100秒内均未重启。
+四测试任务已定向注销。原因尚未定位，不把配置读回当作系统自动恢复成功；
+当前Status分别报告真实进程数量、任务状态和configuredRestartCount，不宣称网络健康。
+不得用无限重复任务掩盖失效监督。该断网测试不是无缝升级/长期稳定性通过。
+
+恢复后正式两机无需点击连接，attempt9/11继续message_exchange；9015/9016新
+消息真实双向领取并取得持久设备回执，Put起算约5.859/5.798秒，仍未达秒级。
+APK仍NOVOCHAT79efe12/fd82796b，无卸载/清数据。仍依赖外部Iroh Relay，
+relay_only未改变；新程序路径入站防火墙、自主直连及后台长期恢复分别待验。
+日志artifacts/rendezvous-user-*.log/json/xml、task-recovery-*/result.json，手机
+证据NOVOCHAT/artifacts/message-events-device/node-task-*.json，均为私有原始产物。
+
 ## 2026-10-14 L3 冷启动 DNS 故障修复与请求预算
 
 输入6f60edd1。Android用户反馈约两秒远端显示，随后本机L3升级重启失败。
