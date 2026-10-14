@@ -32,6 +32,10 @@ pub struct ResidentConfig {
     pub signing_key_file: PathBuf,
     pub relay: ProductRelayClientConfigV1,
     pub genesis: GenesisConfig,
+    /// AOEM ingress workers, not the V2 semantic callback pool size. The latter
+    /// uses AOEM_SEMANTIC_GRAPH_V2_WORKERS (or available parallelism) at context
+    /// creation. Co-located validators need an explicit process resource budget;
+    /// changing this field alone does not partition their compute pools.
     pub workers: u32,
     /// Local explicit backend; old configurations preserve the measured CPU path.
     #[serde(default)]

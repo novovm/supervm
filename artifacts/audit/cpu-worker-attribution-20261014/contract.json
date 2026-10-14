@@ -1,0 +1,8 @@
+{
+  "purpose": "Test the existing semantic worker budget on one unchanged accepted library. This does not re-promote or rebuild the rejected resident candidate and cannot attribute its CPU regression by itself.",
+  "source": "SUPERVM cd0f0932, frozen node 81da4509, accepted AOEM binary 16a303d0",
+  "sequence": ["workers24-1", "workers6-1", "workers6-2", "workers24-2"],
+  "diagnostics_after_formal": ["workers24-diagnostic", "workers6-diagnostic"],
+  "controls": "Windows AC, same original four nodes, single RPC, 65536 signed successful transfers, candidate1024, inflight8192, four final receipts and full cold economics. Formal profiling disabled. Only existing AOEM_SEMANTIC_GRAPH_V2_WORKERS changes; 24 equals this host logical cores, 6 partitions the compute budget among four co-located validators.",
+  "interpretation": "Resource-budget experiment, not unchanged-condition implementation gain, not production default selection, not proof of the cause of the previous library difference. Preserve every round. No code or SDK changes."
+}
