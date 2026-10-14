@@ -1,5 +1,21 @@
 # 自有寻址服务可执行入口
 
+## 2026-10-14 通知携带首份密文
+
+`NVMBOX06` 复用原长期连接、多流宿主和 MailboxService；显式选择后还必须完成
+绑定流的身份握手和加密 `BeginContinuousV6/ContinuousReadyV6` 协商，无旧版本
+隐式回退。V1–V5 继续原契约，不能在旧会话中调用 `WatchFetchV6`。
+
+`WatchFetchV6` 沿原 Watch 观察点返回通知，并最多附带一份 64 KiB 密文，使用
+查询索引绑定已验证的读取能力。先检查所有查询的能力与游标，再由同一存储所有者
+取首份数据；不更改 Message ID、原 TTL、去重或撤销。响应仍受原 300000 字节
+上限、请求预算和节点资源上限约束。它不是 Consume、StoreReceipt 或 DeviceReceipt。
+丢通知、取消请求或断线后，节点保留副本，原 Fetch 可继续补领。
+
+Android 使用既有 Application owner 和有界通知槽，附带对象进入原来的解密、
+持久化、设备回执及 Consume 路径。此改动消除在线首份对象的额外 Fetch 往返，
+不保证路径 RTT 变小，不代表自主中继或匿名能力已交付。实机结果单独记录。
+
 ## 2026-10-14 部署构建与信箱处理耗时
 
 长期手机联调使用同一原生入口的优化构建；先设置本仓 `CARGO_TARGET_DIR`、

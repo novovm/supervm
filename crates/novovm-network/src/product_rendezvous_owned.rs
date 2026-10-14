@@ -263,6 +263,13 @@ impl Node {
                                         let until = offer.lease.as_ref().map_or(0, |lease| lease.expires_at_ms);
                                         Ok((offer, (current.store.clone(), until)))
                                     }, || host.check_continuous_peer_v4(transport, now_ms()?))).await??;
+                                if kind == NodeServiceV1::MailboxPrefetch {
+                                    let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
+                                    return crate::mailbox_rpc::serve_mailbox_multiplex_with_policy_v6(
+                                        stream, key, mailbox_policy, mailbox,
+                                        || host.check_continuous_peer_v4(transport, now_ms()?),
+                                    ).await;
+                                }
                                 if kind == NodeServiceV1::MailboxMultiplex {
                                     let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
                                     return crate::mailbox_rpc::serve_mailbox_multiplex_with_policy_v5(
@@ -289,7 +296,7 @@ impl Node {
                                 let until = if kind == NodeServiceV1::MailboxWindow { window_until } else { legacy_until };
                                 let again = tokio::time::timeout_at(until.into(), async {
                                     match kind {
-                                        NodeServiceV1::MailboxContinuous | NodeServiceV1::MailboxMultiplex => anyhow::bail!("continuous service in legacy dispatch"),
+                                        NodeServiceV1::MailboxContinuous | NodeServiceV1::MailboxMultiplex | NodeServiceV1::MailboxPrefetch => anyhow::bail!("continuous service in legacy dispatch"),
                                         NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
                                         NodeServiceV1::Mailbox | NodeServiceV1::MailboxRealtime | NodeServiceV1::MailboxWindow => {
                                             let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;

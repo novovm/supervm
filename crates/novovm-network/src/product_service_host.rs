@@ -7,6 +7,7 @@ const MAILBOX_REQUEST_V1: &[u8; 8] = b"NVMBOX01";
 const MAILBOX_REQUEST_V2: &[u8; 8] = b"NVMBOX02";
 const MAILBOX_REQUEST_V3: &[u8; 8] = b"NVMBOX03";
 const MAILBOX_REQUEST_V4: &[u8; 8] = b"NVMBOX04";
+const MAILBOX_REQUEST_V6: &[u8] = b"NVMBOX06";
 const MAILBOX_REQUEST_V5: &[u8; 8] = b"NVMBOX05";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
@@ -451,6 +452,7 @@ pub async fn serve_service_offer_selected_v2<T>(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NodeServiceV1 {
+    MailboxPrefetch,
     Rendezvous,
     Mailbox,
     MailboxRealtime,
@@ -501,6 +503,45 @@ pub(crate) async fn accept_mailbox_multiplex_lane_v5(
     stream.write_frame(MAILBOX_REQUEST_V5).await
 }
 
+pub async fn request_mailbox_multiplex_v6<'scope>(
+    stream: &mut CarrierStreamV1<'scope>,
+) -> Result<crate::carrier_stream::CarrierMultiplexV1<'scope>> {
+    ensure!(!stream.is_multiplexed(), "multiplex root already selected");
+    request_prefetch_selector(stream).await?;
+    stream.multiplex_v1()
+}
+
+pub async fn request_mailbox_multiplex_lane_v6(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    ensure!(
+        stream.is_multiplexed(),
+        "multiplex lane requires shared carrier"
+    );
+    request_prefetch_selector(stream).await
+}
+
+async fn request_prefetch_selector(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    stream.write_frame(MAILBOX_REQUEST_V6).await?;
+    ensure!(
+        stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V6,
+        "mailbox multiplex version rejected"
+    );
+    Ok(())
+}
+
+pub(crate) async fn accept_mailbox_multiplex_lane_v6(
+    stream: &mut CarrierStreamV1<'_>,
+) -> Result<()> {
+    ensure!(
+        stream.is_multiplexed(),
+        "multiplex lane requires shared carrier"
+    );
+    ensure!(
+        stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V6,
+        "mailbox multiplex lane version rejected"
+    );
+    stream.write_frame(MAILBOX_REQUEST_V6).await
+}
+
 /// V4 selects the same mailbox operations under local peer trust, without a
 /// service lease. This prelude carries NO credentials or authority; fresh
 /// Finished plus encrypted BeginContinuousV4/ContinuousReadyV4 must follow.
@@ -522,7 +563,11 @@ pub async fn serve_self_owned_node_selected_v4<T>(
     continuous: impl FnOnce() -> Result<()>,
 ) -> Result<(NodeServiceV1, Option<T>)> {
     let request = stream.read_frame().await?;
-    if request.as_slice() == MAILBOX_REQUEST_V5 {
+    if request.as_slice() == MAILBOX_REQUEST_V6 {
+        continuous()?;
+        stream.write_frame(MAILBOX_REQUEST_V6).await?;
+        Ok((NodeServiceV1::MailboxPrefetch, None))
+    } else if request.as_slice() == MAILBOX_REQUEST_V5 {
         continuous()?;
         stream.write_frame(MAILBOX_REQUEST_V5).await?;
         Ok((NodeServiceV1::MailboxMultiplex, None))
@@ -583,4 +628,15 @@ pub async fn serve_bootstrap_sources_v2(
         "bootstrap request version"
     );
     stream.write_frame(&bytes).await
+}
+
+pub(crate) async fn accept_mailbox_multiplex_lane(
+    stream: &mut CarrierStreamV1<'_>,
+    prefetch: bool,
+) -> Result<()> {
+    if prefetch {
+        accept_mailbox_multiplex_lane_v6(stream).await
+    } else {
+        accept_mailbox_multiplex_lane_v5(stream).await
+    }
 }

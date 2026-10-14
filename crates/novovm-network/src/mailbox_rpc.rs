@@ -38,10 +38,16 @@ pub enum MailboxRequestV1 {
     BeginSession,
     /// Explicit, Finished-protected NVMBOX04 negotiation. Legacy rejects it.
     BeginContinuousV4,
+    BeginContinuousV6,
     EndSession,
     /// Bounded notification wait; each position is private to an authorized box.
     /// The caller snapshots before Fetch, then watches from that position.
     Watch {
+        boxes: Vec<MailboxWatchV1>,
+        wait_ms: u32,
+    },
+    /// V6 only: return at most one retained ciphertext with the notification.
+    WatchFetchV6 {
         boxes: Vec<MailboxWatchV1>,
         wait_ms: u32,
     },
@@ -83,8 +89,10 @@ impl Drop for MailboxRequestV1 {
         match self {
             Self::BeginSession
             | Self::BeginContinuousV4
+            | Self::BeginContinuousV6
             | Self::EndSession
-            | Self::Watch { .. } => {} // each item zeroizes its own read capability
+            | Self::Watch { .. }
+            | Self::WatchFetchV6 { .. } => {} // each item zeroizes its own read capability
             Self::Register { write, read, .. } => {
                 write.zeroize();
                 read.zeroize();
@@ -115,13 +123,28 @@ pub struct MailboxNoticeV1 {
     pub cursor: MailboxCursorV1,
     pub pending: bool,
 }
+/// Encrypted object only. Query index binds it to an already validated read capability.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MailboxPrefetchV6 {
+    pub box_index: usize,
+    pub object: [u8; 32],
+    pub ciphertext: Vec<u8>,
+    pub digest: [u8; 32],
+    pub expires: i64,
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxReplyV1 {
     SessionReady,
     ContinuousReadyV4,
+    ContinuousReadyV6,
     SessionEnded,
     Notice(Vec<MailboxNoticeV1>),
+    NoticeObjectV6 {
+        notices: Vec<MailboxNoticeV1>,
+        object: Option<MailboxPrefetchV6>,
+    },
     Registered,
     Stored(StoreReceiptV1),
     Object {
@@ -303,7 +326,9 @@ impl MailboxServiceV1 {
             MailboxRequestV1::Put { .. } => &self.timings.put,
             MailboxRequestV1::Fetch { .. } => &self.timings.fetch,
             MailboxRequestV1::Consume { .. } => &self.timings.consume,
-            MailboxRequestV1::Watch { .. } => &self.timings.watch,
+            MailboxRequestV1::Watch { .. } | MailboxRequestV1::WatchFetchV6 { .. } => {
+                &self.timings.watch
+            }
             _ => &self.timings.other,
         };
         let sample = counter.start();
@@ -315,6 +340,9 @@ impl MailboxServiceV1 {
     async fn execute_inner(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
         if let MailboxRequestV1::Watch { boxes, wait_ms } = &request {
             return self.watch(boxes, *wait_ms).await;
+        }
+        if let MailboxRequestV1::WatchFetchV6 { boxes, wait_ms } = &request {
+            return self.watch_inner(boxes, *wait_ms, true).await;
         }
         let permit = self.slots.clone().acquire_owned().await?;
         let store = self.store.clone();
@@ -330,8 +358,9 @@ impl MailboxServiceV1 {
                 match &request {
                     MailboxRequestV1::BeginSession
                     | MailboxRequestV1::BeginContinuousV4
+                    | MailboxRequestV1::BeginContinuousV6
                     | MailboxRequestV1::EndSession => Err(StoreError::Invalid),
-                    MailboxRequestV1::Watch { .. } => {
+                    MailboxRequestV1::Watch { .. } | MailboxRequestV1::WatchFetchV6 { .. } => {
                         unreachable!("watch dispatched before store worker")
                     }
                     MailboxRequestV1::Register {
@@ -437,6 +466,14 @@ impl MailboxServiceV1 {
         .await?
     }
     async fn watch(&self, boxes: &[MailboxWatchV1], wait_ms: u32) -> Result<MailboxReplyV1> {
+        self.watch_inner(boxes, wait_ms, false).await
+    }
+    async fn watch_inner(
+        &self,
+        boxes: &[MailboxWatchV1],
+        wait_ms: u32,
+        prefetch: bool,
+    ) -> Result<MailboxReplyV1> {
         if boxes.is_empty()
             || boxes.len() > 4
             || wait_ms > 10_000
@@ -459,7 +496,7 @@ impl MailboxServiceV1 {
                 let _permit = permit;
                 let mut store = store.lock().map_err(|_| StoreError::Invalid)?;
                 let now = now().map_err(|_| StoreError::Invalid)?;
-                queries
+                let notices = queries
                     .iter()
                     .map(|query| {
                         let (cursor, pending) = store.observe(
@@ -474,11 +511,31 @@ impl MailboxServiceV1 {
                         }
                         Ok(MailboxNoticeV1 { cursor, pending })
                     })
-                    .collect::<std::result::Result<Vec<_>, StoreError>>()
+                    .collect::<std::result::Result<Vec<_>, StoreError>>()?;
+                // Validate ALL requested capabilities/cursors before fetching anything.
+                // Same exclusive owner; no writer can slip between observation and fetch.
+                let mut object = None;
+                if prefetch {
+                    if let Some(index) = notices.iter().position(|n| n.pending) {
+                        let q = &queries[index];
+                        if let Some(row) =
+                            store.fetch_one(&q.mailbox, &Capability::from_bytes(q.read)?, now)?
+                        {
+                            object = Some(MailboxPrefetchV6 {
+                                box_index: index,
+                                object: row.id,
+                                ciphertext: row.ciphertext,
+                                digest: row.digest,
+                                expires: row.expires,
+                            });
+                        }
+                    }
+                }
+                Ok::<_, StoreError>((notices, object))
             })
             .await?;
-            let notices = match snapshots {
-                Ok(notices) => notices,
+            let (notices, object) = match snapshots {
+                Ok(snapshot) => snapshot,
                 Err(StoreError::Unauthorized) => {
                     return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized))
                 }
@@ -496,7 +553,11 @@ impl MailboxServiceV1 {
                     .zip(boxes)
                     .any(|(n, b)| n.pending || b.after != Some(n.cursor))
             {
-                return Ok(MailboxReplyV1::Notice(notices));
+                return Ok(if prefetch {
+                    MailboxReplyV1::NoticeObjectV6 { notices, object }
+                } else {
+                    MailboxReplyV1::Notice(notices)
+                });
             }
             tokio::select! {
                 result=events.changed() => { result?; }
@@ -638,6 +699,13 @@ pub async fn serve_mailbox_v1(
     .await?;
     let request = receive(stream, &mut channel, &mut 0).await?;
     stream.selected_path()?;
+    ensure!(
+        !matches!(
+            &request,
+            MailboxRequestV1::WatchFetchV6 { .. } | MailboxRequestV1::BeginContinuousV6
+        ),
+        "mailbox V6 not negotiated"
+    );
     let reply = service.execute(request).await?;
     stream.selected_path()?;
     send(stream, &mut channel, &reply, &mut 0).await?;
@@ -656,6 +724,7 @@ pub struct MailboxClientSessionV2<'stream, 'scope> {
     requests: u16,
     poisoned: bool,
     continuous: bool,
+    prefetch: bool,
 }
 impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
     pub async fn begin(
@@ -663,7 +732,7 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
         identity: &SigningKey,
         pinned_node: [u8; 32],
     ) -> Result<Self> {
-        Self::begin_inner(stream, identity, pinned_node, false).await
+        Self::begin_inner(stream, identity, pinned_node, false, false).await
     }
 
     /// Requires a V4 selector and an owner-controlled continuous carrier scope.
@@ -673,14 +742,23 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
         identity: &SigningKey,
         pinned_node: [u8; 32],
     ) -> Result<Self> {
-        Self::begin_inner(stream, identity, pinned_node, true).await
+        Self::begin_inner(stream, identity, pinned_node, true, false).await
     }
 
+    /// Explicit encrypted V6 negotiation on NVMBOX06. No old-version fallback.
+    pub async fn begin_continuous_v6(
+        stream: &'stream mut CarrierStreamV1<'scope>,
+        identity: &SigningKey,
+        pinned_node: [u8; 32],
+    ) -> Result<Self> {
+        Self::begin_inner(stream, identity, pinned_node, true, true).await
+    }
     async fn begin_inner(
         stream: &'stream mut CarrierStreamV1<'scope>,
         identity: &SigningKey,
         pinned_node: [u8; 32],
         continuous: bool,
+        prefetch: bool,
     ) -> Result<Self> {
         let channel = authenticate_bound_session(
             stream,
@@ -698,9 +776,12 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
             requests: 0,
             poisoned: false,
             continuous: false,
+            prefetch,
         };
         let reply = session
-            .exchange(if continuous {
+            .exchange(if prefetch {
+                MailboxRequestV1::BeginContinuousV6
+            } else if continuous {
                 MailboxRequestV1::BeginContinuousV4
             } else {
                 MailboxRequestV1::BeginSession
@@ -708,8 +789,10 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
             .await?;
         ensure!(
             matches!(
-                (&reply, continuous),
-                (MailboxReplyV1::SessionReady, false) | (MailboxReplyV1::ContinuousReadyV4, true)
+                (&reply, continuous, prefetch),
+                (MailboxReplyV1::SessionReady, false, false)
+                    | (MailboxReplyV1::ContinuousReadyV4, true, false)
+                    | (MailboxReplyV1::ContinuousReadyV6, true, true)
             ),
             "mailbox session negotiation rejected"
         );
@@ -729,10 +812,15 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
     }
     pub async fn request(&mut self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
         ensure!(
+            self.prefetch || !matches!(&request, MailboxRequestV1::WatchFetchV6 { .. }),
+            "mailbox V6 not negotiated"
+        );
+        ensure!(
             !matches!(
                 &request,
                 MailboxRequestV1::BeginSession
                     | MailboxRequestV1::BeginContinuousV4
+                    | MailboxRequestV1::BeginContinuousV6
                     | MailboxRequestV1::EndSession
             ),
             "mailbox session control reserved"
@@ -749,6 +837,7 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
             reply,
             MailboxReplyV1::SessionReady
                 | MailboxReplyV1::ContinuousReadyV4
+                | MailboxReplyV1::ContinuousReadyV6
                 | MailboxReplyV1::SessionEnded
         ) {
             self.poisoned = true;
@@ -880,6 +969,7 @@ enum SessionMode {
     Legacy,
     Window(std::time::Instant),
     Continuous,
+    Prefetch,
 }
 
 /// One admitted connection, bounded independent streams. Each lane still
@@ -905,11 +995,30 @@ pub async fn serve_mailbox_multiplex_v5(
 /// Original multiplex protocol; each lane proves its own key possession once.
 /// All lanes and identities share the SAME node resource accounting.
 pub async fn serve_mailbox_multiplex_with_policy_v5(
+    first: CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    serve_multiplex(first, identity, policy, service, authority, false).await
+}
+pub async fn serve_mailbox_multiplex_with_policy_v6(
+    first: CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    serve_multiplex(first, identity, policy, service, authority, true).await
+}
+async fn serve_multiplex(
     mut first: CarrierStreamV1<'_>,
     identity: &SigningKey,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
+    prefetch: bool,
 ) -> Result<()> {
     use futures_util::{stream::FuturesUnordered, StreamExt};
     use std::time::Duration;
@@ -922,16 +1031,24 @@ pub async fn serve_mailbox_multiplex_with_policy_v5(
             if !selected {
                 tokio::time::timeout(
                     Duration::from_secs(3),
-                    crate::product_service_lease::accept_mailbox_multiplex_lane_v5(&mut stream),
+                    crate::product_service_lease::accept_mailbox_multiplex_lane(
+                        &mut stream,
+                        prefetch,
+                    ),
                 )
                 .await??;
             }
-            serve_mailbox_continuous_with_policy_v4(
+            serve_session(
                 &mut stream,
                 identity,
                 policy,
                 service,
                 authority,
+                if prefetch {
+                    SessionMode::Prefetch
+                } else {
+                    SessionMode::Continuous
+                },
             )
             .await
         }
@@ -993,16 +1110,26 @@ async fn serve_session(
         // the listener's short unauthenticated admission into a service window.
         stream.admit_service_window(deadline)?;
     }
-    let continuous = matches!(mode, SessionMode::Continuous);
+    let prefetch = matches!(mode, SessionMode::Prefetch);
+    let continuous = prefetch || matches!(mode, SessionMode::Continuous);
     if continuous {
         ensure!(
-            matches!(&first, MailboxRequestV1::BeginContinuousV4),
+            matches!(
+                (&first, prefetch),
+                (MailboxRequestV1::BeginContinuousV4, false)
+                    | (MailboxRequestV1::BeginContinuousV6, true)
+            ),
             "mailbox V4 negotiation required"
         );
         stream.admit_continuous_service_v4()?;
     } else {
         ensure!(
-            !matches!(&first, MailboxRequestV1::BeginContinuousV4),
+            !matches!(
+                &first,
+                MailboxRequestV1::BeginContinuousV4
+                    | MailboxRequestV1::BeginContinuousV6
+                    | MailboxRequestV1::WatchFetchV6 { .. }
+            ),
             "mailbox V4 not selected"
         );
     }
@@ -1015,7 +1142,9 @@ async fn serve_session(
         send(
             stream,
             &mut channel,
-            &if continuous {
+            &if prefetch {
+                MailboxReplyV1::ContinuousReadyV6
+            } else if continuous {
                 MailboxReplyV1::ContinuousReadyV4
             } else {
                 MailboxReplyV1::SessionReady
@@ -1053,9 +1182,15 @@ async fn serve_session(
                 ensure!(
                     !matches!(
                         &request,
-                        MailboxRequestV1::BeginSession | MailboxRequestV1::BeginContinuousV4
+                        MailboxRequestV1::BeginSession
+                            | MailboxRequestV1::BeginContinuousV4
+                            | MailboxRequestV1::BeginContinuousV6
                     ),
                     "mailbox session already active"
+                );
+                ensure!(
+                    prefetch || !matches!(&request, MailboxRequestV1::WatchFetchV6 { .. }),
+                    "mailbox V6 not negotiated"
                 );
                 let reply = service.execute(request).await?;
                 authority()?;
@@ -1647,6 +1782,75 @@ mod session_failure_tests {
             .unwrap_err()
             .to_string()
             .contains("mailbox sequence"));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod prefetch_tests {
+    use super::*;
+    #[tokio::test]
+    async fn bounded_prefetch_checks_every_capability_and_retains_object_until_consume(
+    ) -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("prefetch.db");
+        let mut store = MailboxStore::open(&path, Default::default())?;
+        let a = store.create(now()?, 600)?;
+        let b = store.create(now()?, 600)?;
+        let expires = now()? + 300;
+        let data = vec![255; 64 * 1024];
+        store.put(&a.id, &a.write, &[7; 32], &data, expires, now()?)?;
+        store.put(&b.id, &b.write, &[8; 32], &data, expires, now()?)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let mut queries = vec![
+            MailboxWatchV1 {
+                mailbox: a.id,
+                read: *a.read.as_bytes(),
+                after: None,
+            },
+            MailboxWatchV1 {
+                mailbox: b.id,
+                read: [99; 32],
+                after: None,
+            },
+        ];
+        assert!(matches!(
+            service.watch_inner(&queries, 0, true).await?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+        ));
+        queries[1].read = *b.read.as_bytes();
+        let reply = service.watch_inner(&queries, 0, true).await?;
+        assert!(serde_json::to_vec(&reply)?.len() <= MAX_WIRE);
+        let digest = match reply {
+            MailboxReplyV1::NoticeObjectV6 {
+                notices,
+                object: Some(row),
+            } => {
+                assert_eq!(notices.len(), 2);
+                assert!(notices.iter().all(|n| n.pending));
+                assert_eq!(row.box_index, 0);
+                assert_eq!(row.object, [7; 32]);
+                assert_eq!(row.ciphertext, data);
+                assert_eq!(row.expires, expires);
+                row.digest
+            }
+            _ => anyhow::bail!("prefetch missing"),
+        };
+        // No Consume: dropped notifications and node restart must retain the original.
+        drop(service);
+        let mut store = MailboxStore::open(&path, Default::default())?;
+        let row = store.fetch_one(&a.id, &a.read, now()?)?.unwrap();
+        assert_eq!(row.id, [7; 32]);
+        assert_eq!(row.expires, expires);
+        store.consume(&a.id, &a.read, &row.id, &digest, now()?)?;
+        assert!(store.fetch_one(&a.id, &a.read, now()?)?.is_none());
+        assert!(store.fetch_one(&b.id, &b.read, now()?)?.is_some());
+        store.revoke(&b.id, &b.read, now()?)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        assert!(matches!(
+            service.watch_inner(&queries, 0, true).await?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+        ));
         Ok(())
     }
 }
