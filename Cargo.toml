@@ -23,7 +23,7 @@ members = [
 ]
 # Retain post-isolation components as an independently tested implementation
 # source, not a second default product or an unreviewed legacy dependency.
-exclude = ["legacy/supervm-20261002", "runtime", "proofs/native-auth", "vendor/iroh"]
+exclude = ["legacy/supervm-20261002", "runtime", "proofs/native-auth", "vendor/iroh", "vendor/simple-dns"]
 resolver = "2"
 
 # Keep the post-isolation release arithmetic checks when restoring assembly.
@@ -45,3 +45,7 @@ opt-level = 3
 
 [profile.test.package.sha2]
 opt-level = 3
+
+[patch.crates-io]
+# RFC 6891 OPT header offsets; see vendor/simple-dns/NOVOVM_PATCH.md.
+simple-dns = { path = "vendor/simple-dns" }
