@@ -22,7 +22,8 @@ use zeroize::Zeroize;
 
 pub const BOUND_TRANSPORT_ALPN_V1: &[u8] = b"novovm/bound-carrier/1";
 pub const BOUND_TRANSPORT_EXPORTER_LABEL_V1: &[u8] = b"EXPORTER-NOVOVM-bound-carrier-v1";
-/// The carrier must use this exact exporter context on both ends.
+/// Legacy carriers use this exact context. Explicit NVMBOX05 Iroh streams append
+/// a versioned domain and their actual QUIC stream ID on both ends before export.
 pub const BOUND_TRANSPORT_EXPORTER_CONTEXT_V1: &[u8] = BOUND_TRANSPORT_ALPN_V1;
 pub const BOUND_HANDSHAKE_VERSION_V1: u16 = 1;
 pub const BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1: usize = 8 * 1024;

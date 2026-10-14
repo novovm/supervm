@@ -12,7 +12,38 @@ pub struct CarrierStreamV1<'scope> {
     inner: Stream<'scope>,
 }
 
+#[cfg(feature = "iroh-transport")]
+pub struct CarrierMultiplexV1<'scope>(crate::iroh_transport::IrohMultiplexV1<'scope>);
+
+#[cfg(feature = "iroh-transport")]
+impl<'scope> CarrierMultiplexV1<'scope> {
+    pub async fn open(&self) -> anyhow::Result<CarrierStreamV1<'scope>> {
+        Ok(self.0.open().await?.into())
+    }
+    pub async fn accept(&self) -> anyhow::Result<CarrierStreamV1<'scope>> {
+        Ok(self.0.accept().await?.into())
+    }
+}
+
 impl<'scope> CarrierStreamV1<'scope> {
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn multiplex_v1(&mut self) -> anyhow::Result<CarrierMultiplexV1<'scope>> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => Ok(CarrierMultiplexV1(stream.multiplex_v1()?)),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("carrier has no multiplex service"),
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn is_multiplexed(&self) -> bool {
+        match &self.inner {
+            Stream::Iroh(stream) => stream.is_multiplexed(),
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => false,
+        }
+    }
+
     /// Stable node listeners may accept a new, independently authorized QUIC
     /// stream after the previous one finished. TLS-only streams cannot do this.
     pub async fn next_inbound(self) -> anyhow::Result<Self> {
@@ -27,7 +58,7 @@ impl<'scope> CarrierStreamV1<'scope> {
 
 enum Stream<'scope> {
     #[cfg(feature = "iroh-transport")]
-    Iroh(IrohStreamV1<'scope>),
+    Iroh(Box<IrohStreamV1<'scope>>),
     #[cfg(feature = "tls-transport")]
     Tls(Box<TlsStreamV1<'scope>>),
 }
@@ -36,7 +67,7 @@ enum Stream<'scope> {
 impl<'scope> From<IrohStreamV1<'scope>> for CarrierStreamV1<'scope> {
     fn from(stream: IrohStreamV1<'scope>) -> Self {
         Self {
-            inner: Stream::Iroh(stream),
+            inner: Stream::Iroh(Box::new(stream)),
         }
     }
 }

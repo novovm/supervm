@@ -36,6 +36,9 @@ pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
 
 #[path = "iroh_connection_reuse.rs"]
 mod reuse;
+#[path = "iroh_multiplex.rs"]
+mod multiplex;
+pub use multiplex::{IrohMultiplexV1, IROH_MAX_MULTIPLEX_STREAMS_V1};
 
 static FORCED_DRAINS: AtomicU64 = AtomicU64::new(0);
 static BINDS_COMPLETED: AtomicU64 = AtomicU64::new(0);
@@ -1166,6 +1169,8 @@ impl IrohScopeV1 {
             failed: AtomicBool::new(false),
             initiator,
             _admission: Some(admission),
+            shared: None,
+            _stream_admission: None,
             finished: false,
             reused: false,
             handed_off: false,
@@ -1208,6 +1213,8 @@ pub struct IrohStreamV1<'a> {
     failed: AtomicBool,
     initiator: bool,
     _admission: Option<tokio::sync::OwnedSemaphorePermit>,
+    shared: Option<Arc<multiplex::SharedConnection>>,
+    _stream_admission: Option<tokio::sync::OwnedSemaphorePermit>,
     finished: bool,
     reused: bool,
     handed_off: bool,
@@ -1397,11 +1404,20 @@ impl IrohStreamV1<'_> {
         let local = *self.scope.endpoint.id().as_bytes();
         let remote = *self.connection.remote_id().as_bytes();
         let mut material = [0u8; 32];
+        // Explicitly selected multiplex streams bind Finished to THIS stream,
+        // not merely to a TLS connection shared with another authenticated lane.
+        // Legacy streams retain their exact exporter context.
+        let mut context = BOUND_TRANSPORT_EXPORTER_CONTEXT_V1.to_vec();
+        if self.shared.is_some() {
+            context.extend_from_slice(b"/multiplex/1/");
+            context.extend_from_slice(&u64::from(self.send.id()).to_be_bytes());
+            ensure!(self.send.id() == self.recv.id(), "carrier stream ID mismatch");
+        }
         self.connection
             .export_keying_material(
                 &mut material,
                 BOUND_TRANSPORT_EXPORTER_LABEL_V1,
-                BOUND_TRANSPORT_EXPORTER_CONTEXT_V1,
+                &context,
             )
             .map_err(|_| anyhow::anyhow!("TLS binding export failed"))?;
         Ok(if self.initiator {
@@ -1504,6 +1520,16 @@ impl IrohStreamV1<'_> {
 
 impl Drop for IrohStreamV1<'_> {
     fn drop(&mut self) {
+        if self.shared.is_some() {
+            // A completed/unused lane owns only its stream admission. The
+            // connection owner still supervises all siblings. Partial framed
+            // IO keeps the existing conservative connection-wide failure latch.
+            if !self.finished {
+                let _ = self.send.reset(1u32.into());
+                let _ = self.recv.stop(1u32.into());
+            }
+            return;
+        }
         if self.handed_off {
             return;
         }
@@ -1587,7 +1613,8 @@ impl<'scope> IrohStreamV1<'scope> {
     pub async fn next_inbound(mut self) -> Result<IrohStreamV1<'scope>> {
         self.check()?;
         ensure!(
-            self.finished && !self.initiator && self.scope.listener_budget.is_some(),
+            self.finished && !self.initiator && self.scope.listener_budget.is_some()
+                && self.shared.is_none(),
             "inbound continuation requires completed listener stream"
         );
         let admission = self
@@ -3085,6 +3112,7 @@ mod tests {
                     stream.admit_continuous_service_v4().is_err(),
                     "finite inbound gained continuous authority"
                 );
+                ensure!(stream.multiplex_v1().is_err(), "finite inbound gained multiplex");
                 ensure!(
                     stream.begin_service_request_v4().is_err(),
                     "finite IO deadline reset"
@@ -3116,6 +3144,7 @@ mod tests {
                     stream.admit_continuous_service_v4().is_err(),
                     "finite outbound gained continuous authority"
                 );
+                ensure!(stream.multiplex_v1().is_err(), "finite outbound gained multiplex");
                 ensure!(
                     stream.begin_service_request_v4().is_err(),
                     "finite IO deadline reset"

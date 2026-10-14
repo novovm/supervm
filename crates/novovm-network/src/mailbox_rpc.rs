@@ -830,6 +830,57 @@ enum SessionMode {
     Continuous,
 }
 
+/// One admitted connection, bounded independent streams. Each lane still
+/// authenticates its own allowed client, Finished and AEAD sequence. The same
+/// service owns storage/rate budgets across ALL connections and lanes.
+pub async fn serve_mailbox_multiplex_v5(
+    mut first: CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    allowed: &[[u8; 32]],
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    use futures_util::{stream::FuturesUnordered, StreamExt};
+    use std::time::Duration;
+    authority()?;
+    let connection = first.multiplex_v1()?;
+    let lane = |mut stream, selected: bool| {
+        let authority = &authority;
+        async move {
+            authority()?;
+            if !selected {
+                tokio::time::timeout(
+                    Duration::from_secs(3),
+                    crate::product_service_lease::accept_mailbox_multiplex_lane_v5(&mut stream),
+                )
+                .await??;
+            }
+            serve_mailbox_continuous_v4(&mut stream, identity, allowed, service, authority).await
+        }
+    };
+    let mut active = FuturesUnordered::new();
+    active.push(lane(first, true));
+    let mut incoming = Box::pin(connection.accept());
+    let mut check = tokio::time::interval(Duration::from_millis(20));
+    check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            _ = check.tick() => authority()?,
+            Some(result) = active.next() => {
+                result?; // Security/IO failures remain visible; never silently retry.
+                if active.is_empty() { return Ok(()); }
+            }
+            result = &mut incoming,
+                if active.len() < crate::iroh_transport::IROH_MAX_MULTIPLEX_STREAMS_V1 => {
+                let stream = result?;
+                incoming = Box::pin(connection.accept());
+                active.push(lane(stream, false));
+            }
+        }
+    }
+}
+
 async fn serve_session(
     stream: &mut CarrierStreamV1<'_>,
     identity: &SigningKey,

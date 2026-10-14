@@ -7,6 +7,7 @@ const MAILBOX_REQUEST_V1: &[u8; 8] = b"NVMBOX01";
 const MAILBOX_REQUEST_V2: &[u8; 8] = b"NVMBOX02";
 const MAILBOX_REQUEST_V3: &[u8; 8] = b"NVMBOX03";
 const MAILBOX_REQUEST_V4: &[u8; 8] = b"NVMBOX04";
+const MAILBOX_REQUEST_V5: &[u8; 8] = b"NVMBOX05";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
 
@@ -455,6 +456,37 @@ pub enum NodeServiceV1 {
     MailboxRealtime,
     MailboxWindow,
     MailboxContinuous,
+    MailboxMultiplex,
+}
+
+/// Explicit transport-sharing version. Existing V4 business requests, storage
+/// and continuous owner rules remain, but Finished is bound to each QUIC stream.
+/// An old peer rejects this selector; callers must not silently retry V4.
+pub async fn request_mailbox_multiplex_v5<'scope>(
+    stream: &mut CarrierStreamV1<'scope>,
+) -> Result<crate::carrier_stream::CarrierMultiplexV1<'scope>> {
+    ensure!(!stream.is_multiplexed(), "multiplex root already selected");
+    request_multiplex_selector(stream).await?;
+    stream.multiplex_v1()
+}
+
+pub async fn request_mailbox_multiplex_lane_v5(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    ensure!(stream.is_multiplexed(), "multiplex lane requires shared carrier");
+    request_multiplex_selector(stream).await
+}
+
+async fn request_multiplex_selector(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    stream.write_frame(MAILBOX_REQUEST_V5).await?;
+    ensure!(stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V5,
+        "mailbox multiplex version rejected");
+    Ok(())
+}
+
+pub(crate) async fn accept_mailbox_multiplex_lane_v5(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    ensure!(stream.is_multiplexed(), "multiplex lane requires shared carrier");
+    ensure!(stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V5,
+        "mailbox multiplex lane version rejected");
+    stream.write_frame(MAILBOX_REQUEST_V5).await
 }
 
 /// V4 selects the same mailbox operations under local peer trust, without a
@@ -478,7 +510,11 @@ pub async fn serve_self_owned_node_selected_v4<T>(
     continuous: impl FnOnce() -> Result<()>,
 ) -> Result<(NodeServiceV1, Option<T>)> {
     let request = stream.read_frame().await?;
-    if request.as_slice() == MAILBOX_REQUEST_V4 {
+    if request.as_slice() == MAILBOX_REQUEST_V5 {
+        continuous()?;
+        stream.write_frame(MAILBOX_REQUEST_V5).await?;
+        Ok((NodeServiceV1::MailboxMultiplex, None))
+    } else if request.as_slice() == MAILBOX_REQUEST_V4 {
         continuous()?;
         stream.write_frame(MAILBOX_REQUEST_V4).await?;
         Ok((NodeServiceV1::MailboxContinuous, None))
