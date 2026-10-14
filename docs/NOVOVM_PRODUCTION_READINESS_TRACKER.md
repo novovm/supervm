@@ -3,6 +3,41 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 NVMBOX05 正式 Android：单连接双流、离线队列与重开保留
+
+共享输入 `ae8fc007`，产品 `NOVOCHAT@b301f5f`。同一本机自主L3原位升级，
+保留原配置、DPAPI身份/策略、journal和SQLite信箱；配置及密钥/策略文件哈希
+一致，无新Publisher、邀请或账户。foreground宿主按核对PID/路径定向结束后
+替换，不称优雅停机；独占journal哈希读取失败导致升级间隔，旧04手机自动
+重试并恢复。节点新exe SHA256 `beead7fbf31e32d8a4439ffebe8a3452c5727767ca90b8b47b178a958e41b3a4`。
+
+正式APK `18c1bcd1129fd4b1b1732a0b11fe94552226c13d31e16ccfe80a0f37bb04d38f`
+原位安装PKL110 Wi-Fi/PCLM50蜂窝，实际包哈希一致，无ADB业务转发。原
+Application owner只connect一次，操作和通知流各自Finished/AEAD，不降低
+验签、撤销、Privacy或旧协议门禁，不提高节点全局4连接/每组4流上限。
+初次任务双流认证5.932/8.694秒；五次成功尝试（含恢复/冷开）每次均观测到
+1 connection + 1 notification stream，没有第二次notification connect。
+
+80–85共6条新消息真实持久交付。35秒蜂窝中断期间82已节点寄存、83本地排队，
+恢复后原ID继续处理，无人工重连；任务2在15.379秒E211后由任务3接替，网络
+可用到认证31.952–31.957秒。随后新消息仍送达，两端am kill确认进程结束再
+显式打开后保留历史/Delivered，自动认证7.583/6.400秒，不称真实LMK/后台保活。
+健康唤醒→StoreReceipt1.694–1.968秒，→DeviceReceipt6.774–10.996秒；含离线
+等待的一条59.939秒全部保留，不声称性能提升、秒级P95或本批五轮恢复。
+
+产品有限离线回归310.84秒通过，连续夹具有161.99/158.90秒通过记录，跨3声明
+各1绑定/1连接/两流认证；2个边界、JVM42、Python23+2及严格Clippy/正式构建
+通过。开放项：Windows初始UDP bind的Tokio reactor间歇异常，在信箱协议前
+发生；重建dev依赖/禁增量后通过但未定位根因。一次连续夹具虽全部Delivered，
+最终组合并发断言失败；拆分诊断后复跑通过，具体失败分项仍未复现。未删除
+断言/扩大产品期限，不以单次通过宣称消除。原失败与新日志完整保留。
+
+本片仅交付手机单连接双流，不是跨联系人节点聚合；仍单L3和外部Iroh Relay。
+L4同协议宿主、独立副本、自主主载体、匿名及生产容量未签收。继续原L4主线，
+另跟踪恢复长尾及主机回归。细节见产品 `docs/implementation/AUTOMATIC_RECOVERY.md`
+Multiplex Mailbox v1节；忽略证据目录`NOVOCHAT/artifacts/multiplex-mailbox/`，
+Android `acceptance.json` SHA256 `d9d9cec17fb95de82e9808417e77fefb7ccf1430e681d1640294c56a00d0356b`。
+
 ## 2026-10-14 NVMBOX05 单连接多流：组件通过，Android 接线待验
 
 输入 `30d4cf45`。原 Iroh/CarrierStream 增加作用域内有界共享连接，原自主
