@@ -30,6 +30,10 @@ V4改用服务owner共享令牌桶（默认64突发、2请求/秒，提供者可
   原信箱真实QUIC6项87.04秒通过；这些分组含重叠，不相加成独立总数。
 - network库/两项集成目标严格Clippy、relay实际Windows入口cargo check、定向格式
   与diff检查通过。未运行金融测试，不据此评价远端node性能改动。
+- 合并另一台机器的`d787dc3c`后，所测network输入树保持不变。随后补齐持续拨号
+  的类型边界：单次拨号超时属于`IrohConnectUnavailableV1`，不再冒充不存在的
+  owner期限。真实本机UDP黑洞1项15.20秒通过，确认失败、资源归还与owner关闭；
+  本次底层先返回连接不可达，未触发外层30秒兜底，不能据此声称兜底定时分支已覆盖。
 
 可复现：显式CARGO_TARGET_DIR=本仓target/runtime-rebuild，`cargo test --locked
 -j 1 -p novovm-network --features iroh-transport,tls-transport --test mailbox_continuous

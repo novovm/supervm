@@ -1022,7 +1022,7 @@ impl IrohScopeV1 {
         let connection = if self.continuous_service {
             tokio::time::timeout(Duration::from_secs(30), connecting)
                 .await
-                .map_err(|_| IrohScopeDeadlineV1(()))?
+                .map_err(|error| IrohConnectUnavailableV1(error.into()))?
         } else {
             connecting.await
         }
@@ -2214,6 +2214,43 @@ mod tests {
             })
             .await
             .unwrap();
+        assert_eq!(owner.snapshot().active_operations, 0);
+        assert_eq!(
+            owner.connections.available_permits(),
+            IROH_MAX_CONNECTIONS_V1
+        );
+        owner.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn continuous_dial_timeout_is_transport_failure_not_owner_expiry() {
+        let _permit = SERIAL.acquire().await.unwrap();
+        let sink = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = IrohAddressV1 {
+            endpoint_key: *iroh::SecretKey::generate().public().as_bytes(),
+            direct: vec![sink.local_addr().unwrap()],
+            relays: vec![],
+        };
+        let owner = IrohEndpointOwnerV1::bind(local_config(), || Ok(()))
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(35),
+            owner.with_continuous_service_v4(
+                || Ok(()),
+                move |scope| {
+                    Box::pin(async move {
+                        let _stream = scope.connect(&peer).await?;
+                        Ok(())
+                    })
+                },
+            ),
+        )
+        .await
+        .unwrap();
+        let error = result.unwrap_err();
+        assert!(error.is::<IrohConnectUnavailableV1>());
+        assert!(!is_iroh_scope_deadline_v1(&error));
         assert_eq!(owner.snapshot().active_operations, 0);
         assert_eq!(
             owner.connections.available_permits(),
