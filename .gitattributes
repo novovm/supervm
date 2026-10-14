@@ -27,3 +27,5 @@ artifacts/audit/resident-effect-projection-20261014/** -text whitespace=blank-at
 artifacts/audit/resident-effect-projection-20261014/*.log whitespace=-blank-at-eof,cr-at-eol
 artifacts/audit/resident-layer-exchange-20261014/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 artifacts/audit/resident-layer-exchange-20261014/*.log whitespace=-blank-at-eof,cr-at-eol
+artifacts/audit/resident-layer-batch-20261014/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+artifacts/audit/resident-layer-batch-20261014/*.log whitespace=-blank-at-eof,cr-at-eol

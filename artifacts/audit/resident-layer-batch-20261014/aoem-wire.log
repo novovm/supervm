@@ -1,0 +1,11 @@
+
+running 5 tests
+test ai_checked_integer_program::resources::tests::binary_result_real_wire_has_no_json_materialization_and_is_single_take ... ok
+test ai_checked_integer_program::resources::tests::composition_batched_layers_keep_alias_chunks_guards_and_failure_latch ... ok
+test ai_checked_integer_program::resources::tests::composition_real_wire_skips_invalid_branch_and_binds_distinct_programs ... ok
+test ai_checked_integer_program::resources::tests::dataflow_real_wire_executes_dependencies_without_consumer_roundtrips ... ok
+AOIP_PAIRED_WIRE rows=256 pairs=5 warmup_each=1 open_us=48805 v5_us=[109854, 108961, 107346, 108552, 110967] v7_us=[1611, 1267, 1498, 1283, 1796] identity=ApflVulkanRuntimeIdentity { api_version: 4211013, driver_version: 2483044352, vendor_id: 4318, device_id: 11352, device_type: 2, queue_family_index: 0, device_uuid: [41, 182, 103, 34, 32, 114, 66, 55, 205, 208, 23, 183, 22, 51, 181, 104], driver_uuid: [42, 250, 122, 157, 24, 249, 88, 95, 150, 68, 225, 162, 186, 213, 18, 175], pipeline_cache_uuid: [252, 109, 93, 49, 117, 183, 193, 217, 12, 184, 139, 141, 206, 65, 133, 72] }; wallclock includes unified dispatch+state write+state read+JSON decode, excludes payload construction; not kernel time, proof gain or mainchain TPS
+test ai_checked_integer_program::resources::tests::gpu_paired_wire_v5_vs_v7_resident_latency ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 268 filtered out; finished in 1.43s
+
