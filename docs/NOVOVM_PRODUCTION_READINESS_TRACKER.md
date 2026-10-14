@@ -13,8 +13,13 @@
 
 Windows新增原生跨进程独占/错误密钥/落盘重开回归2项通过（含子进程实际拒绝），
 已有6项日志压缩及每个发布边界进程崩溃回归通过，定向严格Clippy通过。
-日志在`artifacts/l4-platform-owner/journal-*.log`。Android ARM64程序正交叉构建，
-尚未把本机结果计作手机通过；不涉及主应用数据、安装或网络服务部署。
+日志在`artifacts/l4-platform-owner/journal-*.log`。Rust 1.94.0 / NDK 28.2.13676358
+ARM64 release原生检查程序构建15m31s；SHA256
+`7cc734f6af476df3a6c6a5600db5c317e67461a7b0565ac8e7673683957e7038`。
+同一程序在PKL110(Android15)、PCLM50(Android12)各2项通过（0.05/0.04s），
+均实际启动独立子进程验证持锁时拒绝第二写者，并验证落盘重开/错误密钥/CAS。
+使用各机`/data/local/tmp`临时夹具，不涉及主App数据、安装或网络服务部署；
+这是真机日志兼容性证据，不是手机L4寄存、E2EE或冗余验收。
 
 ## 2026-10-14 CPU有界归因：同机器码负对照仍有约10%差异
 
