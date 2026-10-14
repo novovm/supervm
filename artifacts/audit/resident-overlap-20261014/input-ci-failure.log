@@ -1,0 +1,698 @@
+Rust checks	UNKNOWN STEP	﻿2026-10-14T10:06:54.1602943Z Current runner version: '2.337.0'
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1631754Z ##[group]Runner Image Provisioner
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1632683Z Hosted Compute Agent
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1633367Z Version: 20261002.596
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1634008Z Commit: c3d12f3313a95f25162a1503be624f3b0617f8c0
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1634800Z Build Date: 2026-10-02T22:28:27Z
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1635569Z Worker ID: {7ed65fea-96eb-4426-9fdd-268594db4916}
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1636272Z Region: eastus2
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1636794Z Cloud: Azure
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1637793Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1639361Z ##[group]Operating System
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1640109Z Ubuntu
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1640654Z 24.04.5
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1641181Z LTS
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1641759Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1642344Z ##[group]Runner Image
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1642979Z Image: ubuntu-24.04
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1643555Z Version: 20261004.327.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1644894Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/Ubuntu2404-Readme.md
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1646488Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261004.327
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1648009Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1649257Z ##[group]GITHUB_TOKEN Permissions
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1651594Z Contents: read
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1652218Z Metadata: read
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1652812Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1655146Z Secret source: Actions
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1656114Z Cache mode: write
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.1657145Z Prepare workflow directory
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.2011937Z Prepare all required actions
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.2065738Z Getting action download info
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.4550120Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.5680996Z Download action repository 'dtolnay/rust-toolchain@stable' (SHA:686976e191b89faba57d3206551f0f330d8cb249)
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.7110597Z Download action repository 'Swatinem/rust-cache@v2' (SHA:6323deb102c322ba6fcbdcafc7e3dddab59af2b6)
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:54.9387435Z Download action repository 'actions/upload-artifact@v4' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.2230127Z Complete job name: Rust checks
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3363889Z ##[group]Run actions/checkout@v4
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3364844Z with:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3365263Z   lfs: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3365699Z   repository: novovm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3369914Z   token: ***
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3370355Z   ssh-strict: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3370799Z   ssh-user: git
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3371247Z   persist-credentials: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3371735Z   clean: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3372186Z   sparse-checkout-cone-mode: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3372714Z   fetch-depth: 1
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3373149Z   fetch-tags: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3373589Z   show-progress: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3374043Z   submodules: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3374490Z   set-safe-directory: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3374998Z   allow-unsafe-pr-checkout: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.3375841Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.4450221Z Syncing repository: novovm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.4453350Z ##[group]Getting Git version info
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.4454490Z Working directory is '/home/runner/work/supervm/supervm'
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.4456220Z [command]/usr/bin/git version
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.4530515Z git version 2.55.0
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:55.4584099Z [command]/usr/bin/git lfs version
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1263622Z git-lfs/3.8.0 (GitHub; linux amd64; go 1.27.0)
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1283698Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1306376Z Temporarily overriding HOME='/home/runner/work/_temp/ba22f84b-423a-48f2-b6b5-e18f9de3202f' before making global git config changes
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1310097Z Adding repository directory to the temporary git global config as a safe directory
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1314503Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/supervm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1377792Z Deleting the contents of '/home/runner/work/supervm/supervm'
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1382274Z ##[group]Initializing the repository
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1387691Z [command]/usr/bin/git init /home/runner/work/supervm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1503331Z hint: Using 'master' as the name for the initial branch. This default branch name
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1506647Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1509725Z hint: to use in all of your new repositories, which will suppress this warning,
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1511366Z hint: call:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1512217Z hint:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1513768Z hint: 	git config --global init.defaultBranch <name>
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1515263Z hint:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1516740Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1520023Z hint: 'development'. The just-created branch can be renamed via this command:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1521996Z hint:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1523151Z hint: 	git branch -m <name>
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1524378Z hint:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1526041Z hint: Disable this message with "git config set advice.defaultBranchName false"
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1529195Z Initialized empty Git repository in /home/runner/work/supervm/supervm/.git/
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1533474Z [command]/usr/bin/git remote add origin https://github.com/novovm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1582430Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1585815Z ##[group]Disabling automatic garbage collection
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1588801Z [command]/usr/bin/git config --local gc.auto 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1628316Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1631696Z ##[group]Setting up auth
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1635262Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.1680298Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.2005349Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.2087797Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.2368602Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.2408414Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.2683884Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.2732458Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.2737411Z [command]/usr/bin/git lfs install --local
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.3164174Z Updated Git hooks.
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.3170638Z Git LFS initialized.
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.3179964Z ##[group]Fetching the repository
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:56.3191641Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +0f7babce20a5231ac4e5891b19cb491f38f31f2f:refs/remotes/origin/main
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.6846762Z From https://github.com/novovm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.6849010Z  * [new ref]         0f7babce20a5231ac4e5891b19cb491f38f31f2f -> origin/main
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.6855257Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.6856156Z ##[group]Determining the checkout info
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.6857447Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.6858329Z ##[group]Fetching LFS objects
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.6864139Z [command]/usr/bin/git lfs fetch origin refs/remotes/origin/main
+Rust checks	UNKNOWN STEP	2026-10-14T10:06:58.7394656Z Fetching reference refs/remotes/origin/main
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:07.9013874Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:07.9014572Z [command]/usr/bin/git sparse-checkout disable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:07.9081124Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:07.9119176Z ##[group]Checking out the ref
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:07.9123897Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.1778324Z Updating files:   2% (83/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.1840896Z Updating files:   3% (105/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.1898508Z Updating files:   4% (139/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.1958937Z Updating files:   5% (174/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.1995298Z Updating files:   6% (209/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.2019237Z Updating files:   7% (243/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.2066489Z Updating files:   8% (278/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.2125204Z Updating files:   9% (313/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.2208659Z Updating files:  10% (348/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.2288761Z Updating files:  11% (382/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.2326901Z Updating files:  12% (417/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.3078163Z Updating files:  13% (452/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.3271101Z Updating files:  14% (486/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.3471138Z Updating files:  15% (521/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.3605753Z Updating files:  16% (556/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.3700361Z Updating files:  17% (591/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.3758354Z Updating files:  18% (625/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.3917213Z Updating files:  19% (660/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.4751989Z Updating files:  20% (695/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.4793502Z Updating files:  21% (729/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.4858066Z Updating files:  22% (764/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.4968599Z Updating files:  23% (799/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5080267Z Updating files:  24% (834/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5282707Z Updating files:  25% (868/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5305750Z Updating files:  26% (903/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5374713Z Updating files:  27% (938/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5408740Z Updating files:  28% (972/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5446867Z Updating files:  29% (1007/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5480063Z Updating files:  30% (1042/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5506514Z Updating files:  31% (1077/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5567180Z Updating files:  32% (1111/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5603524Z Updating files:  33% (1146/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5712862Z Updating files:  34% (1181/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5815277Z Updating files:  35% (1215/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5856524Z Updating files:  36% (1250/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5892233Z Updating files:  37% (1285/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5929363Z Updating files:  38% (1319/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.5965405Z Updating files:  39% (1354/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6012093Z Updating files:  40% (1389/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6049102Z Updating files:  41% (1424/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6085366Z Updating files:  42% (1458/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6121098Z Updating files:  43% (1493/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6216719Z Updating files:  44% (1528/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6237078Z Updating files:  45% (1562/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6263891Z Updating files:  46% (1597/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6286531Z Updating files:  47% (1632/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6306900Z Updating files:  48% (1667/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6337472Z Updating files:  49% (1701/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6367961Z Updating files:  50% (1736/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6388794Z Updating files:  51% (1771/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6425542Z Updating files:  52% (1805/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6586823Z Updating files:  53% (1840/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6604586Z Updating files:  54% (1875/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6639630Z Updating files:  55% (1910/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6671528Z Updating files:  56% (1944/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6692578Z Updating files:  57% (1979/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6716323Z Updating files:  58% (2014/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6746982Z Updating files:  59% (2048/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6775503Z Updating files:  60% (2083/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6831433Z Updating files:  61% (2118/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6856889Z Updating files:  62% (2153/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6907331Z Updating files:  63% (2187/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6953668Z Updating files:  64% (2222/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.6983638Z Updating files:  65% (2257/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7010191Z Updating files:  66% (2291/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7119233Z Updating files:  67% (2326/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7198134Z Updating files:  68% (2361/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7244102Z Updating files:  69% (2395/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7274834Z Updating files:  70% (2430/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7308766Z Updating files:  71% (2465/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7341629Z Updating files:  72% (2500/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7381931Z Updating files:  73% (2534/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7480375Z Updating files:  74% (2569/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7488035Z Updating files:  75% (2604/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7496630Z Updating files:  76% (2638/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7518895Z Updating files:  77% (2673/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7550180Z Updating files:  78% (2708/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7574323Z Updating files:  79% (2743/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7599918Z Updating files:  80% (2777/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7630267Z Updating files:  81% (2812/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7652178Z Updating files:  82% (2847/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7674422Z Updating files:  83% (2881/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7699186Z Updating files:  84% (2916/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7732926Z Updating files:  85% (2951/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7772953Z Updating files:  86% (2986/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7807429Z Updating files:  87% (3020/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7839839Z Updating files:  88% (3055/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7870350Z Updating files:  89% (3090/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7891472Z Updating files:  90% (3124/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7918352Z Updating files:  91% (3159/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7942512Z Updating files:  92% (3194/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7960425Z Updating files:  93% (3229/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.7981661Z Updating files:  94% (3263/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8016533Z Updating files:  95% (3298/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8052483Z Updating files:  96% (3333/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8065402Z Updating files:  97% (3367/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8084406Z Updating files:  98% (3402/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8107303Z Updating files:  99% (3437/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8107782Z Updating files: 100% (3471/3471)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8108536Z Updating files: 100% (3471/3471), done.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8162963Z Switched to a new branch 'main'
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8169533Z branch 'main' set up to track 'origin/main'.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8735357Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8789216Z [command]/usr/bin/git log -1 --format=%H
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.8820803Z 0f7babce20a5231ac4e5891b19cb491f38f31f2f
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9041078Z ##[group]Run set -euo pipefail
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9041484Z ^[[36;1mset -euo pipefail^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9041788Z ^[[36;1mruntime="aoem/linux/core/bin/libaoem_ffi.so"^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9042119Z ^[[36;1mif [[ ! -f "$runtime" ]]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9042444Z ^[[36;1m  echo "AOEM Linux runtime is missing: $runtime" >&2^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9042777Z ^[[36;1m  exit 1^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9042970Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9043368Z ^[[36;1mif head -c 128 "$runtime" | grep -q '^version https://git-lfs.github.com/spec/v1'; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9043923Z ^[[36;1m  echo "AOEM Linux runtime is still a Git LFS pointer: $runtime" >&2^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9044319Z ^[[36;1m  exit 1^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9044506Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9044770Z ^[[36;1mmagic="$(od -An -N4 -tx1 "$runtime" | tr -d '[:space:]')"^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9045140Z ^[[36;1mif [[ "$magic" != "7f454c46" ]]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9045586Z ^[[36;1m  echo "AOEM Linux runtime is not an ELF binary: $runtime (magic=$magic)" >&2^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9045980Z ^[[36;1m  exit 1^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9046168Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9046414Z ^[[36;1mecho "AOEM Linux runtime materialized: $runtime"^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9315680Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9316173Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9477512Z AOEM Linux runtime materialized: aoem/linux/core/bin/libaoem_ffi.so
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9674552Z ##[group]Run dtolnay/rust-toolchain@stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9674881Z with:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9675087Z   components: rustfmt, clippy
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9675530Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9675736Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9751813Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9804412Z ##[group]Run if [[ -z $toolchain ]]; then
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9804783Z ^[[36;1mif [[ -z $toolchain ]]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9805324Z ^[[36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9805898Z ^[[36;1m  echo "'toolchain' is a required input" >&2^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9806192Z ^[[36;1m  exit 1^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9806527Z ^[[36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9807148Z ^[[36;1m  if [[ Linux == macOS ]]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9807763Z ^[[36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9808327Z ^[[36;1m  else^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9808738Z ^[[36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9809203Z ^[[36;1m  fi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9809548Z ^[[36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9810083Z ^[[36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9810557Z ^[[36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9811083Z ^[[36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9811587Z ^[[36;1melse^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9811778Z ^[[36;1m  delimiter=EOF^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9812093Z ^[[36;1m  while [[ $toolchain == *$delimiter* ]]; do delimiter+=_; done^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9812601Z ^[[36;1m  printf 'toolchain<<%s\n%s\n%s\n' "$delimiter" "$toolchain" "$delimiter" >> $GITHUB_OUTPUT^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9813029Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9879643Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9879986Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9880194Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:09.9880408Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0007699Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=25]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0013024Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0049805Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0050292Z ^[[36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0118676Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0119048Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0228748Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=21]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0231595Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0261902Z ##[group]Run if ! command -v rustup &>/dev/null; then
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0262294Z ^[[36;1mif ! command -v rustup &>/dev/null; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0263077Z ^[[36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0263823Z ^[[36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0264108Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0331797Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0332138Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0332375Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0332704Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0434366Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=20]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0437692Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0447813Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0464373Z ##[start-action display=rustup toolchain install stable;id=__dtolnay_rust-toolchain.__run_4]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0485150Z ##[group]Run set -f  # split targets and components on commas and whitespace, without glob expansion
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0485849Z ^[[36;1mset -f  # split targets and components on commas and whitespace, without glob expansion^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0486292Z ^[[36;1mflags=()^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0486576Z ^[[36;1mfor t in ${targets//,/ }; do flags+=(--target "$t"); done^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0487344Z ^[[36;1mfor c in ${components//,/ }; do flags+=(--component "$c"); done^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0488107Z ^[[36;1mif [[ $toolchain == nightly && -n $components ]]; then flags+=(--allow-downgrade); fi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0488536Z ^[[36;1mlog=$(mktemp)^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0488763Z ^[[36;1mtrap 'rm -f "$log"' EXIT^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0489036Z ^[[36;1mfor attempt in 1 2 3 4 5; do^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0489616Z ^[[36;1m  if rustup toolchain install "$toolchain" "${flags[@]}" --profile minimal --no-self-update --force-non-host 2>&1 | tee "$log"; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0490183Z ^[[36;1m    break^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0490382Z ^[[36;1m  else^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0490572Z ^[[36;1m    status=$?^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0490782Z ^[[36;1m  fi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0491072Z ^[[36;1m  if [[ $attempt == 5 ]] || ! grep -Fq 'checksum failed for ' "$log" \^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0491633Z ^[[36;1m      || ! grep -Fq 'this is likely due to an ongoing update of the official release server' "$log"; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0492093Z ^[[36;1m    exit "$status"^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0492312Z ^[[36;1m  fi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0492670Z ^[[36;1m  echo "Retrying rustup toolchain install in 30 seconds (retry $attempt of 4)" >&2^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0493090Z ^[[36;1m  sleep 30^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0493288Z ^[[36;1mdone^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0562380Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0562724Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0562939Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0563194Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0563390Z   targets: 
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0563592Z   components: rustfmt, clippy
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0563849Z   RUSTUP_PERMIT_COPY_RENAME: 1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.0564083Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.2361039Z info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4027347Z info: latest update on 2026-10-01 for version 1.99.0 (b940084d7 2026-09-28)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4174728Z info: component clippy is up to date
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4175284Z info: component rustfmt is up to date
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4187290Z 
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4268282Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.99.0 (b940084d7 2026-09-28)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4268909Z 
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4317520Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=385]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4323999Z ##[start-action display=rustup default stable;id=__dtolnay_rust-toolchain.__run_5]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4344679Z ##[group]Run rustup default "$toolchain" --force-non-host
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4345094Z ^[[36;1mrustup default "$toolchain" --force-non-host^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4416064Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4416488Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4416732Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4417339Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4417596Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4580144Z info: using existing install for stable-x86_64-unknown-linux-gnu
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4589017Z info: default toolchain set to stable-x86_64-unknown-linux-gnu
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4589422Z 
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4674228Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.99.0 (b940084d7 2026-09-28)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4674786Z 
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4677549Z info: note that the toolchain '1.94.0-x86_64-unknown-linux-gnu' is currently in use (overridden by '/home/runner/work/supervm/supervm/rust-toolchain.toml')
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4693464Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=36]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4699214Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4726703Z ##[group]Run DATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4727915Z ^[[36;1mDATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4728596Z ^[[36;1mHASH=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-hash: //p')^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4729143Z ^[[36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4798310Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4798678Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4798895Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4799155Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.4799360Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5216181Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=51]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5219592Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5241113Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5241509Z ^[[36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5241845Z ^[[36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5242134Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5310929Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5311315Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5311532Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5311777Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5413702Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=19]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5417184Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5440267Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5440645Z ^[[36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5440980Z ^[[36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5441273Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5508542Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5508913Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5509129Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5509400Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5509621Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5612443Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=19]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5617537Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5639434Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5639949Z ^[[36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5640663Z ^[[36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5641408Z ^[[36;1m  if rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[89]\.'; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5642006Z ^[[36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5642547Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5643239Z ^[[36;1m  elif rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[67]\.'; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5643833Z ^[[36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5644488Z ^[[36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5644834Z ^[[36;1m  fi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5645025Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5712968Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5713313Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5713524Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5713789Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5714010Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5714232Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.5714438Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6092676Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=47]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6098104Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6120101Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6120919Z ^[[36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6121614Z ^[[36;1mif rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.7[01]\.'; then^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6122121Z ^[[36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6122453Z ^[[36;1mfi^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6190801Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6191159Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6191371Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6191644Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6191883Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6192120Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6192331Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6422965Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=32]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6464036Z ##[start-action display=rustc +stable --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6485761Z ##[group]Run rustc +"$toolchain" --version --verbose
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6486138Z ^[[36;1mrustc +"$toolchain" --version --verbose^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6551175Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6551583Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6551824Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6552132Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6552406Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6552678Z   toolchain: stable
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6552921Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6760421Z rustc 1.99.0 (b940084d7 2026-09-28)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6760992Z binary: rustc
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6761347Z commit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6761816Z commit-date: 2026-09-28
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6762127Z host: x86_64-unknown-linux-gnu
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6762507Z release: 1.99.0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6762805Z LLVM version: 23.1.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6784003Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=31]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6892904Z ##[group]Run Swatinem/rust-cache@v2
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6893206Z with:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6893406Z   prefix-key: v0-rust
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6893626Z   add-job-id-key: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6893866Z   add-rust-environment-hash-key: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6894136Z   cache-targets: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6894371Z   cache-all-crates: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6894620Z   cache-workspace-crates: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6894858Z   save-if: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6895057Z   cache-provider: github
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6895279Z   cache-bin: true
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6895480Z   lookup-only: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6895684Z   cmd-format: {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6895867Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6896057Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6896305Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6896522Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:10.6896746Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3005053Z ##[group]Cache Configuration
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3005737Z Cache Provider:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3006666Z     github
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3007327Z Workspaces:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3007715Z     /home/runner/work/supervm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3008269Z Cache Paths:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3008930Z     /home/runner/.cargo/bin
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3009334Z     /home/runner/.cargo/.crates.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3009783Z     /home/runner/.cargo/.crates2.json
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3010220Z     /home/runner/.cargo/registry
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3010644Z     /home/runner/.cargo/git
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3010961Z     /home/runner/work/supervm/supervm/target
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3011405Z Restore Key:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3011815Z     v0-rust-rust-Linux-x64-6f59b9e5
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3012268Z Cache Key:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3012621Z     v0-rust-rust-Linux-x64-6f59b9e5-84e2286d
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3013047Z .. Prefix:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3013598Z   - v0-rust-rust-Linux-x64
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3014080Z .. Environment considered:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3014545Z   - Rust Versions:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3015049Z     - 1.94.0 x86_64-unknown-linux-gnu 4a4ef493e3a1488c6e321570238084b38948f6db
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3015700Z     - 1.99.0 x86_64-unknown-linux-gnu b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3016284Z   - CARGO_HOME
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3016642Z   - CARGO_INCREMENTAL
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3017099Z   - CARGO_TERM_COLOR
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3035691Z .. Lockfiles considered:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3036434Z   - /home/runner/work/supervm/supervm/.cargo/config.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3037264Z   - /home/runner/work/supervm/supervm/Cargo.lock
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3037905Z   - /home/runner/work/supervm/supervm/crates/aoem-bindings/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3038681Z   - /home/runner/work/supervm/supervm/crates/gateways/evm-gateway/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3039510Z   - /home/runner/work/supervm/supervm/crates/novovm-adapter-api/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3040375Z   - /home/runner/work/supervm/supervm/crates/novovm-adapter-novovm/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3041302Z   - /home/runner/work/supervm/supervm/crates/novovm-adapter-sample-plugin/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3042225Z   - /home/runner/work/supervm/supervm/crates/novovm-bench/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3042968Z   - /home/runner/work/supervm/supervm/crates/novovm-consensus/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3043744Z   - /home/runner/work/supervm/supervm/crates/novovm-coordinator/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3044492Z   - /home/runner/work/supervm/supervm/crates/novovm-exec/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3045324Z   - /home/runner/work/supervm/supervm/crates/novovm-governance-observability/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3046187Z   - /home/runner/work/supervm/supervm/crates/novovm-network/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3046925Z   - /home/runner/work/supervm/supervm/crates/novovm-node/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3047888Z   - /home/runner/work/supervm/supervm/crates/novovm-protocol/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3048631Z   - /home/runner/work/supervm/supervm/crates/novovm-prover/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3049775Z   - /home/runner/work/supervm/supervm/crates/novovm-relay/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3050592Z   - /home/runner/work/supervm/supervm/crates/novovm-rollout-policy/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3051452Z   - /home/runner/work/supervm/supervm/crates/novovm-udp-batch/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3052185Z   - /home/runner/work/supervm/supervm/crates/novovmctl/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3052923Z   - /home/runner/work/supervm/supervm/crates/plugins/evm/core/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3053701Z   - /home/runner/work/supervm/supervm/crates/plugins/evm/plugin/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3054421Z   - /home/runner/work/supervm/supervm/rust-toolchain.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3055061Z   - /home/runner/work/supervm/supervm/vendor/web30-core/Cargo.toml
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3055904Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3056086Z 
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3056221Z ... Restoring cache ...
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:20.3850748Z Cache hit for restore-key: v0-rust-rust-Linux-x64-6f59b9e5-231947a7
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:21.4232344Z Received 209715200 of 1511122231 (13.9%), 198.4 MBs/sec
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:22.4254932Z Received 448790528 of 1511122231 (29.7%), 213.0 MBs/sec
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:23.4235767Z Received 671088640 of 1511122231 (44.4%), 212.7 MBs/sec
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:24.4298794Z Received 935329792 of 1511122231 (61.9%), 222.4 MBs/sec
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:25.4287725Z Received 1195376640 of 1511122231 (79.1%), 227.4 MBs/sec
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:26.4305105Z Received 1459617792 of 1511122231 (96.6%), 231.4 MBs/sec
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:26.6506364Z Received 1511122231 of 1511122231 (100.0%), 231.1 MBs/sec
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:26.6508312Z Cache Size: ~1441 MB (1511122231 B)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:26.6620981Z [command]/usr/bin/tar -xf /home/runner/work/_temp/96cbcb5f-b01a-452b-8766-5f90dbabcb39/cache.tzst -P -C /home/runner/work/supervm/supervm --use-compress-program unzstd
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.2323418Z Cache restored successfully
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.4199324Z Restored from cache key "v0-rust-rust-Linux-x64-6f59b9e5-231947a7" full match: false.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8771695Z ##[group]Run ./runtime/check-isolation.ps1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8772521Z ^[[36;1m./runtime/check-isolation.ps1^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8807789Z shell: /usr/bin/pwsh -command ". '{0}'"
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8808209Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8808502Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8808886Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8809222Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8809577Z   CACHE_ON_FAILURE: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:41.8809912Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:47.1663422Z ^[[1m^[[92m    Updating^[[0m crates.io index
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.0534710Z PASS: Product has 21 approved members and no legacy dependency.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.1167722Z ^[[1m^[[92m Downloading^[[0m crates ...
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2302402Z ^[[1m^[[92m  Downloaded^[[0m log v0.4.33
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2381225Z ^[[1m^[[92m  Downloaded^[[0m quote v1.0.47
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2433199Z ^[[1m^[[92m  Downloaded^[[0m find-msvc-tools v0.1.11
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2468385Z ^[[1m^[[92m  Downloaded^[[0m pkg-config v0.3.34
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2488737Z ^[[1m^[[92m  Downloaded^[[0m windows-targets v0.53.5
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2500252Z ^[[1m^[[92m  Downloaded^[[0m bitflags v2.13.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2558476Z ^[[1m^[[92m  Downloaded^[[0m thiserror-impl v2.0.21
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2579661Z ^[[1m^[[92m  Downloaded^[[0m proc-macro2 v1.0.107
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2617192Z ^[[1m^[[92m  Downloaded^[[0m zeroize v1.9.0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2717635Z ^[[1m^[[92m  Downloaded^[[0m shlex v2.0.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2743065Z ^[[1m^[[92m  Downloaded^[[0m zmij v1.0.23
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2763014Z ^[[1m^[[92m  Downloaded^[[0m semver v1.0.28
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2792653Z ^[[1m^[[92m  Downloaded^[[0m memchr v2.8.3
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2862934Z ^[[1m^[[92m  Downloaded^[[0m thiserror v2.0.21
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2941096Z ^[[1m^[[92m  Downloaded^[[0m socket2 v0.6.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.2964115Z ^[[1m^[[92m  Downloaded^[[0m zerocopy-derive v0.8.48
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.3072682Z ^[[1m^[[92m  Downloaded^[[0m cc v1.4.3
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.3108792Z ^[[1m^[[92m  Downloaded^[[0m typenum v1.20.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.3150891Z ^[[1m^[[92m  Downloaded^[[0m rustls-pki-types v1.14.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.3294016Z ^[[1m^[[92m  Downloaded^[[0m time v0.3.55
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.3458864Z ^[[1m^[[92m  Downloaded^[[0m zerocopy v0.8.48
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.3698377Z ^[[1m^[[92m  Downloaded^[[0m syn v2.0.119
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.4034204Z ^[[1m^[[92m  Downloaded^[[0m libc v0.2.189
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.4517600Z ^[[1m^[[92m  Downloaded^[[0m windows_x86_64_gnullvm v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.4635191Z ^[[1m^[[92m  Downloaded^[[0m windows_x86_64_msvc v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.4756214Z ^[[1m^[[92m  Downloaded^[[0m windows_aarch64_msvc v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.4876513Z ^[[1m^[[92m  Downloaded^[[0m windows_i686_gnullvm v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.5000954Z ^[[1m^[[92m  Downloaded^[[0m windows_x86_64_gnu v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.5190395Z ^[[1m^[[92m  Downloaded^[[0m windows_i686_msvc v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.5320602Z ^[[1m^[[92m  Downloaded^[[0m windows_i686_gnu v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.5520257Z ^[[1m^[[92m  Downloaded^[[0m windows_aarch64_gnullvm v0.53.1
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.5659111Z ^[[1m^[[92m  Downloaded^[[0m windows-sys v0.60.2
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.7784841Z PASS: Preserved components has 3 approved members and no legacy dependency.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.7786414Z Assembly boundaries only; not execution ownership or mainnet acceptance.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8430099Z ##[group]Run cargo fmt --manifest-path "Cargo.toml" --all -- --check
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8430652Z ^[[36;1mcargo fmt --manifest-path "Cargo.toml" --all -- --check^[[0m
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8497363Z shell: /usr/bin/bash -e {0}
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8497661Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8497893Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8498182Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8498431Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8498695Z   CACHE_ON_FAILURE: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:49.8498954Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1447237Z Diff in /home/runner/work/supervm/supervm/crates/novovm-relay/src/rendezvous_self_owned_owner.rs:252:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1448620Z              ensure!(!mailbox_path.try_exists()?, "unrecognized mailbox storage");
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1449616Z              create(&mailbox_started, b"NOVONET shared mailbox v1")?;
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1450335Z          }
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1457406Z -        let mailbox = Arc::new(novovm_network::mailbox_rpc::MailboxServiceV1::new(
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1458651Z -            novovm_network::mailbox_store::MailboxStore::open(&mailbox_path, Default::default())?,
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1459579Z -            key.clone(),
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1460082Z -        )
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1460657Z -        // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1461638Z -        // conservative mobile default (2 requests/s for the entire node) makes
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1462627Z -        // those lanes queue behind one another even on healthy connections.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1463553Z -        // This remains one shared budget; reconnecting cannot replenish it.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1464442Z -        // Keep storage, byte quotas and connection bounds unchanged.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1465230Z -        .with_continuous_request_rate_v4(64, 32)?);
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1465899Z +        let mailbox = Arc::new(
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1466559Z +            novovm_network::mailbox_rpc::MailboxServiceV1::new(
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1468182Z +                novovm_network::mailbox_store::MailboxStore::open(
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1468811Z +                    &mailbox_path,
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1469281Z +                    Default::default(),
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1469739Z +                )?,
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1470107Z +                key.clone(),
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1470513Z +            )
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1471033Z +            // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1471902Z +            // conservative mobile default (2 requests/s for the entire node) makes
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1472749Z +            // those lanes queue behind one another even on healthy connections.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1473581Z +            // This remains one shared budget; reconnecting cannot replenish it.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1474403Z +            // Keep storage, byte quotas and connection bounds unchanged.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1475092Z +            .with_continuous_request_rate_v4(64, 32)?,
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1475613Z +        );
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1476331Z          let result = run_self_owned_node_v1(carrier, key, config.allowed_clients.clone(), stop,Some(mailbox),
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1477454Z              move |endpoint, expires| {
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.1478046Z                  let path = self.policy.config.root.join("service.journal");
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7267382Z ##[error]Process completed with exit code 1.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7368729Z ##[group]Run actions/upload-artifact@v4
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7369038Z with:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7369249Z   name: resident-rpc-aab-evidence
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7369516Z   if-no-files-found: ignore
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7370586Z   path: target/resident-rpc-aab-tests/**/result.json
+Rust checks	UNKNOWN STEP	target/resident-rpc-aab-tests/**/byzantine-signed-proposals.json
+Rust checks	UNKNOWN STEP	target/resident-rpc-aab-tests/**/a-a-b-before-recovery.json
+Rust checks	UNKNOWN STEP	target/resident-rpc-aab-tests/**/*.stdout.log
+Rust checks	UNKNOWN STEP	target/resident-rpc-aab-tests/**/*.stderr.log
+Rust checks	UNKNOWN STEP	
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7371881Z   compression-level: 6
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7372105Z   overwrite: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7372325Z   include-hidden-files: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7372557Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7372748Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7372995Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7373212Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7373446Z   CACHE_ON_FAILURE: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.7373668Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9121174Z (node:2683) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9122417Z (Use `node --trace-deprecation ...` to show where the warning was created)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9338513Z No files were found with the provided path: target/resident-rpc-aab-tests/**/result.json
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9339528Z target/resident-rpc-aab-tests/**/byzantine-signed-proposals.json
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9340342Z target/resident-rpc-aab-tests/**/a-a-b-before-recovery.json
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9341034Z target/resident-rpc-aab-tests/**/*.stdout.log
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9342008Z target/resident-rpc-aab-tests/**/*.stderr.log. No artifacts will be uploaded.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9633650Z ##[group]Run actions/upload-artifact@v4
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9634163Z with:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9634484Z   name: fresh-ingress-history-recovery
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9635566Z   path: artifacts/audit/candidate-node-processes/**/continuous-acceptance.json
+Rust checks	UNKNOWN STEP	artifacts/audit/candidate-node-processes/**/*.process.json
+Rust checks	UNKNOWN STEP	artifacts/audit/candidate-node-processes/**/*.stdout.log
+Rust checks	UNKNOWN STEP	artifacts/audit/candidate-node-processes/**/*.stderr.log
+Rust checks	UNKNOWN STEP	
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9636842Z   if-no-files-found: warn
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9637337Z   compression-level: 6
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9637712Z   overwrite: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9637944Z   include-hidden-files: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9638183Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9638403Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9638661Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9638880Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9639117Z   CACHE_ON_FAILURE: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:56.9639466Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1378853Z (node:2695) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1379589Z (Use `node --trace-deprecation ...` to show where the warning was created)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1432790Z ##[warning]No files were found with the provided path: artifacts/audit/candidate-node-processes/**/continuous-acceptance.json
+Rust checks	UNKNOWN STEP	artifacts/audit/candidate-node-processes/**/*.process.json
+Rust checks	UNKNOWN STEP	artifacts/audit/candidate-node-processes/**/*.stdout.log
+Rust checks	UNKNOWN STEP	artifacts/audit/candidate-node-processes/**/*.stderr.log. No artifacts will be uploaded.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1611211Z ##[group]Run actions/upload-artifact@v4
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1611516Z with:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1611746Z   name: original-node-transfer-rpc-recovery
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1612143Z   path: artifacts/audit/candidate-node-processes/**/mixed-*.json
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1612508Z   if-no-files-found: warn
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1612744Z   compression-level: 6
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1612962Z   overwrite: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1613178Z   include-hidden-files: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1613413Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1613607Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1613856Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1614073Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1614309Z   CACHE_ON_FAILURE: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.1614540Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3472723Z (node:2707) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3474174Z (Use `node --trace-deprecation ...` to show where the warning was created)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3494806Z ##[warning]No files were found with the provided path: artifacts/audit/candidate-node-processes/**/mixed-*.json. No artifacts will be uploaded.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3810306Z ##[group]Run actions/upload-artifact@v4
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3810827Z with:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3811234Z   name: supervm-native-pipeline-dual-node-gate
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3812630Z   path: artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json
+Rust checks	UNKNOWN STEP	artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json.evidence-*/*.log
+Rust checks	UNKNOWN STEP	
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3813999Z   if-no-files-found: error
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3814413Z   compression-level: 6
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3814789Z   overwrite: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3815158Z   include-hidden-files: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3815563Z env:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3815897Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3816343Z   CARGO_INCREMENTAL: 0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3816785Z   CARGO_TERM_COLOR: always
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3817581Z   CACHE_ON_FAILURE: false
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.3818021Z ##[endgroup]
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.5806040Z (node:2719) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.5807792Z (Use `node --trace-deprecation ...` to show where the warning was created)
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.5835976Z ##[error]No files were found with the provided path: artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json
+Rust checks	UNKNOWN STEP	artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json.evidence-*/*.log. No artifacts will be uploaded.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.6158652Z Post job cleanup.
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7139158Z [command]/usr/bin/git version
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7187962Z git version 2.55.0
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7236053Z Temporarily overriding HOME='/home/runner/work/_temp/4ccb6e73-d35b-46c6-9c4a-6c8e319e1e96' before making global git config changes
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7237614Z Adding repository directory to the temporary git global config as a safe directory
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7243222Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/supervm/supervm
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7291465Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7330847Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7601007Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7632110Z http.https://github.com/.extraheader
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7644655Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.7684185Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.8001087Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.8037258Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.8526131Z Cleaning up orphan processes
+Rust checks	UNKNOWN STEP	2026-10-14T10:07:57.8824574Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

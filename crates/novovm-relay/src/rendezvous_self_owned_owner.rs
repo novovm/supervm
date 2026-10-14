@@ -252,16 +252,21 @@ impl Owner {
             ensure!(!mailbox_path.try_exists()?, "unrecognized mailbox storage");
             create(&mailbox_started, b"NOVONET shared mailbox v1")?;
         }
-        let mailbox = Arc::new(novovm_network::mailbox_rpc::MailboxServiceV1::new(
-            novovm_network::mailbox_store::MailboxStore::open(&mailbox_path, Default::default())?,
-            key.clone(),
-        )
-        // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
-        // conservative mobile default (2 requests/s for the entire node) makes
-        // those lanes queue behind one another even on healthy connections.
-        // This remains one shared budget; reconnecting cannot replenish it.
-        // Keep storage, byte quotas and connection bounds unchanged.
-        .with_continuous_request_rate_v4(64, 32)?);
+        let mailbox = Arc::new(
+            novovm_network::mailbox_rpc::MailboxServiceV1::new(
+                novovm_network::mailbox_store::MailboxStore::open(
+                    &mailbox_path,
+                    Default::default(),
+                )?,
+                key.clone(),
+            )
+            // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
+            // conservative mobile default (2 requests/s for the entire node) makes
+            // those lanes queue behind one another even on healthy connections.
+            // This remains one shared budget; reconnecting cannot replenish it.
+            // Keep storage, byte quotas and connection bounds unchanged.
+            .with_continuous_request_rate_v4(64, 32)?,
+        );
         let result = run_self_owned_node_v1(carrier, key, config.allowed_clients.clone(), stop,Some(mailbox),
             move |endpoint, expires| {
                 let path = self.policy.config.root.join("service.journal");
