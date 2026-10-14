@@ -1,0 +1,23 @@
+
+running 18 tests
+test ai_checked_integer_program::resources::composition::tests::composition_parser_keeps_per_program_signatures_and_bounds ... ok
+test ai_checked_integer_program::resources::dataflow::tests::bindings_are_exact_bounded_and_acyclic ... ok
+test ai_checked_integer_program::resources::tests::binary_result_is_bounded_versioned_and_context_owned ... ok
+test ai_checked_integer_program::resources::tests::binary_result_real_wire_has_no_json_materialization_and_is_single_take ... ignored, requires Vulkan; unified v8 binary/legacy v7 parity and context lifecycle
+test ai_checked_integer_program::resources::tests::composition_alias_chunks_guards_and_failure_latch ... ignored, requires Vulkan; independent layer groups, aliased resources and partial chunks
+test ai_checked_integer_program::resources::tests::composition_real_wire_skips_invalid_branch_and_binds_distinct_programs ... ignored, requires Vulkan; multi-program guarded composition, not product business signoff
+test ai_checked_integer_program::resources::tests::dataflow_real_wire_executes_dependencies_without_consumer_roundtrips ... ignored, requires Vulkan; generic cross-row dataflow through unified wire, binary final result
+test ai_checked_integer_program::resources::tests::gpu_close_waits_for_accepted_lease_and_drop_releases_owned_programs ... ok
+test ai_checked_integer_program::resources::tests::gpu_concurrent_aliases_do_not_mix_inputs_or_readback ... ok
+test ai_checked_integer_program::resources::tests::gpu_failed_open_releases_budgets_and_failure_latch_cannot_reopen_live_program ... ok
+test ai_checked_integer_program::resources::tests::gpu_integer_resources_use_real_unified_wire_and_context_teardown ... ok
+test ai_checked_integer_program::resources::tests::gpu_paired_wire_v5_vs_v7_resident_latency ... ignored, paired whole-wire latency measurement; run alone on the selected Vulkan device
+test ai_checked_integer_program::resources::tests::gpu_profile_is_resource_bound_and_preserves_plain_result ... ok
+test ai_checked_integer_program::resources::tests::gpu_resource_context_and_generation_are_checked_and_row_fault_does_not_poison ... ok
+test ai_checked_integer_program::resources::tests::gpu_resource_reuses_exact_program_but_fresh_inputs_and_does_not_alias_contracts ... ok
+test ai_checked_integer_program::resources::tests::resident_accounting_includes_program_and_lazy_exchange_buffers ... ok
+test ai_checked_integer_program::resources::tests::resource_budget_is_checked_and_all_reservations_rollback ... ok
+test ai_checked_integer_program::resources::tests::resource_wire_rejects_noncanonical_lengths_commands_and_shapes_before_allocation ... ok
+
+test result: ok. 13 passed; 0 failed; 5 ignored; 0 measured; 255 filtered out; finished in 1.09s
+

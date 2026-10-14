@@ -1,0 +1,48 @@
+{
+  "product_source": "f054342d6afa56f9c0c5a9054e24571b9bd4c384",
+  "aoem_base": "aab3f8bb8cf5c685b8314a08378e8763fbbe83ab",
+  "scope": "Batch independent physical program chunks within one AOIP0 v10 dependency level using the existing resident compute graph",
+  "status": "REJECTED_NOT_PROMOTED",
+  "withdrawal_commit": "AOEM 0273655d; active runtime blobs equal aab3f8bb; net additions only regression test and rejection record",
+  "candidate_source": "69bf37dada46ae92d80c474c15ac1adee714848a (historical, withdrawn from active runtime)",
+  "source_and_delivered_library": "No SDK update. Production remains aab3f8bb / 31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947. Candidate measured hash is historical in measurements.json.",
+  "decision": "Integer +14.258%; CPU -4.794%, both CPU pairs and tails worse. Cause unresolved; CPU preservation promotion gate failed. Restore four runtime files, retain regression, no alternative runtime switch.",
+  "conditions": {
+    "platform": "Windows AC; four original node processes and stores; single ingress RPC",
+    "device_selector": "5090 / 0x10de; resource test records Vulkan vendor 4318, device 11352, discrete type 2",
+    "transactions": 65536,
+    "batch": 1024,
+    "client_window": 8192,
+    "conflicts": "1024 payers with sequential nonces and one shared recipient",
+    "completion": "all four successful final receipt HTTP responses; cold economics/history/recovery checked afterward",
+    "excluded_from_timing": "wallet signing, node startup, cold verification",
+    "production_diagnostics": false
+  },
+  "work": {
+    "waits_before_per_level": "sum(ceil(active_rows_per_canonical_program / capacity))",
+    "waits_after_per_level": "max(ceil(active_rows_per_canonical_program / capacity))",
+    "physical_aliases": "canonicalized by cached Arc identity before locking; at most one prepared chunk per physical program per batch",
+    "gpu_transfer_bytes_removed": false,
+    "cross_layer_host_binding_removed": false,
+    "new_shader_or_public_c_abi": false,
+    "cpu_default_preserved": true,
+    "candidate_runtime_retained": false,
+    "restored_regression": "New alias/chunk/guard/failure test also passes the accepted runtime; see restored-regression.log and restored-resources.log",
+    "cleanup": "Removed target/validation/resident-layer-batch-20261014/candidate.dll; restored AOEM cargo-target-ci-local/release/aoem_ffi.dll and release/deps/aoem_ffi.dll from the unchanged accepted SDK. Rebuilt test executable on restored source. Source and evidence retained in Git; candidate reproducible from history, not a retained runtime option. No data or draft deletion."
+  },
+  "correctness": {
+    "aoem_resources": "13 passed, 5 initially ignored; all five then explicitly passed",
+    "microperf_scope": "One existing v5/v7 diagnostic ran in the ignored group because the skip filter did not match; retained in aoem-wire.log, not used for current performance claims",
+    "new_case": "physical aliases, 3 versus 2 chunk rounds, partial tails, repeated changed inputs, skipped divide-by-zero, active failure and no stale output",
+    "fixture_correction": "First new test incorrectly supplied non-integral inputs to exact division and was rejected; corrected numerators to even values, production domain checks unchanged",
+    "product": "seven original full-effects and actual-node RPC/fault/restart tests passed; logs retained",
+    "drafts": "49 protected legacy/runtime hashes checked by summarize.cjs",
+    "fullmax_build": "release locked; apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2"
+  },
+  "limitations": [
+    "CPU still binds values and guards at dependency-level boundaries",
+    "No claim of full GPU residency, full proof, physical multi-machine acceptance or million TPS",
+    "Linux core and sidecars not rebuilt; Windows core only",
+    "CPU and integer remain separate measured backends, not interchangeable throughput claims"
+  ]
+}
