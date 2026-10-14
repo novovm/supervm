@@ -3,6 +3,41 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 Android 健康信箱通知/发件分离：已交付，容量与秒级仍待
+
+产品 `NOVOCHAT@18e2629`，共享审核输入仍为 `6fbe812c`，与本仓快进到
+`2972b81e` 的 Cargo.toml/network/protocol/adapter-api/vendor/iroh 树一致。
+本片不改节点二进制、协议、身份或金融/AOEM。原 Application owner 在同一
+Endpoint 上建立两个 NVMBOX04 通道，各自 Finished/AEAD 认证同一节点pin；
+操作通道 Put/Fetch/Consume，观察通道有界 Watch，既有加密待发队列提交即
+唤醒发件。没有新的网络/调度器，没有跳过验签、撤销、Privacy或重置原ID/TTL。
+
+这里是两条 QUIC 连接，不是单连接多流。当前载体 bidi stream 上限1、scope
+连接上限4，两部手机各2连接已经用满；不能据此签收多用户/多联系人容量。
+首次夹具双connect后才发selector导致lazy open_bi的服务端建立窗口失败，
+已改为每条connect后立即发送。任一路失败仍释放并交回原owner恢复，不忽略拒接。
+
+正式APK `6343fc7d` 已原位安装原两部Android，保留原身份/联系人/历史，
+冷开不点Connect，任务到两路认证8.196/7.027秒。健康72–77及恢复后78/79共
+8条消息得到设备持久回执。健康本地提交唤醒至StoreReceipt为1.274–1.693秒，
+至Delivered为5.089–7.838秒；不是点击发送时延，缺失独立唤醒点的一条不造数。
+一次18秒蜂窝中断后网络可用至认证约14.1秒，原任务正常取消后任务2自动恢复。
+78/79实际在恢复后发送，不作断网期间入队证据。约16分钟末A仍任务1、B任务2，
+均running/message_exchange/code0；无ADB业务转发，实际外部Iroh Relay仍参与。
+
+真实连续Application夹具1项162.96秒、跨3声明、bind各1/认证每通道各1，
+Watch在途时Put/Store推进；五条突发最终回执28.981秒，非性能通过。旧有限
+离线夹具1项310.61秒、安全边界5项、JVM17项、Python23+2项、严格Clippy、
+fmt/标准Android构建通过。初次10秒突发性能断言失败与Windows relink锁定
+失败保留，后续功能断言/独立有界观察及串行重跑通过；产品超时未扩大。
+
+不签收本候选五轮恢复、秒级P95、生产容量、全天后台或匿名。下一片在原共享
+载体中补有界多流/节点级连接共享，再推进L4同协议信箱，不能把每联系人两条
+连接复制成产品网络，也不盲目调大上限。原始样本与调用链见产品
+`docs/implementation/AUTOMATIC_RECOVERY.md` 的 Healthy Mailbox Wake v1；
+本地 `artifacts/healthy-mailbox/acceptance.json` SHA256
+`62eccb14e450c63b96dce898ae7b287f0d2f081a7f4096daddcab13dff1144e3`。
+
 ## 2026-10-14 计划内设备值驻留：功能验证通过，CPU保护门未过，不晋级
 
 产品输入`f1bbf47d`，AOEM输入`0273655d`；候选源码完整保存在AOEM历史
