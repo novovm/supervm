@@ -1,6 +1,7 @@
 //! Self-owned lifecycle for the EXISTING rendezvous V2 offer and authenticated
 //! RPC. Stable listener; rotating opaque stores and resource-bound mailbox sessions.
 use crate::{
+    bound_session::ServicePeerPolicyV1,
     carrier_stream::CarrierStreamV1,
     iroh_transport::{
         with_iroh_owned_listener_v1, IrohConfigV1, IrohEndpointOwnerV1, IrohScopeV1,
@@ -85,27 +86,59 @@ pub async fn run_self_owned_node_on_endpoint_v1(
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
     let node = Node::new(key, clients, stop, mailbox, 2)?;
-    let revoked = node.stop.clone();
-    endpoint
-        .with_owned_listener_v1(
-            move || {
-                ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
-                Ok(())
-            },
-            move |scope| Box::pin(node.serve(scope, activate, publish)),
-        )
-        .await
+    node.on_endpoint(endpoint, activate, publish).await
+}
+
+/// Permissionless mailbox on the original node dispatcher and platform owner.
+/// Unknown valid peer keys are accepted; mailbox capabilities, total resource
+/// budgets and owner revocation still apply. Legacy rendezvous/mailbox services
+/// are NOT silently opened by this opt-in: use their existing pinned entrypoint.
+pub async fn run_self_owned_mailbox_on_endpoint_v1(
+    endpoint: &IrohEndpointOwnerV1,
+    key: SigningKey,
+    stop: Arc<AtomicBool>,
+    mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
+    activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<()> {
+    Node {
+        key,
+        clients: None,
+        stop,
+        mailbox: Some(mailbox),
+        max_connections: 2,
+    }
+    .on_endpoint(endpoint, activate, publish)
+    .await
 }
 
 struct Node {
     key: SigningKey,
-    clients: Vec<[u8; 32]>,
+    clients: Option<Vec<[u8; 32]>>,
     stop: Arc<AtomicBool>,
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     max_connections: usize,
 }
 
 impl Node {
+    async fn on_endpoint(
+        self,
+        endpoint: &IrohEndpointOwnerV1,
+        activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+        publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+    ) -> Result<()> {
+        let revoked = self.stop.clone();
+        endpoint
+            .with_owned_listener_v1(
+                move || {
+                    ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
+                    Ok(())
+                },
+                move |scope| Box::pin(self.serve(scope, activate, publish)),
+            )
+            .await
+    }
+
     fn new(
         key: SigningKey,
         clients: BTreeSet<[u8; 32]>,
@@ -125,7 +158,7 @@ impl Node {
         }
         Ok(Self {
             key,
-            clients: clients.into_iter().collect(),
+            clients: Some(clients.into_iter().collect()),
             stop,
             mailbox,
             max_connections,
@@ -215,6 +248,9 @@ impl Node {
                         let generation = generation.clone();
                         let key = &key;
                         let clients = &clients;
+                        let mailbox_policy = clients.as_deref().map_or(
+                            ServicePeerPolicyV1::AnyAuthenticated, ServicePeerPolicyV1::Pinned,
+                        );
                         let mailbox=mailbox.clone();
                         let transport = endpoint.address.endpoint_key;
                         active.push(async move {
@@ -229,19 +265,20 @@ impl Node {
                                     }, || host.check_continuous_peer_v4(transport, now_ms()?))).await??;
                                 if kind == NodeServiceV1::MailboxMultiplex {
                                     let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
-                                    return crate::mailbox_rpc::serve_mailbox_multiplex_v5(
-                                        stream, key, clients, mailbox,
+                                    return crate::mailbox_rpc::serve_mailbox_multiplex_with_policy_v5(
+                                        stream, key, mailbox_policy, mailbox,
                                         || host.check_continuous_peer_v4(transport, now_ms()?),
                                     ).await;
                                 }
                                 if kind == NodeServiceV1::MailboxContinuous {
                                     let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
-                                    crate::mailbox_rpc::serve_mailbox_continuous_v4(
-                                        &mut stream, key, clients, mailbox,
+                                    crate::mailbox_rpc::serve_mailbox_continuous_with_policy_v4(
+                                        &mut stream, key, mailbox_policy, mailbox,
                                         || host.check_continuous_peer_v4(transport, now_ms()?),
                                     ).await?;
                                     break;
                                 }
+                                let clients = clients.as_deref().ok_or_else(|| anyhow::anyhow!("open mailbox requires NVMBOX04 or NVMBOX05"))?;
                                 let (store, offer_until) = selected.ok_or_else(||anyhow::anyhow!("missing legacy service offer"))?;
                                 let legacy_until = admitted_at + Duration::from_secs(30);
                                 // The signed offer remains the authority. Its remaining wall

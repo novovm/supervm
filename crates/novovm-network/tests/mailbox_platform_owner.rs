@@ -3,9 +3,16 @@
 use anyhow::{ensure, Result};
 use ed25519_dalek::SigningKey;
 use novovm_network::{
-    carrier_stream::CarrierStreamV1, iroh_transport::*, mailbox_rpc::*, mailbox_store::*,
-    product_directory::sign_relay_record_v1, product_rendezvous_daemon::now_ms,
-    product_rendezvous_owned::run_self_owned_node_on_endpoint_v1, product_service_lease::*,
+    carrier_stream::CarrierStreamV1,
+    iroh_transport::*,
+    mailbox_rpc::*,
+    mailbox_store::*,
+    product_directory::sign_relay_record_v1,
+    product_rendezvous_daemon::now_ms,
+    product_rendezvous_owned::{
+        run_self_owned_mailbox_on_endpoint_v1, run_self_owned_node_on_endpoint_v1,
+    },
+    product_service_lease::*,
 };
 use std::{
     sync::{
@@ -31,6 +38,15 @@ fn control() -> IrohControlV1 {
 #[tokio::test]
 async fn contributor_hosts_shared_mailbox_while_sending_and_retains_obligations_when_disabled(
 ) -> Result<()> {
+    contributor_roundtrip(false).await
+}
+
+#[tokio::test]
+async fn open_contributor_accepts_unregistered_writer_and_independent_reader() -> Result<()> {
+    contributor_roundtrip(true).await
+}
+
+async fn contributor_roundtrip(open: bool) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let db = dir.path().join("mailbox.db");
     let journal = dir.path().join("authority.bin");
@@ -56,39 +72,49 @@ async fn contributor_hosts_shared_mailbox_while_sending_and_retains_obligations_
         version: 1,
         node_pins: [key(1).verifying_key().to_bytes()].into(),
     };
-    let hosting = run_self_owned_node_on_endpoint_v1(
-        &owner,
-        key(1),
-        [key(2).verifying_key().to_bytes()].into(),
-        stop.clone(),
-        Some(service.clone()),
-        move |endpoint, expires| {
-            let now = now_ms()?;
-            let record = sign_relay_record_v1(
-                &key(1),
-                "platform-fixture",
-                vec![endpoint.endpoint()?],
-                now,
-                expires,
-                1,
-            )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now)?;
-            let checkpoint = book.checkpoint()?;
-            let file = ServiceLeaseFileV1::create(
-                &journal,
-                zeroize::Zeroizing::new([91; 32]),
-                &checkpoint,
-            )?;
-            book.attach_persistence(file, &checkpoint)?;
-            Ok(Arc::new(ServiceLeaseHostV1::new(key(1), book)?))
-        },
-        move |value| {
-            if let Some(tx) = published.lock().unwrap().take() {
-                let _ = tx.send(value.clone());
-            }
-            Ok(())
-        },
-    );
+    let activate = move |endpoint: &IrohServiceEndpointV1, expires: u64| {
+        let now = now_ms()?;
+        let record = sign_relay_record_v1(
+            &key(1),
+            "platform-fixture",
+            vec![endpoint.endpoint()?],
+            now,
+            expires,
+            1,
+        )?;
+        let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now)?;
+        let checkpoint = book.checkpoint()?;
+        let file =
+            ServiceLeaseFileV1::create(&journal, zeroize::Zeroizing::new([91; 32]), &checkpoint)?;
+        book.attach_persistence(file, &checkpoint)?;
+        Ok(Arc::new(ServiceLeaseHostV1::new(key(1), book)?))
+    };
+    let publish = move |value: &novovm_network::product_directory::PeerSignedRelayRecordV1| {
+        if let Some(tx) = published.lock().unwrap().take() {
+            let _ = tx.send(value.clone());
+        }
+        Ok(())
+    };
+    let hosting: std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + '_>> = if open {
+        Box::pin(run_self_owned_mailbox_on_endpoint_v1(
+            &owner,
+            key(1),
+            stop.clone(),
+            service.clone(),
+            activate,
+            publish,
+        ))
+    } else {
+        Box::pin(run_self_owned_node_on_endpoint_v1(
+            &owner,
+            key(1),
+            [key(2).verifying_key().to_bytes()].into(),
+            stop.clone(),
+            Some(service.clone()),
+            activate,
+            publish,
+        ))
+    };
     let host = async {
         let result = hosting.await;
         ensure!(
@@ -182,6 +208,23 @@ async fn contributor_hosts_shared_mailbox_while_sending_and_retains_obligations_
             }).await?, MailboxReplyV1::Object { object, ciphertext, expires: actual, .. }
                 if object == [7; 32] && ciphertext == [7; 32] && actual == expires));
                     session.finish().await?;
+                    if open {
+                        // A third key was never registered with the host. Key
+                        // possession alone does NOT confer read capability.
+                        let mut other: CarrierStreamV1<'_> = scope.connect(&route.address).await?.into();
+                        let _other_group = request_mailbox_multiplex_v5(&mut other).await?;
+                        let mut reader = MailboxClientSessionV2::begin_continuous_v4(
+                            &mut other, &key(3), pin,
+                        ).await?;
+                        ensure!(matches!(reader.request(MailboxRequestV1::Fetch {
+                            mailbox: grant.id, read: [98;32],
+                        }).await?, MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)));
+                        ensure!(matches!(reader.request(MailboxRequestV1::Fetch {
+                            mailbox: grant.id, read: *grant.read.as_bytes(),
+                        }).await?, MailboxReplyV1::Object { object, ciphertext, expires: actual, .. }
+                            if object == [7;32] && ciphertext == [7;32] && actual == expires));
+                        reader.finish().await?;
+                    }
                     client_stop.store(true, Ordering::Release);
                     Ok::<_, anyhow::Error>(())
                 };

@@ -225,8 +225,39 @@ pub async fn authenticate_allowed_service_client_observed<O>(
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
-    if allowed.is_empty() || allowed.len() > 16 {
-        return Err(local(anyhow::anyhow!("invalid service allowlist size")));
+    authenticate_service_client_observed(
+        stream,
+        identity,
+        ServicePeerPolicyV1::Pinned(allowed),
+        replay,
+        observer,
+    )
+    .await
+}
+
+/// Local provider choice, not a network license. Open admission proves key
+/// possession; it grants neither mailbox capabilities nor extra resources.
+/// An empty Pinned policy remains invalid and never means open access.
+#[derive(Clone, Copy)]
+pub enum ServicePeerPolicyV1<'a> {
+    Pinned(&'a [[u8; 32]]),
+    AnyAuthenticated,
+}
+
+pub async fn authenticate_service_client_observed<O>(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
+    replay: &mut HandshakeReplayCacheV1,
+    observer: &mut O,
+) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError>
+where
+    O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
+{
+    if let ServicePeerPolicyV1::Pinned(allowed) = policy {
+        if allowed.is_empty() || allowed.len() > 16 {
+            return Err(local(anyhow::anyhow!("invalid service allowlist size")));
+        }
     }
     let binding = stream.binding().map_err(authentication)?;
     let wire = stream
@@ -235,7 +266,9 @@ where
         .map_err(BoundSessionError::Transport)?;
     let offer = BoundNodeHandshakeOfferV1::decode_json(&wire).map_err(authentication)?;
     let claimed = offer.context.initiator_identity_public_key;
-    if !allowed.contains(&claimed) {
+    if claimed == identity.verifying_key().to_bytes()
+        || matches!(policy, ServicePeerPolicyV1::Pinned(allowed) if !allowed.contains(&claimed))
+    {
         return Err(authentication(anyhow::anyhow!(
             "service client not permitted"
         )));
@@ -623,6 +656,114 @@ mod tests {
                 .unwrap(),
             BoundSessionError::Authentication(_)
         ));
+    }
+
+    // Real QUIC admission matrix: no fixed client list in open mode; the
+    // original signature/TLS binding/Finished checks still precede any channel.
+    #[tokio::test]
+    async fn open_service_authenticates_unknown_keys_without_relaxing_crypto() -> Result<()> {
+        let _permit = SERIAL.acquire().await.unwrap();
+        for case in 0..7u8 {
+            let (server_tx, server_rx) = oneshot::channel();
+            let (client_tx, client_rx) = oneshot::channel();
+            let server = with_iroh_scope_v1(config(), control(), move |scope| {
+                Box::pin(async move {
+                    server_tx.send(scope.address()?).unwrap();
+                    let peer: IrohAddressV1 = client_rx.await?;
+                    let mut stream: CarrierStreamV1<'_> =
+                        scope.accept(peer.endpoint_key).await?.into();
+                    let pins = [public(9)];
+                    let policy = match case {
+                        1 => ServicePeerPolicyV1::Pinned(&pins),
+                        2 => ServicePeerPolicyV1::Pinned(&[]),
+                        _ => ServicePeerPolicyV1::AnyAuthenticated,
+                    };
+                    let mut stages = Vec::new();
+                    let result = authenticate_service_client_observed(
+                        &mut stream,
+                        &key(2),
+                        policy,
+                        &mut HandshakeReplayCacheV1::new(8),
+                        &mut |stage, path| record_stage(&mut stages, stage, path),
+                    )
+                    .await;
+                    if case == 0 {
+                        ensure!(result?.1 == public(1));
+                        ensure!(stages.last() == Some(&BoundSessionStage::FinishedVerified));
+                        stream.finish().await?;
+                    } else {
+                        ensure!(result.is_err(), "invalid admission case {case} accepted");
+                        ensure!(!stages.contains(&BoundSessionStage::FinishedVerified));
+                        if case == 2 {
+                            ensure!(matches!(result, Err(BoundSessionError::Local(_))));
+                        } else {
+                            ensure!(matches!(result, Err(BoundSessionError::Authentication(_))));
+                        }
+                    }
+                    Ok(())
+                })
+            });
+            let client = with_iroh_scope_v1(config(), control(), move |scope| {
+                Box::pin(async move {
+                    client_tx.send(scope.address()?).unwrap();
+                    let mut stream: CarrierStreamV1<'_> =
+                        scope.connect(&server_rx.await?).await?.into();
+                    if case <= 2 {
+                        let result = authenticate_bound_session(
+                            &mut stream,
+                            &key(1),
+                            public(2),
+                            true,
+                            &mut HandshakeReplayCacheV1::new(8),
+                        )
+                        .await;
+                        if case == 0 {
+                            result?;
+                            stream.finish().await?;
+                        } else {
+                            ensure!(result.is_err());
+                        }
+                    } else {
+                        let initiator = BoundHandshakeInitiatorV1::start(
+                            &key(1),
+                            public(2),
+                            stream.binding()?,
+                            now_ms()?,
+                            BOUND_HANDSHAKE_MAX_TTL_MS_V1,
+                        )?;
+                        let mut offer = initiator.offer().clone();
+                        match case {
+                            3 => offer.signature[0] ^= 1,
+                            5 => offer.context.initiator_identity_public_key = [0; 32],
+                            6 => offer.context.initiator_identity_public_key = public(2),
+                            _ => {}
+                        }
+                        stream.write_frame(&serde_json::to_vec(&offer)?).await?;
+                        if case == 4 {
+                            let response = BoundNodeHandshakeResponseV1::decode_json(
+                                &stream.read_frame().await?,
+                            )?;
+                            let mut pending = initiator.complete(
+                                &response,
+                                now_ms()?,
+                                &mut HandshakeReplayCacheV1::new(8),
+                            )?;
+                            let mut finished = pending.make_finished(now_ms()?)?;
+                            finished.ciphertext[0] ^= 1;
+                            stream.write_frame(&serde_json::to_vec(&finished)?).await?;
+                            // Consume the server's Finished, then observe refusal.
+                            let _ = stream.read_frame().await;
+                        }
+                        ensure!(stream.read_frame().await.is_err());
+                    }
+                    Ok(())
+                })
+            });
+            let (server, client) = tokio::join!(server, client);
+            client.map_err(|e| e.context(format!("client admission case {case}")))?;
+            server.map_err(|e| e.context(format!("server admission case {case}")))?;
+        }
+        Ok(())
     }
 
     async fn observer_rejection(

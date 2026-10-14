@@ -1,5 +1,14 @@
 # Agent Highest Law
 
+- 2026-10-14 L4 clarification: ordinary mailbox clients must not require a
+  developer approval or fixed public-key enrollment list. Use explicit open
+  key-possession admission on the existing continuous mailbox protocol, with
+  recipient capabilities and node-wide resource bounds. Retain optional pinned
+  provider policies and legacy verifiers; an empty allowlist never means open.
+  Authenticate each bound secure stream once and reuse it, not a full handshake
+  per mailbox request. Contribution choice, current resource readiness and
+  retained storage obligations remain distinct. No new license or scheduler.
+
 - 2026-10-14 user clarification: permissionless NOVONET participation, identity
   authentication, node-owned resource limits and paid service entitlements are
   separate concerns. Basic connectivity must not depend on periodic network

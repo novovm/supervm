@@ -1,7 +1,10 @@
 //! One L3/L4 protocol over the existing Finished-bound carrier. No chat IDs.
 //! Owner admits the service path; credentials are never sent before peer authentication.
 use crate::{
-    bound_session::{authenticate_allowed_service_client, authenticate_bound_session},
+    bound_session::{
+        authenticate_allowed_service_client, authenticate_bound_session,
+        authenticate_service_client_observed, ServicePeerPolicyV1,
+    },
     carrier_stream::CarrierStreamV1,
     duplex::{HandshakeReplayCacheV1, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
     iroh_transport::{decode_iroh_envelope_v1, encode_iroh_envelope_v1},
@@ -761,7 +764,7 @@ pub async fn serve_mailbox_session_v2(
     serve_session(
         stream,
         identity,
-        allowed,
+        ServicePeerPolicyV1::Pinned(allowed),
         service,
         authority,
         SessionMode::Legacy,
@@ -789,7 +792,7 @@ pub async fn serve_mailbox_window_v3(
         serve_session(
             stream,
             identity,
-            allowed,
+            ServicePeerPolicyV1::Pinned(allowed),
             service,
             authority,
             SessionMode::Window(deadline),
@@ -809,6 +812,25 @@ pub async fn serve_mailbox_continuous_v4(
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
+    serve_mailbox_continuous_with_policy_v4(
+        stream,
+        identity,
+        ServicePeerPolicyV1::Pinned(allowed),
+        service,
+        authority,
+    )
+    .await
+}
+
+/// The same NVMBOX04 handshake/session with explicit provider admission policy.
+/// Open admission does not bypass the store's capabilities or global budgets.
+pub async fn serve_mailbox_continuous_with_policy_v4(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
     let revoked = async {
         loop {
             if let Err(error) = authority() {
@@ -820,7 +842,7 @@ pub async fn serve_mailbox_continuous_v4(
     tokio::select! {
         biased;
         error = revoked => Err(error),
-        result = serve_session(stream, identity, allowed, service, &authority, SessionMode::Continuous) => result,
+        result = serve_session(stream, identity, policy, service, &authority, SessionMode::Continuous) => result,
     }
 }
 
@@ -834,9 +856,28 @@ enum SessionMode {
 /// authenticates its own allowed client, Finished and AEAD sequence. The same
 /// service owns storage/rate budgets across ALL connections and lanes.
 pub async fn serve_mailbox_multiplex_v5(
-    mut first: CarrierStreamV1<'_>,
+    first: CarrierStreamV1<'_>,
     identity: &SigningKey,
     allowed: &[[u8; 32]],
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    serve_mailbox_multiplex_with_policy_v5(
+        first,
+        identity,
+        ServicePeerPolicyV1::Pinned(allowed),
+        service,
+        authority,
+    )
+    .await
+}
+
+/// Original multiplex protocol; each lane proves its own key possession once.
+/// All lanes and identities share the SAME node resource accounting.
+pub async fn serve_mailbox_multiplex_with_policy_v5(
+    mut first: CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
@@ -855,7 +896,14 @@ pub async fn serve_mailbox_multiplex_v5(
                 )
                 .await??;
             }
-            serve_mailbox_continuous_v4(&mut stream, identity, allowed, service, authority).await
+            serve_mailbox_continuous_with_policy_v4(
+                &mut stream,
+                identity,
+                policy,
+                service,
+                authority,
+            )
+            .await
         }
     };
     let mut active = FuturesUnordered::new();
@@ -884,7 +932,7 @@ pub async fn serve_mailbox_multiplex_v5(
 async fn serve_session(
     stream: &mut CarrierStreamV1<'_>,
     identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
     mode: SessionMode,
@@ -894,11 +942,12 @@ async fn serve_session(
         "mailbox service signer mismatch"
     );
     authority()?;
-    let (mut channel, _) = authenticate_allowed_service_client(
+    let (mut channel, _) = authenticate_service_client_observed(
         stream,
         identity,
-        allowed,
+        policy,
         &mut HandshakeReplayCacheV1::new(8),
+        &mut |_, _| Ok(()),
     )
     .await?;
     let (mut sent, mut received) = (0, 0);
