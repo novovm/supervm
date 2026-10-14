@@ -16,6 +16,9 @@ Current authoritative documents:
 
 Proposals (not frozen genesis parameters or implemented settlement):
 
+- [NOVONET service billing contract v1, 2026-10-14](NOVONET-SERVICE-BILLING-V1-2026-10-14.md).
+  NOV payments and settlement, non-transferable resource allowances, funded
+  provider budgets, and explicit gross/net fee mapping. No live billing yet.
 - [NOVONET L3/L4 contribution rewards, 2026-10-13](NOVONET-CONTRIBUTION-REWARDS-DRAFT-2026-10-13.md).
   The user confirmed default-enabled bounded L4 participation and genesis-defined
   reward policy; allocation weights, release schedule and pricing remain proposals.
