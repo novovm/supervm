@@ -100,10 +100,10 @@ unstable-net-report = []
 
 [lib]
 name = "iroh"
-crate-type = [
-    "lib",
-    "cdylib",
-]
+# Native Rust dependency: preserve Cargo metadata-hashed rlib outputs.
+# The upstream cdylib is a wasm leaf artifact, not a NOVOVM runtime dependency.
+# See NOVOVM_PATCH.md for the cross-workspace artifact collision regression.
+crate-type = ["rlib"]
 path = "src/lib.rs"
 
 [[example]]

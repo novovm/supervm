@@ -3,6 +3,25 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-14 Windows 共用 target 的双 Tokio 来源定位
+
+输入 `28b10066`。NOVOCHAT 原owner回归2通过4失败，新定向夹具证明同一
+Application runtime内Handle检查和直接Tokio UDP绑定成功，Iroh/netwatch
+`UdpSocket::from_std`却报无reactor。失败linker map实际包含Tokio
+`846da778cd63c275`与`a343ea2b4b26e36d`及两个独立TLS context；Cargo指纹
+仅预期后者。实际载体来自13:36的共享仓构建，而APP期望13:00的依赖图。
+
+已定位vendored Iroh同时生成lib/cdylib，产物为无hash的`libiroh.rlib`，
+两仓不同锁定依赖（socket2/syn）在同一target顺序构建时覆盖它。改为本地
+Rust依赖所需的rlib，由Cargo按图生成带hash文件；APP自身JNI/FFI库类型不变。
+不改Tokio runtime、重试、网络协议或权限，不把清缓存/禁增量当修复。
+原始上游清单/哈希保留，补丁范围说明已更新；通用碰撞背景见Cargo #6313，
+本事故依据实际链接证据。失败EXE/PDB/map保留于NOVOCHAT忽略artifacts目录。
+
+本片共享真实平台owner4项0.63秒通过，编译1分35秒。APP回归及共享仓/APP
+交替构建正在继续，未以共享组件通过宣称APP故障关闭。Android安装与当前L3
+未改变，L4手机接线和原并发组合断言仍单独待验。
+
 ## 2026-10-14 L4 平台宿主接缝：借用持久端点，沿用原信箱
 
 输入 `50794698`。新增 `IrohEndpointOwnerV1::with_owned_listener_v1` 和

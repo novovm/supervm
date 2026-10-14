@@ -5,7 +5,7 @@ Source: crates.io `iroh` 1.3.0, package checksum
 Upstream Git revision: `0072d7d84b233f9e7185eb676f049beaf557ac03`, path `iroh`.
 Original BSD-3-Clause license and source are retained. Registry installation
 marker and upstream package lock are omitted. `UPSTREAM_SHA256.json` records
-the original imported file hashes. Source changes are confined to
+the original imported file hashes. Transport source changes are confined to
 `src/socket.rs`, `src/endpoint.rs`, `src/socket/transports.rs` and
 `src/socket/transports/ip.rs`; no wire, crypto, route or relay change.
 
@@ -40,3 +40,30 @@ audited. Regression tests live with `iroh_transport` in `novovm-network`, use
 actual QUIC and UDP port release, and include cancellation and an unreachable
 peer. Re-evaluate and retire this fork when an upstream version provides the
 same cancellation and bounded-drain guarantees; do not update it implicitly.
+
+
+## Native dependency artifact isolation (2026-10-14)
+
+This vendored native dependency builds only `rlib`. Upstream additionally
+selects `cdylib` for its standalone wasm output (see unchanged `Cargo.toml.orig`).
+NOVOVM and NOVOCHAT consume Rust APIs; their own executable/JNI/FFI leaf crates
+own the deliverable ABI. This patch does not remove their shared-library output
+or alter Iroh protocols. Standalone upstream wasm packaging is not provided by
+this native vendor manifest; it must request its own leaf artifact explicitly.
+
+On Windows Rust/Cargo 1.94 with two workspaces sharing a target directory,
+`lib` + `cdylib` emitted `debug/deps/libiroh.rlib` without a metadata suffix.
+The workspaces have different locked socket2/syn dependencies. Building the
+other workspace overwrote that rlib while the first workspace's fingerprint
+still pointed to its previous graph. The NOVOCHAT test linked two Tokio 1.50
+artifacts with separate thread-local runtime contexts: direct Tokio UDP bind
+worked, but Iroh/netwatch's `from_std` panicked with "no reactor running".
+Disabling incremental compilation or clearing caches is not the correction.
+Building an ordinary rlib preserves graph-specific artifact names; alternating
+workspaces must retain distinct artifacts and pass real endpoint operations.
+The original failure binary, map and logs remain in ignored local artifacts.
+
+Cargo tracks the general artifact collision class in
+https://github.com/rust-lang/cargo/issues/6313 . This incident is established by
+our actual linker map and endpoint regression, not by assuming that issue
+alone diagnoses all reactor errors. See the production tracker for validation.
