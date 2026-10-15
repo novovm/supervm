@@ -1,5 +1,11 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 最新用户决定：七月为实现主体。** 以`4f45526d`原生NovoRUDP/APFL
+完整工程起步，后续有效能力向它迁入；取代继续在十月worker接载体的任务。
+仓内detached恢复现场`docs/temp/july-native-rebuild`已建立，原node的locked
+cargo check通过；不新建分支，不覆盖main或49草稿。尚未复测运行/TPS。
+实施和清理边界见[最新路线](NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md#2026-10-15-用户最终决定七月主体后续能力向内迁入)。
+
 **2026-10-15 原Windows通讯节点部署（认领释放）：** NOVOCHAT会话，输入b8afbf95。
 原用户托管节点升级至已实现V6空闲/地址更新运行时，保留身份、信箱和撤销。
 两部原Android自动恢复后双向持久回执通过，1797/2061ms两个样本仍非秒级。
