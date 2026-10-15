@@ -3,6 +3,30 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 共享原生传输源码进入main，信箱SDK仍待业务接线
+
+输入main `66ac995b`、七月恢复线 `fb8fc69e`。NOVOCHAT反馈属实：此前远端仅有
+进度文档，恢复线的原生客户端源码不可用。本片将18份已验证的会话/对象传输/
+二进制封装源码与测试迁入原`novovm-network`，仅接公开模块与原握手的可重试完成
+适配；不覆盖Cargo依赖/已有信箱/Iroh/TLS，不改主链、AOEM或财务。另补显式有界
+`NativeEndpoint::listen_clients`，不要求预置验证者/客户端公钥；旧空allowlist仍拒绝。
+四个底层适配文件同步回七月恢复现场，同一实现，不另立手机协议栈。
+
+Windows debug：共享main的novorudp过滤回归81通过0.63s，product_overlay过滤22
+通过0.05s；外部公共API真实UDP双向12,000字节、三轮同会话（含握手期后继续）与
+空策略/限额反例2通过0.04s，无HTTP/Iroh/Relay调用。相同2项在
+`iroh-transport,tls-transport,mailbox-seal`组合下也通过0.04s；原信箱local_tests
+2通过0.41s。默认及该feature组合的lib Clippy `-D warnings`均通过。
+恢复现场相同公共API2通过0.06s、novorudp70通过0.97s。加入原CI步骤；远端结果待查。
+
+这是真实共享源码/公共传输API交付，**不是完整APFL信箱、Android或主链生产签收**。
+测试正文为opaque binary，不声称APFL算法收益；原信箱正文仍JSON/CarrierStream。
+后续在同一共享crate内接结构schema/原信箱owner，再做Android ARM64与实机验证；
+保留Message ID/TTL/能力/密文/StoreReceipt/设备回执，不把聊天放入转账共识。
+移动换源重连及槽位回收未完成；不以此覆盖在用手机或让另一端另造SDK。
+接入点、可复跑命令及限制见[共享交接](NOVORUDP_SHARED_CLIENT_HANDOFF.md)。
+49份原草稿、恢复现场主链查询草稿原样保留；无新TPS、GPU、ZK或发布声明。
+
 ## 2026-10-16 原生应用提交与首发禁用HTTP边界
 
 用户最新决定：首发NOVOVM/NOVONET使用自身SDK/NovoRUDP/APFL闭环，不开放

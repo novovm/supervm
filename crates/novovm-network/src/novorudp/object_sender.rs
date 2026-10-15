@@ -1,0 +1,316 @@
+//! Bounded object cursor adapting the original window repair/pacing functions
+//! to native encrypted UDP. One cursor retains one prepared body; its owner must
+//! reserve global/per-peer slots before construction. No consensus or ledger.
+//! A repair plan is drained over polls WITHOUT requiring a fresh ACK each batch.
+
+use super::{
+    datagram::NativeUdpSession,
+    fragments::{FragmentProfile, OutgoingMessage},
+    object_ack::*,
+    *,
+};
+use anyhow::{ensure, Context, Result};
+use std::{
+    net::UdpSocket,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectSendState {
+    Sending,
+    Delivered,
+    Expired,
+}
+
+struct RepairCursor {
+    plan: NovoRudpRepairPlan,
+    range: usize,
+    index: u64,
+    copy: u64,
+}
+
+pub struct NativeObjectSender {
+    body: Arc<OutgoingMessage>,
+    session: [u8; 16],
+    stream: u64,
+    config: NovoRudpWindowConfig,
+    pacing: NovoRudpPacingProfile,
+    state: NovoRudpSenderState,
+    terminal: ObjectSendState,
+    initial: usize,
+    copy: u64,
+    repair: Option<RepairCursor>,
+    last_plan: Option<NovoRudpRepairPlan>,
+    last_missing: Option<u64>,
+    retry_pending: bool,
+    next_send: Instant,
+    feedback_deadline: Instant,
+    deadline: Instant,
+    attempts: u64,
+}
+
+impl NativeObjectSender {
+    pub fn new(
+        body: Arc<OutgoingMessage>,
+        session: [u8; 16],
+        stream: u64,
+        config: NovoRudpWindowConfig,
+        pacing: NovoRudpPacingProfile,
+        now: Instant,
+        ttl: Duration,
+    ) -> Result<Self> {
+        ensure!(
+            body.profile() == FragmentProfile::NativeUdpV2,
+            "native sender requires UDP fragments"
+        );
+        ensure!(
+            config.window_size == OBJECT_WINDOW
+                && (1..=64).contains(&config.batch_size)
+                && (1..=64).contains(&pacing.batch_size)
+                && (1..=16).contains(&config.packet_copies)
+                && (1..=16).contains(&config.tail_packet_copies)
+                && (1..=16).contains(&pacing.packet_copies)
+                && (1..=16).contains(&pacing.tail_packet_copies)
+                && config.ack_wait_ms > 0
+                && pacing.ack_wait_ms > 0
+                && config.max_window_retries > 0
+                && !ttl.is_zero(),
+            "invalid bounded native pacing"
+        );
+        Ok(Self {
+            body,
+            session,
+            stream,
+            config,
+            pacing,
+            state: NovoRudpSenderState::new(),
+            terminal: ObjectSendState::Sending,
+            initial: 0,
+            copy: 0,
+            repair: None,
+            last_plan: None,
+            last_missing: None,
+            retry_pending: false,
+            next_send: now,
+            feedback_deadline: now,
+            deadline: now.checked_add(ttl).context("object TTL overflow")?,
+            attempts: 0,
+        })
+    }
+    pub fn status(&self) -> ObjectSendState {
+        self.terminal
+    }
+    pub fn body(&self) -> &Arc<OutgoingMessage> {
+        &self.body
+    }
+    /// Ownership is preserved even on timeout; caller can report/retry the same
+    /// intent. Releasing transport retention is NOT permission to discard an
+    /// accepted wallet transaction or treat it as finalized.
+    pub fn into_body(self) -> Arc<OutgoingMessage> {
+        self.body
+    }
+
+    pub fn on_ack(
+        &mut self,
+        frame: &NovoRudpTransportFrameV0,
+        now: Instant,
+    ) -> Result<NovoRudpSenderRepairDecision> {
+        ensure!(
+            self.terminal == ObjectSendState::Sending && now < self.deadline,
+            "object sender is terminal/expired"
+        );
+        let ack = decode_object_ack(
+            frame,
+            self.session,
+            self.stream,
+            self.body.id(),
+            self.body.frame_count() as u64,
+        )?;
+        let progress = self
+            .last_missing
+            .is_none_or(|previous| ack.missing_count < previous);
+        let decision =
+            sender_repair_decision_from_ack(&mut self.state, &ack, &self.config, &self.pacing);
+        match &decision {
+            NovoRudpSenderRepairDecision::StaleAck { .. } => return Ok(decision),
+            NovoRudpSenderRepairDecision::ReceiverDone => {
+                self.terminal = ObjectSendState::Delivered;
+                self.repair = None;
+                self.last_plan = None;
+            }
+            NovoRudpSenderRepairDecision::WindowComplete => {
+                self.repair = None;
+                self.last_plan = None;
+            }
+            NovoRudpSenderRepairDecision::Repair(plan) => {
+                // Identical snapshots do not rewind a partially sent repair.
+                let same = self
+                    .last_plan
+                    .as_ref()
+                    .is_some_and(|old| old.window == plan.window);
+                if !same {
+                    self.last_plan = Some(plan.clone());
+                    self.repair = Some(RepairCursor {
+                        plan: plan.clone(),
+                        range: 0,
+                        index: plan.window.missing_ranges[0].start,
+                        copy: 0,
+                    });
+                }
+            }
+        }
+        self.last_missing = Some(ack.missing_count);
+        if progress {
+            self.attempts = 0;
+            self.feedback_deadline = self.feedback_due(now);
+        }
+        Ok(decision)
+    }
+
+    /// Bounded work quantum; no read/ACK wait here. Caller drains ACKs separately
+    /// and fairly polls other peers/objects. Failed sends never advance cursors.
+    pub fn poll_send(
+        &mut self,
+        socket: &UdpSocket,
+        session: &mut NativeUdpSession,
+        now: Instant,
+        budget: usize,
+    ) -> Result<usize> {
+        ensure!((1..=64).contains(&budget), "invalid datagram quantum");
+        ensure!(
+            session.session_id() == self.session,
+            "object sender session changed"
+        );
+        if self.terminal != ObjectSendState::Sending {
+            return Ok(0);
+        }
+        if now >= self.deadline {
+            self.terminal = ObjectSendState::Expired;
+            return Ok(0);
+        }
+        if now < self.next_send {
+            return Ok(0);
+        }
+        let initial = self.initial < self.body.frame_count();
+        let retry = !initial && self.repair.is_none();
+        if retry && now < self.feedback_deadline {
+            return Ok(0);
+        }
+        if retry
+            && self.attempts >= self.config.max_window_retries
+            && (self.config.no_progress_backoff || self.pacing.no_progress_backoff)
+        {
+            // Suppress repeated no-progress work, not the retained intent.
+            // Fresh progress reopens the cursor; only its explicit TTL expires it.
+            return Ok(0);
+        }
+        if retry {
+            self.retry_pending = true;
+            if let Some(plan) = &self.last_plan {
+                self.repair = Some(RepairCursor {
+                    plan: plan.clone(),
+                    range: 0,
+                    index: plan.window.missing_ranges[0].start,
+                    copy: 0,
+                });
+            }
+        }
+        let batch =
+            self.repair
+                .as_ref()
+                .map(|r| r.plan.batch_size)
+                .unwrap_or(self.config.batch_size.max(self.pacing.batch_size)) as usize;
+        let pause = self
+            .repair
+            .as_ref()
+            .map(|r| r.plan.batch_pause_ms)
+            .unwrap_or(self.config.batch_pause_ms.max(self.pacing.batch_pause_ms));
+        let mut sent = 0;
+        for _ in 0..budget.min(batch) {
+            let (index, copies, kind) = if self.initial < self.body.frame_count() {
+                (
+                    self.initial,
+                    self.config.packet_copies.max(self.pacing.packet_copies),
+                    NovoRudpTransportFrameKindV0::Data,
+                )
+            } else if let Some(repair) = &self.repair {
+                (
+                    repair.index as usize,
+                    repair.plan.packet_copies,
+                    NovoRudpTransportFrameKindV0::Repair,
+                )
+            } else if sent == 0 {
+                // Lost feedback/all initial packets: a bounded tail probe lets
+                // the receiver reconstruct its missing snapshot. No full resend.
+                (
+                    self.body.frame_count() - 1,
+                    1,
+                    NovoRudpTransportFrameKindV0::Repair,
+                )
+            } else {
+                break;
+            };
+            let frame = NovoRudpTransportFrameV0::new(
+                kind,
+                self.session,
+                self.stream,
+                u64::from_be_bytes(self.body.id()[..8].try_into()?),
+                index as u64,
+                self.state.latest_ack_epoch,
+                self.body.frame(index)?,
+            );
+            if !session.try_send(socket, &frame)? {
+                break;
+            }
+            sent += 1;
+            if self.retry_pending {
+                self.attempts = self.attempts.saturating_add(1);
+                self.retry_pending = false;
+            }
+            if self.initial < self.body.frame_count() {
+                self.copy += 1;
+                if self.copy == copies {
+                    self.copy = 0;
+                    self.initial += 1;
+                }
+            } else if let Some(repair) = &mut self.repair {
+                repair.copy += 1;
+                if repair.copy == copies {
+                    repair.copy = 0;
+                    repair.index += 1;
+                    if repair.index > repair.plan.window.missing_ranges[repair.range].end_inclusive
+                    {
+                        repair.range += 1;
+                        if repair.range == repair.plan.window.missing_ranges.len() {
+                            self.repair = None;
+                        } else {
+                            repair.index = repair.plan.window.missing_ranges[repair.range].start;
+                        }
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        if sent > 0 {
+            self.next_send = now
+                .checked_add(Duration::from_millis(pause))
+                .unwrap_or(self.deadline)
+                .min(self.deadline);
+            self.feedback_deadline = self.feedback_due(now);
+        }
+        Ok(sent)
+    }
+
+    fn feedback_due(&self, now: Instant) -> Instant {
+        now.checked_add(Duration::from_millis(
+            self.config.ack_wait_ms.max(self.pacing.ack_wait_ms),
+        ))
+        .unwrap_or(self.deadline)
+        .min(self.deadline)
+    }
+}
+
+#[cfg(test)]
+mod tests;
