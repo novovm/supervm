@@ -62,6 +62,7 @@ pub struct NativeLifecycle {
     requested: BTreeSet<(Hash, Hash)>,
     height: u64,
     policy: DirectNovFeePolicy,
+    validators: ValidatorSet,
     codec: DecodeLimits,
     frozen: bool,
     pub rejected_messages: u64,
@@ -131,6 +132,7 @@ impl NativeLifecycle {
             requested: BTreeSet::new(),
             height,
             policy,
+            validators: validators.clone(),
             codec,
             frozen: false,
             rejected_messages: 0,
@@ -394,3 +396,5 @@ impl NativeLifecycle {
 }
 
 mod ingress;
+mod successor;
+pub use successor::SuccessorSelection;

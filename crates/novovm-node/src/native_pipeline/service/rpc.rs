@@ -9,8 +9,9 @@ use super::{ResidentConfig, ResidentNode, StartMode};
 use crate::native_fresh_rpc::FreshRpcServer;
 use crate::native_pipeline::business::nov_transfer_batch::balance_key;
 use crate::native_pipeline::business::quoted_transfer::Account;
+use crate::native_pipeline::consensus::statement::ParentPoint;
 use crate::native_pipeline::consensus::transport::Message;
-use crate::native_pipeline::consensus::wire::Hash;
+use crate::native_pipeline::consensus::wire::{Context as VoteContext, Hash};
 use crate::native_pipeline::consensus::ArchiveRead;
 use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 #[cfg(test)]
@@ -162,8 +163,10 @@ impl PoolRetention {
 struct Position {
     height: u64,
     round: u64,
-    parent: Hash,
-    successor: bool,
+    parent: ParentPoint,
+    // A private lookahead is tied to the source round, not just a parent hash.
+    // This token never authorizes a proposal, vote, or published nonce update.
+    source: Option<(VoteContext, u64)>,
 }
 
 struct GossipOffer {
@@ -273,8 +276,8 @@ impl RpcLifecycle {
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
             return Ok(());
         }
-        // Catch up the nonce query projection before selecting current work.
-        // Successor overlap is not yet activated by this native assembly.
+        // The durable parent receipt overlay is meaningful only on top of this
+        // exact published projection. Neither it nor selection mutates nonces.
         if self.indexed_height != self.node.controller.parent().height {
             return Ok(());
         }
@@ -285,17 +288,38 @@ impl RpcLifecycle {
         if self.incoming.is_some() && !self.ingress_batch_boundary {
             return Ok(());
         }
-        // Current-height native assembly. Existing successor/early mechanisms
-        // remain preserved assets; this profile does NOT claim their activation.
-        if !self.node.controller.is_local_leader()? {
-            return Ok(());
-        }
-        let parent = self.node.controller.parent();
+        let current_height = self.node.controller.context().height;
+        let successor = if self.node.controller.is_local_leader()?
+            && !self.node.controller.has_successor_target(current_height)
+        {
+            None
+        } else {
+            // Reuse one bounded lookahead within the existing body owner.
+            // No duplicate body or repeated nonce projection while it runs.
+            let Some(next_height) = current_height.checked_add(1) else {
+                return Ok(());
+            };
+            if self.node.controller.has_successor_target(next_height) {
+                return Ok(());
+            }
+            let Some(selection) = self.node.controller.successor_selection()? else {
+                return Ok(());
+            };
+            Some(selection)
+        };
+        let parent = successor
+            .as_ref()
+            .map_or_else(|| self.node.controller.parent(), |s| s.parent);
         let position = Position {
-            height: parent.height + 1,
-            round: self.node.controller.round(),
-            parent: parent.block_hash,
-            successor: false,
+            height: parent
+                .height
+                .checked_add(1)
+                .context("candidate height exhausted")?,
+            round: successor
+                .as_ref()
+                .map_or_else(|| self.node.controller.round(), |_| 0),
+            parent,
+            source: successor.as_ref().map(|s| (s.source, s.source_round)),
         };
         if self.offered == Some(position) {
             return Ok(());
@@ -305,7 +329,9 @@ impl RpcLifecycle {
                 &self.order,
                 &self.pending,
                 &self.nonces,
-                BTreeMap::new(),
+                successor
+                    .as_ref()
+                    .map_or_else(BTreeMap::new, |s| s.nonce_after.clone()),
                 self.batch_size,
             );
             if selected.is_empty() {
@@ -326,11 +352,16 @@ impl RpcLifecycle {
             let batch = selected_apfl_batch(&selected, &self.pending, self.batch_size)?;
             self.offer = Some((position, Arc::new(Message::ApflBody { context, batch })));
         }
-        if self
-            .node
-            .controller
-            .offer(&self.offer.as_ref().expect("prepared RPC body").1)?
-        {
+        let message = &self.offer.as_ref().expect("prepared native body").1;
+        let accepted = match &successor {
+            Some(selection) => {
+                self.node
+                    .controller
+                    .offer_successor(message, selection, &self.node.pipeline)?
+            }
+            None => self.node.controller.offer(message)?,
+        };
+        if accepted {
             self.offered = Some(position);
         }
         Ok(())
@@ -442,8 +473,9 @@ impl RpcLifecycle {
         ensure!(matches, "admission signature/input mismatch");
         // Signature-checked memory admission is not current-state admission.
         // A lagging query projection must not stall ingress. Selection still
-        // waits for the exact published parent above; projection removes stale
-        // nonces before any new current-height body can be submitted.
+        // requires the exact published projection above; optional lookahead
+        // overlays only locally executed durable parent receipts. Publication
+        // alone removes stale nonces from the authoritative query projection.
         for asset in [
             &checked.transfer().asset,
             &checked.transfer().fee_policy.pay_asset,
@@ -629,7 +661,7 @@ impl RpcLifecycle {
             "requested_bodies":core.requested_bodies,"served_bodies":core.served_bodies,
             "native_pending_deliveries":core.pending_deliveries(),"native_rejected_messages":core.rejected_messages,
             "native_expired_sends":core.expired_sends,
-            "successor_overlap_active":false,"business_proof_required":false,"business_proof_verified":false,
+            "successor_overlap_active":true,"business_proof_required":false,"business_proof_verified":false,
             "mempool_gossip":true,"gossip_delivery":"bounded_native_custody_not_durable_admission",
             "gossip_repair":self.gossip_repair.status(),"gossip_verified_inputs":self.gossip_verified,
             "gossip_rejected_inputs":self.gossip_rejected,"authentication_cache_hits":self.authentication_cache_hits,
@@ -639,6 +671,10 @@ impl RpcLifecycle {
         status["pending_retained_payload_bytes"] = json!(self.pending_retention.bytes);
         status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
+        let [auth, started, before_parent, promoted, discarded] = core.successor_metrics();
+        status["successor"] = json!({"authentication_started":auth,"execution_started":started,
+            "completed_before_parent":before_parent,"promoted":promoted,"discarded":discarded,
+            "scope":"local_next_proposer_after_durable_parent_candidate"});
         status
     }
 
@@ -973,7 +1009,7 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
 }
 
 /// O(1) scheduling hint, never an execution, publication or signing permit.
-pub fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 9] {
+pub fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 10] {
     let core = &lifecycle.node.controller;
     [
         core.executed(),
@@ -985,6 +1021,9 @@ pub fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 9] {
         lifecycle.indexed_height,
         lifecycle.gossip_verified,
         core.io_progress_generation(),
+        core.successor_metrics()
+            .into_iter()
+            .fold(0_u64, u64::wrapping_add),
     ]
 }
 
@@ -1042,6 +1081,114 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn prepared_selection_identity_includes_full_parent_and_source_round() {
+        let parent = ParentPoint {
+            height: 3,
+            block_hash: [1; 32],
+            state_root: [2; 32],
+            receipt_batch_commitment: [3; 32],
+            state_version: 12,
+            decision_hash: [4; 32],
+        };
+        let source = VoteContext {
+            chain_id: 71,
+            genesis_config_commitment: [5; 32],
+            protocol_commitment: [6; 32],
+            epoch: 1,
+            validator_set_hash: [7; 32],
+            height: 3,
+            parent_block_hash: [8; 32],
+            parent_decision_hash: [9; 32],
+        };
+        let position = Position {
+            height: 4,
+            round: 0,
+            parent,
+            source: Some((source, 2)),
+        };
+        assert!(
+            position
+                != Position {
+                    source: Some((source, 3)),
+                    ..position
+                }
+        );
+        assert!(
+            position
+                != Position {
+                    source: None,
+                    ..position
+                }
+        );
+        assert!(
+            position
+                != Position {
+                    source: Some((
+                        VoteContext {
+                            parent_decision_hash: [10; 32],
+                            ..source
+                        },
+                        2
+                    )),
+                    ..position
+                }
+        );
+        for changed in [
+            ParentPoint {
+                height: 4,
+                ..parent
+            },
+            ParentPoint {
+                block_hash: [11; 32],
+                ..parent
+            },
+            ParentPoint {
+                state_root: [12; 32],
+                ..parent
+            },
+            ParentPoint {
+                receipt_batch_commitment: [13; 32],
+                ..parent
+            },
+            ParentPoint {
+                state_version: 13,
+                ..parent
+            },
+            ParentPoint {
+                decision_hash: [14; 32],
+                ..parent
+            },
+        ] {
+            assert!(
+                position
+                    != Position {
+                        parent: changed,
+                        ..position
+                    }
+            );
+        }
+    }
+
+    #[test]
+    fn durable_successor_nonce_overlay_keeps_published_projection_and_pending_unchanged() {
+        let (order, mut pending) = pending_fixture(4, 8);
+        // The last row belongs to an independent sender and must use the
+        // published prefix when the durable parent did not touch that sender.
+        let independent = *order.back().unwrap();
+        pending.get_mut(&independent).unwrap().signer = [2; 32];
+        let published = BTreeMap::from([([1; 32], 0), ([2; 32], 3)]);
+        // This is an already-executed parent result (success/failure nonce
+        // semantics are covered by the real-pipeline tests), not guessed credit.
+        let next = BTreeMap::from([([1; 32], 2)]);
+        let selected = select_pending_batch(&order, &pending, &published, next.clone(), 4);
+        assert_eq!(selected, vec![order[2], independent]);
+        assert_eq!(published[&[1; 32]], 0);
+        assert_eq!(next[&[1; 32]], 2);
+        assert_eq!(pending.len(), 4);
+        assert_eq!(order.len(), 4);
+    }
 
     #[test]
     fn apfl_pending_prefix_uses_exact_original_signature_and_nonce_not_codec_trust() -> Result<()> {

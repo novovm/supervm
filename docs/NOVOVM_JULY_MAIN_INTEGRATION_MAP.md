@@ -7,7 +7,10 @@
 代数各两项四进程闭环通过，详见[本轮证据](../artifacts/audit/july-main-tick-20261016/README.md)。
 配置、传输、查询和CI随实际入口调整；没有覆盖endpoint、旧wire、EVM或proof。
 旧controller/channel及历史反例源码保留但不编译为第二活动产品；因此不将其
-旧A/A/B/offline结论记入新入口。release性能、原生组合故障和后继重叠仍待完成。
+旧A/A/B/offline结论记入新入口。后续原生release查询修复约6.1K；本轮在原
+CandidateBodies/NativeLifecycle内复用一个有界后继，精确父ACK后才晋升，
+同条件两组总成功/总时间6083→6990TPS。非新controller、非历史性能恢复；
+原生完整组合故障仍待完成。详见[后继证据](../artifacts/audit/native-lookahead-20261016/README.md)。
 下文原始范围与冲突清单保留为实施依据，不再表示整个接合尚未开始。
 
 日期：2026-10-16。来源核对：共享 `5905614b5ec9f69e0332d8ad81a60080d78d4619`

@@ -21,6 +21,8 @@ use std::collections::VecDeque;
 mod lifecycle;
 #[path = "progress_split_integration.rs"]
 mod split;
+#[path = "native_successor_integration.rs"]
+mod successor;
 
 fn progress(
     journal: ValidatorJournal,

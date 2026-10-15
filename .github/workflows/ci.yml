@@ -313,6 +313,14 @@ jobs:
           cargo test -p novovm-network --lib udp_ingress_ --locked -- --test-threads=1
           cargo test -p novovm-protocol --lib native_query --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_pipeline --locked -- --test-threads=1
+          # Same native lifecycle / real AOEM: optional successor may compute,
+          # never publish before exact durable parent ACK; stale tickets drain.
+          cargo test -p novovm-node --lib native_successor_ --locked -- --ignored --list > target/native-successor-test-list.txt
+          grep -q 'native_successor_early_completion_waits_for_parent_ack_and_recovers: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_single_inflight_keeps_current_height_progress: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_auth_ticket_drains_after_source_round_changes: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_execution_ticket_drains_after_source_round_changes: test' target/native-successor-test-list.txt
+          cargo test -p novovm-node --lib native_successor_ --locked -- --ignored --test-threads=1
           # Retained test-only opaque attachment durability. This does not enable
           # the retired backend-specific product proof service or prove ZK/GPU.
           cargo test -p novovm-node --lib real_proof_storage_multichunk_reopen_immutable_and_corruption_rejection --locked -- --ignored --test-threads=1

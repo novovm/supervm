@@ -234,7 +234,7 @@ impl RoundProgress {
             }
             return Ok(true);
         }
-        let bytes = candidate.packet().record_bytes();
+        let bytes = candidate.packet().retained_bytes();
         if self.candidates.len() == self.limits.candidates
             || bytes
                 > self
@@ -431,7 +431,7 @@ impl RoundProgress {
                 self.candidate_bytes = self
                     .candidates
                     .values()
-                    .map(|c| c.candidate.packet().record_bytes())
+                    .map(|c| c.candidate.packet().retained_bytes())
                     .sum();
             }
             if let Some(message) = message {

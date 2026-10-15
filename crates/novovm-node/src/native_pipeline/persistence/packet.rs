@@ -81,6 +81,11 @@ pub struct PreparedCandidate {
     summary: Summary,
     records: BTreeMap<Vec<u8>, Vec<u8>>,
     resources: Resources,
+    // Read-only selection hint from the actual executed receipts, in original
+    // order. Bounded by transaction_count; actual allocation capacity is
+    // charged below against the existing 2x maximum-packet reservation.
+    // Not serialized or added to any business/consensus commitment.
+    receipt_nonces: Vec<(NodeHash, u64)>,
 }
 
 struct Resources {
@@ -91,6 +96,7 @@ struct Resources {
     max_receipt_bytes: usize,
     max_value_bytes: usize,
     total_bytes: usize,
+    retained_bytes: usize,
 }
 
 impl PreparedCandidate {
@@ -143,8 +149,16 @@ impl PreparedCandidate {
     pub fn record_bytes(&self) -> usize {
         self.resources.total_bytes
     }
+    /// Logical record content plus the actual capacity of the read-only nonce
+    /// projection. Runtime owners use this for retention, not storage encoding.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.resources.retained_bytes
+    }
     pub fn transaction_count(&self) -> usize {
         self.resources.transactions
+    }
+    pub(crate) fn receipt_nonces(&self) -> &[(NodeHash, u64)] {
+        &self.receipt_nonces
     }
     pub fn context(&self) -> &BatchContext {
         &self.summary.context
@@ -502,6 +516,14 @@ fn prepare(
     // The codec's independent recovery validator also checks structural receipt
     // relations, not business execution. Preparation never manufactures success.
     decode_document(&document, plan.commitment(), budget)?;
+    let receipt_nonces = receipts
+        .iter()
+        .map(|bytes| -> Result<_> {
+            let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
+            ensure!(tail.is_empty(), "trailing executed receipt bytes");
+            Ok((receipt.signer_identity, receipt.delta.nonce_after))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let digest = document_hash(&document);
     let mut records = BTreeMap::new();
     for (hash, bytes) in nodes {
@@ -526,6 +548,19 @@ fn prepare(
     for (key, value) in &records {
         account_record(&mut total, key, value, budget)?;
     }
+    let nonce_bytes = receipt_nonces
+        .capacity()
+        .checked_mul(std::mem::size_of::<(NodeHash, u64)>())
+        .context("receipt projection size overflow")?;
+    // Existing pipeline reservation contains 2 * maximum packet bytes. The
+    // extra projection cannot silently widen that admitted memory contract.
+    ensure!(
+        nonce_bytes <= total,
+        "receipt projection exceeds reserved packet allowance"
+    );
+    let retained_bytes = total
+        .checked_add(nonce_bytes)
+        .context("packet retention overflow")?;
     let resources = Resources {
         transactions: plan.transaction_count(),
         max_transaction_bytes: plan.max_transaction_bytes(),
@@ -534,6 +569,7 @@ fn prepare(
         max_receipt_bytes: receipts.iter().map(Vec::len).max().unwrap_or(0),
         max_value_bytes: records.values().map(Vec::len).max().unwrap_or(0),
         total_bytes: total,
+        retained_bytes,
     };
     Ok(PreparedCandidate {
         summary: Summary {
@@ -546,6 +582,7 @@ fn prepare(
         },
         records,
         resources,
+        receipt_nonces,
     })
 }
 

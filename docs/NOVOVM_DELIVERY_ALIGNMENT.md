@@ -1,5 +1,23 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 original-tick lookahead integration (implementation validated):** input f29e5519.
+Root owns service/rpc selection, product validation/evidence and the only build/
+performance slot. native_execution_map owns CandidateBodies/NativeLifecycle,
+their focused tests and minimal read-only executed nonce projection; review
+agent is read-only. Reuse existing authentication/background permits and durable
+candidate seed; do not reactivate historical Controller. One bounded successor
+may compute against an exact local durable parent, but only the original
+journal's acknowledged matching head/next context can authorize promotion.
+Source-round changes, competing decisions and recovery retire/drain old work;
+current work has priority and all bytes/tickets stay charged. Retain original
+native SDK/UDP owner, publication rules, CPU/algebraic backends and frozen
+same-condition comparison. No mobile changes, separate signer or authority.
+Two formal pairs6083.265→6990.012 combined successful TPS; diagnostic63 early
+auth/35 early execution submissions/63 exact promotions/0 discards. No claim
+of fully hiding child execution, historical9K recovery or100K capacity. Four
+real-AOEM successor fault/ACK tests and actual CPU/integer process closures pass.
+Claims released after root integration; final CI and combined-fault gaps remain.
+
 **2026-10-16 native observation bottleneck (source/measurement complete):**
 Frozen original-tick release completed65536 transactions at219.127TPS; cold
 receipt-only reads took305.766s. Preserve this failed performance baseline.
