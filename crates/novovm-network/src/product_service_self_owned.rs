@@ -80,12 +80,9 @@ impl ServiceLeaseBookV1 {
             return self.check_route(pin, endpoint, instance, now);
         }
         self.observe(now)?;
-        let entry = self.entries.get(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
         ensure!(
-            IrohServiceEndpointV1::from_record(&entry.current)?
-                .address
-                .endpoint_key
-                == endpoint,
+            entry.decoded_current()?.iroh.address.endpoint_key == endpoint,
             "self-owned transport changed"
         );
         Ok(())
@@ -197,11 +194,11 @@ impl ServiceLeaseBookV1 {
         if self.is_self_owned() {
             return self
                 .entries
-                .values()
+                .values_mut()
                 .map(|entry| {
                     Ok(ServiceBootstrapCandidateV1 {
                         public_key: entry.current.relay_public_key,
-                        endpoint: IrohServiceEndpointV1::from_record(&entry.current)?,
+                        endpoint: entry.decoded_current()?.iroh.clone(),
                         authenticate_before_ms: now
                             .checked_add(MAX_SERVICE_LEASE_MS)
                             .context("local clock exhausted")?,

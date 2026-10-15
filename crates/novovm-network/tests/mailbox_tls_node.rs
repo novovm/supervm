@@ -85,6 +85,20 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
         "2000 live book checks elapsed_us={}",
         started.elapsed().as_micros()
     );
+    let started = std::time::Instant::now();
+    for _ in 0..1000 {
+        let candidates = book.bootstrap_candidates(1001)?;
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(
+            candidates[0].endpoint.address.endpoint_key,
+            ir.address.endpoint_key
+        );
+        book.check_bootstrap_route(pin, ir.address.endpoint_key, ir.instance, 1001)?;
+    }
+    eprintln!(
+        "2000 candidate/route checks elapsed_us={}",
+        started.elapsed().as_micros()
+    );
     let mut wrong = tls.clone();
     wrong.address.set_port(3002);
     assert!(book.check_tls_route_v1(pin, &wrong, 1002).is_err());
@@ -125,6 +139,13 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
         .check_continuous_peer_v4(pin, ir.address.endpoint_key, 92_003)
         .is_err());
     book.check_continuous_peer_v4(pin, rotated.address.endpoint_key, 92_003)?;
+    assert_eq!(
+        book.bootstrap_candidates(92_003)?[0]
+            .endpoint
+            .address
+            .endpoint_key,
+        rotated.address.endpoint_key
+    );
     assert!(book
         .check_continuous_tls_peer_v1(pin, &tls, 92_003)
         .is_err());

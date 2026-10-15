@@ -1,5 +1,11 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 hot candidate reuse (claim released):** same NOVOCHAT session,
+input b6f1e4e8. Application endpoint supervision also asks the original book
+for bootstrap candidates. Use its exact-record decoded view there too; no
+route freshness/identity changes or second cache. Eight self-owned regressions
+and four real node tests pass; strict lib Clippy passes. Network files only.
+
 **2026-10-15 continuous peer parse reuse (claim released):** NOVOCHAT session,
 input 493734ae. Existing service book only: reuse decoded, already verified
 current records during live checks; exact record change invalidates reuse.

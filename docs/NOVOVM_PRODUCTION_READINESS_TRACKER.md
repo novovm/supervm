@@ -3,6 +3,20 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 存活检查中的候选读取共用原解析视图
+
+输入b6f1e4e8。进一步追踪真实Application：endpoint_permit的live检查会调用
+AdaptiveProfile.check→nodes_now→ServiceLeaseBook.bootstrap_candidates；
+此前只优化continuous_peer仍会从这一路重新解码和验证公钥合法性。
+本次将自主候选读取与check_bootstrap_route也接入原Entry完整记录匹配视图，
+新候选仍只是拨号候选，不是对端在线或业务授权证明；租约/握手/撤销不变。
+
+8项自主来源回归通过32.87s，4项真实节点/跨载体/换钥测试通过12.12s，
+严格lib Clippy通过5.93s。热态2000次候选/路由读取采样957微秒，仅本地
+debug状态读取；不能代替手机端消息耗时。日志artifacts/hot-candidate-*.log。
+NOVOCHAT前一片原QUIC完整用例150.03s通过，TLS五条突发40s期限仍失败，
+本片之后须重新执行；未部署手机，未将未通过的TLS功能签收。
+
 ## 2026-10-15 持续会话复用已验证声明的解析结果
 
 输入493734ae。NOVOCHAT本机双客户端TLS完整用例首跑失败：五条突发消息在
