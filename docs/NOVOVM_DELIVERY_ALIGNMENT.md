@@ -1,4 +1,12 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 native in-flight cancellation (active claim):** NOVOCHAT session,
+input c2c1f6fc. Scope: original novorudp object_link/sender completion state,
+shared mailbox_structured/native_session and focused tests/handoff. Propagate
+owner/request invalidation into retained native sends without resetting replay
+counters, tearing healthy peers down or undoing committed mailbox custody.
+No new SDK/transport/runtime, finance, AOEM or July recovery-tree changes.
+Mobile reconnect and actual Android activation remain subsequent integration.
+
 **2026-10-16 native mailbox convergence (claim released):** NOVOCHAT session.
 Concurrent unpublished local faf108c5 overlapped upstream af77af16. Keep the
 shared native_session as the ONLY request/session adapter; remove local session
