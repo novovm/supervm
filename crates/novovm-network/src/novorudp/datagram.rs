@@ -6,6 +6,7 @@
 //! scheduler; repair seals a NEW envelope sequence rather than replaying ciphertext.
 
 use super::{
+    carrier::{NativeDatagramIo, NativeRoute},
     wire_budget::{try_send_datagram, NativeWireBudget},
     NovoRudpTransportFrameV0,
 };
@@ -19,15 +20,15 @@ pub const MAX_DATAGRAM_BYTES: usize = 1200;
 
 pub struct NativeUdpSession {
     channel: E2eSecureChannelV1,
-    remote: SocketAddr,
+    remote: NativeRoute,
 }
 
 impl NativeUdpSession {
     pub fn new(channel: E2eSecureChannelV1, remote: SocketAddr) -> Result<Self> {
-        ensure!(
-            !remote.ip().is_unspecified() && !remote.ip().is_multicast() && remote.port() != 0,
-            "invalid native peer endpoint"
-        );
+        Self::new_route(channel, NativeRoute::Udp(remote))
+    }
+    pub(crate) fn new_route(channel: E2eSecureChannelV1, remote: NativeRoute) -> Result<Self> {
+        remote.validate()?;
         Ok(Self { channel, remote })
     }
     pub fn remote_peer_id(&self) -> &str {
@@ -55,6 +56,14 @@ impl NativeUdpSession {
     }
 
     pub fn open(&mut self, source: SocketAddr, wire: &[u8]) -> Result<NovoRudpTransportFrameV0> {
+        self.open_route(NativeRoute::Udp(source), wire)
+    }
+
+    pub(crate) fn open_route(
+        &mut self,
+        source: NativeRoute,
+        wire: &[u8],
+    ) -> Result<NovoRudpTransportFrameV0> {
         ensure!(source == self.remote, "native packet source mismatch");
         let envelope = binary::decode(wire, MAX_DATAGRAM_BYTES)?;
         let frame = self.channel.open_novorudp_frame(&envelope)?;
@@ -77,13 +86,13 @@ impl NativeUdpSession {
 
     pub(crate) fn try_send_limited(
         &mut self,
-        socket: &UdpSocket,
+        io: &dyn NativeDatagramIo,
         frame: &NovoRudpTransportFrameV0,
         now: Instant,
         budget: Option<&mut NativeWireBudget>,
     ) -> Result<bool> {
         let wire = self.encode(frame)?;
-        try_send_datagram(socket, &wire, self.remote, now, budget)
+        try_send_datagram(io, &wire, self.remote, now, budget)
     }
 
     /// At most one datagram, without an internal wait/retry loop. The caller must

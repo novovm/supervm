@@ -4,6 +4,7 @@
 //! datagrams and an absent peer never terminate another peer's live session.
 
 use super::{
+    carrier::{NativeDatagramIo, NativeRoute},
     datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES},
     handshake::NativeHandshake,
     object_sender::NativeObjectSender,
@@ -25,6 +26,21 @@ use std::{
 pub struct NativePeer {
     pub key: [u8; 32],
     pub address: SocketAddr,
+}
+
+/// Node identity and actual carrier route remain independently bound.
+#[derive(Clone)]
+pub struct NativeRoutePeer {
+    pub key: [u8; 32],
+    pub route: NativeRoute,
+}
+impl From<NativePeer> for NativeRoutePeer {
+    fn from(peer: NativePeer) -> Self {
+        Self {
+            key: peer.key,
+            route: NativeRoute::Udp(peer.address),
+        }
+    }
 }
 
 pub struct NativeHandshakeBudget {
@@ -89,10 +105,10 @@ pub struct NativePoll {
 }
 
 pub struct NativeEndpoint {
-    socket: Arc<UdpSocket>,
+    io: Arc<dyn NativeDatagramIo>,
     local_key: [u8; 32],
     peers: Vec<Peer>,
-    sources: BTreeMap<SocketAddr, usize>,
+    sources: BTreeMap<NativeRoute, usize>,
     replay: HandshakeReplayCacheV1,
     turn: usize,
     open: Option<OpenAdmission>,
@@ -125,8 +141,20 @@ impl NativeEndpoint {
         budget: NativeHandshakeBudget,
     ) -> Result<Self> {
         socket.set_nonblocking(true)?;
+        Self::listen_clients_with_io(socket, identity, clients, streams, budget)
+    }
+
+    /// Use the enclosing owner's bounded nonblocking IO. Carrier routes remain
+    /// rejected until exporter-bound handshake/Finished support is integrated.
+    pub fn listen_clients_with_io(
+        io: Arc<dyn NativeDatagramIo>,
+        identity: SigningKey,
+        clients: usize,
+        streams: Vec<u64>,
+        budget: NativeHandshakeBudget,
+    ) -> Result<Self> {
         let mut endpoint = Self {
-            socket,
+            io,
             local_key: identity.verifying_key().to_bytes(),
             peers: Vec::new(),
             sources: BTreeMap::new(),
@@ -172,7 +200,10 @@ impl NativeEndpoint {
         for (index, peer) in peers.into_iter().enumerate() {
             let id = peer_id_from_ed25519_public_key_v1(&peer.key);
             ensure!(
-                ids.insert(id.clone()) && sources.insert(peer.address, index).is_none(),
+                ids.insert(id.clone())
+                    && sources
+                        .insert(NativeRoute::Udp(peer.address), index)
+                        .is_none(),
                 "duplicate native peer/endpoint"
             );
             let handshake = NativeHandshake::start(
@@ -193,7 +224,7 @@ impl NativeEndpoint {
             });
         }
         Ok(Self {
-            socket,
+            io: socket,
             local_key: identity.verifying_key().to_bytes(),
             peers: owned,
             sources,
@@ -268,6 +299,28 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<Self> {
+        socket.set_nonblocking(true)?;
+        Self::connect_clients_with_io(
+            Arc::new(socket),
+            identity,
+            remotes.into_iter().map(Into::into).collect(),
+            budget,
+            wall_ms,
+            now,
+        )
+    }
+
+    /// Same native peer lifecycle over a supplied IO owner. Only real UDP routes
+    /// are currently active; authenticated carrier provenance alone cannot bind
+    /// the original native handshake transcript to a reliable carrier.
+    pub fn connect_clients_with_io(
+        io: Arc<dyn NativeDatagramIo>,
+        identity: SigningKey,
+        remotes: Vec<NativeRoutePeer>,
+        budget: NativeHandshakeBudget,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<Self> {
         ensure!(
             (1..=64).contains(&remotes.len()),
             "native endpoint peer bound"
@@ -279,13 +332,13 @@ impl NativeEndpoint {
         for (index, remote) in remotes.into_iter().enumerate() {
             let id = peer_id_from_ed25519_public_key_v1(&remote.key);
             ensure!(
-                ids.insert(id.clone()) && sources.insert(remote.address, index).is_none(),
+                ids.insert(id.clone()) && sources.insert(remote.route, index).is_none(),
                 "duplicate native peer/endpoint"
             );
             let handshake = NativeHandshake::start_role(
                 identity.clone(),
                 remote.key,
-                remote.address,
+                remote.route,
                 wall_ms,
                 now,
                 budget.lifetime,
@@ -300,9 +353,8 @@ impl NativeEndpoint {
                 reconnect: None,
             });
         }
-        socket.set_nonblocking(true)?;
         Ok(Self {
-            socket: Arc::new(socket),
+            io,
             local_key,
             peers,
             sources,
@@ -316,7 +368,7 @@ impl NativeEndpoint {
 
     fn accept_client(
         &mut self,
-        source: SocketAddr,
+        source: NativeRoute,
         wire: &[u8],
         wall_ms: u64,
         now: Instant,
@@ -349,7 +401,7 @@ impl NativeEndpoint {
             Some(false),
         )?;
         // All signature/domain/time/replay checks precede retaining a peer slot.
-        handshake.receive(source, wire, wall_ms, now, &mut self.replay)?;
+        handshake.receive_route(source, wire, wall_ms, now, &mut self.replay)?;
         let session = handshake
             .take_session()
             .context("client handshake did not authenticate")?;
@@ -379,7 +431,7 @@ impl NativeEndpoint {
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        Ok(self.socket.local_addr()?)
+        Ok(self.io.local_udp_addr()?)
     }
     pub fn accepts_clients(&self) -> bool {
         self.open.is_some()
@@ -408,10 +460,8 @@ impl NativeEndpoint {
     }
 
     pub fn poll(&mut self, wall_ms: u64, now: Instant, quantum: usize) -> Result<NativePoll> {
-        let socket = Arc::clone(&self.socket);
-        self.poll_with_receiver(wall_ms, now, quantum, |wire| {
-            socket.recv_from(wire).map(Some)
-        })
+        let io = Arc::clone(&self.io);
+        self.poll_with_route_receiver(wall_ms, now, quantum, |wire| io.try_receive(wire))
     }
 
     /// Poll through the enclosing transport's sole bounded datagram receiver.
@@ -433,6 +483,22 @@ impl NativeEndpoint {
     ) -> Result<NativePoll>
     where
         F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, SocketAddr)>>,
+    {
+        self.poll_with_route_receiver(wall_ms, now, quantum, |wire| {
+            receiver(wire)
+                .map(|value| value.map(|(length, source)| (length, NativeRoute::Udp(source))))
+        })
+    }
+
+    fn poll_with_route_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        mut receiver: F,
+    ) -> Result<NativePoll>
+    where
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>>,
     {
         ensure!(
             (1..=64).contains(&quantum),
@@ -498,7 +564,7 @@ impl NativeEndpoint {
             };
             let peer = &mut self.peers[index];
             if let Some(session) = &mut peer.session {
-                match session.open(source, &wire[..length]) {
+                match session.open_route(source, &wire[..length]) {
                     Ok(frame)
                         if peer
                             .streams
@@ -523,7 +589,7 @@ impl NativeEndpoint {
             let peer = &mut self.peers[index];
             if let Some(pending) = &mut peer.reconnect {
                 match pending.handshake.try_send_limited(
-                    &self.socket,
+                    self.io.as_ref(),
                     wall_ms,
                     now,
                     self.wire_budget.as_mut(),
@@ -537,7 +603,7 @@ impl NativeEndpoint {
                 continue;
             }
             match peer.handshake.try_send_limited(
-                &self.socket,
+                self.io.as_ref(),
                 wall_ms,
                 now,
                 self.wire_budget.as_mut(),
@@ -565,7 +631,7 @@ impl NativeEndpoint {
             .as_mut()
             .context("native peer not authenticated")?;
         session.try_send_limited(
-            &self.socket,
+            self.io.as_ref(),
             frame,
             Instant::now(),
             self.wire_budget.as_mut(),
@@ -588,7 +654,7 @@ impl NativeEndpoint {
             .as_mut()
             .context("native peer not authenticated")?;
         object.poll_send_limited(
-            &self.socket,
+            self.io.as_ref(),
             session,
             now,
             quantum,
@@ -605,3 +671,6 @@ mod tests;
 
 #[cfg(test)]
 mod client_set_tests;
+
+#[cfg(test)]
+mod io_tests;

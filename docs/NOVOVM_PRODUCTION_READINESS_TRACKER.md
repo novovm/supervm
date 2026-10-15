@@ -3,6 +3,26 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原生收发接缝（真实 UDP 回归，载体分支尚未启用）
+
+输入 dcc6d1b6，认领 b9b6de16。原 NativeEndpoint/NativeObjectLink 共用
+NativeDatagramIo 收发，握手、数据、修复与 ACK 沿同一字节预算和原调度；
+公开 UDP 入口保持兼容。真实来源采用 NativeRoute，不伪造地址代表中继身份。
+Carrier 材料仅从既有 VerifiedTransportBinding 派生；原裸握手尚未绑定 TLS
+exporter，因此该分支明确拒绝激活，不以本片声称 Iroh/NAT 或手机跨网完成。
+下一步须复用 BoundHandshake/Finished 并接结构化编码，仍走原应用与节点 owner。
+
+验证：默认库 check PASS25.12s；默认 novorudp 过滤回归99/99 PASS0.98s；
+iroh-transport,tls-transport配置100/100 PASS1.02s；公开应用传输集成2/2
+PASS0.04s；同配置 lib/tests 严格Clippy PASS42.08s。新增真实 UDP seam
+完整4096字节对象及ACK、背压、取消、错误来源与重放测试；部分写入/越界返回/
+IO失败使用明确故障注入。载体材料隔离是单元fixture，不是真实TLS验收。
+传输对象Delivered不等于聊天DeviceReceipt；没有修改消息、TTL、节点配置或手机。
+
+这不是性能测量。尚未实现：绑定握手结构化编码、真实可靠载体adapter与持续
+Application接线、蜂窝可达性及不同设备的独立副本。不能仅凭多地址/同机进程
+宣称高可用。具体接口与边界见NOVORUDP_SHARED_CLIENT_HANDOFF.md最新节。
+
 ## 2026-10-16 共享 main 的原 tick 完整依赖组接通（功能，不是吞吐签收）
 
 输入共享 `cb4b3dd1`，保留协调更新至 `5c95c084`；来源恢复 `3f0a95e4`。

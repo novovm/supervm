@@ -4,6 +4,7 @@
 //! attempts. Healthy channels are owned separately and never expire with this
 //! startup handshake. Reconnection is an explicit lifecycle operation.
 
+use super::carrier::{NativeDatagramIo, NativeRoute};
 use super::datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES};
 use super::wire_budget::{try_send_datagram, NativeWireBudget};
 use crate::product_overlay::{
@@ -20,7 +21,7 @@ use std::{
 pub struct NativeHandshake {
     identity: SigningKey,
     remote_peer: String,
-    remote: SocketAddr,
+    remote: NativeRoute,
     initiator: Option<NodeHandshakeInitiatorV1>,
     cached_offer: Option<Vec<u8>>,
     cached_response: Option<Vec<u8>>,
@@ -53,17 +54,15 @@ impl NativeHandshake {
     pub(crate) fn start_role(
         identity: SigningKey,
         remote_key: [u8; 32],
-        remote: SocketAddr,
+        remote: impl Into<NativeRoute>,
         wall_ms: u64,
         now: Instant,
         ttl: Duration,
         retry: Duration,
         initiate: Option<bool>,
     ) -> Result<Self> {
-        ensure!(
-            !remote.ip().is_unspecified() && !remote.ip().is_multicast() && remote.port() != 0,
-            "invalid native endpoint"
-        );
+        let remote = remote.into();
+        remote.validate()?;
         ensure!(
             !retry.is_zero() && retry < ttl && ttl <= Duration::from_secs(60),
             "invalid native handshake budget"
@@ -120,7 +119,7 @@ impl NativeHandshake {
 
     pub(crate) fn try_send_limited(
         &mut self,
-        socket: &UdpSocket,
+        io: &dyn NativeDatagramIo,
         wall_ms: u64,
         now: Instant,
         budget: Option<&mut NativeWireBudget>,
@@ -142,7 +141,7 @@ impl NativeHandshake {
             wire.len() <= MAX_DATAGRAM_BYTES,
             "handshake datagram too large"
         );
-        if try_send_datagram(socket, wire, self.remote, now, budget)? {
+        if try_send_datagram(io, wire, self.remote, now, budget)? {
             self.next_send = now + self.retry;
             Ok(true)
         } else {
@@ -153,6 +152,17 @@ impl NativeHandshake {
     pub fn receive(
         &mut self,
         source: SocketAddr,
+        wire: &[u8],
+        wall_ms: u64,
+        now: Instant,
+        replay: &mut HandshakeReplayCacheV1,
+    ) -> Result<()> {
+        self.receive_route(NativeRoute::Udp(source), wire, wall_ms, now, replay)
+    }
+
+    pub(crate) fn receive_route(
+        &mut self,
+        source: NativeRoute,
         wire: &[u8],
         wall_ms: u64,
         now: Instant,
@@ -191,7 +201,7 @@ impl NativeHandshake {
                 )?;
                 self.outgoing_expiry = responder.response().expires_at_ms;
                 self.outgoing = Some(handshake_wire::encode_response(responder.response())?);
-                self.session = Some(NativeUdpSession::new(
+                self.session = Some(NativeUdpSession::new_route(
                     responder.into_channel(),
                     self.remote,
                 )?);
@@ -215,7 +225,7 @@ impl NativeHandshake {
                 let initiator = self.initiator.take().context("no pending native offer")?;
                 match initiator.complete_owned(&response, wall_ms, replay) {
                     Ok(channel) => {
-                        self.session = Some(NativeUdpSession::new(channel, self.remote)?);
+                        self.session = Some(NativeUdpSession::new_route(channel, self.remote)?);
                         self.cached_response = Some(wire.to_vec());
                         self.ready = true;
                         self.outgoing = None;

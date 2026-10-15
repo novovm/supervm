@@ -19,7 +19,8 @@ fn multiplex_other_protocol_consumes_quantum_without_native_admission() -> Resul
         vec![17],
         budget(),
     )?;
-    assert!(Arc::ptr_eq(&endpoint.socket, &socket));
+    let shared_io: Arc<dyn NativeDatagramIo> = socket.clone();
+    assert!(Arc::ptr_eq(&endpoint.io, &shared_io));
     endpoint.set_wire_budget_v1(2400, now)?;
     let mut calls = 0;
     let report = endpoint.poll_with_receiver(1000, now, 3, |_| {
@@ -103,8 +104,12 @@ fn multiplex_shared_socket_keeps_handshake_source_replay_and_byte_checks() -> Re
     // A third socket cannot claim the authenticated peer's source.
     let stranger = UdpSocket::bind("127.0.0.1:0")?;
     stranger.send_to(&encrypted, socket.local_addr()?)?;
-    client.socket.send_to(&encrypted, socket.local_addr()?)?;
-    client.socket.send_to(&encrypted, socket.local_addr()?)?;
+    client
+        .io
+        .try_send(&encrypted, NativeRoute::Udp(socket.local_addr()?))?;
+    client
+        .io
+        .try_send(&encrypted, NativeRoute::Udp(socket.local_addr()?))?;
     let start = Instant::now();
     let mut frames = 0;
     let mut rejected = 0;
