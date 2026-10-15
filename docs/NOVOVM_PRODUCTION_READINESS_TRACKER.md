@@ -3,6 +3,45 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 七月恢复现场：原生通道承载耐久共识与完整代数候选
+
+恢复现场643ecf57→49de29d2，祖先仍4f45526d。根main尚未切换；本节不是
+四个独立节点进程/RPC/性能签收。恢复代码已作本地detached提交，工作树干净。
+
+原APFL socket中的重组/反馈机制提取到唯一NativeObjectReceiver/NativeObjectLink，
+APFL适配不再保留生产副本。仍使用原握手、加密帧、缺片窗口、pacing和完成历史；
+控制/候选正文/交易输入有独立有限额度，每peer发送额度不被离线peer借尽。
+等待ACK不阻塞轮询；背压保留调用方句柄，TTL到期明确返回原对象，不伪造交付。
+完成反馈仍只表示校验正文并交给有界消费者，不表示鉴权、业务成功或落账。
+
+原node的NativeChannel消费既有round-bft二进制codec，消息域/签名/valid-round/QC
+检查直接从固定58e3aade的channel提取，调用原consensus内核，不复制controller、
+Relay worker或安全状态机。发送准备与组装校验同I/O轮询分开；跨owner句柄、错域、
+错lane和坏签名拒绝，错误应用消息不关闭其它健康peer。此处是固定验证者开发接线，
+不把验证者名单扩成NOVONET全网准入政策。
+
+四socket测试暴露合法握手响应重传被报“no pending native offer”；新增反例先失败，
+随后仅允许同一存活尝试已验证的完全相同响应，不重建会话/重置序号，伪造及过期仍拒绝。
+早期提取遗留self引用、测试签名helper参数错误也已修正，不计初次失败为通过。
+
+Windows本机最终验证：
+- network novorudp：69通过；node native_pipeline：302通过、31显式忽略。
+- 显式真实AOEM运行consensus全部39项通过，23.91秒；含CPU和完整整数代数两种
+  四socket/四独立库/连续三高度用例，以及原签票确认丢失、锁恢复、归档损坏反例。
+  APFL正文、真实耐久提案/prevote/precommit/决定经原生UDP；接收者独立鉴权执行。
+  整数用例断言业务回调数0、重算数0、每候选一次完整计划；并核余额、失败消耗nonce、
+  不同合法QC子集、发布前ACK边界、冷恢复、部分回滚及四类损坏拒绝。
+  测试编排仍同进程；不是自主四进程活性、A/A/B或端到端TPS。
+- 原node binary check通过，7项现有未消费/诊断告警。network严格Clippy仍为原
+  eth_rlpx/overlay/transport的13项失败，未禁lint或修改无关业务取得绿灯。
+- AOEM DLL SHA256仍31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947；
+  AOEM仓/SDK、main的49份草稿、运行数据和手机信箱均未改。
+
+剩余交付仍是将此接合放入原node自主生命周期：有界组装/收票、精确正文请求、
+未决恢复、后继推进及真实RPC，然后四进程故障和65,536笔同条件最终确认对照。
+不能把本测试夹具变成产品控制器或把其耗时换算TPS；不重造已保留的共识规则。
+主目录基线切换与上述能力验收分别报告，不再将恢复目录存在称为根工程已切回。
+
 ## 2026-10-15 Windows 原 owner 接通受保护 TLS 配置及真实重启寄存
 
 输入fdbc5519。原novovm-rendezvous-service增加tls-transport构建选项及
