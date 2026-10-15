@@ -98,6 +98,70 @@ fn heterogeneous_real_v3_rows_and_original_digests_round_trip() {
 }
 
 #[test]
+fn selected_structured_rows_keep_exact_wire_without_raw_reconstruction() {
+    let raw = fixture();
+    let source = ApflTransferBatch::from_raw(&raw, limits()).unwrap();
+    let selected = [4, 1, 3];
+    let views: Vec<_> = selected.iter().map(|i| source.row(*i).unwrap()).collect();
+    let direct = ApflTransferBatch::from_views(&views, limits()).unwrap();
+    let reference: Vec<_> = selected.iter().map(|i| raw[*i].clone()).collect();
+    let encoded_reference = ApflTransferBatch::from_raw(&reference, limits()).unwrap();
+    assert_eq!(direct, encoded_reference);
+    assert_eq!(
+        direct.encode().unwrap(),
+        encoded_reference.encode().unwrap()
+    );
+    for (i, original) in reference.iter().enumerate() {
+        assert!(direct
+            .row(i)
+            .unwrap()
+            .matches_canonical_bytes(original)
+            .unwrap());
+    }
+    assert!(ApflTransferBatch::from_views(
+        &views,
+        ApflLimits {
+            transactions: 2,
+            ..limits()
+        }
+    )
+    .is_err());
+    assert!(ApflTransferBatch::from_views(
+        &views,
+        ApflLimits {
+            body_bytes: direct.canonical_bytes() - 1,
+            ..limits()
+        }
+    )
+    .is_err());
+    let mut invalid = views[0];
+    invalid.signature = &[];
+    assert!(ApflTransferBatch::from_views(&[invalid], limits()).is_err());
+    invalid = views[0];
+    invalid.from = &[1; 19];
+    assert!(ApflTransferBatch::from_views(&[invalid], limits()).is_err());
+    assert!(ApflTransferBatch::from_views(&[], limits()).is_err());
+}
+
+#[test]
+fn retained_owner_accounts_for_capacity_not_only_logical_wire() {
+    let raw = fixture();
+    let mut batch = ApflTransferBatch::from_raw(&raw, limits()).unwrap();
+    let before = batch.retained_bytes().unwrap();
+    let logical = batch.canonical_bytes();
+    let data = Arc::get_mut(&mut batch.0).unwrap();
+    let old = data.signatures.capacity();
+    data.signatures.reserve(4096);
+    let added = data.signatures.capacity() - old;
+    assert!(added > 0);
+    assert_eq!(batch.retained_bytes().unwrap(), before + added);
+    assert_eq!(batch.canonical_bytes(), logical);
+    let clone = batch.clone();
+    assert!(Arc::ptr_eq(&batch.0, &clone.0));
+    assert_eq!(clone.retained_bytes().unwrap(), before + added);
+}
+
+#[test]
 fn shared_real_signed_fields_compress_without_a_fixture_generator() {
     let raw: Vec<_> = (0..1024)
         .map(|nonce| encode_transfer_v3(&signed(4, nonce)).unwrap())

@@ -11,14 +11,19 @@ Root integrates and owns the single local build slot; native_listener_impl owns
 only this endpoint constructor and a new focused test submodule. Preserve original
 key binding, handshake bounds, byte accounting and no compatibility fallback.
 
-**2026-10-16 structured pending/selection (active mainchain claim):** July
+**2026-10-16 structured pending/selection (source checkpoint; query handoff active):** July
 recovery input3ed27bec, shared input6b6ce09d. Root owns APFL borrowed-row
 construction, integration and the single mainchain build/performance slot;
 native_execution_map owns existing pool/admission/gossip; july_reproduce owns
-the native load fixture; release_validation_map reviews the shared integration
-map read-only. Remove canonical row materialization/reparse between structured
-admission and selection, preserving signature identity, nonce reservations and
-both logical/retained-owner budgets. No mailbox owner/SDK deployment edits;
+the native load fixture; both source tasks are complete. release_validation_map now
+owns only recovery consensus/native.rs and native/query.rs to repair consumed
+query requests lost while the prior reply awaits DONE. Root integrates/tests.
+Structured admission/selection no longer materializes/reparses canonical rows;
+signature identity, nonce reservations and logical/retained-owner budgets stay.
+Recovery f2d56b5b and the shared source pass bounded regressions; 4096 load
+prechecks failed in both frozen/candidate binaries, so no performance signoff.
+Shared original-tick integration follows NOVOVM_JULY_MAIN_INTEGRATION_MAP.md;
+it is not activated by these data changes. No mailbox owner/SDK deployment edits;
 preserve the NOVOCHAT claim below and all drafts. Native load observations must
 state their actual confirmation/query boundary; no new TPS claim yet.
 

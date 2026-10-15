@@ -179,7 +179,7 @@ impl RpcLifecycle {
         };
         let hash = view.canonical_tx_hash()?;
         let exact = match self.pending.get(&hash) {
-            Some(entry) => view.matches_canonical_bytes(&entry.raw)?,
+            Some(entry) => entry.matches(view)?,
             None => false,
         };
         if !exact {

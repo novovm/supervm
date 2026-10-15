@@ -16,8 +16,10 @@ use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 #[cfg(test)]
 use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
+use crate::native_pipeline::ingress::wire::{decode_transfer_view_v3, TransferView};
 use crate::native_pipeline::persistence::io::IoTicket;
 use crate::native_pipeline::persistence::packet::ReceiptView;
+use crate::native_pipeline::pipeline::AdmissionInput;
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -68,11 +70,89 @@ struct BalanceQuery {
 }
 
 struct Pending {
-    raw: Vec<u8>,
+    input: AdmissionInput,
+    canonical_len: usize,
     signer: Hash,
     nonce: u64,
     /// Peers omitted from local fanout reservation, NOT delivery/finality bits.
     gossip_missing: u64,
+}
+
+impl Pending {
+    fn view(&self) -> Result<TransferView<'_>> {
+        match &self.input {
+            AdmissionInput::Raw(raw) => decode_transfer_view_v3(raw, 1024),
+            AdmissionInput::Apfl { batch, index } => batch.row(*index),
+        }
+    }
+
+    fn matches(&self, view: TransferView<'_>) -> Result<bool> {
+        match &self.input {
+            AdmissionInput::Raw(raw) => view.matches_canonical_bytes(raw),
+            AdmissionInput::Apfl { batch, index } => Ok(view == batch.row(*index)?),
+        }
+    }
+}
+
+/// Pool payload accounting. One retained row keeps its complete APFL owner
+/// charged until the last pool reference is removed. Keys are allocation
+/// identities, never dereferenced pointers or authentication identities.
+#[derive(Default)]
+struct PoolRetention {
+    bytes: usize,
+    owners: BTreeMap<usize, (usize, usize)>, // references, retained owner bytes
+}
+
+impl PoolRetention {
+    fn reserve(&mut self, input: &AdmissionInput, limit: usize) -> Result<()> {
+        let (owner, additional) = match input {
+            AdmissionInput::Raw(raw) => (None, raw.capacity()),
+            AdmissionInput::Apfl { batch, .. } => {
+                let key = Arc::as_ptr(batch) as usize;
+                let bytes = if self.owners.contains_key(&key) {
+                    0
+                } else {
+                    batch.retained_bytes()?
+                };
+                (Some(key), bytes)
+            }
+        };
+        let next = self
+            .bytes
+            .checked_add(additional)
+            .context("pool retained bytes overflow")?;
+        ensure!(
+            next <= limit,
+            "RPC retained pool backpressure; transaction not accepted"
+        );
+        if let Some(key) = owner {
+            ensure!(
+                self.owners.contains_key(&key) || self.owners.len() < MAX_POOL,
+                "RPC retained owner count limit"
+            );
+            let record = self.owners.entry(key).or_insert((0, additional));
+            record.0 = record
+                .0
+                .checked_add(1)
+                .context("pool owner reference overflow")?;
+        }
+        self.bytes = next;
+        Ok(())
+    }
+
+    fn release(&mut self, input: &AdmissionInput) {
+        match input {
+            AdmissionInput::Raw(raw) => self.bytes -= raw.capacity(),
+            AdmissionInput::Apfl { batch, .. } => {
+                let key = Arc::as_ptr(batch) as usize;
+                let record = self.owners.get_mut(&key).expect("retained pool owner");
+                record.0 -= 1;
+                if record.0 == 0 {
+                    self.bytes -= self.owners.remove(&key).unwrap().1;
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -105,6 +185,7 @@ pub struct RpcLifecycle {
     order: VecDeque<Hash>,
     reservations: BTreeSet<(Hash, u64)>,
     pending_bytes: usize,
+    pending_retention: PoolRetention,
     nonces: BTreeMap<Hash, u64>,
     receipts: BTreeMap<Hash, Value>,
     recent: VecDeque<Hash>,
@@ -138,6 +219,7 @@ impl RpcLifecycle {
             order: VecDeque::new(),
             reservations: BTreeSet::new(),
             pending_bytes: 0,
+            pending_retention: PoolRetention::default(),
             nonces: BTreeMap::new(),
             receipts: BTreeMap::new(),
             recent: VecDeque::new(),
@@ -248,14 +330,14 @@ impl RpcLifecycle {
                 };
                 next = prefix;
             }
-            let raw_transactions = select_pending_batch(
+            let selected = select_pending_batch(
                 &self.order,
                 &self.pending,
                 &self.nonces,
                 next,
                 self.batch_size,
             );
-            if raw_transactions.is_empty() {
+            if selected.is_empty() {
                 return Ok(());
             }
             let mut context = self.node.template;
@@ -270,7 +352,7 @@ impl RpcLifecycle {
             context.parent_state_root = parent.state_root;
             context.parent_receipt_root = parent.receipt_batch_commitment;
             context.parent_state_version = parent.state_version;
-            let batch = apfl_batch(&raw_transactions, self.batch_size)?;
+            let batch = selected_apfl_batch(&selected, &self.pending, self.batch_size)?;
             self.offer = Some((position, Arc::new(Message::ApflBody { context, batch })));
         }
         let body = &self.offer.as_ref().expect("prepared RPC body").1;
@@ -304,17 +386,17 @@ impl RpcLifecycle {
             let Some(next) = pending_body_prefix(&body, &self.pending, &self.nonces)? else {
                 return Ok(());
             };
-            let raw_transactions = select_pending_batch(
+            let selected = select_pending_batch(
                 &self.order,
                 &self.pending,
                 &self.nonces,
                 next,
                 self.batch_size,
             );
-            if raw_transactions.is_empty() {
+            if selected.is_empty() {
                 return Ok(());
             }
-            let batch = apfl_batch(&raw_transactions, self.batch_size)?;
+            let batch = selected_apfl_batch(&selected, &self.pending, self.batch_size)?;
             self.early_offer = Some(EarlyOffer {
                 scope,
                 hint: body,
@@ -367,7 +449,8 @@ impl RpcLifecycle {
                 .insert(receipt.signer_identity, receipt.nonce_after);
             if let Some(entry) = self.pending.remove(&receipt.tx_hash) {
                 self.gossip_repair.remove(entry.gossip_missing);
-                self.pending_bytes -= entry.raw.len();
+                self.pending_bytes -= entry.canonical_len;
+                self.pending_retention.release(&entry.input);
                 self.reservations.remove(&(entry.signer, entry.nonce));
             }
             let hash = receipt.tx_hash;
@@ -393,7 +476,8 @@ impl RpcLifecycle {
         for hash in stale {
             let entry = self.pending.remove(&hash).expect("stale entry");
             self.gossip_repair.remove(entry.gossip_missing);
-            self.pending_bytes -= entry.raw.len();
+            self.pending_bytes -= entry.canonical_len;
+            self.pending_retention.release(&entry.input);
             self.reservations.remove(&(entry.signer, entry.nonce));
             self.receipts.insert(
                 hash,
@@ -467,17 +551,19 @@ impl RpcLifecycle {
             !self.reservations.contains(&(signer, nonce)),
             "signer nonce already reserved"
         );
-        let raw = input.into_raw()?;
+        let canonical_len = input.encoded_len()?;
         ensure!(
             self.pending.len() < MAX_POOL
-                && raw.len() <= MAX_POOL_BYTES.saturating_sub(self.pending_bytes),
+                && canonical_len <= MAX_POOL_BYTES.saturating_sub(self.pending_bytes),
             "RPC pool backpressure; transaction not accepted"
         );
-        self.pending_bytes += raw.len();
+        self.pending_retention.reserve(&input, MAX_POOL_BYTES)?;
+        self.pending_bytes += canonical_len;
         self.pending.insert(
             hash,
             Pending {
-                raw,
+                input,
+                canonical_len,
                 signer,
                 nonce,
                 gossip_missing: 0,
@@ -614,7 +700,7 @@ impl RpcLifecycle {
                 stage_profile["integer_resource"]["last"]["diagnostics"]["device_type"].as_u64(),
                 Some(1 | 2)
             );
-        json!({"profile":"native-resident-v1","experimental":true,
+        let mut status = json!({"profile":"native-resident-v1","experimental":true,
             "core":"novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
             "consensus":"novovm-consensus/round_bft/journal",
             "chain_id":self.node.template.chain_id,"head":controller.head(),
@@ -656,7 +742,10 @@ impl RpcLifecycle {
             "rpc_authentication":self.admission.status(),
             "pending_survives_restart":false,
             "receipt_query_scope":"hash only: recent 65536 entries; optional block height: verified durable archive",
-            "historical_receipt_queries":self.history.len()})
+            "historical_receipt_queries":self.history.len()});
+        status["pending_retained_payload_bytes"] = json!(self.pending_retention.bytes);
+        status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
+        status
     }
 
     pub fn handle(&mut self, request: Value) -> Value {
@@ -753,7 +842,7 @@ fn pending_apfl_prefix(
         let Some(entry) = pending.get(&hash) else {
             return Ok(None);
         };
-        if !row.matches_canonical_bytes(&entry.raw)? {
+        if !entry.matches(row)? {
             return Ok(None);
         }
         let expected = next
@@ -792,9 +881,12 @@ fn advance_pending_raw(
         Err(_) => return Ok(false),
     };
     let hash = canonical_tx_hash(&decoded)?;
-    let Some(entry) = pending.get(&hash).filter(|entry| entry.raw == raw) else {
+    let Some(entry) = pending.get(&hash) else {
         return Ok(false);
     };
+    if !entry.matches(decoded.as_view())? {
+        return Ok(false);
+    }
     let expected = next
         .entry(entry.signer)
         .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
@@ -805,9 +897,34 @@ fn advance_pending_raw(
     Ok(true)
 }
 
+#[cfg(test)]
 fn apfl_batch(raw: &[Vec<u8>], batch_size: usize) -> Result<Arc<ApflTransferBatch>> {
     Ok(Arc::new(ApflTransferBatch::from_raw(
         raw,
+        ApflLimits {
+            transactions: batch_size,
+            transaction_bytes: 1024,
+            body_bytes: super::body_byte_limit(batch_size),
+        },
+    )?))
+}
+
+fn selected_apfl_batch(
+    selected: &[Hash],
+    pending: &BTreeMap<Hash, Pending>,
+    batch_size: usize,
+) -> Result<Arc<ApflTransferBatch>> {
+    let views = selected
+        .iter()
+        .map(|hash| {
+            pending
+                .get(hash)
+                .context("selected pending row missing")?
+                .view()
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Arc::new(ApflTransferBatch::from_views(
+        &views,
         ApflLimits {
             transactions: batch_size,
             transaction_bytes: 1024,
@@ -822,8 +939,8 @@ fn select_pending_batch(
     nonces: &BTreeMap<Hash, u64>,
     mut next: BTreeMap<Hash, u64>,
     batch_size: usize,
-) -> Vec<Vec<u8>> {
-    let mut raw_transactions = Vec::new();
+) -> Vec<Hash> {
+    let mut selected = Vec::new();
     let mut raw_bytes = 0usize;
     let body_limit = super::body_byte_limit(batch_size);
     for hash in order {
@@ -834,18 +951,18 @@ fn select_pending_batch(
             .entry(entry.signer)
             .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
         if entry.nonce == *expected {
-            if raw_bytes + entry.raw.len() > body_limit {
+            if raw_bytes + entry.canonical_len > body_limit {
                 break;
             }
-            raw_bytes += entry.raw.len();
-            raw_transactions.push(entry.raw.clone());
+            raw_bytes += entry.canonical_len;
+            selected.push(*hash);
             *expected += 1;
-            if raw_transactions.len() == batch_size {
+            if selected.len() == batch_size {
                 break;
             }
         }
     }
-    raw_transactions
+    selected
 }
 
 fn reserve_balance_slot(balances: &mut VecDeque<BalanceQuery>) -> Result<()> {
@@ -1037,7 +1154,8 @@ mod tests {
             pending.insert(
                 checked.tx_hash(),
                 Pending {
-                    raw: raw.clone(),
+                    input: AdmissionInput::Raw(raw.clone()),
+                    canonical_len: raw.len(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,
                     gossip_missing: 0,
@@ -1080,7 +1198,8 @@ mod tests {
             pending.insert(
                 checked.tx_hash(),
                 Pending {
-                    raw: raw.clone(),
+                    input: AdmissionInput::Raw(raw.clone()),
+                    canonical_len: raw.len(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,
                     gossip_missing: 0,
@@ -1096,7 +1215,10 @@ mod tests {
             .unwrap();
         assert_eq!(prefix[&signer], 2);
         assert_eq!(
-            select_pending_batch(&order, &pending, &nonces, prefix, 1024),
+            selected_raw_for_test(
+                &select_pending_batch(&order, &pending, &nonces, prefix, 1024),
+                &pending
+            ),
             vec![raws[2].clone()]
         );
         assert_eq!(nonces[&signer], 0);
@@ -1152,7 +1274,8 @@ mod tests {
             pending.insert(
                 hash,
                 Pending {
-                    raw,
+                    canonical_len: raw.len(),
+                    input: AdmissionInput::Raw(raw),
                     signer: [1; 32],
                     nonce: nonce as u64,
                     gossip_missing: 0,
@@ -1169,7 +1292,10 @@ mod tests {
             select_pending_batch(&order, &pending, &BTreeMap::new(), BTreeMap::new(), 1024);
         assert_eq!(selected.len(), 384);
         assert_eq!(
-            selected.iter().map(Vec::len).sum::<usize>(),
+            selected
+                .iter()
+                .map(|hash| pending[hash].canonical_len)
+                .sum::<usize>(),
             super::super::body_byte_limit(1024)
         );
         assert_eq!(order.len(), 1024);
@@ -1181,6 +1307,7 @@ mod tests {
         let advanced = BTreeMap::from([([1; 32], 384)]);
         let next = select_pending_batch(&order, &pending, &advanced, BTreeMap::new(), 1024);
         assert_eq!(next.len(), 384);
+        let next = selected_raw_for_test(&next, &pending);
         assert_eq!(u64::from_le_bytes(next[0][..8].try_into().unwrap()), 384);
         assert_eq!(
             u64::from_le_bytes(next.last().unwrap()[..8].try_into().unwrap()),
@@ -1194,15 +1321,147 @@ mod tests {
         let first = order.pop_front().unwrap();
         order.insert(2, first); // Future 1/2 appear before the required 0.
         let selected = select_pending_batch(&order, &pending, &BTreeMap::new(), BTreeMap::new(), 5);
-        assert_eq!(selected, vec![0_u64.to_le_bytes().to_vec()]);
+        assert_eq!(
+            selected_raw_for_test(&selected, &pending),
+            vec![0_u64.to_le_bytes().to_vec()]
+        );
         let (order, pending) = pending_fixture(5, 8);
         let successor = BTreeMap::from([([1; 32], 2)]);
         let selected = select_pending_batch(&order, &pending, &BTreeMap::new(), successor, 2);
         assert_eq!(
-            selected,
+            selected_raw_for_test(&selected, &pending),
             vec![2_u64.to_le_bytes().to_vec(), 3_u64.to_le_bytes().to_vec()]
         );
         assert_eq!(pending.len(), 5);
+    }
+
+    fn selected_raw_for_test(selected: &[Hash], pending: &BTreeMap<Hash, Pending>) -> Vec<Vec<u8>> {
+        selected
+            .iter()
+            .map(|hash| match &pending[hash].input {
+                AdmissionInput::Raw(raw) => raw.clone(),
+                AdmissionInput::Apfl { batch, index } => batch.canonical_raw(*index).unwrap(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pending_apfl_selection_preserves_shared_rows_signature_and_nonce_order() -> Result<()> {
+        let raws: Vec<_> = (0..4)
+            .map(|n| super::super::tests::signed_raw(19, n))
+            .collect();
+        let source = apfl_batch(&raws, 8)?;
+        let mut pending = BTreeMap::new();
+        let mut order = VecDeque::new();
+        for (index, raw) in raws.iter().enumerate() {
+            let checked = authenticate_transfer_v3(raw, 71, 1024)?;
+            order.push_back(checked.tx_hash());
+            pending.insert(
+                checked.tx_hash(),
+                Pending {
+                    input: AdmissionInput::Apfl {
+                        batch: source.clone(),
+                        index,
+                    },
+                    canonical_len: raw.len(),
+                    signer: checked.nonce_identity(),
+                    nonce: checked.transfer().nonce,
+                    gossip_missing: 0,
+                },
+            );
+        }
+        let selected = select_pending_batch(&order, &pending, &BTreeMap::new(), BTreeMap::new(), 2);
+        assert_eq!(selected, order.iter().take(2).copied().collect::<Vec<_>>());
+        let batch = selected_apfl_batch(&selected, &pending, 2)?;
+        assert_eq!(batch.len(), 2);
+        for (index, raw) in raws.iter().take(2).enumerate() {
+            assert!(batch.row(index)?.matches_canonical_bytes(raw)?);
+        }
+        for entry in pending.values() {
+            let AdmissionInput::Apfl { batch, .. } = &entry.input else {
+                panic!("APFL pending row expanded");
+            };
+            assert!(Arc::ptr_eq(batch, &source));
+        }
+        let entry = &pending[&order[0]];
+        assert!(entry.matches(source.row(0)?)?);
+        let mut bad = raws[0].clone();
+        *bad.last_mut().unwrap() ^= 1;
+        let bad_view = decode_transfer_view_v3(&bad, 1024)?;
+        assert_eq!(
+            bad_view.canonical_tx_hash()?,
+            source.row(0)?.canonical_tx_hash()?
+        );
+        assert!(!entry.matches(bad_view)?, "hash-only signature cache reuse");
+        // Raw compatibility and APFL rows can share one ordered selected body.
+        let last = order[1];
+        pending.get_mut(&last).unwrap().input = AdmissionInput::Raw(raws[1].clone());
+        let mixed = selected_apfl_batch(&selected, &pending, 2)?;
+        assert_eq!(mixed.encode()?, batch.encode()?);
+        assert_eq!(pending.len(), 4);
+        Ok(())
+    }
+
+    #[test]
+    fn pool_retention_keeps_full_owner_charged_until_last_row_and_rejects_without_mutation(
+    ) -> Result<()> {
+        let raws: Vec<_> = (0..3)
+            .map(|n| super::super::tests::signed_raw(19, n))
+            .collect();
+        let source = apfl_batch(&raws, 8)?;
+        let owner_bytes = source.retained_bytes()?;
+        let rows: Vec<_> = (0..3)
+            .map(|index| AdmissionInput::Apfl {
+                batch: source.clone(),
+                index,
+            })
+            .collect();
+        let mut retained = PoolRetention::default();
+        assert!(retained.reserve(&rows[0], owner_bytes - 1).is_err());
+        assert_eq!(retained.bytes, 0);
+        assert!(retained.owners.is_empty());
+        for row in &rows {
+            retained.reserve(row, owner_bytes)?;
+        }
+        assert_eq!(retained.bytes, owner_bytes);
+        assert_eq!(retained.owners.len(), 1);
+        retained.release(&rows[0]);
+        retained.release(&rows[1]);
+        assert_eq!(
+            retained.bytes, owner_bytes,
+            "one remaining row pins the full owner"
+        );
+        let other = apfl_batch(&raws, 8)?;
+        let other_row = AdmissionInput::Apfl {
+            batch: other,
+            index: 0,
+        };
+        assert!(retained.reserve(&other_row, owner_bytes).is_err());
+        assert_eq!(retained.bytes, owner_bytes);
+        assert_eq!(retained.owners.len(), 1);
+        retained.release(&rows[2]);
+        assert_eq!(retained.bytes, 0);
+        assert!(retained.owners.is_empty());
+        retained.reserve(&other_row, owner_bytes)?;
+        retained.release(&other_row);
+        assert_eq!(retained.bytes, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn raw_pool_retention_charges_capacity_not_only_visible_length() -> Result<()> {
+        let mut raw = Vec::with_capacity(4096);
+        raw.extend_from_slice(&[1; 8]);
+        let capacity = raw.capacity();
+        let input = AdmissionInput::Raw(raw);
+        let mut retained = PoolRetention::default();
+        assert!(retained.reserve(&input, 8).is_err());
+        assert_eq!(retained.bytes, 0);
+        retained.reserve(&input, capacity)?;
+        assert_eq!(retained.bytes, capacity);
+        retained.release(&input);
+        assert_eq!(retained.bytes, 0);
+        Ok(())
     }
 
     fn query(index: u8, complete: bool) -> BalanceQuery {

@@ -147,8 +147,46 @@ impl ApflTransferBatch {
             .iter()
             .map(|raw| decode_transfer_view_v3(raw, limits.transaction_bytes))
             .collect::<Result<Vec<_>>>()?;
-        let mut signatures = Vec::with_capacity(raw.len() * SIGNATURE_BYTES);
-        for row in &views {
+        Self::from_views(&views, limits)
+    }
+
+    /// Rebatch already structured rows without encoding and parsing canonical
+    /// transactions. Views are untrusted: validate shape and expanded budgets
+    /// before allocating owned columns. This does not authenticate signatures.
+    pub fn from_views(views: &[TransferView<'_>], limits: ApflLimits) -> Result<Self> {
+        ensure!(
+            !views.is_empty() && views.len() <= limits.transactions,
+            "APFL transaction count exceeds budget"
+        );
+        let mut total = 0usize;
+        let mut max = 0usize;
+        for row in views {
+            ensure!(
+                row.signature.len() == SIGNATURE_BYTES,
+                "APFL signature size mismatch"
+            );
+            let size = row.encoded_len()?;
+            ensure!(
+                size <= limits.transaction_bytes,
+                "APFL expanded transaction exceeds budget"
+            );
+            total = total
+                .checked_add(size)
+                .context("APFL expanded size overflow")?;
+            ensure!(
+                total <= limits.body_bytes,
+                "APFL expanded body exceeds budget"
+            );
+            max = max.max(size);
+        }
+        limits.check(views.len(), total, max)?;
+        let mut signatures = Vec::with_capacity(
+            views
+                .len()
+                .checked_mul(SIGNATURE_BYTES)
+                .context("APFL signature size overflow")?,
+        );
+        for row in views {
             signatures.extend_from_slice(row.signature);
         }
         let columns = Columns {
@@ -290,6 +328,49 @@ impl ApflTransferBatch {
     }
     pub fn max_transaction_bytes(&self) -> usize {
         self.0.max_transaction_bytes
+    }
+
+    /// Allocated payload retained by this immutable owner, including spare
+    /// capacity, nested dictionaries and Arc counters. Allocator bookkeeping
+    /// and caller metadata are excluded; callers must also bound owner count.
+    /// Charge the entire owner even when retaining only one row.
+    pub fn retained_bytes(&self) -> Result<usize> {
+        fn column<T>(value: &Column<T>, nested: impl Fn(&T) -> usize) -> Result<usize> {
+            let base = value
+                .values
+                .capacity()
+                .checked_mul(std::mem::size_of::<T>())
+                .and_then(|n| {
+                    value
+                        .indexes
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<u32>())
+                        .and_then(|indexes| n.checked_add(indexes))
+                })
+                .context("APFL retained capacity overflow")?;
+            value.values.iter().try_fold(base, |n, item| {
+                n.checked_add(nested(item))
+                    .context("APFL retained dictionary overflow")
+            })
+        }
+        let data = &self.0;
+        [
+            column(&data.chain, |_| 0)?,
+            column(&data.from, Vec::capacity)?,
+            column(&data.to, Vec::capacity)?,
+            column(&data.asset, String::capacity)?,
+            column(&data.amount, |_| 0)?,
+            column(&data.nonce, |_| 0)?,
+            column(&data.pay_asset, String::capacity)?,
+            column(&data.max_pay, |_| 0)?,
+            column(&data.slippage, |_| 0)?,
+            data.signatures.capacity(),
+        ]
+        .into_iter()
+        .try_fold(
+            std::mem::size_of::<Owned>() + 2 * std::mem::size_of::<usize>(),
+            |n, bytes| n.checked_add(bytes).context("APFL retained owner overflow"),
+        )
     }
 }
 

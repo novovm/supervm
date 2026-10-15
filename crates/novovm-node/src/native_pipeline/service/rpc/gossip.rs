@@ -76,9 +76,8 @@ fn select_repair(
     pending: &BTreeMap<Hash, Pending>,
     peer: usize,
     batch_size: usize,
-) -> (Vec<Hash>, Vec<Vec<u8>>) {
+) -> Vec<Hash> {
     let mut hashes = Vec::new();
-    let mut raw = Vec::new();
     let mut bytes = 0;
     for hash in order {
         let Some(entry) = pending.get(hash) else {
@@ -88,15 +87,14 @@ fn select_repair(
             continue;
         }
         if hashes.len() == batch_size
-            || bytes + entry.raw.len() > super::super::body_byte_limit(batch_size)
+            || bytes + entry.canonical_len > super::super::body_byte_limit(batch_size)
         {
             break;
         }
-        bytes += entry.raw.len();
+        bytes += entry.canonical_len;
         hashes.push(*hash);
-        raw.push(entry.raw.clone());
     }
-    (hashes, raw)
+    hashes
 }
 
 impl RpcLifecycle {
@@ -135,35 +133,32 @@ impl RpcLifecycle {
             let repair = self.gossip_repair.next_peer(&available);
             let use_repair = repair.is_some()
                 && (self.gossip_repair.prefer_repair || self.gossip_order.is_empty());
-            let (hashes, raw, repair_peer) = if use_repair {
+            let (hashes, repair_peer) = if use_repair {
                 let peer = repair.expect("eligible repair recipient");
-                let (hashes, raw) =
-                    select_repair(&self.order, &self.pending, peer, self.batch_size);
-                (hashes, raw, Some(peer))
+                let hashes = select_repair(&self.order, &self.pending, peer, self.batch_size);
+                (hashes, Some(peer))
             } else {
                 let mut hashes = Vec::new();
-                let mut raw = Vec::new();
                 let mut bytes = 0;
                 while let Some(hash) = self.gossip_order.front().copied() {
                     if let Some(entry) = self.pending.get(&hash) {
                         if hashes.len() == self.batch_size
-                            || bytes + entry.raw.len()
+                            || bytes + entry.canonical_len
                                 > super::super::body_byte_limit(self.batch_size)
                         {
                             break;
                         }
-                        bytes += entry.raw.len();
+                        bytes += entry.canonical_len;
                         hashes.push(hash);
-                        raw.push(entry.raw.clone());
                     } else {
                         self.gossip_queued.remove(&hash);
                     }
                     self.gossip_order.pop_front();
                 }
-                (hashes, raw, None)
+                (hashes, None)
             };
-            if !raw.is_empty() {
-                let batch = apfl_batch(&raw, self.batch_size)?;
+            if !hashes.is_empty() {
+                let batch = selected_apfl_batch(&hashes, &self.pending, self.batch_size)?;
                 self.gossip_offer = Some(GossipOffer {
                     hashes,
                     message: self.node.controller.apfl_transactions_message(batch)?,
@@ -238,23 +233,70 @@ mod tests {
             pending.insert(
                 hash,
                 Pending {
-                    raw: vec![n; 8],
+                    input: AdmissionInput::Raw(vec![n; 8]),
+                    canonical_len: 8,
                     signer: [1; 32],
                     nonce: n as u64,
                     gossip_missing: if n == 0 { 0 } else { 0b101 },
                 },
             );
         }
-        let (hashes, raw) = select_repair(&order, &pending, 2, 2);
+        let hashes = select_repair(&order, &pending, 2, 2);
         assert_eq!(hashes, vec![[1; 32], [2; 32]]);
-        assert_eq!(raw, vec![vec![1; 8], vec![2; 8]]);
-        assert!(select_repair(&order, &pending, 1, 2).0.is_empty());
+        assert!(select_repair(&order, &pending, 1, 2).is_empty());
         pending.remove(&[1; 32]); // finalized/stale data must not be resurrected
         assert_eq!(
-            select_repair(&order, &pending, 2, 2).0,
+            select_repair(&order, &pending, 2, 2),
             vec![[2; 32], [3; 32]]
         );
         assert_eq!(pending.len(), 4);
+    }
+
+    #[test]
+    fn repair_selects_signed_structural_rows_without_raw_projection() -> Result<()> {
+        let raws: Vec<_> = (0..4)
+            .map(|nonce| super::super::super::tests::signed_raw(19, nonce))
+            .collect();
+        let source = apfl_batch(&raws, 8)?;
+        let mut pending = BTreeMap::new();
+        let mut order = VecDeque::new();
+        for (index, raw) in raws.iter().enumerate() {
+            let checked = authenticate_transfer_v3(raw, 71, 1024)?;
+            let hash = checked.tx_hash();
+            order.push_back(hash);
+            pending.insert(
+                hash,
+                Pending {
+                    input: AdmissionInput::Apfl {
+                        batch: source.clone(),
+                        index,
+                    },
+                    canonical_len: raw.len(),
+                    signer: checked.nonce_identity(),
+                    nonce: checked.transfer().nonce,
+                    gossip_missing: if index == 0 { 0 } else { 0b100 },
+                },
+            );
+        }
+        let selected = select_repair(&order, &pending, 2, 2);
+        assert_eq!(selected, vec![order[1], order[2]]);
+        let repair = selected_apfl_batch(&selected, &pending, 2)?;
+        for (index, raw) in raws[1..3].iter().enumerate() {
+            assert!(repair.row(index)?.matches_canonical_bytes(raw)?);
+        }
+        for entry in pending.values() {
+            let AdmissionInput::Apfl { batch, .. } = &entry.input else {
+                panic!("repair expanded pending source");
+            };
+            assert!(Arc::ptr_eq(batch, &source));
+        }
+        pending.remove(&order[1]);
+        assert_eq!(
+            select_repair(&order, &pending, 2, 2),
+            vec![order[2], order[3]]
+        );
+        assert!(select_repair(&order, &pending, 1, 2).is_empty());
+        Ok(())
     }
 
     #[test]
