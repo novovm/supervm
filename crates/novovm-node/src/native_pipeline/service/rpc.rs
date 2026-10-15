@@ -288,6 +288,9 @@ impl RpcLifecycle {
         if self.incoming.is_some() && !self.ingress_batch_boundary {
             return Ok(());
         }
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::NativeSelection,
+        );
         let current_height = self.node.controller.context().height;
         let successor = if self.node.controller.is_local_leader()?
             && !self.node.controller.has_successor_target(current_height)

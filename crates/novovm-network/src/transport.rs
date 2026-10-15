@@ -9620,6 +9620,9 @@ pub enum UdpIngressV1 {
 
 #[path = "transport/native_ingress.rs"]
 mod native_ingress;
+#[cfg(test)]
+#[path = "transport/receive_scratch_tests.rs"]
+mod receive_scratch_tests;
 pub use native_ingress::{AuthenticatedUdpIngressV1, NativeUdpIngressConfigV1, NativeUdpPollV1};
 
 /// One socket/drain owner shared by the legacy protocol and explicit native ingress.
@@ -11283,11 +11286,13 @@ impl UdpTransport {
             self.rcvbuf_effective_bytes,
         );
 
-        let packet_capacity = self
+        // The original receive owner already owns this scratch buffer. Keep its
+        // initialized capacity across empty polls and retain only received bytes
+        // in the existing bounded drain queue (never a 64-KiB backing per frame).
+        let mut scratch = self
             .recv_buf
             .lock()
-            .map(|shared| shared.len().max(1024))
-            .unwrap_or(64 * 1024);
+            .map_err(|_| std::io::Error::other("udp receive buffer lock poisoned"))?;
         let packet_input = if self.drain_first_enabled {
             let mut queue = self
                 .drain_queue
@@ -11297,10 +11302,9 @@ impl UdpTransport {
             while queue.len() < self.drain_queue_limit
                 && drained < self.drain_batch_max.try_into().unwrap_or(u64::MAX)
             {
-                let mut packet = vec![0u8; packet_capacity];
-                match self.socket.recv_from(packet.as_mut_slice()) {
+                match self.socket.recv_from(scratch.as_mut_slice()) {
                     Ok((n, src)) => {
-                        packet.truncate(n);
+                        let packet = scratch[..n].to_vec();
                         observe_network_runtime_receiver_udp_packet_recv_v1(
                             self.chain_id,
                             src,
@@ -11337,10 +11341,9 @@ impl UdpTransport {
             }
             popped
         } else {
-            let mut packet = vec![0u8; packet_capacity];
-            match self.socket.recv_from(packet.as_mut_slice()) {
+            match self.socket.recv_from(scratch.as_mut_slice()) {
                 Ok((n, src)) => {
-                    packet.truncate(n);
+                    let packet = scratch[..n].to_vec();
                     observe_network_runtime_receiver_udp_packet_recv_v1(
                         self.chain_id,
                         src,

@@ -35,8 +35,13 @@ pub(crate) enum Phase {
     QueueCandidate,
     IntegerCompile,
     IntegerProjection,
+    CandidateRegistration,
+    NativeIo,
+    NativeAssembly,
+    NativeQuery,
+    NativeSelection,
 }
-const NAMES: [&str; 27] = [
+const NAMES: [&str; 32] = [
     "admission",
     "authentication",
     "bind",
@@ -64,6 +69,11 @@ const NAMES: [&str; 27] = [
     "queue_candidate",
     "integer_compile",
     "integer_projection",
+    "candidate_registration",
+    "native_io",
+    "native_assembly",
+    "native_query",
+    "native_selection",
 ];
 struct Counter {
     calls: AtomicU64,
@@ -210,6 +220,6 @@ mod tests {
         counter.record(1);
         assert_eq!(counter.ns.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(counter.max_ns.load(Ordering::Relaxed), u64::MAX);
-        assert_eq!(Phase::IntegerProjection as usize + 1, NAMES.len());
+        assert_eq!(Phase::NativeSelection as usize + 1, NAMES.len());
     }
 }

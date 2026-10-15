@@ -106,6 +106,9 @@ pub struct NativePoll {
 
 pub struct NativeEndpoint {
     io: Arc<dyn NativeDatagramIo>,
+    // Full UDP payload capacity, initialized once. Parsing sees only the exact
+    // received prefix; old tail bytes are never input to authentication/decoding.
+    receive_scratch: Vec<u8>,
     local_key: [u8; 32],
     peers: Vec<Peer>,
     sources: BTreeMap<NativeRoute, usize>,
@@ -146,6 +149,7 @@ impl NativeEndpoint {
         let session = NativeUdpSession::from_bound_channel(channel, binding)?;
         Ok(Self {
             io,
+            receive_scratch: vec![0; 65536],
             local_key,
             peers: vec![Peer {
                 id,
@@ -200,6 +204,7 @@ impl NativeEndpoint {
     ) -> Result<Self> {
         let mut endpoint = Self {
             io,
+            receive_scratch: vec![0; 65536],
             local_key: identity.verifying_key().to_bytes(),
             peers: Vec::new(),
             sources: BTreeMap::new(),
@@ -270,6 +275,7 @@ impl NativeEndpoint {
         }
         Ok(Self {
             io: socket,
+            receive_scratch: vec![0; 65536],
             local_key: identity.verifying_key().to_bytes(),
             peers: owned,
             sources,
@@ -400,6 +406,7 @@ impl NativeEndpoint {
         }
         Ok(Self {
             io,
+            receive_scratch: vec![0; 65536],
             local_key,
             peers,
             sources,
@@ -540,7 +547,7 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
         quantum: usize,
-        mut receiver: F,
+        receiver: F,
     ) -> Result<NativePoll>
     where
         F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>>,
@@ -549,12 +556,35 @@ impl NativeEndpoint {
             (1..=64).contains(&quantum),
             "invalid native endpoint quantum"
         );
+        // Detach the scratch so the original handshake/session methods can
+        // borrow this owner. Restore on EVERY Result path, including I/O errors.
+        // Exclusive &mut self prevents a second safe caller from reentering.
+        let mut wire = std::mem::take(&mut self.receive_scratch);
+        let result = self.poll_with_scratch(wall_ms, now, quantum, receiver, &mut wire);
+        self.receive_scratch = wire;
+        result
+    }
+
+    fn poll_with_scratch<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        mut receiver: F,
+        wire: &mut [u8],
+    ) -> Result<NativePoll>
+    where
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>>,
+    {
+        ensure!(
+            wire.len() == 65536,
+            "native receive scratch capacity changed"
+        );
         self.traffic_started = true;
         let mut result = NativePoll::default();
         self.expire_reconnects(now);
         // Full UDP payload buffer ensures even oversized rejected datagrams
         // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).
-        let mut wire = [0; 65536];
         // An adopted reliable carrier has no unrelated UDP ICMP notifications.
         // A reset/refusal there must reach the owner so it retires this stream.
         let udp_io = self
@@ -562,7 +592,7 @@ impl NativeEndpoint {
             .keys()
             .all(|route| matches!(route, NativeRoute::Udp(_)));
         for _ in 0..quantum {
-            let (length, source) = match receiver(&mut wire) {
+            let (length, source) = match receiver(wire) {
                 Ok(Some(value)) => value,
                 Ok(None) => continue,
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
@@ -591,6 +621,7 @@ impl NativeEndpoint {
                 .wire_budget
                 .as_mut()
                 .is_some_and(|budget| !budget.admit_receive(length, now))
+                || length > wire.len()
                 || length > MAX_DATAGRAM_BYTES
             {
                 result.rejected_datagrams += 1;
@@ -773,3 +804,5 @@ mod client_set_tests;
 
 #[cfg(test)]
 mod io_tests;
+#[cfg(test)]
+mod scratch_tests;
