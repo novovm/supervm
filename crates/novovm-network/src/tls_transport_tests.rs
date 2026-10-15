@@ -1,3 +1,4 @@
+use super::TLS_TEST_SERIAL as SERIAL;
 use super::*;
 use crate::{
     duplex::HandshakeReplayCacheV1,
@@ -7,7 +8,70 @@ use tokio::{
     io::duplex,
     net::{TcpListener, TcpStream},
 };
-static SERIAL: Semaphore = Semaphore::const_new(1);
+
+#[cfg(feature = "iroh-transport")]
+#[tokio::test]
+async fn continuous_idle_revocation_closes_owned_io_without_requests() -> Result<()> {
+    let _serial = SERIAL.acquire().await?;
+    let live = Arc::new(AtomicBool::new(true));
+    let owner = live.clone();
+    let a = TlsScopeV1::new_continuous_v4(move || {
+        ensure!(owner.load(Ordering::Acquire), "owner revoked");
+        Ok(())
+    })?;
+    let b = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
+    let (mut left, _right) = pair(&a, &b).await?;
+    left.admit_continuous_service_v4()?;
+    left.complete_service_request_v6()?;
+    assert!(left
+        .write_frame(b"idle cannot write without request")
+        .await
+        .is_err());
+    live.store(false, Ordering::Release);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(left.state.io.0.lock().unwrap().is_none());
+    assert!(left.binding().is_err());
+    assert!(left.begin_service_request_v4().is_err());
+    Ok(())
+}
+
+#[cfg(feature = "iroh-transport")]
+#[tokio::test]
+async fn continuous_partial_header_expires_and_cannot_restart_request() -> Result<()> {
+    let _serial = SERIAL.acquire().await?;
+    let a = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
+    let b = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
+    let (mut left, mut right) = pair(&a, &b).await?;
+    left.admit_continuous_service_v4()?;
+    right.admit_continuous_service_v4()?;
+    left.complete_service_request_v6()?;
+    // Actual partial TLS plaintext header: no clock mocking or shorter deadline.
+    right.tls.write_all(&[0]).await?;
+    right.tls.flush().await?;
+    // Keep peer legitimately idle, so its setup/request deadline cannot be the
+    // cause of this receiver's timeout.
+    right.complete_service_request_v6()?;
+    let started = Instant::now();
+    let error = left.read_idle_service_frame_v6().await.unwrap_err();
+    assert!(started.elapsed() >= SERVICE_REQUEST_TIMEOUT);
+    assert!(error.to_string().contains("request expired"), "{error:#}");
+    assert!(left.begin_service_request_v4().is_err());
+    assert!(left.state.io.0.lock().unwrap().is_none());
+    Ok(())
+}
+
+#[cfg(feature = "iroh-transport")]
+#[tokio::test]
+async fn finite_scope_cannot_be_promoted_to_continuous_or_idle() -> Result<()> {
+    let _serial = SERIAL.acquire().await?;
+    let a = TlsScopeV1::new(control())?;
+    let b = TlsScopeV1::new(control())?;
+    let (mut left, _right) = pair(&a, &b).await?;
+    assert!(left.admit_continuous_service_v4().is_err());
+    assert!(left.begin_service_request_v4().is_err());
+    assert!(left.complete_service_request_v6().is_err());
+    Ok(())
+}
 
 fn control() -> TlsControlV1 {
     TlsControlV1::new(Instant::now() + Duration::from_secs(5), || Ok(())).unwrap()

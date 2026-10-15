@@ -109,7 +109,7 @@ impl CarrierStreamV1<'_> {
         match &mut self.inner {
             Stream::Iroh(stream) => stream.admit_continuous_service_v4(),
             #[cfg(feature = "tls-transport")]
-            Stream::Tls(_) => anyhow::bail!("carrier has no continuous service scope"),
+            Stream::Tls(stream) => stream.admit_continuous_service_v4(),
         }
     }
 
@@ -118,7 +118,7 @@ impl CarrierStreamV1<'_> {
         match &mut self.inner {
             Stream::Iroh(stream) => stream.begin_service_request_v4(),
             #[cfg(feature = "tls-transport")]
-            Stream::Tls(_) => anyhow::bail!("carrier has no continuous service scope"),
+            Stream::Tls(stream) => stream.begin_service_request_v4(),
         }
     }
 
@@ -127,7 +127,7 @@ impl CarrierStreamV1<'_> {
         match &mut self.inner {
             Stream::Iroh(stream) => stream.complete_service_request_v6(),
             #[cfg(feature = "tls-transport")]
-            Stream::Tls(_) => anyhow::bail!("carrier has no continuous idle service"),
+            Stream::Tls(stream) => stream.complete_service_request_v6(),
         }
     }
 
@@ -136,7 +136,7 @@ impl CarrierStreamV1<'_> {
         match &mut self.inner {
             Stream::Iroh(stream) => stream.service_request_deadline_v6(),
             #[cfg(feature = "tls-transport")]
-            Stream::Tls(_) => anyhow::bail!("carrier has no continuous idle service"),
+            Stream::Tls(stream) => stream.service_request_deadline_v6(),
         }
     }
 
@@ -145,7 +145,7 @@ impl CarrierStreamV1<'_> {
         match &mut self.inner {
             Stream::Iroh(stream) => stream.read_idle_service_frame_v6().await,
             #[cfg(feature = "tls-transport")]
-            Stream::Tls(_) => anyhow::bail!("carrier has no continuous idle service"),
+            Stream::Tls(stream) => stream.read_idle_service_frame_v6().await,
         }
     }
 

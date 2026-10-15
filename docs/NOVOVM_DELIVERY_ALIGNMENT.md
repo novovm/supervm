@@ -1,5 +1,15 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 continuous TLS mailbox (claim released):** NOVOCHAT session,
+input ce5624b9. Scoped to tls_transport.rs/tests, carrier_stream.rs,
+mailbox_rpc.rs and mailbox_tls_tests.rs: reuse the existing NVMBOX06 protocol
+over owner-controlled TLS with bounded requests and authenticated idle. No new
+network/identity/scheduler, no financial/AOEM or July recovery changes. Current
+Android route stays unchanged until the actual carrier deployment is ready.
+Final targeted TCP/TLS suite: 16 pass, 62.28s; strict combined-feature lib Clippy
+passes. Broad-filter Iroh timeout and its unchanged passing recheck are retained
+in the tracker. Not Android routing or latency acceptance.
+
 **2026-10-15 最新用户决定：七月为实现主体。** 以`4f45526d`原生NovoRUDP/APFL
 完整工程起步，后续有效能力向它迁入；取代继续在十月worker接载体的任务。
 仓内detached恢复现场`docs/temp/july-native-rebuild`已建立，原node的locked
