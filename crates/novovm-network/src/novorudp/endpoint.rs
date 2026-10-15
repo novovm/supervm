@@ -254,30 +254,58 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<Self> {
+        Self::connect_clients(socket, identity, vec![remote], budget, wall_ms, now)
+    }
+
+    /// A bounded set of explicitly pinned application services on one socket.
+    /// Every remote uses the original client-initiated handshake role; an absent
+    /// service does not serialize or change another peer's authentication.
+    pub fn connect_clients(
+        socket: UdpSocket,
+        identity: SigningKey,
+        remotes: Vec<NativePeer>,
+        budget: NativeHandshakeBudget,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<Self> {
+        ensure!(
+            (1..=64).contains(&remotes.len()),
+            "native endpoint peer bound"
+        );
         let local_key = identity.verifying_key().to_bytes();
-        let handshake = NativeHandshake::start_role(
-            identity,
-            remote.key,
-            remote.address,
-            wall_ms,
-            now,
-            budget.lifetime,
-            budget.retry,
-            Some(true),
-        )?;
-        socket.set_nonblocking(true)?;
-        let id = peer_id_from_ed25519_public_key_v1(&remote.key);
-        Ok(Self {
-            socket: Arc::new(socket),
-            local_key,
-            peers: vec![Peer {
+        let mut sources = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        let mut peers = Vec::with_capacity(remotes.len());
+        for (index, remote) in remotes.into_iter().enumerate() {
+            let id = peer_id_from_ed25519_public_key_v1(&remote.key);
+            ensure!(
+                ids.insert(id.clone()) && sources.insert(remote.address, index).is_none(),
+                "duplicate native peer/endpoint"
+            );
+            let handshake = NativeHandshake::start_role(
+                identity.clone(),
+                remote.key,
+                remote.address,
+                wall_ms,
+                now,
+                budget.lifetime,
+                budget.retry,
+                Some(true),
+            )?;
+            peers.push(Peer {
                 id: id.into(),
                 handshake,
                 session: None,
                 streams: None,
                 reconnect: None,
-            }],
-            sources: BTreeMap::from([(remote.address, 0)]),
+            });
+        }
+        socket.set_nonblocking(true)?;
+        Ok(Self {
+            socket: Arc::new(socket),
+            local_key,
+            peers,
+            sources,
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
@@ -574,3 +602,6 @@ mod multiplex_tests;
 mod reconnect;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod client_set_tests;
