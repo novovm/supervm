@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 carrier admission/cleanup diagnosis (NOVOCHAT claim active):** input
+7075b765, downstream afaee82. Root owns iroh_transport.rs finite-scope/connection
+cleanup and focused existing tests, docs and one build slot. First measure the
+existing eight-second failure before changing behavior; no deadline expansion,
+false cleanup completion, ignored identity errors or live-node switch. Preserve
+long-lived endpoint ownership and original stream/connection limits. No edits to
+mainchain, AOEM, native ingress or another application scheduler.
+
 **2026-10-16 structured bound carrier handshake (claim released; runtime wiring pending):** input
 f29e5519, downstream c8832af. Reuse transport_binding.rs BoundHandshake/Finished
 and bound_session.rs CarrierStream adapter; explicit structured encoding only for
