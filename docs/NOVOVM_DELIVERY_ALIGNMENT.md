@@ -1,4 +1,21 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 sole-mainline correction (active):** July recovery owner.
+Reproduce the actual July `4f45526d` NovoRUDP/APFL structural-bulk execution
+path, then migrate useful later capabilities INTO that path. Do not expand
+`native-resident-udp-v1` / its bootstrap early-return as an alternative mainline.
+One node/exec/bindings/AOEM semantic core and one authorized publication path;
+CPU/GPU backends are permitted within that contract, not replacement products.
+Hundred-thousand-plus native-path TPS is the next evidence target, million-level
+mainchain TPS remains the objective. Separate transport/execution/finalized
+success measurements without abandoning the existing fast mechanisms.
+See [highest-priority recovery decision](NOVOVM_ARCHITECTURE_RECOVERY_ROADMAP.md).
+
+**2026-10-16 native query slice (local, expansion stopped):** recovery worktree
+`docs/temp/july-native-rebuild`, commit `4fa89d80`. Typed native queries and
+functional recovery tests are retained as reuse assets, not proof of July fast
+path throughput. This commit is local-only, not delivered on shared main.
+No new throughput result is claimed. Protected drafts and other-device work stay.
+
 **2026-10-16 native in-flight cancellation (claim released):** NOVOCHAT session,
 input c2c1f6fc plus shared reconnect 943092da. Scope: original novorudp object_link/sender completion state,
 shared mailbox_structured/native_session and focused tests/handoff. Propagate

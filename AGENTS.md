@@ -1,4 +1,38 @@
 # Agent Highest Law
+
+- 2026-10-16 latest user correction — ONE actual execution mainline:
+  Use July `4f45526d`'s original NovoRUDP/APFL structural-bulk path as the
+  recovery foundation. Reproduce that existing path first, then migrate useful
+  later capabilities INTO it through novovm-node -> novovm-exec -> aoem-bindings
+  -> AOEM unified semantics. Do not keep extending a replacement pipeline and
+  describe its July Git ancestry, directory names or transport wrapper as
+  restoration of the original fast execution path.
+  This prohibits ARCHITECTURAL forks, not merely Git branches: no new product
+  mode, bootstrap early-return, independent controller/executor or authority
+  head that bypasses the chosen path. Stop expanding native-resident-udp-v1 as
+  an alternative recovery mainline. Preserve its useful code/tests for reviewed
+  reuse; query closure alone is not recovery of July throughput.
+  Reworking incorrect internals on the chosen mainline is authorized; creating
+  another parallel replacement product is not. CPU/GPU backends selected by
+  the SAME unified semantic contract are not competing product paths. Keep
+  execution and consensus separate, with one authorized publication boundary;
+  do not hide Host business loops inside opaque AOEM callbacks.
+  The immediate performance objective is demonstrated hundred-thousand-plus
+  TPS on the chosen native path, toward the million-TPS mainchain objective,
+  not acceptance of roughly 10K as a ceiling. Report transport delivery,
+  execution and finalized successful transactions with their actual timing
+  boundaries. Historical samples are reusable evidence, not a new measurement
+  or guaranteed production capacity. Do not drop signatures, economic rules,
+  durability or quorum to manufacture the target; do not use these distinctions
+  as an excuse to abandon the original fast mechanisms.
+  Before implementation, name the actual entry/call chain being changed and
+  the old implementation it replaces. After integration and verification,
+  remove superseded ACTIVE wiring through the reviewed replacement map; keep
+  unreviewed drafts, evidence, signing logs and runtime data protected. No hard
+  reset, force-push or wholesale deletion is authorized by this correction.
+  This instruction supersedes conflicting older RPC/replacement-controller
+  next steps below. See the latest section of the recovery roadmap.
+
 - 2026-10-16 user work split: NOVOCHAT, Android/iPhone platform bindings,
   app lifecycle and mobile-device validation belong to the other NOVOCHAT
   machine. Share one NovoRUDP/APFL Rust core; do not take over mobile work.
