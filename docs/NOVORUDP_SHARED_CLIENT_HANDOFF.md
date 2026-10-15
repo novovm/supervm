@@ -286,3 +286,31 @@ within that owner cannot clear it. Process restart starts a new local window;
 this is not durable billing or a global abuse defense. The cumulative 64-peer
 identity capacity still needs lifecycle work before an open-network deployment.
 Mobile driver integration and real Android native-path latency remain pending.
+
+## 2026-10-16 Shared async mailbox request handles
+
+`mailbox_structured::native_requests::{NativeMailboxDriver, NativeMailboxHandle}`
+attach to ONE existing authenticated NativeObjectLink peer. The original owner
+must call progress, poll that same link, dispatch transport completions and feed
+mailbox replies; wake()/next_deadline() fit its existing IO selection. The adapter
+creates no socket/runtime/thread/retry controller. Use the same Application owner,
+not another app SDK or task pump.
+
+request() reserves one of four original slots synchronously, including completed
+results until consumed. The deadline starts before queueing (at most the original
+30-second operation bound); it does not bound the healthy connection lifetime.
+Watch and ordinary operations use independent slots. Do not interpret four slots
+as a lifetime message limit, or require all four free while Watch is active.
+
+Future cancellation directly marks the original link's retained-send token;
+unknown outcomes retain original business identity/TTL and require reconciliation.
+A failed active slot stays retired until a new legitimate session, without sequence
+reset. Validated late replies are discarded using at most four retired contexts.
+Protocol/Authority errors remain typed and cannot become Stopped during teardown.
+Transport completion alone never fulfills a business request or device receipt.
+
+Real Windows UDP tests cover concurrent Watch/Put, continuous Fetch, queued expiry,
+capacity, active cancellation before/after partial send and other-slot progress.
+The production Application/native candidate wiring and Android cross-network
+latency are still pending. Test-only local IO pumping is not a second production
+scheduler. Current installed phones/node remain unchanged.

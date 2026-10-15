@@ -13,7 +13,7 @@ Single build/performance slot remains with root. No outstanding SDK edits;
 next ownership is original node tick/structured execution handoff, not another
 controller or native-resident bootstrap expansion. Preserve NOVOCHAT work below.
 
-**2026-10-16 native async mailbox request handoff (claim active):** NOVOCHAT
+**2026-10-16 native async mailbox request handoff (claim released after local verification):** NOVOCHAT
 session, input781e41f8. Scope mailbox_structured/native_session bounded operation
 lifecycle and a shared async request-handle adapter on the SAME NativeObjectLink;
 real UDP owner regression. No new socket/runtime/thread/account/protocol or
@@ -21,6 +21,11 @@ financial/AOEM work. Root integrates/tests; agent may own native_session + new
 request adapter; root owns tests/docs and later Application integration. Preserve
 four slots, no await-held global lock, original request identity/deadline and
 unknown outcomes; caller's original owner polls IO and dispatches replies.
+Implemented shared bounded handles on the original client/link. Same cancellation
+token reaches retained sends; completed replies retain reservations; terminal
+protocol/security cause survives driver teardown. Real native-node2/session8,
+structured9 and strict Clippy pass. Application runtime and device deployment
+remain pending; no phone-latency claim. Details in readiness tracker.
 
 **2026-10-16 native wire-budget activation (claim released after local verification):** NOVOCHAT session,
 input bb18f05a. Scope original novorudp endpoint/datagram/handshake/object_sender

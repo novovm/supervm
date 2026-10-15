@@ -143,10 +143,34 @@ impl Drop for Pending {
         self.cancellation.cancel();
     }
 }
+struct RetiredRequest {
+    id: RequestId,
+    context: [u8; 32],
+    rows: usize,
+}
+/// A late reply for a terminated slot is distinct from an unsolicited frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplyRequestV7 {
+    Pending(RequestId),
+    Retired(RequestId),
+}
 struct ClientSlot {
+    retired: Option<RetiredRequest>,
     sequence: u64,
     failed: bool,
     pending: Option<Pending>,
+}
+impl ClientSlot {
+    fn fail_pending(&mut self) -> Option<Pending> {
+        self.failed = true;
+        let pending = self.pending.take()?;
+        self.retired = Some(RetiredRequest {
+            id: pending.id,
+            context: pending.context,
+            rows: pending.requests.len(),
+        });
+        Some(pending)
+    }
 }
 pub struct NativeMailboxClient {
     binding: Binding,
@@ -156,9 +180,50 @@ pub struct NativeMailboxClient {
 impl NativeMailboxClient {
     pub fn invalidate(&mut self) {
         for slot in &mut self.slots {
-            slot.failed = true;
-            slot.pending = None;
+            slot.fail_pending();
         }
+    }
+    pub fn check_session(&self, link: &NativeObjectLink) -> Result<()> {
+        self.binding.check(link)
+    }
+    /// Cancel exactly this request; no sequence reset or remote rollback.
+    pub fn cancel(&mut self, id: RequestId) -> bool {
+        let Some(slot) = self.slots.get_mut(id.slot) else {
+            return false;
+        };
+        if !slot.pending.as_ref().is_some_and(|p| p.id == id) {
+            return false;
+        }
+        slot.fail_pending();
+        true
+    }
+    /// Inspect only the authenticated peer/session and a fixed-size context
+    /// prefix on the hot path. Terminated replies additionally undergo full
+    /// schema validation before being classified as safe to discard.
+    pub fn reply_request(
+        &self,
+        link: &NativeObjectLink,
+        body: &CompletedMessage,
+    ) -> Result<ReplyRequestV7> {
+        self.binding.check(link)?;
+        ensure!(body.peer == self.binding.id, "mailbox reply peer");
+        let mut prefix = [0u8; 56];
+        let mut source = body.chunks.iter().flatten();
+        for byte in &mut prefix {
+            *byte = *source.next().context("short mailbox reply")?;
+        }
+        let context = context(&prefix)?;
+        for slot in &self.slots {
+            if let Some(p) = slot.pending.as_ref().filter(|p| p.context == context) {
+                return Ok(ReplyRequestV7::Pending(p.id));
+            }
+            if let Some(p) = slot.retired.as_ref().filter(|p| p.context == context) {
+                let bytes = flatten(body)?;
+                decode_replies(&bytes, p.context, p.rows)?;
+                return Ok(ReplyRequestV7::Retired(p.id));
+            }
+        }
+        anyhow::bail!("unsolicited/old mailbox reply")
     }
     /// Call only once after the existing pinned peer handshake is established.
     /// No handshake per batch; node must be that same peer, not a receipt key
@@ -172,6 +237,7 @@ impl NativeMailboxClient {
             binding: Binding::claim(link, peer, NativeApplicationRole::Client)?,
             node,
             slots: std::array::from_fn(|_| ClientSlot {
+                retired: None,
                 sequence: 1,
                 failed: false,
                 pending: None,
@@ -186,6 +252,36 @@ impl NativeMailboxClient {
         requests: Vec<Request>,
         now: Instant,
     ) -> Result<RequestId> {
+        self.begin_until(slot, requests, now, now + REQUEST_DEADLINE)
+    }
+    /// Caller deadline starts before enqueueing; preparation never restarts it.
+    pub fn begin_until(
+        &mut self,
+        slot: usize,
+        requests: Vec<Request>,
+        now: Instant,
+        deadline: Instant,
+    ) -> Result<RequestId> {
+        self.begin_until_cancellable(
+            slot,
+            requests,
+            now,
+            deadline,
+            &NativeSendCancellation::default(),
+        )
+    }
+    /// Shared owner cancellation reaches retained link sends even if the future
+    /// is dropped between driver progress and the next link polling quantum.
+    pub(crate) fn begin_until_cancellable(
+        &mut self,
+        slot: usize,
+        requests: Vec<Request>,
+        now: Instant,
+        deadline: Instant,
+        cancellation: &NativeSendCancellation,
+    ) -> Result<RequestId> {
+        let deadline = deadline.min(now + REQUEST_DEADLINE);
+        ensure!(now < deadline, "mailbox deadline before preparation");
         let s = self.slots.get_mut(slot).context("mailbox slot")?;
         ensure!(
             !s.failed && s.pending.is_none(),
@@ -198,13 +294,13 @@ impl NativeMailboxClient {
         let context = self.binding.context(slot, id.sequence);
         let body = outgoing(encode_requests(context, &requests)?)?;
         s.pending = Some(Pending {
-            cancellation: NativeSendCancellation::default(),
+            cancellation: cancellation.clone(),
             id,
             context,
             requests,
             body,
             sent: false,
-            deadline: now + REQUEST_DEADLINE,
+            deadline,
         });
         Ok(id)
     }
@@ -226,8 +322,7 @@ impl NativeMailboxClient {
             .filter(|p| p.id == id)
             .context("mailbox pending identity")?;
         if now >= p.deadline {
-            s.failed = true;
-            s.pending = None;
+            s.fail_pending();
             anyhow::bail!("mailbox deadline; outcome unknown");
         }
         if !p.sent {
@@ -264,8 +359,7 @@ impl NativeMailboxClient {
             .position(|s| s.pending.as_ref().is_some_and(|p| p.context == context))
             .context("unsolicited/old mailbox reply")?;
         let s = &mut self.slots[index];
-        let p = s.pending.take().unwrap();
-        s.failed = true; // all decode, semantic, expiry and authority errors latch
+        let p = s.fail_pending().unwrap(); // all decode, semantic, expiry and authority errors latch
         ensure!(p.sent && now < p.deadline, "mailbox late/unsent reply");
         let replies = decode_replies(&bytes, p.context, p.requests.len())?;
         for (request, reply) in p.requests.iter().zip(&replies) {
@@ -277,6 +371,7 @@ impl NativeMailboxClient {
             .checked_add(1)
             .context("mailbox sequence exhausted")?;
         s.failed = false;
+        s.retired = None;
         Ok((p.id, replies))
     }
     /// Feed the existing link's completion events. Returns an unknown-outcome
@@ -296,8 +391,7 @@ impl NativeMailboxClient {
                         | ObjectSendState::Cancelled
                 )
             {
-                s.failed = true;
-                return s.pending.take().map(|p| p.id);
+                return s.fail_pending().map(|p| p.id);
             }
         }
         None
@@ -309,8 +403,7 @@ impl NativeMailboxClient {
                 .as_ref()
                 .is_some_and(|p| now >= p.deadline || !self.binding.validity.is_current())
             {
-                s.failed = true;
-                expired.push(s.pending.take().unwrap().id);
+                expired.push(s.fail_pending().unwrap().id);
             }
         }
         expired
