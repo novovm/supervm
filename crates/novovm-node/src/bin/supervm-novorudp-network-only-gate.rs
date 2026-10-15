@@ -3,6 +3,9 @@
 
 use anyhow::{bail, Context, Result};
 use novovm_exec::{AoemExecFacade, AoemRuntimeConfig};
+#[path = "novorudp_gate/ack.rs"]
+mod gate_ack;
+use gate_ack::{AckScopeV0, NetworkOnlyAckV0};
 use novovm_network::{NovoRudpRange, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
 use novovm_node::tx_ingress::{nov_native_tx_to_adapter_tx_ir_v1, sign_nov_native_tx_with_seed_v1};
 use novovm_protocol::{
@@ -12,7 +15,6 @@ use novovm_protocol::{
     NovPrivacyModeV1, NovTxKindV1, NovVerificationModeV1, ProtocolMessage,
 };
 use novovm_udp_batch::sendmmsg_batch;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use socket2::SockRef;
@@ -35,15 +37,6 @@ const SEND_TO_WOULD_BLOCK_YIELD_RETRIES_V0: u64 = 8;
 const SEND_TO_WOULD_BLOCK_SLEEP_US_V0: u64 = 100;
 const SEND_TO_WOULD_BLOCK_MAX_RETRIES_V0: u64 = 10_000;
 const BACKPRESSURE_HEALTHY_RECOVERY_WINDOWS_V0: u64 = 2;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NetworkOnlyAckV0 {
-    expected_total: u64,
-    received_unique_count: u64,
-    missing_ranges: Vec<NovoRudpRange>,
-    receiver_done: bool,
-    ack_epoch: u64,
-}
 
 #[derive(Debug, Clone, Default)]
 struct ReceiverStats {
@@ -1017,8 +1010,9 @@ fn run_sender() -> Result<()> {
     let mut done = false;
     let mut pending_repair = None::<(Vec<NovoRudpRange>, u64)>;
     let ack_poll_start = Instant::now();
+    let mut ack_scope = AckScopeV0::new(target, session_id, tx_count);
     while start.elapsed() < timeout {
-        match recv_ack_from_lanes_v0(&lanes, session_id, buf.as_mut_slice())? {
+        match recv_ack_from_lanes_v0(&lanes, &mut ack_scope, buf.as_mut_slice())? {
             Some(ack) => {
                 stats.ack_received = stats.ack_received.saturating_add(1);
                 latest_missing = ack.missing_ranges.clone();
@@ -1721,22 +1715,15 @@ fn merge_sender_stats_v0(dst: &mut SenderStats, src: SenderStats) {
 
 fn recv_ack_from_lanes_v0(
     lanes: &[SenderLaneV0],
-    session_id: [u8; 16],
+    scope: &mut AckScopeV0,
     buf: &mut [u8],
 ) -> Result<Option<NetworkOnlyAckV0>> {
     for lane in lanes {
         match lane.socket.recv_from(buf) {
-            Ok((n, _)) => {
-                let Ok(frame) = NovoRudpTransportFrameV0::decode(&buf[..n]) else {
-                    continue;
-                };
-                if frame.kind != NovoRudpTransportFrameKindV0::Ack || frame.session_id != session_id
-                {
-                    continue;
+            Ok((n, source)) => {
+                if let Some(ack) = scope.decode(source, &buf[..n]) {
+                    return Ok(Some(ack));
                 }
-                let ack =
-                    serde_json::from_slice(frame.payload.as_slice()).context("decode ack json")?;
-                return Ok(Some(ack));
             }
             Err(e)
                 if e.kind() == std::io::ErrorKind::WouldBlock

@@ -3,6 +3,37 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 ACK草稿纠偏：仅工具校验，不签收主链迁接
+
+输入b561c392。历史核对后撤回草稿中的network公开`novorudp_ack`入口，
+NetworkOnlyAckV0和AckScopeV0仅置于原gate的私有`novorudp_gate/ack.rs`。
+不新增生产ACK协议或调度器，不把工具抽取称作主链迁接完成。保留原ACK JSON控制格式与
+NovoRUDP二进制帧，不新增业务JSON、不更改DATA/APFL、执行、共识或SDK。
+原接收代码忽略recv_from来源；现按固定receiver地址、session、stream=1、
+ACK对象/序号、expected_total、帧/正文epoch校验，拒绝重放/迟到、重叠/越界
+missing范围、计数不守恒及虚假done。只有全部检查通过才推进epoch；无效数据
+不能毒化后继合法ACK。解析前限UDP有效负载65507B，不扩大队列或重试。
+
+此处来源匹配不是密码学认证：同地址伪造风险必须由后续既有E2E会话接合解决。
+ACK只表示传输，不授予执行/持久化/最终性。不要把原gate提升为生产节点。
+真实loopback UDP覆盖第三方来源拒绝、2/0乱序交付且丢1、复用原build_repair_plan
+补1、完整ACK；另测错误session/stream、epoch不一致/重放、范围/计数拒绝。
+移动前`cargo test --locked -p novovm-network --lib novorudp`：50通过，0失败/忽略；
+`cargo check --locked -p novovm-node --bin supervm-novorudp-network-only-gate`通过。
+首轮check有提取后unused serde imports，已删除并复验无该warning；原Cargo重复
+bin目标提示仍存在，不属于本片。未跑四原节点/TPS；未改49份受保护草稿。
+
+当前缺口仍是将原UDP可靠对象交付与既有加密会话接入同一node channel，替换
+worker/session的强制Relay依赖；本片仅保留原工具调用者的校验，不提供新生产入口。
+不能把组件通过说成主链已回到七月原生载体，亦不因此停止完整接合。
+
+移动后本机复验：工具私有`gate_ack::tests`三项通过；完整工具九项中八项通过，
+`tests::native_transfer_apfl_payload_mode_decode_only_reconstructs_canonical_native_txs`
+失败，business_decode_error_count为1（预期0），单独精确复跑仍失败。第一次精确
+筛选漏写`tests::`仅运行0项，不计通过。失败位于未修改的APFL decode-only用例，
+本轮尚未做冻结旧构建对照或根因确认，不能宣称整套历史工具全绿，也不删断言。
+本轮rustfmt检查与限定路径diff检查通过。未启动TPS、未改变主链默认载体。
+
 ## 2026-10-15 原节点完成通知：功能通过，性能回退，未晋级
 
 输入5d4ce085；仅在pipeline终态reply发送后通知原产品线程，并把原RPC的
