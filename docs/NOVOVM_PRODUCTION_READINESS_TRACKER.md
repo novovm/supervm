@@ -3,6 +3,38 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原 tick 实际消费认证结构交易与耐久发布
+
+七月恢复现场1796346e→`3ed27bec`，本机四进程已验证；**尚未整合到共享main**。
+共享main本轮仅保存此证据和交接，不把恢复树结果冒充其活动产品已切换。
+具体报告与二进制/DLL身份见[恢复验收](../artifacts/audit/july-original-tick-20261016/README.md)。
+
+实际修改原`NativeExecutionPipelineUdpDriveV1/run_native_execution_tick_node_mode_v1`：
+原UdpTransport把唯一收包权交给现有认证对象owner；同一tick持有并推进复用的
+准入/候选/原生查询及round-bft journal。常驻执行和共识仍分离；无第二socket、
+签者或链头。配置产品分支不运行旧raw pending executor、固定数量fixture关闭器
+或由执行计数推导的ledger finality；旧resident bootstrap在默认binary拒绝，只有
+显式historical-http比较构建保留旧夹具。未配置产品时不静默回到裸执行，历史
+七月fixture要求单独明确开关。没有关闭其他原产品模块或改变协议/创世哈希域。
+
+修正真实接合风险：普通客户端只授权application/query流，不能继承validator流；
+产品owner拒绝裸Protocol于旧观察器之前，不写旧pending、不学习旧peer或自动同步。
+配置解析前移至服务启动前；poll/诊断写入错误和正常结束均走既有pipeline drain。
+复用已有费用、失败、nonce、完整代数、状态树、持久journal和恢复，没有修改AOEM。
+
+Windows debug最终CPU两场景通过6.16s；完整代数同两场景通过15.55s。两者均以
+原tick启动四个独立进程，原生SDK非验证者单入口、无HTTP，核对创世、初始5成功/
+1业务失败、冷恢复、重放和后继2成功的经济结果；另验2/4不能发布、待定交易
+相同hash不同签名不能复用鉴权，补足节点后恢复推进。时间为功能测试总耗时，
+不是TPS。普通pipeline341通过/42忽略，结构socket9、传输80、新接收策略3通过。
+编译与非严格Clippy完成但保留告警；初次NodeId别名构造/test模块路径错误已修复
+并复跑。没有新增A/A/B、Linux、远端CI、跨机或性能签收。
+
+下一项是在此实际tick上核对原结构bulk与现有准入/选批物化边界，继续成套复用
+已有快机制，再做完整原生批量最终确认对照；同时受控接回共享main，保留另一设备
+NOVOCHAT增量和49份草稿。当前仍未启用后继重叠，不能因为入口接通就宣布七月
+性能恢复，也不能继续扩建旧替代bootstrap。空间已验证可继续构建，未执行额外清理。
+
 ## 2026-10-16 候选绑定保留 APFL 共享结构
 
 恢复现场b93a9faa→1796346e，九个受影响文件与共享main d4f49d85的原件blob

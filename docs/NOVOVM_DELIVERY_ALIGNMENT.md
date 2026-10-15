@@ -1,5 +1,19 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 original tick activation (recovery checkpoint, not shared-main activation):**
+root integrated existing typed genesis/startup, authenticated original UDP owner,
+resident execution, journal publication and native query/admission into the
+original tick at recovery `3ed27bec`. Network agent owned client stream policy;
+startup agent owned shared initialization and actual-process fixture; channel
+agent owned the same-owner adapter. All file claims now released; root retains
+integration and single build/performance slot. CPU and complete algebraic paths
+both passed the actual four-process native-only closure and minority recovery.
+No new TPS/production claim. Root main publishes evidence only pending controlled
+recovery integration; do not silently substitute its old active path. Preserve
+NOVOCHAT, protected drafts and historical performance artifacts. Next inspect
+remaining admission/selection materialization and original bulk consumption,
+then measure actual native finalized throughput, not another bootstrap.
+
 **2026-10-16 APFL candidate binding (implementation verified in recovery):** root owns packet codec,
 integration and the single build slot in the existing July recovery worktree;
 native_execution_map owns BatchSource/BatchPlan/binding and plan tests;
