@@ -1112,6 +1112,25 @@ pub async fn serve_mailbox_multiplex_with_policy_v6(
 ) -> Result<()> {
     serve_multiplex(first, identity, policy, service, authority, true).await
 }
+
+/// Dispatch an already selected NVMBOX06 service using the actual carrier.
+/// TLS is one stream per connection; QUIC retains the existing bounded lanes.
+/// Both use the same executor, store and node-wide accounting. Selecting a
+/// carrier never selects a weaker peer policy or bypasses V6 authentication.
+pub async fn serve_mailbox_prefetch_with_policy_v6(
+    mut first: CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    if first.supports_multiplex_v1() {
+        serve_mailbox_multiplex_with_policy_v6(first, identity, policy, service, authority).await
+    } else {
+        serve_mailbox_continuous_with_policy_v6(&mut first, identity, policy, service, authority)
+            .await
+    }
+}
 async fn serve_multiplex(
     mut first: CarrierStreamV1<'_>,
     identity: &SigningKey,

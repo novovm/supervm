@@ -511,6 +511,13 @@ pub async fn request_mailbox_multiplex_v6<'scope>(
     stream.multiplex_v1()
 }
 
+/// Select the same NVMBOX06 service on one owned, authenticated byte stream.
+/// This selects a protocol only: the bound identity handshake and encrypted
+/// V6 negotiation still follow. It does not claim QUIC multiplexing or privacy.
+pub async fn request_mailbox_continuous_v6(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    request_prefetch_selector(stream).await
+}
+
 pub async fn request_mailbox_multiplex_lane_v6(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
     ensure!(
         stream.is_multiplexed(),

@@ -3,6 +3,33 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 同一 NVMBOX06 入口按实际载体分派
+
+输入8c06b87a；提交前仅台账快进至58e3aade，保留另一现场七月恢复记录。
+原节点serve分支改用serve_mailbox_prefetch_with_policy_v6：Iroh仍进入原有界
+多流宿主；TLS进入原单流持续会话。request_mailbox_continuous_v6复用同一个
+NVMBOX06选择报文，不新增协议、不降级旧版、不共享不同连接的认证结果。
+链路为selector → carrier dispatcher → 原bound session → 原MailboxService。
+
+本机真实TCP/TLS两项通过，39.79秒，包含刻意31秒无请求空闲。其一验证通知
+等待不阻塞独立Put；另一项经实际选择入口寄存、错误读取能力拒绝、通知及
+Consume，然后关闭TLS，以真实本机QUIC领取同一服务仍保管的另一个对象。
+不重新注册信箱，原对象标识、密文、到期时间保持一致；QUIC原多流选择保留。
+这证明组件共享存储与协议，不是两个独立运营节点或手机自动换路验收。
+
+另外13项信箱回归通过（24.12秒）：重放、撤销、取消、能力、通知竞态、关闭
+贡献与丢ACK恢复等。联合feature严格lib Clippy通过（6.13秒）；现有
+novovm-rendezvous-service的iroh-only binary check通过（21.52秒）。Cargo
+原多binary源文件提示保留。初次夹具编译借用、期限类型错误和未设置监听身份
+导致的失败均保留在本地日志；修正夹具，未修改产品安全检查或超时。
+一次错误测试筛选命中0项不计验收，之后使用实际模块名运行上述13项。
+
+证据位于忽略artifacts/mailbox-carrier-{dispatch-verified,security-regression,
+dispatch-clippy,node-check}.log。正式Windows监听与Android发现仍使用Iroh，
+本次未换包、未重启节点、未新增公网入口或改变VPN。TCP/TLS不会自动解决
+CGNAT入站；下一步需将可达载体地址、原可信节点身份与现有owner选路接通。
+不以这两项本机测试宣称手机提速、300ms/1秒、完全自主或隐私路径已完成。
+
 ## 2026-10-15 七月恢复现场：完成确认丢失后重答
 
 恢复现场a0755a0d→本地fe89340b，仍基于七月4f45526d。复用原重组器，显式启用

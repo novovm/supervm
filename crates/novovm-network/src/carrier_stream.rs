@@ -27,6 +27,15 @@ impl<'scope> CarrierMultiplexV1<'scope> {
 
 impl<'scope> CarrierStreamV1<'scope> {
     #[cfg(feature = "iroh-transport")]
+    pub(crate) fn supports_multiplex_v1(&self) -> bool {
+        match &self.inner {
+            Stream::Iroh(_) => true,
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => false,
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn multiplex_v1(&mut self) -> anyhow::Result<CarrierMultiplexV1<'scope>> {
         match &mut self.inner {
             Stream::Iroh(stream) => Ok(CarrierMultiplexV1(stream.multiplex_v1()?)),

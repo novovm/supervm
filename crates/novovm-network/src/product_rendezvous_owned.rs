@@ -270,7 +270,7 @@ impl Node {
                                     }, || host.check_continuous_peer_v4(transport, now_ms()?))).await??;
                                 if kind == NodeServiceV1::MailboxPrefetch {
                                     let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
-                                    return crate::mailbox_rpc::serve_mailbox_multiplex_with_policy_v6(
+                                    return crate::mailbox_rpc::serve_mailbox_prefetch_with_policy_v6(
                                         stream, key, mailbox_policy, mailbox,
                                         || host.check_continuous_peer_v4(transport, now_ms()?),
                                     ).await;

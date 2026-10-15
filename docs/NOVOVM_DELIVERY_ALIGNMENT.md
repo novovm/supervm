@@ -1,5 +1,15 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 carrier-neutral mailbox dispatch (claim released):** NOVOCHAT session,
+input 8c06b87a. Existing NVMBOX06 selector/dispatcher and cross-carrier storage
+tests only; no new listener, protocol, account, financial or July-recovery work.
+Remove the Iroh-only dispatch assumption while retaining its multiplex path;
+TLS lanes use the same service and actual carrier-bound authentication.
+Two real TLS/QUIC fixtures pass (39.79s, including deliberate 31s idle), plus
+13 mailbox regressions, combined-feature strict lib Clippy and the existing
+Iroh node binary check. Input advanced by docs-only fast-forward to 58e3aade.
+No Android/Windows deployment or new latency result; reachable route wiring remains.
+
 **2026-10-15 continuous TLS mailbox (claim released):** NOVOCHAT session,
 input ce5624b9. Scoped to tls_transport.rs/tests, carrier_stream.rs,
 mailbox_rpc.rs and mailbox_tls_tests.rs: reuse the existing NVMBOX06 protocol
