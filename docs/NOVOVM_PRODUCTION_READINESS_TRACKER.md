@@ -3,6 +3,39 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 七月主体迁入完整代数候选与耐久流水线
+
+目标模式持续active。恢复现场由463220f7推进至本地70eb8dab，基底仍是七月
+4f45526d；不是把七月网络塞回十月controller。复用来源为main@7d08f975的
+已提交exec/bindings、node业务/状态/候选流水线和consensus/round_bft资产，
+迁入前确认这些来源路径无未提交修改；未触碰49份legacy/runtime草稿。
+
+实际迁入：统一整数组合与二进制结果、完整费用/窗口/诊断/失败效应编译、
+原CPU参照、批读/批树、父状态捕获、常驻计算与独立I/O、候选耐久存储与恢复。
+原共识模块接回整套round_bft规则/journal/pacemaker；尚未启动新签者或发布链头。
+七月原节点只适配两处既有commitment调用的类型化参数，不改变其承诺字节。
+旧SDK未被覆盖，真库测试显式加载当前main随仓AOEM。
+
+完成结构正文→AuthenticationRequest→同一CandidatePipeline→完整代数计划→
+AOEM RocksDB候选的接线。删除上一片临时鉴权专用owner及重复验签循环，
+改用已有完整compute owner和整数lane；未新增执行器、controller或活动账本。
+删除临时V2 ABI提取副本，使用原bindings完整ABI定义。删除内容均为本次恢复
+引入且已有替代的受控源码，可从463220f7恢复；不删除运行数据、证据或草稿。
+
+本机Windows结果：原node binary cargo check通过（13项未接消费者告警仍在）；
+node native_pipeline普通测试268通过、24忽略；exec 65通过、25忽略；bindings
+30通过、8忽略；round_bft 86通过。忽略测试不计入通过；另显式执行真库二进制
+结果、完整费用依赖、窗口诊断、CPU候选恢复、整数lane不阻塞鉴权与排空均通过。
+新增july_apfl_complete_plan_persists_and_recovers_on_original_pipeline通过：
+真实签名APFL、坏签名/重复拒绝、两种父余额、单次完整计划且零业务重算、
+候选记录/根/经济状态一致、关闭重开、旧owner令牌拒绝。是本地候选耐久测试，
+不是网络共识最终性、GPU吞吐或业务证明生成验收。
+
+尚未贯通原node进程的原生安全分片接收、活动共识发布/RPC；没有新增TPS。
+下一步接原生NovoRUDP有界对象交付至上述唯一流水线，再接匹配发布协议，
+不回到临时只验签owner或十月强制Relay入口。恢复代码暂存本地detached提交，
+main本次仅同步可核验进度；整合验收后再受控接回main，不能称源码已远端交付。
+
 ## 2026-10-15 目标模式恢复：七月工程接入常驻AOEM鉴权owner
 
 目标已设为active，普通开发不再逐步等待用户确认。恢复现场从d436296b推进到
