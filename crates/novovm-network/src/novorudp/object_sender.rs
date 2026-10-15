@@ -21,6 +21,8 @@ pub enum ObjectSendState {
     Sending,
     Delivered,
     Expired,
+    /// The owner authenticated a replacement channel. Business outcome unknown.
+    SessionReplaced,
 }
 
 struct RepairCursor {
@@ -100,6 +102,16 @@ impl NativeObjectSender {
     }
     pub fn status(&self) -> ObjectSendState {
         self.terminal
+    }
+    pub(crate) fn session_id(&self) -> [u8; 16] {
+        self.session
+    }
+    pub(crate) fn retire_session(&mut self) {
+        if self.terminal == ObjectSendState::Sending {
+            self.terminal = ObjectSendState::SessionReplaced;
+            self.repair = None;
+            self.last_plan = None;
+        }
     }
     pub fn body(&self) -> &Arc<OutgoingMessage> {
         &self.body

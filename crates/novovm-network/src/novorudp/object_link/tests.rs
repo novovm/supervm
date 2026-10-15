@@ -112,6 +112,131 @@ fn pair_and_third() -> Result<(NativeObjectLink, NativeObjectLink, NativeObjectL
 }
 
 #[test]
+fn reconnect_retires_only_old_generation_and_preserves_unknown_outgoing_custody() -> Result<()> {
+    let node_key = SigningKey::from_bytes(&[51; 32]);
+    let client_key = SigningKey::from_bytes(&[52; 32]);
+    let budget = || NativeHandshakeBudget {
+        lifetime: Duration::from_secs(2),
+        retry: Duration::from_millis(5),
+    };
+    let mut endpoint = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        node_key.clone(),
+        1,
+        vec![CONTROL, BODY],
+        budget(),
+    )?;
+    endpoint.enable_client_reconnect_v1()?;
+    let remote = NativePeer {
+        key: node_key.verifying_key().to_bytes(),
+        address: endpoint.local_addr()?,
+    };
+    let mut server = NativeObjectLink::new(endpoint, configs(), policy())?;
+    let start = Instant::now();
+    let connect = || -> Result<NativeObjectLink> {
+        NativeObjectLink::new(
+            NativeEndpoint::connect_client(
+                UdpSocket::bind("127.0.0.1:0")?,
+                client_key.clone(),
+                remote.clone(),
+                budget(),
+                1000,
+                Instant::now(),
+            )?,
+            configs(),
+            policy(),
+        )
+    };
+    let mut old = connect()?;
+    while old.session_id(0).is_none() {
+        ensure!(
+            start.elapsed() < Duration::from_secs(2),
+            "initial handshake timeout"
+        );
+        let _ = old.poll(1000, Instant::now(), 64)?;
+        let _ = server.poll(1000, Instant::now(), 64)?;
+    }
+    let original = server.session_id(0).unwrap();
+    let validity = server.session_validity(0)?;
+    server.claim_application_session(0, BODY, [2; 32], NativeApplicationRole::Service)?;
+    // A completed hash exists in the old generation. The identical object must
+    // be delivered again, NOT mistaken for already-delivered, in the new one.
+    let body = message(BODY, 7, 600)?;
+    old.try_send(0, BODY, &body, Instant::now())?;
+    loop {
+        ensure!(start.elapsed() < Duration::from_secs(2), "old body timeout");
+        let _ = old.poll(1000, Instant::now(), 64)?;
+        let _ = server.poll(1000, Instant::now(), 64)?;
+        if server.poll_complete(BODY, Instant::now(), 64)?.is_some() {
+            break;
+        }
+    }
+    let partial = message(BODY, 8, 2000)?;
+    let frame = super::super::NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Data,
+        original,
+        BODY,
+        u64::from_be_bytes(partial.id()[..8].try_into()?),
+        0,
+        0,
+        partial.frame(0)?,
+    );
+    old.endpoint.try_send(0, &frame)?;
+    let _ = server.poll(1000, Instant::now(), 64)?;
+    assert_eq!(server.reserved_bytes(BODY)?, 2000);
+    let reply = message(CONTROL, 9, 600)?;
+    server.try_send(0, CONTROL, &reply, Instant::now())?;
+    let mut fresh = connect()?;
+    while fresh.session_id(0).is_none() {
+        ensure!(
+            start.elapsed() < Duration::from_secs(2),
+            "fresh handshake timeout"
+        );
+        let _ = fresh.poll(1000, Instant::now(), 64)?;
+        let _ = server.poll(1000, Instant::now(), 64)?;
+    }
+    assert!(validity.is_current());
+    fresh.try_send(0, BODY, &body, Instant::now())?;
+    let mut retired = false;
+    let mut received = false;
+    while !retired || !received {
+        ensure!(
+            start.elapsed() < Duration::from_secs(2),
+            "replacement object timeout"
+        );
+        let _ = fresh.poll(1000, Instant::now(), 64)?;
+        let result = server.poll(1000, Instant::now(), 64)?;
+        if !result.session_changes.is_empty() {
+            assert_eq!(result.session_changes.len(), 1);
+            assert_eq!(result.retired_inbound_messages, 1);
+            assert!(!validity.is_current());
+            assert_ne!(server.session_id(0), Some(original));
+        }
+        for event in result.completed {
+            assert_eq!(event.state, ObjectSendState::SessionReplaced);
+            assert!(Arc::ptr_eq(&event.body, &reply));
+            retired = true;
+        }
+        if let Some(receipt) = server.poll_complete(BODY, Instant::now(), 64)? {
+            assert_eq!(receipt.id, body.id());
+            assert_eq!(receipt.chunks.concat(), vec![7; 600]);
+            received = true;
+        }
+    }
+    assert_eq!(server.outbound_usage(CONTROL)?, (0, 0));
+    assert_eq!(server.reserved_bytes(BODY)?, 0);
+    assert!(server.session_validity(0)?.is_current());
+    server.claim_application_session(0, BODY, [2; 32], NativeApplicationRole::Service)?;
+    assert!(server
+        .claim_application_session(0, BODY, [2; 32], NativeApplicationRole::Service)
+        .is_err());
+    let current = server.session_validity(0)?;
+    drop(server);
+    assert!(!current.is_current());
+    Ok(())
+}
+
+#[test]
 fn application_sequence_owner_is_bound_to_peer_lane_and_authenticated_session() -> Result<()> {
     let (mut a, _, _) = pair_and_third()?;
     let role = NativeApplicationRole::Client;

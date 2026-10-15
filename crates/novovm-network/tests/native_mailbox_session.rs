@@ -86,6 +86,40 @@ struct Fixture {
     admitted: usize,
     _directory: tempfile::TempDir,
 }
+
+#[tokio::test]
+async fn retired_socket_generation_stops_already_admitted_mailbox_work() -> Result<()> {
+    let mut f = Fixture::new().await?;
+    let id = f.send(
+        0,
+        vec![Request::Register {
+            mailbox: [1; 32],
+            write: [2; 32],
+            read: [3; 32],
+            expires: i64::MAX,
+        }],
+    )?;
+    let body = f.receive_request().await?;
+    let work = f
+        .server
+        .admit(&f.server_link, body, Instant::now(), || Ok(()))?;
+    // No explicit server.invalidate: the transport owner lifetime itself is
+    // part of the work guard, including work retained across an await.
+    drop(f.server_link);
+    assert!(work.execute(&f.service, || Ok(())).await.is_err());
+    assert!(matches!(
+        f.service
+            .request_local_v1(Request::Fetch {
+                mailbox: [1; 32],
+                read: [3; 32],
+            })
+            .await?,
+        Reply::Rejected(_)
+    ));
+    drop(f.client_link);
+    assert_eq!(f.client.expire(Instant::now()), vec![id]);
+    Ok(())
+}
 impl Fixture {
     async fn receive_request(
         &mut self,

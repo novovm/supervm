@@ -9,6 +9,140 @@ fn budget() -> NativeHandshakeBudget {
 }
 
 #[test]
+fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confirmed() -> Result<()>
+{
+    for same_address in [false, true] {
+        let start = Instant::now();
+        let node_key = SigningKey::from_bytes(&[51; 32]);
+        let client_key = SigningKey::from_bytes(&[52; 32]);
+        let mut node = NativeEndpoint::listen_clients(
+            UdpSocket::bind("127.0.0.1:0")?,
+            node_key.clone(),
+            1,
+            vec![17],
+            budget(),
+        )?;
+        let remote = NativePeer {
+            key: node_key.verifying_key().to_bytes(),
+            address: node.local_addr()?,
+        };
+        let client_socket = UdpSocket::bind("127.0.0.1:0")?;
+        let replacement_socket = if same_address {
+            client_socket.try_clone()?
+        } else {
+            UdpSocket::bind("127.0.0.1:0")?
+        };
+        let mut old = NativeEndpoint::connect_client(
+            client_socket,
+            client_key.clone(),
+            remote.clone(),
+            budget(),
+            1000,
+            start,
+        )?;
+        old.poll(1000, Instant::now(), 64)?;
+        let mut captured = [0; MAX_DATAGRAM_BYTES];
+        let (length, _) = node.socket.peek_from(&mut captured)?;
+        let old_offer = captured[..length].to_vec();
+        while old.session_id(0).is_none() {
+            ensure!(
+                start.elapsed() < Duration::from_secs(1),
+                "initial handshake timeout"
+            );
+            old.poll(1000, Instant::now(), 64)?;
+            node.poll(1000, Instant::now(), 64)?;
+        }
+        let original = node.session_id(0).unwrap();
+        let start = Instant::now();
+        let mut fresh = NativeEndpoint::connect_client(
+            replacement_socket,
+            client_key,
+            remote,
+            budget(),
+            1000,
+            Instant::now(),
+        )?;
+        fresh.poll(1000, Instant::now(), 64)?;
+        assert_eq!(
+            node.poll(1000, Instant::now(), 64)?.rejected_datagrams,
+            1,
+            "reconnect default must remain closed"
+        );
+        node.enable_client_reconnect_v1()?;
+        // The rejected default-policy attempt did not consume the transcript.
+        fresh.poll(1000, start + Duration::from_millis(20), 64)?;
+        node.poll(1000, start + Duration::from_millis(20), 64)?;
+        fresh.poll(1000, start + Duration::from_millis(21), 64)?;
+        assert!(fresh.session_id(0).is_some());
+        assert_eq!(
+            node.session_id(0),
+            Some(original),
+            "signed offer alone replaced a live session"
+        );
+        let frame = |session, stream| {
+            NovoRudpTransportFrameV0::new(
+                NovoRudpTransportFrameKindV0::Data,
+                session,
+                stream,
+                3,
+                4,
+                0,
+                vec![9; 10],
+            )
+        };
+        // Old encrypted traffic cannot prove possession of the pending key.
+        let old_wire = old.peers[0]
+            .session
+            .as_mut()
+            .unwrap()
+            .encode(&frame(original, 17))?;
+        fresh.socket.send_to(&old_wire, node.local_addr()?)?;
+        node.poll(1000, start + Duration::from_millis(22), 64)?;
+        assert_eq!(node.session_id(0), Some(original));
+        assert!(old.try_send(0, &frame(original, 17))?);
+        assert_eq!(
+            node.poll(1000, start + Duration::from_millis(23), 64)?
+                .frames
+                .len(),
+            1,
+            "old healthy connection stopped before confirmation"
+        );
+        let new_session = fresh.session_id(0).unwrap();
+        assert_ne!(new_session, original);
+        fresh.try_send(0, &frame(new_session, 99))?;
+        assert_eq!(
+            node.poll(1000, start + Duration::from_millis(24), 64)?
+                .rejected_datagrams,
+            1
+        );
+        assert_eq!(node.session_id(0), Some(original));
+        // Old data in the SAME quantum must not escape after the transition.
+        old.try_send(0, &frame(original, 17))?;
+        fresh.try_send(0, &frame(new_session, 17))?;
+        let report = node.poll(1000, start + Duration::from_millis(25), 64)?;
+        assert_eq!(
+            report.session_changes,
+            vec![NativeSessionChange {
+                peer: 0,
+                previous: original,
+                current: new_session
+            }]
+        );
+        assert_eq!(report.frames.len(), 1);
+        assert_eq!(report.frames[0].frame.session_id, new_session);
+        assert_eq!(node.peer_count(), 1);
+        // Old address/transcript/ciphertext never reactivates the prior session.
+        old.socket.send_to(&old_offer, node.local_addr()?)?;
+        old.try_send(0, &frame(original, 17))?;
+        let report = node.poll(1000, start + Duration::from_millis(26), 64)?;
+        assert_eq!(report.rejected_datagrams, 2);
+        assert!(report.frames.is_empty());
+        assert_eq!(node.session_id(0), Some(new_session));
+    }
+    Ok(())
+}
+
+#[test]
 fn open_client_possession_is_bounded_and_cannot_enter_validator_streams() -> Result<()> {
     use crate::product_overlay::{handshake_wire, NodeHandshakeInitiatorV1};
     let socket = UdpSocket::bind("127.0.0.1:0")?;

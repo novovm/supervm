@@ -7,6 +7,7 @@ fn binding() -> Binding {
         session: [7; 16],
         local: [3; 32],
         role: NativeApplicationRole::Client,
+        validity: NativeSessionValidity::new(),
     }
 }
 fn slots() -> Slots {
@@ -34,6 +35,7 @@ fn work(slots: Slots, deadline: Instant) -> Result<MailboxWork> {
             slot: 0,
             sequence: 1,
             armed: true,
+            validity: NativeSessionValidity::new(),
         },
         peer: 0,
         session: [7; 16],

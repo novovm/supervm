@@ -1,4 +1,16 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 native reconnect (claim active):** July recovery owner, input
+af77af16. Scope: existing native endpoint/object-link session replacement and
+mailbox session invalidation/tests. Fresh signed handshake plus encrypted
+possession confirmation; preserve healthy old session until confirmation,
+surface unknown in-flight outcomes and isolate reassembly/ACK generations.
+No new transport, mainchain execution, mobile deployment or financial work.
+User scope clarification: iOS/Android share this Rust protocol core, but platform
+bindings, app owner wiring and phone validation belong to the NOVOCHAT developer.
+Finish only this in-flight shared transport change, hand off, then return to NOV
+genesis/native transactions/AOEM/finality/queries/restart closure. Do not expand
+this SDK task into mobile implementation or postpone the mainchain for it.
+
 **2026-10-16 native mailbox session (claim released):** July recovery owner,
 input main e5d04360. Bind the structured codec to the existing authenticated
 NativeObjectLink session; bounded multiplexed request counters, reply matching,

@@ -17,6 +17,9 @@ pub struct NativeObjectReceiver {
     objects: Reassembler,
 }
 impl NativeObjectReceiver {
+    pub(crate) fn retire_peer_session(&mut self, peer: &str) -> usize {
+        self.objects.retire_peer_session(peer)
+    }
     pub(crate) fn awaiting_authenticated_peers(
         stream: u64,
         domain: [u8; 32],

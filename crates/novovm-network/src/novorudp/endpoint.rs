@@ -36,6 +36,7 @@ struct Peer {
     handshake: NativeHandshake,
     session: Option<NativeUdpSession>,
     streams: Option<BTreeSet<u64>>,
+    reconnect: Option<reconnect::PendingReconnect>,
 }
 
 struct OpenAdmission {
@@ -43,6 +44,16 @@ struct OpenAdmission {
     limit: usize,
     streams: BTreeSet<u64>,
     budget: NativeHandshakeBudget,
+    reconnect_v1: bool,
+}
+
+/// A fresh authenticated generation replaced the old one. Application owners
+/// must retire old operations as unknown, never relabel them as new requests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeSessionChange {
+    pub peer: usize,
+    pub previous: [u8; 16],
+    pub current: [u8; 16],
 }
 
 /// Constructed only after source, identity, encryption and replay checks.
@@ -73,6 +84,7 @@ pub struct NativePoll {
     pub receive_errors: usize,
     pub handshake_send_failures: usize,
     pub handshakes_sent: usize,
+    pub session_changes: Vec<NativeSessionChange>,
 }
 
 pub struct NativeEndpoint {
@@ -146,6 +158,7 @@ impl NativeEndpoint {
                 handshake,
                 session: None,
                 streams: None,
+                reconnect: None,
             });
         }
         Ok(Self {
@@ -193,6 +206,7 @@ impl NativeEndpoint {
             limit: self.peers.len() + additional,
             streams: streams.into_iter().collect(),
             budget,
+            reconnect_v1: false,
         });
         Ok(())
     }
@@ -228,6 +242,7 @@ impl NativeEndpoint {
                 handshake,
                 session: None,
                 streams: None,
+                reconnect: None,
             }],
             sources: BTreeMap::from([(remote.address, 0)]),
             replay: HandshakeReplayCacheV1::new(256),
@@ -248,14 +263,17 @@ impl NativeEndpoint {
             .open
             .as_ref()
             .context("native client admission disabled")?;
-        ensure!(self.peers.len() < open.limit, "native client slots full");
         let HandshakeMessage::Offer(offer) = decode(wire)? else {
             anyhow::bail!("client must initiate")
         };
         let id = peer_id_from_ed25519_public_key_v1(&offer.initiator_identity_public_key);
+        if let Some(index) = self.peers.iter().position(|p| p.id.as_ref() == id) {
+            return self.prepare_reconnect(index, source, wire, wall_ms, now);
+        }
+        ensure!(self.peers.len() < open.limit, "native client slots full");
         ensure!(
-            !self.peers.iter().any(|peer| peer.id.as_ref() == id),
-            "native identity already bound to an endpoint"
+            !self.sources.contains_key(&source) && !self.reconnect_source_in_use(source),
+            "native source already bound"
         );
         let mut handshake = NativeHandshake::start_role(
             open.identity.clone(),
@@ -278,6 +296,7 @@ impl NativeEndpoint {
             handshake,
             session: Some(session),
             streams: Some(open.streams.clone()),
+            reconnect: None,
         });
         Ok(())
     }
@@ -316,6 +335,7 @@ impl NativeEndpoint {
             "invalid native endpoint quantum"
         );
         let mut result = NativePoll::default();
+        self.expire_reconnects(now);
         let mut wire = [0; MAX_DATAGRAM_BYTES + 1];
         for _ in 0..quantum {
             let (length, source) = match self.socket.recv_from(&mut wire) {
@@ -341,27 +361,26 @@ impl NativeEndpoint {
                 }
                 Err(error) => return Err(error.into()),
             };
-            let Some(&index) = self.sources.get(&source) else {
+            if wire[..length].starts_with(b"NVHSHK01") {
                 if self
-                    .accept_client(source, &wire[..length], wall_ms, now)
+                    .receive_handshake(source, &wire[..length], wall_ms, now)
                     .is_err()
                 {
                     result.rejected_datagrams += 1;
                 }
                 continue;
+            }
+            if let Some((frame, change)) = self.confirm_reconnect(source, &wire[..length]) {
+                result.frames.push(frame);
+                result.session_changes.push(change);
+                continue;
+            }
+            let Some(&index) = self.sources.get(&source) else {
+                result.rejected_datagrams += 1;
+                continue;
             };
             let peer = &mut self.peers[index];
-            if wire[..length].starts_with(b"NVHSHK01") {
-                if peer
-                    .handshake
-                    .receive(source, &wire[..length], wall_ms, now, &mut self.replay)
-                    .is_err()
-                {
-                    result.rejected_datagrams += 1;
-                } else if peer.session.is_none() {
-                    peer.session = peer.handshake.take_session();
-                }
-            } else if let Some(session) = &mut peer.session {
+            if let Some(session) = &mut peer.session {
                 match session.open(source, &wire[..length]) {
                     Ok(frame)
                         if peer
@@ -385,6 +404,13 @@ impl NativeEndpoint {
             let index = self.turn % self.peers.len();
             self.turn = (index + 1) % self.peers.len();
             let peer = &mut self.peers[index];
+            if let Some(pending) = &mut peer.reconnect {
+                match pending.handshake.try_send(&self.socket, wall_ms, now) {
+                    Ok(true) => result.handshakes_sent += 1,
+                    Ok(false) => {}
+                    Err(_) => result.handshake_send_failures += 1,
+                }
+            }
             if peer.handshake.is_expired(now) {
                 continue;
             }
@@ -394,6 +420,11 @@ impl NativeEndpoint {
                 Err(_) => result.handshake_send_failures += 1,
             }
         }
+        // A quantum can contain old data BEFORE the handover. Never hand it to
+        // consumers after exposing a replacement generation.
+        result
+            .frames
+            .retain(|frame| self.session_id(frame.peer) == Some(frame.frame.session_id));
         Ok(result)
     }
 
@@ -426,5 +457,6 @@ impl NativeEndpoint {
     }
 }
 
+mod reconnect;
 #[cfg(test)]
 mod tests;

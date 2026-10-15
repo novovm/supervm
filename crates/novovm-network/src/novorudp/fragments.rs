@@ -174,6 +174,21 @@ pub struct Reassembler {
 }
 
 impl Reassembler {
+    /// Only the transport owner calls this after a fresh authenticated session
+    /// replaces this peer. Neither partial bytes nor DONE history cross epochs.
+    pub(crate) fn retire_peer_session(&mut self, peer: &str) -> usize {
+        self.completed.retain(|(id, _), _| id != peer);
+        let before = self.entries.len();
+        self.entries.retain(|(id, _), entry| {
+            if id == peer {
+                self.reserved -= entry.length;
+                false
+            } else {
+                true
+            }
+        });
+        before - self.entries.len()
+    }
     /// Called only by the authenticated socket owner. Reuses the same global
     /// and per-peer assembly budgets; this does not accept an unverified key.
     pub(crate) fn admit_authenticated_peer(&mut self, peer: String) -> Result<()> {

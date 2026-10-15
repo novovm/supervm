@@ -10,7 +10,9 @@ use super::*;
 use crate::{
     novorudp::{
         fragments::{CompletedMessage, FragmentProfile, OutgoingMessage},
-        object_link::{NativeApplicationRole, NativeObjectLink, NativeSendCompletion},
+        object_link::{
+            NativeApplicationRole, NativeObjectLink, NativeSendCompletion, NativeSessionValidity,
+        },
         object_sender::ObjectSendState,
     },
     product_overlay::peer_id_from_ed25519_public_key_v1,
@@ -45,6 +47,7 @@ struct Binding {
     session: [u8; 16],
     local: [u8; 32],
     role: NativeApplicationRole,
+    validity: NativeSessionValidity,
 }
 impl Binding {
     fn claim(
@@ -60,11 +63,13 @@ impl Binding {
             session,
             local: link.local_identity(),
             role,
+            validity: link.session_validity(peer)?,
         })
     }
     fn check(&self, link: &NativeObjectLink) -> Result<()> {
         ensure!(
-            link.local_identity() == self.local
+            self.validity.is_current()
+                && link.local_identity() == self.local
                 && link.session_id(self.peer) == Some(self.session)
                 && link.peer_id(self.peer)? == self.id,
             "native mailbox session changed"
@@ -260,7 +265,7 @@ impl NativeMailboxClient {
         Ok((p.id, replies))
     }
     /// Feed the existing link's completion events. Returns an unknown-outcome
-    /// request only on expiry; Delivered releases no business request slot.
+    /// request on expiry/replacement; Delivered releases no business request slot.
     pub fn transport_complete(&mut self, event: &NativeSendCompletion) -> Option<RequestId> {
         if event.peer != self.binding.peer || event.stream != STREAM {
             return None;
@@ -269,7 +274,10 @@ impl NativeMailboxClient {
             if s.pending
                 .as_ref()
                 .is_some_and(|p| Arc::ptr_eq(&p.body, &event.body))
-                && event.state == ObjectSendState::Expired
+                && matches!(
+                    event.state,
+                    ObjectSendState::Expired | ObjectSendState::SessionReplaced
+                )
             {
                 s.failed = true;
                 return s.pending.take().map(|p| p.id);
@@ -280,7 +288,10 @@ impl NativeMailboxClient {
     pub fn expire(&mut self, now: Instant) -> Vec<RequestId> {
         let mut expired = Vec::new();
         for s in &mut self.slots {
-            if s.pending.as_ref().is_some_and(|p| now >= p.deadline) {
+            if s.pending
+                .as_ref()
+                .is_some_and(|p| now >= p.deadline || !self.binding.validity.is_current())
+            {
                 s.failed = true;
                 expired.push(s.pending.take().unwrap().id);
             }
@@ -409,6 +420,7 @@ impl NativeMailboxServer {
                 slot: index,
                 sequence: slots[index].sequence,
                 armed: true,
+                validity: self.binding.validity.clone(),
             },
             peer: self.binding.peer,
             session: self.binding.session,
@@ -427,9 +439,14 @@ struct WorkGuard {
     slot: usize,
     sequence: u64,
     armed: bool,
+    validity: NativeSessionValidity,
 }
 impl WorkGuard {
     fn check(&self) -> Result<()> {
+        ensure!(
+            self.validity.is_current(),
+            "mailbox transport session retired"
+        );
         let slots = self
             .slots
             .lock()
@@ -524,6 +541,10 @@ impl MailboxResponse {
         authority: impl Fn() -> Result<()>,
     ) -> Result<bool> {
         if let Err(error) = authority().and_then(|_| {
+            ensure!(
+                self.guard.validity.is_current(),
+                "mailbox transport session retired"
+            );
             ensure!(
                 link.session_id(self.peer) == Some(self.session),
                 "mailbox response session changed"
