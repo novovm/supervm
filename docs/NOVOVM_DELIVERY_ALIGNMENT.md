@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 mobile TLS lane capacity (claim released):** NOVOCHAT session,
+input 69a0baa5. Optional TLS listener uses an explicit bounded owner connection
+budget, shared with QUIC and published in its signed route. Preserve four-slot
+defaults; verify six real TLS admissions plus QUIC progress before mobile wiring.
+Four real node tests pass (11.11s), two Windows process tests pass (19.26s),
+14 TLS regressions plus the new handshake IO/authority distinction pass; strict
+network lib Clippy passes. No finance/AOEM/July rebuild or deployment changes.
+
 **2026-10-15 Windows TLS owner activation (claim released):** NOVOCHAT session,
 input fdbc5519. Existing rendezvous Windows owner/CLI only: protected optional
 listener settings and purpose-separated stable transport key, same shared node

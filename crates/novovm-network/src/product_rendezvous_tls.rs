@@ -17,14 +17,24 @@ impl TlsMailboxListenerV1 {
     /// purpose-specific transport seed. Binding does not claim public reachability.
     pub async fn bind(
         listen: SocketAddr,
+        advertised: SocketAddr,
+        seed: Zeroizing<[u8; 32]>,
+        stop: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        Self::bind_with_capacity(listen, advertised, seed, stop, 4).await
+    }
+    pub async fn bind_with_capacity(
+        listen: SocketAddr,
         mut advertised: SocketAddr,
         seed: Zeroizing<[u8; 32]>,
         stop: Arc<AtomicBool>,
+        max_connections: u16,
     ) -> Result<Self> {
         let scope = TlsScopeV1::new_owned_continuous_v1(seed, move || {
             ensure!(!stop.load(Ordering::Acquire), "service stopped by owner");
             Ok(())
-        })?;
+        })?
+        .with_connection_limit(usize::from(max_connections))?;
         let listener = TcpListener::bind(listen).await?;
         if advertised.port() == 0 {
             advertised.set_port(listener.local_addr()?.port());
@@ -32,6 +42,7 @@ impl TlsMailboxListenerV1 {
         let route = TlsServiceEndpointV1 {
             address: advertised,
             endpoint_key: scope.endpoint_key(),
+            max_connections,
         };
         route.endpoint()?;
         Ok(Self {

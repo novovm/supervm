@@ -94,6 +94,11 @@ pub struct TlsListenerConfig {
     pub version: u8,
     pub listen: SocketAddr,
     pub advertised: SocketAddr,
+    #[serde(default = "default_tls_connections")]
+    pub max_connections: u16,
+}
+fn default_tls_connections() -> u16 {
+    4
 }
 impl TlsListenerConfig {
     pub fn load(path: &Path) -> Result<Self> {
@@ -106,6 +111,7 @@ impl TlsListenerConfig {
             |ip: IpAddr| !ip.is_multicast() && !matches!(ip, IpAddr::V4(v) if v.is_broadcast());
         ensure!(
             self.version == 1
+                && (1..=64).contains(&self.max_connections)
                 && admissible(self.listen.ip())
                 && admissible(self.advertised.ip())
                 && !self.advertised.ip().is_unspecified()
@@ -376,11 +382,12 @@ impl Owner {
                 .expand(b"NOVOVM/self-owned/TLS-transport/v1", seed.as_mut())
                 .map_err(|_| anyhow::anyhow!("TLS key derivation failed"))?;
             Some(
-                novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind(
+                novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind_with_capacity(
                     settings.listen,
                     settings.advertised,
                     seed,
                     stop.clone(),
+                    settings.max_connections,
                 )
                 .await?,
             )

@@ -76,6 +76,44 @@ async fn finite_scope_cannot_be_promoted_to_continuous_or_idle() -> Result<()> {
 fn control() -> TlsControlV1 {
     TlsControlV1::new(Instant::now() + Duration::from_secs(5), || Ok(())).unwrap()
 }
+
+#[tokio::test]
+async fn handshake_closed_socket_is_io_but_owner_failure_is_not() -> Result<()> {
+    let _serial = SERIAL.acquire().await?;
+    let peer = SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes();
+    let scope = TlsScopeV1::new(control())?;
+    let (left, right) = duplex(65536);
+    drop(right);
+    let error = scope
+        .connect(left, peer)
+        .await
+        .err()
+        .context("closed socket accepted")?;
+    assert!(error.is::<TlsStreamIoFailureV1>(), "{error:#}");
+    let denied = Arc::new(AtomicBool::new(false));
+    let flag = denied.clone();
+    let scope = TlsScopeV1::new(TlsControlV1::new(
+        Instant::now() + Duration::from_secs(5),
+        move || {
+            if flag.load(Ordering::Acquire) {
+                return Err(io::Error::from(io::ErrorKind::ConnectionReset).into());
+            }
+            Ok(())
+        },
+    )?)?;
+    denied.store(true, Ordering::Release);
+    let (left, _right) = duplex(65536);
+    let error = scope
+        .connect(left, peer)
+        .await
+        .err()
+        .context("owner rejection ignored")?;
+    assert!(
+        !error.is::<TlsStreamIoFailureV1>(),
+        "authority error became retryable"
+    );
+    Ok(())
+}
 async fn pair<'a>(
     a: &'a TlsScopeV1,
     b: &'a TlsScopeV1,

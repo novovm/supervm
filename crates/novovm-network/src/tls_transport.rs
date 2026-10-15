@@ -519,6 +519,13 @@ impl TlsScopeV1 {
             _admission: admission,
         })
     }
+    /// Local owner resource budget, fixed before any stream borrows the scope.
+    /// Remote peer admission and byte/request/storage limits remain independent.
+    pub fn with_connection_limit(mut self, limit: usize) -> Result<Self> {
+        ensure!((1..=64).contains(&limit), "TLS connection limit bounds");
+        self.connections = Semaphore::new(limit);
+        Ok(self)
+    }
     pub fn endpoint_key(&self) -> [u8; 32] {
         self.endpoint
     }
@@ -610,16 +617,18 @@ impl TlsScopeV1 {
                     let connector = TlsConnector::from(
                         self.client_config(expected.context("TLS peer pin missing")?)?,
                     );
-                    let stream = connector
+                    let handshake = connector
                         .connect(
                             ServerName::try_from("bound-carrier.invalid")?.to_owned(),
                             io,
                         )
-                        .await?;
+                        .await;
+                    let stream = state.io_result(&self.control, handshake)?;
                     Ok(tokio_rustls::TlsStream::Client(stream))
                 } else {
                     let acceptor = TlsAcceptor::from(self.server_config(expected)?);
-                    Ok(tokio_rustls::TlsStream::Server(acceptor.accept(io).await?))
+                    let stream = state.io_result(&self.control, acceptor.accept(io).await)?;
+                    Ok(tokio_rustls::TlsStream::Server(stream))
                 }
             })
             .await?;

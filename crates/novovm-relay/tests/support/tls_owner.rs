@@ -128,7 +128,7 @@ async fn windows_tls_policy_restart_preserves_identity_and_real_custody() -> Res
         let tls_file = fixture.0.join("tls.json");
         std::fs::write(
             &tls_file,
-            br#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0"}"#,
+            br#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":8}"#,
         )?;
         let policy_path = fixture.0.join("self-owned-policy.dpapi");
         let original_policy = std::fs::read(&policy_path)?;
@@ -160,6 +160,7 @@ async fn windows_tls_policy_restart_preserves_identity_and_real_custody() -> Res
         let second_process = fixture.launch_owned("--foreground")?;
         let second = fixture.owned_record(first.sequence).await?;
         let second_tls = TlsServiceEndpointV1::from_record(&second)?.unwrap();
+        ensure!(second_tls.max_connections == 8);
         ensure!(second.relay_public_key == first.relay_public_key);
         ensure!(second_tls.endpoint_key != second.relay_public_key);
         ensure!(
@@ -220,6 +221,8 @@ async fn windows_tls_invalid_settings_never_change_custody() -> Result<()> {
         r#"{"version":1,"listen":"127.0.0.1:0","advertised":"224.0.0.1:443"}"#,
         r#"{"version":1,"listen":"127.0.0.1:0","advertised":"[::1]:443"}"#,
         r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","private_key":"forbidden"}"#,
+        r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":0}"#,
+        r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":65}"#,
     ] {
         std::fs::write(&path, invalid)?;
         configure(&fixture, "--set-self-owned-tls", path.as_os_str(), false).await?;

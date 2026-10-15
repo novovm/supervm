@@ -68,6 +68,7 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:3001".parse()?,
         endpoint_key: key(5).verifying_key().to_bytes(),
+        max_connections: 4,
     };
     let pin = key(1).verifying_key().to_bytes();
     let first = sign(&ir, Some(&tls), 1, 1000)?;
@@ -147,11 +148,12 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
     let dir = tempfile::tempdir()?;
     let journal = dir.path().join("authority.bin");
     let stop = Arc::new(AtomicBool::new(false));
-    let listener = TlsMailboxListenerV1::bind(
+    let listener = TlsMailboxListenerV1::bind_with_capacity(
         "127.0.0.1:0".parse()?,
         "127.0.0.1:0".parse()?,
         Zeroizing::new([92; 32]),
         stop.clone(),
+        8,
     )
     .await?;
     let expected = listener.route().clone();
@@ -208,7 +210,7 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
         ensure!(tls == expected);
         let pin = key(1).verifying_key().to_bytes();
         book.check_tls_route_v1(pin, &tls, now_ms()?)?;
-        let client_scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
+        let client_scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?.with_connection_limit(8)?;
         let tcp = tokio::net::TcpStream::connect(tls.address).await?;
         tcp.set_nodelay(true)?;
         let mut stream: CarrierStreamV1<'_> =
@@ -244,6 +246,17 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
             anyhow::bail!("no StoreReceipt")
         };
         receipt.verify(pin, grant.id, [7; 32], &data, expires)?;
+        // Real simultaneous TLS admissions exceed the former four-slot limit.
+        // These lanes wait for their bound handshake; they cannot access data.
+        // The established mailbox and QUIC lane must still make progress.
+        let mut admitted = Vec::new();
+        for _ in 0..5 {
+            let tcp = tokio::net::TcpStream::connect(tls.address).await?;
+            let mut lane: CarrierStreamV1<'_> =
+                client_scope.connect(tcp, tls.endpoint_key).await?.into();
+            request_mailbox_continuous_v6(&mut lane).await?;
+            admitted.push(lane);
+        }
         // Both real transports remain connected to the SAME running node/store.
         let route = IrohServiceEndpointV1::from_record(&record)?;
         let mailbox = grant.id;
@@ -289,6 +302,7 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
             .await;
         owner.close().await?;
         result?;
+        drop(admitted);
         ensure!(matches!(
             session
                 .request(MailboxRequestV1::Fetch { mailbox, read })
@@ -339,6 +353,7 @@ fn host_rotation_preserves_tls_until_explicit_removal_and_persists_it() -> Resul
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:3001".parse()?,
         endpoint_key: key(5).verifying_key().to_bytes(),
+        max_connections: 4,
     };
     let mut book =
         ServiceLeaseBookV1::new_self_owned(trust(), vec![sign(&ir, None, 1, 1000)?], 1000)?;

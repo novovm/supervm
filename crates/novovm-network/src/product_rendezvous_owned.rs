@@ -88,7 +88,13 @@ pub async fn run_self_owned_node_with_tls_v1(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
-    let mut node = Node::new(key, clients, stop, Some(mailbox), IROH_MAX_CONNECTIONS_V1)?;
+    let mut node = Node::new(
+        key,
+        clients,
+        stop,
+        Some(mailbox),
+        usize::from(tls.route().max_connections),
+    )?;
     node.tls = Some(tls);
     let revoked = node.stop.clone();
     with_iroh_owned_listener_v1(

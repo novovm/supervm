@@ -10,11 +10,26 @@ const PREFIX: &str = "tls-service-v1://";
 pub struct TlsServiceEndpointV1 {
     pub address: SocketAddr,
     pub endpoint_key: [u8; 32],
+    #[serde(
+        default = "default_connections",
+        skip_serializing_if = "is_default_connections"
+    )]
+    pub max_connections: u16,
+}
+fn default_connections() -> u16 {
+    4
+}
+fn is_default_connections(value: &u16) -> bool {
+    *value == 4
 }
 
 impl TlsServiceEndpointV1 {
     fn validate(&self) -> Result<()> {
         strict_key(&self.endpoint_key)?;
+        ensure!(
+            (1..=64).contains(&self.max_connections),
+            "TLS connection limit bounds"
+        );
         ensure!(
             self.address.port() != 0
                 && !self.address.ip().is_unspecified()
@@ -34,7 +49,7 @@ impl TlsServiceEndpointV1 {
                 URL_SAFE_NO_PAD.encode(serde_json::to_vec(self)?)
             ),
             priority: 0,
-            max_sessions: 4,
+            max_sessions: u32::from(self.max_connections),
             max_bytes_per_minute: 65536,
         })
     }
@@ -60,6 +75,10 @@ impl TlsServiceEndpointV1 {
             "noncanonical TLS service address"
         );
         value.validate()?;
+        ensure!(
+            endpoint.max_sessions == u32::from(value.max_connections),
+            "TLS capacity declaration differs"
+        );
         Ok(Some(value))
     }
 }
