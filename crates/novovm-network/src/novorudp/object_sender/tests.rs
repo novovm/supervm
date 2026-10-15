@@ -286,3 +286,136 @@ fn invalid_and_stale_feedback_cannot_deliver_or_rewrite_repair_state() -> Result
     assert_eq!(sender.repair.as_ref().unwrap().index, 1);
     Ok(())
 }
+
+struct BlockedWriter {
+    socket: UdpSocket,
+    blocked: std::sync::atomic::AtomicBool,
+}
+impl crate::novorudp::carrier::NativeDatagramIo for BlockedWriter {
+    fn deferred_writes(&self) -> bool {
+        true
+    }
+    fn try_receive(
+        &self,
+        _: &mut [u8],
+    ) -> std::io::Result<Option<(usize, crate::novorudp::carrier::NativeRoute)>> {
+        Err(std::io::ErrorKind::WouldBlock.into())
+    }
+    fn try_send(
+        &self,
+        bytes: &[u8],
+        route: crate::novorudp::carrier::NativeRoute,
+    ) -> std::io::Result<usize> {
+        if self.blocked.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(std::io::ErrorKind::WouldBlock.into());
+        }
+        self.socket.try_send(bytes, route)
+    }
+}
+fn missing_ack(
+    sender: &NativeObjectSender,
+    epoch: u64,
+    start: u64,
+) -> Result<NovoRudpTransportFrameV0> {
+    let total = sender.body.frame_count() as u64;
+    encode_object_ack(
+        sender.body.id(),
+        sender.stream,
+        &NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: sender.session,
+                epoch,
+                sequence: None,
+                window_id: Some(start / OBJECT_WINDOW),
+            },
+            expected_total: total,
+            receiver_done: false,
+            missing_count: total - start,
+            current_window: Some(NovoRudpRange::new(start, total - 1)),
+            current_window_missing_ranges: vec![NovoRudpRange::new(start, total - 1)],
+        },
+    )
+}
+#[test]
+fn blocked_initial_write_keeps_exact_frame_across_new_ack_epoch() -> Result<()> {
+    let (left, right, mut a, mut b) = link()?;
+    let io = BlockedWriter {
+        socket: left,
+        blocked: true.into(),
+    };
+    let now = Instant::now();
+    let body = Arc::new(OutgoingMessage::with_profile(
+        [1; 32],
+        vec![5; 1000],
+        2000,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let (config, pacing) = settings();
+    let mut sender = NativeObjectSender::new(
+        body,
+        a.session_id(),
+        11,
+        config,
+        pacing,
+        now,
+        Duration::from_secs(5),
+    )?;
+    assert_eq!(sender.poll_send_limited(&io, &mut a, now, 1, None)?, 0);
+    let original = sender.pending.as_ref().unwrap().frame.clone();
+    sender.on_ack(&missing_ack(&sender, 4, 1)?, now)?;
+    assert_eq!(sender.state.latest_ack_epoch, 4);
+    io.blocked
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(sender.poll_send_limited(&io, &mut a, now, 1, None)?, 1);
+    assert_eq!(receive(&right, &mut b)?, original);
+    assert_eq!(sender.initial, 1);
+    assert!(sender.pending.is_none());
+    Ok(())
+}
+#[test]
+fn blocked_repair_completion_does_not_skip_replacement_cursor() -> Result<()> {
+    let (left, right, mut a, mut b) = link()?;
+    let io = BlockedWriter {
+        socket: left,
+        blocked: false.into(),
+    };
+    let now = Instant::now();
+    let body = Arc::new(OutgoingMessage::with_profile(
+        [1; 32],
+        vec![5; 1000],
+        2000,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let (config, pacing) = settings();
+    let mut sender = NativeObjectSender::new(
+        body,
+        a.session_id(),
+        11,
+        config,
+        pacing,
+        now,
+        Duration::from_secs(5),
+    )?;
+    for _ in 0..2 {
+        assert_eq!(sender.poll_send_limited(&io, &mut a, now, 2, None)?, 1);
+        receive(&right, &mut b)?;
+    }
+    sender.on_ack(&missing_ack(&sender, 1, 0)?, now)?;
+    io.blocked.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(sender.poll_send_limited(&io, &mut a, now, 1, None)?, 0);
+    let original = sender.pending.as_ref().unwrap().frame.clone();
+    sender.on_ack(&missing_ack(&sender, 2, 1)?, now)?;
+    io.blocked
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(sender.poll_send_limited(&io, &mut a, now, 1, None)?, 1);
+    assert_eq!(receive(&right, &mut b)?, original);
+    assert_eq!(sender.repair.as_ref().unwrap().index, 1);
+    assert_eq!(sender.poll_send_limited(&io, &mut a, now, 1, None)?, 1);
+    let repaired = receive(&right, &mut b)?;
+    assert_eq!(repaired.sequence, 1);
+    assert_eq!(repaired.ack_epoch, 2);
+    assert!(sender.repair.is_none());
+    Ok(())
+}

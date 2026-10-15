@@ -1,5 +1,20 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 原对象 owner 的异步载体接线（2026-10-16）
+
+`novorudp::carrier_io::NativeCarrierPump::attach` 消费结构化 Finished 后的原通道，
+把实际 CarrierStream 接入原 NativeObjectLink。驱动方在同一 owner 内轮询
+`link.poll` 与 `pump.progress`；短暂取消 progress 等待不会丢失半帧 future，
+销毁 pump 则终止载体。排队不算写成功，待写帧及配额保留到完成或明确取消。
+正文/反馈公平交替，取消中的未知写入不能重用旧流。原UDP同步路径保持。
+本机实际QUIC双向两批对象和回归通过，详见生产台账顶部。
+
+当前attach只支持原有限IO生命周期，不能直接接常驻Mailbox。下一片须在原
+iroh_transport/carrier_stream明确原生服务选择后提供持续split-IO模式：首字节
+等待保留撤销检查，每帧固定期限，业务请求仍守原NativeMailbox期限。之后将
+product_rendezvous_native现有jobs/active/pending执行体复用于carrier readiness，
+补齐签名carrier服务能力与原Application接线，不复制信箱或调度器。
+
 ## 结构化载体认证接线（2026-10-16）
 
 `bound_session::authenticate_structured_bound_session_observed` 和

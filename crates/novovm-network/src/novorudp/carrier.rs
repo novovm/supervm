@@ -67,6 +67,16 @@ impl VerifiedCarrierRoute {
 pub trait NativeDatagramIo: Send + Sync {
     fn try_receive(&self, buffer: &mut [u8]) -> io::Result<Option<(usize, NativeRoute)>>;
     fn try_send(&self, bytes: &[u8], route: NativeRoute) -> io::Result<usize>;
+    /// A scoped reliable carrier retains exactly one write until real completion.
+    /// The original session reserves its budget and keeps the exact sealed frame.
+    fn deferred_writes(&self) -> bool {
+        false
+    }
+    /// Cancel the exact retained write. Zero means it never started; a full count
+    /// means it already completed. Partial/uncertain cancellation retires the carrier.
+    fn cancel_send(&self, _bytes: &[u8], _route: NativeRoute) -> io::Result<usize> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
     fn local_udp_addr(&self) -> io::Result<SocketAddr> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -74,6 +84,11 @@ pub trait NativeDatagramIo: Send + Sync {
         ))
     }
 }
+
+/// Terminal reliable-carrier failure, never reclassified as unrelated UDP noise.
+#[derive(Debug, thiserror::Error)]
+#[error("native carrier IO failed: {0}")]
+pub struct NativeCarrierIoFailure(pub(crate) io::Error);
 impl NativeDatagramIo for UdpSocket {
     fn try_receive(&self, buffer: &mut [u8]) -> io::Result<Option<(usize, NativeRoute)>> {
         self.recv_from(buffer)

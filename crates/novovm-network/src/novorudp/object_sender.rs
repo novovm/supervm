@@ -34,6 +34,25 @@ struct RepairCursor {
     copy: u64,
 }
 
+enum PendingCursor {
+    Initial {
+        index: usize,
+        copy: u64,
+        copies: u64,
+    },
+    Repair {
+        generation: u64,
+        index: u64,
+        copy: u64,
+        copies: u64,
+    },
+    Probe,
+}
+struct PendingSend {
+    frame: NovoRudpTransportFrameV0,
+    cursor: PendingCursor,
+}
+
 pub struct NativeObjectSender {
     body: Arc<OutgoingMessage>,
     session: [u8; 16],
@@ -45,6 +64,8 @@ pub struct NativeObjectSender {
     initial: usize,
     copy: u64,
     repair: Option<RepairCursor>,
+    repair_generation: u64,
+    pending: Option<PendingSend>,
     last_plan: Option<NovoRudpRepairPlan>,
     last_missing: Option<u64>,
     retry_pending: bool,
@@ -93,6 +114,8 @@ impl NativeObjectSender {
             initial: 0,
             copy: 0,
             repair: None,
+            repair_generation: 0,
+            pending: None,
             last_plan: None,
             last_missing: None,
             retry_pending: false,
@@ -171,6 +194,10 @@ impl NativeObjectSender {
                     .as_ref()
                     .is_some_and(|old| old.window == plan.window);
                 if !same {
+                    self.repair_generation = self
+                        .repair_generation
+                        .checked_add(1)
+                        .context("native repair generation exhausted")?;
                     self.last_plan = Some(plan.clone());
                     self.repair = Some(RepairCursor {
                         plan: plan.clone(),
@@ -225,7 +252,7 @@ impl NativeObjectSender {
             return Ok(0);
         }
         let initial = self.initial < self.body.frame_count();
-        let retry = !initial && self.repair.is_none();
+        let retry = self.pending.is_none() && !initial && self.repair.is_none();
         if retry && now < self.feedback_deadline {
             return Ok(0);
         }
@@ -260,68 +287,122 @@ impl NativeObjectSender {
             .unwrap_or(self.config.batch_pause_ms.max(self.pacing.batch_pause_ms));
         let mut sent = 0;
         for _ in 0..budget.min(batch) {
-            let (index, copies, kind) = if self.initial < self.body.frame_count() {
-                (
-                    self.initial,
-                    self.config.packet_copies.max(self.pacing.packet_copies),
-                    NovoRudpTransportFrameKindV0::Data,
-                )
-            } else if let Some(repair) = &self.repair {
-                (
-                    repair.index as usize,
-                    repair.plan.packet_copies,
-                    NovoRudpTransportFrameKindV0::Repair,
-                )
-            } else if sent == 0 {
-                // Lost feedback/all initial packets: a bounded tail probe lets
-                // the receiver reconstruct its missing snapshot. No full resend.
-                (
-                    self.body.frame_count() - 1,
-                    1,
-                    NovoRudpTransportFrameKindV0::Repair,
-                )
-            } else {
-                break;
-            };
-            let frame = NovoRudpTransportFrameV0::new(
-                kind,
-                self.session,
-                self.stream,
-                u64::from_be_bytes(self.body.id()[..8].try_into()?),
-                index as u64,
-                self.state.latest_ack_epoch,
-                self.body.frame(index)?,
-            );
-            if !session.try_send_limited(io, &frame, now, wire_budget.as_deref_mut())? {
+            if self.pending.is_none() {
+                let (index, copies, kind) = if self.initial < self.body.frame_count() {
+                    (
+                        self.initial,
+                        self.config.packet_copies.max(self.pacing.packet_copies),
+                        NovoRudpTransportFrameKindV0::Data,
+                    )
+                } else if let Some(repair) = &self.repair {
+                    (
+                        repair.index as usize,
+                        repair.plan.packet_copies,
+                        NovoRudpTransportFrameKindV0::Repair,
+                    )
+                } else if sent == 0 {
+                    // Lost feedback/all initial packets: a bounded tail probe lets
+                    // the receiver reconstruct its missing snapshot. No full resend.
+                    (
+                        self.body.frame_count() - 1,
+                        1,
+                        NovoRudpTransportFrameKindV0::Repair,
+                    )
+                } else {
+                    break;
+                };
+                let frame = NovoRudpTransportFrameV0::new(
+                    kind,
+                    self.session,
+                    self.stream,
+                    u64::from_be_bytes(self.body.id()[..8].try_into()?),
+                    index as u64,
+                    self.state.latest_ack_epoch,
+                    self.body.frame(index)?,
+                );
+                let cursor = if self.initial < self.body.frame_count() {
+                    PendingCursor::Initial {
+                        index: self.initial,
+                        copy: self.copy,
+                        copies,
+                    }
+                } else if let Some(repair) = &self.repair {
+                    PendingCursor::Repair {
+                        generation: self.repair_generation,
+                        index: repair.index,
+                        copy: repair.copy,
+                        copies,
+                    }
+                } else {
+                    PendingCursor::Probe
+                };
+                self.pending = Some(PendingSend { frame, cursor });
+            }
+            let pending = self.pending.as_ref().expect("prepared native frame");
+            if !session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())? {
                 break;
             }
+            let pending = self.pending.take().expect("completed native frame");
             sent += 1;
             if self.retry_pending {
                 self.attempts = self.attempts.saturating_add(1);
                 self.retry_pending = false;
             }
-            if self.initial < self.body.frame_count() {
-                self.copy += 1;
-                if self.copy == copies {
-                    self.copy = 0;
-                    self.initial += 1;
+            match pending.cursor {
+                PendingCursor::Initial {
+                    index,
+                    copy,
+                    copies,
+                } => {
+                    ensure!(
+                        self.initial == index && self.copy == copy,
+                        "native initial cursor changed during write"
+                    );
+                    self.copy += 1;
+                    if self.copy == copies {
+                        self.copy = 0;
+                        self.initial += 1;
+                    }
                 }
-            } else if let Some(repair) = &mut self.repair {
-                repair.copy += 1;
-                if repair.copy == copies {
-                    repair.copy = 0;
-                    repair.index += 1;
-                    if repair.index > repair.plan.window.missing_ranges[repair.range].end_inclusive
-                    {
-                        repair.range += 1;
-                        if repair.range == repair.plan.window.missing_ranges.len() {
-                            self.repair = None;
-                        } else {
-                            repair.index = repair.plan.window.missing_ranges[repair.range].start;
+                PendingCursor::Repair {
+                    generation,
+                    index,
+                    copy,
+                    copies,
+                } => {
+                    if generation != self.repair_generation || self.repair.is_none() {
+                        if io.deferred_writes() {
+                            break;
+                        }
+                        continue;
+                    }
+                    let repair = self.repair.as_mut().expect("current repair cursor");
+                    ensure!(
+                        repair.index == index && repair.copy == copy,
+                        "native repair cursor changed during write"
+                    );
+                    repair.copy += 1;
+                    if repair.copy == copies {
+                        repair.copy = 0;
+                        repair.index += 1;
+                        if repair.index
+                            > repair.plan.window.missing_ranges[repair.range].end_inclusive
+                        {
+                            repair.range += 1;
+                            if repair.range == repair.plan.window.missing_ranges.len() {
+                                self.repair = None;
+                            } else {
+                                repair.index =
+                                    repair.plan.window.missing_ranges[repair.range].start;
+                            }
                         }
                     }
                 }
-            } else {
+                PendingCursor::Probe => break,
+            }
+            // Return the sole reliable-stream write slot to the same owner so
+            // pending feedback can run before this object queues another frame.
+            if io.deferred_writes() {
                 break;
             }
         }

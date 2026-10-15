@@ -9,7 +9,8 @@ use super::{
     object_ack::encode_object_ack,
     object_receiver::NativeObjectReceiver,
     object_sender::{NativeObjectSender, ObjectSendState},
-    NovoRudpPacingProfile, NovoRudpTransportFrameKindV0, NovoRudpWindowConfig,
+    NovoRudpPacingProfile, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
+    NovoRudpWindowConfig,
 };
 use anyhow::{ensure, Context, Result};
 use std::{
@@ -100,6 +101,10 @@ impl NativeSendCancellation {
         self.0.load(Ordering::Acquire)
     }
 }
+struct PendingFeedback {
+    frame: NovoRudpTransportFrameV0,
+    dirty: bool,
+}
 struct Lane {
     config: NativeLaneConfig,
     receiver: NativeObjectReceiver,
@@ -107,9 +112,16 @@ struct Lane {
     peers: Vec<Usage>,
     feedback: VecDeque<Feedback>,
     queued: BTreeSet<Feedback>,
+    pending_feedback: BTreeMap<Feedback, PendingFeedback>,
 }
 impl Lane {
     fn feedback(&mut self, peer: usize, id: [u8; 32]) {
+        if let Some(pending) = self.pending_feedback.get_mut(&(peer, id)) {
+            pending.dirty = true;
+        }
+        self.requeue_feedback(peer, id);
+    }
+    fn requeue_feedback(&mut self, peer: usize, id: [u8; 32]) {
         // Coalesced hint only. No payload eviction or fabricated completion.
         if self.queued.len() < self.config.receive.messages * 2 && self.queued.insert((peer, id)) {
             self.feedback.push_back((peer, id));
@@ -212,6 +224,7 @@ impl NativeObjectLink {
                     peers: vec![Usage::default(); endpoint.peer_count()],
                     feedback: VecDeque::new(),
                     queued: BTreeSet::new(),
+                    pending_feedback: BTreeMap::new(),
                 },
             );
         }
@@ -481,6 +494,9 @@ impl NativeObjectLink {
                 report.retired_inbound_messages += lane.receiver.retire_peer_session(id);
                 lane.feedback.retain(|(peer, _)| *peer != change.peer);
                 lane.queued.retain(|(peer, _)| *peer != change.peer);
+                // The endpoint already retired that exact session and its IO.
+                lane.pending_feedback
+                    .retain(|(peer, _), _| *peer != change.peer);
             }
             for ((peer, _, _), sender) in &mut self.jobs {
                 if *peer == change.peer {
@@ -533,43 +549,7 @@ impl NativeObjectLink {
                 }
             }
         }
-        // Control/body/ingress feedback have independent bounded hint queues.
-        for _ in 0..quantum {
-            let stream = self.streams[self.feedback_turn];
-            self.feedback_turn = (self.feedback_turn + 1) % self.streams.len();
-            let lane = self.lanes.get_mut(&stream).expect("configured lane");
-            let Some((peer, id)) = lane.feedback.pop_front() else {
-                continue;
-            };
-            lane.queued.remove(&(peer, id));
-            let Some(session) = self.endpoint.session_id(peer) else {
-                continue;
-            };
-            self.epoch = self
-                .epoch
-                .checked_add(1)
-                .context("native ACK epoch exhausted")?;
-            let Some(ack) = lane.receiver.transport_feedback(
-                self.endpoint.peer_id(peer)?,
-                id,
-                session,
-                self.epoch,
-                now,
-            )?
-            else {
-                continue;
-            };
-            let frame = encode_object_ack(id, stream, &ack)?;
-            match self.endpoint.try_send(peer, &frame) {
-                Ok(true) => report.feedback_sent += 1,
-                Ok(false) => lane.feedback(peer, id),
-                Err(error) if error.downcast_ref::<std::io::Error>().is_some() => {
-                    report.send_failures += 1;
-                    lane.feedback(peer, id);
-                }
-                Err(error) => return Err(error),
-            }
-        }
+        self.poll_feedback(now, quantum, &mut report)?;
         // Fair across retained jobs, with no per-object wait for an ACK.
         for _ in 0..quantum.min(self.order.len()) {
             let key = self.order.pop_front().expect("bounded job count");
@@ -590,15 +570,29 @@ impl NativeObjectLink {
                     Err(error) if error.downcast_ref::<std::io::Error>().is_some() => {
                         report.send_failures += 1
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        self.order.push_front(key);
+                        return Err(error);
+                    }
                 }
             }
             if sender.status() == ObjectSendState::Sending {
                 self.order.push_back(key);
-                if report.data_sent == quantum {
+                if report.data_sent == quantum
+                    || (report.data_sent > 0 && self.endpoint.uses_deferred_writes())
+                {
                     break;
                 }
                 continue;
+            }
+            // A terminal object may still own a deferred encrypted write.
+            // Retire it before releasing quota; a partial stream abort is fatal,
+            // not a recoverable UDP send error or a successful transmission.
+            if self.endpoint.session_id(key.0) == Some(sender.session_id()) {
+                if let Err(error) = self.endpoint.cancel_object_send(key.0, key.1, key.2) {
+                    self.order.push_front(key);
+                    return Err(error);
+                }
             }
             let sender = self.jobs.remove(&key).expect("finished send job");
             self.cancellations.remove(&key);
@@ -614,7 +608,101 @@ impl NativeObjectLink {
                 body,
             });
         }
+        // ACK-first alone can starve data, and data-first alone can starve ACKs.
+        // A deferred completion releases one slot: give feedback one bounded
+        // opportunity after data completion instead of queuing another body.
+        if self.endpoint.uses_deferred_writes()
+            && report.data_sent > 0
+            && report.feedback_sent < quantum
+        {
+            self.poll_feedback(now, quantum - report.feedback_sent, &mut report)?;
+        }
         Ok(report)
+    }
+    fn poll_feedback(
+        &mut self,
+        now: Instant,
+        quantum: usize,
+        report: &mut NativeLinkPoll,
+    ) -> Result<()> {
+        // Control/body/ingress feedback have independent bounded hint queues.
+        for _ in 0..quantum {
+            let stream = self.streams[self.feedback_turn];
+            self.feedback_turn = (self.feedback_turn + 1) % self.streams.len();
+            let lane = self.lanes.get_mut(&stream).expect("configured lane");
+            let Some((peer, id)) = lane.feedback.pop_front() else {
+                continue;
+            };
+            lane.queued.remove(&(peer, id));
+            let Some(session) = self.endpoint.session_id(peer) else {
+                continue;
+            };
+            let key = (peer, id);
+            let epoch = if let Some(pending) = lane.pending_feedback.get(&key) {
+                pending.frame.ack_epoch
+            } else {
+                self.epoch = self
+                    .epoch
+                    .checked_add(1)
+                    .context("native ACK epoch exhausted")?;
+                self.epoch
+            };
+            // Also checks receiver TTL/history expiry. Never keep a blocked ACK
+            // alive after the object it describes has left the receiver state.
+            let Some(ack) = lane.receiver.transport_feedback(
+                self.endpoint.peer_id(peer)?,
+                id,
+                session,
+                epoch,
+                now,
+            )?
+            else {
+                if let Err(error) = self.endpoint.cancel_feedback_send(peer, stream, id) {
+                    lane.requeue_feedback(peer, id);
+                    return Err(error);
+                }
+                lane.pending_feedback.remove(&key);
+                continue;
+            };
+            if let std::collections::btree_map::Entry::Vacant(entry) =
+                lane.pending_feedback.entry(key)
+            {
+                entry.insert(PendingFeedback {
+                    frame: encode_object_ack(id, stream, &ack)?,
+                    dirty: false,
+                });
+            }
+            let pending = lane
+                .pending_feedback
+                .get(&key)
+                .expect("prepared native ACK");
+            match self.endpoint.try_send(peer, &pending.frame) {
+                Ok(true) => {
+                    report.feedback_sent += 1;
+                    let pending = lane
+                        .pending_feedback
+                        .remove(&key)
+                        .expect("completed native ACK");
+                    if pending.dirty {
+                        lane.feedback(peer, id);
+                    }
+                    // Let data use the freed slot before queuing another ACK.
+                    if self.endpoint.uses_deferred_writes() {
+                        break;
+                    }
+                }
+                Ok(false) => lane.requeue_feedback(peer, id),
+                Err(error) if error.downcast_ref::<std::io::Error>().is_some() => {
+                    report.send_failures += 1;
+                    lane.requeue_feedback(peer, id);
+                }
+                Err(error) => {
+                    lane.requeue_feedback(peer, id);
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
     /// Separate assembly-owner call. A free caller output slot is REQUIRED;
     /// completion custody leaves the reassembly budget, not the process budget.

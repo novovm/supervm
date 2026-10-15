@@ -3,6 +3,30 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原 NativeObjectLink 实际异步载体收发（有限 scope；非手机部署）
+
+输入 fa58bf4b，认领20c8455e。调用链为实际 CarrierStream 结构化 Finished →
+NativeCarrierPump::attach → 原 NativeEndpoint/NativeUdpSession → NativeObjectLink。
+同一 owner 轮询 pump 与原对象任务，不生成后台 worker、第二握手或新协议。
+单个有界写槽在实际 write_frame 完成之前只返回 WouldBlock；原发送帧、密文、
+ACK 快照和预算预留跨等待保持。真实取消发生在写入中则废弃载体，不把未知结果
+伪装为成功；任务取消先退役待写状态再释放对象配额，原 Arc/Message ID 不变。
+部分写入已知字节与未知字节分别记账，预留不随滚动窗口到期重复释放。
+正文与 ACK 在原有限 quantum 内交替获得写槽，避免持续反馈或持续正文饿死另一侧。
+
+验证：原生回归100/100 PASS（1.01s）；组合 Iroh/TLS bound_45 PASS、0 FAIL、
+3项既有 ignored（7.26s）；组合 lib/tests 严格 Clippy PASS（27.84s）；
+无默认特性 lib 检查 PASS（4.51s）。实际本机 QUIC 单连接双向两批共8个对象，
+多分片、两lane与原传输ACK闭环通过。初次完整bound_有1次测试结束竞态：
+双方完成后barrier与对端关闭同时ready，随机select先读到关闭；优先已完成的
+双端barrier后复测通过，未忽略业务期间载体错误或调整任何期限。
+
+边界：这是有限scope真实收发，不是持续信箱或设备送达回执验收。现有split_io
+半部保留固定操作期限，不能直接成为常驻接收。下一片在原载体显式原生服务选择
+后接空闲首字节等待及独立分帧期限，再由原NativeMailboxServer/Client保留各请求
+原截止时间；不得逐帧延长整个业务期限。节点签名原生carrier能力、宿主与手机
+Application接线、真实跨网及独立物理副本仍未交付。本片未部署手机或改动用户数据。
+
 ## 2026-10-16 已认证载体接管原生会话（接线组件；非手机部署）
 
 输入 `4a74d881`，认领 `43039abe`。沿既有 CarrierStreamV1 结构化握手与双方
