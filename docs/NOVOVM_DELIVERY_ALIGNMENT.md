@@ -1,5 +1,29 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 root release dependency repair (validated; integration pending):** input0bcfa905.
+Root owns network rustls pin, root lockfile, bounded validation and evidence;
+one heavy build/performance slot. Fix the confirmed root security gate through
+the upstream patch, no advisory suppression, broad dependency update or carrier
+rewrite. Preserved runtime/legacy drafts stay untouched. Parallel agents are
+read-only: security/CI review and evidence-based original native-tick bottleneck
+mapping. Performance implementation requires a concrete existing-path finding,
+not another controller or changed confirmation denominator.
+Root security-only node9f689469… built successfully; actual four-process CPU2
+and complete algebraic2 tests pass, including minority/publication and cold
+recovery. TLS39 tests, audit0 vulnerabilities and deny checks pass; existing
+paste/rand warnings and preserved nested-workspace vulnerability remain.
+
+Next original-path implementation is ACK-bound warm receipt projection:
+rpc.poll_projection currently blocks selection while ArchiveRead reloads
+head/block/outbox/full candidate every height. At height33, four diagnostic
+snapshots each record33 io_recover calls totaling315.6–325.3ms (inclusive, not
+whole-chain attribution). Reuse only the exact local journal Decision ACK's
+owner-bound immutable candidate, with one budgeted read-only slot and compact
+receipt projection. No pre-ACK/competing/replayed-cold completion may populate
+it; exact head required, cold/history/miss retain original ArchiveRead checks.
+Not implemented yet. Do not claim reduced I/O or improved TPS until matched
+tests prove it; do not replace original consensus or create an authority cache.
+
 **2026-10-16 native receive reuse (integrated; claim released):** input17c9479c.
 Root owns existing profile counters, tests/evidence and the sole build/performance
 slot. Candidate registration measured only54–58ms/node, so no speculative cache.
