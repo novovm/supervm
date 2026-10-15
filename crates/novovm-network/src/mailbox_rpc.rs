@@ -12,6 +12,8 @@ use crate::{
     mailbox_store::{
         Capability, ContributionStatusV1, MailboxCursorV1, MailboxGrant, MailboxStore, StoreError,
     },
+    product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
+    product_service_lease::NativeMailboxEndpointV7,
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Result};
@@ -38,6 +40,9 @@ const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxRequestV1 {
+    /// NVMBOX07 APFL only; has no legacy JSON wire representation.
+    #[serde(skip)]
+    ServiceRecordV7,
     /// Explicit opt-in on NVMBOX02; never a downgrade on an older service.
     BeginSession,
     /// Explicit, Finished-protected NVMBOX04 negotiation. Legacy rejects it.
@@ -91,7 +96,8 @@ pub enum MailboxRequestV1 {
 impl Drop for MailboxRequestV1 {
     fn drop(&mut self) {
         match self {
-            Self::BeginSession
+            Self::ServiceRecordV7
+            | Self::BeginSession
             | Self::BeginContinuousV4
             | Self::BeginContinuousV6
             | Self::EndSession
@@ -140,6 +146,11 @@ pub struct MailboxPrefetchV6 {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxReplyV1 {
+    /// Original signed directory value, never re-signed by the RPC adapter.
+    #[serde(skip)]
+    ServiceRecordV7 {
+        record: PeerSignedRelayRecordV1,
+    },
     SessionReady,
     ContinuousReadyV4,
     ContinuousReadyV6,
@@ -183,6 +194,7 @@ pub struct MailboxServiceV1 {
     // Shared across V4 connections, so reconnecting cannot reset the budget.
     request_budget: Mutex<RequestBudgetV4>,
     timings: metrics::Timings,
+    native_record_v7: Mutex<Option<PeerSignedRelayRecordV1>>,
 }
 
 struct RequestBudgetV4 {
@@ -220,6 +232,7 @@ impl MailboxServiceV1 {
             slots: Arc::new(tokio::sync::Semaphore::new(1)),
             changed: tokio::sync::watch::channel(0).0,
             timings: metrics::Timings::default(),
+            native_record_v7: Mutex::new(None),
             request_budget: Mutex::new(RequestBudgetV4 {
                 tokens: 64,
                 updated: std::time::Instant::now(),
@@ -227,6 +240,38 @@ impl MailboxServiceV1 {
                 interval: std::time::Duration::from_millis(500),
             }),
         }
+    }
+
+    /// Local owner publication only. The directory journal remains authoritative;
+    /// this is a single current snapshot for authenticated native clients.
+    pub fn update_native_record_v7(&self, record: PeerSignedRelayRecordV1) -> Result<()> {
+        crate::mailbox_structured::locator::validate(&record)?;
+        ensure!(
+            record.relay_public_key == self.identity_public_key(),
+            "mailbox locator node mismatch"
+        );
+        validate_relay_record_v1(&record, crate::product_rendezvous_daemon::now_ms()?)?;
+        ensure!(
+            NativeMailboxEndpointV7::from_record(&record)?.is_some(),
+            "mailbox native locator missing"
+        );
+        let mut current = self
+            .native_record_v7
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mailbox locator unavailable"))?;
+        if let Some(previous) = current.as_ref() {
+            ensure!(
+                record.sequence >= previous.sequence
+                    && record.issued_at_ms >= previous.issued_at_ms,
+                "mailbox locator rollback"
+            );
+            ensure!(
+                record.sequence != previous.sequence || record == *previous,
+                "mailbox locator sequence conflict"
+            );
+        }
+        *current = Some(record);
+        Ok(())
     }
 
     /// Local provider configuration, chosen before sharing this service owner.
@@ -366,6 +411,21 @@ impl MailboxServiceV1 {
     }
 
     async fn execute_inner(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        if matches!(&request, MailboxRequestV1::ServiceRecordV7) {
+            let current = self
+                .native_record_v7
+                .lock()
+                .map_err(|_| anyhow::anyhow!("mailbox locator unavailable"))?;
+            let now = crate::product_rendezvous_daemon::now_ms()?;
+            return Ok(match current.as_ref() {
+                Some(record) if record.issued_at_ms <= now && now < record.expires_at_ms => {
+                    MailboxReplyV1::ServiceRecordV7 {
+                        record: record.clone(),
+                    }
+                }
+                _ => MailboxReplyV1::Rejected(MailboxRejectionV1::Invalid),
+            });
+        }
         if let MailboxRequestV1::Watch { boxes, wait_ms } = &request {
             return self.watch(boxes, *wait_ms).await;
         }
@@ -384,7 +444,8 @@ impl MailboxServiceV1 {
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
-                    MailboxRequestV1::BeginSession
+                    MailboxRequestV1::ServiceRecordV7
+                    | MailboxRequestV1::BeginSession
                     | MailboxRequestV1::BeginContinuousV4
                     | MailboxRequestV1::BeginContinuousV6
                     | MailboxRequestV1::EndSession => Err(StoreError::Invalid),

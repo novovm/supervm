@@ -231,6 +231,7 @@ pub async fn run_self_owned_native_mailbox_v7(
         record.relay_public_key == key.verifying_key().to_bytes(),
         "native host signer mismatch"
     );
+    mailbox.update_native_record_v7(record.clone())?;
     publish(&record)?;
     let serving = listener.serve(
         &host,
@@ -262,7 +263,9 @@ pub async fn run_self_owned_native_mailbox_v7(
                 host.check_continuous_native_peer_v7(now)?;
                 if Instant::now() >= rotate_at {
                     let expiry = now.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
-                    publish(&host.rotate_native_mailbox_v7(Some(&route), now, expiry)?)?;
+                    let record = host.rotate_native_mailbox_v7(Some(&route), now, expiry)?;
+                    mailbox.update_native_record_v7(record.clone())?;
+                    publish(&record)?;
                     rotate_at = Instant::now() + Duration::from_secs(60);
                 }
             }

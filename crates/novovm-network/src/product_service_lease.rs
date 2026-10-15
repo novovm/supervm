@@ -32,7 +32,9 @@ pub use tls_endpoint::TlsServiceEndpointV1;
 #[path = "product_service_native.rs"]
 mod native_endpoint;
 use native_endpoint::ServiceEndpoints;
-pub use native_endpoint::{NativeMailboxCandidateV7, NativeMailboxEndpointV7};
+pub use native_endpoint::{
+    NativeMailboxBootstrapV7, NativeMailboxCandidateV7, NativeMailboxEndpointV7,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

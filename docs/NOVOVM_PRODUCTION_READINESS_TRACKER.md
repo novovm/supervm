@@ -3,6 +3,24 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原生信箱签名入口自动更新
+
+沿用 ServiceLeaseBook/Host 与 NVMBOX07：ServiceRecordV7 是有界 APFL 操作，
+返回原节点签名记录，不另建目录、签名者或 HTTP/JSON 入口。稳定监听启动及
+原有定时声明更新，将同一持久 Host 产生的记录提供给已认证原生会话。
+客户端保留的过期地址仅能探测已信任且未撤销的节点；取得并持久验证新记录后
+才能开启新的信箱业务。单节点更新不要求其他离线节点同时提供新记录。
+正常声明更新不延长旧记录，也不主动拆除健康会话。撤销、签名、序号及冲突
+校验仍在原 owner 内，旧 JSON 编解码显式拒绝新操作。
+
+`cargo test --locked -p novovm-network --features iroh-transport --lib
+mailbox_structured -- --test-threads=1`：16 PASS（含新增 7 项）；
+`product_service_lease::native_endpoint::tests`：10 PASS（含新增 3 项）。
+覆盖结构边界、原签名字节往返、旧 JSON 拒绝、快照过期、双节点独立更新、
+加密文件重开、防伪造/回滚/同序号冲突及持久撤销。此为 SDK 本机验证，
+Android 正式应用、公网 NAT 及独立物理副本仍须单独验收。
+
+
 ## 2026-10-16 APFL 准入及选批保留结构，负载预检暴露查询交接缺口
 
 恢复 `3ed27bec`→`f2d56b5b`；共享 main 仅接相同的五文件数据契约修改，
