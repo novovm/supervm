@@ -1,5 +1,5 @@
 # NOVOVM 产品目标与交付主线
-**2026-10-16 native reconnect (claim active):** July recovery owner, input
+**2026-10-16 native reconnect (claim released):** July recovery owner, input
 af77af16. Scope: existing native endpoint/object-link session replacement and
 mailbox session invalidation/tests. Fresh signed handshake plus encrypted
 possession confirmation; preserve healthy old session until confirmation,
@@ -10,6 +10,19 @@ bindings, app owner wiring and phone validation belong to the NOVOCHAT developer
 Finish only this in-flight shared transport change, hand off, then return to NOV
 genesis/native transactions/AOEM/finality/queries/restart closure. Do not expand
 this SDK task into mobile implementation or postpone the mainchain for it.
+Merged NOVOCHAT c2c1f6fc operation-deadline cap. Combined native 85, public
+transport 3 and mailbox session 4 tests plus strict Clippy pass. Shared transport
+synchronized to July 74b532cc (74 tests); native query drafts remain separate.
+Handoff is published, not acknowledgement by the other machine or phone signoff.
+
+**2026-10-16 native mailbox convergence (claim released):** NOVOCHAT session.
+Concurrent unpublished local faf108c5 overlapped upstream af77af16. Keep the
+shared native_session as the ONLY request/session adapter; remove local session
+module and duplicate identity readers/replay change. Retain the native sender's
+per-operation deadline cap and connect both shared request/reply sends to it.
+No second SDK, new protocol, scheduler, financial or recovery-tree changes.
+Existing mobile deployment is unchanged. Converged real UDP 3, structure/session 7, native regressions 83 pass; strict
+combined-feature lib/all-tests Clippy passes. No phone latency claim.
 
 **2026-10-16 native mailbox session (claim released):** July recovery owner,
 input main e5d04360. Bind the structured codec to the existing authenticated

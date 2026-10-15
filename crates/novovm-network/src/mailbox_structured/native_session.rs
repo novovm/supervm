@@ -223,7 +223,7 @@ impl NativeMailboxClient {
             anyhow::bail!("mailbox deadline; outcome unknown");
         }
         if !p.sent {
-            p.sent = link.try_send(self.binding.peer, STREAM, &p.body, now)?;
+            p.sent = link.try_send_until(self.binding.peer, STREAM, &p.body, now, p.deadline)?;
         }
         Ok(p.sent)
     }
@@ -573,7 +573,7 @@ impl MailboxResponse {
                 .sequence
                 .checked_add(1)
                 .context("mailbox sequence exhausted")?;
-            if !link.try_send(self.peer, STREAM, &self.body, now)? {
+            if !link.try_send_until(self.peer, STREAM, &self.body, now, self.deadline)? {
                 return Ok(false);
             }
             s.sequence = next;

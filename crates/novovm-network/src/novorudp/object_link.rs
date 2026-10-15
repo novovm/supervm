@@ -304,6 +304,23 @@ impl NativeObjectLink {
         body: &Arc<OutgoingMessage>,
         now: Instant,
     ) -> Result<bool> {
+        let deadline = now
+            .checked_add(self.policy.ttl)
+            .context("native send deadline overflow")?;
+        self.try_send_until(peer, stream, body, now, deadline)
+    }
+
+    /// A short operation can finish before the transport's normal repair TTL.
+    /// Reusing an in-flight object never restarts or extends its original TTL.
+    pub fn try_send_until(
+        &mut self,
+        peer: usize,
+        stream: u64,
+        body: &Arc<OutgoingMessage>,
+        now: Instant,
+        deadline: Instant,
+    ) -> Result<bool> {
+        ensure!(now < deadline, "native send operation deadline");
         ensure!(peer < self.endpoint.peer_count(), "unknown native peer");
         let lane = self.lanes.get_mut(&stream).context("unknown native lane")?;
         ensure!(
@@ -335,7 +352,7 @@ impl NativeObjectLink {
             self.policy.window.clone(),
             self.policy.pacing.clone(),
             now,
-            self.policy.ttl,
+            self.policy.ttl.min(deadline.duration_since(now)),
         )?;
         lane.usage.add(bytes);
         lane.peers[peer].add(bytes);

@@ -1,5 +1,41 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 最新分工：手机归 NOVOCHAT 设备，主链归七月恢复设备
+
+用户本轮明确：iPhone/Android 复用同一 NovoRUDP/APFL 协议与 Rust 核心，但
+平台封装/构建、NOVOCHAT Application owner 装配、通知/后台/换网及手机实测
+交给另一台开发 NOVOCHAT 的设备。本机不接手手机功能，不另造移动 SDK。
+两端都沿本仓共享实现，不复制成独立分叉；不能将桌面通过宣称为 iOS/Android 通过。
+
+本机完成本节这笔在途通用重连修复后，回到 **NOV 新创世 → 原生结构化签名交易
+→ AOEM 统一代数执行 → 共识耐久发布 → 原生余额/回执查询 → 重启恢复**。
+同时验证 NovoRUDP/APFL 真实结构批路径的 TPS/P95/P99：保持真实签名、经济规则、
+冲突条件、验证者数量与耐久终点，单列业务失败；检查中途是否又出现 JSON、逐笔
+展开或 Host 业务接力。七月高吞吐是复用/对照来源，不是现行最终确认成绩。
+不再以移动配套、网络组件数字或旧 HTTP 观察代替主链交付。
+
+### 本次共享接口增量：显式客户端重连 v1
+
+在既有 open-client endpoint 上显式调用 `enable_client_reconnect_v1()`，再装配
+原 `NativeObjectLink`。默认及固定验证者 peer 仍不接受此替换。客户端使用原
+`connect_client` 重新握手；服务端保留旧连接，直到新源发来有效新会话 AEAD 帧，
+才接替原 peer 索引。只有签名 offer 不会断开旧会话。每 peer 最多一个有期限的
+待确认握手，重试不延长；未完成/过期不影响旧连接。无握手或 AEAD 格式变更。
+
+同一 poll 返回 `session_changes`，先处理代次事件再消费应用消息；旧分片、DONE
+缓存及待发反馈不能进入新代次。旧出站对象以 `ObjectSendState::SessionReplaced`
+连同原 Arc 交还，表示结果未知，不是业务失败或回滚。完成仍按 poll quantum
+有界交付，额度交还后可明确重试；不要自动重放整个已执行的信箱批次。
+`session_validity(peer)` 是只读本地代次句柄，替换/释放 link 后永久失效；
+共享 mailbox adapter 已将它接入在途任务检查，原业务权限检查仍必须提供。
+已经进入存储提交的操作不会被撤销；按原 Object ID/签名回执恢复未知结果。
+已合并 NOVOCHAT 设备的 `try_send_until`，不延长业务期限或恢复失败槽。
+
+移动 owner 应依据该事件退休旧适配器/任务，真实新会话再 attach；旧请求 context
+不得重标新 session。这里只实现并验证通用 socket 生命周期，不替手机实现发现、
+选路、重试决策或 NAT 穿透。新身份槽仍有原上限，尚无闲置身份回收；已持有输出的
+应用必须保留自己的总预算。能力缓冲全面安全擦除、平台构建/实机尚未验收。
+
 本片把七月恢复线 `fb8fc69efbbe01177a24f82ca44b6d1ab569a99e` 已验证的
 会话、对象传输与反例迁入共享 `main` 的原 `novovm-network`，不是另建 SDK。
 新增显式有界、无需预置对端的应用监听器。原帧、加密、窗口修复、pacing、
@@ -150,3 +186,15 @@ Iroh fallback来把这些项冒充原生验收；已有在用协议也没有被�
 ```powershell
 cargo test --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_mailbox_session -- --test-threads=1
 ```
+
+## 2026-10-16 消费端合并：只保留共享native_session
+
+另一机器af77af16与本机未推送faf108c5发生请求状态实现重叠。当前仅保留
+`native_session`：节点签名回执与请求类型核验、四个并发槽、原link唯一owner
+认领均沿共享实现；本机另一份session模块及重复公钥getter已移除，不形成两套SDK。
+保留本机`NativeObjectLink::try_send_until`并接到共享请求/回复发送：原对象sender
+取业务剩余期限与transport TTL较小者，重入队不延长原期限。没有延长30秒操作
+期限或把它变成连接寿命；原认证会话与临时操作仍分开。
+
+移动换源重连/故障槽恢复、在途撤销定向取消、能力缓冲全面擦除和正式Application
+接线仍待完成。四个请求槽是当前有界并发，不是聊天历史或累计发送条数上限。
