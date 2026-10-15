@@ -1,5 +1,14 @@
 use super::*;
 
+#[test]
+fn original_and_duplex_consumers_share_one_frame_type() {
+    // A direct assignment (not serialization/conversion) proves both call paths
+    // consume the same type. Compatibility imports must not grow a new codec.
+    let original: crate::novorudp::NovoRudpTransportFrameV0 = frame();
+    let compatibility: crate::duplex::novorudp::NovoRudpTransportFrameV0 = original.clone();
+    assert_eq!(compatibility.try_encode().unwrap(), original.encode());
+}
+
 fn frame() -> NovoRudpTransportFrameV0 {
     NovoRudpTransportFrameV0::new(
         NovoRudpTransportFrameKindV0::Data,

@@ -9,7 +9,6 @@
 //! The caller must retry its immutable protocol messages until its own protocol
 //! establishes progress. Queues may expire or drop inbound traffic under load.
 
-use crate::duplex::novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
 use crate::duplex::product_overlay::{
     peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
     NodeHandshakeInitiatorV1, NodeHandshakeResponderV1, NodeHandshakeResponseV1,
@@ -20,6 +19,7 @@ use crate::duplex::product_relay::{
 use crate::duplex::product_relay_client::{
     ProductRelayClientConfigV1, ProductRelayClientEventV1, ProductRelayClientV1,
 };
+use crate::novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
 use anyhow::{bail, Context, Result};
 use ed25519_dalek::SigningKey;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

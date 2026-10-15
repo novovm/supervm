@@ -1,4 +1,5 @@
-//! Reviewed frame-codec migration from the isolated network implementation.
+//! Single native frame codec shared by original and duplex consumers.
+//! Retains the checked-length and canonical-header fixes from the migrated codec.
 //! This module carries opaque bytes only; it is not a reliability scheduler or
 //! proof of delivery, execution, consensus, or finality.
 
@@ -297,5 +298,5 @@ fn novorudp_transport_frame_checksum_v0(
 }
 
 #[cfg(test)]
-#[path = "novorudp_tests.rs"]
+#[path = "frame_tests.rs"]
 mod tests;

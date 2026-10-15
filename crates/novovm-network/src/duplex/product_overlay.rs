@@ -3,7 +3,7 @@
 //! classical Ed25519/secp256k1/ChaCha20-Poly1305 primitives, not post-quantum
 //! transport or blockchain execution-validity proofs.
 
-use crate::duplex::novorudp::{
+use crate::novorudp::{
     NovoRudpTransportFrameDecodeErrorV0, NovoRudpTransportFrameEncodeErrorV0,
     NovoRudpTransportFrameV0,
 };

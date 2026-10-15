@@ -3,6 +3,25 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 原生帧实现收敛：删除重复codec，载体尚未切换
+
+输入8dfa2820。核对原novorudp与duplex帧代码：同NOVRUDP0/version1、字段布局和
+checksum域，但duplex额外具有长度溢出拒绝和非零reserved拒绝。将已有强化实现及
+六项反例迁回`novorudp/frame.rs`，删除根文件旧实现和duplex独立codec文件；
+当前worker与E2E overlay直接引用原模块的同一个帧类型。duplex旧路径仅为选定
+类型的兼容重导出，不含编解码逻辑，不引入root的旧ledger状态机。
+
+正常帧格式不改；原模块现在同样拒绝非零reserved及无法表示的编码长度，不能称
+所有异常输入行为完全不变。旧原件可从Git恢复，未删除历史证据或runtime/legacy草稿。
+本机NovoRUDP相关48项通过；duplex回归213通过、10忽略，包含真实WSS双工、
+背压和身份用例；忽略项不计通过。本片没有重建ACK、执行器或共识。
+原`novovm-node` binary的cargo check通过，network lib严格Clippy通过。
+
+范围限制：这是实际消费者共用原生codec和重复代码清理，不是可靠UDP载体接入。
+run_worker仍连接Relay，尚无原生四节点/TPS结果。下一接合点仍为worker/session
+中的实际I/O与完成事件，不改变node候选、APFL、AOEM或最终确认合同。
+此前gate的APFL decode-only失败未在本片修复，不让旁支工具修复冒充主线交付。
+
 ## 2026-10-15 ACK草稿纠偏：仅工具校验，不签收主链迁接
 
 输入b561c392。历史核对后撤回草稿中的network公开`novorudp_ack`入口，
