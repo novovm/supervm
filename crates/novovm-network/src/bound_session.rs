@@ -468,6 +468,7 @@ where
 
 #[cfg(all(test, feature = "iroh-transport"))]
 mod tests {
+    mod native_carrier;
     use super::*;
     use crate::{
         duplex::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},

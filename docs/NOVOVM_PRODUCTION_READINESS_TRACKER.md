@@ -3,6 +3,35 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 已认证载体接管原生会话（接线组件；非手机部署）
+
+输入 `4a74d881`，认领 `43039abe`。沿既有 CarrierStreamV1 结构化握手与双方
+Finished 保留实际签名上下文、exporter 和方向；NativeEndpoint 新接管入口消费
+原通道，复用其会话、序号及重放窗口，不再启动第二次 NVHSHK01。原 UDP 入口
+继续原握手，单凭 Carrier route 仍不能准入。节点公钥、连接代次或方向不符拒绝。
+NativeUdpSession 使用原 NVRLY002 envelope 和 NovoRUDP frame，不新增协议或 SDK。
+
+实际调用链已验证至 structured bound_session → NativeUdpSession → 同一真实
+本机 QUIC stream 双向帧。固定对端、开放密钥持有策略分别连续八次往返，序号
+紧接 Finished，不重置或重认证。另验证接管 endpoint 收到旧握手后拒绝，仍接收
+合法密文；Carrier reset/refused/interrupted 返回 owner，不误用 UDP ICMP 忽略规则。
+载体存活、Privacy、撤销、取消及 NVMBOX07 服务选择仍由原 owner 验证；绑定快照
+不是永久授权，也不证明任意传入 IO 是原载体。
+
+验证：组合 Iroh/TLS `bound_` 42 PASS、0 FAIL、3 项既有 ignored（7.60s）；
+原 NovoRUDP 回归 86/86 PASS（0.97s）；组合 lib/tests 严格 Clippy PASS（20.70s），
+无默认特性 lib 检查 PASS（11.03s），diff 检查通过。六项新增测试包含真实本机
+QUIC 两项与绑定/接管四项。一次大枚举 Clippy 失败通过每会话一次 Box 修复，
+无逐帧额外 Box；未修改手机、节点运行环境或聊天数据，不签收跨网性能。
+
+**未接通项明确保留：** NativeObjectLink 的异步载体收发、实际 Mailbox 宿主、
+Android 部署与独立设备副本。不能把上述帧往返当作正式聊天/StoreReceipt。
+实际接线需先在原 owner 统一 prepare/write/commit：阻塞期间 ACK epoch 和
+数据帧的 latest_ack_epoch 可能变化，不能用重新封装后的密文认领旧写完成；
+取消或到期的 job 不得留下永久占槽。完整实际写出前不能返回发送成功。
+跨 await 保留 read/write future，避免丢弃半帧导致原载体主动关闭；写前保留
+有界预算，部分写失败仍核算，并向 owner 返回真实终止原因。不新增调度器。
+
 ## 2026-10-16 Windows 冷端点初始化阻塞定位与修复
 
 输入 `7075b765`，认领 `a69e428a`。前述 Iroh 8 秒 scope 失败不是由新增

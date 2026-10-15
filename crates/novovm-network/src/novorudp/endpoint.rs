@@ -50,7 +50,7 @@ pub struct NativeHandshakeBudget {
 
 struct Peer {
     id: Arc<str>,
-    handshake: NativeHandshake,
+    handshake: Option<NativeHandshake>,
     session: Option<NativeUdpSession>,
     streams: Option<BTreeSet<u64>>,
     reconnect: Option<reconnect::PendingReconnect>,
@@ -117,6 +117,51 @@ pub struct NativeEndpoint {
 }
 
 impl NativeEndpoint {
+    /// Adopt a Finished-verified channel on its original authenticated carrier.
+    /// This consumes the existing channel; it never performs a second UDP
+    /// handshake or treats a transport route as a node identity proof.
+    /// `io` must belong to the exact original, still-live bound carrier. Its
+    /// owner must enforce revocation, Privacy and cancellation during IO;
+    /// this proof snapshot does not establish ongoing runtime validity or
+    /// negotiate a native service version on the owner's behalf.
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub fn from_bound_channel(
+        io: Arc<dyn NativeDatagramIo>,
+        channel: crate::transport_binding::BoundSecureChannelV1,
+        binding: &crate::transport_binding::VerifiedTransportBinding,
+        streams: Vec<u64>,
+    ) -> Result<Self> {
+        ensure!(
+            !streams.is_empty()
+                && streams.len() <= 16
+                && !streams.contains(&0)
+                && !streams.contains(&u64::MAX),
+            "invalid bound native streams"
+        );
+        channel.verify_transport_binding(binding)?;
+        let local_key = channel.local_identity_public_key();
+        let id: Arc<str> = channel.remote_peer_id().into();
+        let route =
+            NativeRoute::Carrier(super::carrier::VerifiedCarrierRoute::from_binding(binding));
+        let session = NativeUdpSession::from_bound_channel(channel, binding)?;
+        Ok(Self {
+            io,
+            local_key,
+            peers: vec![Peer {
+                id,
+                handshake: None,
+                session: Some(session),
+                streams: Some(streams.into_iter().collect()),
+                reconnect: None,
+            }],
+            sources: BTreeMap::from([(route, 0)]),
+            replay: HandshakeReplayCacheV1::new(256),
+            turn: 0,
+            open: None,
+            wire_budget: None,
+            traffic_started: false,
+        })
+    }
     /// Explicit bounded application listener, with no pre-enrolled client or
     /// validator dependency. Empty `bind` peers still fail; this constructor
     /// installs key-possession admission before the socket can receive data.
@@ -217,7 +262,7 @@ impl NativeEndpoint {
             )?;
             owned.push(Peer {
                 id: id.into(),
-                handshake,
+                handshake: Some(handshake),
                 session: None,
                 streams: None,
                 reconnect: None,
@@ -347,7 +392,7 @@ impl NativeEndpoint {
             )?;
             peers.push(Peer {
                 id: id.into(),
-                handshake,
+                handshake: Some(handshake),
                 session: None,
                 streams: None,
                 reconnect: None,
@@ -408,7 +453,7 @@ impl NativeEndpoint {
         self.sources.insert(source, self.peers.len());
         self.peers.push(Peer {
             id: id.into(),
-            handshake,
+            handshake: Some(handshake),
             session: Some(session),
             streams: Some(open.streams.clone()),
             reconnect: None,
@@ -455,7 +500,7 @@ impl NativeEndpoint {
     pub fn expired_handshakes(&self, now: Instant) -> usize {
         self.peers
             .iter()
-            .filter(|p| p.handshake.is_expired(now))
+            .filter(|p| p.handshake.as_ref().is_some_and(|h| h.is_expired(now)))
             .count()
     }
 
@@ -510,6 +555,12 @@ impl NativeEndpoint {
         // Full UDP payload buffer ensures even oversized rejected datagrams
         // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).
         let mut wire = [0; 65536];
+        // An adopted reliable carrier has no unrelated UDP ICMP notifications.
+        // A reset/refusal there must reach the owner so it retires this stream.
+        let udp_io = self
+            .sources
+            .keys()
+            .all(|route| matches!(route, NativeRoute::Udp(_)));
         for _ in 0..quantum {
             let (length, source) = match receiver(&mut wire) {
                 Ok(Some(value)) => value,
@@ -518,18 +569,19 @@ impl NativeEndpoint {
                 // UDP ICMP errors can refer to a different peer's previous send.
                 // Count them within this quantum; never tear down healthy peers.
                 Err(error)
-                    if matches!(
-                        error.kind(),
-                        ErrorKind::ConnectionReset
-                            | ErrorKind::ConnectionRefused
-                            | ErrorKind::Interrupted
-                    ) =>
+                    if udp_io
+                        && matches!(
+                            error.kind(),
+                            ErrorKind::ConnectionReset
+                                | ErrorKind::ConnectionRefused
+                                | ErrorKind::Interrupted
+                        ) =>
                 {
                     result.receive_errors += 1;
                     continue;
                 }
                 // Windows reports an oversized UDP datagram as WSAEMSGSIZE.
-                Err(error) if cfg!(windows) && error.raw_os_error() == Some(10040) => {
+                Err(error) if udp_io && cfg!(windows) && error.raw_os_error() == Some(10040) => {
                     result.rejected_datagrams += 1;
                     continue;
                 }
@@ -599,10 +651,13 @@ impl NativeEndpoint {
                     Err(_) => result.handshake_send_failures += 1,
                 }
             }
-            if peer.handshake.is_expired(now) {
+            let Some(handshake) = peer.handshake.as_mut() else {
+                continue;
+            };
+            if handshake.is_expired(now) {
                 continue;
             }
-            match peer.handshake.try_send_limited(
+            match handshake.try_send_limited(
                 self.io.as_ref(),
                 wall_ms,
                 now,

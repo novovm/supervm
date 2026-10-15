@@ -2183,7 +2183,7 @@ preserve gateway IPs with unknown MAC and all authentication/deadline policy.
 No mainchain/SDK execution change, no network configuration change. Temporary
 iroh instrumentation will be removed after before/after measurement.
 
-**2026-10-16 native carrier runtime integration claim (active):** input 4a74d881,
+**2026-10-16 native carrier runtime integration claim (adoption complete; IO pump pending):** input 4a74d881,
 downstream faf44d3. NOVOCHAT owner reuses CarrierStreamV1 structured bound
 Finished -> NativeEndpoint -> NativeObjectLink, retaining original APFL objects,
 wire budgets and mailbox executor. Replace current unconditional Carrier route
@@ -2195,3 +2195,11 @@ review agent is read-only. No mainchain transport/native_ingress/exec/AOEM edits
 Partial write/backpressure must not manufacture transport or device receipts;
 stream cancellation must retire uncertain writes. Mobile deployment/independent
 replicas remain pending until actual runtime tests pass.
+
+Bound proof adoption and actual QUIC native-frame roundtrips are validated:
+42 bound PASS / 3 existing ignored, 86 native PASS, combined strict Clippy and
+no-default lib check PASS. Claims released for these files; runtime pump is NOT
+activated. Review found changing ACK/data epochs across WouldBlock, cancellation
+and shared byte-budget reservations require one prepare/write/commit contract
+before any buffered IO activation. Do not return success on mere queueing or
+re-seal/re-credit an earlier partial write as another frame. Keep existing owner.
