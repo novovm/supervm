@@ -18,6 +18,10 @@ use crate::native_pipeline::{
 use anyhow::{ensure, Context, Result};
 use std::{collections::BTreeMap, sync::Arc};
 
+mod successor;
+use successor::Lookahead;
+pub use successor::SuccessorSelection;
+
 #[derive(Clone, Copy)]
 pub struct BodyLimits {
     pub bodies: usize,
@@ -27,6 +31,7 @@ pub struct BodyLimits {
 
 enum Work {
     Pending(Option<BatchRequest>),
+    Authenticated(Option<crate::native_pipeline::pipeline::AuthenticatedRequest>),
     Running(PipelineTicket),
     Ready(DurableCandidate),
     Registered(DurableCandidate),
@@ -52,6 +57,9 @@ pub struct CandidateBodies {
     bodies: BTreeMap<Hash, Body>,
     bytes: usize,
     frozen: bool,
+    successor: Option<Lookahead>,
+    successor_attempt: Option<successor::Pin>,
+    successor_metrics: [u64; 5],
     pub executed: u64,
     pub rejected_execution: u64,
     pub integer_rows: u64,
@@ -95,6 +103,9 @@ impl CandidateBodies {
             bodies: BTreeMap::new(),
             bytes: 0,
             frozen: false,
+            successor: None,
+            successor_attempt: None,
+            successor_metrics: [0; 5],
             executed: 0,
             rejected_execution: 0,
             integer_rows: 0,
@@ -107,7 +118,10 @@ impl CandidateBodies {
         self.frozen
     }
     pub fn retained(&self) -> (usize, usize) {
-        (self.bodies.len(), self.bytes)
+        (
+            self.bodies.len() + usize::from(self.successor.is_some()),
+            self.bytes,
+        )
     }
 
     /// Borrowed admission: backpressure never consumes the caller's input.
@@ -143,6 +157,12 @@ impl CandidateBodies {
             local || progress.missing_bodies().any(|(_, wanted)| wanted == id),
             "unsolicited body or different ordered input"
         );
+        // A parent ACK can arrive during the same lifecycle turn before the
+        // background owner is polled again. Retain its one existing input;
+        // do not create a second execution for an exact demanded child.
+        if self.retains_promoting_successor(id, progress) {
+            return Ok(true);
+        }
         if let Some(known) = self.bodies.get_mut(&id) {
             if local {
                 known.local_round = Some(progress.round());
@@ -155,7 +175,7 @@ impl CandidateBodies {
             .len()
             .checked_mul(2)
             .context("body charge overflow")?;
-        if self.bodies.len() >= self.limits.bodies
+        if self.retained().0 >= self.limits.bodies
             || charge > self.limits.bytes.saturating_sub(self.bytes)
         {
             return Ok(false);
@@ -226,6 +246,9 @@ impl CandidateBodies {
             Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
             "body execution owner changed"
         );
+        // Observe/drain/promotion first; new optional submissions only after
+        // current-height requests have received their admission turn below.
+        self.poll_successor(pipeline, progress, false)?;
         let mut retired = Vec::new();
         for (id, body) in &mut self.bodies {
             let current = matches_context(&body.context, &self.pin, progress);
@@ -302,7 +325,8 @@ impl CandidateBodies {
             .bodies
             .values()
             .filter(|b| matches!(b.work, Work::Running(_)))
-            .count();
+            .count()
+            + usize::from(self.successor_inflight());
         let demanded = progress
             .missing_bodies()
             .map(|(_, id)| id)
@@ -313,6 +337,27 @@ impl CandidateBodies {
                 break;
             }
             if !(demanded.contains(id) || leader && body.local_round == Some(progress.round())) {
+                continue;
+            }
+            if let Work::Authenticated(request) = &mut body.work {
+                use crate::native_pipeline::pipeline::AuthenticatedSubmission;
+                let owned = request
+                    .take()
+                    .context("authenticated body lost on backpressure")?;
+                match pipeline.try_submit_authenticated_owned(owned) {
+                    Ok(AuthenticatedSubmission::Accepted(ticket)) => {
+                        body.work = Work::Running(ticket);
+                        running += 1;
+                    }
+                    Ok(AuthenticatedSubmission::Backpressured(returned)) => {
+                        *request = Some(returned);
+                        break;
+                    }
+                    Err(rejected) => {
+                        *request = Some(rejected.request);
+                        return Err(rejected.error);
+                    }
+                }
                 continue;
             }
             let Work::Pending(request) = &mut body.work else {
@@ -336,6 +381,7 @@ impl CandidateBodies {
                 }
             }
         }
+        self.poll_successor(pipeline, progress, true)?;
         Ok(())
     }
 }
