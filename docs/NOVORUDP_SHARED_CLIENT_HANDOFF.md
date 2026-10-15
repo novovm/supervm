@@ -1,5 +1,24 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 结构化载体认证接线（2026-10-16）
+
+`bound_session::authenticate_structured_bound_session_observed` 和
+`authenticate_structured_service_client_observed` 进入同一个既有认证状态机，
+仅显式选择原生编码；Offer/Response 复用 APFL 批格式（NVBOFR01/NVBRES01），
+Finished 复用严格 NVRLY002 Data 二进制封装，不自动探测或回退 JSON。
+原节点签名、公钥绑定、真实 TLS exporter、重放缓存及双方 Finished 不变；
+本机 Finished 实际写出且对端 Finished 验证后才返回 channel。
+旧入口供现有调用者保留，原生入口不能把旧入口当作失败后备。
+
+编码器不是新的身份或权限系统，解码成功不代表认证成功。握手期限仅约束
+建立过程，不成为健康会话的周期终止条件。开放服务继续证明密钥持有，无需
+固定用户名单；接收者信箱能力、资源边界和撤销检查仍由原业务执行。
+
+尚未交付：原生 IO 与 Iroh owner 的实际收发连接、明确服务版本的加密绑定及
+原生节点身份对应、旧流取消后的排队数据清理、手机跨 NAT 与独立副本验证。
+仅完成本节认证不能直接放开 NativeRoute::Carrier；原生帧必须继续绑定到
+这个已认证流及其 channel，不能改走裸流、伪造 SocketAddr 或本地 UDP 代理。
+
 ## 最新分工：手机归 NOVOCHAT 设备，主链归七月恢复设备
 
 用户本轮明确：iPhone/Android 复用同一 NovoRUDP/APFL 协议与 Rust 核心，但

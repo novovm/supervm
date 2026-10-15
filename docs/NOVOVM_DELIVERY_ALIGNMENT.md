@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-16 structured bound carrier handshake (NOVOCHAT claim active):** input
+**2026-10-16 structured bound carrier handshake (claim released; runtime wiring pending):** input
 f29e5519, downstream c8832af. Reuse transport_binding.rs BoundHandshake/Finished
 and bound_session.rs CarrierStream adapter; explicit structured encoding only for
 native callers, no JSON auto-detection or fallback. Original crypto transcript,
@@ -10,6 +10,9 @@ transport_binding.rs structured submodule plus focused tests only; review is rea
 No mainchain transport.rs/native_ingress, node/exec/AOEM/consensus changes. Typed
 native Carrier activation stays rejected until the actual stream owner is wired;
 codec/localhost checks do not claim phone NAT deployment or independent replicas.
+Structured binding22 and real QUIC6 PASS; strict combined-feature lib/tests
+Clippy PASS. Broader bound_ run34PASS/2FAIL/3ignored retains unresolved existing
+Iroh admission/cleanup deadline failures; see tracker. No live deployment.
 
 **2026-10-16 native observation bottleneck (source/measurement complete):**
 Frozen original-tick release completed65536 transactions at219.127TPS; cold
