@@ -1,11 +1,16 @@
 # NOVOVM 产品目标与交付主线
-**2026-10-16 native mailbox session (active claim):** July recovery owner,
+**2026-10-16 native mailbox session (claim released):** July recovery owner,
 input main e5d04360. Bind the structured codec to the existing authenticated
 NativeObjectLink session; bounded multiplexed request counters, reply matching,
 failure latch and same MailboxService owner. No second socket runtime, identity,
 store, billing or mainchain executor. Scope: structured session adapter, bounded
 link ownership claim, public-API tests and handoff. Mobile route/reconnect and
 live listener activation are not silently enabled by this change.
+Real UDP session multiplex, lost response/retry and revocation regressions pass;
+native replay ownership is direction-separated so one L4 peer may both provide
+and consume service. Three generic files also synchronized to July e618180f.
+Upstream 2f7ec54d IO diagnostics retained. See shared handoff for owner integration
+and still-unexecuted Android/reconnect/capability-buffer erasure acceptance.
 
 **2026-10-16 structured mailbox adapter (claim released):** July recovery owner,
 main 3a9dfcce. Extract existing APFL column reuse into novovm-protocol; add

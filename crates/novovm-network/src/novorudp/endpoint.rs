@@ -290,6 +290,9 @@ impl NativeEndpoint {
     pub fn peer_count(&self) -> usize {
         self.peers.len()
     }
+    pub fn local_identity(&self) -> [u8; 32] {
+        self.local_key
+    }
     pub fn peer_id(&self, index: usize) -> Result<&str> {
         Ok(&self.peers.get(index).context("unknown native peer")?.id)
     }

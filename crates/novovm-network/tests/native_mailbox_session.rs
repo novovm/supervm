@@ -1,0 +1,511 @@
+#![cfg(feature = "iroh-transport")]
+//! Public SDK/session consumption, not a substitute for Android owner wiring.
+use anyhow::{ensure, Result};
+use ed25519_dalek::SigningKey;
+use novovm_network::{
+    mailbox_rpc::{
+        MailboxReplyV1 as Reply, MailboxRequestV1 as Request, MailboxServiceV1, MailboxWatchV1,
+    },
+    mailbox_store::MailboxStore,
+    mailbox_structured::{native_session::*, LIMITS, STREAM},
+    novorudp::{
+        endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
+        fragments::ReassemblyLimits,
+        object_link::{NativeLaneConfig, NativeObjectLink, NativeSendLimits, NativeSendPolicy},
+        NovoRudpPacingProfile, NovoRudpWindowConfig,
+    },
+};
+use std::{
+    collections::VecDeque,
+    net::UdpSocket,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
+
+fn lane() -> NativeLaneConfig {
+    NativeLaneConfig {
+        stream: STREAM,
+        domain: domain(),
+        receive: ReassemblyLimits {
+            max_message_bytes: LIMITS.wire_bytes,
+            messages: 4,
+            bytes: LIMITS.wire_bytes * 4,
+            peer_messages: 4,
+            peer_bytes: LIMITS.wire_bytes * 4,
+            ttl: Duration::from_secs(5),
+        },
+        send: NativeSendLimits {
+            messages: 4,
+            bytes: LIMITS.wire_bytes * 4,
+            peer_messages: 4,
+            peer_bytes: LIMITS.wire_bytes * 4,
+        },
+    }
+}
+fn budget() -> NativeHandshakeBudget {
+    NativeHandshakeBudget {
+        lifetime: Duration::from_secs(5),
+        retry: Duration::from_millis(10),
+    }
+}
+fn policy() -> NativeSendPolicy {
+    NativeSendPolicy {
+        window: NovoRudpWindowConfig {
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            ..Default::default()
+        },
+        pacing: NovoRudpPacingProfile {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+        },
+        ttl: Duration::from_secs(5),
+    }
+}
+struct Fixture {
+    server_link: NativeObjectLink,
+    client_link: NativeObjectLink,
+    server: NativeMailboxServer,
+    client: NativeMailboxClient,
+    service: Arc<MailboxServiceV1>,
+    alive: Arc<AtomicBool>,
+    jobs: tokio::task::JoinSet<Result<MailboxResponse>>,
+    responses: VecDeque<MailboxResponse>,
+    origin: Instant,
+    received: Vec<(RequestId, Vec<Reply>)>,
+    admitted: usize,
+    _directory: tempfile::TempDir,
+}
+impl Fixture {
+    async fn receive_request(
+        &mut self,
+    ) -> Result<novovm_network::novorudp::fragments::CompletedMessage> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            ensure!(Instant::now() < deadline, "request receive timeout");
+            let now = Instant::now();
+            let wall = 1000 + self.origin.elapsed().as_millis() as u64;
+            for done in self.client_link.poll(wall, now, 64)?.completed {
+                ensure!(
+                    self.client.transport_complete(&done).is_none(),
+                    "request expired"
+                );
+            }
+            let _ = self.server_link.poll(wall, now, 64)?;
+            if let Some(body) = self.server_link.poll_complete(STREAM, now, 64)? {
+                return Ok(body);
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+    async fn new() -> Result<Self> {
+        let key = SigningKey::from_bytes(&[17; 32]);
+        let pin = key.verifying_key().to_bytes();
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        let address = socket.local_addr()?;
+        let mut server_link = NativeObjectLink::new(
+            NativeEndpoint::listen_clients(socket, key.clone(), 1, vec![STREAM], budget())?,
+            vec![lane()],
+            policy(),
+        )?;
+        let origin = Instant::now();
+        let mut client_link = NativeObjectLink::new(
+            NativeEndpoint::connect_client(
+                UdpSocket::bind("127.0.0.1:0")?,
+                SigningKey::from_bytes(&[83; 32]),
+                NativePeer { key: pin, address },
+                budget(),
+                1000,
+                origin,
+            )?,
+            vec![lane()],
+            policy(),
+        )?;
+        while client_link.session_id(0).is_none() || server_link.session_id(0).is_none() {
+            ensure!(
+                origin.elapsed() < Duration::from_secs(5),
+                "native handshake deadline"
+            );
+            let now = Instant::now();
+            let wall = 1000 + origin.elapsed().as_millis() as u64;
+            let _ = client_link.poll(wall, now, 64)?;
+            let _ = server_link.poll(wall, now, 64)?;
+            tokio::task::yield_now().await;
+        }
+        assert!(NativeMailboxClient::attach(&mut client_link, 0, [99; 32]).is_err());
+        let client = NativeMailboxClient::attach(&mut client_link, 0, pin)?;
+        let server = NativeMailboxServer::attach(&mut server_link, 0)?;
+        assert!(NativeMailboxClient::attach(&mut client_link, 0, pin).is_err());
+        assert!(NativeMailboxServer::attach(&mut server_link, 0).is_err());
+        // Same authenticated peer may provide AND consume service; roles have
+        // independent, direction-bound counters, not an exclusive client license.
+        let reverse_client =
+            NativeMailboxClient::attach(&mut server_link, 0, client_link.local_identity())?;
+        let reverse_server = NativeMailboxServer::attach(&mut client_link, 0)?;
+        drop((reverse_client, reverse_server)); // no implicit counter reset on drop
+        let directory = tempfile::tempdir()?;
+        let service = Arc::new(MailboxServiceV1::new(
+            MailboxStore::open_contributor(
+                directory.path().join("mailbox.db"),
+                Default::default(),
+                true,
+            )?,
+            key,
+        ));
+        service.set_resources_available(true).await?;
+        Ok(Self {
+            server_link,
+            client_link,
+            server,
+            client,
+            service,
+            alive: Arc::new(AtomicBool::new(true)),
+            jobs: tokio::task::JoinSet::new(),
+            responses: VecDeque::new(),
+            origin,
+            received: Vec::new(),
+            admitted: 0,
+            _directory: directory,
+        })
+    }
+    fn send(&mut self, slot: usize, requests: Vec<Request>) -> Result<RequestId> {
+        let id = self.client.begin(slot, requests, Instant::now())?;
+        ensure!(
+            self.client
+                .try_send(&mut self.client_link, id, Instant::now(), || Ok(()))?,
+            "fixture send capacity"
+        );
+        Ok(id)
+    }
+    async fn tick(&mut self) -> Result<()> {
+        let now = Instant::now();
+        let wall = 1000 + self.origin.elapsed().as_millis() as u64;
+        for done in self.client_link.poll(wall, now, 64)?.completed {
+            ensure!(
+                self.client.transport_complete(&done).is_none(),
+                "request transport expired"
+            );
+        }
+        let _ = self.server_link.poll(wall, now, 64)?;
+        while let Some(body) = self.server_link.poll_complete(STREAM, now, 64)? {
+            assert_eq!(
+                recipient_role(&body)?,
+                novovm_network::novorudp::object_link::NativeApplicationRole::Service
+            );
+            ensure!(self.jobs.len() < 4, "work budget");
+            let work = self.server.admit(&self.server_link, body, now, || Ok(()))?;
+            let service = self.service.clone();
+            let alive = self.alive.clone();
+            self.admitted += 1;
+            self.jobs.spawn(async move {
+                work.execute(&service, || {
+                    ensure!(alive.load(Ordering::SeqCst), "owner revoked");
+                    Ok(())
+                })
+                .await
+            });
+        }
+        while let Some(result) = self.jobs.try_join_next() {
+            self.responses.push_back(result??);
+            ensure!(self.responses.len() <= 4, "response budget");
+        }
+        if let Some(response) = self.responses.front_mut() {
+            if response.try_send(&mut self.server_link, now, || Ok(()))? {
+                self.responses.pop_front();
+            }
+        }
+        while let Some(body) = self.client_link.poll_complete(STREAM, now, 64)? {
+            assert_eq!(
+                recipient_role(&body)?,
+                novovm_network::novorudp::object_link::NativeApplicationRole::Client
+            );
+            self.received.push(
+                self.client
+                    .receive(&self.client_link, body, now, || Ok(()))?,
+            );
+        }
+        tokio::task::yield_now().await;
+        Ok(())
+    }
+    async fn until(&mut self, id: RequestId) -> Result<Vec<Reply>> {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            if let Some(i) = self.received.iter().position(|(seen, _)| *seen == id) {
+                return Ok(self.received.remove(i).1);
+            }
+            ensure!(Instant::now() < deadline, "mailbox outcome timeout");
+            self.tick().await?;
+        }
+    }
+}
+
+#[tokio::test]
+async fn dropped_response_preserves_commit_but_latches_replay_and_new_session_binding() -> Result<()>
+{
+    use novovm_network::novorudp::fragments::CompletedMessage;
+    let mut f = Fixture::new().await?;
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64
+        + 600;
+    let id = f.send(
+        0,
+        vec![
+            Request::Register {
+                mailbox: [1; 32],
+                write: [2; 32],
+                read: [3; 32],
+                expires,
+            },
+            Request::Put {
+                mailbox: [1; 32],
+                write: [2; 32],
+                object: [4; 32],
+                ciphertext: vec![7; 64],
+                expires,
+            },
+        ],
+    )?;
+    let body = f.receive_request().await?;
+    let replay = || CompletedMessage {
+        peer: body.peer.clone(),
+        id: body.id,
+        chunks: body.chunks.clone(),
+    };
+    let work = f
+        .server
+        .admit(&f.server_link, replay(), Instant::now(), || Ok(()))?;
+    assert!(f
+        .server
+        .admit(&f.server_link, replay(), Instant::now(), || Ok(()))
+        .is_err());
+    let response = work.execute(&f.service, || Ok(())).await?;
+    drop(response); // deliberate post-commit/pre-enqueue loss, not a store rollback
+    assert!(f
+        .server
+        .admit(&f.server_link, replay(), Instant::now(), || Ok(()))
+        .is_err());
+    assert!(matches!(
+        f.service
+            .request_local_v1(Request::Fetch {
+                mailbox: [1; 32],
+                read: [3; 32]
+            })
+            .await?,
+        Reply::Object { .. }
+    ));
+    assert_eq!(f.client.expire(Instant::now() + REQUEST_DEADLINE), vec![id]);
+    assert!(f
+        .client
+        .begin(
+            0,
+            vec![Request::Fetch {
+                mailbox: [1; 32],
+                read: [3; 32]
+            }],
+            Instant::now()
+        )
+        .is_err());
+    // Another slot recovers the ORIGINAL durable receipt through existing Put
+    // idempotency. No global request reset, second DB or fabricated success.
+    let retry = f.send(
+        1,
+        vec![Request::Put {
+            mailbox: [1; 32],
+            write: [2; 32],
+            object: [4; 32],
+            ciphertext: vec![7; 64],
+            expires,
+        }],
+    )?;
+    assert!(matches!(
+        f.until(retry).await?.as_slice(),
+        [Reply::Stored(_)]
+    ));
+    let mut other = Fixture::new().await?;
+    assert_ne!(f.client_link.session_id(0), other.client_link.session_id(0));
+    assert!(other
+        .server
+        .admit(&other.server_link, replay(), Instant::now(), || Ok(()))
+        .is_err());
+    assert!(matches!(
+        other
+            .service
+            .request_local_v1(Request::Fetch {
+                mailbox: [1; 32],
+                read: [3; 32]
+            })
+            .await?,
+        Reply::Rejected(_)
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn caller_revocation_latches_work_and_cannot_be_reversed_by_retrying_response() -> Result<()>
+{
+    let mut f = Fixture::new().await?;
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64
+        + 600;
+    f.send(
+        0,
+        vec![Request::Register {
+            mailbox: [1; 32],
+            write: [2; 32],
+            read: [3; 32],
+            expires,
+        }],
+    )?;
+    let body = f.receive_request().await?;
+    let work = f
+        .server
+        .admit(&f.server_link, body, Instant::now(), || Ok(()))?;
+    let mut response = work.execute(&f.service, || Ok(())).await?;
+    assert!(response
+        .try_send(&mut f.server_link, Instant::now(), || anyhow::bail!(
+            "revoked"
+        ))
+        .is_err());
+    assert!(response
+        .try_send(&mut f.server_link, Instant::now(), || Ok(()))
+        .is_err());
+    assert_eq!(f.server_link.outbound_usage(STREAM)?, (0, 0));
+    f.send(
+        1,
+        vec![Request::Fetch {
+            mailbox: [1; 32],
+            read: [3; 32],
+        }],
+    )?;
+    let body = f.receive_request().await?;
+    let work = f
+        .server
+        .admit(&f.server_link, body, Instant::now(), || Ok(()))?;
+    f.server.invalidate();
+    assert!(work.execute(&f.service, || Ok(())).await.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn shared_session_multiplexes_watch_and_put_and_checks_actual_storage_reply() -> Result<()> {
+    let mut f = Fixture::new().await?;
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64
+        + 600;
+    let id = f.send(
+        0,
+        vec![Request::Register {
+            mailbox: [1; 32],
+            write: [2; 32],
+            read: [3; 32],
+            expires,
+        }],
+    )?;
+    assert!(matches!(f.until(id).await?.as_slice(), [Reply::Registered]));
+    let request = |after, wait_ms| Request::WatchFetchV6 {
+        boxes: vec![MailboxWatchV1 {
+            mailbox: [1; 32],
+            read: [3; 32],
+            after,
+        }],
+        wait_ms,
+    };
+    let snapshot = f.send(0, vec![request(None, 0)])?;
+    let replies = f.until(snapshot).await?;
+    let Reply::NoticeObjectV6 {
+        notices,
+        object: None,
+    } = &replies[0]
+    else {
+        anyhow::bail!("initial watch")
+    };
+    let watch = f.send(1, vec![request(Some(notices[0].cursor), 10_000)])?;
+    let before = Instant::now();
+    while before.elapsed() < Duration::from_millis(40) {
+        f.tick().await?;
+    }
+    assert!(f.received.is_empty());
+    assert_eq!(f.jobs.len(), 1);
+    let put = f.send(
+        2,
+        vec![Request::Put {
+            mailbox: [1; 32],
+            write: [2; 32],
+            object: [4; 32],
+            ciphertext: vec![7; 9000],
+            expires,
+        }],
+    )?;
+    assert!(matches!(f.until(put).await?.as_slice(), [Reply::Stored(_)])); // adapter independently verified signature
+    let notices = f.until(watch).await?;
+    assert!(
+        matches!(&notices[0],Reply::NoticeObjectV6{object:Some(o),..}if o.object==[4;32]&&o.ciphertext==vec![7;9000])
+    );
+    ensure!(
+        before.elapsed() < Duration::from_secs(5),
+        "Put serialized behind 10s watch"
+    );
+    assert_eq!(f.client_link.session_id(0), f.server_link.session_id(0));
+    let fetch = f.send(
+        0,
+        vec![Request::Fetch {
+            mailbox: [1; 32],
+            read: [3; 32],
+        }],
+    )?;
+    assert!(matches!(
+        f.until(fetch).await?.as_slice(),
+        [Reply::Object { .. }]
+    ));
+    assert_eq!(fetch.sequence, 3);
+    // A locally prepared but unsent request cannot be called completed. Expiry
+    // latches only that slot; no implicit reconnect or application replay.
+    let pending = f.client.begin(
+        3,
+        vec![Request::Fetch {
+            mailbox: [1; 32],
+            read: [3; 32],
+        }],
+        Instant::now(),
+    )?;
+    assert_eq!(
+        f.client.expire(Instant::now() + REQUEST_DEADLINE),
+        vec![pending]
+    );
+    assert!(f
+        .client
+        .begin(
+            3,
+            vec![Request::Fetch {
+                mailbox: [1; 32],
+                read: [3; 32]
+            }],
+            Instant::now()
+        )
+        .is_err());
+    let good = f.send(
+        0,
+        vec![Request::Fetch {
+            mailbox: [1; 32],
+            read: [3; 32],
+        }],
+    )?;
+    assert!(matches!(
+        f.until(good).await?.as_slice(),
+        [Reply::Object { .. }]
+    ));
+    Ok(())
+}

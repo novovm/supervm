@@ -64,6 +64,11 @@ impl Usage {
 }
 type JobKey = (usize, u64, [u8; 32]);
 type Feedback = (usize, [u8; 32]);
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NativeApplicationRole {
+    Client,
+    Service,
+}
 struct Lane {
     config: NativeLaneConfig,
     receiver: NativeObjectReceiver,
@@ -116,6 +121,9 @@ pub struct NativeObjectLink {
     feedback_turn: usize,
     epoch: u64,
     policy: NativeSendPolicy,
+    // One application sequence owner per authenticated peer/stream. Bounded by
+    // the existing peer and lane counts; not an admission/entitlement registry.
+    application_owners: BTreeMap<(usize, u64, NativeApplicationRole), [u8; 16]>,
 }
 impl NativeObjectLink {
     pub fn new(
@@ -181,10 +189,14 @@ impl NativeObjectLink {
             feedback_turn: 0,
             epoch: 0,
             policy,
+            application_owners: BTreeMap::new(),
         })
     }
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.endpoint.local_addr()
+    }
+    pub fn local_identity(&self) -> [u8; 32] {
+        self.endpoint.local_identity()
     }
     pub fn session_id(&self, peer: usize) -> Option<[u8; 16]> {
         self.endpoint.session_id(peer)
@@ -194,6 +206,33 @@ impl NativeObjectLink {
     }
     pub fn peer_count(&self) -> usize {
         self.endpoint.peer_count()
+    }
+    /// Prevent dropping/recreating an application adapter from resetting replay
+    /// counters on the SAME authenticated session. Only a genuinely new session
+    /// may acquire this slot again; there is deliberately no reset/unclaim API.
+    pub fn claim_application_session(
+        &mut self,
+        peer: usize,
+        stream: u64,
+        domain: [u8; 32],
+        role: NativeApplicationRole,
+    ) -> Result<[u8; 16]> {
+        ensure!(
+            self.lanes
+                .get(&stream)
+                .is_some_and(|l| l.config.domain == domain),
+            "application lane/domain mismatch"
+        );
+        let session = self
+            .session_id(peer)
+            .context("application peer not authenticated")?;
+        ensure!(
+            self.application_owners.get(&(peer, stream, role)) != Some(&session),
+            "application session already owned"
+        );
+        self.application_owners
+            .insert((peer, stream, role), session);
+        Ok(session)
     }
     pub fn pending_messages(&self, stream: u64) -> Result<usize> {
         Ok(self
