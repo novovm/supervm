@@ -1,4 +1,15 @@
 # Agent Highest Law
+- 2026-10-16 user native-DApp rule: NOVOVM, NOVONET and NOVOCHAT must use
+  the existing NovoRUDP/APFL structured SDK and native communication entry.
+  Do not route native DApp business through HTTP/JSON-RPC compatibility APIs,
+  including silent fallback. Reuse original infrastructure, not another app SDK,
+  account or transport system. A NovoRUDP outer frame with a JSON body is not
+  completed structured-native integration; current mailbox/Iroh deployment must
+  retain its honest migration status. Version wire changes, preserve original
+  identity, message/custody/receipt/TTL and cryptographic semantics, and do not
+  turn chat ciphertext into Transfer/APFL execution or per-message consensus.
+  Coordinate with the existing July recovery owner rather than copying its
+  unshared working tree. Compatibility tooling is not native acceptance evidence.
 
 - 2026-10-14 latest economic decision supersedes free-service fallback: NOV is
   the native main-chain token and sole NOVONET mainnet asset. New communication

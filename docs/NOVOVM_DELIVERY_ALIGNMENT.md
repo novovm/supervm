@@ -1,4 +1,11 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 native DApp entry audit (claim released):** NOVOCHAT session,
+input a8f95c44 after a documentation-only fast-forward. Updated root agent rule
+and NOVONET_TRANSPORT_POLICY_V1.md for the user's ban on native DApp use of
+HTTP/JSON-RPC compatibility entries. Mailbox current body JSON and unshared July
+SDK/native ingress gaps are explicitly recorded; no network/runtime/finance/
+AOEM/recovery source changed. Mobile L4 continuity evidence is in NOVOCHAT
+9cd9b77, not native NovoRUDP/APFL integration acceptance.
 
 **2026-10-15 hot candidate reuse (claim released):** same NOVOCHAT session,
 input b6f1e4e8. Application endpoint supervision also asks the original book
