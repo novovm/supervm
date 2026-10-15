@@ -1,6 +1,7 @@
 //! Explicit NVMBOX07 locator in the existing signed directory. UDP alone is
 //! not a mailbox capability, reachability proof or privacy qualification.
 use super::*;
+use crate::novorudp::wire_budget::{MAX_BYTES_PER_MINUTE, MIN_BYTES_PER_MINUTE};
 use std::net::SocketAddr;
 
 const SUFFIX: &str = "/novonet-mailbox/v7";
@@ -11,6 +12,10 @@ const SUFFIX: &str = "/novonet-mailbox/v7";
 pub struct NativeMailboxEndpointV7 {
     pub address: SocketAddr,
     pub max_connections: u16,
+    /// Node-wide admitted UDP payload bytes (receive + successful send), including
+    /// native framing, handshakes, ACKs and repairs; IP/link headers are excluded.
+    /// Unsolicited traffic still reaches the network interface before admission.
+    pub max_bytes_per_minute: u64,
 }
 
 impl NativeMailboxEndpointV7 {
@@ -18,6 +23,10 @@ impl NativeMailboxEndpointV7 {
         ensure!(
             (1..=64).contains(&self.max_connections),
             "native connection limit bounds"
+        );
+        ensure!(
+            (MIN_BYTES_PER_MINUTE..=MAX_BYTES_PER_MINUTE).contains(&self.max_bytes_per_minute),
+            "native byte budget bounds"
         );
         ensure!(
             self.address.port() != 0
@@ -37,7 +46,7 @@ impl NativeMailboxEndpointV7 {
             uri: format!("udp://{}{SUFFIX}", self.address),
             priority: 0,
             max_sessions: u32::from(self.max_connections),
-            max_bytes_per_minute: 65536,
+            max_bytes_per_minute: self.max_bytes_per_minute,
         })
     }
 
@@ -62,6 +71,7 @@ impl NativeMailboxEndpointV7 {
         let value = Self {
             address: address.parse()?,
             max_connections: endpoint.max_sessions.try_into()?,
+            max_bytes_per_minute: endpoint.max_bytes_per_minute,
         };
         value.validate()?;
         ensure!(

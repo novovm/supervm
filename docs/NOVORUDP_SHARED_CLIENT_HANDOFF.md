@@ -257,3 +257,32 @@ wire boundary. Shared request quota and object memory bounds do not substitute
 for that budget. Windows protected runtime settings, Android Application driver,
 real network adaptation and latency remain pending. Keep current installed
 carrier unchanged until these hooks are integrated and measured.
+
+## 2026-10-16 Native UDP payload budget on the original owner
+
+`NativeEndpoint::set_wire_budget_v1(bytes_per_minute, Instant)` may be set once,
+before the first poll/send. The optional original-SDK budget covers admitted
+UDP payload bytes plus successful UDP sends across initial/reconnect handshakes,
+data, ACK and repair. Standalone original APIs retain their existing behavior.
+The native mailbox listener always installs its explicit resource budget;
+`bind_with_wire_budget` supplies it and `bind` defaults to 64 MiB/minute.
+`NativeMailboxEndpointV7` preserves this same signed value, rather than losing
+it when converting a directory record into a typed route. This is a node-wide
+resource ceiling, not per-user admission, billing or a network license.
+
+Accounting uses 61 fixed second buckets and monotonic time, conservatively
+covering each rolling 60 seconds. It does not allocate or lock per packet.
+A full UDP receive buffer counts oversized datagrams accurately before rejection;
+unwanted incoming bytes already reached the socket and cannot be prevented by
+application admission. Usage separately exposes received/admitted/sent totals,
+receive drops and deferred sends; IP/link headers are not included. Successful
+send accounting is not a storage or device delivery receipt. Quota backpressure
+does not advance object transmission/repair success or recreate the session.
+
+Resource limits are 2400 bytes through 1 GiB per minute; the low bound allows
+only very limited traffic and is not a useful general chat capacity promise.
+Changing a signed route does not reset the running socket budget; reconnects
+within that owner cannot clear it. Process restart starts a new local window;
+this is not durable billing or a global abuse defense. The cumulative 64-peer
+identity capacity still needs lifecycle work before an open-network deployment.
+Mobile driver integration and real Android native-path latency remain pending.

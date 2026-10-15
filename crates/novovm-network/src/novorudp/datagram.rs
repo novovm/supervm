@@ -5,11 +5,15 @@
 //! Sending never waits for an ACK. Repair/pacing remain in the original NovoRUDP
 //! scheduler; repair seals a NEW envelope sequence rather than replaying ciphertext.
 
-use super::NovoRudpTransportFrameV0;
+use super::{
+    wire_budget::{try_send_datagram, NativeWireBudget},
+    NovoRudpTransportFrameV0,
+};
 use crate::product_overlay::{binary, E2eSecureChannelV1};
 use anyhow::{ensure, Result};
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
+use std::time::Instant;
 
 pub const MAX_DATAGRAM_BYTES: usize = 1200;
 
@@ -68,15 +72,18 @@ impl NativeUdpSession {
         socket: &UdpSocket,
         frame: &NovoRudpTransportFrameV0,
     ) -> Result<bool> {
+        self.try_send_limited(socket, frame, Instant::now(), None)
+    }
+
+    pub(crate) fn try_send_limited(
+        &mut self,
+        socket: &UdpSocket,
+        frame: &NovoRudpTransportFrameV0,
+        now: Instant,
+        budget: Option<&mut NativeWireBudget>,
+    ) -> Result<bool> {
         let wire = self.encode(frame)?;
-        match socket.send_to(&wire, self.remote) {
-            Ok(count) => {
-                ensure!(count == wire.len(), "partial UDP datagram");
-                Ok(true)
-            }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(false),
-            Err(error) => Err(error.into()),
-        }
+        try_send_datagram(socket, &wire, self.remote, now, budget)
     }
 
     /// At most one datagram, without an internal wait/retry loop. The caller must

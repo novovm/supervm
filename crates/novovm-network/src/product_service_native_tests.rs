@@ -16,6 +16,7 @@ fn route() -> NativeMailboxEndpointV7 {
     NativeMailboxEndpointV7 {
         address: "127.0.0.1:30210".parse().unwrap(),
         max_connections: 4,
+        max_bytes_per_minute: 64 * 1024 * 1024,
     }
 }
 fn record(
@@ -148,6 +149,7 @@ fn udp_label_does_not_authorize_unknown_mailbox_protocol_or_malformed_alternativ
     let ipv6 = NativeMailboxEndpointV7 {
         address: "[2001:db8::1]:30210".parse()?,
         max_connections: 2,
+        max_bytes_per_minute: 64 * 1024 * 1024,
     };
     let r = record(vec![ipv6.endpoint()?], 1, 1000)?;
     assert_eq!(NativeMailboxEndpointV7::from_record(&r)?, Some(ipv6));
@@ -219,5 +221,40 @@ fn native_only_host_renews_without_legacy_lease_protocol() -> Result<()> {
         .rotate_native_mailbox_v7(None, 200_001, 290_001)
         .is_err());
     host.check_continuous_native_peer_v7(200_002)?;
+    Ok(())
+}
+
+#[test]
+fn native_wire_budget_is_signed_preserved_and_bound_to_fresh_dials() -> Result<()> {
+    let mut b = book()?;
+    let original = route();
+    let mut limited = original.clone();
+    limited.max_bytes_per_minute = 32 * 1024 * 1024;
+    let record = record(vec![limited.endpoint()?], 2, 3000)?;
+    assert_eq!(
+        NativeMailboxEndpointV7::from_record(&record)?,
+        Some(limited.clone())
+    );
+    let mut forged = record.clone();
+    forged.endpoints[0].max_bytes_per_minute += 1;
+    assert!(b.replace_self_owned_records(vec![forged], 3000).is_err());
+    b.replace_self_owned_records(vec![record], 3000)?;
+    assert!(b
+        .check_native_mailbox_route_v7(pin(), &original, 3001)
+        .is_err());
+    b.check_native_mailbox_route_v7(pin(), &limited, 3001)?;
+    let saved = b.checkpoint()?;
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3002)?;
+    assert_eq!(
+        restored.native_mailbox_candidates_v7(3002)?[0].endpoint,
+        limited
+    );
+    // This does not reset or expand the already-open socket's budget.
+    restored.check_continuous_native_peer_v7(pin(), 3002)?;
+    for limit in [0, 2399, 1024 * 1024 * 1024 + 1, u64::MAX] {
+        let mut wrong = original.clone();
+        wrong.max_bytes_per_minute = limit;
+        assert!(wrong.endpoint().is_err());
+    }
     Ok(())
 }

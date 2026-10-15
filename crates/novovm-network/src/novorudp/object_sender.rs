@@ -198,6 +198,17 @@ impl NativeObjectSender {
         now: Instant,
         budget: usize,
     ) -> Result<usize> {
+        self.poll_send_limited(socket, session, now, budget, None)
+    }
+
+    pub(crate) fn poll_send_limited(
+        &mut self,
+        socket: &UdpSocket,
+        session: &mut NativeUdpSession,
+        now: Instant,
+        budget: usize,
+        mut wire_budget: Option<&mut wire_budget::NativeWireBudget>,
+    ) -> Result<usize> {
         ensure!((1..=64).contains(&budget), "invalid datagram quantum");
         ensure!(
             session.session_id() == self.session,
@@ -281,7 +292,7 @@ impl NativeObjectSender {
                 self.state.latest_ack_epoch,
                 self.body.frame(index)?,
             );
-            if !session.try_send(socket, &frame)? {
+            if !session.try_send_limited(socket, &frame, now, wire_budget.as_deref_mut())? {
                 break;
             }
             sent += 1;

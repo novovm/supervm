@@ -9,6 +9,7 @@ pub mod object_ack;
 pub mod object_link;
 pub mod object_receiver;
 pub mod object_sender;
+pub mod wire_budget;
 
 mod frame;
 pub use frame::*;

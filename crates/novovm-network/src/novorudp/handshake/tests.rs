@@ -1,5 +1,6 @@
 use super::*;
 use crate::novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
+use std::io::ErrorKind;
 
 fn keys() -> (SigningKey, SigningKey) {
     let a = SigningKey::from_bytes(&[31; 32]);

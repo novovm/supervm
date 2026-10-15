@@ -154,6 +154,7 @@ impl Fixture {
         let route = NativeMailboxEndpointV7 {
             address,
             max_connections: 1,
+            max_bytes_per_minute: 64 * 1024 * 1024,
         };
         let record = sign_relay_record_v1(
             &key,
