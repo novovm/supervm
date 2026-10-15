@@ -3,6 +3,38 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原生信箱异步请求接到同一会话
+
+输入781e41f8，认领6b9f439a；整合前快进dd48c278，仅新增另一机器主链证据，
+未改变本轮通讯源码。调用链NativeMailboxHandle -> NativeMailboxDriver ->
+原NativeMailboxClient -> NativeObjectLink -> 原NativeMailboxListenerV7 ->
+MailboxService/SQLite。新增句柄供原Application owner接线，不创建socket、
+线程、runtime、重连器或协议，不改金融/AOEM。手机实际调用链尚未迁移。
+
+四个原请求槽在创建future时即预留，已完成但未消费的回复继续占槽；队列、
+密文和回复不会随未poll的future无限积累。通知Watch与Put/Fetch共用认证会话，
+没有跨await全局锁。原操作截止从入队开始，策略回调后再次检查真实经过时间；
+连接健康不代表能力永远有效，身份/撤销/能力/Privacy仍由原调用方检查。
+
+取消仅作用于原请求；future Drop与原link retained-send共用同一个取消token，
+不等待下一次driver调度才停发。修正了独立token造成的取消竞态，以及成功回复
+清理token可能提前释放未消费结果槽的问题。取消或超时不回滚远端托管，不生成
+Delivered，原Message ID/TTL必须继续用于未知结果恢复。迟到回复按原上下文及
+完整结构验证后丢弃；失败槽不重置序号，其他槽仍可工作。Protocol/Authority等
+首错先锁定，driver退出不得改写成普通Stopped，不能按异常文字放宽重试。
+
+Windows debug真实UDP：mailbox_native_node 2项通过1.41s，包括同一会话Watch
+等待时Put落盘、通知领取、连续Fetch、取消前/部分发送后无后续数据包、取消Watch
+后其他槽继续、真实节点重启/TTL/能力/关闭贡献与消费墓碑。原native session
+8项通过0.57s，结构单元9项通过0.27s；lib/tests严格Clippy通过19.43s。
+日志位于NOVOCHAT忽略目录artifacts/native-async-{sockets,codec,clippy}-final.log。
+早期夹具缺少durable host journal，修正为原加密日志后验证，未绕过落盘规则。
+
+尚未完成：手机Application装配、原生候选选路、原生NAT跨网与实机延迟；本轮
+未部署新APK/节点。累计64peer回收仍是开放长期服务缺口。不得把桌面同机UDP
+结果称为手机300ms、匿名性或生产验收。下一刀接原ApplicationIoOwner及原
+Client业务循环，保留原journal、通知游标、StoreReceipt和设备持久回执语义。
+
 ## 2026-10-16 原结构接收迁接检查点：预算修正与原路径复测
 
 磁盘释放后继续原恢复现场，源码本地提交`9797a346`，未激活为共享main产品路径。

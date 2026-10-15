@@ -74,7 +74,10 @@ struct Client {
     received: Vec<(RequestId, Vec<Reply>)>,
 }
 impl Client {
-    async fn connect(route: &NativeMailboxEndpointV7, identity: u8) -> Result<Self> {
+    async fn connect_link(
+        route: &NativeMailboxEndpointV7,
+        identity: u8,
+    ) -> Result<NativeObjectLink> {
         let pin = key(17).verifying_key().to_bytes();
         let mut link = NativeObjectLink::new(
             NativeEndpoint::connect_client(
@@ -121,6 +124,11 @@ impl Client {
             );
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
+        Ok(link)
+    }
+    async fn connect(route: &NativeMailboxEndpointV7, identity: u8) -> Result<Self> {
+        let mut link = Self::connect_link(route, identity).await?;
+        let pin = key(17).verifying_key().to_bytes();
         let session = NativeMailboxClient::attach(&mut link, 0, pin)?;
         Ok(Self {
             link,
@@ -425,6 +433,388 @@ async fn round(
     let result = tokio::select! {
         outcome = tokio::time::timeout(Duration::from_secs(25), client) => outcome?,
         outcome = &mut server => { outcome?; bail!("native node ended before client") }
+    };
+    stop.store(true, Ordering::Release);
+    tokio::time::timeout(Duration::from_secs(5), &mut server).await??;
+    result
+}
+
+/// The existing caller owns and polls ONE link; request handles only wake it.
+/// This bounded test pump is not another production runtime or mobile scheduler.
+async fn drive_requests(
+    mut link: NativeObjectLink,
+    mut driver: novovm_network::mailbox_structured::native_requests::NativeMailboxDriver,
+) -> Result<()> {
+    use novovm_network::mailbox_structured::native_requests::NativeRequestErrorKind;
+    let wake = driver.wake();
+    let session = link.session_id(0);
+    loop {
+        let now = Instant::now();
+        driver.progress(&mut link, now)?;
+        let report = link.poll(now_ms()?, now, 64)?;
+        ensure!(
+            link.session_id(0) == session,
+            "async handle rebound the session"
+        );
+        if !report.session_changes.is_empty() {
+            driver.invalidate(NativeRequestErrorKind::Session);
+            bail!("test connection generation changed");
+        }
+        for done in report.completed {
+            driver.transport_complete(&done);
+        }
+        while let Some(body) = link.poll_complete(STREAM, now, 64)? {
+            driver.receive(&link, body, now)?;
+        }
+        driver.progress(&mut link, now)?;
+        tokio::select! {
+            _ = wake.notified() => {},
+            _ = tokio::time::sleep(Duration::from_millis(1)) => {},
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_async_handles_share_one_session_without_watch_serialization() -> Result<()> {
+    use novovm_network::mailbox_structured::native_requests::{
+        NativeMailboxDriver, NativeRequestAuthority, NativeRequestErrorKind,
+    };
+    let directory = tempfile::tempdir()?;
+    let expires = (now_ms()? / 1000) as i64 + 600;
+    let stop = Arc::new(AtomicBool::new(false));
+    let listener = NativeMailboxListenerV7::bind(
+        "127.0.0.1:0".parse()?,
+        "127.0.0.1:0".parse()?,
+        key(17),
+        stop.clone(),
+        4,
+    )?;
+    let route = listener.route().clone();
+    let service = Arc::new(MailboxServiceV1::new(
+        MailboxStore::open_contributor(
+            directory.path().join("async.db"),
+            Default::default(),
+            true,
+        )?,
+        key(17),
+    ));
+    service.set_resources_available(true).await?;
+    let journal = directory.path().join("async-authority.bin");
+    let server = run_self_owned_native_mailbox_v7(
+        listener,
+        key(17),
+        stop.clone(),
+        service,
+        move |route, until| {
+            let at = now_ms()?;
+            let record = sign_relay_record_v1(
+                &key(17),
+                "native-async-fixture",
+                vec![route.endpoint()?],
+                at,
+                until,
+                1,
+            )?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let bytes = book.checkpoint()?;
+            let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([92; 32]), &bytes)?;
+            book.attach_persistence(file, &bytes)?;
+            Ok(Arc::new(ServiceLeaseHostV1::new(key(17), book)?))
+        },
+        |_| Ok(()),
+    );
+    let client = async {
+        let pin = key(17).verifying_key().to_bytes();
+        let mut stopped_link = Client::connect_link(&route, 87).await?;
+        let (stopped_driver, stopped_handle) =
+            NativeMailboxDriver::attach(&mut stopped_link, 0, pin)?;
+        let abandoned = stopped_handle.request(
+            0,
+            vec![fetch(3)],
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(|| Ok(())),
+        );
+        drop(stopped_driver);
+        assert_eq!(
+            abandoned
+                .await
+                .err()
+                .context("expected typed request failure")?
+                .kind,
+            NativeRequestErrorKind::Stopped
+        );
+        drop(stopped_link);
+        let mut rejected_link = Client::connect_link(&route, 88).await?;
+        let (mut rejected_driver, rejected_handle) =
+            NativeMailboxDriver::attach(&mut rejected_link, 0, pin)?;
+        let rejected_pending = rejected_handle.request(
+            0,
+            vec![fetch(3)],
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(|| Ok(())),
+        );
+        rejected_driver.invalidate(NativeRequestErrorKind::Protocol);
+        drop(rejected_driver);
+        assert_eq!(
+            rejected_pending
+                .await
+                .err()
+                .context("expected protocol stop")?
+                .kind,
+            NativeRequestErrorKind::Protocol
+        );
+        assert_eq!(
+            rejected_handle
+                .request(
+                    1,
+                    vec![fetch(3)],
+                    Instant::now() + Duration::from_secs(5),
+                    Arc::new(|| Ok(()))
+                )
+                .await
+                .err()
+                .context("expected retained protocol stop")?
+                .kind,
+            NativeRequestErrorKind::Protocol
+        );
+        drop(rejected_link);
+        let mut cancel_link = Client::connect_link(&route, 89).await?;
+        let (mut cancel_driver, cancel_handle) =
+            NativeMailboxDriver::attach(&mut cancel_link, 0, pin)?;
+        let unsent = cancel_handle.request(
+            0,
+            vec![fetch(3)],
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(|| Ok(())),
+        );
+        cancel_driver.progress(&mut cancel_link, Instant::now())?;
+        assert_eq!(cancel_link.outbound_usage(STREAM)?.0, 1);
+        drop(unsent);
+        // Deliberately no driver.progress: Drop must cancel the real retained
+        // transport object, not merely a second local scheduler flag.
+        let report = cancel_link.poll(now_ms()?, Instant::now(), 64)?;
+        assert_eq!(report.data_sent, 0);
+        assert!(report.completed.iter().any(|c| matches!(
+            c.state,
+            novovm_network::novorudp::object_sender::ObjectSendState::Cancelled
+        )));
+        for done in report.completed {
+            cancel_driver.transport_complete(&done);
+        }
+        let partial = cancel_handle.request(
+            1,
+            vec![put(expires, 9)],
+            Instant::now() + Duration::from_secs(5),
+            Arc::new(|| Ok(())),
+        );
+        cancel_driver.progress(&mut cancel_link, Instant::now())?;
+        let sent = cancel_link.poll(now_ms()?, Instant::now(), 1)?;
+        assert!(sent.data_sent > 0);
+        drop(partial);
+        let stopped = cancel_link.poll(now_ms()?, Instant::now(), 64)?;
+        assert_eq!(stopped.data_sent, 0);
+        assert!(stopped.completed.iter().any(|c| matches!(
+            c.state,
+            novovm_network::novorudp::object_sender::ObjectSendState::Cancelled
+        )));
+        assert_eq!(cancel_link.outbound_usage(STREAM)?, (0, 0));
+        drop(cancel_driver);
+        drop(cancel_link);
+        let mut link = Client::connect_link(&route, 86).await?;
+        ensure!(link.session_id(0).is_some(), "native session missing");
+        let (driver, handle) = NativeMailboxDriver::attach(&mut link, 0, pin)?;
+        let check: NativeRequestAuthority = Arc::new(|| Ok(()));
+        let until = || Instant::now() + Duration::from_secs(5);
+        // The queue's caller deadline elapses even before the owner gets CPU;
+        // it must not be restarted later when the socket driver is polled.
+        let queued_timeout = handle.request(
+            3,
+            vec![fetch(3)],
+            Instant::now() + Duration::from_millis(20),
+            check.clone(),
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(
+            queued_timeout
+                .await
+                .err()
+                .context("expected queued deadline")?
+                .kind,
+            NativeRequestErrorKind::Deadline
+        );
+        // Admission is synchronous and bounded even if these futures are never polled.
+        let queued = handle.request(3, vec![fetch(3)], until(), check.clone());
+        let capacity = handle
+            .request(3, vec![fetch(3)], until(), check.clone())
+            .await
+            .err()
+            .context("expected typed request failure")?;
+        assert_eq!(capacity.kind, NativeRequestErrorKind::Capacity);
+        drop(queued); // no wire operation, so no server/client sequence consumption
+        let first = handle.request(
+            3,
+            vec![Request::Register {
+                mailbox: [1; 32],
+                write: [2; 32],
+                read: [3; 32],
+                expires,
+            }],
+            until(),
+            check.clone(),
+        );
+        let operations = async {
+            assert!(matches!(first.await?.as_slice(), [Reply::Registered]));
+            let initial = handle
+                .request(
+                    0,
+                    vec![Request::WatchFetchV6 {
+                        boxes: vec![MailboxWatchV1 {
+                            mailbox: [1; 32],
+                            read: [3; 32],
+                            after: None,
+                        }],
+                        wait_ms: 0,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+                .await?;
+            let Reply::NoticeObjectV6 {
+                notices,
+                object: None,
+            } = &initial[0]
+            else {
+                bail!("missing original async cursor");
+            };
+            let start = Instant::now();
+            let watch = handle.request(
+                1,
+                vec![Request::WatchFetchV6 {
+                    boxes: vec![MailboxWatchV1 {
+                        mailbox: [1; 32],
+                        read: [3; 32],
+                        after: Some(notices[0].cursor),
+                    }],
+                    wait_ms: 10_000,
+                }],
+                until(),
+                check.clone(),
+            );
+            // Let the owner send the waiting watch first; Put must not await it.
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            let stored = handle
+                .request(2, vec![put(expires, 7)], until(), check.clone())
+                .await?;
+            let Reply::Stored(receipt) = &stored[0] else {
+                bail!("no async storage receipt");
+            };
+            receipt.verify(pin, [1; 32], [7; 32], &vec![9; 9000], expires)?;
+            let notified = watch.await?;
+            assert!(
+                matches!(&notified[0], Reply::NoticeObjectV6 { object: Some(row), .. }
+                if row.object == [7; 32] && row.expires == expires && row.ciphertext == vec![9;9000])
+            );
+            ensure!(
+                start.elapsed() < Duration::from_secs(5),
+                "async handles serialized ten-second Watch"
+            );
+            // Independent business actions across successive request futures reuse
+            // the same application/session slots; transport DONE never completes one.
+            for _ in 0..3 {
+                let result = handle
+                    .request(0, vec![fetch(3)], until(), check.clone())
+                    .await?;
+                assert!(
+                    matches!(&result[0], Reply::Object { object, expires: actual, .. }
+                    if *object == [7;32] && *actual == expires)
+                );
+            }
+            let consumed = handle
+                .request(
+                    0,
+                    vec![Request::Consume {
+                        mailbox: [1; 32],
+                        read: [3; 32],
+                        object: [7; 32],
+                        digest: receipt.digest,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+                .await?;
+            assert!(matches!(&consumed[0], Reply::Consumed));
+            let snapshot = handle
+                .request(
+                    0,
+                    vec![Request::Watch {
+                        boxes: vec![MailboxWatchV1 {
+                            mailbox: [1; 32],
+                            read: [3; 32],
+                            after: None,
+                        }],
+                        wait_ms: 0,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+                .await?;
+            let Reply::Notice(empty) = &snapshot[0] else {
+                bail!("no empty cursor");
+            };
+            assert!(!empty[0].pending);
+            let cancelled = handle.request(
+                1,
+                vec![Request::Watch {
+                    boxes: vec![MailboxWatchV1 {
+                        mailbox: [1; 32],
+                        read: [3; 32],
+                        after: Some(empty[0].cursor),
+                    }],
+                    wait_ms: 10_000,
+                }],
+                until(),
+                check.clone(),
+            );
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            drop(cancelled); // active request slot is retired, other slots remain valid
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let second = handle
+                .request(2, vec![put(expires, 8)], until(), check.clone())
+                .await?;
+            assert!(matches!(&second[0], Reply::Stored(_)));
+            // This Put releases the server's already admitted canceled Watch;
+            // its late authenticated reply must not poison unrelated slots.
+            tokio::time::sleep(Duration::from_millis(40)).await;
+            assert!(
+                matches!(&handle.request(0, vec![fetch(3)], until(), check.clone()).await?[0],
+                Reply::Object {object, ..} if *object == [8;32])
+            );
+            // Invalid authority is not converted into a transient network error.
+            let denied: NativeRequestAuthority = Arc::new(|| bail!("test caller revoked"));
+            let rejected = handle
+                .request(3, vec![fetch(3)], until(), denied)
+                .await
+                .err()
+                .context("expected typed request failure")?;
+            assert_eq!(rejected.kind, NativeRequestErrorKind::Authority);
+            // A request already out of time cannot reset its deadline on admission.
+            let late = handle
+                .request(2, vec![fetch(3)], Instant::now(), check.clone())
+                .await
+                .err()
+                .context("expected typed request failure")?;
+            assert_eq!(late.kind, NativeRequestErrorKind::Deadline);
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::select! {
+            result = operations => result,
+            result = drive_requests(link, driver) => { result?; bail!("native request owner ended") }
+        }
+    };
+    tokio::pin!(server);
+    let result = tokio::select! {
+        outcome = tokio::time::timeout(Duration::from_secs(15), client) => outcome?,
+        outcome = &mut server => { outcome?; bail!("native node ended before async client") }
     };
     stop.store(true, Ordering::Release);
     tokio::time::timeout(Duration::from_secs(5), &mut server).await??;
