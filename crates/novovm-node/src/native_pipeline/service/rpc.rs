@@ -973,7 +973,7 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
 }
 
 /// O(1) scheduling hint, never an execution, publication or signing permit.
-pub fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 8] {
+pub fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 9] {
     let core = &lifecycle.node.controller;
     [
         core.executed(),
@@ -984,6 +984,7 @@ pub fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 8] {
         core.served_bodies,
         lifecycle.indexed_height,
         lifecycle.gossip_verified,
+        core.io_progress_generation(),
     ]
 }
 

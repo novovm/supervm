@@ -70,10 +70,19 @@ impl RpcLifecycle {
         } else if self.node.controller.is_recovering() || self.projection_error.is_some() {
             Answer::Error(QueryError::Unavailable)
         } else {
-            match request.query {
+            match &request.query {
                 Query::Status => unreachable!(),
                 Query::Receipt { hash } => Answer::Receipt {
-                    state: self.recent_receipt(hash),
+                    state: self.recent_receipt(*hash),
+                    indexed_height: self.indexed_height,
+                },
+                Query::Receipts { hashes } => Answer::Receipts {
+                    states: hashes
+                        .iter()
+                        .map(|hash| self.recent_receipt(*hash))
+                        .collect::<Vec<_>>()
+                        .try_into()
+                        .map_err(anyhow::Error::msg)?,
                     indexed_height: self.indexed_height,
                 },
                 Query::NovBalance { account } => {

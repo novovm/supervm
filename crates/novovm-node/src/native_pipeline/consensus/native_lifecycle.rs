@@ -159,6 +159,10 @@ impl NativeLifecycle {
     pub fn pending_deliveries(&self) -> usize {
         self.deliveries.iter().map(VecDeque::len).sum()
     }
+    /// Scheduling-only change token; no transaction or durable decision meaning.
+    pub fn io_progress_generation(&self) -> u64 {
+        self.channel.io_progress_generation()
+    }
     pub fn is_frozen(&self) -> bool {
         self.frozen || self.progress.is_frozen() || self.bodies.is_frozen()
     }

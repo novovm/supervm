@@ -56,7 +56,25 @@ and all 18 cases passed. No runtime data was opened in these negative checks.
 
 ## Limits / next checkpoint
 
-Release build/load is separate; no new 65,536-transaction TPS claim here.
+Release load completed: see [raw single-query baseline](release-single-query-baseline.json).
+Frozen `f5c2fcd6` executable above, before remote mailbox merge; current merged
+source is NOT retrospectively assigned that binary's measurements. Plugged-in
+Windows, CPU callbacks,4 workers/node,4 processes,65536 real signed transfers,
+1024 execution batch,8192 in flight,shared recipient. Diagnostics disabled.
+65536 successful /0 business failures /0 timeouts;299.077304s,
+**219.127293 successful TPS**,P95/P99 **37.102617/37.391049s**.
+Every transaction has four matching finalized receipts. Four heads match at
+height64; balances,receipt fee conservation and nonce sequence pass. This is
+not a full persisted fee-state audit (`full_fee_state_audited=false`).
+Cold restart matched heads and all receipts/balances; receipt-only observation
+took **305.766176s** with262144 requests and no new transaction execution.
+Timed run used262475 single-row requests (331 not yet final). This demonstrates
+a slow read path; it does NOT isolate all execution/publication costs or prove
+the node would achieve historical throughput without this observer.
+Raw observations and DBs remain in `target/native-product-load/10920-1792097520681486100`.
+Frozen node and test driver remain in `target/frozen-native-single-20261016`.
+Test driver SHA256 `365b76fbaeb700a64dd6746e5c3900cf4bdd492adf8bc47843f544db82170ca8`.
+Performance acceptance **FAILED**, even though this functional load passed.
 Native cross-height successor overlap, archived catch-up/offline backpressure,
 actual native A/A/B combined faults, Linux and multi-machine acceptance remain
 open. The historical Relay tests and later execution assets are preserved, but

@@ -1,5 +1,21 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 native observation bottleneck (source/measurement complete):**
+Frozen original-tick release completed65536 transactions at219.127TPS; cold
+receipt-only reads took305.766s. Preserve this failed performance baseline.
+Root owns native SDK query consumption, service projection, load and evidence;
+native_execution_map owns consensus native/lifecycle/query scheduling hints;
+release_validation_map owns protocol/native_query bounded versioned batch reads.
+Same original tick, authenticated socket, receipt projection and AOEM authority;
+no new executor/network/ledger. Keep single-query comparison, four-node every-row
+final receipt checks,8192 window,1024 execution batch and original deadlines.
+Versioned batched observation is a separate measurement axis, never evidence of
+faster execution by itself. Claims released; root integrates/pushes. Single
+query5969/5920TPS, batch6142/6177TPS with full cold recovery, not9K recovery.
+Preserve mobile and drafts. Next root scope is existing early authentication /
+bounded successor overlap inside CandidateBodies/NativeLifecycle, not a new
+Controller. Driver SeedCache is already active. CI rustls advisory remains open.
+
 **2026-10-16 original-tick shared integration (source handoffs complete; root validation active):** shared
 cb4b3dd1, reviewed recovery3f0a95e4. Apply NOVOVM_JULY_MAIN_INTEGRATION_MAP.md:
 root owns node service/ingress modules, integration and ONE build/perf slot;

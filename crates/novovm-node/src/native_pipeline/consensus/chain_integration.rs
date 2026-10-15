@@ -674,15 +674,11 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
             records.push(record);
         }
         if let Some(mesh) = &mut native {
-            for i in 0..4 {
+            for (i, journal) in journals.iter().enumerate() {
                 let DurableMessage::Decision {
                     proposal,
                     certificate,
-                } = journals[i]
-                    .as_ref()
-                    .unwrap()
-                    .last_durable_message()
-                    .unwrap()
+                } = journal.as_ref().unwrap().last_durable_message().unwrap()
                 else {
                     bail!("missing published decision")
                 };

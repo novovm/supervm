@@ -1,13 +1,89 @@
-//! Native application read protocol v1. Binary, bounded, read-only; carried by
+//! Native application reads: unchanged single-item v1 and bounded batch v2.
+//! Binary, bounded, read-only; carried by
 //! the existing authenticated NovoRUDP session, not a second transport or ledger.
 //! Replies are the authenticated serving node's observations, NOT light-client
 //! execution proofs. Received is volatile; NotRecent is not proof of absence.
 use serde::{Deserialize, Serialize};
 
 pub const STREAM: u64 = u64::from_be_bytes(*b"NVQUERY1");
-pub const MAX_BYTES: usize = 1024;
-const MAGIC: &[u8; 8] = b"NVQUERY1";
+pub const MAX_V1_BYTES: usize = 1024;
+pub const MAX_RECEIPTS: usize = 128;
+// Largest batch response echoes 128 hashes and 128 finalized states. Each
+// state uses at most 73 bytes (tag/bool/u64/u128/u64/hash), plus <128 bytes of
+// envelope/lengths. 128 * (32 + 73) + 128 < 32 KiB; no numeric narrowing.
+pub const MAX_BYTES: usize = 32 * 1024;
+const MAGIC_V1: &[u8; 8] = b"NVQUERY1";
+const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
 pub type Hash = [u8; 32];
+
+/// Nonempty bounded sequence. Its wire representation is an ordinary postcard
+/// sequence, but the advertised length is checked BEFORE allocating elements.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReceiptBatch<T>(Vec<T>);
+impl<T> ReceiptBatch<T> {
+    pub fn as_slice(&self) -> &[T] {
+        &self.0
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn iter(&self) -> std::slice::Iter<'_, T> {
+        self.0.iter()
+    }
+    pub fn into_vec(self) -> Vec<T> {
+        self.0
+    }
+}
+impl<T> TryFrom<Vec<T>> for ReceiptBatch<T> {
+    type Error = &'static str;
+    fn try_from(values: Vec<T>) -> Result<Self, Self::Error> {
+        if values.is_empty() || values.len() > MAX_RECEIPTS {
+            return Err("native receipt batch count");
+        }
+        Ok(Self(values))
+    }
+}
+impl<T: Serialize> Serialize for ReceiptBatch<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for ReceiptBatch<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct BoundedVisitor<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for BoundedVisitor<T> {
+            type Value = ReceiptBatch<T>;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "1..={MAX_RECEIPTS} receipt batch entries")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<Self::Value, A::Error> {
+                // Postcard exposes its length prefix. Require it rather than
+                // allocating an unknown-size sequence then checking afterwards.
+                let count = sequence
+                    .size_hint()
+                    .filter(|n| (1..=MAX_RECEIPTS).contains(n))
+                    .ok_or_else(|| serde::de::Error::custom("native receipt batch count"))?;
+                let mut values = Vec::with_capacity(count);
+                for _ in 0..count {
+                    values.push(sequence.next_element()?.ok_or_else(|| {
+                        serde::de::Error::custom("truncated native receipt batch")
+                    })?);
+                }
+                if sequence.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::custom("native receipt batch overflow"));
+                }
+                Ok(ReceiptBatch(values))
+            }
+        }
+        deserializer.deserialize_seq(BoundedVisitor(std::marker::PhantomData))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AccountId {
@@ -22,14 +98,22 @@ impl AccountId {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Query {
     Status,
-    Receipt { hash: Hash },
-    NovBalance { account: AccountId },
+    Receipt {
+        hash: Hash,
+    },
+    NovBalance {
+        account: AccountId,
+    },
+    /// Order is part of the exact echoed request. Only NVQUERY2 may carry it.
+    Receipts {
+        hashes: ReceiptBatch<Hash>,
+    },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Request {
     pub session: Hash,
     pub sequence: u64,
@@ -79,7 +163,7 @@ pub enum QueryError {
     Busy,
     Unavailable,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Answer {
     Status(Status),
     Receipt {
@@ -89,34 +173,47 @@ pub enum Answer {
     /// None means read pending. Missing account at the captured root is Some(0).
     NovBalance(Option<Balance>),
     Error(QueryError),
+    Receipts {
+        states: ReceiptBatch<ReceiptState>,
+        indexed_height: u64,
+    },
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
     pub request: Request,
     pub answer: Answer,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Frame {
     Request(Request),
     Response(Response),
 }
 
-fn valid(frame: &Frame) -> bool {
-    let request = match frame {
+fn request(frame: &Frame) -> &Request {
+    match frame {
         Frame::Request(r) => r,
         Frame::Response(r) => &r.request,
-    };
+    }
+}
+fn is_batch(frame: &Frame) -> bool {
+    matches!(request(frame).query, Query::Receipts { .. })
+}
+fn valid(frame: &Frame) -> bool {
+    let request = request(frame);
     if request.session == [0; 32] || request.sequence == 0 {
         return false;
     }
     match frame {
-        Frame::Response(Response { request, answer }) => matches!(
-            (request.query, answer),
+        Frame::Response(Response { request, answer }) => match (&request.query, answer) {
             (_, Answer::Error(_))
-                | (Query::Status, Answer::Status(_))
-                | (Query::Receipt { .. }, Answer::Receipt { .. })
-                | (Query::NovBalance { .. }, Answer::NovBalance(_))
-        ),
+            | (Query::Status, Answer::Status(_))
+            | (Query::Receipt { .. }, Answer::Receipt { .. })
+            | (Query::NovBalance { .. }, Answer::NovBalance(_)) => true,
+            (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
+                hashes.len() == states.len()
+            }
+            _ => false,
+        },
         _ => true,
     }
 }
@@ -124,21 +221,29 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     if !valid(&frame) {
         return Err("invalid native query binding");
     }
-    let mut bytes = MAGIC.to_vec();
+    let batch = is_batch(&frame);
+    let mut bytes = if batch { MAGIC_V2 } else { MAGIC_V1 }.to_vec();
     bytes.extend(postcard::to_allocvec(&frame).map_err(|_| "native query encode")?);
-    if bytes.len() > MAX_BYTES {
+    if bytes.len() > if batch { MAX_BYTES } else { MAX_V1_BYTES } {
         return Err("native query size");
     }
     Ok(bytes)
 }
 pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
-    if bytes.len() > MAX_BYTES || !bytes.starts_with(MAGIC) {
+    let batch = if bytes.starts_with(MAGIC_V1) {
+        false
+    } else if bytes.starts_with(MAGIC_V2) {
+        true
+    } else {
+        return Err("native query header/size");
+    };
+    if bytes.len() > if batch { MAX_BYTES } else { MAX_V1_BYTES } {
         return Err("native query header/size");
     }
-    // All decoded fields have fixed bounds: no peer-controlled Vec/String allocation.
+    // Fixed fields and checked length prefixes only; no unbounded Vec/String.
     let (frame, tail): (Frame, _) =
         postcard::take_from_bytes(&bytes[8..]).map_err(|_| "native query decode")?;
-    if !tail.is_empty() || !valid(&frame) {
+    if !tail.is_empty() || !valid(&frame) || is_batch(&frame) != batch {
         return Err("native query trailing bytes/binding");
     }
     Ok(frame)
@@ -155,7 +260,7 @@ mod tests {
             query: Query::Receipt { hash: [3; 32] },
         };
         let frame = Frame::Response(Response {
-            request,
+            request: request.clone(),
             answer: Answer::Receipt {
                 state: ReceiptState::Finalized {
                     success: false,
@@ -167,7 +272,7 @@ mod tests {
                 indexed_height: 3,
             },
         });
-        let bytes = encode(frame).unwrap();
+        let bytes = encode(frame.clone()).unwrap();
         assert_eq!(decode(&bytes).unwrap(), frame);
         for n in 0..bytes.len() {
             assert!(decode(&bytes[..n]).is_err());
@@ -178,7 +283,7 @@ mod tests {
         assert!(decode(&vec![0; MAX_BYTES + 1]).is_err());
         assert!(encode(Frame::Request(Request {
             sequence: 0,
-            ..request
+            ..request.clone()
         }))
         .is_err());
         assert!(encode(Frame::Response(Response {
@@ -187,5 +292,210 @@ mod tests {
         }))
         .is_err());
         assert_ne!(AccountId::Bytes20([0; 20]), AccountId::Bytes32([0; 32]));
+    }
+
+    fn batch_request(count: usize) -> Request {
+        Request {
+            session: [7; 32],
+            sequence: u64::MAX,
+            query: Query::Receipts {
+                hashes: ReceiptBatch::try_from(
+                    (0..count).map(|i| [i as u8; 32]).collect::<Vec<_>>(),
+                )
+                .unwrap(),
+            },
+        }
+    }
+    fn finalized() -> ReceiptState {
+        ReceiptState::Finalized {
+            success: true,
+            nonce_after: u64::MAX,
+            charged_fee: u128::MAX,
+            height: u64::MAX,
+            block_hash: [255; 32],
+        }
+    }
+
+    #[test]
+    fn batch_maximum_full_width_order_and_version_round_trip() {
+        for count in [1, MAX_RECEIPTS] {
+            let request = batch_request(count);
+            let frame = Frame::Response(Response {
+                request: request.clone(),
+                answer: Answer::Receipts {
+                    states: ReceiptBatch::try_from(vec![finalized(); count]).unwrap(),
+                    indexed_height: u64::MAX,
+                },
+            });
+            let bytes = encode(frame.clone()).unwrap();
+            assert!(bytes.starts_with(MAGIC_V2));
+            assert!(bytes.len() <= MAX_RECEIPTS * (32 + 73) + 128);
+            assert_eq!(decode(&bytes).unwrap(), frame);
+            assert_eq!(
+                decode(&encode(Frame::Request(request.clone())).unwrap()).unwrap(),
+                Frame::Request(request.clone())
+            );
+            let error = Frame::Response(Response {
+                request,
+                answer: Answer::Error(QueryError::Busy),
+            });
+            assert_eq!(decode(&encode(error.clone()).unwrap()).unwrap(), error);
+            let mut old_label = bytes.clone();
+            old_label[..8].copy_from_slice(MAGIC_V1);
+            assert!(decode(&old_label).is_err());
+            let mut trailing = bytes;
+            trailing.push(0);
+            assert!(decode(&trailing).is_err());
+        }
+        let frame = Frame::Request(batch_request(2));
+        let mut reversed = batch_request(2);
+        if let Query::Receipts { hashes } = &mut reversed.query {
+            hashes.0.reverse();
+        }
+        assert_ne!(
+            encode(frame).unwrap(),
+            encode(Frame::Request(reversed)).unwrap()
+        );
+    }
+
+    #[test]
+    fn batch_count_rejected_before_element_decode_or_allocation() {
+        struct Never;
+        impl<'de> Deserialize<'de> for Never {
+            fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+                panic!("invalid advertised length must fail before decoding any element")
+            }
+        }
+        // Postcard unsigned length prefixes: 0, 129 and usize::MAX. No body is
+        // supplied: rejection must follow the prefix, not collecting elements.
+        for count in [0usize, MAX_RECEIPTS + 1, usize::MAX] {
+            let prefix = postcard::to_allocvec(&count).unwrap();
+            assert!(postcard::take_from_bytes::<ReceiptBatch<Never>>(&prefix).is_err());
+        }
+        // Enough remaining bytes for postcard to expose Some(129), not merely
+        // reject a truncated sequence through its remaining-input size hint.
+        let mut oversized = postcard::to_allocvec(&(MAX_RECEIPTS + 1)).unwrap();
+        oversized.extend(vec![0; MAX_RECEIPTS + 1]);
+        assert!(postcard::take_from_bytes::<ReceiptBatch<Never>>(&oversized).is_err());
+        assert!(ReceiptBatch::<Hash>::try_from(Vec::new()).is_err());
+        assert!(ReceiptBatch::try_from(vec![[0; 32]; MAX_RECEIPTS + 1]).is_err());
+        let truncated = postcard::to_allocvec(&2usize).unwrap();
+        assert!(postcard::take_from_bytes::<ReceiptBatch<Hash>>(&truncated).is_err());
+    }
+
+    #[test]
+    fn batch_response_count_type_and_version_are_bound_to_exact_request() {
+        for answer in [
+            Answer::Receipts {
+                states: ReceiptBatch::try_from(vec![ReceiptState::Received]).unwrap(),
+                indexed_height: 1,
+            },
+            Answer::Receipt {
+                state: finalized(),
+                indexed_height: 1,
+            },
+            Answer::NovBalance(None),
+        ] {
+            let frame = Frame::Response(Response {
+                request: batch_request(2),
+                answer,
+            });
+            assert!(encode(frame.clone()).is_err());
+            let mut bytes = MAGIC_V2.to_vec();
+            bytes.extend(postcard::to_allocvec(&frame).unwrap());
+            assert!(decode(&bytes).is_err());
+        }
+        let single = Frame::Request(Request {
+            session: [7; 32],
+            sequence: 1,
+            query: Query::Status,
+        });
+        let mut bytes = encode(single).unwrap();
+        bytes[..8].copy_from_slice(MAGIC_V2);
+        assert!(decode(&bytes).is_err());
+        let mut unknown = encode(Frame::Request(batch_request(1))).unwrap();
+        unknown[7] = b'3';
+        assert!(decode(&unknown).is_err());
+    }
+
+    #[test]
+    fn original_v1_request_and_receipt_golden_bytes_are_unchanged() {
+        // Frozen postcard v1 enum ordinals and fixed-width byte fields; these
+        // expected bytes do not serialize the new Query/Frame implementation.
+        for (query, query_bytes) in [
+            (Query::Status, vec![0]),
+            (
+                Query::Receipt { hash: [3; 32] },
+                [vec![1], vec![3; 32]].concat(),
+            ),
+            (
+                Query::NovBalance {
+                    account: AccountId::Bytes20([4; 20]),
+                },
+                [vec![2, 0], vec![4; 20]].concat(),
+            ),
+            (
+                Query::NovBalance {
+                    account: AccountId::Bytes32([5; 32]),
+                },
+                [vec![2, 1], vec![5; 32]].concat(),
+            ),
+        ] {
+            let request = Request {
+                session: [7; 32],
+                sequence: 1,
+                query,
+            };
+            let mut expected = MAGIC_V1.to_vec();
+            expected.push(0); // Frame::Request
+            expected.extend([7; 32]);
+            expected.push(1); // sequence
+            expected.extend(&query_bytes);
+            assert_eq!(encode(Frame::Request(request.clone())).unwrap(), expected);
+            assert_eq!(decode(&expected).unwrap(), Frame::Request(request.clone()));
+            expected[8] = 1; // Frame::Response echoes exactly the same request
+            expected.extend([3, 0]); // Answer::Error(QueryError::Busy)
+            assert_eq!(
+                encode(Frame::Response(Response {
+                    request,
+                    answer: Answer::Error(QueryError::Busy)
+                }))
+                .unwrap(),
+                expected
+            );
+        }
+        let frame = Frame::Response(Response {
+            request: Request {
+                session: [7; 32],
+                sequence: 1,
+                query: Query::Receipt { hash: [3; 32] },
+            },
+            answer: Answer::Receipt {
+                state: ReceiptState::Finalized {
+                    success: false,
+                    nonce_after: 2,
+                    charged_fee: 3,
+                    height: 4,
+                    block_hash: [9; 32],
+                },
+                indexed_height: 4,
+            },
+        });
+        let expected = [
+            MAGIC_V1.to_vec(),
+            vec![1],
+            vec![7; 32],
+            vec![1, 1],
+            vec![3; 32],
+            vec![1, 3, 0, 2, 3, 4],
+            vec![9; 32],
+            vec![4],
+        ]
+        .concat();
+        assert_eq!(encode(frame.clone()).unwrap(), expected);
+        assert_eq!(decode(&expected).unwrap(), frame);
+        let mut oversized = expected;
+        oversized.resize(MAX_V1_BYTES + 1, 0);
+        assert!(decode(&oversized).is_err());
     }
 }

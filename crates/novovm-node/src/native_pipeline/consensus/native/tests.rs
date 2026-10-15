@@ -11,6 +11,74 @@ use novovm_network::novorudp::{
 };
 use std::{net::UdpSocket, time::Duration};
 
+#[test]
+fn io_hint_ignores_duplicate_rejected_and_stalled_io() {
+    let mut hint = IoProgressHint::default();
+    let stalled = NativeLinkPoll {
+        rejected: 4,
+        backpressured: 2,
+        duplicate_fragments: 16,
+        feedback_sent: 16,
+        handshake_send_failures: 1,
+        receive_errors: 1,
+        send_failures: 1,
+        retired_inbound_messages: 1,
+        ..Default::default()
+    };
+    for _ in 0..128 {
+        hint.observe(&stalled);
+        hint.observe(&NativeLinkPoll::default());
+    }
+    assert_eq!(hint.0, 0, "unchanged pending work must become idle");
+}
+
+#[test]
+fn io_hint_tracks_new_fragments_sends_and_query_completion() -> Result<()> {
+    use novovm_network::novorudp::object_link::NativeSendCompletion;
+    let mut hint = IoProgressHint::default();
+    hint.observe(&NativeLinkPoll {
+        accepted_fragments: 3,
+        ..Default::default()
+    });
+    assert_eq!(hint.0, 1);
+    hint.observe(&NativeLinkPoll {
+        data_sent: 2,
+        ..Default::default()
+    });
+    assert_eq!(hint.0, 2);
+    hint.observe(&NativeLinkPoll::default());
+    assert_eq!(hint.0, 2, "sending once does not sustain a busy hint");
+    hint.observe(&NativeLinkPoll {
+        completed: vec![NativeSendCompletion {
+            peer: 0,
+            stream: novovm_protocol::native_query::STREAM,
+            state: ObjectSendState::Delivered,
+            body: Arc::new(OutgoingMessage::with_profile(
+                [1; 32],
+                vec![7],
+                1024,
+                FragmentProfile::NativeUdpV2,
+            )?),
+        }],
+        ..Default::default()
+    });
+    assert_eq!(hint.0, 3, "query DONE must be visible before filtering");
+    hint.observe(&NativeLinkPoll::default());
+    assert_eq!(hint.0, 3);
+    Ok(())
+}
+
+#[test]
+fn io_hint_wrap_is_a_change_token_not_a_permit_counter() {
+    let mut hint = IoProgressHint(u64::MAX);
+    let before = hint.0;
+    hint.advance();
+    assert_ne!(hint.0, before);
+    assert_eq!(hint.0, 0);
+    hint.observe(&NativeLinkPoll::default());
+    assert_eq!(hint.0, 0);
+}
+
 pub(crate) struct Mesh {
     pub channels: Vec<NativeChannel>,
     start: Instant,

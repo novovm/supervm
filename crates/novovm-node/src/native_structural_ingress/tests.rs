@@ -288,8 +288,10 @@ fn default_bulk_is_128_and_session_fingerprint_budget_is_hard_bounded() {
     assert_eq!(rx.take_ready_bulk().unwrap().len(), 128);
     assert_eq!(rx.take_ready_bulk().unwrap().len(), 1);
     assert_eq!(rx.received_count(), 129);
-    let mut oversized = StructuralReceiveLimits::default();
-    oversized.max_total_frames = MAX_STRUCTURAL_SESSION_FRAMES + 1;
+    let oversized = StructuralReceiveLimits {
+        max_total_frames: MAX_STRUCTURAL_SESSION_FRAMES + 1,
+        ..StructuralReceiveLimits::default()
+    };
     assert!(NativeStructuralReceiver::new([7; 16], 1, 1, oversized).is_err());
     let mut too_small = limits();
     too_small.max_buffered_bytes = 15;

@@ -90,6 +90,29 @@ pub struct NativeIngressObservation {
     pub protocol_rejected: u64,
 }
 
+/// Local cooperative scheduling epoch, never an admission/finality permit.
+/// Only compare for change; wrapping does not alter protocol state or budgets.
+#[derive(Default)]
+struct IoProgressHint(u64);
+impl IoProgressHint {
+    fn advance(&mut self) {
+        self.0 = self.0.wrapping_add(1);
+    }
+    fn observe(&mut self, report: &NativeLinkPoll) {
+        // ACK feedback can be produced by duplicates, so feedback/duplicates,
+        // rejection, backpressure and pending counts cannot refresh the hint.
+        // Actual sends include bounded timer-driven repair: a retry does not
+        // permit spinning while its unchanged sender is awaiting the next ACK.
+        if report.accepted_fragments > 0
+            || report.data_sent > 0
+            || !report.completed.is_empty()
+            || !report.session_changes.is_empty()
+        {
+            self.advance();
+        }
+    }
+}
+
 #[cfg(not(test))]
 type ChannelLink = AuthenticatedUdpIngressV1;
 
@@ -103,6 +126,7 @@ pub struct NativeChannel {
     query_replies: std::collections::VecDeque<QueryDelivery>,
     query_inbox: QueryInbox,
     ingress_observation: NativeIngressObservation,
+    io_progress: IoProgressHint,
 }
 impl NativeChannel {
     // Explicit deployment budgets and domains remain distinct at owner transfer.
@@ -261,10 +285,14 @@ impl NativeChannel {
             query_replies: Default::default(),
             query_inbox: QueryInbox::default(),
             ingress_observation: NativeIngressObservation::default(),
+            io_progress: IoProgressHint::default(),
         }
     }
     pub fn ingress_observation(&self) -> NativeIngressObservation {
         self.ingress_observation
+    }
+    pub fn io_progress_generation(&self) -> u64 {
+        self.io_progress.0
     }
     pub fn peer_count(&self) -> usize {
         self.link.peer_count()
@@ -323,6 +351,9 @@ impl NativeChannel {
             protocol,
             rejected_protocol,
         } = self.link.poll(wall_ms, now, quantum)?;
+        // Observe before query completions leave the protocol report. Otherwise
+        // a query-only turn can make real progress while appearing idle above.
+        self.io_progress.observe(&native);
         // The original UdpTransport has already applied its protocol observer.
         // These bounded observations do not acquire wallet/validator authority.
         self.ingress_observation.protocol_observed = self

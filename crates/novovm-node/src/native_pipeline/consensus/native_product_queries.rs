@@ -4,7 +4,7 @@ use super::*;
 use novovm_protocol::native_query::{AccountId, Answer, Balance, Query, ReceiptState, Status};
 
 fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer> {
-    let request = client.prepare_query(selector)?;
+    let request = client.prepare_query(selector.clone())?;
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut sent = false;
     loop {
@@ -88,6 +88,32 @@ fn receipts(
                 all.iter().all(|rows| rows == &all[0]),
                 "four native receipts differ: {all:?}"
             );
+            // Maximum-size v2 response crosses real object fragments. Ordered
+            // duplicates and an unknown hash must agree with the v1 projection,
+            // including failed business receipts, before and after cold reopen.
+            let selectors: Vec<_> = (0..127)
+                .map(|i| hashes[hashes.len() - 1 - i % hashes.len()])
+                .chain(std::iter::once([0xa7; 32]))
+                .collect();
+            let expected: Vec<_> = (0..127)
+                .map(|i| all[0][hashes.len() - 1 - i % hashes.len()])
+                .chain(std::iter::once(ReceiptState::NotRecent))
+                .collect();
+            for client in clients.iter_mut() {
+                let Answer::Receipts { states, .. } = query(
+                    client,
+                    Query::Receipts {
+                        hashes: selectors.clone().try_into().map_err(anyhow::Error::msg)?,
+                    },
+                )?
+                else {
+                    anyhow::bail!("native batch receipt missing");
+                };
+                ensure!(
+                    states.as_slice() == expected.as_slice(),
+                    "native batch projection differs from single reads"
+                );
+            }
             return Ok(all.remove(0));
         }
         ensure!(

@@ -189,12 +189,12 @@ impl NativeApplicationClient {
                 self.domain.genesis,
                 self.domain.protocol,
             ),
-            query::encode(Frame::Request(request)).map_err(anyhow::Error::msg)?,
+            query::encode(Frame::Request(request.clone())).map_err(anyhow::Error::msg)?,
             query::MAX_BYTES,
             FragmentProfile::NativeUdpV2,
         )?);
         self.sequence = sequence;
-        self.query_pending = Some(request);
+        self.query_pending = Some(request.clone());
         Ok(PreparedQuery {
             owner: self.owner.clone(),
             request,
@@ -203,7 +203,8 @@ impl NativeApplicationClient {
     }
     pub fn try_send_query(&mut self, request: &PreparedQuery, now: Instant) -> Result<bool> {
         ensure!(
-            Arc::ptr_eq(&request.owner, &self.owner) && self.query_pending == Some(request.request),
+            Arc::ptr_eq(&request.owner, &self.owner)
+                && self.query_pending.as_ref() == Some(&request.request),
             "foreign/stale application query handle"
         );
         self.link.try_send(0, query::STREAM, &request.body, now)
@@ -214,7 +215,8 @@ impl NativeApplicationClient {
         now: Instant,
     ) -> Result<Option<Response>> {
         ensure!(
-            Arc::ptr_eq(&request.owner, &self.owner) && self.query_pending == Some(request.request),
+            Arc::ptr_eq(&request.owner, &self.owner)
+                && self.query_pending.as_ref() == Some(&request.request),
             "foreign/stale application query handle"
         );
         let Some(complete) = self.link.poll_complete(query::STREAM, now, 8)? else {
@@ -241,7 +243,8 @@ impl NativeApplicationClient {
     /// admitted bytes until DONE/expiry; this never cancels an accepted transfer.
     pub fn abandon_query(&mut self, request: &PreparedQuery) -> Result<()> {
         ensure!(
-            Arc::ptr_eq(&request.owner, &self.owner) && self.query_pending == Some(request.request),
+            Arc::ptr_eq(&request.owner, &self.owner)
+                && self.query_pending.as_ref() == Some(&request.request),
             "foreign/stale application query handle"
         );
         self.query_pending = None;

@@ -67,7 +67,7 @@ impl QueryInbox {
             .iter_mut()
             .find(|q| !q.dispatched && !busy(q.peer))?;
         entry.dispatched = true;
-        Some((entry.peer, entry.request))
+        Some((entry.peer, entry.request.clone()))
     }
 }
 pub(crate) fn lane(domain: [u8; 32]) -> NativeLaneConfig {
@@ -99,6 +99,7 @@ impl NativeChannel {
         }
         let busy = |peer| self.query_replies.iter().any(|r| r.peer == peer);
         if let Some(request) = self.query_inbox.take_ready(busy) {
+            self.io_progress.advance();
             return Ok(Some(request));
         }
         // Completion consumes receiver custody and schedules DONE. Never call
@@ -128,6 +129,7 @@ impl NativeChannel {
             anyhow::bail!("node accepts query requests only");
         };
         self.query_inbox.insert(peer, session, request, now)?;
+        self.io_progress.advance();
         Ok(self.query_inbox.take_ready(busy))
     }
     pub fn reply_query(&mut self, peer: usize, response: Response, now: Instant) -> Result<()> {
@@ -169,6 +171,7 @@ impl NativeChannel {
             deadline: request.deadline,
         });
         self.query_inbox.entries.remove(index);
+        self.io_progress.advance();
         Ok(())
     }
     pub(super) fn poll_query_deliveries(
@@ -205,6 +208,7 @@ impl NativeChannel {
         self.query_replies.retain(|q| {
             q.admitted || (now < q.deadline && self.link.session_id(q.peer) == Some(q.session))
         });
+        let mut admitted = false;
         for reply in &mut self.query_replies {
             if !reply.admitted {
                 reply.admitted = self.link.try_send_until(
@@ -214,7 +218,11 @@ impl NativeChannel {
                     now,
                     reply.deadline,
                 )?;
+                admitted |= reply.admitted;
             }
+        }
+        if admitted {
+            self.io_progress.advance();
         }
         Ok(report)
     }
@@ -404,7 +412,7 @@ mod tests {
         let (peer, exact) = node.poll_query(now)?.context("retained request lost")?;
         assert_eq!(exact.sequence, 2);
         let deadline_before = node.query_inbox.entries[0].deadline;
-        let mut wrong = exact;
+        let mut wrong = exact.clone();
         wrong.sequence += 1;
         assert!(node
             .reply_query(
@@ -419,7 +427,7 @@ mod tests {
         node.reply_query(
             peer,
             Response {
-                request: exact,
+                request: exact.clone(),
                 answer: Answer::Error(QueryError::Unavailable),
             },
             now,
@@ -448,10 +456,11 @@ mod tests {
         let session = node.link.session_id(peer).context("test session missing")?;
         let replies_before = node.query_replies.len();
         let expired = request(100);
-        node.query_inbox.insert(peer, session, expired, now)?;
+        node.query_inbox
+            .insert(peer, session, expired.clone(), now)?;
         assert_eq!(
             node.query_inbox.take_ready(|_| false),
-            Some((peer, expired))
+            Some((peer, expired.clone()))
         );
         let expired_at = now + QUERY_TTL;
         assert!(node
@@ -479,10 +488,11 @@ mod tests {
         let mut old_session = session;
         old_session[0] ^= 1;
         let replaced = request(102);
-        node.query_inbox.insert(peer, old_session, replaced, now)?;
+        node.query_inbox
+            .insert(peer, old_session, replaced.clone(), now)?;
         assert_eq!(
             node.query_inbox.take_ready(|_| false),
-            Some((peer, replaced))
+            Some((peer, replaced.clone()))
         );
         node.reply_query(
             peer,

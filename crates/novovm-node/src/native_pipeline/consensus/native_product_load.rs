@@ -23,7 +23,7 @@ use novovm_network::novorudp::{
     NovoRudpPacingProfile, NovoRudpWindowConfig,
 };
 use novovm_protocol::native_query::{
-    AccountId, Answer, Balance, Query, ReceiptState, Status, STREAM,
+    AccountId, Answer, Balance, Query, ReceiptState, Status, MAX_RECEIPTS, STREAM,
 };
 use serde::Serialize;
 use std::{collections::BTreeSet, net::UdpSocket};
@@ -134,7 +134,7 @@ fn client(
 }
 
 fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer> {
-    let request = client.prepare_query(selector)?;
+    let request = client.prepare_query(selector.clone())?;
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut sent = false;
     loop {
@@ -199,6 +199,7 @@ struct Counts {
     application_batches_transport_delivered: usize,
     transport_failures: usize,
     observation_requests: usize,
+    observation_rows_received: usize,
     observation_not_final: usize,
     observation_service_busy: usize,
     successful_transactions: usize,
@@ -210,13 +211,77 @@ struct Counts {
 struct PendingRead {
     request: PreparedQuery,
     index: usize,
+    count: usize,
     sent: bool,
     deadline: Instant,
+}
+
+// Every row remains independently checked against all four nodes, including
+// repeated rows in a partially-final batch. A batch response is not a finality
+// shortcut; it only amortizes the authenticated request/response envelope.
+fn observe_receipt(
+    row: &mut Observation,
+    node: usize,
+    index: usize,
+    value: ReceiptState,
+    elapsed_us: u64,
+    counts: &mut Counts,
+) -> Result<bool> {
+    counts.observation_rows_received += 1;
+    match value {
+        ReceiptState::Finalized {
+            success,
+            nonce_after,
+            charged_fee,
+            height,
+            block_hash,
+        } => {
+            if let Some(expected) = row.receipt {
+                ensure!(
+                    expected == value,
+                    "four-node/cold receipt mismatch at {index}"
+                );
+            }
+            ensure!(
+                nonce_after == row.expected_nonce
+                    && charged_fee == row.expected_fee
+                    && height > 0
+                    && block_hash != [0; 32],
+                "receipt economics/nonce mismatch at {index}"
+            );
+            row.receipt = Some(value);
+            if row.finalized_us[node].is_some() {
+                return Ok(false);
+            }
+            row.finalized_us[node] = Some(elapsed_us);
+            if row.complete() {
+                if success {
+                    counts.successful_transactions += 1;
+                } else {
+                    counts.business_failed_transactions += 1;
+                }
+                return Ok(true);
+            }
+        }
+        ReceiptState::RejectedNonce => {
+            counts.rejected_nonce += 1;
+            bail!("valid workload nonce rejected at {index}");
+        }
+        _ => {
+            ensure!(
+                row.finalized_us[node].is_none(),
+                "finalized receipt regressed at {index}"
+            );
+            counts.observation_not_final += 1;
+        }
+    }
+    Ok(false)
 }
 
 /// Four existing native sessions are driven together. One outstanding read per
 /// session is the real SDK contract, not HTTP batching or a privileged readback.
 /// Supply uses the historical 8192 window and only four final replies free it.
+#[allow(clippy::too_many_arguments)] // Keep process, SDK, workload and observation owners explicit.
 fn drive(
     nodes: &mut ProductNodes,
     clients: &mut [NativeApplicationClient],
@@ -228,6 +293,7 @@ fn drive(
     timeout: Duration,
 ) -> Result<Duration> {
     let start = Instant::now();
+    let query_batch = env_count("NOVOVM_NATIVE_QUERY_BATCH", 1, MAX_RECEIPTS)?;
     let cold = inputs.is_empty();
     let mut dispatched = if cold { observations.len() } else { 0 };
     let mut complete = 0;
@@ -287,11 +353,25 @@ fn drive(
         for node in 0..4 {
             if reads[node].is_none() && cursors[node] < dispatched {
                 let index = cursors[node];
-                reads[node] = Some(PendingRead {
-                    request: clients[node].prepare_query(Query::Receipt {
+                let count = query_batch.min(dispatched - index);
+                let selector = if query_batch == 1 {
+                    Query::Receipt {
                         hash: observations[index].hash,
-                    })?,
+                    }
+                } else {
+                    Query::Receipts {
+                        hashes: observations[index..index + count]
+                            .iter()
+                            .map(|row| row.hash)
+                            .collect::<Vec<_>>()
+                            .try_into()
+                            .map_err(anyhow::Error::msg)?,
+                    }
+                };
+                reads[node] = Some(PendingRead {
+                    request: clients[node].prepare_query(selector)?,
                     index,
+                    count,
                     sent: false,
                     deadline: now + Duration::from_secs(5),
                 });
@@ -315,56 +395,33 @@ fn drive(
                 continue;
             };
             let index = read.index;
+            let count = read.count;
             reads[node] = None;
-            match response.answer {
-                Answer::Receipt {
-                    state:
-                        value @ ReceiptState::Finalized {
-                            success,
-                            nonce_after,
-                            charged_fee,
-                            height,
-                            block_hash,
-                        },
-                    ..
-                } => {
-                    let row = &mut observations[index];
-                    if let Some(expected) = row.receipt {
-                        ensure!(
-                            expected == value,
-                            "four-node/cold receipt mismatch at {index}"
-                        );
-                    } else {
-                        row.receipt = Some(value);
-                    }
-                    ensure!(
-                        nonce_after == row.expected_nonce
-                            && charged_fee == row.expected_fee
-                            && height > 0
-                            && block_hash != [0; 32],
-                        "receipt economics/nonce mismatch at {index}"
-                    );
-                    row.finalized_us[node] = Some(start.elapsed().as_micros() as u64);
-                    cursors[node] += 1;
-                    if row.complete() {
-                        complete += 1;
-                        if success {
-                            counts.successful_transactions += 1;
-                        } else {
-                            counts.business_failed_transactions += 1;
-                        }
-                    }
+            let states = match response.answer {
+                Answer::Receipt { state, .. } if query_batch == 1 => vec![state],
+                Answer::Receipts { states, .. } if query_batch > 1 => states.into_vec(),
+                Answer::Error(_) => {
+                    counts.observation_service_busy += 1;
+                    continue;
                 }
-                Answer::Receipt {
-                    state: ReceiptState::RejectedNonce,
-                    ..
-                } => {
-                    counts.rejected_nonce += 1;
-                    bail!("valid workload nonce rejected at {index}");
-                }
-                Answer::Receipt { .. } => counts.observation_not_final += 1,
-                Answer::Error(_) => counts.observation_service_busy += 1,
                 other => bail!("unexpected receipt answer: {other:?}"),
+            };
+            ensure!(states.len() == count, "native receipt batch shape mismatch");
+            let elapsed_us = start.elapsed().as_micros() as u64;
+            for (offset, state) in states.into_iter().enumerate() {
+                complete += usize::from(observe_receipt(
+                    &mut observations[index + offset],
+                    node,
+                    index + offset,
+                    state,
+                    elapsed_us,
+                    counts,
+                )?);
+            }
+            while cursors[node] < dispatched
+                && observations[cursors[node]].finalized_us[node].is_some()
+            {
+                cursors[node] += 1;
             }
         }
         std::thread::yield_now();
@@ -447,6 +504,7 @@ fn percentile(sorted: &[u64], percent: usize) -> Option<u64> {
 fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
     let count = env_count("NOVOVM_NATIVE_LOAD_TRANSACTIONS", 65_536, 65_536)?;
     let batch = env_count("NOVOVM_NATIVE_LOAD_BATCH_SIZE", 1024, 1024)?;
+    let query_batch = env_count("NOVOVM_NATIVE_QUERY_BATCH", 1, MAX_RECEIPTS)?;
     let timeout =
         Duration::from_secs(env_count("NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS", 600, 3600)? as u64);
     ensure!(
@@ -476,7 +534,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         "transport":"native_novorudp_apfl","http_listeners":0,"signature_generation_timed":false,
         "binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
         "aoem_sha256":hex(&Sha256::digest(fs::read(library()?)?)),"backend":test_execution_backend()?,
-        "timeout_seconds":timeout.as_secs(),"cold_recovery_pass":false,"full_fee_state_audited":false,
+        "timeout_seconds":timeout.as_secs(),"query_batch":query_batch,"cold_recovery_pass":false,"full_fee_state_audited":false,
         "business_proof_verified":false,"system_capacity_claim":false,
         "diagnostics_enabled":std::env::var("NOVOVM_NATIVE_LOAD_DIAGNOSTICS").as_deref()==Ok("1")});
     let mut phase = "prepare signed workload";
@@ -741,4 +799,62 @@ fn native_load_wallet_identity_and_percentile_contract() {
     assert_eq!(percentile(&[1, 2, 3, 4], 95), Some(4));
     assert_eq!(percentile(&(1..=100).collect::<Vec<_>>(), 95), Some(95));
     assert_eq!(percentile(&(1..=100).collect::<Vec<_>>(), 99), Some(99));
+}
+
+#[test]
+fn native_load_batch_observer_requires_every_node_and_does_not_count_retries() -> Result<()> {
+    let mut row = Observation {
+        hash: [1; 32],
+        first_submit_us: Some(0),
+        finalized_us: [None; 4],
+        receipt: None,
+        expected_nonce: 7,
+        expected_fee: 45,
+    };
+    let good = ReceiptState::Finalized {
+        success: true,
+        nonce_after: 7,
+        charged_fee: 45,
+        height: 2,
+        block_hash: [3; 32],
+    };
+    let mut counts = Counts::default();
+    assert!(!observe_receipt(
+        &mut row,
+        0,
+        0,
+        ReceiptState::Received,
+        1,
+        &mut counts
+    )?);
+    for node in 0..3 {
+        assert!(!observe_receipt(&mut row, node, 0, good, 2, &mut counts)?);
+        assert!(!observe_receipt(&mut row, node, 0, good, 3, &mut counts)?);
+    }
+    assert_eq!(counts.successful_transactions, 0);
+    assert!(observe_receipt(&mut row, 3, 0, good, 4, &mut counts)?);
+    assert!(!observe_receipt(&mut row, 3, 0, good, 5, &mut counts)?);
+    assert_eq!(counts.successful_transactions, 1);
+    assert_eq!(row.finalized_us, [Some(2), Some(2), Some(2), Some(4)]);
+    let wrong = ReceiptState::Finalized {
+        success: false,
+        nonce_after: 7,
+        charged_fee: 45,
+        height: 2,
+        block_hash: [3; 32],
+    };
+    assert!(observe_receipt(&mut row, 3, 0, wrong, 6, &mut counts).is_err());
+    assert!(observe_receipt(&mut row, 3, 0, ReceiptState::NotRecent, 6, &mut counts).is_err());
+    let mut failed = row.clone();
+    failed.finalized_us = [None; 4];
+    failed.receipt = None;
+    for node in 0..4 {
+        assert_eq!(
+            observe_receipt(&mut failed, node, 1, wrong, 7, &mut counts)?,
+            node == 3
+        );
+    }
+    assert_eq!(counts.business_failed_transactions, 1);
+    assert_eq!(counts.successful_transactions, 1);
+    Ok(())
 }
