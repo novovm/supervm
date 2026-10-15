@@ -1,5 +1,17 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 protected native mailbox owner activation (active claim):** NOVOCHAT
+session, input5905614b; downstream Application f076838. Reuse the existing
+Windows self-owned Owner, DPAPI identity/storage, mailbox.sqlite, sequence floor,
+service.journal and signed record publication. Wire its existing startup to
+run_self_owned_native_mailbox_v7 with explicit protected listener settings.
+No new service/account/scheduler, financial/AOEM/mainchain edits or HTTP/JSON
+fallback. Root owns service CLI, integration/docs and single build slot; bounded
+agent owns rendezvous_self_owned_owner implementation and its existing tests.
+Native UDP reachability and mobile locator refresh remain explicit gaps;
+local activation cannot be reported as cross-network phone acceptance.
+
+
 **2026-10-16 original tick activation (recovery checkpoint, not shared-main activation):**
 root integrated existing typed genesis/startup, authenticated original UDP owner,
 resident execution, journal publication and native query/admission into the
