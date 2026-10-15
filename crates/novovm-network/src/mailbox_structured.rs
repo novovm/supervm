@@ -15,6 +15,7 @@ use novovm_protocol::{
 };
 use zeroize::Zeroizing;
 
+pub(crate) mod locator;
 pub mod native_requests;
 pub mod native_session;
 
@@ -137,6 +138,7 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
     let mut tags = Vec::with_capacity(requests.len());
     for req in requests {
         let (tag, number) = match req {
+            Request::ServiceRecordV7 => (9, 0),
             Request::Register { expires, .. } => (1, *expires),
             Request::Put { expires, .. } => (2, *expires),
             Request::Fetch { .. } => (3, 0),
@@ -161,6 +163,7 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
         let mut f: Fields<'_> = [&[]; 8];
         f[0] = &tags[i];
         match req {
+            Request::ServiceRecordV7 => {}
             Request::Register {
                 mailbox,
                 write,
@@ -236,6 +239,7 @@ fn validate_request(f: &Fields<'_>) -> Result<()> {
             ensure!(u64_value(f[5])? <= 10_000, "mailbox wait bound");
             watches(f[6])?;
         }
+        9 => shape(f, [s(1), s(0), s(0), s(0), s(0), s(0), s(0), s(0)])?,
         _ => anyhow::bail!("unknown mailbox operation"),
     }
     Ok(())
@@ -274,6 +278,7 @@ impl<'a> RequestBatch<'a> {
     pub fn request(&self, index: usize) -> Result<Request> {
         let f = fields(&self.0, index)?;
         Ok(match f[0][0] {
+            9 => Request::ServiceRecordV7,
             1 => Request::Register {
                 mailbox: fixed(f[1])?,
                 write: fixed(f[2])?,
@@ -359,6 +364,7 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
     let mut aux = Vec::new();
     for reply in replies {
         let (tag, num, extra) = match reply {
+            Reply::ServiceRecordV7 { record } => (11, Vec::new(), locator::encode(record)?),
             Reply::Registered => (1, Vec::new(), Vec::new()),
             Reply::Stored(r) => {
                 let mut n = vec![r.version];
@@ -423,7 +429,7 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
                 f[4] = ciphertext;
             }
             Reply::Rejected(_) => f[1] = &numbers[i],
-            Reply::Notice(_) => f[1] = &aux[i],
+            Reply::Notice(_) | Reply::ServiceRecordV7 { .. } => f[1] = &aux[i],
             Reply::NoticeObjectV6 { object, .. } => {
                 f[1] = &aux[i];
                 if let Some(o) = object {
@@ -478,6 +484,10 @@ fn validate_reply(f: &Fields<'_>) -> Result<()> {
                 );
             }
         }
+        11 => {
+            shape(f, [s(1), None, s(0), s(0), s(0), s(0), s(0), s(0)])?;
+            locator::decode(f[1])?;
+        }
         _ => anyhow::bail!("unknown mailbox reply"),
     }
     Ok(())
@@ -496,6 +506,9 @@ pub fn decode_replies(bytes: &[u8], context: [u8; 32], expected: usize) -> Resul
         let f = fields(&batch, row)?;
         validate_reply(&f)?;
         out.push(match f[0][0] {
+            11 => Reply::ServiceRecordV7 {
+                record: locator::decode(f[1])?,
+            },
             1 => Reply::Registered,
             2 => Reply::Stored(StoreReceiptV1 {
                 version: 1,
@@ -573,3 +586,6 @@ pub async fn execute_local_batch(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod locator_tests;

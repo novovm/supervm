@@ -15,7 +15,7 @@ four-process closure passed; root owns release build/load next. Agent file claim
 released. See july-main-tick-20261016 evidence; successor overlap and native
 A/A/B/offline acceptance remain open, not covered by old Relay tests.
 
-**2026-10-16 native locator refresh (active communications claim):** input
+**2026-10-16 native locator refresh (SDK claim released; downstream integration active):** input
 c3f370e9, downstream f7c6e33. Existing ServiceLeaseBook/Host, NVMBOX07 APFL
 codec/service and original native listener only. Root owns book/native candidate
 acceptance, listener activation and downstream Application integration; bounded
@@ -24,6 +24,8 @@ No new directory/account/transport, no HTTP/JSON fallback; expired retained pins
 may only probe for fresh signed locators, never authorize mailbox IO. Preserve
 revocation, sequence, persistence, request/resource bounds and shared mainchain.
 Root alone owns integration/build slot. Physical Android validation remains separate.
+SDK structured regression16 and native trust regression10 PASS; downstream uses
+slot3 on the same authenticated connection and original encrypted bootstrap cache.
 
 
 **2026-10-16 bounded multi-mailbox client (claim released):**

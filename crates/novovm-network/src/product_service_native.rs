@@ -132,7 +132,87 @@ pub struct NativeMailboxCandidateV7 {
     pub record_expires_at_ms: u64,
 }
 
+/// Historical signed address usable ONLY to obtain a fresh record from the
+/// locally pinned node. It carries no permission for mailbox business requests.
+#[derive(Clone)]
+pub struct NativeMailboxBootstrapV7 {
+    pub public_key: [u8; 32],
+    pub endpoint: NativeMailboxEndpointV7,
+}
+
 impl ServiceLeaseBookV1 {
+    pub fn native_mailbox_bootstrap_v7(
+        &mut self,
+        now: u64,
+    ) -> Result<Vec<NativeMailboxBootstrapV7>> {
+        self.observe(now)?;
+        ensure!(
+            self.is_self_owned(),
+            "native bootstrap requires local trust"
+        );
+        let mut out = Vec::new();
+        for entry in self.entries.values_mut() {
+            let public_key = entry.current.relay_public_key;
+            if let Some(endpoint) = &entry.decoded_current()?.routes.native {
+                out.push(NativeMailboxBootstrapV7 {
+                    public_key,
+                    endpoint: endpoint.clone(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn check_native_bootstrap_route_v7(
+        &mut self,
+        pin: [u8; 32],
+        endpoint: &NativeMailboxEndpointV7,
+        now: u64,
+    ) -> Result<()> {
+        self.check_continuous_native_peer_v7(pin, now)?;
+        ensure!(
+            self.entries
+                .get_mut(&pin)
+                .context("service revoked")?
+                .decoded_current()?
+                .routes
+                .native
+                .as_ref()
+                == Some(endpoint),
+            "native bootstrap route changed"
+        );
+        Ok(())
+    }
+
+    /// Update exactly one existing local pin; other offline nodes need not have
+    /// fresh records. Original durable publish, high-water and tombstones apply.
+    pub fn accept_native_record_v7(
+        &mut self,
+        expected_pin: [u8; 32],
+        record: PeerSignedRelayRecordV1,
+        now: u64,
+    ) -> Result<()> {
+        self.observe(now)?;
+        ensure!(self.is_self_owned(), "native refresh requires local trust");
+        ensure!(
+            record.relay_public_key == expected_pin,
+            "native refresh wrong node"
+        );
+        let decoded = verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+        ensure!(decoded.native.is_some(), "native service missing");
+        let mut entries = self.entries.clone();
+        let entry = entries
+            .get_mut(&expected_pin)
+            .context("untrusted or revoked self-owned node")?;
+        newer(&entry.current, &record)?;
+        if entry.current == record {
+            return Ok(());
+        }
+        entry.grant = record.clone();
+        entry.current = record;
+        self.publish(Vec::new(), entries, self.tombstones.clone())
+    }
+
     pub fn native_mailbox_candidates_v7(
         &mut self,
         now: u64,

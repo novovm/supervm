@@ -414,6 +414,22 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
         return Ok(());
     }
     match (request, reply) {
+        (Request::ServiceRecordV7, Reply::ServiceRecordV7 { record }) => {
+            ensure!(
+                record.relay_public_key == node,
+                "mailbox locator node binding"
+            );
+            crate::product_directory::validate_relay_record_v1(
+                record,
+                crate::product_rendezvous_daemon::now_ms()?,
+            )?;
+            ensure!(
+                crate::product_service_lease::NativeMailboxEndpointV7::from_record(record)?
+                    .is_some(),
+                "mailbox native locator missing"
+            );
+            Ok(())
+        }
         (Request::Register { .. }, Reply::Registered)
         | (Request::Consume { .. }, Reply::Consumed)
         | (Request::Renew { .. }, Reply::Renewed)
