@@ -1,9 +1,10 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-16 native receive reuse (implementation validated; integration checks pending):** input17c9479c.
+**2026-10-16 native receive reuse (integrated; claim released):** input17c9479c.
 Root owns existing profile counters, tests/evidence and the sole build/performance
 slot. Candidate registration measured only54–58ms/node, so no speculative cache.
-Native I/O measured6.10–6.35s/node. native_execution_map owns only the existing
+Native I/O periodic snapshots measured6.10–6.35s/node, not final totals;
+different-height snapshots are not a matched-work speedup. native_execution_map owns only the existing
 transport/endpoint receive-buffer reuse and focused tests (no build), removing
 empty-poll allocation/zeroing while retaining budgets and exact input boundaries.
 Other agents remain read-only. Do not edit NOVOCHAT carrier, AOEM, protected
@@ -15,6 +16,10 @@ Formal A/B/A/B on the unchanged native driver:6961.883→7318.100 successful TPS
 two finite pairs, not a capacity ceiling. CPU/algebraic original-node closures,
 successor drain/ACK and receive-buffer bounds pass. No candidate validation
 cache, new ACK protocol or authority path. All49 protected drafts retained.
+Merged remote fa58bf4b at7a02c7a6, preserving carrier adoption and adding its
+scratch initialization. Final node f46d0c61… repeats65536 at7313.217TPS,
+P95/P99 1.128376/1.271884s; all four final receipts/economics/cold recovery pass.
+This separate final sample does not replace the checkpoint paired comparison.
 
 **2026-10-16 original-tick lookahead integration (implementation validated):** input f29e5519.
 Root owns service/rpc selection, product validation/evidence and the only build/

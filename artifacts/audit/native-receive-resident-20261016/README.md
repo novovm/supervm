@@ -121,3 +121,22 @@ Cargo audit for rustls0.23.45 advisories0346–0349. This is an unresolved relea
 gate, not a native performance result. No advisory ignore or security downgrade
 was added. Remote NOVOCHAT carrier changes are integrated separately; no mobile
 runtime deployment or acceptance is claimed here.
+
+## Shared-main integration verification
+
+Implementation7615369d merged remote fa58bf4b at7a02c7a6. Kept the remote
+carrier admission/reset semantics and initialized the same scratch in its new
+from_bound_channel constructor. No carrier/mobile functionality was removed.
+TLS-feature release NovoRUDP88 tests PASS; completed_bound4 tests PASS,
+including actual endpoint adoption and reset propagation.
+
+Final rebuilt node SHA256
+`f46d0c6157e2f4e926ea7d49a384730160f14dde616cd990583806f617c1f808`.
+Same frozen driver/AOEM, plugged-in, diagnostics off: `merged-final.json`
+records65536 successes/0 business failures,8.961309s,7313.217299 successfulTPS,
+P95/P99 1.128376/1.271884s,42763 query requests. Four final receipts, reported
+fees/nonces/balances/heads and cold recovery PASS. This final-build sample is
+separate from the pre-merge paired performance claim, not a new capacity result.
+Source report: target/native-product-load/15832-1792103166244265900/report.json.
+Same final node actual CPU2 tests PASS2.06s and algebraic2 tests PASS7.32s,
+using the preserved test executable above. Security advisory remains unresolved.
