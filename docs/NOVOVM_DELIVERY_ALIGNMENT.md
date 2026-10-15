@@ -1,5 +1,17 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 original-tick shared integration (active mainchain claim):** shared
+cb4b3dd1, reviewed recovery3f0a95e4. Apply NOVOVM_JULY_MAIN_INTEGRATION_MAP.md:
+root owns node service/ingress modules, integration and ONE build/perf slot;
+native_execution_map owns network transport.rs/native_ingress and protocol
+native_query/lib declaration only; release_validation_map owns node
+native_pipeline/consensus; july_reproduce owns original node binary tick/startup
+and minimal node Cargo feature. Do not edit endpoint, mailbox, relay or mobile
+files; preserve NOVOCHAT updates and49 drafts. Replace active old resident
+bootstrap/controller wiring as a dependency group, not a parallel product.
+Recovery/source results do not sign off the final shared binary. No agent builds
+or commits; root validates original owner/auth/economics/recovery then release load.
+
 **2026-10-16 bounded multi-mailbox client (claim released):**
 NOVOCHAT input c153796c, downstream f54cb2f. Extend existing
 novorudp/endpoint.rs connect_client construction to bounded multiple explicit
