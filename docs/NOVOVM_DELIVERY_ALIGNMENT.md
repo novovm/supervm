@@ -26,6 +26,16 @@ Recovery query drafts remain separate. This is not yet the complete APFL mailbox
 Public API bidirectional UDP tests pass with default and mailbox feature sets;
 see [consumer handoff](NOVORUDP_SHARED_CLIENT_HANDOFF.md) for exact APIs and gaps.
 
+**2026-10-16 L4 IO evidence (claim released):** NOVOCHAT session, baseline
+66ac995b. Scope: existing iroh_transport.rs typed IO diagnostics and its tests,
+plus this alignment and readiness record. Preserve sealed retry classification,
+deadlines, wire formats and custody. No new SDK, listener or native recovery-tree
+changes. Typed matrix and real disconnect/invalid-frame tests pass; real STOP
+first hit two scope deadlines, old binary passed, final fixed-stage observation
+passed at 4.40s (bind 4.35s, STOP under 1ms). Earlier timeout cause remains open;
+no timer increase. Strict network lib Clippy passes. Android integration and
+mobile reproduction belong to NOVOCHAT. Native SDK remains on the other machine.
+
 **2026-10-16 native DApp entry audit (claim released):** NOVOCHAT session,
 input a8f95c44 after a documentation-only fast-forward. Updated root agent rule
 and NOVONET_TRANSPORT_POLICY_V1.md for the user's ban on native DApp use of
