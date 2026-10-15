@@ -1,4 +1,15 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 parallel execution (active, user authorized):** one integration
+owner (root), one July original-binary reproduction owner (`july_reproduce`),
+one read-only execution-wiring reviewer (`native_execution_map`), and one
+read-only release/recovery reviewer (`release_validation_map`). Reproduction
+owns a scoped harness/evidence in the July recovery worktree and the release
+build slot; reviewers do not edit or compile. Root owns shared documentation,
+review and Git integration. Formal performance runs are serialized and wait
+for heavy builds to stop. No mobile takeover or alternative runtime expansion.
+The thread goal was explicitly recreated after the status tool returned no
+active goal; its prior disappearance has no established cause in this check.
+
 **2026-10-16 sole-mainline correction (active):** July recovery owner.
 Reproduce the actual July `4f45526d` NovoRUDP/APFL structural-bulk execution
 path, then migrate useful later capabilities INTO that path. Do not expand

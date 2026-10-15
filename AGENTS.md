@@ -1,5 +1,12 @@
 # Agent Highest Law
 
+- 2026-10-16 user explicitly authorizes concurrent agents toward the active
+  NOVOVM release goal. Parallelize bounded implementation, source verification
+  and validation preparation on the SAME mainline; do not let agents create
+  competing execution paths. Assign disjoint file ownership, one integration
+  owner and one performance-run slot. Do not run competing benchmarks or heavy
+  builds during formal TPS measurements. Preserve the NOVOCHAT machine's scope.
+
 - 2026-10-16 latest user correction — ONE actual execution mainline:
   Use July `4f45526d`'s original NovoRUDP/APFL structural-bulk path as the
   recovery foundation. Reproduce that existing path first, then migrate useful
