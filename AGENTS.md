@@ -1,5 +1,17 @@
 # Agent Highest Law
 
+- 2026-10-16 first-release client contract: NOVOVM and NOVONET use their
+  native SDK/protocol closed loop, not an HTTP/JSON-RPC compatibility product
+  entrance. DApps, native apps, CLI and the planned self-developed browser
+  consume NovoRUDP/APFL through the NOVOVM SDK. Complete native transaction
+  submission, receipts/state queries and result subscriptions on the same
+  node/exec/AOEM authority. Historical HTTP comparisons do not satisfy this
+  release contract and must not open a release listener. This is a protocol
+  boundary, not authorization to introduce developer approval, client-key
+  enrollment, a second identity, signer, ledger, or execution engine. Preserve
+  existing communications work; audit and retire external compatibility wiring
+  through the controlled integration map, not indiscriminate deletion.
+
 - 2026-10-14 latest economic decision supersedes free-service fallback: NOV is
   the native main-chain token and sole NOVONET mainnet asset. New communication
   service obligations require NOV-funded subscription/prepaid resources. Open
