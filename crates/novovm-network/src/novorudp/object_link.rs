@@ -415,6 +415,37 @@ impl NativeObjectLink {
         Ok(accepted)
     }
     pub fn poll(&mut self, wall_ms: u64, now: Instant, quantum: usize) -> Result<NativeLinkPoll> {
+        let received = self.endpoint.poll(wall_ms, now, quantum)?;
+        self.process_poll(received, now, quantum)
+    }
+
+    /// Reuse the same authenticated endpoint and object state machine when the
+    /// original socket owner supplies datagrams. The receiver must be bounded
+    /// and nonblocking; it preserves source addresses and encrypted wire bytes.
+    /// `Ok(None)` consumes one poll turn used by the owner's other protocol.
+    /// This does not accept pre-authenticated frames or bypass endpoint budgets.
+    pub fn poll_with_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        receiver: F,
+    ) -> Result<NativeLinkPoll>
+    where
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, SocketAddr)>>,
+    {
+        let received = self
+            .endpoint
+            .poll_with_receiver(wall_ms, now, quantum, receiver)?;
+        self.process_poll(received, now, quantum)
+    }
+
+    fn process_poll(
+        &mut self,
+        received: NativePoll,
+        now: Instant,
+        quantum: usize,
+    ) -> Result<NativeLinkPoll> {
         let NativePoll {
             frames,
             rejected_datagrams,
@@ -422,7 +453,7 @@ impl NativeObjectLink {
             receive_errors,
             session_changes,
             ..
-        } = self.endpoint.poll(wall_ms, now, quantum)?;
+        } = received;
         // Append only identities authenticated by this endpoint. Indices never
         // change, so retained jobs/ACKs cannot attach to a recycled client slot.
         while self.peers.len() < self.endpoint.peer_count() {
@@ -616,3 +647,6 @@ impl Drop for NativeObjectLink {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod receiver_tests;

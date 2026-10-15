@@ -89,7 +89,7 @@ pub struct NativePoll {
 }
 
 pub struct NativeEndpoint {
-    socket: UdpSocket,
+    socket: Arc<UdpSocket>,
     local_key: [u8; 32],
     peers: Vec<Peer>,
     sources: BTreeMap<SocketAddr, usize>,
@@ -106,6 +106,19 @@ impl NativeEndpoint {
     /// installs key-possession admission before the socket can receive data.
     pub fn listen_clients(
         socket: UdpSocket,
+        identity: SigningKey,
+        clients: usize,
+        streams: Vec<u64>,
+        budget: NativeHandshakeBudget,
+    ) -> Result<Self> {
+        Self::listen_clients_shared(Arc::new(socket), identity, clients, streams, budget)
+    }
+
+    /// Reuse an existing socket without creating another listener or OS handle.
+    /// The enclosing transport must retain one receive owner and dispatch through
+    /// `poll_with_receiver`; sharing the socket does not authenticate a sender.
+    pub fn listen_clients_shared(
+        socket: Arc<UdpSocket>,
         identity: SigningKey,
         clients: usize,
         streams: Vec<u64>,
@@ -129,6 +142,19 @@ impl NativeEndpoint {
 
     pub fn bind(
         socket: UdpSocket,
+        identity: SigningKey,
+        peers: Vec<NativePeer>,
+        budget: NativeHandshakeBudget,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<Self> {
+        Self::bind_shared(Arc::new(socket), identity, peers, budget, wall_ms, now)
+    }
+
+    /// Bind the existing native state machine to the transport's shared socket.
+    /// This does not install a receiver; the enclosing owner serializes reads.
+    pub fn bind_shared(
+        socket: Arc<UdpSocket>,
         identity: SigningKey,
         peers: Vec<NativePeer>,
         budget: NativeHandshakeBudget,
@@ -242,7 +268,7 @@ impl NativeEndpoint {
         socket.set_nonblocking(true)?;
         let id = peer_id_from_ed25519_public_key_v1(&remote.key);
         Ok(Self {
-            socket,
+            socket: Arc::new(socket),
             local_key,
             peers: vec![Peer {
                 id: id.into(),
@@ -354,6 +380,32 @@ impl NativeEndpoint {
     }
 
     pub fn poll(&mut self, wall_ms: u64, now: Instant, quantum: usize) -> Result<NativePoll> {
+        let socket = Arc::clone(&self.socket);
+        self.poll_with_receiver(wall_ms, now, quantum, |wire| {
+            socket.recv_from(wire).map(Some)
+        })
+    }
+
+    /// Poll through the enclosing transport's sole bounded datagram receiver.
+    /// `Some` supplies an entire native datagram and its actual source; it is
+    /// still untrusted and passes the same budget, handshake and AEAD checks.
+    /// `None` consumes one quantum handled by another protocol, without adding
+    /// a native rejection or native byte charge. That protocol's owner remains
+    /// responsible for its own admission/accounting. `WouldBlock` ends input.
+    /// The callback must not block, truncate, synthesize a source or perform
+    /// native validation. A pre-existing bounded drain queue may prefetch;
+    /// quantum bounds consumption here, not its underlying socket-read count.
+    /// Handshake sends, reconnect expiry and generation filtering remain here.
+    pub fn poll_with_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        mut receiver: F,
+    ) -> Result<NativePoll>
+    where
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, SocketAddr)>>,
+    {
         ensure!(
             (1..=64).contains(&quantum),
             "invalid native endpoint quantum"
@@ -365,8 +417,9 @@ impl NativeEndpoint {
         // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).
         let mut wire = [0; 65536];
         for _ in 0..quantum {
-            let (length, source) = match self.socket.recv_from(&mut wire) {
-                Ok(value) => value,
+            let (length, source) = match receiver(&mut wire) {
+                Ok(Some(value)) => value,
+                Ok(None) => continue,
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
                 // UDP ICMP errors can refer to a different peer's previous send.
                 // Count them within this quantum; never tear down healthy peers.
@@ -516,6 +569,8 @@ impl NativeEndpoint {
     }
 }
 
+#[cfg(test)]
+mod multiplex_tests;
 mod reconnect;
 #[cfg(test)]
 mod tests;

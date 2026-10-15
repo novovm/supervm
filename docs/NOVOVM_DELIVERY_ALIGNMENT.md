@@ -1,5 +1,18 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 original socket authentication handoff (shared slice verified):**
+July owner, shared input dd48c278; recovery checkpoint b93a9faa. Original
+NativeEndpoint/NativeObjectLink now expose bounded borrowed receive callbacks,
+preserving the SAME handshake/AEAD/reconnect/budget/reassembly implementation.
+Shared source ownership: root integrates; release_validation_map endpoint;
+native_execution_map object_link. No mailbox/native_session changes. Main
+native80 and strict network-lib Clippy pass. Recovery original UdpTransport
+adapter and signed APFL tests pass; original node activation/execution remains
+next, not completed by these library tests. No new TPS or mobile acceptance.
+Single build/performance slot remains with root. No outstanding SDK edits;
+next ownership is original node tick/structured execution handoff, not another
+controller or native-resident bootstrap expansion. Preserve NOVOCHAT work below.
+
 **2026-10-16 native async mailbox request handoff (claim active):** NOVOCHAT
 session, input781e41f8. Scope mailbox_structured/native_session bounded operation
 lifecycle and a shared async request-handle adapter on the SAME NativeObjectLink;
