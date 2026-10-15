@@ -27,6 +27,57 @@ pub struct ServiceLeaseHostV1 {
 }
 
 impl ServiceLeaseHostV1 {
+    pub fn check_continuous_native_peer_v7(&self, now: u64) -> Result<()> {
+        self.book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?
+            .check_continuous_native_peer_v7(self.key.verifying_key().to_bytes(), now)
+    }
+
+    /// Publish/remove an explicitly running native listener using the SAME
+    /// signer and durable sequence/revocation owner. Also works for native-only
+    /// records; does not manufacture an Iroh endpoint or extend live requests.
+    pub fn rotate_native_mailbox_v7(
+        &self,
+        endpoint: Option<&NativeMailboxEndpointV7>,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        let mut book = self
+            .book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?;
+        ensure!(book.is_self_owned(), "self-owned policy required");
+        let entry = book
+            .entries
+            .get(&self.key.verifying_key().to_bytes())
+            .context("service revoked")?;
+        let mut endpoints: Vec<_> = entry
+            .current
+            .endpoints
+            .iter()
+            .filter(|e| e.transport != RelayTransportV1::Udp)
+            .cloned()
+            .collect();
+        if let Some(endpoint) = endpoint {
+            endpoints.push(endpoint.endpoint()?);
+        }
+        let record = directory::sign_relay_record_v1(
+            &self.key,
+            entry.grant.record_id.clone(),
+            endpoints,
+            now,
+            expires,
+            entry
+                .current
+                .sequence
+                .checked_add(1)
+                .context("host sequence exhausted")?,
+        )?;
+        book.replace_self_owned_records(vec![record.clone()], now)?;
+        Ok(record)
+    }
+
     pub fn check_continuous_tls_peer_v1(
         &self,
         endpoint: &TlsServiceEndpointV1,
@@ -207,6 +258,16 @@ impl ServiceLeaseHostV1 {
         let mut endpoints = vec![endpoint.endpoint()?];
         if let Some(tls) = tls {
             endpoints.push(tls.endpoint()?);
+        }
+        // Normal Iroh/TLS declaration renewal preserves the independent native
+        // service. Only explicit native publication/removal changes that route.
+        if let Some(native) = entry
+            .current
+            .endpoints
+            .iter()
+            .find(|e| e.transport == RelayTransportV1::Udp)
+        {
+            endpoints.push(native.clone());
         }
         let record = directory::sign_relay_record_v1(
             &self.key,

@@ -55,7 +55,7 @@ impl TlsServiceEndpointV1 {
     }
 
     pub fn from_record(record: &PeerSignedRelayRecordV1) -> Result<Option<Self>> {
-        ensure!(record.endpoints.len() <= 2, "service endpoint budget");
+        ensure!(record.endpoints.len() <= 3, "service endpoint budget");
         let mut routes = record
             .endpoints
             .iter()
@@ -99,6 +99,7 @@ impl ServiceLeaseBookV1 {
         let entry = self.entries.get_mut(&pin).context("service revoked")?;
         let current = entry
             .decoded_current()?
+            .routes
             .tls
             .as_ref()
             .context("TLS service removed")?;
@@ -125,7 +126,7 @@ impl ServiceLeaseBookV1 {
             "TLS service route expired"
         );
         ensure!(
-            entry.decoded_current()?.tls.as_ref() == Some(endpoint),
+            entry.decoded_current()?.routes.tls.as_ref() == Some(endpoint),
             "TLS service route changed"
         );
         Ok(())

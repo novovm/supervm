@@ -214,3 +214,20 @@ invalidate/drop停止该owner已排队回复。单个response授权/期限检查
 
 已通过桌面实际UDP和负向验证。原生平台接线、可达性/手机延迟、全能力缓冲擦除
 仍未签收；取消接口不能冒充这些完成，也不支持用旧HTTP/JSON后备填补缺口。
+
+## 2026-10-16 NOVOCHAT 消费方补齐原生信箱目录
+
+`product_service_lease::NativeMailboxEndpointV7` 明确声明既有 NVMBOX07 服务。
+通过原 `ServiceLeaseBookV1` 导入/验签/持久化后，调用
+`native_mailbox_candidates_v7` 获取绑定公钥与新鲜候选；新拨号调用
+`check_native_mailbox_route_v7`，健康会话调用 `check_continuous_native_peer_v7`，
+并继续检查 NativeObjectLink 的实际身份/代次和业务能力。这些目录检查本身
+不能证明连接在线、安全会话成立或匿名，也不会替代资源准入。
+
+原 `ServiceLeaseHostV1::rotate_native_mailbox_v7` 发布或移除原生入口，签名序号
+和撤销沿原持久owner。纯原生记录不再强制携带Iroh地址；混合记录正常轮换不丢
+原生候选，旧载体API不把原生地址当自己的地址。载体Udp标签本身不等于信箱版本。
+
+Windows真实UDP8项已从签名目录取得地址再调用原共享SDK；原TLS/QUIC宿主4项
+继续通过。实际Android原生监听/拨号、自动路由及蜂窝NAT仍待原平台owner接线；
+不把本片当作移动激活。详见生产台账同日目录记录，保留旧一秒清理计时失败。

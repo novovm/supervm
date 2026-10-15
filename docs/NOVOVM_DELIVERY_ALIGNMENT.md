@@ -16,7 +16,7 @@ functional recovery tests are retained as reuse assets, not proof of July fast
 path throughput. This commit is local-only, not delivered on shared main.
 No new throughput result is claimed. Protected drafts and other-device work stay.
 
-**2026-10-16 native mailbox discovery (claim active):** NOVOCHAT session,
+**2026-10-16 native mailbox discovery (claim released):** NOVOCHAT session,
 input 7a7bc0f6. Scope: existing product_service lease/self-owned/host/TLS
 record parsing, typed native mailbox route and focused tests. Admit explicitly
 versioned NovoRUDP/APFL mailbox locators through the original signed directory
@@ -24,7 +24,12 @@ and durable pin/revocation owner, including native-only nodes without an Iroh
 placeholder. Keep legacy carrier checks explicit, preserve alternate routes on
 rotation, separate fresh dial candidates from healthy session supervision.
 No new directory, account, SDK, wire protocol, finance or mainchain changes.
-Live mobile/native listener activation follows this shared route integration.
+Native-only and hybrid signed-route imports/rotation now use the same durable
+owner. New six directory tests pass; real native UDP eight and legacy TLS/QUIC
+node four pass, strict Clippy passes. Lease regression 61 pass/one previously
+recorded one-second cleanup failure, not hidden or relaxed. Live mobile/native
+listener activation remains next; routing priority/adaptation follows the
+existing owner and privacy policy, not another scheduler.
 
 **2026-10-16 native in-flight cancellation (claim released):** NOVOCHAT session,
 input c2c1f6fc plus shared reconnect 943092da. Scope: original novorudp object_link/sender completion state,

@@ -14,6 +14,8 @@ use novovm_network::{
         object_link::{NativeLaneConfig, NativeObjectLink, NativeSendLimits, NativeSendPolicy},
         NovoRudpPacingProfile, NovoRudpWindowConfig,
     },
+    product_directory::sign_relay_record_v1,
+    product_service_lease::{NativeMailboxEndpointV7, SelfOwnedTrustV1, ServiceLeaseBookV1},
 };
 use std::{
     collections::VecDeque,
@@ -147,6 +149,35 @@ impl Fixture {
         let pin = key.verifying_key().to_bytes();
         let socket = UdpSocket::bind("127.0.0.1:0")?;
         let address = socket.local_addr()?;
+        // Consumer obtains the actual native endpoint through the original
+        // signed directory/pin owner, without an Iroh placeholder or Publisher.
+        let route = NativeMailboxEndpointV7 {
+            address,
+            max_connections: 1,
+        };
+        let record = sign_relay_record_v1(
+            &key,
+            "native-mailbox",
+            vec![route.endpoint()?],
+            1000,
+            91_000,
+            1,
+        )?;
+        let mut directory_book = ServiceLeaseBookV1::new_self_owned(
+            SelfOwnedTrustV1 {
+                version: 1,
+                node_pins: [pin].into(),
+            },
+            vec![record],
+            1000,
+        )?;
+        let candidates = directory_book.native_mailbox_candidates_v7(1000)?;
+        let selected = &candidates[0];
+        directory_book.check_native_mailbox_route_v7(
+            selected.public_key,
+            &selected.endpoint,
+            1000,
+        )?;
         let mut server_link = NativeObjectLink::new(
             NativeEndpoint::listen_clients(socket, key.clone(), 1, vec![STREAM], budget())?,
             vec![lane()],
@@ -157,7 +188,10 @@ impl Fixture {
             NativeEndpoint::connect_client(
                 UdpSocket::bind("127.0.0.1:0")?,
                 SigningKey::from_bytes(&[83; 32]),
-                NativePeer { key: pin, address },
+                NativePeer {
+                    key: selected.public_key,
+                    address: selected.endpoint.address,
+                },
                 budget(),
                 1000,
                 origin,
@@ -177,7 +211,8 @@ impl Fixture {
             tokio::task::yield_now().await;
         }
         assert!(NativeMailboxClient::attach(&mut client_link, 0, [99; 32]).is_err());
-        let client = NativeMailboxClient::attach(&mut client_link, 0, pin)?;
+        directory_book.check_continuous_native_peer_v7(selected.public_key, 1000)?;
+        let client = NativeMailboxClient::attach(&mut client_link, 0, selected.public_key)?;
         let server = NativeMailboxServer::attach(&mut server_link, 0)?;
         assert!(NativeMailboxClient::attach(&mut client_link, 0, pin).is_err());
         assert!(NativeMailboxServer::attach(&mut server_link, 0).is_err());

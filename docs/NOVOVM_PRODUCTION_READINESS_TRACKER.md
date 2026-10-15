@@ -3,6 +3,38 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原生信箱自主目录：移除发现层强制 Iroh 依赖
+
+基线7a7bc0f6，认领27f047ce；同步另一机器a8687658文档纠偏（共享通讯源码未变）。
+原调用链 `ServiceLeaseBookV1::new_self_owned/replace_self_owned_records/restore_self_owned`
+改为验证同一签名记录中的显式服务集合，替换此前“每条必须含Iroh地址”的限制。
+新增 `NativeMailboxEndpointV7` 在既有Udp类型中使用明确的
+`udp://<SocketAddr>/novonet-mailbox/v7`，与已交付NVMBOX07结构信箱匹配；普通Udp、
+错误版本、重复/畸形替代入口不能冒充信箱。签名pin同时是原生握手及StoreReceipt
+服务公钥，不新建身份或目录，不改金融执行路径，不把聊天变成链上交易。
+
+原book输出native_mailbox_candidates_v7，原host可持久发布/移除native入口；
+已有Iroh/TLS声明轮换保留native，native更新保留其他入口。纯native记录可导入、
+恢复和续声明，无Iroh占位或Publisher。新拨号要求新鲜且完全匹配的签名地址；
+健康会话另查原pin/本地撤销/服务存在性，不因声明到期拆连接。实际NativeObjectLink
+会话代次/AEAD持有证明、业务能力、资源和隐私要求仍由原owner执行；候选不是在线
+证明，更不是匿名资格。旧Iroh/V2接口遇纯native记录明确拒绝或不输出Iroh候选。
+
+验证（Windows debug）：新目录6项均通过，包含伪造/未知pin/序号回滚/等序异文、
+过期拨号拒绝但健康会话持续、撤销重开不可复活、纯native及三载体持久轮换。
+全部lease组串行61通过1失败，127.30s；失败仍为此前台账已记录的
+bootstrap_recovery_original_deadline_and_permission_prevent_dials一秒清理计时。
+首轮并行51通过5失败（新增测试前），包含全局carrier额度竞争；串行后仅上述计时
+失败，保留原断言，不宣称全绿。原native_mailbox_session改为从真实签名候选取
+socket地址后使用共享原生SDK，8项全部通过0.19s；原mailbox_tls_node真实服务4项
+通过15.16s；组合feature lib/全部tests严格Clippy通过26.09s。证据在NOVOCHAT的
+忽略目录artifacts/native-discovery-{lease,session,tls,clippy}.log。
+
+尚未部署native节点监听/手机运行owner，未改变两台现有安装/消息/网络配置。
+不能据本机socket测试宣称蜂窝穿透、智能路由上线或低延迟达标。下一接线仍是
+现有L3/L4节点owner挂接共享NativeObjectLink/NativeMailboxServer，现有Application
+owner消费相同目录与NativeMailboxClient；不建立新SDK或另一个调度系统。
+
 ## 2026-10-16 原生SDK在途取消：旧请求停止发送，保管不回滚
 
 基线c2c1f6fc，先合入另一设备943092da已有同key换源/代次隔离，认领推送c31c212e。

@@ -60,7 +60,15 @@ impl ServiceLeaseBookV1 {
         ensure!(self.is_self_owned(), "continuous peer requires local trust");
         let entry = self.entries.get_mut(&pin).context("service revoked")?;
         ensure!(
-            entry.decoded_current()?.iroh.address.endpoint_key == endpoint,
+            entry
+                .decoded_current()?
+                .routes
+                .iroh
+                .as_ref()
+                .context("Iroh service endpoint required")?
+                .address
+                .endpoint_key
+                == endpoint,
             "self-owned transport changed"
         );
         Ok(())
@@ -82,7 +90,15 @@ impl ServiceLeaseBookV1 {
         self.observe(now)?;
         let entry = self.entries.get_mut(&pin).context("service revoked")?;
         ensure!(
-            entry.decoded_current()?.iroh.address.endpoint_key == endpoint,
+            entry
+                .decoded_current()?
+                .routes
+                .iroh
+                .as_ref()
+                .context("Iroh service endpoint required")?
+                .address
+                .endpoint_key
+                == endpoint,
             "self-owned transport changed"
         );
         Ok(())
@@ -128,7 +144,7 @@ impl ServiceLeaseBookV1 {
         let mut entries = self.entries.clone();
         let mut seen = BTreeSet::new();
         for record in records {
-            verify(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
             ensure!(
                 seen.insert(record.relay_public_key),
                 "duplicate self-owned update"
@@ -155,7 +171,7 @@ impl ServiceLeaseBookV1 {
         );
         let mut entries = BTreeMap::new();
         for record in records {
-            verify(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
             ensure!(
                 trust.node_pins.contains(&record.relay_public_key),
                 "unconfirmed self-owned node"
@@ -192,19 +208,20 @@ impl ServiceLeaseBookV1 {
     pub fn bootstrap_candidates(&mut self, now: u64) -> Result<Vec<ServiceBootstrapCandidateV1>> {
         self.observe(now)?;
         if self.is_self_owned() {
-            return self
-                .entries
-                .values_mut()
-                .map(|entry| {
-                    Ok(ServiceBootstrapCandidateV1 {
-                        public_key: entry.current.relay_public_key,
-                        endpoint: entry.decoded_current()?.iroh.clone(),
+            let mut candidates = Vec::new();
+            for entry in self.entries.values_mut() {
+                let pin = entry.current.relay_public_key;
+                if let Some(endpoint) = &entry.decoded_current()?.routes.iroh {
+                    candidates.push(ServiceBootstrapCandidateV1 {
+                        public_key: pin,
+                        endpoint: endpoint.clone(),
                         authenticate_before_ms: now
                             .checked_add(MAX_SERVICE_LEASE_MS)
                             .context("local clock exhausted")?,
-                    })
-                })
-                .collect();
+                    });
+                }
+            }
+            return Ok(candidates);
         }
         self.bootstrap_routes(now)?
             .iter()
@@ -302,8 +319,11 @@ impl ServiceLeaseBookV1 {
                     && current.issued_at_ms <= state.clock,
                 "self-owned checkpoint identity/clock"
             );
-            let old = verify(grant, grant.issued_at_ms, MAX_BOOTSTRAP_LEASE_MS)?;
+            let old = verify_service_record(grant, grant.issued_at_ms, MAX_BOOTSTRAP_LEASE_MS)?;
             if current != grant {
+                // Different grant/current is the legacy Iroh online-renewal
+                // shape. Native locator updates atomically replace both.
+                let old = old.iroh.context("Iroh service endpoint required")?;
                 let live = verify(current, current.issued_at_ms, MAX_SERVICE_LEASE_MS)?;
                 ensure!(
                     old.address.endpoint_key == live.address.endpoint_key
