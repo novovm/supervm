@@ -1,5 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 bounded multi-mailbox client (active communications claim):**
+NOVOCHAT input c153796c, downstream f54cb2f. Extend existing
+novorudp/endpoint.rs connect_client construction to bounded multiple explicit
+client-role peers on the SAME socket/state machine, plus focused endpoint tests.
+No change to original mainchain bind/poll/receive ownership or its active claims.
+Downstream original Application owner will keep per-node mailbox operations and
+receiver-owned descriptors independent; this is not independent-device HA proof.
+Root integrates and owns the single local build slot; native_listener_impl owns
+only this endpoint constructor and a new focused test submodule. Preserve original
+key binding, handshake bounds, byte accounting and no compatibility fallback.
+
 **2026-10-16 structured pending/selection (active mainchain claim):** July
 recovery input3ed27bec, shared input6b6ce09d. Root owns APFL borrowed-row
 construction, integration and the single mainchain build/performance slot;
