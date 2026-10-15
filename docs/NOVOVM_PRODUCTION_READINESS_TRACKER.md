@@ -3,6 +3,27 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 原 Windows 节点升级到空闲 V6 运行时
+
+固定输入b8afbf95，release构建通过；原托管节点由da55b71502d4升级为
+cab8da1354b6dbbb2c6fa12f0c1c7d3bb578a464920255ad6ffc03dd945c9c65。
+沿原用户任务安装入口升级，配置/身份/DPAPI/策略4项哈希保持，停机后备份，
+信箱及两份日志在启动前保持，未回滚日志、未初始化新节点。单进程fresh serving
+约7.2秒。VPN路径与配置未修改；不是全新无依赖网络或秒级交付声明。
+
+原两台正式Android不换安装、不手动Connect，恢复后9108/9109双向消息及
+持久设备回执通过，截图核对各一次。发送侧Put至首个设备回执1797/2061ms；
+期间用户另发一条消息，未混入两个标记的统计。首次升级观察保留旧连接code3、
+蜂窝恢复期间一次code8/网络代次变化；后续两端running/code0，Wi-Fi direct、
+蜂窝仍外部relay。不能把观察尾部健康描述为全过程无错误或五轮恢复通过。
+
+既有mailbox_peer_probe增加可选0–35秒空闲，再使用同一会话寄存；保留原55秒
+请求整体限制与能力/存储回执校验。release编译通过。对原L3的独立随机身份
+探测在认证前被拒绝，原L3仍为Pinned客户端策略，未为测试放宽策略；不将其
+算成空闲验收通过。此后应由原手机已认证会话验证删除业务保活后的实际空闲。
+证据：artifacts/mailbox-idle-node-{release-build,probe-build,live-probe}.log，
+NOVOCHAT/artifacts/idle-node-upgrade.json、message-events-device/idle-node-*.json。
+
 ## 2026-10-15 原生帧实现收敛：删除重复codec，载体尚未切换
 
 输入8dfa2820。核对原novorudp与duplex帧代码：同NOVRUDP0/version1、字段布局和

@@ -27,8 +27,13 @@ use zeroize::Zeroizing;
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     ensure!(
-        args.len() == 4,
-        "usage: mailbox_peer_probe RECORD APPROVED_RELAY DNS_IP"
+        args.len() == 4 || args.len() == 5,
+        "usage: mailbox_peer_probe RECORD APPROVED_RELAY DNS_IP [IDLE_SECONDS]"
+    );
+    let idle_seconds: u64 = args.get(4).map(|v| v.parse()).transpose()?.unwrap_or(0);
+    ensure!(
+        idle_seconds <= 35,
+        "idle probe exceeds bounded operation budget"
     );
     let bytes = std::fs::read(&args[1])?;
     ensure!(bytes.len() <= 16384, "record too large");
@@ -78,6 +83,11 @@ async fn main() -> Result<()> {
                 let operation = Instant::now();
                 if !receive {
                     ensure!(matches!(session.request(MailboxRequestV1::Register { mailbox, read:caps.0, write:caps.1, expires }).await?, MailboxReplyV1::Registered), "register rejected");
+                    if idle_seconds > 0 {
+                        let idle = Instant::now();
+                        tokio::time::sleep(Duration::from_secs(idle_seconds)).await;
+                        println!("{}", serde_json::json!({"phase":"authenticated_idle_completed", "idle_ms":idle.elapsed().as_millis(), "application_requests":0}));
+                    }
                     let put = || MailboxRequestV1::Put { mailbox, write:caps.1, object, ciphertext:expected.clone(), expires };
                     let MailboxReplyV1::Stored(receipt) = session.request(put()).await? else { anyhow::bail!("missing storage receipt") };
                     receipt.verify(pin, mailbox, object, &expected, expires)?;
