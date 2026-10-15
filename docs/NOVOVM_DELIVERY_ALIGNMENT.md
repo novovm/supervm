@@ -18,6 +18,28 @@ of fully hiding child execution, historical9K recovery or100K capacity. Four
 real-AOEM successor fault/ACK tests and actual CPU/integer process closures pass.
 Claims released after root integration; final CI and combined-fault gaps remain.
 
+**2026-10-16 carrier admission/cleanup diagnosis (NOVOCHAT claim active):** input
+7075b765, downstream afaee82. Root owns iroh_transport.rs finite-scope/connection
+cleanup and focused existing tests, docs and one build slot. First measure the
+existing eight-second failure before changing behavior; no deadline expansion,
+false cleanup completion, ignored identity errors or live-node switch. Preserve
+long-lived endpoint ownership and original stream/connection limits. No edits to
+mainchain, AOEM, native ingress or another application scheduler.
+
+**2026-10-16 structured bound carrier handshake (claim released; runtime wiring pending):** input
+f29e5519, downstream c8832af. Reuse transport_binding.rs BoundHandshake/Finished
+and bound_session.rs CarrierStream adapter; explicit structured encoding only for
+native callers, no JSON auto-detection or fallback. Original crypto transcript,
+peer pins, replay and actual Finished write-before-channel remain authoritative.
+Root owns bound_session.rs integration/docs and ONE build slot; codec agent owns
+transport_binding.rs structured submodule plus focused tests only; review is read-only.
+No mainchain transport.rs/native_ingress, node/exec/AOEM/consensus changes. Typed
+native Carrier activation stays rejected until the actual stream owner is wired;
+codec/localhost checks do not claim phone NAT deployment or independent replicas.
+Structured binding22 and real QUIC6 PASS; strict combined-feature lib/tests
+Clippy PASS. Broader bound_ run34PASS/2FAIL/3ignored retains unresolved existing
+Iroh admission/cleanup deadline failures; see tracker. No live deployment.
+
 **2026-10-16 native observation bottleneck (source/measurement complete):**
 Frozen original-tick release completed65536 transactions at219.127TPS; cold
 receipt-only reads took305.766s. Preserve this failed performance baseline.
@@ -2140,3 +2162,18 @@ AOEM 经典隐私 JSON v2 源码已交付
 每次报告应说明“本次改变了什么用户能力、走哪条真实路径、有哪些证据、哪些仍未完成”。只有组件通过时写组件通过，只有本机验证时写本机验证。三条核心能力没有按其产品路径签收前，不得宣布已完整兑现高性能、隐匿资产、抗量子 Web3 的交付目标。
 
 用户后续明确批准的范围调整可以更新本文件；开发者不得自行把临时限制、兼容路径或局部验收改成最终产品定义。
+
+**2026-10-16 startup diagnosis claim extension:** Root temporarily instruments
+`vendor/iroh/src/socket.rs` and `endpoint.rs` around existing bind stages to
+distinguish Windows network-monitor initialization from socket/TLS creation.
+No new listener, timeout extension or trust change. The original
+`iroh_transport.rs` scope remains owned; one build slot.
+
+**2026-10-16 measured Windows interface snapshot fix claim:** Monitor first polls
+block the executor for 2.167/4.162/1.161 seconds; standalone netdev 0.45.1
+enumeration takes 1.170/4.181/4.188 seconds. Root owns Cargo.toml/Cargo.lock
+patch entry, vendored netdev 0.45.1 and its Windows gateway enumeration only.
+Replace active SendARP metadata resolution with passive neighbor-cache lookup;
+preserve gateway IPs with unknown MAC and all authentication/deadline policy.
+No mainchain/SDK execution change, no network configuration change. Temporary
+iroh instrumentation will be removed after before/after measurement.

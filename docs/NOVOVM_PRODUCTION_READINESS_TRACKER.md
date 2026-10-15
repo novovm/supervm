@@ -37,6 +37,28 @@ AOEM31306037…，诊断关闭。旧节点4f0d01ca…、新3b6ee279…：
 仍缺新整合的完整网络竞争父/A/A/B、硬崩溃未知写入、跨机器容量、完整证明与发布
 验收。rustls安全告警和最终提交CI另行处理，不能以本机性能通过豁免。
 
+## 2026-10-16 原生载体结构化绑定认证，未部署手机
+
+输入 `f29e5519`，NOVOCHAT `c8832af`。原 `bound_session` 状态机增加显式
+结构化入口，Offer/Response 使用现有 APFL，Finished 使用原 NVRLY002 二进制
+Data；原签名摘要、双身份/真实 exporter 绑定、重放、实际 Finished 写出及
+回调拒绝均保留。解码不能代替认证，旧 JSON 不作为原生失败后备。原生
+Carrier 激活仍拒绝，实际 owner/服务版本/流绑定和手机跨网接线尚未完成。
+
+`transport_binding` 22/22 PASS（0.16s）；更新后的公开结构化入口真实本机
+QUIC 六项 6/6 PASS（52.13s），覆盖固定身份/开放密钥持有接入、双向加密
+业务、重放、错误身份、旧格式拒绝、连接中断、篡改 Finished 及观察回调拒绝。
+不是蜂窝 NAT、自有 Relay、300ms 延迟或独立设备副本验收。
+
+扩展 `bound_` 过滤回归 34 PASS / 2 FAIL / 3 ignored（197.83s）：全部
+新旧 bound_session 通过；既有 Iroh 连接容量测试与“不打开流”测试发生
+`carrier scope expired`。前者单独复测仍 FAIL（8.42s），后者单独 PASS（7.39s）。
+两项直接走 Iroh，不调用本轮握手；共同8秒 scope 包含 endpoint 关闭等待，
+其中 no-stream 另有3秒 setup 等待。这是定位线索，不是根因结论，不能将
+整个扩展回归标为通过。保留原期限，后续需分辨操作与回收阶段；未改运行节点。
+
+Iroh/TLS 组合 lib/tests 严格 Clippy PASS（37.06s），`git diff --check` PASS。
+
 ## 2026-10-16 原生查询调度修复与有界批回执，仍未恢复历史性能
 
 合并共享carrier更新后的`cb4bb9eb`已重建release节点4f0d01ca…，保持冻结SDK发压器

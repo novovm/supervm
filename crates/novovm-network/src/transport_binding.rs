@@ -20,6 +20,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::Zeroize;
 
+pub mod structured;
+
 pub const BOUND_TRANSPORT_ALPN_V1: &[u8] = b"novovm/bound-carrier/1";
 pub const BOUND_TRANSPORT_EXPORTER_LABEL_V1: &[u8] = b"EXPORTER-NOVOVM-bound-carrier-v1";
 /// Legacy carriers use this exact context. Explicit NVMBOX05 Iroh streams append
