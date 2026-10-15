@@ -3,6 +3,31 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原生SDK在途取消：旧请求停止发送，保管不回滚
+
+基线c2c1f6fc，先合入另一设备943092da已有同key换源/代次隔离，认领推送c31c212e。
+在原NativeObjectLink发送job附加有界本地取消信号；client的Pending销毁（失效、
+超时、正常完成或owner退出）停止尚存的请求重传。server失效/退出停止该owner
+已入队回复；单个response失败只定向取消同一Arc，不影响其他合法请求。失败reply
+handle不可用后续Ok检查复活；不重新建立SDK/线程/监听器、不改变业务操作期限。
+
+原poll在发送或处理ACK前检查取消，输出Cancelled并归还原对象及额度；它是未知
+远端结果，不是Delivered或存储回滚。取消前已发的内核数据包不能撤回，远端部分
+重组仍按原TTL清理；原owner必须继续驱动poll。取消不重置防重放claim/序号，
+不切断健康endpoint，不删除原消息/已提交密文；权限撤销仍由既有调用者检查触发。
+尚无网络撤销广播或能力缓冲全面安全擦除，不扩大本片结论。
+
+Windows debug实测：native_mailbox_session真实UDP8项通过0.57s；包含入队后
+撤销、drop客户端无等待停发、落盘后取消回复仍能读取原密文、另一槽继续完成、
+已有换代和并行Watch/Put。novorudp过滤86项通过0.82s（含部分发送取消归还额度、
+同一健康连接另一lane继续完成、错误对象handle不能取消）；结构单元7项通过0.23s。
+组合features的lib/全部tests严格Clippy通过32.32s，已有Cargo重复bin提示保留。
+日志在NOVOCHAT artifacts/native-cancel-*.log。首轮回归发现取消范围过大，已收敛
+为单reply定向取消与server owner整体失效分别处理；最终上述全量目标通过。
+
+当前是共享运行时改动，未更新两台手机或常驻节点，不是手机原生协议迁移、NAT
+可达性或300ms验收。后续由NOVOCHAT原Application owner接同一个共享实现。
+
 ## 2026-10-16 共享传输交接收口，手机归另一设备，返回主链闭环
 
 输入af77af16，重连实现b20f8ac8，本次合并NOVOCHAT c2c1f6fc的操作期限修复。

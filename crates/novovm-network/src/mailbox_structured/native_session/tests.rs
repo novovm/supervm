@@ -35,6 +35,7 @@ fn work(slots: Slots, deadline: Instant) -> Result<MailboxWork> {
             slot: 0,
             sequence: 1,
             armed: true,
+            cancellation: NativeSendCancellation::default(),
             validity: NativeSessionValidity::new(),
         },
         peer: 0,

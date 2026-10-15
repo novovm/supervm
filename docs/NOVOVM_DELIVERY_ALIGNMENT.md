@@ -1,11 +1,13 @@
 # NOVOVM 产品目标与交付主线
-**2026-10-16 native in-flight cancellation (active claim):** NOVOCHAT session,
+**2026-10-16 native in-flight cancellation (claim released):** NOVOCHAT session,
 input c2c1f6fc plus shared reconnect 943092da. Scope: original novorudp object_link/sender completion state,
 shared mailbox_structured/native_session and focused tests/handoff. Propagate
 owner/request invalidation into retained native sends without resetting replay
 counters, tearing healthy peers down or undoing committed mailbox custody.
 No new SDK/transport/runtime, finance, AOEM or July recovery-tree changes.
-Reuse delivered reconnect; actual Android activation remains subsequent integration.
+Reuse delivered reconnect. Eight real UDP mailbox tests, 86 native regressions,
+seven structured tests and strict lib/all-tests Clippy pass. Android activation
+and actual mobile latency remain subsequent integration.
 
 **2026-10-16 native reconnect (claim released):** July recovery owner, input
 af77af16. Scope: existing native endpoint/object-link session replacement and

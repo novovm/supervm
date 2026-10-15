@@ -11,7 +11,8 @@ use crate::{
     novorudp::{
         fragments::{CompletedMessage, FragmentProfile, OutgoingMessage},
         object_link::{
-            NativeApplicationRole, NativeObjectLink, NativeSendCompletion, NativeSessionValidity,
+            NativeApplicationRole, NativeObjectLink, NativeSendCancellation, NativeSendCompletion,
+            NativeSessionValidity,
         },
         object_sender::ObjectSendState,
     },
@@ -129,12 +130,18 @@ pub struct RequestId {
     pub sequence: u64,
 }
 struct Pending {
+    cancellation: NativeSendCancellation,
     id: RequestId,
     context: [u8; 32],
     requests: Vec<Request>,
     body: Arc<OutgoingMessage>,
     sent: bool,
     deadline: Instant,
+}
+impl Drop for Pending {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
 }
 struct ClientSlot {
     sequence: u64,
@@ -191,6 +198,7 @@ impl NativeMailboxClient {
         let context = self.binding.context(slot, id.sequence);
         let body = outgoing(encode_requests(context, &requests)?)?;
         s.pending = Some(Pending {
+            cancellation: NativeSendCancellation::default(),
             id,
             context,
             requests,
@@ -223,7 +231,14 @@ impl NativeMailboxClient {
             anyhow::bail!("mailbox deadline; outcome unknown");
         }
         if !p.sent {
-            p.sent = link.try_send_until(self.binding.peer, STREAM, &p.body, now, p.deadline)?;
+            p.sent = link.try_send_cancellable_until(
+                self.binding.peer,
+                STREAM,
+                &p.body,
+                now,
+                p.deadline,
+                &p.cancellation,
+            )?;
         }
         Ok(p.sent)
     }
@@ -276,7 +291,9 @@ impl NativeMailboxClient {
                 .is_some_and(|p| Arc::ptr_eq(&p.body, &event.body))
                 && matches!(
                     event.state,
-                    ObjectSendState::Expired | ObjectSendState::SessionReplaced
+                    ObjectSendState::Expired
+                        | ObjectSendState::SessionReplaced
+                        | ObjectSendState::Cancelled
                 )
             {
                 s.failed = true;
@@ -363,10 +380,12 @@ struct ServerSlot {
 type Slots = Arc<Mutex<[ServerSlot; SLOTS]>>;
 pub struct NativeMailboxServer {
     binding: Binding,
+    cancellation: NativeSendCancellation,
     slots: Slots,
 }
 impl NativeMailboxServer {
     pub fn invalidate(&mut self) {
+        self.cancellation.cancel();
         if let Ok(mut slots) = self.slots.lock() {
             for slot in slots.iter_mut() {
                 slot.phase = Phase::Failed;
@@ -376,6 +395,7 @@ impl NativeMailboxServer {
     pub fn attach(link: &mut NativeObjectLink, peer: usize) -> Result<Self> {
         Ok(Self {
             binding: Binding::claim(link, peer, NativeApplicationRole::Service)?,
+            cancellation: NativeSendCancellation::default(),
             slots: Arc::new(Mutex::new(std::array::from_fn(|_| ServerSlot {
                 sequence: 1,
                 phase: Phase::Ready,
@@ -396,6 +416,10 @@ impl NativeMailboxServer {
             self.invalidate();
             return Err(error);
         }
+        ensure!(
+            !self.cancellation.is_cancelled(),
+            "mailbox service owner cancelled"
+        );
         ensure!(body.peer == self.binding.id, "mailbox request peer");
         let bytes = flatten(&body)?;
         let context = context(&bytes)?;
@@ -421,6 +445,7 @@ impl NativeMailboxServer {
                 sequence: slots[index].sequence,
                 armed: true,
                 validity: self.binding.validity.clone(),
+                cancellation: self.cancellation.clone(),
             },
             peer: self.binding.peer,
             session: self.binding.session,
@@ -440,12 +465,13 @@ struct WorkGuard {
     sequence: u64,
     armed: bool,
     validity: NativeSessionValidity,
+    cancellation: NativeSendCancellation,
 }
 impl WorkGuard {
     fn check(&self) -> Result<()> {
         ensure!(
-            self.validity.is_current(),
-            "mailbox transport session retired"
+            self.validity.is_current() && !self.cancellation.is_cancelled(),
+            "mailbox transport session retired/cancelled"
         );
         let slots = self
             .slots
@@ -517,11 +543,13 @@ impl MailboxWork {
             session: self.session,
             deadline: self.deadline,
             sent: false,
+            failed: false,
         })
     }
 }
 
 pub struct MailboxResponse {
+    failed: bool,
     body: Arc<OutgoingMessage>,
     guard: WorkGuard,
     peer: usize,
@@ -540,9 +568,10 @@ impl MailboxResponse {
         now: Instant,
         authority: impl Fn() -> Result<()>,
     ) -> Result<bool> {
+        ensure!(!self.failed, "mailbox response cancelled");
         if let Err(error) = authority().and_then(|_| {
             ensure!(
-                self.guard.validity.is_current(),
+                self.guard.validity.is_current() && !self.guard.cancellation.is_cancelled(),
                 "mailbox transport session retired"
             );
             ensure!(
@@ -555,6 +584,8 @@ impl MailboxResponse {
             );
             Ok(())
         }) {
+            self.failed = true;
+            link.cancel_send(self.peer, STREAM, &self.body);
             self.guard.fail();
             return Err(error);
         }
@@ -573,7 +604,14 @@ impl MailboxResponse {
                 .sequence
                 .checked_add(1)
                 .context("mailbox sequence exhausted")?;
-            if !link.try_send_until(self.peer, STREAM, &self.body, now, self.deadline)? {
+            if !link.try_send_cancellable_until(
+                self.peer,
+                STREAM,
+                &self.body,
+                now,
+                self.deadline,
+                &self.guard.cancellation,
+            )? {
                 return Ok(false);
             }
             s.sequence = next;

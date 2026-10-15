@@ -198,3 +198,19 @@ cargo test --locked -p novovm-network --features iroh-transport,tls-transport,ma
 
 移动换源重连/故障槽恢复、在途撤销定向取消、能力缓冲全面擦除和正式Application
 接线仍待完成。四个请求槽是当前有界并发，不是聊天历史或累计发送条数上限。
+
+## 2026-10-16 消费端补齐：原发送队列取消传播
+
+`NativeObjectLink::try_send_cancellable_until`在原有队列中保留本地单向取消信号，
+`cancel_send`仅接受原Arc对象进行定向取消。`Cancelled`与`SessionReplaced`、
+`Expired`都是未知业务结果，必须保留原业务ID及恢复信息。它不是全网许可或新的
+认证；不会撤回已经进入内核的包、远端已提交密文或已报告的Delivered。
+
+共享native_session已直接接入：client Pending退出自动通知原发送队列；server
+invalidate/drop停止该owner已排队回复。单个response授权/期限检查失败仅取消
+该回复并锁住handle，不能通过再次返回Ok复活，也不会取消其他槽。原poll有界
+回收额度，原owner需继续poll；远端未完分片保持原TTL与额度，不凭取消删除托管。
+所有路径仍使用同一个endpoint、原加密与序号、防重放和StoreReceipt验证。
+
+已通过桌面实际UDP和负向验证。原生平台接线、可达性/手机延迟、全能力缓冲擦除
+仍未签收；取消接口不能冒充这些完成，也不支持用旧HTTP/JSON后备填补缺口。

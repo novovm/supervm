@@ -88,6 +88,18 @@ impl NativeSessionValidity {
         self.0.store(false, Ordering::Release);
     }
 }
+/// Local cancellation only: stops future sends when the original owner polls.
+/// Does not recall datagrams, roll back remote commits or authorize a retry.
+#[derive(Clone, Default)]
+pub struct NativeSendCancellation(Arc<AtomicBool>);
+impl NativeSendCancellation {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
 struct Lane {
     config: NativeLaneConfig,
     receiver: NativeObjectReceiver,
@@ -141,6 +153,7 @@ pub struct NativeObjectLink {
     peers: BTreeMap<String, usize>,
     jobs: BTreeMap<JobKey, NativeObjectSender>,
     order: VecDeque<JobKey>,
+    cancellations: BTreeMap<JobKey, NativeSendCancellation>,
     feedback_turn: usize,
     epoch: u64,
     policy: NativeSendPolicy,
@@ -210,6 +223,7 @@ impl NativeObjectLink {
             peers,
             jobs: BTreeMap::new(),
             order: VecDeque::new(),
+            cancellations: BTreeMap::new(),
             feedback_turn: 0,
             epoch: 0,
             policy,
@@ -360,6 +374,46 @@ impl NativeObjectLink {
         self.order.push_back(key);
         Ok(true)
     }
+    /// Cancel only this retained object handle. An equal digest from another
+    /// caller is not ownership of the queued send. Quota is returned by poll.
+    pub fn cancel_send(&mut self, peer: usize, stream: u64, body: &Arc<OutgoingMessage>) -> bool {
+        let Some(sender) = self.jobs.get_mut(&(peer, stream, body.id())) else {
+            return false;
+        };
+        if !Arc::ptr_eq(sender.body(), body) {
+            return false;
+        }
+        sender.cancel();
+        true
+    }
+
+    /// Retain the caller's one-way cancellation signal with the SAME send job.
+    /// Re-enqueue cannot replace its owner, restart its deadline or revive it.
+    pub fn try_send_cancellable_until(
+        &mut self,
+        peer: usize,
+        stream: u64,
+        body: &Arc<OutgoingMessage>,
+        now: Instant,
+        deadline: Instant,
+        cancellation: &NativeSendCancellation,
+    ) -> Result<bool> {
+        ensure!(!cancellation.is_cancelled(), "native send cancelled");
+        let key = (peer, stream, body.id());
+        if self.jobs.contains_key(&key) {
+            ensure!(
+                self.cancellations
+                    .get(&key)
+                    .is_some_and(|old| Arc::ptr_eq(&old.0, &cancellation.0)),
+                "native send cancellation owner mismatch"
+            );
+        }
+        let accepted = self.try_send_until(peer, stream, body, now, deadline)?;
+        if accepted {
+            self.cancellations.insert(key, cancellation.clone());
+        }
+        Ok(accepted)
+    }
     pub fn poll(&mut self, wall_ms: u64, now: Instant, quantum: usize) -> Result<NativeLinkPoll> {
         let NativePoll {
             frames,
@@ -420,6 +474,13 @@ impl NativeObjectLink {
                 };
                 let key = (received.peer(), stream, id.try_into()?);
                 if let Some(sender) = self.jobs.get_mut(&key) {
+                    if self
+                        .cancellations
+                        .get(&key)
+                        .is_some_and(NativeSendCancellation::is_cancelled)
+                    {
+                        sender.cancel();
+                    }
                     if sender.status() == ObjectSendState::Sending
                         && sender.on_ack(frame, now).is_err()
                     {
@@ -482,6 +543,13 @@ impl NativeObjectLink {
         for _ in 0..quantum.min(self.order.len()) {
             let key = self.order.pop_front().expect("bounded job count");
             let sender = self.jobs.get_mut(&key).expect("retained send job");
+            if self
+                .cancellations
+                .get(&key)
+                .is_some_and(NativeSendCancellation::is_cancelled)
+            {
+                sender.cancel();
+            }
             if sender.status() == ObjectSendState::Sending {
                 match self
                     .endpoint
@@ -502,6 +570,7 @@ impl NativeObjectLink {
                 continue;
             }
             let sender = self.jobs.remove(&key).expect("finished send job");
+            self.cancellations.remove(&key);
             let state = sender.status();
             let body = sender.into_body();
             let lane = self.lanes.get_mut(&key.1).expect("configured lane");

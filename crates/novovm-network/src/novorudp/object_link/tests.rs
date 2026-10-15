@@ -381,3 +381,73 @@ fn operation_deadline_caps_repairs_without_resetting_a_live_send() -> Result<()>
     assert_eq!(a.outbound_usage(BODY)?, (0, 0));
     Ok(())
 }
+
+#[test]
+fn cancelled_partial_send_releases_quota_without_resetting_healthy_session() -> Result<()> {
+    let (mut a, mut b, _c) = pair_and_third()?;
+    let session = a.session_id(0);
+    let now = Instant::now();
+    let body = message(BODY, 81, 8192)?;
+    let cancel = NativeSendCancellation::default();
+    assert!(a.try_send_cancellable_until(
+        0,
+        BODY,
+        &body,
+        now,
+        now + Duration::from_secs(1),
+        &cancel
+    )?);
+    assert!(a
+        .try_send_cancellable_until(
+            0,
+            BODY,
+            &body,
+            now,
+            now + Duration::from_secs(2),
+            &NativeSendCancellation::default()
+        )
+        .is_err());
+    assert_eq!(a.poll(1000, now, 1)?.data_sent, 1);
+    assert!(!a.cancel_send(0, BODY, &message(BODY, 81, 8192)?));
+    cancel.cancel();
+    cancel.cancel(); // idempotent, never resets a request
+    assert!(a
+        .try_send_cancellable_until(0, BODY, &body, now, now + Duration::from_secs(2), &cancel)
+        .is_err());
+    let report = a.poll(1000, now, 8)?;
+    assert_eq!(report.data_sent, 0);
+    assert_eq!(report.completed.len(), 1);
+    assert_eq!(report.completed[0].state, ObjectSendState::Cancelled);
+    assert!(Arc::ptr_eq(&report.completed[0].body, &body));
+    assert_eq!(a.outbound_usage(BODY)?, (0, 0));
+    assert!(a.cancellations.is_empty());
+    assert_eq!(a.session_id(0), session);
+    assert!(a.poll(1000, now, 8)?.completed.is_empty());
+
+    // A different lane completes over the SAME connection. Remote partial
+    // assembly is still bounded by its original TTL, not erased by local cancel.
+    let next = message(CONTROL, 82, 600)?;
+    assert!(a.try_send(0, CONTROL, &next, now)?);
+    let mut received = false;
+    let mut delivered = false;
+    while !received || !delivered {
+        ensure!(
+            now.elapsed() < Duration::from_secs(2),
+            "healthy send stalled after cancellation"
+        );
+        let t = Instant::now();
+        for done in a.poll(1000, t, 8)?.completed {
+            assert_eq!(done.state, ObjectSendState::Delivered);
+            assert!(Arc::ptr_eq(&done.body, &next));
+            delivered = true;
+        }
+        let _ = b.poll(1000, t, 8)?;
+        if let Some(item) = b.poll_complete(CONTROL, t, 8)? {
+            assert_eq!(item.id, next.id());
+            received = true;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(a.session_id(0), session);
+    Ok(())
+}

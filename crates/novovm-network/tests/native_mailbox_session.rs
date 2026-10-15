@@ -543,3 +543,165 @@ async fn shared_session_multiplexes_watch_and_put_and_checks_actual_storage_repl
     ));
     Ok(())
 }
+
+#[tokio::test]
+async fn client_invalidation_stops_enqueued_bytes_and_cannot_restart_owner() -> Result<()> {
+    let mut f = Fixture::new().await?;
+    let session = f.client_link.session_id(0);
+    let id = f.send(
+        0,
+        vec![Request::Register {
+            mailbox: [1; 32],
+            write: [2; 32],
+            read: [3; 32],
+            expires: i64::MAX,
+        }],
+    )?;
+    assert_eq!(f.client_link.outbound_usage(STREAM)?.0, 1);
+    f.client.invalidate();
+    let report = f.client_link.poll(1000, Instant::now(), 64)?;
+    assert_eq!(report.data_sent, 0);
+    assert_eq!(report.completed.len(), 1);
+    assert_eq!(
+        report.completed[0].state,
+        novovm_network::novorudp::object_sender::ObjectSendState::Cancelled
+    );
+    assert_eq!(f.client_link.outbound_usage(STREAM)?, (0, 0));
+    assert_eq!(f.client_link.session_id(0), session);
+    assert!(f
+        .client
+        .try_send(&mut f.client_link, id, Instant::now(), || Ok(()))
+        .is_err());
+    assert!(
+        NativeMailboxClient::attach(&mut f.client_link, 0, f.server_link.local_identity()).is_err()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn service_revocation_cancels_queued_reply_but_preserves_real_stored_ciphertext() -> Result<()>
+{
+    let mut f = Fixture::new().await?;
+    let expires = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64
+        + 600;
+    let registration = f.send(
+        0,
+        vec![Request::Register {
+            mailbox: [1; 32],
+            write: [2; 32],
+            read: [3; 32],
+            expires,
+        }],
+    )?;
+    assert!(matches!(
+        f.until(registration).await?.as_slice(),
+        [Reply::Registered]
+    ));
+    let id = f.send(
+        0,
+        vec![Request::Put {
+            mailbox: [1; 32],
+            write: [2; 32],
+            object: [4; 32],
+            ciphertext: vec![9; 9000],
+            expires,
+        }],
+    )?;
+    let body = f.receive_request().await?;
+    let work = f
+        .server
+        .admit(&f.server_link, body, Instant::now(), || Ok(()))?;
+    let mut response = work.execute(&f.service, || Ok(())).await?;
+    assert!(response.try_send(&mut f.server_link, Instant::now(), || Ok(()))?);
+    f.server.invalidate(); // revoke AFTER enqueue, BEFORE network send
+    let report = f.server_link.poll(1000, Instant::now(), 64)?;
+    assert_eq!(report.data_sent, 0);
+    assert!(report
+        .completed
+        .iter()
+        .any(|done| done.state
+            == novovm_network::novorudp::object_sender::ObjectSendState::Cancelled));
+    assert_eq!(f.server_link.outbound_usage(STREAM)?, (0, 0));
+    assert!(response
+        .try_send(&mut f.server_link, Instant::now(), || Ok(()))
+        .is_err());
+    assert!(!f.received.iter().any(|(received, _)| *received == id));
+    // Actual existing mailbox custody remains; local cancellation is not rollback.
+    assert!(matches!(f.service.request_local_v1(Request::Fetch {
+        mailbox: [1; 32], read: [3; 32],
+    }).await?, Reply::Object { ciphertext, .. } if ciphertext == vec![9; 9000]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn dropped_client_stops_retained_requests_without_waiting_for_transport_ttl() -> Result<()> {
+    let mut f = Fixture::new().await?;
+    f.send(
+        0,
+        vec![Request::Fetch {
+            mailbox: [1; 32],
+            read: [3; 32],
+        }],
+    )?;
+    drop(f.client);
+    let report = f.client_link.poll(1000, Instant::now(), 64)?;
+    assert_eq!(report.data_sent, 0);
+    assert_eq!(report.completed.len(), 1);
+    assert_eq!(
+        report.completed[0].state,
+        novovm_network::novorudp::object_sender::ObjectSendState::Cancelled
+    );
+    assert_eq!(f.client_link.outbound_usage(STREAM)?, (0, 0));
+    Ok(())
+}
+
+#[tokio::test]
+async fn response_cancel_after_enqueue_is_latched_but_other_slot_keeps_working() -> Result<()> {
+    let mut f = Fixture::new().await?;
+    f.send(
+        0,
+        vec![Request::Register {
+            mailbox: [1; 32],
+            write: [2; 32],
+            read: [3; 32],
+            expires: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs() as i64
+                + 600,
+        }],
+    )?;
+    let body = f.receive_request().await?;
+    let work = f
+        .server
+        .admit(&f.server_link, body, Instant::now(), || Ok(()))?;
+    let mut response = work.execute(&f.service, || Ok(())).await?;
+    assert!(response
+        .try_send(&mut f.server_link, Instant::now(), || Ok(()))
+        .is_ok_and(|v| v));
+    assert!(response
+        .try_send(&mut f.server_link, Instant::now(), || anyhow::bail!(
+            "operation cancelled"
+        ))
+        .is_err());
+    assert!(response
+        .try_send(&mut f.server_link, Instant::now(), || Ok(()))
+        .is_err());
+    let report = f.server_link.poll(1000, Instant::now(), 64)?;
+    assert_eq!(report.data_sent, 0);
+    assert!(report
+        .completed
+        .iter()
+        .any(|done| done.state
+            == novovm_network::novorudp::object_sender::ObjectSendState::Cancelled));
+    let next = f.send(
+        1,
+        vec![Request::Fetch {
+            mailbox: [1; 32],
+            read: [3; 32],
+        }],
+    )?;
+    assert!(matches!(f.until(next).await?.as_slice(), [Reply::Empty]));
+    Ok(())
+}
