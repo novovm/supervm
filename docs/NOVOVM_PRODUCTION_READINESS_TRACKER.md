@@ -3,6 +3,44 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 七月原生安全对象交付接入候选流水线
+
+目标保持active；恢复现场70eb8dab→本地e52a2b20，仍以4f45526d为主体。
+复用main@a9478676的原product_overlay握手/加密/防重放、checked原生帧及
+既有有界fragments，不迁入duplex worker、Relay controller或新执行器。
+帧只保留一份实现并接回后续长度/reserved修复；旧内嵌实现已替换，可从父提交恢复。
+原ACK窗口/repair选择函数未改，传输缺片不读取AOEM回执或账本计数。
+
+新增适配：NVRLY002既有Data二进制codec的独立载体子集（没有Relay连接或JSON），
+绑定原认证channel和来源端点的1200字节原生UDP；原重组器增加显式NVFRAG02
+768字节分片profile，保留NVFRAG01原大帧解释和正文哈希。整对象/每peer额度、
+TTL、乱序/重复/冲突校验沿用，不把大型签名批直接塞进单个UDP包。中间descriptor
+仍受消息数及声明字节上限约束；这些额度不是精确allocator/native内存计量。
+
+原node新增NativeApflReceiver交接：认证数据报→有界重组→装配owner解析APFL→
+既有AuthenticationRequest→同一CandidatePipeline。socket侧不执行交易验签/业务，
+装配操作要求下游有空槽，pipeline背压仍保留原请求。结果不授予nonce或投票权。
+原签名、链域、父绑定、完整代数执行和RocksDB候选恢复均复用上一片。
+
+Windows本机结果：原node binary locked check通过（13项未接消费者告警保留）；
+native_pipeline普通回归269通过、24忽略；network NovoRUDP筛选56通过、安全与
+二进制载体8通过。新增1024笔真实签名APFL原生加密UDP交付通过（逐行独立验签
+参照，不是1024笔共识/执行TPS）；256KiB对象丢片/乱序测试用原缺片窗口选择补齐。
+坏来源/篡改/重放/旧会话、错误stream/object、profile混用、per-peer背压及TTL反例通过。
+两笔真实交易的真AOEM完整计划测试现已经过实际UDP交付，坏签名/重复/错上下文、
+两种父余额、完整经济结果和冷重启核对通过。最终新增反例后两项重点测试均复跑。
+真库SHA256仍为31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947；
+未修改AOEM仓库或旧SDK。一次带不完整exact名称的命令匹配0项，未计入通过；
+随后正确命令实际运行1项通过。network严格Clippy失败13项，均位于本轮未改的
+eth_rlpx/overlay/transport旧源；不取消检查，也不宣称CI全绿。
+
+尚未完成：原node启动/连续生命周期消费、UDP线上握手与ACK收发/重试调度、
+唯一活动共识发布和RPC。当前握手密码操作在夹具内完成，丢片快照到repair选择
+也在进程内传递；因此不能声称已验收完整可靠网络或四节点主链。没有新增TPS。
+下一步继续这些实际接合，不重造ACK、不将收到数据视为落账；后续端到端负载仍
+按真实确认条件执行。源码仅本地detached提交，main本次只发布进度证据，49份
+草稿保持不动，未将尚未完成的恢复工程替换为生产默认。
+
 ## 2026-10-15 七月主体迁入完整代数候选与耐久流水线
 
 目标模式持续active。恢复现场由463220f7推进至本地70eb8dab，基底仍是七月
