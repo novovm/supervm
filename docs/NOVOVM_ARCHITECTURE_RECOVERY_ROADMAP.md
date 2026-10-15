@@ -19,6 +19,50 @@
 
 ## 2026-10-13 当前实施：完整代数计划与二进制结果
 
+### 2026-10-15 最新优先级：原生传输接回，停止保护十月 Relay 耦合
+
+用户允许废弃十月错误分叉，并要求快速推进。此次代码核查基线e128971b。
+结论是**以七月原生NovoRUDP/APFL结构技术为复用主干，在当前原node中替换载体耦合**，
+不是整仓回滚七月，也不是再造第三套网络。CPU快路径只是正确性/回归对照，不是
+最终技术上限；WSS/Relay不得因历史测试使用而成为永久强制主链入口。
+
+实际分叉证据：d431a74b（2026-10-04）把a7db795的网络迁入`novovm-network::duplex`。
+`duplex/worker.rs::run_worker`直接连接ProductRelayClientV1，session使用
+ProductRelayPipelineV1；`native_pipeline/consensus/channel.rs`直接持有NetworkWorker。
+`duplex/novorudp.rs`仅是帧codec，不包含原根模块的可靠传输/修复调度。
+原`novorudp`、`product_overlay`、路由和UDP实现仍存在：不是全部源码被覆盖，
+而是当前约10K测试路径未完整使用它们。WSS与E2E是不同层，原生UDP不授权移除身份、
+防重放或加密。不能仅换模块名、复用帧头就签收已接回完整NovoRUDP。
+
+| 已核实资产 | 处理与接合边界 |
+| --- | --- |
+| `novovm-network/src/novorudp.rs` 的帧、ACK窗口、repair选择、pacing | 复用纯传输部分，不重写；文件也含AOEM/账本生命周期统计，不能整体照搬为传输ACK |
+| `supervm-novorudp-network-only-gate.rs` 的真实UDP发送/接收/repair | 提取既有有限传输机制，不调用gate进程代替节点、不迁入测试钱包和固定交易生成 |
+| `transport.rs::UdpTransport` | 已有drain-first与源绑定，但API进入ProtocolMessage；不能把它当无适配的opaque字节worker直接替换 |
+| 根`product_overlay.rs`的握手/加密、防重放 | 保留并复用；与duplex版核对wire/会话边界，禁止静默混用会话或ACK |
+| `overlay_runtime.rs`/`adaptive_overlay.rs` | 已有直连/relay/多跳选择；这些是路由决策，不等同实际收发和可靠对象交付 |
+| exec `execute_apfl_native_transfer_bulk_wire_v1`及七月hot-plan/compact commit | 保留结构批资产；与当前独立签名、费用、nonce、条件失败和完整状态效应逐项适配，不直接恢复固定profile为生产业务 |
+| 当前node的APFL、父绑定、常驻AOEM、round_bft journal、发布/恢复 | 保留，不因传输切换再重写，不建立第二签者或链头 |
+
+七月4f45526源码明确标记`preserve_original_signature_no_crypto_v0`；旧TPS以传输
+完成窗口为分母，ledger计数有tx_count回退。它证明结构传输/执行资产，不能单独证明
+现行真实签名四节点最终确认。这个边界不构成丢弃原技术或另造网络的理由。
+
+两条路线比较：整仓七月起步还需重新迁入完整签名/费用/失败、父状态与恢复、耐久
+共识和RPC；这些已在当前原node工作。限定替换当前channel下的强制Relay接合，
+保留上述上层，改动面更明确。**选择后者，但允许删除验收后被替代的十月实现。**
+这是源码依赖范围判断，不是工期承诺或已证明原生传输一定提高TPS。
+
+下一实际代码交付限定：让同一个原node channel能够使用复用的原生NovoRUDP
+交付opaque协议消息/APFL正文；ACK只代表传输，不依赖AOEM落账。先验证丢包、
+重排、重复、来源/会话隔离、背压及退出，再让同一RPC/共识/发布核心跑四节点。
+既有65,536笔全确认条件不变，另列原生传输与Relay的同条件对照；不能把旧12万
+传输窗口或固定profile的百万数字直接当新成绩。WSS保留现有可用对照/适用fallback，
+不得破坏手机/信箱使用者。完成后按调用关系清理冗余，不按月份删除源码或证据。
+
+本节仅完成取舍和接线核查；**原生carrier尚未接入当前resident主链，未新增TPS成果**。
+先前“继续优化固定载体/唤醒”不再作为下一任务，不再重做完整代数计划和二进制结果。
+
 用户已批准[四项能力对应与实施顺序](NOVOVM_ALGEBRAIC_PLAN_INTEGRATION.md)。
 先消除现有整数结果的完整 JSON 中间表示，再接显式依赖/条件/状态效应的完整
 代数计划，并接回唯一候选发布；不是把 Host 循环搬进 AOEM。允许 AOEM 通用适配，
