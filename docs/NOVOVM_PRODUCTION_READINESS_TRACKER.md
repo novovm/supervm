@@ -34,6 +34,17 @@ native wire budget仅覆盖native分支，旧Protocol保原边界，不冒称全
 唯一共识发布及恢复；不能把本次库测试说成实际节点交易/最终确认闭环。
 无新增吞吐数字，不重标上一轮约16.37万原fixture结果。未修改AOEM、手机或49份草稿。
 
+后续接合已定位具体而非重新审计：恢复树`SignatureCheckedBatch::bind`仍调用
+`BatchSource::into_raw`，APFL在此逐行canonical_raw物化整批；不能仅接from_apfl就
+宣布结构贯通。下一编辑范围为BatchPlan保留共享source、规范承诺有界访问以及
+packet归档边界编码，保留原格式/证明/恢复对照；既有完整费用代数计划不重写。
+原tick持有既有CandidatePipeline与journal，DurableBatch只是候选，不回写旧字段
+冒充finalized，也不同时运行两个发布者。共享接合5a397589已与NOVOCHAT03486e84
+合并为3b29df45并推送；文档冲突保留双方记录，代码无冲突，49份草稿仍未触碰。
+合并后novorudp80项复跑通过0.72s；启用iroh-transport编译原兼容测试后，实际
+native UDP mailbox节点2项通过1.36s，含对方新异步句柄。这是共享SDK回归，
+不是把主链改回Iroh，也未接手手机开发。
+
 ## 2026-10-16 原生信箱异步请求接到同一会话
 
 输入781e41f8，认领6b9f439a；整合前快进dd48c278，仅新增另一机器主链证据，
