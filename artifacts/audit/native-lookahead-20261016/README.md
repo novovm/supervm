@@ -112,3 +112,13 @@ Not signed off: complete competing-parent/network A/A/B on this integration,
 hard-crash unknown-write injection here, multi-machine capacity, stable9K/100K/
 million TPS, GPU speedup, business proof, privacy/PQ release or production.
 Outstanding rustls advisory and final commit CI remain release gates.
+
+## Shared-main integration
+
+Implementation commit `192d483b`; merge `1063c471` preserves remote `f4d6760a`
+and `7075b765`'s feature-gated bound-carrier codec. Both machines' doc sections
+were retained. No conflicting production source hunks. The default mainchain
+release build was checked after merging; its executable remains EXACTLY
+`3b6ee279...` as measured above (no timestamp-only extrapolation). Default
+NovoRUDP regression99/99 PASS0.77s on merged source. Optional Iroh/TLS results
+remain the other commit's recorded evidence, not a claimed local rerun here.
