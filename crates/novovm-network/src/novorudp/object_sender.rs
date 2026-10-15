@@ -203,7 +203,7 @@ impl NativeObjectSender {
 
     pub(crate) fn poll_send_limited(
         &mut self,
-        socket: &UdpSocket,
+        io: &dyn super::carrier::NativeDatagramIo,
         session: &mut NativeUdpSession,
         now: Instant,
         budget: usize,
@@ -292,7 +292,7 @@ impl NativeObjectSender {
                 self.state.latest_ack_epoch,
                 self.body.frame(index)?,
             );
-            if !session.try_send_limited(socket, &frame, now, wire_budget.as_deref_mut())? {
+            if !session.try_send_limited(io, &frame, now, wire_budget.as_deref_mut())? {
                 break;
             }
             sent += 1;

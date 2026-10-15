@@ -101,7 +101,7 @@ fn connect_clients_one_socket_authenticates_live_services_around_silent_peer() -
     assert!(client.session_id(1).is_none());
     assert_eq!(client.local_addr()?, source);
     for (ordinal, server) in servers.iter_mut().enumerate() {
-        assert_eq!(server.sources.get(&source), Some(&0));
+        assert_eq!(server.sources.get(&NativeRoute::Udp(source)), Some(&0));
         assert_eq!(
             server.peer_id(0)?,
             peer_id_from_ed25519_public_key_v1(&client_key.verifying_key().to_bytes())

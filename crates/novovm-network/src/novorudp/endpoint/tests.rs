@@ -15,8 +15,9 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
         let start = Instant::now();
         let node_key = SigningKey::from_bytes(&[51; 32]);
         let client_key = SigningKey::from_bytes(&[52; 32]);
-        let mut node = NativeEndpoint::listen_clients(
-            UdpSocket::bind("127.0.0.1:0")?,
+        let node_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
+        let mut node = NativeEndpoint::listen_clients_shared(
+            node_socket.clone(),
             node_key.clone(),
             1,
             vec![17],
@@ -42,7 +43,7 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
         )?;
         old.poll(1000, Instant::now(), 64)?;
         let mut captured = [0; MAX_DATAGRAM_BYTES];
-        let (length, _) = node.socket.peek_from(&mut captured)?;
+        let (length, _) = node_socket.peek_from(&mut captured)?;
         let old_offer = captured[..length].to_vec();
         while old.session_id(0).is_none() {
             ensure!(
@@ -96,7 +97,9 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
             .as_mut()
             .unwrap()
             .encode(&frame(original, 17))?;
-        fresh.socket.send_to(&old_wire, node.local_addr()?)?;
+        fresh
+            .io
+            .try_send(&old_wire, NativeRoute::Udp(node.local_addr()?))?;
         node.poll(1000, start + Duration::from_millis(22), 64)?;
         assert_eq!(node.session_id(0), Some(original));
         assert!(old.try_send(0, &frame(original, 17))?);
@@ -132,7 +135,8 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
         assert_eq!(report.frames[0].frame.session_id, new_session);
         assert_eq!(node.peer_count(), 1);
         // Old address/transcript/ciphertext never reactivates the prior session.
-        old.socket.send_to(&old_offer, node.local_addr()?)?;
+        old.io
+            .try_send(&old_offer, NativeRoute::Udp(node.local_addr()?))?;
         old.try_send(0, &frame(original, 17))?;
         let report = node.poll(1000, start + Duration::from_millis(26), 64)?;
         assert_eq!(report.rejected_datagrams, 2);

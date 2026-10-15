@@ -4,7 +4,7 @@
 use super::*;
 
 pub(super) struct PendingReconnect {
-    source: SocketAddr,
+    source: NativeRoute,
     pub(super) handshake: NativeHandshake,
     session: NativeUdpSession,
     deadline: Instant,
@@ -22,7 +22,7 @@ impl NativeEndpoint {
         Ok(())
     }
 
-    pub(super) fn reconnect_source_in_use(&self, source: SocketAddr) -> bool {
+    pub(super) fn reconnect_source_in_use(&self, source: NativeRoute) -> bool {
         self.peers
             .iter()
             .any(|p| p.reconnect.as_ref().is_some_and(|r| r.source == source))
@@ -38,7 +38,7 @@ impl NativeEndpoint {
 
     pub(super) fn receive_handshake(
         &mut self,
-        source: SocketAddr,
+        source: NativeRoute,
         wire: &[u8],
         wall_ms: u64,
         now: Instant,
@@ -48,7 +48,7 @@ impl NativeEndpoint {
             // Old transcript retries keep their original replay semantics.
             if peer
                 .handshake
-                .receive(source, wire, wall_ms, now, &mut self.replay)
+                .receive_route(source, wire, wall_ms, now, &mut self.replay)
                 .is_ok()
             {
                 if peer.session.is_none() {
@@ -63,7 +63,7 @@ impl NativeEndpoint {
     pub(super) fn prepare_reconnect(
         &mut self,
         index: usize,
-        source: SocketAddr,
+        source: NativeRoute,
         wire: &[u8],
         wall_ms: u64,
         now: Instant,
@@ -83,7 +83,7 @@ impl NativeEndpoint {
             // Only the identical transcript can retry; no deadline/slot reset.
             return pending
                 .handshake
-                .receive(source, wire, wall_ms, now, &mut self.replay);
+                .receive_route(source, wire, wall_ms, now, &mut self.replay);
         }
         ensure!(
             !self.reconnect_source_in_use(source),
@@ -102,7 +102,7 @@ impl NativeEndpoint {
             open.budget.retry,
             Some(false),
         )?;
-        handshake.receive(source, wire, wall_ms, now, &mut self.replay)?;
+        handshake.receive_route(source, wire, wall_ms, now, &mut self.replay)?;
         let session = handshake
             .take_session()
             .context("reconnect did not authenticate")?;
@@ -123,7 +123,7 @@ impl NativeEndpoint {
 
     pub(super) fn confirm_reconnect(
         &mut self,
-        source: SocketAddr,
+        source: NativeRoute,
         wire: &[u8],
     ) -> Option<(NativeReceivedFrame, NativeSessionChange)> {
         let index = self
@@ -131,7 +131,12 @@ impl NativeEndpoint {
             .iter()
             .position(|p| p.reconnect.as_ref().is_some_and(|r| r.source == source))?;
         let peer = &mut self.peers[index];
-        let frame = peer.reconnect.as_mut()?.session.open(source, wire).ok()?;
+        let frame = peer
+            .reconnect
+            .as_mut()?
+            .session
+            .open_route(source, wire)
+            .ok()?;
         // Authenticated but forbidden streams do not activate a connection.
         if !peer.streams.as_ref()?.contains(&frame.stream_id) {
             return None;

@@ -69,6 +69,19 @@ pub struct VerifiedTransportBinding {
 }
 
 impl VerifiedTransportBinding {
+    /// Local evidence for the native carrier source key. This is not a node
+    /// identity or a signed native handshake binding; the carrier owner must
+    /// still bind the expected node and its actual authenticated session.
+    /// Never serialize this material or accept a remote supplied replacement.
+    pub(crate) fn native_route_material(&self) -> ([u8; 32], [u8; 32]) {
+        let remote = if self.local_is_initiator {
+            self.responder_endpoint
+        } else {
+            self.initiator_endpoint
+        };
+        (remote, self.connection_binding)
+    }
+
     /// Call only after the carrier's TLS handshake completes; no 0-RTT or
     /// unauthenticated endpoint hints. `exporter` must come from that connection
     /// using the exported label/context constants. Never use a peer's binder.

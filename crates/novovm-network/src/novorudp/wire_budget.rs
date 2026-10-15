@@ -4,12 +4,9 @@
 //! 61 one-second buckets conservatively retain the oldest partial second, so
 //! every rolling 60-second interval fits the limit without per-packet allocation.
 
+use super::carrier::{NativeDatagramIo, NativeRoute};
 use anyhow::{ensure, Result};
-use std::{
-    io::ErrorKind,
-    net::{SocketAddr, UdpSocket},
-    time::Instant,
-};
+use std::{io::ErrorKind, time::Instant};
 
 pub const MIN_BYTES_PER_MINUTE: u64 = 2400;
 pub const MAX_BYTES_PER_MINUTE: u64 = 1024 * 1024 * 1024;
@@ -101,9 +98,9 @@ impl NativeWireBudget {
 /// A mutable borrow makes admission/send/accounting one synchronous operation;
 /// failed socket writes consume no budget. No mutex or separate queue is needed.
 pub(crate) fn try_send_datagram(
-    socket: &UdpSocket,
+    io: &dyn NativeDatagramIo,
     wire: &[u8],
-    remote: SocketAddr,
+    remote: impl Into<NativeRoute>,
     now: Instant,
     mut budget: Option<&mut NativeWireBudget>,
 ) -> Result<bool> {
@@ -114,8 +111,12 @@ pub(crate) fn try_send_datagram(
             return Ok(false);
         }
     }
-    match socket.send_to(wire, remote) {
+    match io.try_send(wire, remote.into()) {
         Ok(count) => {
+            ensure!(
+                count <= wire.len(),
+                "native carrier write count exceeds input"
+            );
             if let Some(budget) = budget {
                 budget.charge(count);
                 budget.usage.sent_bytes = budget.usage.sent_bytes.saturating_add(count as u64);
@@ -131,6 +132,7 @@ pub(crate) fn try_send_datagram(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::UdpSocket;
     use std::time::Duration;
 
     #[test]

@@ -314,3 +314,27 @@ capacity, active cancellation before/after partial send and other-slot progress.
 The production Application/native candidate wiring and Android cross-network
 latency are still pending. Test-only local IO pumping is not a second production
 scheduler. Current installed phones/node remain unchanged.
+
+
+## 2026-10-16 增量：原生单 owner 的类型化收发边界
+
+输入 dcc6d1b6，NOVOCHAT335e9d1。NativeEndpoint 内部由直接 UdpSocket
+改为同一 owner 的 NativeDatagramIo；原 bind/connect/listen/poll_with_receiver
+公开 UDP 入口继续保留。握手、数据、修复和 ACK 都通过同一发送边界及原字节
+预算；NativeObjectLink 的调度、重传、取消、会话代次和对象完成语义不变。
+没有新线程、代理、SDK 或聊天协议。新 listen_clients_with_io 与
+connect_clients_with_io 可接已有平台 IO owner；实现必须有界、非阻塞，提供
+完整包和实际来源。WouldBlock 不推进发送；部分写入报告错误，不伪装整包成功。
+
+NativeRoute 将真实 UDP 地址与载体身份分开；VerifiedCarrierRoute 只能由
+已有 VerifiedTransportBinding 的本地认证结果派生，不用假的 SocketAddr。
+它仅表示本地来源归属：原 NVHSHK01 没有签 TLS exporter，因此当前 Carrier
+构造握手/业务会话仍明确拒绝，绝不能把类型化路由当作载体绑定已完成。
+下一步复用原 BoundHandshake/Finished 语义并补结构化编码，再由原 Iroh
+owner 驱动原生对象流；原 JSON 握手和旧 NVMBOX 不是静默后备。
+实际 adapter 还须在部分流写入失败后退役该流、清理旧代次待发内容，并将
+节点签名身份与实际载体身份分别验证。未完成这些步骤前不切换现场节点/手机。
+
+上游4d0c16a2..dcc6d1b6另有原主链tick接线与native_query变化；NOVOCHAT
+没有调用新增UdpTransport ingress或查询入口。静态核对未见手机调用链冲突，
+不由此声称Android运行或主链吞吐已通过。构建及回归结果见生产台账最新条目。

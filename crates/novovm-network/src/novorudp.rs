@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod carrier;
 pub mod datagram;
 pub mod endpoint;
 pub mod fragments;
