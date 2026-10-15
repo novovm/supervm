@@ -62,3 +62,9 @@ actual native A/A/B combined faults, Linux and multi-machine acceptance remain
 open. The historical Relay tests and later execution assets are preserved, but
 their past PASS is not native-path acceptance. CI now verifies the new test
 names exist before running them; remote result remains pending.
+
+Remote merge `89f168c7` retained communications `4d0c16a2`; shared lib/bin check
+passed after merge. CI run `38805236251` failed before jobs due to this change's
+workflow indentation, NOT a Rust/consensus failure. Indentation was corrected
+and the complete YAML parsed successfully (8 jobs); rerun remains to be verified.
+Independent host-only auth run `38805238033` passed, not main-CI acceptance.

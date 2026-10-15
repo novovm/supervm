@@ -309,9 +309,9 @@ jobs:
           cargo test -p aoem-bindings --lib resident --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-exec --lib resident --locked -- --test-threads=1
           cargo test -p novovm-network --lib duplex --locked -- --test-threads=1
-            cargo test -p novovm-network --lib transport::native_ingress::tests --locked -- --test-threads=1
-            cargo test -p novovm-network --lib udp_ingress_ --locked -- --test-threads=1
-            cargo test -p novovm-protocol --lib native_query --locked -- --test-threads=1
+          cargo test -p novovm-network --lib transport::native_ingress::tests --locked -- --test-threads=1
+          cargo test -p novovm-network --lib udp_ingress_ --locked -- --test-threads=1
+          cargo test -p novovm-protocol --lib native_query --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_pipeline --locked -- --test-threads=1
           # Retained test-only opaque attachment durability. This does not enable
           # the retired backend-specific product proof service or prove ZK/GPU.
@@ -319,26 +319,26 @@ jobs:
           cargo build -p novovm-node --bin novovm-node --locked
           target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
           export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
-            # Fail instead of silently passing a filter matching zero tests.
-            cargo test -p novovm-node --lib native_only_ --locked -- --ignored --list > target/native-test-list.txt
-            grep -q 'native_only_genesis_transactions_queries_and_cold_recovery: test' target/native-test-list.txt
-            grep -q 'native_only_minority_and_pending_signature_conflict_recover: test' target/native-test-list.txt
-            cargo test -p novovm-node --lib native_only_ --locked -- --ignored --test-threads=1
-            # Old Relay A/A/B and offline tests remain historical sources, not
-            # coverage of this native transport. Actual native combined-fault
-            # acceptance remains OPEN in the readiness tracker.
+          # Fail instead of silently passing a filter matching zero tests.
+          cargo test -p novovm-node --lib native_only_ --locked -- --ignored --list > target/native-test-list.txt
+          grep -q 'native_only_genesis_transactions_queries_and_cold_recovery: test' target/native-test-list.txt
+          grep -q 'native_only_minority_and_pending_signature_conflict_recover: test' target/native-test-list.txt
+          cargo test -p novovm-node --lib native_only_ --locked -- --ignored --test-threads=1
+          # Old Relay A/A/B and offline tests remain historical sources, not
+          # coverage of this native transport. Actual native combined-fault
+          # acceptance remains OPEN in the readiness tracker.
 
       - name: Upload native closure and historical AAB evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-            name: native-and-historical-aab-evidence
+          name: native-and-historical-aab-evidence
           if-no-files-found: ignore
           # Explicit evidence allowlist: never upload configs, signing keys or DBs.
           path: |
-              target/native-product-rpc/**/report.json
-              target/native-product-rpc/**/*.stdout.log
-              target/native-product-rpc/**/*.stderr.log
+            target/native-product-rpc/**/report.json
+            target/native-product-rpc/**/*.stdout.log
+            target/native-product-rpc/**/*.stderr.log
             target/resident-rpc-aab-tests/**/result.json
             target/resident-rpc-aab-tests/**/byzantine-signed-proposals.json
             target/resident-rpc-aab-tests/**/a-a-b-before-recovery.json
