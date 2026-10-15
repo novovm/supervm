@@ -2182,3 +2182,16 @@ Replace active SendARP metadata resolution with passive neighbor-cache lookup;
 preserve gateway IPs with unknown MAC and all authentication/deadline policy.
 No mainchain/SDK execution change, no network configuration change. Temporary
 iroh instrumentation will be removed after before/after measurement.
+
+**2026-10-16 native carrier runtime integration claim (active):** input 4a74d881,
+downstream faf44d3. NOVOCHAT owner reuses CarrierStreamV1 structured bound
+Finished -> NativeEndpoint -> NativeObjectLink, retaining original APFL objects,
+wire budgets and mailbox executor. Replace current unconditional Carrier route
+rejection only through proof of the actual authenticated stream; no second
+NVHSHK01 handshake, synthetic UDP address, JSON fallback or scheduler. Root owns
+bounded carrier IO adapter/integration tests and one build slot. Bounded agent
+owns transport_binding proof retention and novorudp datagram/endpoint adoption;
+review agent is read-only. No mainchain transport/native_ingress/exec/AOEM edits.
+Partial write/backpressure must not manufacture transport or device receipts;
+stream cancellation must retire uncertain writes. Mobile deployment/independent
+replicas remain pending until actual runtime tests pass.
