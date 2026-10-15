@@ -1,0 +1,10 @@
+{
+  "input": "5d4ce085",
+  "change": "Pipeline terminal reply notification to product RPC; original bounded idle wait becomes interruptible. No consensus, execution, durability or pool changes.",
+  "sequence": ["parent-1", "candidate-1", "candidate-2", "parent-2"],
+  "semantic_workers": 24,
+  "profiling": false,
+  "load": "65536 signed transfers, four original nodes, single RPC, batch1024, shared recipient, inflight8192, all-node final receipts and cold economics",
+  "gate": "Real completion wake plus business/fault/recovery correctness; retain all formal results and reject stable performance regression. No TPS claim from component or kernel results.",
+  "limitation": "Only pipeline terminal replies notify product thread. Other network and metadata events retain original bounded polling. No million-TPS or GPU residency claim."
+}

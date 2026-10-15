@@ -1,0 +1,182 @@
+{
+  "input": "5d4ce085",
+  "integrated_remote": "6e3f80b9",
+  "decision": "NOT PROMOTED; six active code edits reverted; candidate.patch retained",
+  "sdk_unchanged": true,
+  "aoem_modified": false,
+  "tests": {
+    "pipeline": {
+      "passed": 403,
+      "ignored": 65
+    },
+    "real_wake": 1,
+    "product_single_ingress_failures_restart": 1,
+    "product_aab": 1,
+    "product_offline_catchup_restart": 1,
+    "formal_loads": 4,
+    "zero_test_bin_attempts": "component.log and wake.log selected 0; excluded"
+  },
+  "binaries": {
+    "parent": "321d2496d304fb40101e03a7bfbfcb6af341f984dd732765742844b01dce0302",
+    "candidate": "6da0a8a93fc466ecfd462c85b263d86e685dcac2e1324e8217811927d6e7227f",
+    "sdk": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+    "test_library": "53e3d683aee9897ba067361de8f2ea30fee5f21d4370a9832eaf4482cb245731",
+    "load_driver": "07090a3c5be02a4f0c3467e671f08520654dd41e7a6650e9db22e625beb5044a"
+  },
+  "power": "Initial battery preflight refused before workload. All four formal rounds started and ended AC Online.",
+  "performance": {
+    "samples": [
+      {
+        "name": "parent-1",
+        "tps": 9657.535901877927,
+        "seconds": 6.785996,
+        "p95_us": 996600,
+        "p99_us": 1023492,
+        "observation_requests": 755712
+      },
+      {
+        "name": "candidate-1",
+        "tps": 6858.770714798905,
+        "seconds": 9.555065,
+        "p95_us": 1349029,
+        "p99_us": 1491587,
+        "observation_requests": 893952
+      },
+      {
+        "name": "candidate-2",
+        "tps": 6178.235145500003,
+        "seconds": 10.60756,
+        "p95_us": 1595682,
+        "p99_us": 1690855,
+        "observation_requests": 915456
+      },
+      {
+        "name": "parent-2",
+        "tps": 10362.692661946721,
+        "seconds": 6.324225,
+        "p95_us": 973585,
+        "p99_us": 1187036,
+        "observation_requests": 640000
+      }
+    ],
+    "combined": {
+      "parent": 9997.695691018482,
+      "candidate": 6500.740850955667
+    },
+    "change_percent": -34.97760832232907,
+    "scope": "Same CPU load and SDK, diagnostics off; four-node final receipts with economics/history/cold checks. Not GPU, proof or production capacity."
+  },
+  "limitations": [
+    "CPU callbacks only; no GPU/proof/mainnet signoff",
+    "Notification correctness does not establish throughput improvement",
+    "Detailed regression mechanism not identified; no claims about AOEM capability",
+    "Formal binaries fixed at 5d4ce085; later locator update not benchmarked",
+    "CI for evidence commit not yet verified"
+  ],
+  "drafts": {
+    "count": 49,
+    "unchanged": true
+  },
+  "artifacts": [
+    {
+      "file": "actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers.log",
+      "bytes": 1400,
+      "sha256": "3a01c4d37525423e809ed4dc17d8797c6d2d5ef4ebef9d62c992dd6718144d7b"
+    },
+    {
+      "file": "actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart.log",
+      "bytes": 1449,
+      "sha256": "eca44243fbb6cfa2c4240ceed9d16f19661a50ef8ef6a9fea7da34315620318f"
+    },
+    {
+      "file": "actual_product_rpc_single_ingress_gossip_failures_and_restart.log",
+      "bytes": 1451,
+      "sha256": "154ee7207b5ddf95021443af75cbfb9977f9a5f0fac4ba3e4d6183c5bbd040cf"
+    },
+    {
+      "file": "candidate-1.json",
+      "bytes": 731560,
+      "sha256": "17c59ee677e2faf578a291e64bd50f4bed63bce8b42aa798304017bbde140ff7"
+    },
+    {
+      "file": "candidate-1.log",
+      "bytes": 2685,
+      "sha256": "64ffecf03c70615c8ae167e619300b72c13261c07f41e21ff80f9987ef33a935"
+    },
+    {
+      "file": "candidate-2.json",
+      "bytes": 731504,
+      "sha256": "7b9374933576d39fee150db33fc9460a068e7f3510c4b91266fdabea1b760cf0"
+    },
+    {
+      "file": "candidate-2.log",
+      "bytes": 2685,
+      "sha256": "14bec6478fdafba436e321966510fcb3b08bfb07f2673c72399bb7b62cabc343"
+    },
+    {
+      "file": "candidate.patch",
+      "bytes": 9311,
+      "sha256": "1b19ab98f12e7b4e629f762a85ad36d4facbe81316d9b26eb0839277ad2ea377"
+    },
+    {
+      "file": "component-library.log",
+      "bytes": 67271,
+      "sha256": "0d7e796600ff577164b56c89f6682c1919764c15e724a9ca8c84ec1e7bb3ded9"
+    },
+    {
+      "file": "component.log",
+      "bytes": 120,
+      "sha256": "cbc13c63c30cc455e854453d3ca368688dd7632f0f0bafe34e0e76fa0fe93bdf"
+    },
+    {
+      "file": "contract.json",
+      "bytes": 841,
+      "sha256": "4c11f84734f973c5a7eb8450c95502d75e104a82ec5bc524601ad25da7660d25"
+    },
+    {
+      "file": "parent-1.json",
+      "bytes": 731528,
+      "sha256": "7d610530aad8a8ab91e45e512ad5c05139585e632728242cb2d0401c320a6b5d"
+    },
+    {
+      "file": "parent-1.log",
+      "bytes": 2680,
+      "sha256": "9805f0cefa362af36724ac5ab812d2a78b36a37d373596836fe87df0697f612e"
+    },
+    {
+      "file": "parent-2.json",
+      "bytes": 731518,
+      "sha256": "abf171f15481469201b783e14ad9997536eb9c277e67c776e09811764144d331"
+    },
+    {
+      "file": "parent-2.log",
+      "bytes": 2680,
+      "sha256": "4abaf0518918fdf2e3ba4b903127499bbccb037915bdcb6b61784630daec407d"
+    },
+    {
+      "file": "run-load.ps1",
+      "bytes": 2479,
+      "sha256": "938b90847d9d37a8ac660fe82db5bda131e27859755db395f08620eb1ccc1e2c"
+    },
+    {
+      "file": "summarize.cjs",
+      "bytes": 1117,
+      "sha256": "d5ebdddbe57bb5d75f3405d6890db188017d93a6903bf3f70018102e2a87d373"
+    },
+    {
+      "file": "summary.json",
+      "bytes": 1050,
+      "sha256": "f4da0e0dab1bce80186372dbf70cdc8380c01e04c16f149f3699be51cb5a83e6"
+    },
+    {
+      "file": "wake-enabled.log",
+      "bytes": 238,
+      "sha256": "cece8889eb90bf226c88dfafedb27946ad0417077f98d62e8acc03c98d6ff987"
+    },
+    {
+      "file": "wake.log",
+      "bytes": 120,
+      "sha256": "cbc13c63c30cc455e854453d3ca368688dd7632f0f0bafe34e0e76fa0fe93bdf"
+    }
+  ]
+}

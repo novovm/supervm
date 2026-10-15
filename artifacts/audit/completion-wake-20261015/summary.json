@@ -1,0 +1,42 @@
+{
+  "samples": [
+    {
+      "name": "parent-1",
+      "tps": 9657.535901877927,
+      "seconds": 6.785996,
+      "p95_us": 996600,
+      "p99_us": 1023492,
+      "observation_requests": 755712
+    },
+    {
+      "name": "candidate-1",
+      "tps": 6858.770714798905,
+      "seconds": 9.555065,
+      "p95_us": 1349029,
+      "p99_us": 1491587,
+      "observation_requests": 893952
+    },
+    {
+      "name": "candidate-2",
+      "tps": 6178.235145500003,
+      "seconds": 10.60756,
+      "p95_us": 1595682,
+      "p99_us": 1690855,
+      "observation_requests": 915456
+    },
+    {
+      "name": "parent-2",
+      "tps": 10362.692661946721,
+      "seconds": 6.324225,
+      "p95_us": 973585,
+      "p99_us": 1187036,
+      "observation_requests": 640000
+    }
+  ],
+  "combined": {
+    "parent": 9997.695691018482,
+    "candidate": 6500.740850955667
+  },
+  "change_percent": -34.97760832232907,
+  "scope": "Same CPU load and SDK, diagnostics off; four-node final receipts with economics/history/cold checks. Not GPU, proof or production capacity."
+}

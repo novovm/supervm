@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 原节点完成唤醒试验（未晋级，认领释放）：** 输入5d4ce085，
+终态reply后unpark产品线程、原1ms sleep改为park_timeout；功能/故障通过，
+固定四轮CPU合并9997.70→6500.74 TPS（−34.98%），两组尾延迟变差。
+按预定门撤回全部六文件活动改动，补丁和全样本保留completion-wake-20261015；
+AOEM/SDK及49份草稿不变。已同步6e3f80b9的独立定位更新，不把它混入冻结测量。
+不要将更勤唤醒视为必然提速或重复无条件推广；后续回到完整代数计划的数据驻留/
+真实工作消减，保持CPU对照门，不以本次失败解释GPU能力或既往库回退。
+
 **2026-10-15 live locator refresh (claim released):** NOVOCHAT session, input
 5d4ce085. Scope product_rendezvous_owned.rs / service lease regression only:
 refresh the existing endpoint's address snapshot before signing each new
