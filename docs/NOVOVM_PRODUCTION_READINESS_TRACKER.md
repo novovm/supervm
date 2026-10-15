@@ -3,6 +3,25 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 L4 首错保留：密封 IO 的固定类型诊断
+
+输入66ac995b，NOVOCHAT会话仅修改iroh_transport.rs既有错误观察接口。
+旧IrohStreamIoFailureV1保留了底层错误，但手机统一映射为E3；新增只读
+iroh_stream_failure_kind_v1区分连接原因、提前EOF、RESET、STOP、已关闭流及
+0-RTT拒绝。只接受载体自己的密封IO标记；不导出远端原因、应用错误码或
+部分数据长度，不改变重试分类、期限、握手、消息格式或资源权限。
+confirm_send_completion原STOP拒绝改为保留WriteError::Stopped类型，仍失败。
+
+验证：固定错误矩阵通过；真实QUIC断开和非法帧/尾数据拒绝2项通过。
+真实STOP测试首次和单独复测均scope expired，旧2026-10-15构建对照通过7.49s；
+最终加入测试内固定阶段耗时后通过4.40s：两个bind完成4.35s，实际STOP传播
+不足1ms。没有增大8秒测试期限；前两次超时根因未确认，不能宣布载体长期稳定。
+严格network lib Clippy通过。日志位于NOVOCHAT/artifacts/l4-io-*.log。
+
+此改动是定位现存L4长中断的证据补齐，不是对上次130秒中断根因的修复，
+未部署笔记本节点；手机接线及验收另记NOVOCHAT。未变更原生恢复线，
+未实现NovoRUDP/APFL SDK迁移，也未降低约1.9秒实机回执基准。
+
 ## 2026-10-16 原生应用提交与首发禁用HTTP边界
 
 用户最新决定：首发NOVOVM/NOVONET使用自身SDK/NovoRUDP/APFL闭环，不开放

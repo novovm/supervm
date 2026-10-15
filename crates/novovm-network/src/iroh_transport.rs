@@ -57,6 +57,63 @@ pub fn iroh_forced_drain_count_v1() -> u64 {
 #[error("carrier stream IO failed: {0:#}")]
 pub struct IrohStreamIoFailureV1(#[source] anyhow::Error);
 
+/// Fixed observations from a sealed stream IO failure, never retry authority.
+/// Peer STOP/reset codes, reasons and partial byte counts are not exported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrohStreamFailureKindV1 {
+    Connection(IrohConnectionFailureKindV1),
+    FinishedEarly,
+    Reset,
+    Stopped,
+    Closed,
+    ZeroRttRejected,
+}
+
+pub fn iroh_stream_failure_kind_v1(error: &anyhow::Error) -> Option<IrohStreamFailureKindV1> {
+    use iroh::endpoint::{ConnectionError, ReadError, ReadExactError, StoppedError, WriteError};
+    use IrohStreamFailureKindV1::*;
+    fn read(error: &ReadError) -> IrohStreamFailureKindV1 {
+        match error {
+            ReadError::ConnectionLost(error) => Connection(connection_failure_kind(error)),
+            ReadError::Reset(_) => Reset,
+            ReadError::ClosedStream => Closed,
+            ReadError::ZeroRttRejected => ZeroRttRejected,
+        }
+    }
+    // Local/authentication wrappers must not be reclassified as carrier IO.
+    // Anyhow contexts are transparent; arbitrary source wrappers are not.
+    let sealed = error.downcast_ref::<IrohStreamIoFailureV1>()?;
+    for cause in sealed.0.chain() {
+        if let Some(error) = cause.downcast_ref::<ReadExactError>() {
+            return Some(match error {
+                ReadExactError::FinishedEarly(_) => FinishedEarly,
+                ReadExactError::ReadError(error) => read(error),
+            });
+        }
+        if let Some(error) = cause.downcast_ref::<ReadError>() {
+            return Some(read(error));
+        }
+        if let Some(error) = cause.downcast_ref::<WriteError>() {
+            return Some(match error {
+                WriteError::ConnectionLost(error) => Connection(connection_failure_kind(error)),
+                WriteError::Stopped(_) => Stopped,
+                WriteError::ClosedStream => Closed,
+                WriteError::ZeroRttRejected => ZeroRttRejected,
+            });
+        }
+        if let Some(error) = cause.downcast_ref::<StoppedError>() {
+            return Some(match error {
+                StoppedError::ConnectionLost(error) => Connection(connection_failure_kind(error)),
+                StoppedError::ZeroRttRejected => ZeroRttRejected,
+            });
+        }
+        if let Some(error) = cause.downcast_ref::<ConnectionError>() {
+            return Some(Connection(connection_failure_kind(error)));
+        }
+    }
+    None
+}
+
 /// Only this adapter's finite frame timer can construct this marker. The old
 /// stream is closed and unusable. It is neither a remote rejection nor a new
 /// permission; a product owner must reauthorize a NEW operation to continue.
@@ -1390,13 +1447,13 @@ async fn read_frame_io(
 }
 
 async fn confirm_send_completion(send: &mut SendStream) -> Result<()> {
-    ensure!(
-        send.stopped()
-            .await
-            .map_err(|error| IrohStreamIoFailureV1(error.into()))?
-            .is_none(),
-        IrohStreamIoFailureV1(anyhow::anyhow!("peer stopped stream"))
-    );
+    if let Some(code) = send
+        .stopped()
+        .await
+        .map_err(|error| IrohStreamIoFailureV1(error.into()))?
+    {
+        return Err(IrohStreamIoFailureV1(iroh::endpoint::WriteError::Stopped(code).into()).into());
+    }
     Ok(())
 }
 
@@ -1779,6 +1836,56 @@ mod tests {
     use super::*;
     use tokio::sync::oneshot;
     pub(super) static SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+    #[test]
+    fn stream_diagnostics_preserve_typed_cause_without_granting_retry() {
+        use iroh::endpoint::{
+            ConnectionError, ReadError, ReadExactError, StoppedError, WriteError,
+        };
+        use IrohStreamFailureKindV1::*;
+        for (inner, expected) in [
+            (ReadExactError::FinishedEarly(12345).into(), FinishedEarly),
+            (
+                ReadExactError::ReadError(ReadError::Reset(98765u32.into())).into(),
+                Reset,
+            ),
+            (WriteError::Stopped(98765u32.into()).into(), Stopped),
+            (ReadError::ClosedStream.into(), Closed),
+            (WriteError::ClosedStream.into(), Closed),
+            (StoppedError::ZeroRttRejected.into(), ZeroRttRejected),
+            (
+                ReadExactError::ReadError(ReadError::ConnectionLost(ConnectionError::TimedOut))
+                    .into(),
+                Connection(IrohConnectionFailureKindV1::Timeout),
+            ),
+            (
+                WriteError::ConnectionLost(ConnectionError::Reset).into(),
+                Connection(IrohConnectionFailureKindV1::Reset),
+            ),
+            (
+                StoppedError::ConnectionLost(ConnectionError::LocallyClosed).into(),
+                Connection(IrohConnectionFailureKindV1::LocalClosed),
+            ),
+            (
+                ConnectionError::VersionMismatch.into(),
+                Connection(IrohConnectionFailureKindV1::Protocol),
+            ),
+        ] {
+            // A raw error with identical text/type isn't a sealed IO fact.
+            assert!(iroh_stream_failure_kind_v1(&inner).is_none());
+            assert!(!crate::carrier_stream::is_carrier_io_failure(&inner));
+            let error = anyhow::Error::new(IrohStreamIoFailureV1(inner)).context("outer operation");
+            assert_eq!(iroh_stream_failure_kind_v1(&error), Some(expected));
+            assert!(crate::carrier_stream::is_carrier_io_failure(&error));
+            assert!(!format!("{expected:?}").contains("98765"));
+            let error: anyhow::Error =
+                crate::bound_session::BoundSessionError::Authentication(error).into();
+            assert!(iroh_stream_failure_kind_v1(&error).is_none());
+            assert!(!crate::carrier_stream::is_carrier_io_failure(&error));
+        }
+        let text = IrohStreamIoFailureV1(anyhow::anyhow!("connection lost: timed out"));
+        assert!(iroh_stream_failure_kind_v1(&text.into()).is_none());
+    }
 
     #[test]
     fn fixed_connection_diagnostics_do_not_grant_retries_or_match_text() {
@@ -3730,36 +3837,45 @@ mod tests {
     #[tokio::test]
     async fn real_quic_peer_stop_is_explicit_stream_interruption() -> Result<()> {
         let _permit = SERIAL.acquire().await?;
+        let started = Instant::now();
         let (a_tx, a_rx) = oneshot::channel();
         let (b_tx, b_rx) = oneshot::channel();
         let (done_tx, done_rx) = oneshot::channel();
         let server = with_iroh_scope_v1(local_config(), control(), move |scope| {
             Box::pin(async move {
+                eprintln!("STOP fixture server bound: {:?}", started.elapsed());
                 a_tx.send(scope.address()?).unwrap();
                 let peer: IrohAddressV1 = b_rx.await?;
                 let mut stream = scope.accept(peer.endpoint_key).await?;
                 ensure!(stream.read_frame().await? == b"ready");
+                eprintln!("STOP fixture server received: {:?}", started.elapsed());
                 stream.write_frame(b"accepted").await?;
                 // Exercise the same real stopped() check used by finish. Do
                 // not send local FIN here: its transport ACK could race with
                 // STOP and legitimately complete before the peer interrupts.
                 let error = confirm_send_completion(&mut stream.send).await.unwrap_err();
+                eprintln!("STOP fixture server observed: {:?}", started.elapsed());
                 assert!(
                     error.is::<IrohStreamIoFailureV1>(),
                     "peer STOP was not classified: {error:#}"
                 );
-                assert!(error.to_string().contains("peer stopped stream"));
+                assert_eq!(
+                    iroh_stream_failure_kind_v1(&error),
+                    Some(IrohStreamFailureKindV1::Stopped)
+                );
                 done_tx.send(()).unwrap();
                 Ok(())
             })
         });
         let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
             Box::pin(async move {
+                eprintln!("STOP fixture client bound: {:?}", started.elapsed());
                 b_tx.send(scope.address()?).unwrap();
                 let mut stream = scope.connect(&a_rx.await?).await?;
                 stream.write_frame(b"ready").await?;
                 ensure!(stream.read_frame().await? == b"accepted");
                 stream.recv.stop(7u32.into())?;
+                eprintln!("STOP fixture client stopped: {:?}", started.elapsed());
                 done_rx.await?;
                 Ok(())
             })
