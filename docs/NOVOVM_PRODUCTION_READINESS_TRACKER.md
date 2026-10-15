@@ -3,6 +3,36 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 七月恢复现场：原生 socket 与同 owner 耐久签票/归档适配
+
+恢复现场fe89340b→本地643ecf57，祖先仍七月4f45526d；不是根main已切换。
+NativeEndpoint持有原UDP socket/握手/加密会话，按有限quantum接收并公平推进握手；
+NativeApflSocket复用原重组、缺片窗口与完成历史，仅组装owner取走正文后发DONE。
+未腾出组装输出槽时不发完成；鉴权背压返回同一APFL结构，不能把传输DONE当入池或落账。
+完整peer列表/顺序验证，陌生或超长数据报拒绝；UDP异步ICMP错误计数，不因缺席peer
+关闭健康会话。此处仍为固定peer开发接线，不宣称完成公网发现、自动重连或全网服务。
+
+从固定main@58e3aade直接复用consensus/statement、chain、journal适配及相应反例，
+规则仍调用原novovm-consensus::round_bft，不复制安全内核。共识二进制消息/APFL正文
+codec一并复用，仅将fragment依赖指回原novorudp；未迁入Relay worker或controller。
+保留原签名字节、域标签、QC含义及原子metadata契约，不将旧日志重标。候选、签票日志、
+决定outbox、归档及唯一链头使用同一CandidatePipeline的AOEM条件持久化owner。
+这一接合已经可实际验证签票/发布恢复，不代表原可执行节点已经启用它。
+
+Windows本机：network novorudp 67项通过；node native_pipeline 300通过、29显式忽略。
+另带真实AOEM库运行consensus全部35项（包括5项原忽略的真库集成）全部通过：四独立库
+先持久化再释放签名、三个连续高度、不同QC子集、丢失写确认、迟到QC/锁恢复、陈旧CAS、
+归档损坏与部分回滚拒绝。共识消息由同进程夹具传递，不冒充四节点网络/进程崩溃验收。
+真实完整代数候选改用NativeApflSocket接收，经济核对/冷恢复专项通过（最终7.06秒为
+测试总时间，非TPS）；组装背压、丢失DONE及重复探测无二次交付另有回归。
+原node binary检查通过，8项未消费/诊断告警；严格network Clippy仍有原13项失败。
+AOEM DLL SHA256仍31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947。
+
+仍缺：同一原节点进程中的原生双向共识/正文调度、连续生命周期及RPC接合，随后真实
+四进程故障和65,536笔最终确认对照；没有新增TPS或生产签收。恢复源码仅本地提交，
+本次main只同步可核验进度；root49份草稿、手机信箱、AOEM仓/SDK未改。已ff同步远端
+0ccf3dbd通讯变更，未用此次主链测试替它作手机部署签收。目标保持active。
+
 ## 2026-10-15 同一 NVMBOX06 入口按实际载体分派
 
 输入8c06b87a；提交前仅台账快进至58e3aade，保留另一现场七月恢复记录。
