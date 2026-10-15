@@ -11,7 +11,7 @@ both logical/retained-owner budgets. No mailbox owner/SDK deployment edits;
 preserve the NOVOCHAT claim below and all drafts. Native load observations must
 state their actual confirmation/query boundary; no new TPS claim yet.
 
-**2026-10-16 protected native mailbox owner activation (active claim):** NOVOCHAT
+**2026-10-16 protected native mailbox owner activation (claim released):** NOVOCHAT
 session, input5905614b; downstream Application f076838. Reuse the existing
 Windows self-owned Owner, DPAPI identity/storage, mailbox.sqlite, sequence floor,
 service.journal and signed record publication. Wire its existing startup to
@@ -21,6 +21,10 @@ fallback. Root owns service CLI, integration/docs and single build slot; bounded
 agent owns rendezvous_self_owned_owner implementation and its existing tests.
 Native UDP reachability and mobile locator refresh remain explicit gaps;
 local activation cannot be reported as cross-network phone acceptance.
+Completed same-owner protected CLI activation/off, original journal sequence and
+custody reuse. Windows owner tests 6/6, real executable native switch/restart
+1/1 and existing TLS custody regressions 2/2 PASS; strict selected Clippy PASS.
+No deployment or independent replica/mobile native reachability acceptance.
 
 
 **2026-10-16 original tick activation (recovery checkpoint, not shared-main activation):**

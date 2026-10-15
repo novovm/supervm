@@ -3,6 +3,33 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原 Windows owner 接入原生持久信箱
+
+输入 `5905614b`，下游 Application `f076838`；本片为节点运行入口接线，
+未更换现场节点或两台 Android 安装。`rendezvous_service` 增加显式
+`--set-self-owned-native CONFIG LISTENER_JSON|off`，仍使用原 v2 Config、
+独占 Owner、Windows DPAPI、节点身份、SQLite 与加密服务日志。
+
+真实调用链：CLI 原 Owner → 受保护 native listener 设置 → 原
+`run_self_owned_native_mailbox_v7` → 既有 NovoRUDP 认证对象链路 →
+结构化 NVMBOX07 → 原 MailboxService/Store。启用时不绑定 Iroh/TLS，
+只签发实际绑定的 native 地址，不以失败回退 JSON 或 HTTP。显式 off 后
+才恢复原有载体配置；序号递增、节点公钥、存储密钥和撤销历史不重建。
+
+本机 Windows 验证：服务 binary 六项单测通过（14.99s），含真实 UDP
+寄存、停止、重开先领取原密文、重复 Put 取得相同签名 StoreReceipt/TTL。
+独立服务进程 CLI 启用/重启/off 通过（5.72s）：运行中修改被原锁拒绝，
+更改选择不修改 keys/数据库/日志，native 仅发布一个入口，回原载体保留
+原用途身份。原 TLS 入口两项回归通过（12.14s），覆盖原托管密文重启领取。
+这些时间是测试整体耗时，不是消息时延指标。
+服务 binary/对应进程测试严格 Clippy 通过（36.36s）；Cargo 仍提示既有
+主链 soak 文件多 target 告警，未在通讯片修改该非相关配置。
+
+仍未签收：现场节点安装、蜂窝对笔记本的原生 UDP 可达性、手机自动刷新
+原生定位声明、多独立信箱寄存/领取、匿名路径和累计 peer 身份槽回收。
+用户要求的 A 离线、B 信箱关机、C 从另一设备领取属于下一阶段副本接线；
+不能把多个候选地址、本机进程测试或旧收件方 L4 机会性路径当作高可用证明。
+
 ## 2026-10-16 原 tick 实际消费认证结构交易与耐久发布
 
 七月恢复现场1796346e→`3ed27bec`，本机四进程已验证；**尚未整合到共享main**。

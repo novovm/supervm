@@ -159,6 +159,24 @@ mod windows {
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
+        if args[0] == "--set-self-owned-native" {
+            use super::rendezvous_self_owned_owner::{Config, NativeListenerConfig, Owner};
+            ensure!(
+                args.len() == 3,
+                "usage: --set-self-owned-native CONFIG LISTENER_JSON|off"
+            );
+            let listener = if args[2] == "off" {
+                None
+            } else {
+                let settings = PathBuf::from(&args[2]);
+                ensure!(
+                    settings.is_absolute(),
+                    "absolute listener settings path required"
+                );
+                Some(NativeListenerConfig::load(&settings)?)
+            };
+            return Owner::open(Config::load(&path)?, false, None)?.set_native_listener(listener);
+        }
         if args[0] == "--set-self-owned-tls" {
             use super::rendezvous_self_owned_owner::{Config, Owner, TlsListenerConfig};
             ensure!(

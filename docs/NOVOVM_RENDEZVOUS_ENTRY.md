@@ -277,3 +277,35 @@ novovm-rendezvous-service.exe --set-self-owned-tls <absolute-existing-config> of
 验签、核对新鲜地址及真实 TLS/业务身份；旧客户端不识别双地址记录，升级客户端
 和接好选路后再启用部署。当前发现控制仍使用 Iroh，TLS 本身不解决 CGNAT 入站。
 此入口不代表 Android 自动选择、直连成功、低延迟或匿名路径已经验收。
+
+## 2026-10-16 原 owner 的 NovoRUDP/APFL 信箱入口
+
+复用同一个服务程序和原 v2 配置。停止该 owner 后，可显式选择原生信箱监听：
+
+```powershell
+novovm-rendezvous-service.exe --set-self-owned-native <absolute-existing-config> <absolute-listener-json>
+novovm-rendezvous-service.exe --foreground <absolute-existing-config>
+# 停止 owner 后，显式恢复之前的载体配置：
+novovm-rendezvous-service.exe --set-self-owned-native <absolute-existing-config> off
+```
+
+监听设置示例（仅示例，地址须按实际可达网络配置）：
+
+```json
+{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":8,"max_bytes_per_minute":1048576}
+```
+
+地址族必须相同，公告地址不得是通配、组播或广播；端口0使用实际绑定端口，
+不代表自动建立公网映射。并发和收发字节预算沿用既有 NativeMailboxEndpointV7
+边界。配置保存在原 DPAPI policy，原 keys.dpapi、mailbox.sqlite、service.journal、
+节点公钥、签名序号和撤销记录继续使用。运行期间原文件锁拒绝修改，关闭后新配置
+只改变载体选择；不创建账号或网络许可证，不把私钥放进配置、命令行或日志。
+
+启用后仅启动现有 `run_self_owned_native_mailbox_v7`，用原 SDK 的认证对象链路
+和结构化 Mailbox 会话承载请求，未绑定 Iroh/TLS，也不在失败时回退兼容入口。
+新声明只包含实际绑定的原生路由。之前的载体设置保留供显式 off 后恢复；
+relay-only 与原生直接监听不兼容，需先明确选择 automatic。
+
+本地独立进程与 UDP 验证不等于现场部署、跨 CGNAT 或 Android 原生上线。
+原生公告刷新到手机、自动公网可达路径、多独立信箱及累计 peer 身份容量回收
+仍需接线与验收；该入口不凭绑定成功宣称蜂窝可达。未修改 VPN、路由和防火墙。
