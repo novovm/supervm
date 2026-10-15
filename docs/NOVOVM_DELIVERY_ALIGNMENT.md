@@ -2203,3 +2203,14 @@ activated. Review found changing ACK/data epochs across WouldBlock, cancellation
 and shared byte-budget reservations require one prepare/write/commit contract
 before any buffered IO activation. Do not return success on mere queueing or
 re-seal/re-credit an earlier partial write as another frame. Keep existing owner.
+
+**2026-10-16 native async carrier IO claim (active):** input fa58bf4b,
+downstream112abe3. Root owns novorudp/carrier, datagram, endpoint and new scoped
+carrier IO adapter/tests, plus one build slot. Bounded send agent owns original
+object_sender/object_link pending-frame retention and cancellation integration;
+budget agent owns wire_budget reservation accounting/tests. Prepare/write/commit
+stays in original NativeObjectLink, with one bounded per-peer write and borrowed
+CarrierStream halves driven by enclosing owner. No new task/scheduler/SDK, no
+queue-as-success, no second handshake, no HTTP/JSON fallback. Retain actual
+Finished binding, session, original IDs/TTL and strict partial-write retirement.
+Mainchain transport/native_ingress/exec/AOEM/consensus remain untouched.
