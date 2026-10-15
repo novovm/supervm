@@ -35,7 +35,7 @@
 
 ## 尚未交付，不能冒称已经可上线
 
-- **完整 APFL 信箱接线还没有完成。** 此片传输测试的正文是 opaque binary，
+- **完整 APFL 信箱接线还没有完成。** 初片传输测试的正文是 opaque binary，
   不把任意 bytes、二进制帧或 JSON 包裹当作 APFL 结构执行。
 - 原 `MailboxClientSessionV2` 仍用 CarrierStream、原协议和 JSON 正文；未改动
   正在运行的手机、信箱服务、数据或策略。旧 `NVAPFLV3` 是转账专用，聊天不能
@@ -65,3 +65,47 @@ cargo clippy --locked -p novovm-network --lib -- -D warnings
 主体恢复仍按原路线执行。本片仅把共享、无金融依赖的传输组件提前发布给等待中的
 消费者，不能理解为改回“以十月主链为主体”。恢复现场的同名组件应保持与这份
 共享实现一致；主链查询草稿不属于本次交付。
+
+## 2026-10-16 增量：结构信箱编码与原 owner 已连接（非完整移动 SDK）
+
+本节更新上述“schema/owner 待接”项，不改其他未完成项。公共接口位于
+`novovm-network::mailbox_structured`，当前随原 `MailboxServiceV1` 的
+`iroh-transport` feature 编译；**feature 依赖不表示新路径运行时使用 Iroh**。
+没有打开任何 HTTP/Iroh/Relay listener，没有改 NVMBOX01–06 的字节或协商。
+
+| 公共接口 | 契约 |
+| --- | --- |
+| `encode_requests` / `RequestBatch::decode` | 原操作类型的有界 APFL 列编码与借用视图；全部行先验证，后执行 |
+| `encode_replies` / `decode_replies` | 原回复与 StoreReceipt 无损映射；context/数量匹配不代替回执验签 |
+| `execute_local_batch` | 原 MailboxService 的适配，不是远程准入；调用者在每次 await 前后提供实际 authority 检查 |
+
+NVMBOX07 是新 schema/stream，不将旧 BeginSession/Continuous 票据换标签使用。
+每批 1–16 行、8 列、单字段最多 65,536 字节、编码及展开各最多 1,100,000 字节；
+Watch 最多4个信箱、10秒。上下文必须非零，远程驱动仍须将它绑定到认证会话和
+唯一请求，落实重放与响应关联；一个调用者自填的 context 本身不提供这些保证。
+数据层使用 `novovm-protocol::apfl_batch` 的 NVAPFLC1/v1，header/数值小端，
+magic/schema 固定，保留字为零；原 NVAPFLV3 转账格式不变。
+
+编码复用从原 Transfer 提取的同一 `Column` 实现：共享列只编码一次、重复值用
+首见顺序字典与索引、独立密文无损保留。解码在行数/长度/展开预算内验证规范性，
+值借用原缓冲；调用原 owned 信箱接口时才物化该行密文。**不是全程零拷贝、不是
+加密密文压缩算法，也不是 AOEM 交易执行计划。** 生产 codec/adapter 不经过 JSON；
+测试中的 JSON 只作旧类型的逐字段等价 oracle。
+
+批内操作有序，但不是原子事务；取消或 authority 丢失时，之前存储可能已提交。
+不得称回滚或盲重试整个批次。沿原 Object ID/Consume/StoreReceipt 处理未知结果；
+Registered、传输 DONE 和 Stored 含义不同，Stored 仍须验证原节点签名及密文摘要。
+原 node-wide 限速、能力、TTL、贡献开关、资源可用性、托管责任和消费墓碑均复用。
+
+公共 API 测试新增 `structured_mailbox_over_authenticated_udp_returns_verified_custody`：
+本机实际 UDP、同一原生认证会话、结构注册/9KB密文存储/读取，服务端调用同一个
+MailboxService，客户端独立验签及篡改拒绝。单元测试另验重启OFF保留托管、消费
+墓碑、坏能力、整批预检、提交后权限失效与原ID重试。这不是生产 server/client
+驱动：移动重连、活动身份/撤销策略接合、请求重放与响应关联、transport保留缓冲
+中的能力擦除、Android ARM64/实机仍未交付。现有手机不要据此切换协议。
+
+```powershell
+cargo test --locked -p novovm-protocol apfl_batch
+cargo test --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --lib mailbox_structured -- --test-threads=1
+cargo test --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_application_transport -- --test-threads=1
+```

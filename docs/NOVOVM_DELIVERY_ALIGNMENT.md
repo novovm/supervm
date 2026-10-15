@@ -1,4 +1,13 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 structured mailbox adapter (claim released):** July recovery owner,
+main 3a9dfcce. Extract existing APFL column reuse into novovm-protocol; add
+versioned bounded mailbox batch encoding consumed by the existing mailbox owner.
+No live selector replacement, mobile deployment, financial execution or new
+transport/controller. Scope: protocol APFL column, node APFL import, mailbox
+structured adapter/tests. Native server/client lifecycle remains explicit work.
+Shared column codec and original owner roundtrip/negative/restart tests pass;
+real native UDP custody roundtrip passes. No Android production SDK claim.
+
 **2026-10-16 native shared transport (claim released):** July recovery owner,
 input main 66ac995b / recovery fb8fc69e. Publish reviewed original native
 session/object transport under novovm-network for the waiting NOVOCHAT consumer;

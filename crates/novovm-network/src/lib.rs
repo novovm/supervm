@@ -29,6 +29,8 @@ pub mod mailbox_rpc;
 #[cfg(feature = "mailbox-seal")]
 pub mod mailbox_seal;
 pub mod mailbox_store;
+#[cfg(feature = "iroh-transport")]
+pub mod mailbox_structured;
 pub mod novorudp;
 pub mod opaque_rendezvous;
 pub mod overlay;

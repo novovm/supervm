@@ -8,7 +8,8 @@
 
 use super::wire::{decode_transfer_view_v3, FeePolicyView, TransferView};
 use anyhow::{ensure, Context, Result};
-use std::collections::{BTreeMap, BTreeSet};
+use novovm_protocol::apfl_column::Column;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 const MAGIC: &[u8; 8] = b"NVAPFLV3";
@@ -46,52 +47,6 @@ impl ApflLimits {
             "APFL expanded body below minimum size"
         );
         Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Column<T> {
-    values: Vec<T>,
-    // Empty for shared or dense columns; otherwise exactly one u32 per row.
-    indexes: Vec<u32>,
-}
-
-impl<T> Column<T> {
-    fn value(&self, index: usize) -> &T {
-        let slot = if self.values.len() == 1 {
-            0
-        } else if self.indexes.is_empty() {
-            index
-        } else {
-            self.indexes[index] as usize
-        };
-        &self.values[slot]
-    }
-    fn map<U>(self, convert: impl Fn(T) -> U) -> Column<U> {
-        Column {
-            values: self.values.into_iter().map(convert).collect(),
-            indexes: self.indexes,
-        }
-    }
-}
-
-impl<T: Clone + Ord> Column<T> {
-    fn collect(input: impl Iterator<Item = T>) -> Self {
-        let mut known = BTreeMap::new();
-        let mut values = Vec::new();
-        let mut indexes = Vec::new();
-        for value in input {
-            let index = *known.entry(value.clone()).or_insert_with(|| {
-                let index = values.len() as u32;
-                values.push(value);
-                index
-            });
-            indexes.push(index);
-        }
-        if values.len() == 1 || values.len() == indexes.len() {
-            indexes.clear();
-        }
-        Self { values, indexes }
     }
 }
 
