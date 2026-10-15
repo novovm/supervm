@@ -159,7 +159,15 @@ impl ResidentNode {
 
     pub fn poll(&mut self, now: Instant) -> Result<()> {
         let wall_ms = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
-        self.controller.poll_io(wall_ms, now)?;
+        {
+            let _span = crate::native_pipeline::profile::span(
+                crate::native_pipeline::profile::Phase::NativeIo,
+            );
+            self.controller.poll_io(wall_ms, now)?;
+        }
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::NativeAssembly,
+        );
         self.controller.poll(&self.pipeline, now)
     }
 

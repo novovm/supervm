@@ -205,6 +205,9 @@ impl RoundProgress {
         candidate: &DurableCandidate,
         locally_selected: bool,
     ) -> Result<bool> {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::CandidateRegistration,
+        );
         ensure!(!self.is_frozen(), "progress frozen");
         ensure!(body_id != [0; 32], "empty candidate body identity");
         let statement = CandidatePipeline::checked_statement(

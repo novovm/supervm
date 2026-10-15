@@ -62,6 +62,9 @@ impl RpcLifecycle {
     /// During recovery only status is observable, never an unverified head's
     /// balance/receipt projection. Balance None means pending, NOT zero/absence.
     pub(super) fn poll_native_query(&mut self, now: Instant) -> Result<()> {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::NativeQuery,
+        );
         let Some((peer, request)) = self.node.controller.take_client_query(now) else {
             return Ok(());
         };
