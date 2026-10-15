@@ -191,6 +191,55 @@ fn self_owned_expired_claim_is_only_locator_and_new_online_offer_is_required() -
 }
 
 #[test]
+fn self_owned_live_locator_update_preserves_peer_and_persists_new_candidates() -> Result<()> {
+    let dir = HostDirectory::new();
+    let mut book = own_book()?;
+    let bytes = book.checkpoint()?;
+    let file = ServiceLeaseFileV1::create(&dir.path(), zeroize::Zeroizing::new([91; 32]), &bytes)?;
+    book.attach_persistence(file, &bytes)?;
+    let host = ServiceLeaseHostV1::new(key(2), book)?;
+    let mut endpoint = address(3);
+    let transport = endpoint.address.endpoint_key;
+    host.check_continuous_peer_v4(transport, 3000)?;
+    endpoint.address.direct = vec!["192.0.2.44:54321".parse()?];
+    endpoint.instance = [8; 32];
+    let fresh = host.rotate_self_owned(&endpoint, 3001, 93_001)?;
+    directory::validate_relay_record_v1(&fresh, 3001)?;
+    assert_eq!(
+        IrohServiceEndpointV1::from_record(&fresh)?.address.direct,
+        endpoint.address.direct
+    );
+    // A live peer remains authenticated; its transport identity is not replaced.
+    host.check_continuous_peer_v4(transport, 3002)?;
+    let offer = host.offer(3003)?;
+    assert_eq!(
+        IrohServiceEndpointV1::from_record(offer.lease.as_ref().unwrap())?
+            .address
+            .direct,
+        endpoint.address.direct
+    );
+    endpoint.address.endpoint_key = key(9).verifying_key().to_bytes();
+    assert!(host.rotate_self_owned(&endpoint, 3004, 93_004).is_err());
+    drop(host);
+    let (_file, saved) = ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 3005)?;
+    let routes = reopened.routes(3005)?;
+    let restored = IrohServiceEndpointV1::from_record(&routes[0])?;
+    assert_eq!(restored.address.direct, endpoint.address.direct);
+    assert_eq!(restored.address.endpoint_key, transport);
+    assert_eq!(restored.instance, [8; 32]);
+    let pin = key(2).verifying_key().to_bytes();
+    reopened.revoke_self_owned(pin, 3006)?;
+    assert!(reopened
+        .replace_self_owned_records(vec![fresh], 3007)
+        .is_err());
+    assert!(reopened
+        .check_continuous_peer_v4(pin, transport, 3007)
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn self_owned_offers_reject_forgery_wrong_endpoint_and_endorsement_fallback() -> Result<()> {
     for case in 0..5 {
         let mut b = own_book()?;

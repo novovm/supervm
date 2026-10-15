@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 live locator refresh (claim released):** NOVOCHAT session, input
+5d4ce085. Scope product_rendezvous_owned.rs / service lease regression only:
+refresh the existing endpoint's address snapshot before signing each new
+locator. Preserve endpoint identity, connections, replay and resource rules.
+No financial/AOEM changes. New durable/signature regression passes; suite 49/50,
+one original 1s wall-time assertion also fails in the previous built binary.
+Strict Clippy passes. Actual Android latency benefit is not yet proven.
+
 **2026-10-15 mailbox live carrier observation (claim released):** NOVOCHAT session,
 input 627bef00. Scoped to mailbox_rpc.rs and mailbox_idle_tests.rs: expose the
 existing selected-path/smoothed-RTT snapshot on a healthy mailbox session.

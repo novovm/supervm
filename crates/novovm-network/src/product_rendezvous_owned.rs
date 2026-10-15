@@ -225,6 +225,11 @@ impl Node {
                     if stop.load(Ordering::Acquire) { break; }
                     let now = Instant::now();
                     if now >= rotate_at {
+                        // The listener survives network changes. Re-signing its
+                        // startup snapshot would preserve stale NAT/interface
+                        // candidates forever. Read the SAME endpoint here; the
+                        // host below still rejects a changed transport identity.
+                        endpoint.address = scope.address()?;
                         endpoint.instance = rand::random();
                         let expiry = now_ms()?.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
                         let next = Arc::new(Mutex::new(RendezvousStoreV1::new(endpoint.instance, now + Duration::from_secs(90))?));
