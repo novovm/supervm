@@ -1,11 +1,27 @@
 # NOVOVM 产品目标与交付主线
 **2026-10-16 native in-flight cancellation (active claim):** NOVOCHAT session,
-input c2c1f6fc. Scope: original novorudp object_link/sender completion state,
+input c2c1f6fc plus shared reconnect 943092da. Scope: original novorudp object_link/sender completion state,
 shared mailbox_structured/native_session and focused tests/handoff. Propagate
 owner/request invalidation into retained native sends without resetting replay
 counters, tearing healthy peers down or undoing committed mailbox custody.
 No new SDK/transport/runtime, finance, AOEM or July recovery-tree changes.
-Mobile reconnect and actual Android activation remain subsequent integration.
+Reuse delivered reconnect; actual Android activation remains subsequent integration.
+
+**2026-10-16 native reconnect (claim released):** July recovery owner, input
+af77af16. Scope: existing native endpoint/object-link session replacement and
+mailbox session invalidation/tests. Fresh signed handshake plus encrypted
+possession confirmation; preserve healthy old session until confirmation,
+surface unknown in-flight outcomes and isolate reassembly/ACK generations.
+No new transport, mainchain execution, mobile deployment or financial work.
+User scope clarification: iOS/Android share this Rust protocol core, but platform
+bindings, app owner wiring and phone validation belong to the NOVOCHAT developer.
+Finish only this in-flight shared transport change, hand off, then return to NOV
+genesis/native transactions/AOEM/finality/queries/restart closure. Do not expand
+this SDK task into mobile implementation or postpone the mainchain for it.
+Merged NOVOCHAT c2c1f6fc operation-deadline cap. Combined native 85, public
+transport 3 and mailbox session 4 tests plus strict Clippy pass. Shared transport
+synchronized to July 74b532cc (74 tests); native query drafts remain separate.
+Handoff is published, not acknowledgement by the other machine or phone signoff.
 
 **2026-10-16 native mailbox convergence (claim released):** NOVOCHAT session.
 Concurrent unpublished local faf108c5 overlapped upstream af77af16. Keep the

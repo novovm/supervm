@@ -2,7 +2,7 @@
 //! handshake, frame, window repair, pacing and reassembly implementations.
 //! No body encoding/decoding, business execution, consensus rules or worker.
 use super::{
-    endpoint::{NativeEndpoint, NativePoll},
+    endpoint::{NativeEndpoint, NativePoll, NativeSessionChange},
     fragments::{
         CompletedMessage, FragmentAdmission, FragmentProfile, OutgoingMessage, ReassemblyLimits,
     },
@@ -15,7 +15,10 @@ use anyhow::{ensure, Context, Result};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -69,6 +72,22 @@ pub enum NativeApplicationRole {
     Client,
     Service,
 }
+/// Read-only local generation guard, not an identity/entitlement authority.
+/// A pending operation can check this without holding the socket owner across
+/// an await. Replacement or dropping the link permanently invalidates it.
+#[derive(Clone)]
+pub struct NativeSessionValidity(Arc<AtomicBool>);
+impl NativeSessionValidity {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(true)))
+    }
+    pub fn is_current(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+    fn invalidate(&self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 struct Lane {
     config: NativeLaneConfig,
     receiver: NativeObjectReceiver,
@@ -109,6 +128,10 @@ pub struct NativeLinkPoll {
     /// At most the supplied poll quantum. Ownership transfers to the caller;
     /// it must budget retained completions before polling again.
     pub completed: Vec<NativeSendCompletion>,
+    /// Process before receiving new application objects. Old business work may
+    /// already have committed; this is NOT a rollback or automatic retry.
+    pub session_changes: Vec<NativeSessionChange>,
+    pub retired_inbound_messages: usize,
 }
 
 pub struct NativeObjectLink {
@@ -124,6 +147,7 @@ pub struct NativeObjectLink {
     // One application sequence owner per authenticated peer/stream. Bounded by
     // the existing peer and lane counts; not an admission/entitlement registry.
     application_owners: BTreeMap<(usize, u64, NativeApplicationRole), [u8; 16]>,
+    session_validity: BTreeMap<usize, ([u8; 16], NativeSessionValidity)>,
 }
 impl NativeObjectLink {
     pub fn new(
@@ -190,6 +214,7 @@ impl NativeObjectLink {
             epoch: 0,
             policy,
             application_owners: BTreeMap::new(),
+            session_validity: BTreeMap::new(),
         })
     }
     pub fn local_addr(&self) -> Result<SocketAddr> {
@@ -206,6 +231,18 @@ impl NativeObjectLink {
     }
     pub fn peer_count(&self) -> usize {
         self.endpoint.peer_count()
+    }
+    pub fn session_validity(&mut self, peer: usize) -> Result<NativeSessionValidity> {
+        let session = self.session_id(peer).context("peer not authenticated")?;
+        let entry = self
+            .session_validity
+            .entry(peer)
+            .or_insert_with(|| (session, NativeSessionValidity::new()));
+        if entry.0 != session {
+            entry.1.invalidate();
+            *entry = (session, NativeSessionValidity::new());
+        }
+        Ok(entry.1.clone())
     }
     /// Prevent dropping/recreating an application adapter from resetting replay
     /// counters on the SAME authenticated session. Only a genuinely new session
@@ -293,8 +330,10 @@ impl NativeObjectLink {
             "native outgoing object scope/shape mismatch"
         );
         let key = (peer, stream, body.id());
-        if self.jobs.contains_key(&key) {
-            return Ok(true);
+        if let Some(sender) = self.jobs.get(&key) {
+            // A retired job still owns its quota until its completion is handed
+            // back. Identical bytes in a new session are not that old job.
+            return Ok(self.endpoint.session_id(peer) == Some(sender.session_id()));
         }
         let Some(session) = self.endpoint.session_id(peer) else {
             return Ok(false);
@@ -327,6 +366,7 @@ impl NativeObjectLink {
             rejected_datagrams,
             handshake_send_failures,
             receive_errors,
+            session_changes,
             ..
         } = self.endpoint.poll(wall_ms, now, quantum)?;
         // Append only identities authenticated by this endpoint. Indices never
@@ -344,8 +384,25 @@ impl NativeObjectLink {
             rejected: rejected_datagrams,
             handshake_send_failures,
             receive_errors,
+            session_changes,
             ..Default::default()
         };
+        for change in &report.session_changes {
+            if let Some((_, validity)) = self.session_validity.remove(&change.peer) {
+                validity.invalidate();
+            }
+            let id = self.endpoint.peer_id(change.peer)?;
+            for lane in self.lanes.values_mut() {
+                report.retired_inbound_messages += lane.receiver.retire_peer_session(id);
+                lane.feedback.retain(|(peer, _)| *peer != change.peer);
+                lane.queued.retain(|(peer, _)| *peer != change.peer);
+            }
+            for ((peer, _, _), sender) in &mut self.jobs {
+                if *peer == change.peer {
+                    sender.retire_session();
+                }
+            }
+        }
         for lane in self.lanes.values_mut() {
             lane.receiver.expire(now);
         }
@@ -477,6 +534,14 @@ impl NativeObjectLink {
             lane.feedback(peer, item.id);
         }
         Ok(item)
+    }
+}
+
+impl Drop for NativeObjectLink {
+    fn drop(&mut self) {
+        for (_, validity) in self.session_validity.values() {
+            validity.invalidate();
+        }
     }
 }
 

@@ -1,4 +1,13 @@
 # Agent Highest Law
+- 2026-10-16 user work split: NOVOCHAT, Android/iPhone platform bindings,
+  app lifecycle and mobile-device validation belong to the other NOVOCHAT
+  machine. Share one NovoRUDP/APFL Rust core; do not take over mobile work.
+  This machine's priority is NOV genesis, native structured transactions,
+  unified AOEM execution, durable consensus/publication, native queries and
+  restart closure, plus same-condition finalized TPS/P95/P99 validation.
+  Finish the in-flight shared SDK handoff, then return to that mainchain path;
+  do not prolong mobile/network work or equate July transport TPS with current
+  finalized transaction capacity. See NOVORUDP_SHARED_CLIENT_HANDOFF.md in docs.
 - 2026-10-16 user native-DApp rule: NOVOVM, NOVONET and NOVOCHAT must use
   the existing NovoRUDP/APFL structured SDK and native communication entry.
   Do not route native DApp business through HTTP/JSON-RPC compatibility APIs,
