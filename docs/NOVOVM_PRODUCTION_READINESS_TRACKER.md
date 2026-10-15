@@ -18,6 +18,12 @@ release TLS feature真实握手/exporter/错误pin与ALPN/跨连接绑定/部分
 CPU2项（2.38秒）、完整代数2项（7.55秒）通过，覆盖原生查询、少数票不得发布和
 冷恢复。本片没有新TPS成绩。保留runtime独立锁仍为旧依赖，
 本片没有签收它或手机部署，也没有把安全升级算作TPS改善。
+
+随后以3e5b6400合并另一设备c1297d12载体更新，完整保留其实现。合并后TLS-feature
+原NovoRUDP102项通过（0.13秒），audit仍0漏洞；上述四进程结果对应安全补丁构建
+80fc0e95，不冒充合并后的节点性能或手机实测。下一性能项为原发布ACK后的只读
+候选投影，消除正常推进重复ArchiveRead，尚未实现；冷恢复校验不得删除。
+
 ## 2026-10-16 原 NativeObjectLink 实际异步载体收发（有限 scope；非手机部署）
 
 输入 fa58bf4b，认领20c8455e。调用链为实际 CarrierStream 结构化 Finished →

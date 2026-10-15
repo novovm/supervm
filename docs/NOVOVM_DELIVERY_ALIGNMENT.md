@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-16 root release dependency repair (validated; integration pending):** input0bcfa905.
+**2026-10-16 root release dependency repair (integrated; claim released):** input0bcfa905.
 Root owns network rustls pin, root lockfile, bounded validation and evidence;
 one heavy build/performance slot. Fix the confirmed root security gate through
 the upstream patch, no advisory suppression, broad dependency update or carrier
@@ -12,6 +12,10 @@ Root security-only node9f689469… built successfully; actual four-process CPU2
 and complete algebraic2 tests pass, including minority/publication and cold
 recovery. TLS39 tests, audit0 vulnerabilities and deny checks pass; existing
 paste/rand warnings and preserved nested-workspace vulnerability remain.
+Merged remote c1297d12 at3e5b6400 without changing its carrier implementation;
+merged release TLS-feature NovoRUDP102 tests pass, root audit still reports0
+vulnerabilities. Four-process node tests above belong to security-only80fc0e95,
+not an unmeasured merged node. Remote CI remains a separate gate.
 
 Next original-path implementation is ACK-bound warm receipt projection:
 rpc.poll_projection currently blocks selection while ArchiveRead reloads
