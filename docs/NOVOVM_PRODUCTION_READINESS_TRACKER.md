@@ -3,6 +3,20 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 根产品 TLS 依赖安全补丁（本地门通过，非全仓发布签收）
+
+输入0bcfa905。network精确rustls0.23.45升级0.23.46，根锁只变rustls版本与校验和；
+node/relay已有兼容范围无需修改。定向更新顺带重选的syn依赖已还原。不新增advisory
+豁免，不改TLS认证/原生协议/AOEM/手机或保留runtime草稿。
+[官方修复说明](https://github.com/rustls/rustls/releases/tag/v/0.23.46)对应四项
+RUSTSEC-2026-0346/0347/0348/0349。本机audit由4项漏洞退出1变为0项漏洞，
+数据库edb58f5974b83eb8302332821cb6d389777aa351；原paste未维护与rand unsound警告
+仍存在，不称无风险。cargo-deny四类检查通过，原有rand例外未增删。
+
+release TLS feature真实握手/exporter/错误pin与ALPN/跨连接绑定/部分读写/关闭与释放
+39项通过（8.92秒）；最终节点构建与原生回归继续。保留runtime独立锁仍为旧依赖，
+本片没有签收它或手机部署，也没有把安全升级算作TPS改善。
+
 ## 2026-10-16 原生接收资源复用，有限负载约7.32K，非容量上限
 
 输入17c9479c，继续唯一原tick/NovoRUDP/APFL→node/exec/bindings/AOEM→原
