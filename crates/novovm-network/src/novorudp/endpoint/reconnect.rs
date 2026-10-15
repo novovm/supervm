@@ -45,14 +45,17 @@ impl NativeEndpoint {
     ) -> Result<()> {
         if let Some(&index) = self.sources.get(&source) {
             let peer = &mut self.peers[index];
-            // Old transcript retries keep their original replay semantics.
-            if peer
+            let handshake = peer
                 .handshake
+                .as_mut()
+                .context("bound carrier cannot accept UDP handshake")?;
+            // Old transcript retries keep their original replay semantics.
+            if handshake
                 .receive_route(source, wire, wall_ms, now, &mut self.replay)
                 .is_ok()
             {
                 if peer.session.is_none() {
-                    peer.session = peer.handshake.take_session();
+                    peer.session = handshake.take_session();
                 }
                 return Ok(());
             }
@@ -145,7 +148,7 @@ impl NativeEndpoint {
         let previous = peer.session.as_ref()?.session_id();
         let current = pending.session.session_id();
         peer.session = Some(pending.session);
-        peer.handshake = pending.handshake;
+        peer.handshake = Some(pending.handshake);
         self.sources.retain(|_, i| *i != index);
         self.sources.insert(source, index);
         Some((

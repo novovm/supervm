@@ -277,6 +277,7 @@ impl BoundHandshakeInitiatorV1 {
         let channel = self.inner.complete(&response.e2e, now_ms, replay_cache)?;
         Ok(PendingBoundChannelV1::new(
             channel,
+            self.offer.context,
             transcript,
             true,
             expires_at_ms,
@@ -336,10 +337,12 @@ impl BoundHandshakeResponderV1 {
         check_response_shape(&response)?;
         let transcript = transcript_hash(offer, &response);
         let expires_at_ms = offer.e2e.expires_at_ms.min(response.e2e.expires_at_ms);
+        let context = response.context.clone();
         Ok(Self {
             response,
             pending: PendingBoundChannelV1::new(
                 inner.into_channel(),
+                context,
                 transcript,
                 false,
                 expires_at_ms,
@@ -364,6 +367,7 @@ impl BoundHandshakeResponderV1 {
 /// an envelope is not a transport send or application delivery acknowledgement.
 pub struct PendingBoundChannelV1 {
     channel: E2eSecureChannelV1,
+    context: BoundHandshakeContextV1,
     transcript: [u8; 32],
     initiator: bool,
     expires_at_ms: u64,
@@ -375,12 +379,14 @@ pub struct PendingBoundChannelV1 {
 impl PendingBoundChannelV1 {
     fn new(
         channel: E2eSecureChannelV1,
+        context: BoundHandshakeContextV1,
         transcript: [u8; 32],
         initiator: bool,
         expires_at_ms: u64,
     ) -> Self {
         Self {
             channel,
+            context,
             transcript,
             initiator,
             expires_at_ms,
@@ -439,6 +445,8 @@ impl PendingBoundChannelV1 {
         }
         Ok(BoundSecureChannelV1 {
             channel: self.channel,
+            context: self.context,
+            initiator: self.initiator,
         })
     }
 
@@ -473,9 +481,36 @@ impl PendingBoundChannelV1 {
 /// privacy/cancellation policy and does not establish an application receipt.
 pub struct BoundSecureChannelV1 {
     channel: E2eSecureChannelV1,
+    context: BoundHandshakeContextV1,
+    initiator: bool,
 }
 
 impl BoundSecureChannelV1 {
+    /// Recheck this completed channel against the actual local carrier before
+    /// transferring ownership. Neither a node key nor a route flag substitutes
+    /// for the exact connection/stream exporter and authenticated direction.
+    pub fn verify_transport_binding(&self, binding: &VerifiedTransportBinding) -> Result<()> {
+        if self.initiator != binding.local_is_initiator
+            || self.context
+                != binding.context(
+                    self.context.initiator_identity_public_key,
+                    self.context.responder_identity_public_key,
+                )?
+        {
+            return Err(TransportBindingErrorV1::BindingMismatch);
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn local_identity_public_key(&self) -> [u8; 32] {
+        if self.initiator {
+            self.context.initiator_identity_public_key
+        } else {
+            self.context.responder_identity_public_key
+        }
+    }
+
     #[must_use]
     pub fn local_peer_id(&self) -> &str {
         self.channel.local_peer_id()
@@ -850,6 +885,215 @@ mod tests {
         assert!(right.open_novorudp_frame(&envelope).is_err());
         let return_envelope = right.seal_novorudp_frame(&frame).unwrap();
         assert_eq!(left.open_novorudp_frame(&return_envelope).unwrap(), frame);
+    }
+
+    #[test]
+    fn completed_bound_channel_rejects_other_carrier_generation_and_direction() {
+        let (left, right) = finished_pair();
+        left.verify_transport_binding(&binding(true, 7)).unwrap();
+        right.verify_transport_binding(&binding(false, 7)).unwrap();
+        assert_eq!(left.local_identity_public_key(), public(1));
+        assert_eq!(right.local_identity_public_key(), public(2));
+        assert!(left.verify_transport_binding(&binding(true, 8)).is_err());
+        assert!(left.verify_transport_binding(&binding(false, 7)).is_err());
+        let different_peer = VerifiedTransportBinding::from_authenticated_transport(
+            public(3),
+            public(5),
+            [7; 32],
+            BOUND_TRANSPORT_ALPN_V1,
+            true,
+        )
+        .unwrap();
+        assert!(left.verify_transport_binding(&different_peer).is_err());
+    }
+
+    #[test]
+    fn completed_bound_channel_native_frames_preserve_replay_and_source_checks() {
+        use crate::novorudp::{
+            carrier::{NativeRoute, VerifiedCarrierRoute},
+            datagram::NativeUdpSession,
+        };
+        let (left, right) = finished_pair();
+        let mut left = NativeUdpSession::from_bound_channel(left, &binding(true, 7)).unwrap();
+        let mut right = NativeUdpSession::from_bound_channel(right, &binding(false, 7)).unwrap();
+        let incoming = NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(&binding(false, 7)));
+        let wrong = NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(&binding(false, 8)));
+        let frame = NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            left.session_id(),
+            11,
+            0,
+            0,
+            0,
+            vec![42; 848],
+        );
+        let wire = left.encode(&frame).unwrap();
+        assert!(wire.starts_with(b"NVRLY002"));
+        assert!(right.open_route(wrong, &wire).is_err());
+        let mut tampered = wire.clone();
+        *tampered.last_mut().unwrap() ^= 1;
+        assert!(right.open_route(incoming, &tampered).is_err());
+        assert_eq!(right.open_route(incoming, &wire).unwrap(), frame);
+        assert!(right.open_route(incoming, &wire).is_err());
+        let repair = left.encode(&frame).unwrap();
+        assert_ne!(repair, wire);
+        assert_eq!(right.open_route(incoming, &repair).unwrap(), frame);
+        let response = right.encode(&frame).unwrap();
+        let left_incoming =
+            NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(&binding(true, 7)));
+        assert_eq!(left.open_route(left_incoming, &response).unwrap(), frame);
+    }
+
+    #[test]
+    fn completed_bound_channel_adopts_native_endpoint_without_udp_handshake() {
+        use crate::novorudp::{carrier::NativeDatagramIo, endpoint::NativeEndpoint};
+        use std::{
+            io,
+            sync::Arc,
+            time::{Duration, Instant},
+        };
+        struct IdleIo;
+        impl NativeDatagramIo for IdleIo {
+            fn try_receive(
+                &self,
+                _: &mut [u8],
+            ) -> io::Result<Option<(usize, crate::novorudp::carrier::NativeRoute)>> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+            fn try_send(
+                &self,
+                _: &[u8],
+                _: crate::novorudp::carrier::NativeRoute,
+            ) -> io::Result<usize> {
+                panic!("adoption must not emit a second handshake")
+            }
+        }
+        let (left, _) = finished_pair();
+        let session = left.session_id();
+        let mut endpoint =
+            NativeEndpoint::from_bound_channel(Arc::new(IdleIo), left, &binding(true, 7), vec![11])
+                .unwrap();
+        assert_eq!(endpoint.session_id(0), Some(session));
+        assert_eq!(endpoint.local_identity(), public(1));
+        assert_eq!(
+            endpoint.peer_id(0).unwrap(),
+            peer_id_from_ed25519_public_key_v1(&public(2))
+        );
+        assert!(!endpoint.accepts_clients());
+        assert!(endpoint.local_addr().is_err());
+        let later = Instant::now() + Duration::from_secs(120);
+        assert_eq!(endpoint.expired_handshakes(later), 0);
+        assert_eq!(
+            endpoint
+                .poll(NOW + 120_000, later, 1)
+                .unwrap()
+                .handshakes_sent,
+            0
+        );
+        let (left, _) = finished_pair();
+        assert!(NativeEndpoint::from_bound_channel(
+            Arc::new(IdleIo),
+            left,
+            &binding(true, 8),
+            vec![11]
+        )
+        .is_err());
+        let (left, _) = finished_pair();
+        assert!(NativeEndpoint::from_bound_channel(
+            Arc::new(IdleIo),
+            left,
+            &binding(true, 7),
+            vec![u64::MAX]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn completed_bound_endpoint_rejects_nested_handshake_and_propagates_carrier_reset() {
+        use crate::novorudp::{
+            carrier::{NativeDatagramIo, NativeRoute, VerifiedCarrierRoute},
+            datagram::NativeUdpSession,
+            endpoint::NativeEndpoint,
+        };
+        use std::{
+            collections::VecDeque,
+            io,
+            sync::{Arc, Mutex},
+            time::Instant,
+        };
+        struct Input {
+            // Test fixture: exactly two bounded frames followed by one error.
+            events: Mutex<VecDeque<io::Result<Vec<u8>>>>,
+            route: NativeRoute,
+        }
+        impl NativeDatagramIo for Input {
+            fn try_receive(&self, target: &mut [u8]) -> io::Result<Option<(usize, NativeRoute)>> {
+                let event = self
+                    .events
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .ok_or(io::ErrorKind::WouldBlock)??;
+                if event.len() > target.len() {
+                    return Err(io::ErrorKind::InvalidInput.into());
+                }
+                target[..event.len()].copy_from_slice(&event);
+                Ok(Some((event.len(), self.route)))
+            }
+            fn try_send(&self, _: &[u8], _: NativeRoute) -> io::Result<usize> {
+                panic!("nested handshake must not send any response")
+            }
+        }
+        for failure in [
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionRefused,
+            io::ErrorKind::Interrupted,
+        ] {
+            let (left, right) = finished_pair();
+            let session = left.session_id();
+            let mut right =
+                NativeUdpSession::from_bound_channel(right, &binding(false, 7)).unwrap();
+            let frame = NovoRudpTransportFrameV0::new(
+                NovoRudpTransportFrameKindV0::Data,
+                session,
+                11,
+                0,
+                0,
+                0,
+                vec![9; 32],
+            );
+            let old_offer = crate::product_overlay::NodeHandshakeInitiatorV1::start(
+                &key(2),
+                peer_id_from_ed25519_public_key_v1(&public(1)),
+                NOW,
+                TTL,
+            )
+            .unwrap();
+            let nested =
+                crate::product_overlay::handshake_wire::encode_offer(old_offer.offer()).unwrap();
+            let input = Arc::new(Input {
+                events: Mutex::new(VecDeque::from([
+                    Ok(nested),
+                    Ok(right.encode(&frame).unwrap()),
+                    Err(failure.into()),
+                ])),
+                route: NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(&binding(true, 7))),
+            });
+            let mut endpoint =
+                NativeEndpoint::from_bound_channel(input, left, &binding(true, 7), vec![11])
+                    .unwrap();
+            let report = endpoint.poll(NOW, Instant::now(), 2).unwrap();
+            assert_eq!(report.rejected_datagrams, 1);
+            assert_eq!(report.handshakes_sent, 0);
+            assert_eq!(report.frames.len(), 1);
+            assert_eq!(report.frames[0].frame(), &frame);
+            assert_eq!(endpoint.session_id(0), Some(session));
+            let error = endpoint
+                .poll(NOW, Instant::now(), 1)
+                .err()
+                .expect("carrier failure must reach owner");
+            assert_eq!(error.downcast_ref::<io::Error>().unwrap().kind(), failure);
+        }
     }
 
     #[test]

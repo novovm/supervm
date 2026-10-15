@@ -18,8 +18,14 @@ use std::time::Instant;
 
 pub const MAX_DATAGRAM_BYTES: usize = 1200;
 
+enum NativeChannel {
+    Udp(E2eSecureChannelV1),
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    Bound(Box<crate::transport_binding::BoundSecureChannelV1>),
+}
+
 pub struct NativeUdpSession {
-    channel: E2eSecureChannelV1,
+    channel: NativeChannel,
     remote: NativeRoute,
 }
 
@@ -29,18 +35,42 @@ impl NativeUdpSession {
     }
     pub(crate) fn new_route(channel: E2eSecureChannelV1, remote: NativeRoute) -> Result<Self> {
         remote.validate()?;
-        Ok(Self { channel, remote })
+        Ok(Self {
+            channel: NativeChannel::Udp(channel),
+            remote,
+        })
+    }
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub(crate) fn from_bound_channel(
+        channel: crate::transport_binding::BoundSecureChannelV1,
+        binding: &crate::transport_binding::VerifiedTransportBinding,
+    ) -> Result<Self> {
+        channel.verify_transport_binding(binding)?;
+        Ok(Self {
+            channel: NativeChannel::Bound(Box::new(channel)),
+            remote: NativeRoute::Carrier(super::carrier::VerifiedCarrierRoute::from_binding(
+                binding,
+            )),
+        })
     }
     pub fn remote_peer_id(&self) -> &str {
-        self.channel.remote_peer_id()
+        match &self.channel {
+            NativeChannel::Udp(channel) => channel.remote_peer_id(),
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            NativeChannel::Bound(channel) => channel.remote_peer_id(),
+        }
     }
     pub fn session_id(&self) -> [u8; 16] {
-        self.channel.session_id()
+        match &self.channel {
+            NativeChannel::Udp(channel) => channel.session_id(),
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            NativeChannel::Bound(channel) => channel.session_id(),
+        }
     }
 
     pub fn encode(&mut self, frame: &NovoRudpTransportFrameV0) -> Result<Vec<u8>> {
         ensure!(
-            frame.session_id == self.channel.session_id(),
+            frame.session_id == self.session_id(),
             "inner frame session mismatch"
         );
         // Reject oversized application input before encryption/allocation. The
@@ -49,10 +79,23 @@ impl NativeUdpSession {
             frame.payload.len() <= MAX_DATAGRAM_BYTES - 96 - 16,
             "native payload too large"
         );
-        binary::encode(
-            &self.channel.seal_novorudp_frame(frame)?,
-            MAX_DATAGRAM_BYTES,
-        )
+        let envelope = match &mut self.channel {
+            NativeChannel::Udp(channel) => channel.seal_novorudp_frame(frame)?,
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            NativeChannel::Bound(channel) => {
+                let envelope = channel.seal_novorudp_frame(frame)?;
+                crate::product_overlay::SecureNovoRudpEnvelopeV1 {
+                    version: envelope.version,
+                    session_id: envelope.session_id,
+                    sender_peer_id: envelope.sender_peer_id,
+                    recipient_peer_id: envelope.recipient_peer_id,
+                    sequence: envelope.sequence,
+                    nonce: envelope.nonce,
+                    ciphertext: envelope.ciphertext,
+                }
+            }
+        };
+        binary::encode(&envelope, MAX_DATAGRAM_BYTES)
     }
 
     pub fn open(&mut self, source: SocketAddr, wire: &[u8]) -> Result<NovoRudpTransportFrameV0> {
@@ -66,9 +109,23 @@ impl NativeUdpSession {
     ) -> Result<NovoRudpTransportFrameV0> {
         ensure!(source == self.remote, "native packet source mismatch");
         let envelope = binary::decode(wire, MAX_DATAGRAM_BYTES)?;
-        let frame = self.channel.open_novorudp_frame(&envelope)?;
+        let frame = match &mut self.channel {
+            NativeChannel::Udp(channel) => channel.open_novorudp_frame(&envelope)?,
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            NativeChannel::Bound(channel) => {
+                channel.open_novorudp_frame(&crate::duplex::SecureNovoRudpEnvelopeV1 {
+                    version: envelope.version,
+                    session_id: envelope.session_id,
+                    sender_peer_id: envelope.sender_peer_id,
+                    recipient_peer_id: envelope.recipient_peer_id,
+                    sequence: envelope.sequence,
+                    nonce: envelope.nonce,
+                    ciphertext: envelope.ciphertext,
+                })?
+            }
+        };
         ensure!(
-            frame.session_id == self.channel.session_id(),
+            frame.session_id == self.session_id(),
             "inner frame session mismatch"
         );
         Ok(frame)

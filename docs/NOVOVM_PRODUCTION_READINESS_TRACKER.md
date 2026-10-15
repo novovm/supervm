@@ -36,6 +36,63 @@ main接合见[本轮证据](../artifacts/audit/native-receive-resident-20261016/
 保留49份legacy/runtime草稿、所有旧报告。当前7.32K不是110.83 debug观察、也不是
 历史9K/七月十几万/百万目标恢复或峰值证明。上个17c9479c CI38813464884已取消，
 其中Rust security检查因rustls0.23.45四项advisory失败；不以本机跑分豁免发布门。
+## 2026-10-16 已认证载体接管原生会话（接线组件；非手机部署）
+
+输入 `4a74d881`，认领 `43039abe`。沿既有 CarrierStreamV1 结构化握手与双方
+Finished 保留实际签名上下文、exporter 和方向；NativeEndpoint 新接管入口消费
+原通道，复用其会话、序号及重放窗口，不再启动第二次 NVHSHK01。原 UDP 入口
+继续原握手，单凭 Carrier route 仍不能准入。节点公钥、连接代次或方向不符拒绝。
+NativeUdpSession 使用原 NVRLY002 envelope 和 NovoRUDP frame，不新增协议或 SDK。
+
+实际调用链已验证至 structured bound_session → NativeUdpSession → 同一真实
+本机 QUIC stream 双向帧。固定对端、开放密钥持有策略分别连续八次往返，序号
+紧接 Finished，不重置或重认证。另验证接管 endpoint 收到旧握手后拒绝，仍接收
+合法密文；Carrier reset/refused/interrupted 返回 owner，不误用 UDP ICMP 忽略规则。
+载体存活、Privacy、撤销、取消及 NVMBOX07 服务选择仍由原 owner 验证；绑定快照
+不是永久授权，也不证明任意传入 IO 是原载体。
+
+验证：组合 Iroh/TLS `bound_` 42 PASS、0 FAIL、3 项既有 ignored（7.60s）；
+原 NovoRUDP 回归 86/86 PASS（0.97s）；组合 lib/tests 严格 Clippy PASS（20.70s），
+无默认特性 lib 检查 PASS（11.03s），diff 检查通过。六项新增测试包含真实本机
+QUIC 两项与绑定/接管四项。一次大枚举 Clippy 失败通过每会话一次 Box 修复，
+无逐帧额外 Box；未修改手机、节点运行环境或聊天数据，不签收跨网性能。
+
+**未接通项明确保留：** NativeObjectLink 的异步载体收发、实际 Mailbox 宿主、
+Android 部署与独立设备副本。不能把上述帧往返当作正式聊天/StoreReceipt。
+实际接线需先在原 owner 统一 prepare/write/commit：阻塞期间 ACK epoch 和
+数据帧的 latest_ack_epoch 可能变化，不能用重新封装后的密文认领旧写完成；
+取消或到期的 job 不得留下永久占槽。完整实际写出前不能返回发送成功。
+跨 await 保留 read/write future，避免丢弃半帧导致原载体主动关闭；写前保留
+有界预算，部分写失败仍核算，并向 owner 返回真实终止原因。不新增调度器。
+
+## 2026-10-16 Windows 冷端点初始化阻塞定位与修复
+
+输入 `7075b765`，认领 `a69e428a`。前述 Iroh 8 秒 scope 失败不是由新增
+结构化握手触发。临时分段测量复现 8.39 秒超时；另一次通过但耗时 7.70 秒。
+TLS/UDP 创建低于 3ms，Monitor 首次 poll 同步阻塞 2.167/4.162/1.161 秒；
+四条连接建立/收尾约 0.2 秒，最终本地清理仅几毫秒。不能再把此样本归因于
+收尾超时，亦不能把这个结论推广成全部手机长尾的原因。
+
+实际调用链：原 `bind_carrier_endpoint` → vendored Iroh `Endpoint::bind`
+→ `netwatch::Monitor::new` → Windows netdev 0.45.1 网卡枚举。原枚举为每个
+在线 IPv4 网关同步 `SendARP`，让本机网络信息读取依赖网关回答，并阻塞
+同线程的其他连接 future。补丁保留该原链路，仅把 netdev 网关 MAC 获取改为
+被动 `GetIpNetEntry2` 缓存读取；未知 MAC 保留真实网关 IP。本机 MAC、网卡
+地址、状态、默认接口与 WMI 路由读取未改。无新任务/调度器、无超时扩大、
+无关闭检查/身份/撤销放宽。上游 MIT 源码与窄补丁来源见 vendor/netdev。
+
+同机顺序执行旧/新库的三次对比：旧枚举 1161/4198/4189ms，新枚举
+7003/6183/6138µs；每次网卡身份、本机 MAC、IPv4/IPv6、flags 与默认接口
+快照一致。补丁后带诊断的原连接容量用例 0.26 秒通过，三个 Endpoint
+25.7/48.3/38.2ms。临时 Iroh/测试日志均移除，不进入正式运行输出。
+
+四项 Windows 专项测试通过，覆盖未知 MAC 保留双栈网关、缓存 MAC、去重、
+无网关、family-sized IPv4、IPv6 scope 和非法长度；无默认 feature 检查通过。
+移除临时日志后，同一 `bound_` 扩展回归 36 PASS / 0 FAIL / 3 ignored，
+7.09 秒；此前两项失败均通过。三个既有 ignored 仍未执行，不计入通过。
+Iroh/TLS 组合 lib/tests 严格 Clippy 通过（45.70 秒），diff 检查通过。
+这些是 Windows 同机组件/真实 QUIC 结果，不是 Android 延迟、独立物理副本、
+跨 NAT 原生载体部署或 300ms/P95 验收。已安装手机与运行节点均未改动。
 
 ## 2026-10-16 原 tick 内有界后继重叠，有限负载约6.99K，未恢复历史目标
 

@@ -34,13 +34,18 @@ of fully hiding child execution, historical9K recovery or100K capacity. Four
 real-AOEM successor fault/ACK tests and actual CPU/integer process closures pass.
 Claims released after root integration; final CI and combined-fault gaps remain.
 
-**2026-10-16 carrier admission/cleanup diagnosis (NOVOCHAT claim active):** input
+**2026-10-16 carrier admission/cleanup diagnosis (source fix complete; validation below):** input
 7075b765, downstream afaee82. Root owns iroh_transport.rs finite-scope/connection
 cleanup and focused existing tests, docs and one build slot. First measure the
 existing eight-second failure before changing behavior; no deadline expansion,
 false cleanup completion, ignored identity errors or live-node switch. Preserve
 long-lived endpoint ownership and original stream/connection limits. No edits to
 mainchain, AOEM, native ingress or another application scheduler.
+Diagnosis found synchronous Windows netdev gateway ARP during endpoint startup,
+not the observed connection cleanup. Passive metadata patch: same bound_ suite
+36 PASS / 0 FAIL / 3 ignored in 7.09s; original deadlines unchanged. Four vendor
+unit tests and no-default-feature check PASS. See tracker for measured limits.
+Native carrier runtime wiring, live deployment and independent replicas remain pending.
 
 **2026-10-16 structured bound carrier handshake (claim released; runtime wiring pending):** input
 f29e5519, downstream c8832af. Reuse transport_binding.rs BoundHandshake/Finished
@@ -2193,3 +2198,24 @@ Replace active SendARP metadata resolution with passive neighbor-cache lookup;
 preserve gateway IPs with unknown MAC and all authentication/deadline policy.
 No mainchain/SDK execution change, no network configuration change. Temporary
 iroh instrumentation will be removed after before/after measurement.
+
+**2026-10-16 native carrier runtime integration claim (adoption complete; IO pump pending):** input 4a74d881,
+downstream faf44d3. NOVOCHAT owner reuses CarrierStreamV1 structured bound
+Finished -> NativeEndpoint -> NativeObjectLink, retaining original APFL objects,
+wire budgets and mailbox executor. Replace current unconditional Carrier route
+rejection only through proof of the actual authenticated stream; no second
+NVHSHK01 handshake, synthetic UDP address, JSON fallback or scheduler. Root owns
+bounded carrier IO adapter/integration tests and one build slot. Bounded agent
+owns transport_binding proof retention and novorudp datagram/endpoint adoption;
+review agent is read-only. No mainchain transport/native_ingress/exec/AOEM edits.
+Partial write/backpressure must not manufacture transport or device receipts;
+stream cancellation must retire uncertain writes. Mobile deployment/independent
+replicas remain pending until actual runtime tests pass.
+
+Bound proof adoption and actual QUIC native-frame roundtrips are validated:
+42 bound PASS / 3 existing ignored, 86 native PASS, combined strict Clippy and
+no-default lib check PASS. Claims released for these files; runtime pump is NOT
+activated. Review found changing ACK/data epochs across WouldBlock, cancellation
+and shared byte-budget reservations require one prepare/write/commit contract
+before any buffered IO activation. Do not return success on mere queueing or
+re-seal/re-credit an earlier partial write as another frame. Keep existing owner.
