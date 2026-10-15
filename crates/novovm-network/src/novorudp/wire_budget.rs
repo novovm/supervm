@@ -1,12 +1,15 @@
-//! Node-wide UDP payload accounting, before ingress cryptography and after
-//! successful egress. This is an application admission bound, not an upstream
+//! Node-wide native payload accounting, before ingress cryptography and after
+//! successful egress, with held capacity for asynchronous carrier writes. This is an application admission bound, not an upstream
 //! firewall: discarded incoming bytes still physically reach the socket.
 //! 61 one-second buckets conservatively retain the oldest partial second, so
 //! every rolling 60-second interval fits the limit without per-packet allocation.
+//! Outstanding reservations remain charged separately until explicitly resolved.
 
 use super::carrier::{NativeDatagramIo, NativeRoute};
 use anyhow::{ensure, Result};
-use std::{io::ErrorKind, time::Instant};
+use std::{io::ErrorKind, sync::Arc, time::Instant};
+
+const MAX_PENDING_SENDS: usize = 64;
 
 pub const MIN_BYTES_PER_MINUTE: u64 = 2400;
 pub const MAX_BYTES_PER_MINUTE: u64 = 1024 * 1024 * 1024;
@@ -19,8 +22,20 @@ pub struct NativeWireUsage {
     pub received_bytes: u64,
     pub admitted_receive_bytes: u64,
     pub sent_bytes: u64,
+    /// Outstanding send bytes, included in used and never expired by the clock.
+    pub reserved_send_bytes: u64,
+    /// Bytes conservatively charged beyond the known actual write count.
+    pub uncertain_send_bytes: u64,
     pub receive_dropped: u64,
     pub send_deferred: u64,
+}
+
+/// Single-use proof of capacity held by exactly one budget owner. Dropping this
+/// token does not release capacity: the owner must resolve the actual write.
+#[derive(Debug)]
+pub(crate) struct NativeSendReservation {
+    owner: Arc<()>,
+    id: u64,
 }
 
 pub struct NativeWireBudget {
@@ -28,6 +43,9 @@ pub struct NativeWireBudget {
     second: u64,
     buckets: [u64; 61],
     usage: NativeWireUsage,
+    reservation_owner: Arc<()>,
+    next_reservation: u64,
+    pending_sends: [Option<(u64, usize)>; MAX_PENDING_SENDS],
 }
 
 impl NativeWireBudget {
@@ -40,6 +58,9 @@ impl NativeWireBudget {
             origin: now,
             second: 0,
             buckets: [0; 61],
+            reservation_owner: Arc::new(()),
+            next_reservation: 0,
+            pending_sends: [None; MAX_PENDING_SENDS],
             usage: NativeWireUsage {
                 limit,
                 remaining: limit,
@@ -56,7 +77,7 @@ impl NativeWireBudget {
         let elapsed = second - self.second;
         if elapsed >= 61 {
             self.buckets.fill(0);
-            self.usage.used = 0;
+            self.usage.used = self.usage.reserved_send_bytes;
         } else {
             for step in 1..=elapsed {
                 let index = ((self.second + step) % 61) as usize;
@@ -77,6 +98,75 @@ impl NativeWireBudget {
         self.buckets[(self.second % 61) as usize] += bytes as u64;
         self.usage.used += bytes as u64;
         self.usage.remaining = self.usage.limit - self.usage.used;
+    }
+
+    /// Hold capacity before yielding to a carrier write. The same node-wide
+    /// meter continues to account for ingress, UDP sends and other pending writes.
+    pub(crate) fn reserve_send(
+        &mut self,
+        bytes: usize,
+        now: Instant,
+    ) -> Result<Option<NativeSendReservation>> {
+        ensure!(bytes > 0, "empty native send reservation");
+        self.advance(now);
+        let slot = self.pending_sends.iter().position(Option::is_none);
+        if bytes as u64 > self.usage.remaining || slot.is_none() {
+            self.usage.send_deferred = self.usage.send_deferred.saturating_add(1);
+            return Ok(None);
+        }
+        let id = self
+            .next_reservation
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("native send reservation sequence exhausted"))?;
+        self.next_reservation = id;
+        self.pending_sends[slot.expect("available reservation slot")] = Some((id, bytes));
+        self.usage.reserved_send_bytes += bytes as u64;
+        self.usage.used += bytes as u64;
+        self.usage.remaining = self.usage.limit - self.usage.used;
+        Ok(Some(NativeSendReservation {
+            owner: Arc::clone(&self.reservation_owner),
+            id,
+        }))
+    }
+
+    /// Resolve a held write in the completion-time bucket. For unknown partial
+    /// writes the whole reservation remains charged, but only the known actual
+    /// bytes contribute to sent_bytes. This is accounting, not delivery success.
+    /// Cancellation before any write uses actual_bytes=0 and uncertain=false.
+    pub(crate) fn finish_send(
+        &mut self,
+        reservation: NativeSendReservation,
+        actual_bytes: usize,
+        uncertain: bool,
+        now: Instant,
+    ) -> Result<()> {
+        ensure!(
+            Arc::ptr_eq(&reservation.owner, &self.reservation_owner),
+            "native send reservation belongs to another budget"
+        );
+        let slot = self
+            .pending_sends
+            .iter()
+            .position(|entry| entry.is_some_and(|(id, _)| id == reservation.id))
+            .ok_or_else(|| anyhow::anyhow!("native send reservation is no longer outstanding"))?;
+        let (_, held) = self.pending_sends[slot].expect("outstanding reservation");
+        ensure!(
+            actual_bytes <= held,
+            "native send count exceeds reservation"
+        );
+        self.advance(now);
+        self.pending_sends[slot] = None;
+        self.usage.reserved_send_bytes -= held as u64;
+        self.usage.used -= held as u64;
+        self.charge(if uncertain { held } else { actual_bytes });
+        self.usage.sent_bytes = self.usage.sent_bytes.saturating_add(actual_bytes as u64);
+        if uncertain {
+            self.usage.uncertain_send_bytes = self
+                .usage
+                .uncertain_send_bytes
+                .saturating_add((held - actual_bytes) as u64);
+        }
+        Ok(())
     }
 
     pub(crate) fn admit_receive(&mut self, bytes: usize, now: Instant) -> bool {
@@ -134,6 +224,149 @@ mod tests {
     use super::*;
     use std::net::UdpSocket;
     use std::time::Duration;
+
+    // Internal forgery only exercises defensive validation; callers cannot
+    // construct or clone the private token.
+    fn duplicate_for_test(token: &NativeSendReservation) -> NativeSendReservation {
+        NativeSendReservation {
+            owner: Arc::clone(&token.owner),
+            id: token.id,
+        }
+    }
+
+    #[test]
+    fn held_send_survives_window_expiry_and_completion_starts_new_window() -> Result<()> {
+        let start = Instant::now();
+        let later = start + Duration::from_secs(600);
+        let mut budget = NativeWireBudget::new(2400, start)?;
+        assert!(budget.admit_receive(1200, start));
+        let pending = budget.reserve_send(1200, start)?.unwrap();
+        assert_eq!(budget.usage(start).remaining, 0);
+        let usage = budget.usage(later);
+        assert_eq!((usage.used, usage.reserved_send_bytes), (1200, 1200));
+        assert_eq!(usage.sent_bytes, 0);
+        assert!(budget.admit_receive(1200, later));
+        assert!(!budget.admit_receive(1, later));
+        assert!(budget.reserve_send(1, later)?.is_none());
+        budget.finish_send(pending, 1200, false, later)?;
+        let usage = budget.usage(later);
+        assert_eq!(
+            (usage.used, usage.reserved_send_bytes, usage.sent_bytes),
+            (2400, 0, 1200)
+        );
+        assert_eq!(budget.usage(start).remaining, 0); // clock regression cannot undo it
+        assert_eq!(budget.usage(later + Duration::from_secs(60)).remaining, 0);
+        assert_eq!(
+            budget.usage(later + Duration::from_secs(61)).remaining,
+            2400
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cancel_partial_and_uncertain_completion_do_not_report_false_bytes() -> Result<()> {
+        let now = Instant::now();
+        let mut budget = NativeWireBudget::new(2400, now)?;
+        let cancel = budget.reserve_send(1200, now)?.unwrap();
+        budget.finish_send(cancel, 0, false, now)?;
+        assert_eq!(budget.usage(now).remaining, 2400);
+        let partial = budget.reserve_send(1200, now)?.unwrap();
+        budget.finish_send(partial, 250, false, now)?;
+        assert_eq!(budget.usage(now).used, 250);
+        let uncertain = budget.reserve_send(1200, now)?.unwrap();
+        budget.finish_send(uncertain, 200, true, now)?;
+        let usage = budget.usage(now);
+        assert_eq!(
+            (usage.used, usage.sent_bytes, usage.uncertain_send_bytes),
+            (1450, 450, 1000)
+        );
+        assert_eq!(usage.reserved_send_bytes, 0);
+        let unknown = budget.reserve_send(950, now)?.unwrap();
+        budget.finish_send(unknown, 0, true, now)?;
+        let usage = budget.usage(now);
+        assert_eq!(
+            (
+                usage.remaining,
+                usage.sent_bytes,
+                usage.uncertain_send_bytes
+            ),
+            (0, 450, 1950)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reservations_are_owner_bound_single_use_and_bounded() -> Result<()> {
+        let now = Instant::now();
+        let mut budget = NativeWireBudget::new(2400, now)?;
+        let mut other = NativeWireBudget::new(2400, now)?;
+        assert!(budget.reserve_send(0, now).is_err());
+        let pending = budget.reserve_send(10, now)?.unwrap();
+        let duplicate = duplicate_for_test(&pending);
+        assert!(other
+            .finish_send(duplicate_for_test(&pending), 10, false, now)
+            .is_err());
+        assert!(budget
+            .finish_send(duplicate_for_test(&pending), 11, false, now)
+            .is_err());
+        assert_eq!(budget.usage(now).reserved_send_bytes, 10);
+        assert_eq!(other.usage(now).used, 0);
+        budget.finish_send(pending, 10, false, now)?;
+        assert!(budget.finish_send(duplicate, 10, false, now).is_err());
+        let mut tokens = Vec::new();
+        for _ in 0..MAX_PENDING_SENDS {
+            tokens.push(budget.reserve_send(1, now)?.unwrap());
+        }
+        assert!(budget.reserve_send(1, now)?.is_none());
+        assert!(budget
+            .reserve_send(1, now + Duration::from_secs(600))?
+            .is_none());
+        assert_eq!(budget.usage(now).reserved_send_bytes, 64);
+        for token in tokens {
+            budget.finish_send(token, 0, false, now)?;
+        }
+        assert_eq!(budget.usage(now).remaining, 2400);
+        assert!(budget.reserve_send(2400, now)?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn deferred_write_capacity_is_shared_with_udp_and_ingress() -> Result<()> {
+        let now = Instant::now();
+        let mut budget = NativeWireBudget::new(2400, now)?;
+        let pending = budget.reserve_send(1200, now)?.unwrap();
+        assert!(budget.admit_receive(600, now));
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        let receiver = UdpSocket::bind("127.0.0.1:0")?;
+        receiver.set_read_timeout(Some(Duration::from_secs(1)))?;
+        assert!(try_send_datagram(
+            &socket,
+            &[7; 600],
+            receiver.local_addr()?,
+            now,
+            Some(&mut budget)
+        )?);
+        let mut buffer = [0; 1200];
+        assert_eq!(receiver.recv_from(&mut buffer)?.0, 600);
+        assert!(!try_send_datagram(
+            &socket,
+            &[8],
+            receiver.local_addr()?,
+            now,
+            Some(&mut budget)
+        )?);
+        assert!(!budget.admit_receive(1, now));
+        budget.finish_send(pending, 0, false, now)?;
+        assert!(budget.admit_receive(1200, now));
+        let usage = budget.usage(now);
+        assert_eq!(
+            (usage.used, usage.sent_bytes, usage.admitted_receive_bytes),
+            (2400, 600, 1800)
+        );
+        assert_eq!(usage.reserved_send_bytes, 0);
+        assert_eq!((usage.send_deferred, usage.receive_dropped), (1, 1));
+        Ok(())
+    }
 
     #[test]
     fn rolling_window_has_no_boundary_burst_or_clock_regression_reset() -> Result<()> {

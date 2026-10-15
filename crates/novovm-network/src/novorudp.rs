@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod carrier;
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+pub mod carrier_io;
 pub mod datagram;
 pub mod endpoint;
 pub mod fragments;

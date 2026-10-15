@@ -6,9 +6,9 @@
 //! scheduler; repair seals a NEW envelope sequence rather than replaying ciphertext.
 
 use super::{
-    carrier::{NativeDatagramIo, NativeRoute},
-    wire_budget::{try_send_datagram, NativeWireBudget},
-    NovoRudpTransportFrameV0,
+    carrier::{NativeCarrierIoFailure, NativeDatagramIo, NativeRoute},
+    wire_budget::{try_send_datagram, NativeSendReservation, NativeWireBudget},
+    NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
 };
 use crate::product_overlay::{binary, E2eSecureChannelV1};
 use anyhow::{ensure, Result};
@@ -27,6 +27,12 @@ enum NativeChannel {
 pub struct NativeUdpSession {
     channel: NativeChannel,
     remote: NativeRoute,
+    pending: Option<PendingWrite>,
+}
+struct PendingWrite {
+    frame: NovoRudpTransportFrameV0,
+    wire: Vec<u8>,
+    reservation: Option<NativeSendReservation>,
 }
 
 impl NativeUdpSession {
@@ -38,6 +44,7 @@ impl NativeUdpSession {
         Ok(Self {
             channel: NativeChannel::Udp(channel),
             remote,
+            pending: None,
         })
     }
     #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
@@ -51,6 +58,7 @@ impl NativeUdpSession {
             remote: NativeRoute::Carrier(super::carrier::VerifiedCarrierRoute::from_binding(
                 binding,
             )),
+            pending: None,
         })
     }
     pub fn remote_peer_id(&self) -> &str {
@@ -146,10 +154,100 @@ impl NativeUdpSession {
         io: &dyn NativeDatagramIo,
         frame: &NovoRudpTransportFrameV0,
         now: Instant,
-        budget: Option<&mut NativeWireBudget>,
+        mut budget: Option<&mut NativeWireBudget>,
     ) -> Result<bool> {
+        if io.deferred_writes() {
+            if self.pending.is_none() {
+                let wire = self.encode(frame)?;
+                let reservation = match budget.as_deref_mut() {
+                    Some(budget) => match budget.reserve_send(wire.len(), now)? {
+                        Some(reservation) => Some(reservation),
+                        None => return Ok(false),
+                    },
+                    None => None,
+                };
+                self.pending = Some(PendingWrite {
+                    frame: frame.clone(),
+                    wire,
+                    reservation,
+                });
+            }
+            let pending = self.pending.as_ref().expect("retained write");
+            if pending.frame != *frame {
+                return Ok(false);
+            }
+            let result = io.try_send(&pending.wire, self.remote);
+            if matches!(&result, Err(error) if error.kind() == ErrorKind::WouldBlock) {
+                return Ok(false);
+            }
+            let pending = self.pending.take().expect("retained write");
+            match result {
+                Ok(count) if count == pending.wire.len() => {
+                    finish_reservation(pending.reservation, budget, count, false, now)?;
+                    return Ok(true);
+                }
+                Ok(count) => {
+                    let known = if count < pending.wire.len() { count } else { 0 };
+                    finish_reservation(pending.reservation, budget, known, true, now)?;
+                    return Err(NativeCarrierIoFailure(std::io::Error::new(
+                        ErrorKind::InvalidData,
+                        "incomplete native carrier write",
+                    ))
+                    .into());
+                }
+                Err(error) => {
+                    finish_reservation(pending.reservation, budget, 0, true, now)?;
+                    return Err(NativeCarrierIoFailure(error).into());
+                }
+            }
+        }
         let wire = self.encode(frame)?;
         try_send_datagram(io, &wire, self.remote, now, budget)
+    }
+
+    pub(crate) fn cancel_send(
+        &mut self,
+        io: &dyn NativeDatagramIo,
+        stream: u64,
+        id: [u8; 32],
+        feedback: bool,
+        budget: Option<&mut NativeWireBudget>,
+        now: Instant,
+    ) -> Result<()> {
+        let Some(pending) = self.pending.as_ref() else {
+            return Ok(());
+        };
+        let frame = &pending.frame;
+        let matches = frame.stream_id == stream
+            && if feedback {
+                frame.kind == NovoRudpTransportFrameKindV0::Ack
+                    && frame.payload.get(8..40) == Some(id.as_slice())
+            } else {
+                matches!(
+                    frame.kind,
+                    NovoRudpTransportFrameKindV0::Data | NovoRudpTransportFrameKindV0::Repair
+                ) && frame.payload.get(40..72) == Some(id.as_slice())
+            };
+        if !matches {
+            return Ok(());
+        }
+        let pending = self.pending.take().expect("matched pending write");
+        match io.cancel_send(&pending.wire, self.remote) {
+            Ok(count) if count == 0 || count == pending.wire.len() => {
+                finish_reservation(pending.reservation, budget, count, false, now)
+            }
+            result => {
+                let known = match &result {
+                    Ok(count) if *count < pending.wire.len() => *count,
+                    _ => 0,
+                };
+                finish_reservation(pending.reservation, budget, known, true, now)?;
+                let error = result.err().unwrap_or_else(|| {
+                    std::io::Error::new(ErrorKind::InvalidData, "partial carrier cancellation")
+                });
+                Err(NativeCarrierIoFailure(error).into())
+            }
+        }
     }
 
     /// At most one datagram, without an internal wait/retry loop. The caller must
@@ -162,6 +260,21 @@ impl NativeUdpSession {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+fn finish_reservation(
+    reservation: Option<NativeSendReservation>,
+    budget: Option<&mut NativeWireBudget>,
+    actual: usize,
+    uncertain: bool,
+    now: Instant,
+) -> Result<()> {
+    if let Some(reservation) = reservation {
+        let budget =
+            budget.ok_or_else(|| anyhow::anyhow!("native write reservation lost its budget"))?;
+        budget.finish_send(reservation, actual, uncertain, now)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

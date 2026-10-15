@@ -724,6 +724,50 @@ impl NativeEndpoint {
         )
     }
 
+    pub(crate) fn uses_deferred_writes(&self) -> bool {
+        self.io.deferred_writes()
+    }
+
+    pub(crate) fn cancel_object_send(
+        &mut self,
+        peer: usize,
+        stream: u64,
+        id: [u8; 32],
+    ) -> Result<()> {
+        self.cancel_retained_send(peer, stream, id, false)
+    }
+    pub(crate) fn cancel_feedback_send(
+        &mut self,
+        peer: usize,
+        stream: u64,
+        id: [u8; 32],
+    ) -> Result<()> {
+        self.cancel_retained_send(peer, stream, id, true)
+    }
+    fn cancel_retained_send(
+        &mut self,
+        peer: usize,
+        stream: u64,
+        id: [u8; 32],
+        feedback: bool,
+    ) -> Result<()> {
+        let session = self
+            .peers
+            .get_mut(peer)
+            .context("unknown native peer")?
+            .session
+            .as_mut()
+            .context("native peer not authenticated")?;
+        session.cancel_send(
+            self.io.as_ref(),
+            stream,
+            id,
+            feedback,
+            self.wire_budget.as_mut(),
+            Instant::now(),
+        )
+    }
+
     pub fn poll_object(
         &mut self,
         peer: usize,

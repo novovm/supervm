@@ -18,6 +18,29 @@ release TLS feature真实握手/exporter/错误pin与ALPN/跨连接绑定/部分
 CPU2项（2.38秒）、完整代数2项（7.55秒）通过，覆盖原生查询、少数票不得发布和
 冷恢复。本片没有新TPS成绩。保留runtime独立锁仍为旧依赖，
 本片没有签收它或手机部署，也没有把安全升级算作TPS改善。
+## 2026-10-16 原 NativeObjectLink 实际异步载体收发（有限 scope；非手机部署）
+
+输入 fa58bf4b，认领20c8455e。调用链为实际 CarrierStream 结构化 Finished →
+NativeCarrierPump::attach → 原 NativeEndpoint/NativeUdpSession → NativeObjectLink。
+同一 owner 轮询 pump 与原对象任务，不生成后台 worker、第二握手或新协议。
+单个有界写槽在实际 write_frame 完成之前只返回 WouldBlock；原发送帧、密文、
+ACK 快照和预算预留跨等待保持。真实取消发生在写入中则废弃载体，不把未知结果
+伪装为成功；任务取消先退役待写状态再释放对象配额，原 Arc/Message ID 不变。
+部分写入已知字节与未知字节分别记账，预留不随滚动窗口到期重复释放。
+正文与 ACK 在原有限 quantum 内交替获得写槽，避免持续反馈或持续正文饿死另一侧。
+
+验证：原生回归100/100 PASS（1.01s）；组合 Iroh/TLS bound_45 PASS、0 FAIL、
+3项既有 ignored（7.26s）；组合 lib/tests 严格 Clippy PASS（27.84s）；
+无默认特性 lib 检查 PASS（4.51s）。实际本机 QUIC 单连接双向两批共8个对象，
+多分片、两lane与原传输ACK闭环通过。初次完整bound_有1次测试结束竞态：
+双方完成后barrier与对端关闭同时ready，随机select先读到关闭；优先已完成的
+双端barrier后复测通过，未忽略业务期间载体错误或调整任何期限。
+
+边界：这是有限scope真实收发，不是持续信箱或设备送达回执验收。现有split_io
+半部保留固定操作期限，不能直接成为常驻接收。下一片在原载体显式原生服务选择
+后接空闲首字节等待及独立分帧期限，再由原NativeMailboxServer/Client保留各请求
+原截止时间；不得逐帧延长整个业务期限。节点签名原生carrier能力、宿主与手机
+Application接线、真实跨网及独立物理副本仍未交付。本片未部署手机或改动用户数据。
 
 ## 2026-10-16 原生接收资源复用，有限负载约7.32K，非容量上限
 
@@ -58,6 +81,7 @@ main接合见[本轮证据](../artifacts/audit/native-receive-resident-20261016/
 经济结果及冷恢复通过。此样本与合并前配对分开，未将旧构建成绩套给新构建。
 TLS feature原NovoRUDP88项、completed_bound4项通过；最终节点CPU2项/完整代数2项
 真实四进程功能与少数票拒绝发布、冷恢复通过。保留另一设备载体接管实现及其限制。
+
 ## 2026-10-16 已认证载体接管原生会话（接线组件；非手机部署）
 
 输入 `4a74d881`，认领 `43039abe`。沿既有 CarrierStreamV1 结构化握手与双方

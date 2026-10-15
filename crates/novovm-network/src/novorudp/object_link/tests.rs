@@ -451,3 +451,233 @@ fn cancelled_partial_send_releases_quota_without_resetting_healthy_session() -> 
     assert_eq!(a.session_id(0), session);
     Ok(())
 }
+
+struct BlockedFeedbackIo {
+    socket: UdpSocket,
+    blocked: AtomicBool,
+    cancellations: std::sync::atomic::AtomicUsize,
+    stepped: AtomicBool,
+    write: std::sync::Mutex<Option<(Vec<u8>, crate::novorudp::carrier::NativeRoute, bool)>>,
+}
+impl crate::novorudp::carrier::NativeDatagramIo for BlockedFeedbackIo {
+    fn deferred_writes(&self) -> bool {
+        true
+    }
+    fn cancel_send(
+        &self,
+        _: &[u8],
+        _: crate::novorudp::carrier::NativeRoute,
+    ) -> std::io::Result<usize> {
+        self.cancellations.fetch_add(1, Ordering::Relaxed);
+        Ok(0)
+    }
+    fn try_receive(
+        &self,
+        bytes: &mut [u8],
+    ) -> std::io::Result<Option<(usize, crate::novorudp::carrier::NativeRoute)>> {
+        self.socket
+            .recv_from(bytes)
+            .map(|(n, address)| Some((n, address.into())))
+    }
+    fn try_send(
+        &self,
+        bytes: &[u8],
+        route: crate::novorudp::carrier::NativeRoute,
+    ) -> std::io::Result<usize> {
+        if self.blocked.load(Ordering::Relaxed) {
+            return Err(std::io::ErrorKind::WouldBlock.into());
+        }
+        if self.stepped.load(Ordering::Relaxed) {
+            let mut slot = self.write.lock().unwrap();
+            if let Some((old, old_route, complete)) = slot.as_ref() {
+                if old != bytes || *old_route != route {
+                    return Err(std::io::ErrorKind::InvalidInput.into());
+                }
+                if !complete {
+                    return Err(std::io::ErrorKind::WouldBlock.into());
+                }
+                *slot = None;
+                return Ok(bytes.len());
+            }
+            *slot = Some((bytes.to_vec(), route, false));
+            return Err(std::io::ErrorKind::WouldBlock.into());
+        }
+        self.socket.try_send(bytes, route)
+    }
+}
+fn blocked_feedback_pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<BlockedFeedbackIo>)> {
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    socket.set_nonblocking(true)?;
+    let address = socket.local_addr()?;
+    let io = Arc::new(BlockedFeedbackIo {
+        socket,
+        blocked: false.into(),
+        cancellations: 0.into(),
+        stepped: false.into(),
+        write: std::sync::Mutex::new(None),
+    });
+    let server_key = SigningKey::from_bytes(&[81; 32]);
+    let budget = || NativeHandshakeBudget {
+        lifetime: Duration::from_secs(2),
+        retry: Duration::from_millis(10),
+    };
+    let mut server = NativeObjectLink::new(
+        NativeEndpoint::listen_clients_with_io(
+            io.clone(),
+            server_key.clone(),
+            1,
+            vec![CONTROL, BODY],
+            budget(),
+        )?,
+        configs(),
+        policy(),
+    )?;
+    let mut client = NativeObjectLink::new(
+        NativeEndpoint::connect_client(
+            UdpSocket::bind("127.0.0.1:0")?,
+            SigningKey::from_bytes(&[82; 32]),
+            NativePeer {
+                key: server_key.verifying_key().to_bytes(),
+                address,
+            },
+            budget(),
+            1000,
+            Instant::now(),
+        )?,
+        configs(),
+        policy(),
+    )?;
+    let start = Instant::now();
+    while client.session_id(0).is_none() || server.session_id(0).is_none() {
+        ensure!(
+            start.elapsed() < Duration::from_secs(2),
+            "feedback fixture handshake timeout"
+        );
+        let _ = client.poll(1000, Instant::now(), 8)?;
+        let _ = server.poll(1000, Instant::now(), 8)?;
+        std::thread::yield_now();
+    }
+    io.blocked.store(true, Ordering::Relaxed);
+    Ok((client, server, io))
+}
+#[test]
+fn blocked_feedback_preserves_frame_then_emits_newer_snapshot() -> Result<()> {
+    let (mut client, mut server, io) = blocked_feedback_pair()?;
+    let now = Instant::now();
+    let body = message(CONTROL, 6, 1000)?;
+    assert!(client.try_send(0, CONTROL, &body, now)?);
+    assert_eq!(client.poll(1000, now, 1)?.data_sent, 1);
+    let _ = server.poll(1000, now, 1)?;
+    let key = (0, body.id());
+    let original = server.lanes[&CONTROL].pending_feedback[&key].frame.clone();
+    assert_eq!(client.poll(1000, now, 1)?.data_sent, 1);
+    let _ = server.poll(1000, now, 1)?;
+    assert_eq!(
+        server.lanes[&CONTROL].pending_feedback[&key].frame,
+        original
+    );
+    assert!(server.lanes[&CONTROL].pending_feedback[&key].dirty);
+    io.blocked.store(false, Ordering::Relaxed);
+    // CONTROL/BODY alternate; bounded polls eventually service CONTROL again.
+    let epoch = server.epoch;
+    let mut feedback = 0;
+    for _ in 0..4 {
+        feedback += server.poll(1000, now, 1)?.feedback_sent;
+    }
+    assert_eq!(feedback, 2);
+    assert_eq!(server.epoch, epoch + 1);
+    assert!(server.lanes[&CONTROL].pending_feedback.is_empty());
+    assert!(server.lanes[&CONTROL].queued.is_empty());
+    Ok(())
+}
+#[test]
+fn blocked_feedback_expires_with_receiver_state() -> Result<()> {
+    let (mut client, mut server, io) = blocked_feedback_pair()?;
+    let now = Instant::now();
+    let body = message(CONTROL, 7, 1000)?;
+    assert!(client.try_send(0, CONTROL, &body, now)?);
+    let _ = client.poll(1000, now, 1)?;
+    let _ = server.poll(1000, now, 2)?;
+    assert_eq!(server.lanes[&CONTROL].pending_feedback.len(), 1);
+    let report = server.poll(1000, now + Duration::from_secs(6), 2)?;
+    assert_eq!(report.feedback_sent, 0);
+    assert_eq!(io.cancellations.load(Ordering::Relaxed), 1);
+    assert!(server.lanes[&CONTROL].pending_feedback.is_empty());
+    assert!(server.lanes[&CONTROL].queued.is_empty());
+    Ok(())
+}
+
+#[test]
+fn cancelled_or_expired_object_retires_deferred_write_before_releasing_quota() -> Result<()> {
+    for cancel in [true, false] {
+        let (_client, mut server, io) = blocked_feedback_pair()?;
+        let now = Instant::now();
+        let body = message(CONTROL, 9, 1000)?;
+        assert!(server.try_send(0, CONTROL, &body, now)?);
+        assert_eq!(server.poll(1000, now, 2)?.data_sent, 0);
+        assert_eq!(server.outbound_usage(CONTROL)?, (1, 1000));
+        if cancel {
+            assert!(server.cancel_send(0, CONTROL, &body));
+        }
+        let next = if cancel {
+            now
+        } else {
+            now + Duration::from_secs(3)
+        };
+        let report = server.poll(1000, next, 2)?;
+        assert_eq!(report.completed.len(), 1);
+        assert_eq!(
+            report.completed[0].state,
+            if cancel {
+                ObjectSendState::Cancelled
+            } else {
+                ObjectSendState::Expired
+            }
+        );
+        assert!(Arc::ptr_eq(&report.completed[0].body, &body));
+        assert_eq!(io.cancellations.load(Ordering::Relaxed), 1);
+        assert_eq!(server.outbound_usage(CONTROL)?, (0, 0));
+    }
+    Ok(())
+}
+
+#[test]
+fn deferred_slot_alternates_sustained_feedback_and_outbound_data() -> Result<()> {
+    let (mut client, mut server, io) = blocked_feedback_pair()?;
+    let now = Instant::now();
+    let inbound = message(CONTROL, 11, 1000)?;
+    assert!(client.try_send(0, CONTROL, &inbound, now)?);
+    // Keep one actual incomplete object, generating valid repeated missing
+    // snapshots as duplicate fragments would. Do not finish that input stream.
+    assert_eq!(client.poll(1000, now, 1)?.data_sent, 1);
+    io.stepped.store(true, Ordering::Relaxed);
+    io.blocked.store(false, Ordering::Relaxed);
+    let outbound = message(BODY, 12, 8000)?;
+    assert!(server.try_send(0, BODY, &outbound, now)?);
+    let mut feedback = 0;
+    let mut data = 0;
+    for _ in 0..16 {
+        server
+            .lanes
+            .get_mut(&CONTROL)
+            .unwrap()
+            .feedback(0, inbound.id());
+        let report = server.poll(1000, now, 2)?;
+        feedback += report.feedback_sent;
+        data += report.data_sent;
+        let mut write = io.write.lock().unwrap();
+        if let Some((bytes, route, complete)) = write.as_mut() {
+            if !*complete {
+                use crate::novorudp::carrier::NativeDatagramIo;
+                assert_eq!(io.socket.try_send(bytes, *route)?, bytes.len());
+                *complete = true;
+            }
+        }
+    }
+    // Neither a continuous stream of fresh ACK hints nor a large outgoing body
+    // can reserve the sole deferred write slot forever ahead of the other.
+    assert!(feedback >= 5, "feedback starved: {feedback}");
+    assert!(data >= 5, "outbound data starved: {data}");
+    assert!(data < outbound.frame_count());
+    Ok(())
+}

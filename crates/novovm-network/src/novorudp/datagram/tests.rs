@@ -45,6 +45,63 @@ fn frame(session: [u8; 16], sequence: u64, payload: Vec<u8>) -> NovoRudpTranspor
 }
 
 #[test]
+fn deferred_partial_write_and_cancel_keep_known_and_unknown_bytes_separate() -> Result<()> {
+    use crate::novorudp::carrier::NativeDatagramIo;
+    struct Partial {
+        cancel: bool,
+    }
+    impl NativeDatagramIo for Partial {
+        fn deferred_writes(&self) -> bool {
+            true
+        }
+        fn try_receive(&self, _: &mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>> {
+            Err(ErrorKind::WouldBlock.into())
+        }
+        fn try_send(&self, _: &[u8], _: NativeRoute) -> std::io::Result<usize> {
+            if self.cancel {
+                Err(ErrorKind::WouldBlock.into())
+            } else {
+                Ok(17)
+            }
+        }
+        fn cancel_send(&self, _: &[u8], _: NativeRoute) -> std::io::Result<usize> {
+            Ok(17)
+        }
+    }
+    for cancel in [false, true] {
+        let (channel, _) = channels();
+        let mut session = NativeUdpSession::new(channel, "127.0.0.1:12345".parse()?)?;
+        let now = Instant::now();
+        let mut budget = NativeWireBudget::new(100_000, now)?;
+        let mut payload = vec![0; 72];
+        payload[40..72].fill(7);
+        let frame = frame(session.session_id(), 0, payload);
+        let result = session.try_send_limited(&Partial { cancel }, &frame, now, Some(&mut budget));
+        if cancel {
+            assert!(!result?);
+            assert!(session
+                .cancel_send(
+                    &Partial { cancel },
+                    11,
+                    [7; 32],
+                    false,
+                    Some(&mut budget),
+                    now
+                )
+                .is_err());
+        } else {
+            assert!(result.is_err());
+        }
+        let usage = budget.usage(now);
+        assert_eq!(usage.sent_bytes, 17);
+        assert!(usage.uncertain_send_bytes > 0);
+        assert_eq!(usage.used, usage.sent_bytes + usage.uncertain_send_bytes);
+        assert_eq!(usage.reserved_send_bytes, 0);
+    }
+    Ok(())
+}
+
+#[test]
 fn native_binding_rejects_source_replay_tamper_and_old_session_before_body_admission() -> Result<()>
 {
     let address = "127.0.0.1:12345".parse()?;
