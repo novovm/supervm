@@ -7,6 +7,7 @@
 //! count, or candidate slot enters the statement. Local budgets do not affect
 //! its identity. Constructing a plan never allocates a persistent candidate.
 
+use crate::native_pipeline::ingress::batch::BatchSource;
 use crate::native_pipeline::state::frontier::{
     BulkCapture, CaptureBudget, CaptureStep, DeclaredAccess, OwnedStateInput,
 };
@@ -15,6 +16,7 @@ use crate::native_pipeline::state::tree::{
 };
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 const PLAN_DOMAIN: &[u8] = b"novovm-replacement-batch-plan/v1\0";
@@ -110,7 +112,9 @@ pub struct PlanBudget {
 /// No Deserialize or writable accessors can substitute a body after capture.
 pub struct BatchPlan {
     context: BatchContext,
-    raw_transactions: Vec<Vec<u8>>,
+    source: BatchSource,
+    canonical_body_bytes: usize,
+    max_transaction_bytes: usize,
     declared_access: Vec<DeclaredAccess>,
     commitment: NodeHash,
 }
@@ -119,31 +123,49 @@ impl BatchPlan {
     pub fn new(
         context: BatchContext,
         raw_transactions: Vec<Vec<u8>>,
+        declared_access: Vec<DeclaredAccess>,
+        budget: PlanBudget,
+    ) -> Result<Self> {
+        Self::from_source(
+            context,
+            BatchSource::Raw(raw_transactions),
+            declared_access,
+            budget,
+        )
+    }
+
+    pub(crate) fn from_source(
+        context: BatchContext,
+        source: BatchSource,
         mut declared_access: Vec<DeclaredAccess>,
         budget: PlanBudget,
     ) -> Result<Self> {
         context.validate()?;
-        if raw_transactions.is_empty() || raw_transactions.len() > budget.transactions {
+        if source.is_empty() || source.len() > budget.transactions {
             bail!("batch transaction budget exceeded or empty");
         }
         if declared_access.is_empty() || declared_access.len() > budget.access_keys {
             bail!("batch access budget exceeded or empty");
         }
         let mut total = 0usize;
+        let mut max_transaction_bytes = 0usize;
         let mut seen = BTreeSet::new();
-        for raw in &raw_transactions {
-            if raw.is_empty() || raw.len() > budget.transaction_bytes {
+        for index in 0..source.len() {
+            let len = match &source {
+                BatchSource::Raw(raw) => raw[index].len(),
+                BatchSource::Apfl(batch) => batch.row(index)?.encoded_len()?,
+            };
+            if len == 0 || len > budget.transaction_bytes {
                 bail!("batch raw transaction size exceeds budget or empty");
             }
-            total = total
-                .checked_add(raw.len())
-                .context("batch body overflow")?;
+            total = total.checked_add(len).context("batch body overflow")?;
+            max_transaction_bytes = max_transaction_bytes.max(len);
             if total > budget.body_bytes {
                 bail!("batch body byte budget exceeded");
             }
             let mut digest = Sha256::new();
             digest.update(WIRE_DOMAIN);
-            framed(&mut digest, raw)?;
+            framed_source_row(&mut digest, &source, index)?;
             // A wire-content digest, NOT the protocol's canonical transaction ID.
             let wire_digest: NodeHash = digest.finalize().into();
             if !seen.insert(wire_digest) {
@@ -152,7 +174,7 @@ impl BatchPlan {
         }
         context
             .parent_state_version
-            .checked_add(u64::try_from(raw_transactions.len())?)
+            .checked_add(u64::try_from(source.len())?)
             .context("batch state version exhausted")?;
         for access in &declared_access {
             tree::state_key_hash(&access.key)?;
@@ -167,9 +189,9 @@ impl BatchPlan {
         let mut digest = Sha256::new();
         digest.update(PLAN_DOMAIN);
         context.commit(&mut digest)?;
-        digest.update(u64::try_from(raw_transactions.len())?.to_be_bytes());
-        for raw in &raw_transactions {
-            framed(&mut digest, raw)?;
+        digest.update(u64::try_from(source.len())?.to_be_bytes());
+        for index in 0..source.len() {
+            framed_source_row(&mut digest, &source, index)?;
         }
         digest.update(u64::try_from(declared_access.len())?.to_be_bytes());
         for access in &declared_access {
@@ -178,7 +200,9 @@ impl BatchPlan {
         }
         Ok(Self {
             context,
-            raw_transactions,
+            source,
+            canonical_body_bytes: total,
+            max_transaction_bytes,
             declared_access,
             commitment: digest.finalize().into(),
         })
@@ -192,11 +216,47 @@ impl BatchPlan {
         self.commitment
     }
 
-    pub fn raw_transactions(&self) -> &[Vec<u8>] {
-        &self.raw_transactions
+    pub fn transaction_count(&self) -> usize {
+        self.source.len()
     }
 
-    /// Immutable compiler-derived access declarations, retained with the raw
+    pub fn canonical_body_bytes(&self) -> usize {
+        self.canonical_body_bytes
+    }
+
+    pub fn max_transaction_bytes(&self) -> usize {
+        self.max_transaction_bytes
+    }
+
+    /// Explicit codec-boundary projection of ONE row, never a whole-batch
+    /// expansion. Raw archive bytes stay borrowed; APFL remains shared.
+    pub fn canonical_transaction(&self, index: usize) -> Result<Cow<'_, [u8]>> {
+        match &self.source {
+            BatchSource::Raw(raw) => Ok(Cow::Borrowed(
+                raw.get(index)
+                    .context("batch transaction index out of bounds")?,
+            )),
+            BatchSource::Apfl(batch) => Ok(Cow::Owned(batch.canonical_raw(index)?)),
+        }
+    }
+
+    /// Decoded cold archives already own their raw records. Never materializes
+    /// a structural batch merely to satisfy a legacy slice consumer.
+    pub fn raw_transactions_if_materialized(&self) -> Option<&[Vec<u8>]> {
+        match &self.source {
+            BatchSource::Raw(raw) => Some(raw),
+            BatchSource::Apfl(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn canonical_transactions_for_test(&self) -> Vec<Vec<u8>> {
+        (0..self.transaction_count())
+            .map(|index| self.canonical_transaction(index).unwrap().into_owned())
+            .collect()
+    }
+
+    /// Immutable compiler-derived access declarations, retained with the exact
     /// body so durable candidate packets cannot substitute either after execution.
     pub(crate) fn declared_access(&self) -> &[DeclaredAccess] {
         &self.declared_access
@@ -366,6 +426,17 @@ fn framed(digest: &mut Sha256, bytes: &[u8]) -> Result<()> {
     digest.update(u64::try_from(bytes.len())?.to_be_bytes());
     digest.update(bytes);
     Ok(())
+}
+
+fn framed_source_row(digest: &mut Sha256, source: &BatchSource, index: usize) -> Result<()> {
+    match source {
+        BatchSource::Raw(raw) => framed(digest, &raw[index]),
+        BatchSource::Apfl(batch) => {
+            let row = batch.row(index)?;
+            digest.update(u64::try_from(row.encoded_len()?)?.to_be_bytes());
+            row.update_canonical_digest(digest)
+        }
+    }
 }
 
 #[cfg(test)]

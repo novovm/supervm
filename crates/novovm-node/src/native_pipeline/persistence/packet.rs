@@ -302,7 +302,12 @@ impl StoredCandidate {
         self.summary.document_digest
     }
     pub fn raw_transactions(&self) -> &[Vec<u8>] {
-        self.plan.raw_transactions()
+        // Only `load` constructs this type, through `decode_plan` of the
+        // canonical archive. That decoder always owns raw rows. Live APFL plans
+        // are never installed here or silently materialized for this accessor.
+        self.plan
+            .raw_transactions_if_materialized()
+            .expect("stored candidate is constructed from a decoded raw archive")
     }
     pub fn declared_access(&self) -> &[DeclaredAccess] {
         self.plan.declared_access()
@@ -483,7 +488,7 @@ fn prepare(
     }
     document.u64(receipts.len() as u64)?;
     ensure!(
-        receipts.len() == plan.raw_transactions().len(),
+        receipts.len() == plan.transaction_count(),
         "candidate receipt count mismatch"
     );
     for bytes in receipts {
@@ -522,13 +527,8 @@ fn prepare(
         account_record(&mut total, key, value, budget)?;
     }
     let resources = Resources {
-        transactions: plan.raw_transactions().len(),
-        max_transaction_bytes: plan
-            .raw_transactions()
-            .iter()
-            .map(Vec::len)
-            .max()
-            .unwrap_or(0),
+        transactions: plan.transaction_count(),
+        max_transaction_bytes: plan.max_transaction_bytes(),
         access_keys: plan.declared_access().len(),
         nodes: nodes.len(),
         max_receipt_bytes: receipts.iter().map(Vec::len).max().unwrap_or(0),
@@ -630,9 +630,14 @@ impl<'a> Reader<'a> {
 fn encode_plan(out: &mut Encoder, plan: &BatchPlan, budget: PacketBudget) -> Result<()> {
     let c = plan.context();
     ensure!(
-        plan.raw_transactions().len() <= budget.max_transactions
+        plan.transaction_count() <= budget.max_transactions
             && plan.declared_access().len() <= budget.max_access_keys,
         "candidate plan counts exceed budget"
+    );
+    ensure!(
+        plan.max_transaction_bytes() <= budget.max_transaction_bytes
+            && plan.canonical_body_bytes() <= budget.max_bytes,
+        "candidate transaction bytes exceed budget"
     );
     out.u64(c.chain_id)?;
     for hash in [
@@ -653,13 +658,12 @@ fn encode_plan(out: &mut Encoder, plan: &BatchPlan, budget: PacketBudget) -> Res
     out.u64(c.height)?;
     out.u64(c.slot)?;
     out.u64(c.timestamp_unix_ms)?;
-    out.u64(plan.raw_transactions().len() as u64)?;
-    for raw in plan.raw_transactions() {
-        ensure!(
-            raw.len() <= budget.max_transaction_bytes,
-            "candidate transaction exceeds byte budget"
-        );
-        out.frame(raw)?;
+    out.u64(plan.transaction_count() as u64)?;
+    for index in 0..plan.transaction_count() {
+        // The existing archive requires canonical bytes. Project one row at
+        // this codec boundary, not an expanded batch during candidate binding.
+        let raw = plan.canonical_transaction(index)?;
+        out.frame(raw.as_ref())?;
     }
     out.u64(plan.declared_access().len() as u64)?;
     for access in plan.declared_access() {
@@ -764,7 +768,7 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
     }
     let count = input.count(budget.max_transactions, 9)?;
     ensure!(
-        count == plan.raw_transactions().len(),
+        count == plan.transaction_count(),
         "candidate receipt/body count mismatch"
     );
     let mut receipts = Vec::with_capacity(count);
@@ -889,8 +893,13 @@ fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudge
     let mut hashes = BTreeSet::new();
     let mut nonces = BTreeMap::new();
     let mut journal_seq: Option<u64> = None;
-    for (raw, bytes) in plan.raw_transactions().iter().zip(receipts) {
-        let transaction = decode_transfer_v3(raw, budget.max_transaction_bytes)?;
+    ensure!(
+        receipts.len() == plan.transaction_count(),
+        "candidate receipt/body count mismatch"
+    );
+    for (index, bytes) in receipts.iter().enumerate() {
+        let raw = plan.canonical_transaction(index)?;
+        let transaction = decode_transfer_v3(raw.as_ref(), budget.max_transaction_bytes)?;
         ensure!(
             transaction.chain_id == plan.context().chain_id,
             "candidate transaction chain mismatch"

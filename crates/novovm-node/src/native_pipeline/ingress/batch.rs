@@ -87,6 +87,7 @@ impl BatchSource {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn into_raw(self) -> Result<Vec<Vec<u8>>> {
         match self {
             Self::Raw(raw) => Ok(raw),
@@ -312,14 +313,9 @@ impl SignatureCheckedBatch {
             context.chain_id == self.chain_id,
             "authenticated batch chain cannot be replaced"
         );
-        // Canonical projection for existing plan/packet/proof compatibility.
-        // Checked rows retain their shared APFL source through compilation.
-        let plan = BatchPlan::new(
-            context,
-            self.raw_transactions.into_raw()?,
-            declarations,
-            budget,
-        )?;
+        // Retain the exact authenticated structural source. Canonical projection
+        // belongs at an explicit codec boundary, not parent binding.
+        let plan = BatchPlan::from_source(context, self.raw_transactions, declarations, budget)?;
         Ok(SignatureCheckedPlan {
             plan,
             transactions: self.transactions,

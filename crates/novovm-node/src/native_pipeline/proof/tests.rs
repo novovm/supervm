@@ -226,7 +226,7 @@ fn wire_roundtrip_preserves_context_raw_policy_and_original_parent_witness() {
     let decoded = wire::decode(&fixture.input).unwrap();
     let plan = fixture.executed.effects().plan();
     assert_eq!(decoded.context, *plan.context());
-    assert_eq!(decoded.raw, plan.raw_transactions());
+    assert_eq!(decoded.raw, plan.canonical_transactions_for_test());
     assert_eq!(decoded.policy, policy());
     assert_eq!(&decoded.witness[..8], b"NVFRNT01");
     assert_eq!(&decoded.witness[8..40], &plan.context().parent_state_root);
@@ -243,6 +243,45 @@ fn wire_roundtrip_preserves_context_raw_policy_and_original_parent_witness() {
         ),
         fixture.input
     );
+}
+
+#[test]
+fn apfl_source_encodes_exact_original_proof_bytes_at_final_boundary() -> Result<()> {
+    use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+    use crate::native_pipeline::ingress::batch::BatchSource;
+    use std::sync::Arc;
+
+    let fixture = fixture();
+    let decoded = wire::decode(&fixture.input)?;
+    let original = fixture.executed.effects().plan();
+    let limits = ApflLimits {
+        transactions: MAX_TRANSACTIONS,
+        transaction_bytes: MAX_TRANSACTION_BYTES,
+        body_bytes: MAX_BODY_BYTES,
+    };
+    let batch = ApflTransferBatch::from_raw(&decoded.raw, limits)?;
+    let batch = Arc::new(ApflTransferBatch::decode(&batch.encode()?, limits)?);
+    let structured = BatchPlan::from_source(
+        *original.context(),
+        BatchSource::Apfl(batch),
+        original.declared_access().to_vec(),
+        plan_budget(),
+    )?;
+    assert_eq!(structured.commitment(), original.commitment());
+    assert_eq!(structured.transaction_count(), decoded.raw.len());
+    assert_eq!(
+        structured.canonical_body_bytes(),
+        decoded.raw.iter().map(Vec::len).sum::<usize>()
+    );
+    let encoded = wire::encode(&structured, &decoded.policy, decoded.witness)?;
+    assert_eq!(encoded, fixture.input);
+    assert_eq!(wire::decode(&encoded)?.raw, decoded.raw);
+    // This checks the existing native guest relation, not proof generation.
+    assert_eq!(
+        execute_to_journal(&encoded)?.encode(),
+        ExecutionJournalV1::from_executed(&fixture.executed)?.encode()
+    );
+    Ok(())
 }
 
 #[test]

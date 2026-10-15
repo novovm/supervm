@@ -231,8 +231,8 @@ fn assert_same_plan(left: &NovTransferPlan, right: &NovTransferPlan) {
     assert_eq!(left.commitment(), right.commitment());
     assert_eq!(left.plan().context(), right.plan().context());
     assert_eq!(
-        left.plan().raw_transactions(),
-        right.plan().raw_transactions()
+        left.plan().canonical_transactions_for_test(),
+        right.plan().canonical_transactions_for_test()
     );
     assert_eq!(access(left), access(right));
     assert_eq!(left.requests, right.requests);
@@ -553,7 +553,7 @@ fn compiler_owns_original_policy_and_signed_bytes_and_is_send() {
     raw[0][0] ^= 1;
     local_policy.quote_ttl_ms += 1;
     let plan = independent.bind(context(empty_root())).unwrap();
-    assert_eq!(plan.plan().raw_transactions(), &original);
+    assert_eq!(plan.plan().canonical_transactions_for_test(), original);
     assert_eq!(plan.policy, policy());
     assert_ne!(plan.policy, local_policy);
 }
@@ -649,9 +649,13 @@ fn native_apfl_views_match_raw_execution_failures_fees_nonce_and_proof_input() -
         let expected_plan = body(&raw).bind(ctx)?;
         let actual_plan = NovTransferBody::prepare(checked, policy(), budget())?.bind(ctx)?;
         assert_same_plan(&expected_plan, &actual_plan);
-        // The existing proof/packet source remains the exact original raw body;
-        // APFL has not replaced it with host assertions or precomputed outputs.
-        assert_eq!(actual_plan.plan().raw_transactions(), raw);
+        // Binding retains the same APFL structure; only explicit codec/test
+        // projection produces original bytes, never a second live raw body.
+        assert!(actual_plan
+            .plan()
+            .raw_transactions_if_materialized()
+            .is_none());
+        assert_eq!(actual_plan.plan().canonical_transactions_for_test(), raw);
         let expected_input = expected_plan.capture(&memory, capture_budget())?;
         let actual_input = actual_plan.capture(&memory, capture_budget())?;
         assert_eq!(
@@ -660,6 +664,11 @@ fn native_apfl_views_match_raw_execution_failures_fees_nonce_and_proof_input() -
         );
         let expected = expected_input.execute_for_proof()?;
         let actual = actual_input.execute(&mut session, Duration::from_secs(10))?;
+        assert!(actual
+            .effects()
+            .plan()
+            .raw_transactions_if_materialized()
+            .is_none());
         assert_eq!(actual.observation().apfl_view_transactions, raw.len());
         assert_eq!(expected.observation().apfl_view_transactions, 0);
         assert_same_execution(&expected, &actual);

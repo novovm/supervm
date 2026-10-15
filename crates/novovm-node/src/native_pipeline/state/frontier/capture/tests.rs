@@ -426,7 +426,7 @@ fn bounded_plan_capture_retains_original_body_root_and_permissions() {
     }
     let input = capture.finish().unwrap();
     assert_eq!(input.plan().context(), &context);
-    assert_eq!(input.plan().raw_transactions(), raw);
+    assert_eq!(input.plan().canonical_transactions_for_test(), raw);
     assert_eq!(input.plan().commitment(), commitment);
     assert!(input.read(&key(1)).is_err());
     let output = input.stage(&[put(0, 3)]).unwrap();

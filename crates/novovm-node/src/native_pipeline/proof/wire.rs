@@ -22,31 +22,26 @@ pub(super) fn encode(
         plan.declared_access().len() <= capture_budget().keys,
         "proof access set exceeds bound"
     );
+    let count = plan.transaction_count();
+    ensure!(
+        count > 0 && count <= MAX_TRANSACTIONS,
+        "proof transaction count exceeds bound"
+    );
+    ensure!(
+        plan.max_transaction_bytes() > 0 && plan.max_transaction_bytes() <= MAX_TRANSACTION_BYTES,
+        "proof raw size exceeds bound"
+    );
+    let body_bytes = plan.canonical_body_bytes();
+    ensure!(body_bytes <= MAX_BODY_BYTES, "proof body exceeds bound");
     let policy = postcard::to_allocvec(policy)?;
     ensure!(
         policy.len() <= MAX_POLICY_BYTES,
         "proof policy size exceeds bound"
     );
-    let raw = plan.raw_transactions();
-    ensure!(
-        !raw.is_empty() && raw.len() <= MAX_TRANSACTIONS,
-        "proof transaction count exceeds bound"
-    );
-    let mut body_bytes = 0usize;
-    for bytes in raw {
-        ensure!(
-            !bytes.is_empty() && bytes.len() <= MAX_TRANSACTION_BYTES,
-            "proof raw size exceeds bound"
-        );
-        body_bytes = body_bytes
-            .checked_add(bytes.len())
-            .context("proof body overflow")?;
-        ensure!(body_bytes <= MAX_BODY_BYTES, "proof body exceeds bound");
-    }
     // Fixed context is 8 hashes, 6 u64s and one u32. Bounds precede allocation.
     let total = 8usize + 8 * 32 + 6 * 8 + 4 + 4;
     let total = total
-        .checked_add(raw.len().checked_mul(4).context("proof framing overflow")?)
+        .checked_add(count.checked_mul(4).context("proof framing overflow")?)
         .and_then(|n| n.checked_add(body_bytes))
         .and_then(|n| n.checked_add(4 + policy.len()))
         .and_then(|n| n.checked_add(4))
@@ -56,10 +51,30 @@ pub(super) fn encode(
     let mut out = Vec::with_capacity(total);
     out.extend_from_slice(MAGIC);
     put_context(&mut out, plan.context());
-    out.extend_from_slice(&u32::try_from(raw.len())?.to_be_bytes());
-    for bytes in raw {
-        framed(&mut out, bytes)?;
+    out.extend_from_slice(&u32::try_from(count)?.to_be_bytes());
+    // Canonical raw bytes are required by NVEXIN01, not by the retained plan.
+    // Borrow a raw row or materialize one APFL row only at this codec boundary;
+    // never expand the entire structural batch into a second Vec<Vec<u8>>.
+    let mut emitted_body_bytes = 0usize;
+    for index in 0..count {
+        let bytes = plan.canonical_transaction(index)?;
+        ensure!(
+            !bytes.is_empty() && bytes.len() <= MAX_TRANSACTION_BYTES,
+            "proof raw size exceeds bound"
+        );
+        emitted_body_bytes = emitted_body_bytes
+            .checked_add(bytes.len())
+            .context("proof body overflow")?;
+        ensure!(
+            emitted_body_bytes <= body_bytes,
+            "proof source body metadata mismatch"
+        );
+        framed(&mut out, bytes.as_ref())?;
     }
+    ensure!(
+        emitted_body_bytes == body_bytes,
+        "proof source body metadata mismatch"
+    );
     framed(&mut out, &policy)?;
     framed(&mut out, witness)?;
     ensure!(out.len() == total, "proof input framing mismatch");

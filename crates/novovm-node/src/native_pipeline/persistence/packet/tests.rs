@@ -198,7 +198,10 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
     assert!(packet.matches(&stored));
     assert_eq!(stored.record_bytes(), packet.record_bytes());
     assert_eq!(stored.context(), fixture.plan.context());
-    assert_eq!(stored.raw_transactions(), fixture.plan.raw_transactions());
+    assert_eq!(
+        stored.raw_transactions(),
+        fixture.plan.canonical_transactions_for_test()
+    );
     let access = |items: &[DeclaredAccess]| {
         items
             .iter()
@@ -233,6 +236,64 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
         })
         .unwrap();
     assert_eq!(packet.records(), repeated.records());
+}
+
+#[test]
+fn structured_plan_keeps_exact_archive_receipts_and_cold_recovery() {
+    use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+    use crate::native_pipeline::ingress::batch::BatchSource;
+    use std::sync::Arc;
+
+    let budget = PacketBudget::default();
+    let mut fixture = Fixture::new(&[4, 5, 6], 0, 3);
+    let raw = fixture.plan.canonical_transactions_for_test();
+    let expected = fixture.packet(budget).unwrap();
+    let batch = Arc::new(
+        ApflTransferBatch::from_raw(
+            &raw,
+            ApflLimits {
+                transactions: budget.max_transactions,
+                transaction_bytes: budget.max_transaction_bytes,
+                body_bytes: budget.max_bytes,
+            },
+        )
+        .unwrap(),
+    );
+    fixture.plan = BatchPlan::from_source(
+        *fixture.plan.context(),
+        BatchSource::Apfl(Arc::clone(&batch)),
+        fixture.plan.declared_access().to_vec(),
+        budget.plan(),
+    )
+    .unwrap();
+    assert!(fixture.plan.raw_transactions_if_materialized().is_none());
+    assert_eq!(Arc::strong_count(&batch), 2);
+    let actual = fixture.packet(budget).unwrap();
+    assert_eq!(actual.records(), expected.records());
+    assert_eq!(actual.record_bytes(), expected.record_bytes());
+    // Archive projection and its independent decoder do not replace the live
+    // source or retain a second expanded body inside the candidate plan.
+    assert!(fixture.plan.raw_transactions_if_materialized().is_none());
+    assert_eq!(Arc::strong_count(&batch), 2);
+    let stored = load(&actual, actual.records(), budget).unwrap().unwrap();
+    assert!(expected.matches(&stored));
+    assert_eq!(stored.raw_transactions(), raw);
+    assert_eq!(stored.state_root(), fixture.root);
+    assert_eq!(
+        stored.receipt_bytes(),
+        load(&expected, expected.records(), budget)
+            .unwrap()
+            .unwrap()
+            .receipt_bytes()
+    );
+
+    let strict = PacketBudget {
+        max_transaction_bytes: fixture.plan.max_transaction_bytes() - 1,
+        ..budget
+    };
+    assert!(fixture.packet(strict).is_err());
+    assert!(load(&actual, actual.records(), strict).is_err());
+    assert!(actual.validate_budget(strict).is_err());
 }
 
 #[test]

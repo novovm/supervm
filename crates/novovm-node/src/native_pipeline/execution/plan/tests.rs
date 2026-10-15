@@ -199,7 +199,144 @@ fn raw_order_bytes_count_and_length_boundaries_are_bound() {
         make(vec![b"a".to_vec(), b"bc".to_vec()])
     );
     let structural = plan(context);
-    assert_eq!(structural.raw_transactions(), raw());
+    assert_eq!(structural.canonical_transactions_for_test(), raw());
+}
+
+fn signed_structural_rows() -> Vec<Vec<u8>> {
+    use crate::native_pipeline::ingress::wire::{
+        encode_transfer_v3, signing_message, FeePolicy, TransferV3,
+    };
+    use ed25519_dalek::{Signer, SigningKey};
+    let key = SigningKey::from_bytes(&[42; 32]);
+    let public = key.verifying_key().to_bytes();
+    [0, 128, u64::MAX]
+        .into_iter()
+        .map(|nonce| {
+            let mut tx = TransferV3 {
+                chain_id: 7,
+                from: public.to_vec(),
+                to: vec![9; 32],
+                asset: "NOV".into(),
+                amount: u128::MAX - u128::from(nonce),
+                nonce,
+                fee_policy: FeePolicy {
+                    pay_asset: "NOV".into(),
+                    max_pay_amount: u128::MAX,
+                    slippage_bps: 17,
+                },
+                signature: Vec::new(),
+            };
+            let signature = key.sign(&signing_message(&tx).unwrap());
+            tx.signature = public.to_vec();
+            tx.signature.extend_from_slice(&signature.to_bytes());
+            encode_transfer_v3(&tx).unwrap()
+        })
+        .collect()
+}
+
+fn structural_source(
+    rows: &[Vec<u8>],
+) -> Arc<crate::native_pipeline::ingress::apfl::ApflTransferBatch> {
+    use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+    Arc::new(
+        ApflTransferBatch::from_raw(
+            rows,
+            ApflLimits {
+                transactions: 16,
+                transaction_bytes: 1024,
+                body_bytes: 4096,
+            },
+        )
+        .unwrap(),
+    )
+}
+
+#[test]
+fn apfl_plan_retains_shared_source_and_exact_raw_commitment() {
+    let rows = signed_structural_rows();
+    let source = structural_source(&rows);
+    let raw = BatchPlan::new(context([7; 32]), rows.clone(), accesses(), budget()).unwrap();
+    let plan = BatchPlan::from_source(
+        context([7; 32]),
+        BatchSource::Apfl(Arc::clone(&source)),
+        accesses(),
+        budget(),
+    )
+    .unwrap();
+    assert_eq!(Arc::strong_count(&source), 2);
+    match &plan.source {
+        BatchSource::Apfl(retained) => assert!(Arc::ptr_eq(retained, &source)),
+        BatchSource::Raw(_) => panic!("structural source was expanded"),
+    }
+    assert!(plan.raw_transactions_if_materialized().is_none());
+    assert_eq!(
+        raw.raw_transactions_if_materialized(),
+        Some(rows.as_slice())
+    );
+    assert_eq!(plan.commitment(), raw.commitment());
+    assert_eq!(plan.transaction_count(), rows.len());
+    assert_eq!(
+        plan.canonical_body_bytes(),
+        rows.iter().map(Vec::len).sum::<usize>()
+    );
+    assert_eq!(
+        plan.max_transaction_bytes(),
+        rows.iter().map(Vec::len).max().unwrap()
+    );
+    for (index, expected) in rows.iter().enumerate() {
+        assert!(matches!(
+            raw.canonical_transaction(index).unwrap(),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(
+            plan.canonical_transaction(index).unwrap().as_ref(),
+            expected
+        );
+    }
+    assert_eq!(plan.canonical_transactions_for_test(), rows);
+    assert!(raw.canonical_transaction(3).is_err());
+    assert!(plan.canonical_transaction(3).is_err());
+    // A codec-boundary projection does not replace or clone the retained owner.
+    assert_eq!(Arc::strong_count(&source), 2);
+}
+
+#[test]
+fn apfl_plan_preserves_duplicate_bounds_order_and_signature_binding() {
+    let rows = signed_structural_rows();
+    let make = |rows: &[Vec<u8>], budget| {
+        BatchPlan::from_source(
+            context([7; 32]),
+            BatchSource::Apfl(structural_source(rows)),
+            accesses(),
+            budget,
+        )
+    };
+    let baseline = make(&rows, budget()).unwrap().commitment();
+    let duplicate = vec![rows[0].clone(), rows[0].clone()];
+    assert!(error(make(&duplicate, budget())).contains("duplicate raw"));
+    let mut limited = budget();
+    limited.transactions = rows.len() - 1;
+    assert!(error(make(&rows, limited)).contains("transaction budget"));
+    limited = budget();
+    limited.transaction_bytes = rows.iter().map(Vec::len).max().unwrap() - 1;
+    assert!(error(make(&rows, limited)).contains("transaction size"));
+    limited = budget();
+    limited.body_bytes = rows.iter().map(Vec::len).sum::<usize>() - 1;
+    assert!(error(make(&rows, limited)).contains("body byte budget"));
+    let reversed: Vec<_> = rows.iter().rev().cloned().collect();
+    assert_ne!(make(&reversed, budget()).unwrap().commitment(), baseline);
+    let mut signature_changed = rows.clone();
+    *signature_changed[0].last_mut().unwrap() ^= 1;
+    // Structural plan binding does not authenticate this altered signature,
+    // but MUST commit to it, not only the unsigned canonical transaction id.
+    let changed = make(&signature_changed, budget()).unwrap();
+    assert_ne!(changed.commitment(), baseline);
+    assert_eq!(
+        changed.commitment(),
+        BatchPlan::new(context([7; 32]), signature_changed, accesses(), budget())
+            .unwrap()
+            .commitment()
+    );
 }
 
 #[test]
