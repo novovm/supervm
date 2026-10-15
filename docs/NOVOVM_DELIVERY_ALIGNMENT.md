@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 Windows TLS owner activation (claim released):** NOVOCHAT session,
+input fdbc5519. Existing rendezvous Windows owner/CLI only: protected optional
+listener settings and purpose-separated stable transport key, same shared node
+runtime. Two real DPAPI/executable/TCP custody tests pass (18.00s); original
+carrier change and fresh-node process regressions pass (11.00/8.68s), strict
+entry/test Clippy and Iroh-only check pass. No finance/AOEM/July rebuild work;
+no live deployment before compatible mobile routing and reachability validation.
+
 **2026-10-15 signed TLS service routes (claim released):** NOVOCHAT session,
 input 0ccf3dbd, docs-only upstream c8edc570 retained. Existing signed node record,
 service book and node owner now support an optional TCP/TLS mailbox listener,

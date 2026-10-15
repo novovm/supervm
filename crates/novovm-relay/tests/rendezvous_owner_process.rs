@@ -17,6 +17,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "tls-transport")]
+#[path = "support/tls_owner.rs"]
+mod tls_owner;
+
 fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }

@@ -3,6 +3,32 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 Windows 原 owner 接通受保护 TLS 配置及真实重启寄存
+
+输入fdbc5519。原novovm-rendezvous-service增加tls-transport构建选项及
+--set-self-owned-tls CONFIG LISTENER_JSON|off，复用原Owner文件锁、DPAPI
+封装和写穿替换。仅地址设置进入policy；固定域分离HKDF从原保护载体材料
+派生TLS用途密钥，原签名/存储/Iroh身份及历史不变。不另建许可证、密钥服务
+或信箱。未编译载体、非法地址、运行中变更和relay-only冲突均拒绝，不暗改
+隐私/路由。原run入口接同一可选监听及签名记录；启动绑定失败更新failed_closed，
+第二写入者抢锁失败不覆盖运行状态。此轮为隔离真实进程验证，正式节点未重启。
+
+两个新增进程用例通过18.00秒：实际EXE、当前Windows用户DPAPI、TCP/TLS及
+SQLite；寄存后取得签名StoreReceipt，强制结束进程再重启，身份与用途公钥
+不变，领取/Consume保留原对象、密文和TTL。停用监听不删密文库或身份；非法
+设置不改保护文件，端口占用明确失败。原carrier-change进程回归11.00秒、
+fresh-node回归8.68秒通过。入口及进程测试严格Clippy通过15.14秒，iroh-only
+原入口检查通过1.24秒；旧Cargo重复bin源提示仍在。新增测试初次引用模块
+错误已修正，初次失败保留，未通过扩大期限解决。旧一秒计时失败未重新签收。
+
+证据：忽略artifacts/tls-windows-{process,process-verified,process-final,
+clippy,carrier-regression,fresh-regression,iroh-only-check}.log。只有测试
+临时目录被使用，原节点、两台手机、VPN及防火墙不变；无新手机延迟数据。
+旧手机不识别双地址记录，部署前先接兼容解析和原Application通道选择。须
+核对QUIC多流到TLS独立通道的总连接容量，不能把多个长通道塞入原限额后再
+称并行可用。公网可达性、CGNAT、自动选路及手机性能仍待实测，不因TCP本机
+通过宣称摆脱Iroh中继或300ms达标。入口用法见NOVOVM_RENDEZVOUS_ENTRY。
+
 ## 2026-10-15 原自主节点接通签名 TLS 地址与共同信箱监听
 
 输入0ccf3dbd；提交前保留远端仅文档c8edc570。product_service_tls定义原签名

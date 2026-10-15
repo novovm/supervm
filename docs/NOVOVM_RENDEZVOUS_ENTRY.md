@@ -244,3 +244,31 @@ automatic 复用 Iroh 现有 IP/Relay 自动选路，允许地址发现和 IP �
 回退载体偏好须用新版命令，不恢复旧 journal 或 DPAPI 快照。旧程序严格拒绝
 新增 policy 字段，不能仅替换成旧 EXE。此命令不修改 VPN/TUN、路由、网卡或
 防火墙；保留 VPN 的进程分流属于独立的实际可达性验证和配置工作。
+
+## 可选 TCP/TLS 信箱监听（同一自主节点 owner）
+
+构建原入口时启用 `--features tls-transport`（包含 Iroh）；停止该节点后执行：
+
+```powershell
+novovm-rendezvous-service.exe --set-self-owned-tls <absolute-existing-config> <absolute-listener-json>
+# 停用同一可选监听，保留原节点、历史和信箱：
+novovm-rendezvous-service.exe --set-self-owned-tls <absolute-existing-config> off
+```
+
+监听文件仅为 `{"version":1,"listen":"<local-IP>:<port>","advertised":"<reachable-IP>:<port>"}`。
+地址必须使用 SocketAddr 格式；IPv6 带方括号。listen 可绑定通配地址，advertised
+不得为通配/组播/广播地址；两者地址族相同。advertised 的端口为0时使用实际
+绑定端口，不表示自动取得公网端口映射。程序不修改路由、防火墙或 VPN。
+
+命令取得原独占文件锁并检查现有密钥、历史，再写穿替换现有 DPAPI policy；
+不修改原登记配置、不引入许可证。TLS 用途密钥以固定域分离 HKDF 从受保护的
+稳定载体材料派生，节点签名和存储密钥不变；原始私钥不写入配置、参数或日志。
+普通启动不重新创建身份。仅中继策略须先显式改为 automatic 才能启用 IP 监听；
+存在 TLS 监听配置时拒绝改为 relay-only，需先停用 TLS。未编译 TLS 的程序遇到
+已启用的保护配置会拒绝启动，不能无声地丢掉服务。
+
+运行复用原 Node、MailboxService、数据库、请求配额及 TCP/QUIC 总连接额度。
+原签名记录发布 TLS 地址与用途公钥，停用后的新记录移除 TLS 候选。新客户端须
+验签、核对新鲜地址及真实 TLS/业务身份；旧客户端不识别双地址记录，升级客户端
+和接好选路后再启用部署。当前发现控制仍使用 Iroh，TLS 本身不解决 CGNAT 入站。
+此入口不代表 Android 自动选择、直连成功、低延迟或匿名路径已经验收。

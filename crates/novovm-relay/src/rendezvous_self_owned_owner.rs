@@ -70,6 +70,8 @@ struct Policy {
     // local owner command can change this persisted transport preference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     carrier_mode: Option<CarrierMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tls_listener: Option<TlsListenerConfig>,
     node_pin: [u8; 32],
     sequence_floor: u64,
     legacy: Option<crate::rendezvous_owner::Config>,
@@ -83,6 +85,36 @@ struct Policy {
 pub enum CarrierMode {
     Automatic,
     RelayOnly,
+}
+
+/// Local listener settings only; transport secrets never enter this JSON.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TlsListenerConfig {
+    pub version: u8,
+    pub listen: SocketAddr,
+    pub advertised: SocketAddr,
+}
+impl TlsListenerConfig {
+    pub fn load(path: &Path) -> Result<Self> {
+        let value: Self = serde_json::from_slice(&read_bounded(path, 4096)?)?;
+        value.validate()?;
+        Ok(value)
+    }
+    fn validate(&self) -> Result<()> {
+        let admissible =
+            |ip: IpAddr| !ip.is_multicast() && !matches!(ip, IpAddr::V4(v) if v.is_broadcast());
+        ensure!(
+            self.version == 1
+                && admissible(self.listen.ip())
+                && admissible(self.advertised.ip())
+                && !self.advertised.ip().is_unspecified()
+                && self.listen.is_ipv4() == self.advertised.is_ipv4(),
+            "TLS listener address bounds"
+        );
+        // Port zero requests the actual listener port in the signed record.
+        Ok(())
+    }
 }
 
 pub struct Owner {
@@ -170,6 +202,7 @@ impl Owner {
             let policy = Policy {
                 config: config.clone(),
                 carrier_mode: None,
+                tls_listener: None,
                 node_pin: key.verifying_key().to_bytes(),
                 sequence_floor,
                 legacy,
@@ -195,6 +228,17 @@ impl Owner {
         let transport = Zeroizing::new(<[u8; 32]>::try_from(&protected[8..40])?);
         let policy: Policy = serde_json::from_slice(&protected[40..])?;
         ensure!(policy.config == config, "protected local policy differs");
+        if let Some(tls) = &policy.tls_listener {
+            ensure!(
+                cfg!(feature = "tls-transport"),
+                "configured TLS carrier missing from binary"
+            );
+            tls.validate()?;
+            ensure!(
+                !relay_only(&policy),
+                "TLS listener conflicts with relay-only policy"
+            );
+        }
         let (key, storage) = read_keys(root)?;
         ensure!(
             policy.node_pin == key.verifying_key().to_bytes()
@@ -247,6 +291,10 @@ impl Owner {
     pub fn set_carrier_mode(mut self, mode: CarrierMode) -> Result<()> {
         if matches!(mode, CarrierMode::RelayOnly) {
             ensure!(
+                self.policy.tls_listener.is_none(),
+                "disable TLS listener before relay-only"
+            );
+            ensure!(
                 self.policy.config.bind_address.is_none(),
                 "relay-only cannot bind IP"
             );
@@ -254,6 +302,26 @@ impl Owner {
                 .with_relay_only()?;
         }
         self.policy.carrier_mode = Some(mode);
+        self.save_policy()
+    }
+
+    pub fn set_tls_listener(mut self, listener: Option<TlsListenerConfig>) -> Result<()> {
+        ensure!(
+            cfg!(feature = "tls-transport"),
+            "TLS carrier missing from binary"
+        );
+        if let Some(value) = &listener {
+            value.validate()?;
+            ensure!(
+                !relay_only(&self.policy),
+                "TLS listener conflicts with relay-only policy"
+            );
+        }
+        self.policy.tls_listener = listener;
+        self.save_policy()
+    }
+
+    fn save_policy(&self) -> Result<()> {
         let mut bytes = Zeroizing::new(Vec::with_capacity(4096));
         bytes.extend_from_slice(b"NVOWN002");
         bytes.extend_from_slice(self.transport.as_ref());
@@ -270,6 +338,26 @@ impl Owner {
     }
 
     pub async fn run(self, stop: Arc<AtomicBool>) -> Result<()> {
+        // Only the lock holder writes runtime status. A failed second start
+        // must not overwrite the live owner's status; failed binding must not
+        // leave an earlier process's "serving" snapshot behind.
+        let root = self.policy.config.root.clone();
+        let _status_lock = self._lock.clone();
+        atomic(
+            &root.join("status.json"),
+            br#"{"version":2,"phase":"starting","anonymous":false}"#,
+        )?;
+        let result = self.run_inner(stop).await;
+        atomic(
+            &root.join("status.json"),
+            &serde_json::to_vec(
+                &serde_json::json!({"version":2,"phase":if result.is_ok() {"stopped"} else {"failed_closed"},"anonymous":false}),
+            )?,
+        )?;
+        result
+    }
+
+    async fn run_inner(self, stop: Arc<AtomicBool>) -> Result<()> {
         let _running_lock = self._lock.clone();
         let config = self.policy.config.clone();
         let mut carrier = IrohConfigV1::new(&config.relays, config.nameserver)?
@@ -277,14 +365,28 @@ impl Owner {
         if let Some(bind) = config.bind_address {
             carrier = carrier.with_bind_address(bind)?;
         }
-        let relay_only = match self.policy.carrier_mode {
-            Some(CarrierMode::Automatic) => false,
-            Some(CarrierMode::RelayOnly) => true,
-            None => config.relay_only,
-        };
+        let relay_only = relay_only(&self.policy);
         if relay_only {
             carrier = carrier.with_relay_only()?;
         }
+        #[cfg(feature = "tls-transport")]
+        let tls = if let Some(settings) = &self.policy.tls_listener {
+            let mut seed = Zeroizing::new([0u8; 32]);
+            hkdf::Hkdf::<sha2::Sha256>::new(Some(&self.policy.node_pin), self.transport.as_ref())
+                .expand(b"NOVOVM/self-owned/TLS-transport/v1", seed.as_mut())
+                .map_err(|_| anyhow::anyhow!("TLS key derivation failed"))?;
+            Some(
+                novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind(
+                    settings.listen,
+                    settings.advertised,
+                    seed,
+                    stop.clone(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         let key = self.key.clone();
         let publish_root = config.root.clone();
         let mailbox_path = config.root.join("mailbox.sqlite");
@@ -312,65 +414,170 @@ impl Owner {
             .with_continuous_request_rate_v4(64, 32)?,
         );
         let mailbox_status = mailbox.clone();
-        let result = run_self_owned_node_v1(carrier, key, config.allowed_clients.clone(), stop,Some(mailbox),
-            move |endpoint, expires| {
+        let activate =
+            move |endpoint: &novovm_network::product_service_lease::IrohServiceEndpointV1,
+                  expires| {
                 let path = self.policy.config.root.join("service.journal");
-                let previous = if path.try_exists()? { Some(ServiceLeaseFileV1::open(&path, self.storage.clone())?) } else { None };
+                let previous = if path.try_exists()? {
+                    Some(ServiceLeaseFileV1::open(&path, self.storage.clone())?)
+                } else {
+                    None
+                };
                 let now = now_ms()?;
                 let (mut book, file) = if let Some((file, bytes)) = previous {
-                    let version = serde_json::from_slice::<serde_json::Value>(&bytes)?["version"].as_u64();
+                    let version =
+                        serde_json::from_slice::<serde_json::Value>(&bytes)?["version"].as_u64();
                     let mut book = if version == Some(2) {
-                        ServiceLeaseBookV1::restore_self_owned(trust(self.policy.node_pin), &bytes, now)?
+                        ServiceLeaseBookV1::restore_self_owned(
+                            trust(self.policy.node_pin),
+                            &bytes,
+                            now,
+                        )?
                     } else {
                         ensure!(self.transition, "explicit migration required");
-                        let old = self.policy.legacy.as_ref().context("legacy policy missing")?;
+                        let old = self
+                            .policy
+                            .legacy
+                            .as_ref()
+                            .context("legacy policy missing")?;
                         ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &bytes, now)?
                     };
                     let state: serde_json::Value = serde_json::from_slice(&bytes)?;
-                    let floor = state["current"].as_array().context("service sequence history")?.iter()
-                        .filter_map(|r| r["sequence"].as_u64()).max().context("service revoked")?;
-                    let sequence = floor.max(self.policy.sequence_floor).checked_add(1).context("sequence exhausted")?;
-                    let record = sign_relay_record_v1(&self.key, &self.policy.config.record_id, vec![endpoint.endpoint()?], now, expires, sequence)?;
+                    let floor = state["current"]
+                        .as_array()
+                        .context("service sequence history")?
+                        .iter()
+                        .filter_map(|r| r["sequence"].as_u64())
+                        .max()
+                        .context("service revoked")?;
+                    let sequence = floor
+                        .max(self.policy.sequence_floor)
+                        .checked_add(1)
+                        .context("sequence exhausted")?;
+                    let record = sign_relay_record_v1(
+                        &self.key,
+                        &self.policy.config.record_id,
+                        vec![endpoint.endpoint()?],
+                        now,
+                        expires,
+                        sequence,
+                    )?;
                     if book.is_self_owned() {
                         book.attach_persistence(file.clone(), &bytes)?;
                         book.replace_self_owned_records(vec![record], now)?;
                     } else {
-                        book = book.prepare_self_owned_migration(trust(self.policy.node_pin), vec![record], now)?;
+                        book = book.prepare_self_owned_migration(
+                            trust(self.policy.node_pin),
+                            vec![record],
+                            now,
+                        )?;
                         let next = book.checkpoint()?;
                         file.commit(&bytes, &next)?;
                         book.attach_persistence(file.clone(), &next)?;
                     }
                     (book, file)
                 } else {
-                    ensure!(self.transition && self.policy.legacy.is_none(), "fresh enrollment not authorized");
-                    create(&self.policy.config.root.join("self-owned-activation.started"), b"NOVOVM self-owned activation v2")?;
-                    let record = sign_relay_record_v1(&self.key, &self.policy.config.record_id, vec![endpoint.endpoint()?], now, expires, self.policy.sequence_floor)?;
-                    let mut book = ServiceLeaseBookV1::new_self_owned(trust(self.policy.node_pin), vec![record], now)?;
+                    ensure!(
+                        self.transition && self.policy.legacy.is_none(),
+                        "fresh enrollment not authorized"
+                    );
+                    create(
+                        &self
+                            .policy
+                            .config
+                            .root
+                            .join("self-owned-activation.started"),
+                        b"NOVOVM self-owned activation v2",
+                    )?;
+                    let record = sign_relay_record_v1(
+                        &self.key,
+                        &self.policy.config.record_id,
+                        vec![endpoint.endpoint()?],
+                        now,
+                        expires,
+                        self.policy.sequence_floor,
+                    )?;
+                    let mut book = ServiceLeaseBookV1::new_self_owned(
+                        trust(self.policy.node_pin),
+                        vec![record],
+                        now,
+                    )?;
                     let bytes = book.checkpoint()?;
                     let file = ServiceLeaseFileV1::create(&path, self.storage.clone(), &bytes)?;
                     book.attach_persistence(file.clone(), &bytes)?;
                     (book, file)
                 };
-                book.check_route(self.policy.node_pin, endpoint.address.endpoint_key, endpoint.instance, now)?;
+                book.check_route(
+                    self.policy.node_pin,
+                    endpoint.address.endpoint_key,
+                    endpoint.instance,
+                    now,
+                )?;
                 drop(file); // Book retains the sole durable file owner.
-                // Use the common bounded lease policy. The old 30s override was
-                // tied to the unauthenticated stream watchdog, not to protected
-                // operator permission. Offers remain capped by the current
-                // signed store generation (90s), and existing offers never move.
-                // NVMBOX03 alone admits the lease-bounded authenticated window;
-                // legacy stream and client operation deadlines remain unchanged.
+                            // Use the common bounded lease policy. The old 30s override was
+                            // tied to the unauthenticated stream watchdog, not to protected
+                            // operator permission. Offers remain capped by the current
+                            // signed store generation (90s), and existing offers never move.
+                            // NVMBOX03 alone admits the lease-bounded authenticated window;
+                            // legacy stream and client operation deadlines remain unchanged.
                 Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
-            }, move |record| {
-                atomic(&publish_root.join("self-owned-record.json"), &serde_json::to_vec(record)?)?;
-                atomic(&publish_root.join("status.json"), &serde_json::to_vec(&serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if relay_only {"relay-only"} else {"automatic"},"mailboxTimings":mailbox_status.timing_snapshot_v1()}))?)
-            }).await;
-        atomic(
-            &config.root.join("status.json"),
-            &serde_json::to_vec(
-                &serde_json::json!({"version":2,"phase":if result.is_ok() {"stopped"} else {"failed_closed"},"anonymous":false}),
-            )?,
-        )?;
+            };
+        let publish = move |record: &novovm_network::product_directory::PeerSignedRelayRecordV1| {
+            atomic(
+                &publish_root.join("self-owned-record.json"),
+                &serde_json::to_vec(record)?,
+            )?;
+            atomic(
+                &publish_root.join("status.json"),
+                &serde_json::to_vec(
+                    &serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if relay_only {"relay-only"} else {"automatic"},"mailboxTimings":mailbox_status.timing_snapshot_v1()}),
+                )?,
+            )
+        };
+        #[cfg(feature = "tls-transport")]
+        let result = if let Some(tls) = tls {
+            novovm_network::product_rendezvous_owned::run_self_owned_node_with_tls_v1(
+                carrier,
+                key,
+                config.allowed_clients.clone(),
+                stop,
+                mailbox,
+                tls,
+                activate,
+                publish,
+            )
+            .await
+        } else {
+            run_self_owned_node_v1(
+                carrier,
+                key,
+                config.allowed_clients.clone(),
+                stop,
+                Some(mailbox),
+                activate,
+                publish,
+            )
+            .await
+        };
+        #[cfg(not(feature = "tls-transport"))]
+        let result = run_self_owned_node_v1(
+            carrier,
+            key,
+            config.allowed_clients.clone(),
+            stop,
+            Some(mailbox),
+            activate,
+            publish,
+        )
+        .await;
         result
+    }
+}
+fn relay_only(policy: &Policy) -> bool {
+    match policy.carrier_mode {
+        Some(CarrierMode::Automatic) => false,
+        Some(CarrierMode::RelayOnly) => true,
+        None => policy.config.relay_only,
     }
 }
 fn trust(pin: [u8; 32]) -> SelfOwnedTrustV1 {
