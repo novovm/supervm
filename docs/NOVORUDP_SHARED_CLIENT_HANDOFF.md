@@ -231,3 +231,29 @@ invalidate/drop停止该owner已排队回复。单个response授权/期限检查
 Windows真实UDP8项已从签名目录取得地址再调用原共享SDK；原TLS/QUIC宿主4项
 继续通过。实际Android原生监听/拨号、自动路由及蜂窝NAT仍待原平台owner接线；
 不把本片当作移动激活。详见生产台账同日目录记录，保留旧一秒清理计时失败。
+
+
+## 2026-10-16 Node owner native mailbox listener
+
+`product_rendezvous_owned::NativeMailboxListenerV7` now borrows the original
+NativeObjectLink/NVMBOX07 codec/session and MailboxService. The same node owner
+can attach this listener beside its existing carrier, or use
+`run_self_owned_native_mailbox_v7` without constructing an Iroh endpoint.
+The caller supplies the protected node key, same stop Arc, same persistent
+MailboxService, and original durable ServiceLeaseHost activation/publication.
+No new account, schema, JSON compatibility service or financial execution path.
+
+The socket clone only peeks for readiness; NativeEndpoint alone receives/sends.
+Concurrent borrowed work and retained responses are jointly bounded. Waiting
+Watch is classified only after full APFL validation, limited to two globally
+and one per peer; overload returns the existing typed Quota response without
+executing rows or resetting sequences. Put/Fetch/Consume retain room for progress.
+Same-key session replacement retires old work and responses; committed custody
+survives cancellation and must be reconciled by original object identity.
+
+Not yet a deployment release: cumulative native peer identities remain capped
+at 64 without reclamation; signed bytes/min is not yet enforced at the original
+wire boundary. Shared request quota and object memory bounds do not substitute
+for that budget. Windows protected runtime settings, Android Application driver,
+real network adaptation and latency remain pending. Keep current installed
+carrier unchanged until these hooks are integrated and measured.

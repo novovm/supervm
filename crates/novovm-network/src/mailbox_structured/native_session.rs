@@ -434,9 +434,13 @@ impl NativeMailboxServer {
                 s.phase == Phase::Ready && self.binding.context(i, s.sequence) == context
             })
             .context("mailbox replay/busy/unknown request")?;
-        RequestBatch::decode(&bytes, context)?; // ALL rows before any durable effects
+        let batch = RequestBatch::decode(&bytes, context)?; // ALL rows before any durable effects
+        let waiting_watch = batch.has_waiting_watch()?;
+        let rows = batch.len();
         slots[index].phase = Phase::Working;
         Ok(MailboxWork {
+            waiting_watch,
+            rows,
             bytes,
             context,
             guard: WorkGuard {
@@ -505,6 +509,8 @@ impl Drop for WorkGuard {
     }
 }
 pub struct MailboxWork {
+    waiting_watch: bool,
+    rows: usize,
     bytes: Zeroizing<Vec<u8>>,
     context: [u8; 32],
     guard: WorkGuard,
@@ -514,6 +520,40 @@ pub struct MailboxWork {
     deadline: Instant,
 }
 impl MailboxWork {
+    pub fn has_waiting_watch(&self) -> bool {
+        self.waiting_watch
+    }
+
+    /// Bounded overload reply on the SAME authenticated request slot. No row is
+    /// executed, and the slot advances only when the response is enqueued by
+    /// try_send. This is never a storage or delivery acknowledgement.
+    pub fn reject_quota(
+        self,
+        service: &MailboxServiceV1,
+        authority: impl Fn() -> Result<()>,
+    ) -> Result<MailboxResponse> {
+        ensure!(Instant::now() < self.deadline, "mailbox rejection expired");
+        ensure!(
+            service.identity_public_key() == self.signer,
+            "mailbox signer differs from authenticated node"
+        );
+        self.guard.check()?;
+        authority()?;
+        let replies = (0..self.rows)
+            .map(|_| Reply::Rejected(MailboxRejectionV1::Quota))
+            .collect::<Vec<_>>();
+        let bytes = encode_replies(self.context, &replies)?;
+        Ok(MailboxResponse {
+            body: outgoing(bytes)?,
+            guard: self.guard,
+            peer: self.peer,
+            session: self.session,
+            deadline: self.deadline,
+            sent: false,
+            failed: false,
+        })
+    }
+
     pub async fn execute(
         self,
         service: &MailboxServiceV1,

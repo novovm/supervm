@@ -3,6 +3,41 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原生信箱借用式常驻监听与等待隔离
+
+基线43ab6d33，先同步89b36b3a文档；认领e164cb40。用户允许并行后，root整合
+原节点owner，一代理实现借用式listener，一代理写真实socket回归；仅root运行构建。
+调用链 `product_rendezvous_owned -> NativeMailboxListenerV7 -> NativeObjectLink ->
+NativeMailboxServer -> MailboxWork -> MailboxServiceV1::request_local_v1 -> 原SQLite`。
+可挂接原Iroh节点或显式只启用native，不创建Iroh占位、新SDK/身份/数据库/金融路径。
+它替代本机验证中手写服务端pump的角色；手机原Application调用链尚未迁移。
+
+监听借用原节点future，同一签名key、durable host、mailbox、stop和共享并发预算；
+socket就绪唤醒立即推进，原SDK独占真正收发，等待/重传维护不会新建runtime。
+签名地址正常60秒换代不重绑socket或续写旧业务期限；单操作仍受原30秒界限约束。
+旧会话换代先取消旧work/response，未知结果不得回滚已持久保管。所有请求仍验
+原能力/身份/撤销及node-wide请求预算，无客户端公钥预登记、无HTTP/JSON业务。
+
+复核发现并修复两个真实等待点：8个work若全被Watch占用会阻挡Put；共享permit
+不足时传输已ACK却无业务结果会让client等超时。完整验证后的结构batch识别等待
+Watch，不复制密文；现宿主最多两个等待work/每peer一个，其余供普通操作；超额
+Watch或共享permit不足通过原协议返回Quota，无存储副作用、无序号重置。工作和
+待发送响应共同有界，原传输对象的保留/取消预算独立有效。并行不是取消资源边界。
+
+验证（Windows debug）：mailbox_native_node真实UDP三客户端/两次owner运行通过
+0.71s，覆盖Watch容量饱和时的Quota、同一请求槽正常复用、并行Put及通知领取、
+关闭贡献后仍可领取、错误能力拒绝、重启原TTL/回执和消费墓碑；并发段272ms
+包含40ms测试等待与建连，非端到端手机性能样本。native_mailbox_session 8项通过
+0.57s；原TLS/QUIC节点4项通过8.08s；结构单元9项通过0.28s；lib/全部tests严格
+Clippy通过19.86s。日志NOVOCHAT忽略目录artifacts/native-listener-{sockets,codec,
+clippy}.log。已有Cargo重复bin提示保留，旧lease一秒清理计时问题不在本轮改动内，
+未宣称全部工程测试通过。不能用本机loopback代替Android跨网验收。
+
+未完成：SDK累计身份槽最多64且尚无回收；签名记录中的bytes/min尚未接实际
+wire预算（不能用请求次数或内存上限冒充）；因此本入口尚未部署到开放网络。
+Windows受保护启动配置、手机原Application借用驱动、NAT/优先级自适应选路与
+双机时延继续待接。未改现有APK/节点安装/用户数据，不签收300ms或自主传输。
+
 ## 2026-10-16 七月原结构批路径实际复现，后续能力沿此迁入
 
 恢复树4fa89d80的原gate/transport与4f45526d无差异，exec/bindings含后续扩展；

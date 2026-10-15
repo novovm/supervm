@@ -260,6 +260,16 @@ impl<'a> RequestBatch<'a> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// Inspect only fully validated row views, without cloning ciphertext.
+    pub fn has_waiting_watch(&self) -> Result<bool> {
+        for row in 0..self.len() {
+            let f = fields(&self.0, row)?;
+            if matches!(f[0][0], 7 | 8) && u64_value(f[5])? != 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
     pub fn request(&self, index: usize) -> Result<Request> {
         let f = fields(&self.0, index)?;
         Ok(match f[0][0] {

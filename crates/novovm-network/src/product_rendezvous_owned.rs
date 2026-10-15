@@ -11,7 +11,8 @@ use crate::{
     product_directory::PeerSignedRelayRecordV1,
     product_rendezvous_daemon::now_ms,
     product_service_lease::{
-        serve_self_owned_node_selected_v4, IrohServiceEndpointV1, NodeServiceV1, ServiceLeaseHostV1,
+        serve_self_owned_node_selected_v4, IrohServiceEndpointV1, NativeMailboxEndpointV7,
+        NodeServiceV1, ServiceLeaseHostV1,
     },
 };
 use anyhow::{ensure, Result};
@@ -27,6 +28,9 @@ use std::{
 };
 
 type Store = Arc<Mutex<RendezvousStoreV1>>;
+#[path = "product_rendezvous_native.rs"]
+mod native;
+pub use native::NativeMailboxListenerV7;
 #[cfg(feature = "tls-transport")]
 #[path = "product_rendezvous_tls.rs"]
 mod tls;
@@ -146,11 +150,124 @@ pub async fn run_self_owned_mailbox_on_endpoint_v1(
         stop,
         mailbox: Some(mailbox),
         max_connections: 2,
+        native: None,
         #[cfg(feature = "tls-transport")]
         tls: None,
     }
     .on_endpoint(endpoint, activate, publish)
     .await
+}
+
+/// Original self-owned node dispatcher with an explicitly bound native mailbox.
+/// Reuses the same custody service and node signing book as the carrier listeners.
+/// Binding a UDP address alone does not claim NAT traversal or public reachability.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_self_owned_node_with_native_v7(
+    carrier: IrohConfigV1,
+    key: SigningKey,
+    clients: BTreeSet<[u8; 32]>,
+    stop: Arc<AtomicBool>,
+    mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
+    native: NativeMailboxListenerV7,
+    activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<()> {
+    ensure!(
+        native.uses_stop(&stop),
+        "native listener requires original owner stop"
+    );
+    ensure!(
+        native.identity() == key.verifying_key().to_bytes(),
+        "native node signer mismatch"
+    );
+    let mut node = Node::new(
+        key,
+        clients,
+        stop,
+        Some(mailbox),
+        usize::from(native.route().max_connections),
+    )?;
+    node.native = Some(native);
+    let revoked = node.stop.clone();
+    with_iroh_owned_listener_v1(
+        carrier,
+        move || {
+            ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
+            Ok(())
+        },
+        move |scope| Box::pin(node.serve(scope, activate, publish)),
+    )
+    .await
+}
+
+/// Native-only activation of the SAME self-owned node: no dummy Iroh endpoint,
+/// Publisher, new mailbox store or JSON compatibility entrance is constructed.
+/// The platform supplies its existing protected signer and durable history.
+pub async fn run_self_owned_native_mailbox_v7(
+    listener: NativeMailboxListenerV7,
+    key: SigningKey,
+    stop: Arc<AtomicBool>,
+    mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
+    activate: impl FnOnce(&NativeMailboxEndpointV7, u64) -> Result<Arc<ServiceLeaseHostV1>>,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()>,
+) -> Result<()> {
+    ensure!(!stop.load(Ordering::Acquire), "service stopped by owner");
+    ensure!(
+        listener.uses_stop(&stop),
+        "native listener requires original owner stop"
+    );
+    ensure!(
+        listener.identity() == key.verifying_key().to_bytes()
+            && mailbox.identity_public_key() == key.verifying_key().to_bytes(),
+        "native node signer mismatch"
+    );
+    let route = listener.route().clone();
+    let expiry = now_ms()?
+        .checked_add(90_000)
+        .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
+    let host = activate(&route, expiry)?;
+    let record = host.rotate_native_mailbox_v7(Some(&route), now_ms()?, expiry)?;
+    ensure!(
+        record.relay_public_key == key.verifying_key().to_bytes(),
+        "native host signer mismatch"
+    );
+    publish(&record)?;
+    let serving = listener.serve(
+        &host,
+        &mailbox,
+        Arc::new(tokio::sync::Semaphore::new(usize::from(
+            route.max_connections,
+        ))),
+    );
+    tokio::pin!(serving);
+    let sweeping = async {
+        loop {
+            mailbox.sweep().await?;
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), anyhow::Error>(())
+    };
+    tokio::pin!(sweeping);
+    let mut maintenance = tokio::time::interval(Duration::from_millis(200));
+    maintenance.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut rotate_at = Instant::now() + Duration::from_secs(60);
+    loop {
+        tokio::select! {
+            result = &mut serving => return result,
+            result = &mut sweeping => return result,
+            _ = maintenance.tick() => {
+                if stop.load(Ordering::Acquire) { return Ok(()); }
+                let now = now_ms()?;
+                host.check_continuous_native_peer_v7(now)?;
+                if Instant::now() >= rotate_at {
+                    let expiry = now.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
+                    publish(&host.rotate_native_mailbox_v7(Some(&route), now, expiry)?)?;
+                    rotate_at = Instant::now() + Duration::from_secs(60);
+                }
+            }
+        }
+    }
 }
 
 struct Node {
@@ -159,6 +276,7 @@ struct Node {
     stop: Arc<AtomicBool>,
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     max_connections: usize,
+    native: Option<NativeMailboxListenerV7>,
     #[cfg(feature = "tls-transport")]
     tls: Option<TlsMailboxListenerV1>,
 }
@@ -205,6 +323,7 @@ impl Node {
             stop,
             mailbox,
             max_connections,
+            native: None,
             #[cfg(feature = "tls-transport")]
             tls: None,
         })
@@ -222,6 +341,7 @@ impl Node {
             stop,
             mailbox,
             max_connections,
+            native,
             #[cfg(feature = "tls-transport")]
             tls,
         } = self;
@@ -231,7 +351,7 @@ impl Node {
         let has_tls_listener = false;
         // A bound TCP listener must not wait for a separate relay registration.
         // The signed QUIC locator is a candidate, never proof that it is online.
-        if scope.uses_relays() && !has_tls_listener {
+        if scope.uses_relays() && !has_tls_listener && native.is_none() {
             tokio::time::timeout(Duration::from_secs(20), scope.online()).await??;
         }
         let mut endpoint = IrohServiceEndpointV1 {
@@ -251,6 +371,17 @@ impl Node {
         )?;
         #[cfg(not(feature = "tls-transport"))]
         let first = host.rotate_self_owned_with_tls_v1(&endpoint, None, now_ms()?, expires_ms)?;
+        // Reconcile the advertised native route with an actually bound listener.
+        // Do not leave a previously published UDP route live after disabling it.
+        let first = if native.is_some() || NativeMailboxEndpointV7::from_record(&first)?.is_some() {
+            host.rotate_native_mailbox_v7(
+                native.as_ref().map(NativeMailboxListenerV7::route),
+                now_ms()?,
+                expires_ms,
+            )?
+        } else {
+            first
+        };
         publish(&first)?;
         let slots = Arc::new(tokio::sync::Semaphore::new(max_connections));
         #[cfg(feature = "tls-transport")]
@@ -268,6 +399,16 @@ impl Node {
         #[cfg(not(feature = "tls-transport"))]
         let extra_serving = std::future::pending::<Result<()>>();
         tokio::pin!(extra_serving);
+        let native_serving = async {
+            if let Some(native) = native {
+                let service = mailbox
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("native mailbox missing"))?;
+                return native.serve(&host, service, slots.clone()).await;
+            }
+            std::future::pending::<Result<()>>().await
+        };
+        tokio::pin!(native_serving);
         let generation = Arc::new(Mutex::new(Generation {
             store: Arc::new(Mutex::new(RendezvousStoreV1::new(
                 endpoint.instance,
@@ -322,6 +463,7 @@ impl Node {
                     host.check_route(endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
                 }
                 result = &mut sweeping => { result?; unreachable!("mailbox maintenance is continuous"); }
+                result = &mut native_serving => { result?; break; }
                 result = &mut extra_serving => { result?; anyhow::bail!("TLS mailbox listener ended"); }
                 Some(_) = active.next(), if !active.is_empty() => {}
                 accepted = &mut incoming, if active.len() < max_connections => {

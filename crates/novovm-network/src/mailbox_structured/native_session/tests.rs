@@ -20,6 +20,8 @@ fn work(slots: Slots, deadline: Instant) -> Result<MailboxWork> {
     let context = binding().context(0, 1);
     slots.lock().unwrap()[0].phase = Phase::Working;
     Ok(MailboxWork {
+        waiting_watch: false,
+        rows: 1,
         bytes: encode_requests(
             context,
             &[Request::Register {
@@ -162,5 +164,68 @@ fn reply_semantics_are_checked_not_only_context_and_row_count() -> Result<()> {
         wait_ms: 0,
     };
     assert!(verify_reply(node, &watch, &Reply::Notice(vec![])).is_err());
+    Ok(())
+}
+#[test]
+fn waiting_watch_classification_uses_validated_batch_and_zero_wait_is_immediate() -> Result<()> {
+    let context = [71; 32];
+    for wait_ms in [0, 1, 10_000] {
+        let requests = [
+            Request::Put {
+                mailbox: [1; 32],
+                write: [2; 32],
+                object: [3; 32],
+                ciphertext: vec![9; 65_536],
+                expires: 1000,
+            },
+            Request::WatchFetchV6 {
+                boxes: vec![MailboxWatchV1 {
+                    mailbox: [1; 32],
+                    read: [4; 32],
+                    after: None,
+                }],
+                wait_ms,
+            },
+        ];
+        let bytes = encode_requests(context, &requests)?;
+        let batch = RequestBatch::decode(&bytes, context)?;
+        assert_eq!(batch.has_waiting_watch()?, wait_ms > 0);
+        assert!(RequestBatch::decode(&bytes, [72; 32]).is_err());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn overload_rejects_without_storage_effects_or_slot_reset() -> Result<()> {
+    use crate::mailbox_store::MailboxStore;
+    let dir = tempfile::tempdir()?;
+    let key = ed25519_dalek::SigningKey::from_bytes(&[81; 32]);
+    let service = MailboxServiceV1::new(
+        MailboxStore::open_contributor(dir.path().join("quota.db"), Default::default(), true)?,
+        key.clone(),
+    );
+    service.set_resources_available(true).await?;
+    let slots = slots();
+    let mut item = work(slots.clone(), Instant::now() + REQUEST_DEADLINE)?;
+    item.signer = key.verifying_key().to_bytes();
+    assert!(!item.has_waiting_watch());
+    let response = item.reject_quota(&service, || Ok(()))?;
+    {
+        let state = slots.lock().unwrap();
+        assert!(state[0].phase == Phase::Working);
+        assert_eq!(state[0].sequence, 1);
+        assert!(state[1..].iter().all(|s| s.phase == Phase::Ready));
+    }
+    assert!(matches!(
+        service
+            .request_local_v1(Request::Fetch {
+                mailbox: [1; 32],
+                read: [3; 32],
+            })
+            .await?,
+        Reply::Rejected(MailboxRejectionV1::Unauthorized)
+    ));
+    drop(response);
+    assert!(slots.lock().unwrap()[0].phase == Phase::Failed);
     Ok(())
 }

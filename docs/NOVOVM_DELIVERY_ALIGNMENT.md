@@ -1,14 +1,18 @@
 # NOVOVM 产品目标与交付主线
-**2026-10-16 native mailbox listener (claim active):** NOVOCHAT session,
-input 43ab6d33 / documentation 89b36b3a. Scope: original product_rendezvous_owned
-node dispatcher, borrowed native listener module, native route resource bounds,
-shared session response metadata as needed and real-socket integration tests.
-Reuse NativeObjectLink/NativeMailboxServer and the SAME MailboxService/host,
-not another SDK, wire protocol, store or runtime. Concurrent Watch/work, bounded
-outputs, socket wakeup, original revocation and cancellation; explicit native-only
-entry plus optional existing-node listener. No mainchain/AOEM/finance edits.
-One implementation/build owner; read-only native_listener_review audits original
-limits/lifecycle, no competing heavy builds. Existing deployed phones unchanged.
+**2026-10-16 native mailbox listener (claim released after local verification):**
+NOVOCHAT session, input43ab6d33/docs89b36b3a; claim e164cb40. Original
+product_rendezvous_owned now borrows NativeMailboxListenerV7 beside existing
+carriers or without an Iroh endpoint, using SAME NativeObjectLink/NVMBOX07,
+MailboxService/store/signer/stop/durable host. No financial/AOEM edits. Root
+integrated and built; implementation and real-socket tests used disjoint agents.
+Validated Watch classification reserves ordinary operation capacity; excess wait
+or unavailable shared permit returns existing Quota without execution/slot reset.
+Real node restart/concurrent Watch+Put custody test passed, original native8,
+TLS/QUIC4, structured9 and strict Clippy passed; evidence in readiness tracker.
+SDK cumulative64 identities and unenforced signed wire-byte budget remain open;
+no native listener deployment/mobile driver/public reachability claim. Existing
+installed phones/node unchanged. Next: close these original SDK resource gaps,
+then protected platform config and original Application owner wiring. No new SDK.
 
 **2026-10-16 parallel execution (active, user authorized):** one integration
 owner (root), one July original-binary reproduction owner (`july_reproduce`),
