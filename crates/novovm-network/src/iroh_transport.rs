@@ -36,6 +36,8 @@ pub const IROH_MAX_CONNECTIONS_V1: usize = 4;
 
 #[path = "iroh_multiplex.rs"]
 mod multiplex;
+#[path = "iroh_native_frames.rs"]
+mod native_frames;
 #[path = "iroh_connection_reuse.rs"]
 mod reuse;
 pub use multiplex::{IrohMultiplexV1, IROH_MAX_MULTIPLEX_STREAMS_V1};
@@ -1283,6 +1285,7 @@ impl IrohScopeV1 {
             handed_off: false,
             service_window: false,
             continuous_service: false,
+            native_service: false,
         })
     }
 }
@@ -1327,6 +1330,7 @@ pub struct IrohStreamV1<'a> {
     handed_off: bool,
     service_window: bool,
     continuous_service: bool,
+    native_service: bool,
 }
 
 /// A borrowed framed writer. The parent stream and its authorized scope remain
@@ -1337,6 +1341,7 @@ pub struct IrohWriteHalfV1<'a> {
     connection: &'a Connection,
     send: &'a mut SendStream,
     failed: &'a AtomicBool,
+    native: bool,
 }
 
 /// A borrowed framed reader, independent of the writer's mutable borrow. Keep
@@ -1347,6 +1352,7 @@ pub struct IrohReadHalfV1<'a> {
     connection: &'a Connection,
     recv: &'a mut RecvStream,
     failed: &'a AtomicBool,
+    native: bool,
 }
 
 struct FrameIoGuard<'a> {
@@ -1459,12 +1465,26 @@ async fn confirm_send_completion(send: &mut SendStream) -> Result<()> {
 
 impl IrohWriteHalfV1<'_> {
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
+        if self.native {
+            return native_frames::write(
+                self.control,
+                self.connection,
+                self.failed,
+                self.send,
+                bytes,
+            )
+            .await;
+        }
         write_frame_io(self.control, self.connection, self.failed, self.send, bytes).await
     }
 }
 
 impl IrohReadHalfV1<'_> {
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        if self.native {
+            return native_frames::read(self.control, self.connection, self.failed, self.recv)
+                .await;
+        }
         read_frame_io(self.control, self.connection, self.failed, self.recv).await
     }
 }
@@ -1481,18 +1501,24 @@ impl IrohStreamV1<'_> {
     /// and the parent. Ordinary application waits must not cancel half-frames.
     pub fn split_io(&mut self) -> Result<(IrohWriteHalfV1<'_>, IrohReadHalfV1<'_>)> {
         self.check()?;
+        ensure!(
+            !self.native_service,
+            "native service requires native framed IO"
+        );
         Ok((
             IrohWriteHalfV1 {
                 control: &self.io_control,
                 connection: &self.connection,
                 send: &mut self.send,
                 failed: &self.failed,
+                native: false,
             },
             IrohReadHalfV1 {
                 control: &self.io_control,
                 connection: &self.connection,
                 recv: &mut self.recv,
                 failed: &self.failed,
+                native: false,
             },
         ))
     }
@@ -1590,6 +1616,10 @@ impl IrohStreamV1<'_> {
     }
 
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
+        ensure!(
+            !self.native_service,
+            "native service requires native framed IO"
+        );
         write_frame_io(
             &self.io_control,
             &self.connection,
@@ -1601,6 +1631,10 @@ impl IrohStreamV1<'_> {
     }
 
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        ensure!(
+            !self.native_service,
+            "native service requires native framed IO"
+        );
         read_frame_io(
             &self.io_control,
             &self.connection,
@@ -1614,6 +1648,10 @@ impl IrohStreamV1<'_> {
     /// recipient's application receipt; the application must verify that first.
     pub async fn finish(&mut self) -> Result<()> {
         self.check()?;
+        ensure!(
+            !self.native_service,
+            "native service closes through its owner"
+        );
         let mut guard = FrameIoGuard {
             connection: &self.connection,
             failed: &self.failed,
@@ -1682,6 +1720,7 @@ impl<'scope> IrohStreamV1<'scope> {
                 && (self.scope.continuous_service || self.scope.listener_budget.is_some())
                 && !self.service_window
                 && !self.continuous_service
+                && !self.native_service
                 && !self.finished
                 && !self.handed_off,
             "continuous service requires fresh owned scope"
@@ -1780,6 +1819,10 @@ impl<'scope> IrohStreamV1<'scope> {
     /// expired admission, repeat admission and completed streams are rejected.
     pub(crate) fn admit_service_window(&mut self, deadline: Instant) -> Result<()> {
         self.check()?;
+        ensure!(
+            !self.native_service,
+            "native service cannot acquire legacy window"
+        );
         ensure!(
             !self.initiator
                 && self.scope.listener_budget.is_some()

@@ -255,6 +255,37 @@ impl CarrierStreamV1<'_> {
         }
     }
 
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn split_native_continuous_v7(
+        &mut self,
+    ) -> anyhow::Result<(CarrierWriteHalfV1<'_>, CarrierReadHalfV1<'_>)> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => {
+                let (write, read) = stream.split_native_continuous_v7()?;
+                Ok((
+                    CarrierWriteHalfV1 {
+                        inner: WriteHalf::Iroh(write),
+                    },
+                    CarrierReadHalfV1 {
+                        inner: ReadHalf::Iroh(read),
+                    },
+                ))
+            }
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(stream) => {
+                let (write, read) = stream.split_native_continuous_v7()?;
+                Ok((
+                    CarrierWriteHalfV1 {
+                        inner: WriteHalf::Tls(write),
+                    },
+                    CarrierReadHalfV1 {
+                        inner: ReadHalf::Tls(read),
+                    },
+                ))
+            }
+        }
+    }
+
     pub async fn finish(&mut self) -> anyhow::Result<()> {
         match &mut self.inner {
             #[cfg(feature = "iroh-transport")]

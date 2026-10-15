@@ -122,9 +122,9 @@ type Writing<'a> = Pin<Box<dyn Future<Output = (CarrierWriteHalfV1<'a>, Result<(
 /// Poll alongside the SAME NativeObjectLink/application owner. `progress()` may
 /// be selected with application events: incomplete frame futures remain here,
 /// not in the temporary select branch. Dropping this scope retires the carrier.
-/// This adapter retains the carrier's existing finite IO deadline. Persistent
-/// mailbox owners must supply explicit idle/request lifecycle support before
-/// adopting it; keeping this pump alive does not extend any operation deadline.
+/// `attach` retains the finite IO deadline. `attach_continuous_v7` explicitly
+/// selects idle-safe native framing in an existing continuous owner. Each frame
+/// and mailbox request retains its own bound; neither mode renews business TTL.
 pub struct NativeCarrierPump<'a> {
     io: Arc<CarrierIo>,
     reading: Option<Reading<'a>>,
@@ -137,6 +137,29 @@ impl<'a> NativeCarrierPump<'a> {
         channel: BoundSecureChannelV1,
         streams: Vec<u64>,
     ) -> Result<(NativeEndpoint, Self)> {
+        Self::attach_mode(stream, channel, streams, false)
+    }
+
+    /// Called after explicit native service selection. The channel must prove
+    /// Finished on THIS stream; the transport must still have fresh continuous
+    /// owner scope. This does not authorize mailbox operations or renew their TTL.
+    /// The channel proves binding, not the selected service/handshake codec;
+    /// the enclosing native service entry must enforce that explicit selection.
+    #[cfg(feature = "iroh-transport")]
+    pub fn attach_continuous_v7(
+        stream: &'a mut CarrierStreamV1<'_>,
+        channel: BoundSecureChannelV1,
+        streams: Vec<u64>,
+    ) -> Result<(NativeEndpoint, Self)> {
+        Self::attach_mode(stream, channel, streams, true)
+    }
+
+    fn attach_mode(
+        stream: &'a mut CarrierStreamV1<'_>,
+        channel: BoundSecureChannelV1,
+        streams: Vec<u64>,
+        continuous: bool,
+    ) -> Result<(NativeEndpoint, Self)> {
         let binding = stream.binding()?;
         let io = Arc::new(CarrierIo {
             route: NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(&binding)),
@@ -148,7 +171,17 @@ impl<'a> NativeCarrierPump<'a> {
             }),
         });
         let endpoint = NativeEndpoint::from_bound_channel(io.clone(), channel, &binding, streams)?;
-        let (writer, reader) = stream.split_io()?;
+        #[cfg(feature = "iroh-transport")]
+        let (writer, reader) = if continuous {
+            stream.split_native_continuous_v7()?
+        } else {
+            stream.split_io()?
+        };
+        #[cfg(not(feature = "iroh-transport"))]
+        let (writer, reader) = {
+            anyhow::ensure!(!continuous, "continuous carrier unavailable");
+            stream.split_io()?
+        };
         Ok((
             endpoint,
             Self {

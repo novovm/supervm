@@ -9,11 +9,18 @@
 正文/反馈公平交替，取消中的未知写入不能重用旧流。原UDP同步路径保持。
 本机实际QUIC双向两批对象和回归通过，详见生产台账顶部。
 
-当前attach只支持原有限IO生命周期，不能直接接常驻Mailbox。下一片须在原
-iroh_transport/carrier_stream明确原生服务选择后提供持续split-IO模式：首字节
-等待保留撤销检查，每帧固定期限，业务请求仍守原NativeMailbox期限。之后将
-product_rendezvous_native现有jobs/active/pending执行体复用于carrier readiness，
-补齐签名carrier服务能力与原Application接线，不复制信箱或调度器。
+原attach保留有限IO契约；新增attach_continuous_v7在现有持续owner内选择原生
+分帧：首字节前空闲等待仍检查撤销，首字节后固定30秒完成整帧，不能逐字节续时。
+原NativeMailbox业务期限不变。有限scope、过期握手和已选择旧协议的流不能升级；
+半帧取消/失败终止载体。没有新增worker、SDK、信箱或调度器。
+
+重要边界：BoundSecureChannel只证明Finished及实际exporter绑定，本身不携带
+structured codec或NVMBOX07选择证明；正式入口须显式选择服务并调用结构化握手。
+当前实际QUIC对象收发和TLS分帧测试不是正式信箱或Android接线验收。
+下一片将product_rendezvous_native现有jobs/active/pending执行体复用于UDP与
+carrier readiness；复用入站已取得的连接permit，避免同一额度重复申请死锁。
+同时增加明确签名的原生carrier能力，正常声明换代须保留它，旧Iroh记录不能
+被静默解释为NVMBOX07。之后接原Application owner并重新验收两台手机。
 
 ## 结构化载体认证接线（2026-10-16）
 

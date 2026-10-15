@@ -49,6 +49,7 @@ impl<'scope> IrohStreamV1<'scope> {
                 && !self.handed_off
                 && !self.service_window
                 && !self.continuous_service
+                && !self.native_service
                 && !self.reused
                 && u64::from(self.send.id()) == 0,
             "multiplex requires fresh owned service connection"
@@ -166,6 +167,7 @@ impl<'scope> IrohMultiplexV1<'scope> {
             handed_off: false,
             service_window: false,
             continuous_service: false,
+            native_service: false,
         })
     }
 }

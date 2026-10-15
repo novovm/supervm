@@ -27,7 +27,7 @@ receipt projection. No pre-ACK/competing/replayed-cold completion may populate
 it; exact head required, cold/history/miss retain original ArchiveRead checks.
 Not implemented yet. Do not claim reduced I/O or improved TPS until matched
 tests prove it; do not replace original consensus or create an authority cache.
-**2026-10-16 continuous native carrier framing claim (active):** input ad2f9977,
+**2026-10-16 continuous native carrier framing (integrated; claim released):** input ad2f9977,
 downstream9add600. Root owns iroh_transport/carrier_stream/native carrier IO and
 actual QUIC lifecycle tests; bounded TLS agent owns tls_transport counterpart
 and focused tests, review read-only. One root build slot. Add explicit native

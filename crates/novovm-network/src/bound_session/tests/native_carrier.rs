@@ -118,6 +118,7 @@ async fn exchange_objects(
     channel: BoundSecureChannelV1,
     value: u8,
     done: std::sync::Arc<tokio::sync::Barrier>,
+    continuous: bool,
 ) -> Result<()> {
     use crate::novorudp::{
         carrier_io::NativeCarrierPump,
@@ -127,7 +128,15 @@ async fn exchange_objects(
         NovoRudpPacingProfile, NovoRudpWindowConfig,
     };
     use std::sync::Arc;
-    let (mut endpoint, mut pump) = NativeCarrierPump::attach(stream, channel, vec![1, 2])?;
+    let (mut endpoint, mut pump) = if continuous {
+        NativeCarrierPump::attach_continuous_v7(stream, channel, vec![1, 2])?
+    } else {
+        ensure!(
+            stream.split_native_continuous_v7().is_err(),
+            "finite scope upgraded"
+        );
+        NativeCarrierPump::attach(stream, channel, vec![1, 2])?
+    };
     endpoint.set_wire_budget_v1(1_000_000, Instant::now())?;
     let lanes = [1, 2]
         .into_iter()
@@ -174,6 +183,19 @@ async fn exchange_objects(
     // The second wave proves the same scoped owner can continue after earlier
     // native objects and their transport ACKs have completed.
     for wave in 0..2u8 {
+        if continuous && wave == 1 {
+            // Actual time beyond the old initial30s window; retain idle reader
+            // across progress/select cancellation without extending a request.
+            let idle = tokio::time::sleep(Duration::from_secs(31));
+            tokio::pin!(idle);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut idle => break,
+                    result = pump.progress() => result?,
+                }
+            }
+        }
         let start = Instant::now();
         for lane in [1, 2] {
             let body = Arc::new(OutgoingMessage::with_profile(
@@ -246,7 +268,7 @@ async fn structured_native_object_link_duplex_two_waves_on_one_carrier() {
             )
             .await?
             .0;
-            exchange_objects(&mut stream, channel, 2, server_done).await
+            exchange_objects(&mut stream, channel, 2, server_done, false).await
         })
     });
     let client = with_iroh_scope_v1(config(), control(), move |scope| {
@@ -262,10 +284,72 @@ async fn structured_native_object_link_duplex_two_waves_on_one_carrier() {
                 &mut |_, _| Ok(()),
             )
             .await?;
-            exchange_objects(&mut stream, channel, 1, done).await
+            exchange_objects(&mut stream, channel, 1, done, false).await
         })
     });
     let (server, client) = tokio::join!(server, client);
     server.unwrap();
     client.unwrap();
+}
+
+#[tokio::test]
+async fn structured_native_continuous_object_link_survives_idle_initial_deadline() -> Result<()> {
+    use crate::iroh_transport::IrohEndpointOwnerV1;
+    let _permit = SERIAL.acquire().await?;
+    let (server_tx, server_rx) = oneshot::channel();
+    let (client_tx, client_rx) = oneshot::channel();
+    let done = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+    let server_done = done.clone();
+    let server_owner = IrohEndpointOwnerV1::bind(config(), || Ok(())).await?;
+    let client_owner = IrohEndpointOwnerV1::bind(config(), || Ok(())).await?;
+    let server = server_owner.with_continuous_service_v4(
+        || Ok(()),
+        move |scope| {
+            Box::pin(async move {
+                server_tx.send(scope.address()?).unwrap();
+                let peer: IrohAddressV1 = client_rx.await?;
+                let mut stream: CarrierStreamV1<'_> = scope.accept(peer.endpoint_key).await?.into();
+                let channel = authenticate_structured_service_client_observed(
+                    &mut stream,
+                    &key(2),
+                    ServicePeerPolicyV1::AnyAuthenticated,
+                    &mut HandshakeReplayCacheV1::new(8),
+                    &mut |_, _| Ok(()),
+                )
+                .await?
+                .0;
+                exchange_objects(&mut stream, channel, 2, server_done, true).await
+            })
+        },
+    );
+    let client = client_owner.with_continuous_service_v4(
+        || Ok(()),
+        move |scope| {
+            Box::pin(async move {
+                client_tx.send(scope.address()?).unwrap();
+                let mut stream: CarrierStreamV1<'_> =
+                    scope.connect(&server_rx.await?).await?.into();
+                let channel = authenticate_structured_bound_session_observed(
+                    &mut stream,
+                    &key(1),
+                    public(2),
+                    true,
+                    &mut HandshakeReplayCacheV1::new(8),
+                    &mut |_, _| Ok(()),
+                )
+                .await?;
+                exchange_objects(&mut stream, channel, 1, done, true).await
+            })
+        },
+    );
+    let result = tokio::time::timeout(Duration::from_secs(40), async {
+        tokio::join!(server, client)
+    })
+    .await;
+    server_owner.close().await?;
+    client_owner.close().await?;
+    let (server, client) = result?;
+    server?;
+    client?;
+    Ok(())
 }

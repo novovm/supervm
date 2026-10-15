@@ -3,6 +3,34 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 原生载体持续分帧（组件接线，非正式信箱部署）
+
+输入ad2f9977，认领c1297d12；合入远端4cabc9a8及rustls0.23.46。
+现有CarrierStream → NativeCarrierPump::attach_continuous_v7 → 原NativeEndpoint/
+NativeObjectLink，借用现有Iroh/TLS owner，不新增worker或另一调度器。
+初次握手必须在原入站期限内完成。显式选择持续原生分帧后，首字节前的正常
+空闲不耗尽操作预算；收到首字节后固定30秒完成剩余头及正文，发送帧亦固定30秒。
+此时间是坏帧上限而非消息等待/批处理延迟；正文仍立即读写。每帧最多1200字节，
+分配前检查长度。原Mailbox业务期限、Message ID、TTL、回执与资源配额未更改。
+
+有限scope、过期入站及旧服务模式不能升级；原生模式不能切回旧帧或复用窗口。
+取消已轮询帧、半帧超时、非法长度、撤销均终止旧载体。真实QUIC对象测试在同一
+认证流完成首轮后空闲31秒，随后第二轮双向对象成功；TLS亦覆盖空闲后双向IO。
+
+初次负向测试1项失败：scope撤销supervisor先于内层read结束，测试错误要求
+server返回Ok。现在检查撤销错误及客户端真实connection.closed，不忽略撤销。
+严格Clippy另发现测试非Drop半部显式drop，已改词法作用域，不添加lint豁免。
+升级前native_回归100 PASS/1既有公网ignored（123.14s）；升级后相同回归100 PASS/1 ignored（123.17s）。组合lib/tests严格Clippy通过（32.48s）。
+最终补充：其余bound_45通过/3既有ignored；NovoRUDP102通过；TLS基础15通过；
+无默认特性及TLS-only lib检查通过。手机现场反馈收发停止，后续优先处理
+NOVOCHAT身份检查与Application恢复，不继续扩展载体入口。
+
+边界：BoundSecureChannel证明Finished/exporter，不自行证明structured codec或
+NVMBOX07选择。正式入口仍须明确服务选择、签名原生carrier能力与结构化握手，
+再接同一个NativeMailboxServer执行体。UDP和carrier复用jobs/active/pending，
+不能因载体已持连接permit而重复申请同一额度。正式手机和节点本片未部署，
+未证明新延迟、独立物理副本或自主跨网；接入完成后必须重新实机验证。
+
 ## 2026-10-16 根产品 TLS 依赖安全补丁（本地门通过，非全仓发布签收）
 
 输入0bcfa905。network精确rustls0.23.45升级0.23.46，根锁只变rustls版本与校验和；

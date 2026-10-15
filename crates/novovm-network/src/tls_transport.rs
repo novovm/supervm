@@ -179,8 +179,9 @@ impl AsyncWrite for ClosableIo {
 struct ConnectionState {
     failed: AtomicBool,
     io: ClosableIo,
-    // Shared with the existing IO supervisor. None is authenticated V6 idle,
-    // never an unlimited handshake or request.
+    // Shared with the existing IO supervisor. None is authenticated V6 idle
+    // or native V7 framing (independent bounded frames/requests), never an
+    // unlimited handshake or business request.
     request_deadline: Mutex<Option<Instant>>,
 }
 impl ConnectionState {
@@ -716,6 +717,7 @@ impl TlsScopeV1 {
             initiator,
             #[cfg(feature = "iroh-transport")]
             continuous_service: false,
+            native_continuous: false,
             supervisor,
             _admission: admission,
         })
@@ -731,6 +733,7 @@ pub struct TlsStreamV1<'scope> {
     initiator: bool,
     #[cfg(feature = "iroh-transport")]
     continuous_service: bool,
+    native_continuous: bool,
     supervisor: tokio::task::JoinHandle<()>,
     _admission: SemaphorePermit<'scope>,
 }
@@ -738,11 +741,13 @@ pub struct TlsWriteHalfV1<'a> {
     control: &'a TlsControlV1,
     state: &'a ConnectionState,
     io: WriteHalf<&'a mut TlsIo>,
+    native: bool,
 }
 pub struct TlsReadHalfV1<'a> {
     control: &'a TlsControlV1,
     state: &'a ConnectionState,
     io: ReadHalf<&'a mut TlsIo>,
+    native: bool,
 }
 
 async fn write_frame<W: AsyncWrite + Unpin>(
@@ -801,14 +806,98 @@ async fn read_frame<R: AsyncRead + Unpin>(
     guard.complete = true;
     Ok(bytes)
 }
+// Native frames use the SAME TLS IO, failure latch and authority supervisor.
+// Neither half can reset the other half's frame timer or a business deadline.
+async fn write_native_frame<W: AsyncWrite + Unpin>(
+    control: &TlsControlV1,
+    state: &ConnectionState,
+    io: &mut W,
+    bytes: &[u8],
+) -> Result<()> {
+    state.check(control)?;
+    ensure!(
+        !bytes.is_empty() && bytes.len() <= crate::novorudp::datagram::MAX_DATAGRAM_BYTES,
+        "native TLS frame limit"
+    );
+    let mut guard = FrameGuard {
+        state,
+        complete: false,
+    };
+    let deadline = Instant::now() + SERVICE_REQUEST_TIMEOUT;
+    tokio::time::timeout_at(
+        deadline.into(),
+        control.during(state, async {
+            state.io_result(
+                control,
+                io.write_all(&(bytes.len() as u32).to_be_bytes()).await,
+            )?;
+            state.io_result(control, io.write_all(bytes).await)?;
+            state.io_result(control, io.flush().await)?;
+            Ok(())
+        }),
+    )
+    .await
+    .context("native TLS frame deadline")??;
+    state.check(control)?;
+    guard.complete = true;
+    Ok(())
+}
+async fn read_native_frame<R: AsyncRead + Unpin>(
+    control: &TlsControlV1,
+    state: &ConnectionState,
+    io: &mut R,
+) -> Result<Vec<u8>> {
+    state.check(control)?;
+    let mut guard = FrameGuard {
+        state,
+        complete: false,
+    };
+    let mut length = [0; 4];
+    // No frame deadline before first byte, but revocation/stop still closes IO.
+    control
+        .during(state, async {
+            state.io_result(control, io.read_exact(&mut length[..1]).await)?;
+            Ok(())
+        })
+        .await?;
+    let deadline = Instant::now() + SERVICE_REQUEST_TIMEOUT;
+    let bytes = tokio::time::timeout_at(
+        deadline.into(),
+        control.during(state, async {
+            state.io_result(control, io.read_exact(&mut length[1..]).await)?;
+            let length = u32::from_be_bytes(length) as usize;
+            ensure!(
+                length > 0 && length <= crate::novorudp::datagram::MAX_DATAGRAM_BYTES,
+                "native TLS frame limit"
+            );
+            let mut bytes = vec![0; length];
+            state.io_result(control, io.read_exact(&mut bytes).await)?;
+            Ok(bytes)
+        }),
+    )
+    .await
+    .context("native TLS frame deadline")??;
+    state.check(control)?;
+    guard.complete = true;
+    Ok(bytes)
+}
+
 impl TlsWriteHalfV1<'_> {
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
-        write_frame(self.control, self.state, &mut self.io, bytes).await
+        if self.native {
+            write_native_frame(self.control, self.state, &mut self.io, bytes).await
+        } else {
+            write_frame(self.control, self.state, &mut self.io, bytes).await
+        }
     }
 }
 impl TlsReadHalfV1<'_> {
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        read_frame(self.control, self.state, &mut self.io).await
+        if self.native {
+            read_native_frame(self.control, self.state, &mut self.io).await
+        } else {
+            read_frame(self.control, self.state, &mut self.io).await
+        }
     }
 }
 impl TlsStreamV1<'_> {
@@ -818,7 +907,9 @@ impl TlsStreamV1<'_> {
     pub(crate) fn admit_continuous_service_v4(&mut self) -> Result<()> {
         self.state.check(&self.scope.control)?;
         ensure!(
-            self.scope.control.deadline.is_none() && !self.continuous_service,
+            self.scope.control.deadline.is_none()
+                && !self.continuous_service
+                && !self.native_continuous,
             "TLS carrier has no fresh continuous service scope"
         );
         self.state.transition(
@@ -916,7 +1007,40 @@ impl TlsStreamV1<'_> {
         self.state.check(&self.scope.control)?;
         Ok("tls-unclassified")
     }
+    /// Only the explicit native service owner calls this after its structured
+    /// Finished handshake. Idle is unlimited while owner checks remain live;
+    /// each frame has its own fixed budget, independent of mailbox request TTL.
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn split_native_continuous_v7(
+        &mut self,
+    ) -> Result<(TlsWriteHalfV1<'_>, TlsReadHalfV1<'_>)> {
+        self.state.active_deadline(&self.scope.control)?;
+        ensure!(
+            self.scope.control.deadline.is_none()
+                && !self.continuous_service
+                && !self.native_continuous,
+            "native TLS requires fresh continuous scope"
+        );
+        self.state.transition(&self.scope.control, None)?;
+        self.native_continuous = true;
+        let (read, write) = tokio::io::split(&mut self.tls);
+        Ok((
+            TlsWriteHalfV1 {
+                control: &self.scope.control,
+                state: &self.state,
+                io: write,
+                native: true,
+            },
+            TlsReadHalfV1 {
+                control: &self.scope.control,
+                state: &self.state,
+                io: read,
+                native: true,
+            },
+        ))
+    }
     pub fn split_io(&mut self) -> Result<(TlsWriteHalfV1<'_>, TlsReadHalfV1<'_>)> {
+        ensure!(!self.native_continuous, "native TLS mode already selected");
         self.state.active_deadline(&self.scope.control)?;
         let (read, write) = tokio::io::split(&mut self.tls);
         Ok((
@@ -924,24 +1048,29 @@ impl TlsStreamV1<'_> {
                 control: &self.scope.control,
                 state: &self.state,
                 io: write,
+                native: false,
             },
             TlsReadHalfV1 {
                 control: &self.scope.control,
                 state: &self.state,
                 io: read,
+                native: false,
             },
         ))
     }
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
+        ensure!(!self.native_continuous, "native TLS mode already selected");
         write_frame(&self.scope.control, &self.state, &mut self.tls, bytes).await
     }
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        ensure!(!self.native_continuous, "native TLS mode already selected");
         read_frame(&self.scope.control, &self.state, &mut self.tls).await
     }
     /// Application receipts must already be verified. Flush close_notify,
     /// require the peer's authenticated close with no trailing application
     /// byte, then close underlying IO. Bare EOF is a truncation failure.
     pub async fn finish(&mut self) -> Result<()> {
+        ensure!(!self.native_continuous, "native TLS mode already selected");
         let control = &self.scope.control;
         let state = &self.state;
         state.active_deadline(control)?;
@@ -978,3 +1107,7 @@ impl Drop for TlsStreamV1<'_> {
 #[cfg(test)]
 #[path = "tls_transport_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "iroh-transport"))]
+#[path = "tls_transport/native_frame_tests.rs"]
+mod native_frame_tests;
