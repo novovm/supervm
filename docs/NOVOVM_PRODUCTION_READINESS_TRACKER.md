@@ -3,6 +3,26 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 七月恢复现场：迁入真实签名结构输入，尚未连接收循环
+
+恢复现场从4f45526d推进至本地detached提交
+`c5a65ea179c56ce99636c5848b251af03ee412c2`，没有创建分支或改当前生产入口。
+复用main@24610cc7的node `native_pipeline/ingress`中wire、apfl、authentication
+及原测试六文件，迁入七月原node库；只增加模块装配和一项结构行直接鉴权反例，
+不迁十月controller、网络或执行器。源实现已经在Git中；恢复提交目前仅本机保存，
+尚未合入/推送main，不能将本台账推送解释为恢复代码已发布。
+
+Windows执行`cargo test --locked -p novovm-node --lib native_pipeline::ingress`
+32通过、0失败、0忽略。新增用例覆盖APFL共享行直接验签、原交易摘要/nonce身份
+一致、同签者连续nonce，以及错链域、越界行、修改金额未重签拒绝。
+`cargo check --locked -p novovm-node --bin novovm-node`通过，但有6项未使用告警：
+这些能力尚未连接收/执行循环，不隐藏告警，不称生产接线完成。
+
+明确接合缺口：七月原protocol交易版本及签名形状不同；opcode114 bulk调用点位于
+原network-only gate，不能把该工具的计数当成原节点完整用户交易执行。下一步仍以
+七月工程为主体，在原接收边界交付真实签名结构输入并接统一执行，不运行gate代替
+节点、不将V3原文直接塞入旧固定profile。当前无新增TPS、AOEM或ACK变更。
+
 ## 2026-10-15 七月原生实现恢复起步：原节点构建检查通过
 
 用户决定以七月原生NovoRUDP/APFL实现为主体，将后续有效能力迁入，不再以
