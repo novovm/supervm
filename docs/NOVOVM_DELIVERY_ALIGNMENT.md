@@ -1,4 +1,16 @@
 # NOVOVM 产品目标与交付主线
+
+**2026-10-16 native wire-budget activation (claim active):** NOVOCHAT session,
+input bb18f05a. Scope original novorudp endpoint/datagram/handshake/object_sender
+byte admission and bounded monotonic accounting, native signed route + listener
+configuration, real-socket regression. Reuse original SDK and mailbox owner;
+no mainchain/AOEM/finance changes, no second transport. Root owns integration,
+route/listener and single build slot; bounded SDK implementation can run in a
+disjoint agent. Async mobile driver audit remains read-only this slice.
+Signed bytes/min must reflect actual admitted UDP payload/egress, including
+handshake/repair, not request counts or object-memory quota. Incoming unwanted
+wire traffic cannot be prevented by an application and is reported separately.
+
 **2026-10-16 native mailbox listener (claim released after local verification):**
 NOVOCHAT session, input43ab6d33/docs89b36b3a; claim e164cb40. Original
 product_rendezvous_owned now borrows NativeMailboxListenerV7 beside existing
