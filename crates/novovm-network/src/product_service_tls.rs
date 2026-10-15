@@ -96,9 +96,12 @@ impl ServiceLeaseBookV1 {
     ) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "continuous peer requires local trust");
-        let entry = self.entries.get(&pin).context("service revoked")?;
-        let current =
-            TlsServiceEndpointV1::from_record(&entry.current)?.context("TLS service removed")?;
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let current = entry
+            .decoded_current()?
+            .tls
+            .as_ref()
+            .context("TLS service removed")?;
         // A live connection is bound to its key, not a mutable advertised IP.
         ensure!(
             current.endpoint_key == endpoint.endpoint_key,
@@ -116,13 +119,13 @@ impl ServiceLeaseBookV1 {
         now: u64,
     ) -> Result<()> {
         self.check_continuous_tls_peer_v1(pin, endpoint, now)?;
-        let entry = self.entries.get(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
         ensure!(
             entry.current.expires_at_ms > now,
             "TLS service route expired"
         );
         ensure!(
-            TlsServiceEndpointV1::from_record(&entry.current)?.as_ref() == Some(endpoint),
+            entry.decoded_current()?.tls.as_ref() == Some(endpoint),
             "TLS service route changed"
         );
         Ok(())

@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 continuous peer parse reuse (claim released):** NOVOCHAT session,
+input 493734ae. Existing service book only: reuse decoded, already verified
+current records during live checks; exact record change invalidates reuse.
+Keep revocation, clock, freshness and durable commit checks. No financial,
+AOEM or July recovery files. Four real node/route tests pass (10.25s), 49
+lease tests pass (102.33s); the known one-second deadline assertion is excluded
+and remains unresolved. Strict network lib Clippy passes. Not mobile latency.
+
 **2026-10-15 mobile TLS lane capacity (claim released):** NOVOCHAT session,
 input 69a0baa5. Optional TLS listener uses an explicit bounded owner connection
 budget, shared with QUIC and published in its signed route. Preserve four-slot

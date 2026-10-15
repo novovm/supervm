@@ -163,6 +163,35 @@ struct Entry {
     grant: PeerSignedRelayRecordV1,
     current: PeerSignedRelayRecordV1,
     expires: u64,
+    decoded: Option<DecodedCurrent>,
+}
+#[derive(Clone)]
+struct DecodedCurrent {
+    record: PeerSignedRelayRecordV1,
+    iroh: IrohServiceEndpointV1,
+    tls: Option<TlsServiceEndpointV1>,
+}
+impl Entry {
+    // Entries only come from verified imports/restores. Compare the WHOLE
+    // record, not just its sequence: no mutation/rotation path can leave a
+    // stale key or address in use. Derived data is never checkpointed and
+    // cannot replace this owner's revocation, clock or persistence checks.
+    fn decoded_current(&mut self) -> Result<&DecodedCurrent> {
+        if self
+            .decoded
+            .as_ref()
+            .is_none_or(|d| d.record != self.current)
+        {
+            let iroh = IrohServiceEndpointV1::from_record(&self.current)?;
+            let tls = TlsServiceEndpointV1::from_record(&self.current)?;
+            self.decoded = Some(DecodedCurrent {
+                record: self.current.clone(),
+                iroh,
+                tls,
+            });
+        }
+        Ok(self.decoded.as_ref().expect("decoded current record"))
+    }
 }
 /// The caller must hold this under its existing Application/native owner lock.
 /// No network IO, wallet lookup, automatic trust-on-first-use or privacy claim.
@@ -448,6 +477,7 @@ fn validated_sources(
                             grant: record.clone(),
                             current: record.clone(),
                             expires,
+                            decoded: None,
                         },
                     );
                 }

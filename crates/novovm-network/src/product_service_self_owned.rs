@@ -58,12 +58,9 @@ impl ServiceLeaseBookV1 {
     ) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "continuous peer requires local trust");
-        let entry = self.entries.get(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
         ensure!(
-            IrohServiceEndpointV1::from_record(&entry.current)?
-                .address
-                .endpoint_key
-                == endpoint,
+            entry.decoded_current()?.iroh.address.endpoint_key == endpoint,
             "self-owned transport changed"
         );
         Ok(())
@@ -174,6 +171,7 @@ impl ServiceLeaseBookV1 {
                     grant: record.clone(),
                     current: record,
                     expires: u64::MAX,
+                    decoded: None,
                 },
             );
         }
@@ -324,7 +322,8 @@ impl ServiceLeaseBookV1 {
                         Entry {
                             grant: grant.clone(),
                             current: current.clone(),
-                            expires: u64::MAX
+                            expires: u64::MAX,
+                            decoded: None,
                         }
                     )
                     .is_none(),

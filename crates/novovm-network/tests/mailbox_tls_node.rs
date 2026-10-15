@@ -74,6 +74,17 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     let first = sign(&ir, Some(&tls), 1, 1000)?;
     let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![first.clone()], 1000)?;
     book.check_tls_route_v1(pin, &tls, 1001)?;
+    // Live supervision repeats at IO/watchdog frequency, not discovery frequency.
+    // This measures only the local checked book, not message/network latency.
+    let started = std::time::Instant::now();
+    for _ in 0..1000 {
+        book.check_continuous_tls_peer_v1(pin, &tls, 1001)?;
+        book.check_continuous_peer_v4(pin, ir.address.endpoint_key, 1001)?;
+    }
+    eprintln!(
+        "2000 live book checks elapsed_us={}",
+        started.elapsed().as_micros()
+    );
     let mut wrong = tls.clone();
     wrong.address.set_port(3002);
     assert!(book.check_tls_route_v1(pin, &wrong, 1002).is_err());
@@ -90,6 +101,9 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     assert!(book
         .replace_self_owned_records(vec![forged], 92_000)
         .is_err());
+    book.check_tls_route_v1(pin, &tls, 92_000)
+        .expect_err("old locator expired");
+    book.check_continuous_tls_peer_v1(pin, &tls, 92_000)?;
     book.replace_self_owned_records(vec![next], 92_000)?;
     book.check_tls_route_v1(pin, &tls, 92_000)?;
     let saved = book.checkpoint()?;
@@ -104,7 +118,18 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     book.check_continuous_tls_peer_v1(pin, &tls, 92_002)?;
     assert!(book.check_tls_route_v1(pin, &tls, 92_002).is_err());
     book.check_tls_route_v1(pin, &moved, 92_002)?;
-    book.replace_self_owned_records(vec![sign(&ir, None, 4, 92_003)?], 92_003)?;
+    let mut rotated = ir.clone();
+    rotated.address.endpoint_key = key(7).verifying_key().to_bytes();
+    book.replace_self_owned_records(vec![sign(&rotated, Some(&wrong), 4, 92_003)?], 92_003)?;
+    assert!(book
+        .check_continuous_peer_v4(pin, ir.address.endpoint_key, 92_003)
+        .is_err());
+    book.check_continuous_peer_v4(pin, rotated.address.endpoint_key, 92_003)?;
+    assert!(book
+        .check_continuous_tls_peer_v1(pin, &tls, 92_003)
+        .is_err());
+    book.check_tls_route_v1(pin, &wrong, 92_003)?;
+    book.replace_self_owned_records(vec![sign(&rotated, None, 5, 92_003)?], 92_003)?;
     assert!(book
         .check_continuous_tls_peer_v1(pin, &tls, 92_003)
         .is_err());
@@ -112,7 +137,7 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     let mut restored =
         ServiceLeaseBookV1::restore_self_owned(trust(), &book.checkpoint()?, 92_005)?;
     assert!(restored
-        .replace_self_owned_records(vec![sign(&ir, Some(&tls), 5, 92_005)?], 92_005)
+        .replace_self_owned_records(vec![sign(&ir, Some(&tls), 6, 92_005)?], 92_005)
         .is_err());
 
     let mut duplicate = sign(&ir, Some(&tls), 1, 1000)?;
