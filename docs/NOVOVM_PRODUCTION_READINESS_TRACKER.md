@@ -23,8 +23,35 @@
 
 实际原node尚未消费此结构接线。下一步复用已有握手/AEAD/代次及完整对象重组，
 接入原socket owner；裸NOVRUDP0只为显式未认证/历史复现边界，不能直接开放入池。
-已有共享SDK的wire预算由NOVOCHAT设备认领，不覆盖其代码或另造鉴权状态机。
+已有共享SDK的wire预算已由NOVOCHAT设备交付781e41f8（下节）；后续沿同一实现
+接合，不覆盖其代码或另造鉴权状态机。
 原49草稿、知识库、SDK、冻结二进制与数据证据保留；本轮没有修改AOEM兄弟仓库。
+
+## 2026-10-16 原生信箱实际 UDP 字节预算
+
+输入 bb18f05a，认领398660bd；沿原 NativeEndpoint -> handshake/datagram/
+object_sender 收发路径接同一可选计量器，NativeMailboxListenerV7 启动即安装
+节点预算，默认64MiB/min，可显式配置。签名记录和类型化候选保留同一数值；
+修改已签名预算被拒绝，新拨号检查新声明，健康连接不因声明换代重建。
+无新SDK/账户/许可/调度器，无金融或AOEM修改。
+
+61个固定秒桶以单调时间保守限制滚动60秒，握手/ACK/修复包含在实际UDP载荷
+收发计量内。接收先准入再解析，发送成功才扣预算；超额不伪造ACK、不推进
+对象成功游标，重连不能清零预算。入站垃圾已抵达网卡，应用不能避免物理
+带宽消耗；IP/link头不计入。进程重启是新本地窗口，不是持久计费依据。
+
+Windows debug验证：原novorudp单元76项通过0.86s；签名原生路由7项通过
+0.06s；真实mailbox_native_node 1项通过0.63s（含节点重启和Watch并行Put）；
+原native_mailbox_session 8项通过0.59s；TLS/QUIC节点4项通过9.12s。
+lib/全部tests严格Clippy通过31.28s，日志native-wire-clippy.log。
+首轮编译发现handshake测试依赖父级ErrorKind导入，已改为测试显式导入。
+日志在NOVOCHAT忽略目录artifacts/native-wire-{budget-tests,route-tests,sockets}.log。
+
+本轮不部署新节点/手机包，不声明手机延迟改善。原生累计身份64槽仍待回收，
+只读审查确认不能Vec.remove或复用旧peer索引，否则link和宿主在途任务可能
+错绑身份；后续须从原owner统一退役并保留业务保管状态。此项列为开放长期
+服务缺口，不把它扩成新框架或阻塞受控双机接线。下一刀优先原Application
+owner的共享原生异步请求驱动与候选选择；不新增第二套聊天循环。
 
 ## 2026-10-16 原生信箱借用式常驻监听与等待隔离
 

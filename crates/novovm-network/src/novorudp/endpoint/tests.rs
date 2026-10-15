@@ -351,3 +351,135 @@ fn duplicate_identity_or_source_and_invalid_quantum_are_rejected() -> Result<()>
     assert!(endpoint.poll(1000, now, 65).is_err());
     Ok(())
 }
+
+#[test]
+fn node_wire_budget_counts_handshake_and_rejects_ingress_before_identity_admission() -> Result<()> {
+    let now = Instant::now();
+    let key = SigningKey::from_bytes(&[81; 32]);
+    let mut node = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        key.clone(),
+        2,
+        vec![17],
+        budget(),
+    )?;
+    node.set_wire_budget_v1(2400, now)?;
+    assert!(node.set_wire_budget_v1(2400, now).is_err());
+    let mut client = NativeEndpoint::connect_client(
+        UdpSocket::bind("127.0.0.1:0")?,
+        SigningKey::from_bytes(&[82; 32]),
+        NativePeer {
+            key: key.verifying_key().to_bytes(),
+            address: node.local_addr()?,
+        },
+        budget(),
+        1000,
+        now,
+    )?;
+    client.set_wire_budget_v1(2400, now)?;
+    client.poll(1000, now, 64)?;
+    let sent = client.wire_usage_v1(now).unwrap().sent_bytes;
+    assert!(sent > 0);
+    node.poll(1000, now, 64)?;
+    let usage = node.wire_usage_v1(now).unwrap();
+    assert_eq!(usage.received_bytes, sent);
+    assert_eq!(usage.admitted_receive_bytes, sent);
+    assert!(usage.sent_bytes > 0);
+    client.poll(1000, now, 64)?;
+    assert!(client.session_id(0).is_some());
+    let session = node.session_id(0);
+    let remaining = node.wire_usage_v1(now).unwrap().remaining as usize;
+    let attacker = UdpSocket::bind("127.0.0.1:0")?;
+    // Invalid bytes still consume admission work; excess is never parsed into
+    // a new peer. Full datagram length (not a truncated 1201-byte prefix) counts.
+    attacker.send_to(&vec![7; remaining], node.local_addr()?)?;
+    node.poll(1000, now, 64)?;
+    attacker.send_to(&[9; 4096], node.local_addr()?)?;
+    assert_eq!(node.poll(1000, now, 64)?.rejected_datagrams, 1);
+    let usage = node.wire_usage_v1(now).unwrap();
+    assert_eq!(usage.remaining, 0);
+    assert_eq!(usage.receive_dropped, 1);
+    assert_eq!(usage.received_bytes, sent + remaining as u64 + 4096);
+    assert_eq!(node.peer_count(), 1);
+    assert_eq!(node.session_id(0), session);
+    Ok(())
+}
+
+#[test]
+fn node_wire_budget_blocks_data_and_object_cursor_but_keeps_authenticated_session() -> Result<()> {
+    use crate::novorudp::{
+        fragments::{FragmentProfile, OutgoingMessage},
+        NovoRudpPacingProfile, NovoRudpWindowConfig,
+    };
+    let now = Instant::now();
+    let key = SigningKey::from_bytes(&[83; 32]);
+    let mut node = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        key.clone(),
+        1,
+        vec![17],
+        budget(),
+    )?;
+    node.set_wire_budget_v1(2400, now)?;
+    let mut client = NativeEndpoint::connect_client(
+        UdpSocket::bind("127.0.0.1:0")?,
+        SigningKey::from_bytes(&[84; 32]),
+        NativePeer {
+            key: key.verifying_key().to_bytes(),
+            address: node.local_addr()?,
+        },
+        budget(),
+        1000,
+        now,
+    )?;
+    client.poll(1000, now, 64)?;
+    node.poll(1000, now, 64)?;
+    client.poll(1000, now, 64)?;
+    let session = node.session_id(0).unwrap();
+    let remaining = node.wire_usage_v1(now).unwrap().remaining as usize;
+    assert!(node
+        .wire_budget
+        .as_mut()
+        .unwrap()
+        .admit_receive(remaining, now));
+    let frame = NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Ack,
+        session,
+        17,
+        1,
+        0,
+        0,
+        vec![],
+    );
+    assert!(!node.try_send(0, &frame)?);
+    let body = Arc::new(OutgoingMessage::with_profile(
+        [5; 32],
+        vec![7; 10],
+        1024,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let mut sender = NativeObjectSender::new(
+        body,
+        session,
+        17,
+        NovoRudpWindowConfig::default(),
+        NovoRudpPacingProfile::default(),
+        now,
+        Duration::from_secs(120),
+    )?;
+    assert_eq!(node.poll_object(0, &mut sender, now, 1)?, 0);
+    assert_eq!(node.session_id(0), Some(session));
+    assert_eq!(node.wire_usage_v1(now).unwrap().send_deferred, 2);
+    // No sleeping: advance the monotonic accounting window. The original first
+    // object fragment is still pending, rather than a fabricated transport ACK.
+    let later = now + Duration::from_secs(61);
+    assert_eq!(node.poll_object(0, &mut sender, later, 1)?, 1);
+    let poll = client.poll(1000, later, 64)?;
+    assert_eq!(poll.frames.len(), 1);
+    assert_eq!(
+        poll.frames[0].frame().kind,
+        NovoRudpTransportFrameKindV0::Data
+    );
+    assert_eq!(poll.frames[0].frame().sequence, 0);
+    Ok(())
+}

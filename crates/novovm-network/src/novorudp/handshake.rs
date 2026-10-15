@@ -5,6 +5,7 @@
 //! startup handshake. Reconnection is an explicit lifecycle operation.
 
 use super::datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES};
+use super::wire_budget::{try_send_datagram, NativeWireBudget};
 use crate::product_overlay::{
     handshake_wire::{self, HandshakeMessage},
     *,
@@ -12,7 +13,6 @@ use crate::product_overlay::{
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use std::{
-    io::ErrorKind,
     net::{SocketAddr, UdpSocket},
     time::{Duration, Instant},
 };
@@ -115,6 +115,16 @@ impl NativeHandshake {
     /// Poll a bounded retry without waiting for a response. A full socket does
     /// not advance the retry timer and does not pretend the packet was sent.
     pub fn try_send(&mut self, socket: &UdpSocket, wall_ms: u64, now: Instant) -> Result<bool> {
+        self.try_send_limited(socket, wall_ms, now, None)
+    }
+
+    pub(crate) fn try_send_limited(
+        &mut self,
+        socket: &UdpSocket,
+        wall_ms: u64,
+        now: Instant,
+        budget: Option<&mut NativeWireBudget>,
+    ) -> Result<bool> {
         if now >= self.deadline || wall_ms > self.outgoing_expiry {
             ensure!(
                 self.ready || self.outgoing.is_none(),
@@ -132,14 +142,11 @@ impl NativeHandshake {
             wire.len() <= MAX_DATAGRAM_BYTES,
             "handshake datagram too large"
         );
-        match socket.send_to(wire, self.remote) {
-            Ok(n) => {
-                ensure!(n == wire.len(), "partial handshake datagram");
-                self.next_send = now + self.retry;
-                Ok(true)
-            }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(false),
-            Err(e) => Err(e.into()),
+        if try_send_datagram(socket, wire, self.remote, now, budget)? {
+            self.next_send = now + self.retry;
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
 

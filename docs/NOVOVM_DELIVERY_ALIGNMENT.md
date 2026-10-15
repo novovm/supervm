@@ -1,6 +1,15 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-16 native wire-budget activation (claim active):** NOVOCHAT session,
+**2026-10-16 native async mailbox request handoff (claim active):** NOVOCHAT
+session, input781e41f8. Scope mailbox_structured/native_session bounded operation
+lifecycle and a shared async request-handle adapter on the SAME NativeObjectLink;
+real UDP owner regression. No new socket/runtime/thread/account/protocol or
+financial/AOEM work. Root integrates/tests; agent may own native_session + new
+request adapter; root owns tests/docs and later Application integration. Preserve
+four slots, no await-held global lock, original request identity/deadline and
+unknown outcomes; caller's original owner polls IO and dispatches replies.
+
+**2026-10-16 native wire-budget activation (claim released after local verification):** NOVOCHAT session,
 input bb18f05a. Scope original novorudp endpoint/datagram/handshake/object_sender
 byte admission and bounded monotonic accounting, native signed route + listener
 configuration, real-socket regression. Reuse original SDK and mailbox owner;
@@ -10,6 +19,11 @@ disjoint agent. Async mobile driver audit remains read-only this slice.
 Signed bytes/min must reflect actual admitted UDP payload/egress, including
 handshake/repair, not request counts or object-memory quota. Incoming unwanted
 wire traffic cannot be prevented by an application and is reported separately.
+Implemented in the original SDK, signed locator and listener. Native unit76,
+route7, real native-node1, session8 and TLS/QUIC4 pass; see readiness tracker.
+Cumulative identity retirement and mobile driver remain separate unfinished work;
+existing installed phones/node unchanged. Next priority is original mobile owner
+integration, with shared-library request handles rather than a second scheduler.
 
 **2026-10-16 native mailbox listener (claim released after local verification):**
 NOVOCHAT session, input43ab6d33/docs89b36b3a; claim e164cb40. Original

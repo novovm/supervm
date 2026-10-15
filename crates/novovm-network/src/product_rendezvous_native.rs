@@ -62,10 +62,30 @@ impl NativeMailboxListenerV7 {
     /// identity capacity (<=64), not an evicting public-server peer table.
     pub fn bind(
         listen: SocketAddr,
+        advertised: SocketAddr,
+        key: SigningKey,
+        stop: Arc<AtomicBool>,
+        max_connections: u16,
+    ) -> Result<Self> {
+        Self::bind_with_wire_budget(
+            listen,
+            advertised,
+            key,
+            stop,
+            max_connections,
+            64 * 1024 * 1024,
+        )
+    }
+
+    /// One explicit node resource budget is both signed and enforced by the
+    /// original socket owner. It is not a permission to join the network.
+    pub fn bind_with_wire_budget(
+        listen: SocketAddr,
         mut advertised: SocketAddr,
         key: SigningKey,
         stop: Arc<AtomicBool>,
         max_connections: u16,
+        max_bytes_per_minute: u64,
     ) -> Result<Self> {
         ensure!(
             (1..=64).contains(&max_connections),
@@ -79,6 +99,7 @@ impl NativeMailboxListenerV7 {
         let route = NativeMailboxEndpointV7 {
             address: advertised,
             max_connections,
+            max_bytes_per_minute,
         };
         route.endpoint()?;
         // The clone ONLY observes readiness through peek. NativeEndpoint remains
@@ -94,6 +115,7 @@ impl NativeMailboxListenerV7 {
                 retry: Duration::from_millis(500),
             },
         )?;
+        endpoint.set_wire_budget_v1(max_bytes_per_minute, Instant::now())?;
         endpoint.enable_client_reconnect_v1()?;
         let link = NativeObjectLink::new(
             endpoint,

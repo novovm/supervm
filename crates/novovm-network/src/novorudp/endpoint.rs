@@ -7,6 +7,7 @@ use super::{
     datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES},
     handshake::NativeHandshake,
     object_sender::NativeObjectSender,
+    wire_budget::{NativeWireBudget, NativeWireUsage},
     NovoRudpTransportFrameV0,
 };
 use crate::product_overlay::{peer_id_from_ed25519_public_key_v1, HandshakeReplayCacheV1};
@@ -95,6 +96,8 @@ pub struct NativeEndpoint {
     replay: HandshakeReplayCacheV1,
     turn: usize,
     open: Option<OpenAdmission>,
+    wire_budget: Option<NativeWireBudget>,
+    traffic_started: bool,
 }
 
 impl NativeEndpoint {
@@ -117,6 +120,8 @@ impl NativeEndpoint {
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
+            wire_budget: None,
+            traffic_started: false,
         };
         endpoint.allow_clients(identity, clients, streams, budget)?;
         Ok(endpoint)
@@ -169,6 +174,8 @@ impl NativeEndpoint {
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
+            wire_budget: None,
+            traffic_started: false,
         })
     }
 
@@ -248,6 +255,8 @@ impl NativeEndpoint {
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
+            wire_budget: None,
+            traffic_started: false,
         })
     }
 
@@ -300,6 +309,21 @@ impl NativeEndpoint {
         });
         Ok(())
     }
+    /// Configure once, before any poll/send. Reconnects and sessions cannot reset
+    /// the node-wide combined ingress-admission/egress allowance.
+    pub fn set_wire_budget_v1(&mut self, bytes_per_minute: u64, now: Instant) -> Result<()> {
+        ensure!(
+            !self.traffic_started && self.wire_budget.is_none(),
+            "native wire budget already active or traffic started"
+        );
+        self.wire_budget = Some(NativeWireBudget::new(bytes_per_minute, now)?);
+        Ok(())
+    }
+
+    pub fn wire_usage_v1(&mut self, now: Instant) -> Option<NativeWireUsage> {
+        self.wire_budget.as_mut().map(|budget| budget.usage(now))
+    }
+
     pub fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.socket.local_addr()?)
     }
@@ -334,9 +358,12 @@ impl NativeEndpoint {
             (1..=64).contains(&quantum),
             "invalid native endpoint quantum"
         );
+        self.traffic_started = true;
         let mut result = NativePoll::default();
         self.expire_reconnects(now);
-        let mut wire = [0; MAX_DATAGRAM_BYTES + 1];
+        // Full UDP payload buffer ensures even oversized rejected datagrams
+        // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).
+        let mut wire = [0; 65536];
         for _ in 0..quantum {
             let (length, source) = match self.socket.recv_from(&mut wire) {
                 Ok(value) => value,
@@ -361,6 +388,15 @@ impl NativeEndpoint {
                 }
                 Err(error) => return Err(error.into()),
             };
+            if self
+                .wire_budget
+                .as_mut()
+                .is_some_and(|budget| !budget.admit_receive(length, now))
+                || length > MAX_DATAGRAM_BYTES
+            {
+                result.rejected_datagrams += 1;
+                continue;
+            }
             if wire[..length].starts_with(b"NVHSHK01") {
                 if self
                     .receive_handshake(source, &wire[..length], wall_ms, now)
@@ -405,7 +441,12 @@ impl NativeEndpoint {
             self.turn = (index + 1) % self.peers.len();
             let peer = &mut self.peers[index];
             if let Some(pending) = &mut peer.reconnect {
-                match pending.handshake.try_send(&self.socket, wall_ms, now) {
+                match pending.handshake.try_send_limited(
+                    &self.socket,
+                    wall_ms,
+                    now,
+                    self.wire_budget.as_mut(),
+                ) {
                     Ok(true) => result.handshakes_sent += 1,
                     Ok(false) => {}
                     Err(_) => result.handshake_send_failures += 1,
@@ -414,7 +455,12 @@ impl NativeEndpoint {
             if peer.handshake.is_expired(now) {
                 continue;
             }
-            match peer.handshake.try_send(&self.socket, wall_ms, now) {
+            match peer.handshake.try_send_limited(
+                &self.socket,
+                wall_ms,
+                now,
+                self.wire_budget.as_mut(),
+            ) {
                 Ok(true) => result.handshakes_sent += 1,
                 Ok(false) => {}
                 Err(_) => result.handshake_send_failures += 1,
@@ -429,6 +475,7 @@ impl NativeEndpoint {
     }
 
     pub fn try_send(&mut self, peer: usize, frame: &NovoRudpTransportFrameV0) -> Result<bool> {
+        self.traffic_started = true;
         let session = self
             .peers
             .get_mut(peer)
@@ -436,7 +483,12 @@ impl NativeEndpoint {
             .session
             .as_mut()
             .context("native peer not authenticated")?;
-        session.try_send(&self.socket, frame)
+        session.try_send_limited(
+            &self.socket,
+            frame,
+            Instant::now(),
+            self.wire_budget.as_mut(),
+        )
     }
 
     pub fn poll_object(
@@ -446,6 +498,7 @@ impl NativeEndpoint {
         now: Instant,
         quantum: usize,
     ) -> Result<usize> {
+        self.traffic_started = true;
         let session = self
             .peers
             .get_mut(peer)
@@ -453,7 +506,13 @@ impl NativeEndpoint {
             .session
             .as_mut()
             .context("native peer not authenticated")?;
-        object.poll_send(&self.socket, session, now, quantum)
+        object.poll_send_limited(
+            &self.socket,
+            session,
+            now,
+            quantum,
+            self.wire_budget.as_mut(),
+        )
     }
 }
 
