@@ -1,5 +1,18 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 native carrier seam (NOVOCHAT active claim):** input dcc6d1b6,
+downstream335e9d1. Extend the existing novorudp endpoint/handshake/datagram/
+object sender/wire budget seam to separate actual UDP addresses from explicitly
+authenticated carrier peer routes. Reuse the original NativeObjectLink owner,
+handshake, replay, resource bounds and APFL mailbox; no synthetic SocketAddr,
+HTTP/JSON fallback, local UDP proxy, second SDK or parallel application scheduler.
+Root owns integration, docs and the single local build slot. Bounded agent may
+own only the named novorudp modules and focused tests; review remains read-only.
+Do not edit mainchain transport.rs/native_ingress, node/exec/AOEM/consensus files.
+This seam alone is not deployed NAT/Relay or Android cross-network acceptance;
+real carrier binding and original Application/node wiring must follow before
+switching live phones. Existing UDP behavior and public callers remain compatible.
+
 **2026-10-16 original-tick shared integration (source handoffs complete; root validation active):** shared
 cb4b3dd1, reviewed recovery3f0a95e4. Apply NOVOVM_JULY_MAIN_INTEGRATION_MAP.md:
 root owns node service/ingress modules, integration and ONE build/perf slot;
