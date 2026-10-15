@@ -1009,6 +1009,47 @@ pub async fn serve_mailbox_continuous_with_policy_v4(
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
+    serve_continuous(
+        stream,
+        identity,
+        policy,
+        service,
+        authority,
+        SessionMode::Continuous,
+    )
+    .await
+}
+
+/// One continuous NVMBOX06 lane on an owner-controlled carrier, including TLS.
+/// The caller must select V6 explicitly. This reuses the same bound handshake,
+/// capabilities, durable cursor and request budget as multiplex V6; it does
+/// not turn TLS into a multiplexed connection or grant another lane's identity.
+pub async fn serve_mailbox_continuous_with_policy_v6(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+) -> Result<()> {
+    serve_continuous(
+        stream,
+        identity,
+        policy,
+        service,
+        authority,
+        SessionMode::Prefetch,
+    )
+    .await
+}
+
+async fn serve_continuous(
+    stream: &mut CarrierStreamV1<'_>,
+    identity: &SigningKey,
+    policy: ServicePeerPolicyV1<'_>,
+    service: &MailboxServiceV1,
+    authority: impl Fn() -> Result<()>,
+    mode: SessionMode,
+) -> Result<()> {
     let revoked = async {
         loop {
             if let Err(error) = authority() {
@@ -1020,7 +1061,7 @@ pub async fn serve_mailbox_continuous_with_policy_v4(
     tokio::select! {
         biased;
         error = revoked => Err(error),
-        result = serve_session(stream, identity, policy, service, &authority, SessionMode::Continuous) => result,
+        result = serve_session(stream, identity, policy, service, &authority, mode) => result,
     }
 }
 
@@ -1931,3 +1972,7 @@ mod prefetch_tests {
 #[cfg(test)]
 #[path = "mailbox_idle_tests.rs"]
 mod idle_tests;
+
+#[cfg(all(test, feature = "tls-transport"))]
+#[path = "mailbox_tls_tests.rs"]
+mod tls_tests;

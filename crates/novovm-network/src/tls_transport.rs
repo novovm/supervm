@@ -50,11 +50,14 @@ use zeroize::Zeroizing;
 pub const TLS_MAX_FRAME_V1: usize = 16 * 1024;
 pub const TLS_MAX_CONNECTIONS_V1: usize = 4;
 const CHECK_INTERVAL: Duration = Duration::from_millis(20);
+const SERVICE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 // RFC 8410: exact, canonical Ed25519 SubjectPublicKeyInfo with absent parameters.
 const ED25519_SPKI_PREFIX: &[u8] = &[
     0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
 ];
 static SCOPE_LIMIT: OnceLock<Arc<Semaphore>> = OnceLock::new();
+#[cfg(test)]
+pub(crate) static TLS_TEST_SERIAL: Semaphore = Semaphore::const_new(1);
 
 /// Only actual byte-stream IO failures receive this marker. TLS verification,
 /// malformed records, bounds, authorization and cancellation remain terminal
@@ -65,7 +68,7 @@ pub struct TlsStreamIoFailureV1(#[source] anyhow::Error);
 
 #[derive(Clone)]
 pub struct TlsControlV1 {
-    deadline: Instant,
+    deadline: Option<Instant>,
     authority: Arc<dyn Fn() -> Result<()> + Send + Sync>,
 }
 impl TlsControlV1 {
@@ -79,7 +82,7 @@ impl TlsControlV1 {
             "TLS carrier requires a lease of at most 120 seconds"
         );
         let value = Self {
-            deadline,
+            deadline: Some(deadline),
             authority: Arc::new(authority),
         };
         value.check()?;
@@ -87,7 +90,10 @@ impl TlsControlV1 {
     }
     fn check(&self) -> Result<()> {
         (self.authority)()?;
-        ensure!(Instant::now() < self.deadline, "TLS carrier scope expired");
+        ensure!(
+            self.deadline.is_none_or(|end| Instant::now() < end),
+            "TLS carrier scope expired"
+        );
         Ok(())
     }
     async fn during<T>(
@@ -173,6 +179,9 @@ impl AsyncWrite for ClosableIo {
 struct ConnectionState {
     failed: AtomicBool,
     io: ClosableIo,
+    // Shared with the existing IO supervisor. None is authenticated V6 idle,
+    // never an unlimited handshake or request.
+    request_deadline: Mutex<Option<Instant>>,
 }
 impl ConnectionState {
     fn fail(&self) {
@@ -190,6 +199,41 @@ impl ConnectionState {
             !self.failed.load(Ordering::Acquire),
             "TLS carrier stream failed"
         );
+        let deadline = self.request_deadline.lock().map_err(|_| {
+            self.fail();
+            anyhow::anyhow!("TLS request state poisoned")
+        })?;
+        if deadline.is_some_and(|end| Instant::now() >= end) {
+            self.fail();
+            anyhow::bail!("TLS service request expired");
+        }
+        Ok(())
+    }
+    fn active_deadline(&self, control: &TlsControlV1) -> Result<Instant> {
+        self.check(control)?;
+        self.request_deadline
+            .lock()
+            .map_err(|_| anyhow::anyhow!("TLS request state poisoned"))?
+            .context("TLS service request is idle")
+    }
+    #[cfg(feature = "iroh-transport")]
+    fn transition(&self, control: &TlsControlV1, next: Option<Instant>) -> Result<()> {
+        self.check(control)?;
+        let mut deadline = self
+            .request_deadline
+            .lock()
+            .map_err(|_| anyhow::anyhow!("TLS request state poisoned"))?;
+        // Check while holding the same lock as the watchdog: expiration cannot
+        // be erased by starting another request at the deadline boundary.
+        if deadline.is_some_and(|end| Instant::now() >= end) {
+            self.fail();
+            anyhow::bail!("TLS service request expired");
+        }
+        ensure!(
+            !self.failed.load(Ordering::Acquire),
+            "TLS carrier stream failed"
+        );
+        *deadline = next;
         Ok(())
     }
     fn io_result<T>(&self, control: &TlsControlV1, result: io::Result<T>) -> Result<T> {
@@ -404,8 +448,9 @@ impl ClientCertVerifier for RawKeyVerifier {
     }
 }
 
-/// A bounded transport-key lifetime. It does not bootstrap or authorize the
-/// underlying network; `new` generates one independent ephemeral signing key.
+/// An owned transport-key lifetime. Finite V1 scopes retain their absolute
+/// deadline; continuous scopes retain live owner checks and bounded requests.
+/// Neither bootstraps or authorizes the underlying network.
 pub struct TlsScopeV1 {
     control: TlsControlV1,
     identity: Arc<CertifiedKey>,
@@ -414,6 +459,18 @@ pub struct TlsScopeV1 {
     _admission: OwnedSemaphorePermit,
 }
 impl TlsScopeV1 {
+    /// Owner-controlled transport lifetime for the existing continuous service
+    /// protocol. Setup and each request remain bounded. This does not grant any
+    /// mailbox capability or authenticate an application identity.
+    #[cfg(feature = "iroh-transport")]
+    pub fn new_continuous_v4(
+        authority: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::new(TlsControlV1 {
+            deadline: None,
+            authority: Arc::new(authority),
+        })
+    }
     pub fn new(control: TlsControlV1) -> Result<Self> {
         control.check()?;
         let admission = SCOPE_LIMIT
@@ -516,6 +573,11 @@ impl TlsScopeV1 {
         let state = Arc::new(ConnectionState {
             failed: AtomicBool::new(false),
             io: io.clone(),
+            request_deadline: Mutex::new(Some(
+                self.control
+                    .deadline
+                    .unwrap_or_else(|| Instant::now() + SERVICE_REQUEST_TIMEOUT),
+            )),
         });
         let mut guard = FrameGuard {
             state: &state,
@@ -610,7 +672,7 @@ impl TlsScopeV1 {
                 if guard.0.failed.load(Ordering::Acquire) {
                     return;
                 }
-                if watched_control.check().is_err() {
+                if guard.0.check(&watched_control).is_err() {
                     guard.0.fail();
                     return;
                 }
@@ -623,6 +685,8 @@ impl TlsScopeV1 {
             remote,
             exporter,
             initiator,
+            #[cfg(feature = "iroh-transport")]
+            continuous_service: false,
             supervisor,
             _admission: admission,
         })
@@ -636,6 +700,8 @@ pub struct TlsStreamV1<'scope> {
     remote: [u8; 32],
     exporter: Zeroizing<[u8; 32]>,
     initiator: bool,
+    #[cfg(feature = "iroh-transport")]
+    continuous_service: bool,
     supervisor: tokio::task::JoinHandle<()>,
     _admission: SemaphorePermit<'scope>,
 }
@@ -656,7 +722,7 @@ async fn write_frame<W: AsyncWrite + Unpin>(
     io: &mut W,
     bytes: &[u8],
 ) -> Result<()> {
-    state.check(control)?;
+    state.active_deadline(control)?;
     ensure!(
         !bytes.is_empty() && bytes.len() <= TLS_MAX_FRAME_V1,
         "TLS carrier frame limit"
@@ -684,7 +750,7 @@ async fn read_frame<R: AsyncRead + Unpin>(
     state: &ConnectionState,
     io: &mut R,
 ) -> Result<Vec<u8>> {
-    state.check(control)?;
+    state.active_deadline(control)?;
     let mut guard = FrameGuard {
         state,
         complete: false,
@@ -717,6 +783,92 @@ impl TlsReadHalfV1<'_> {
     }
 }
 impl TlsStreamV1<'_> {
+    // Only the existing mailbox negotiation invokes these transitions after
+    // the bound identity handshake. Finite V1 scopes can never be upgraded.
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn admit_continuous_service_v4(&mut self) -> Result<()> {
+        self.state.check(&self.scope.control)?;
+        ensure!(
+            self.scope.control.deadline.is_none() && !self.continuous_service,
+            "TLS carrier has no fresh continuous service scope"
+        );
+        self.state.transition(
+            &self.scope.control,
+            Some(Instant::now() + SERVICE_REQUEST_TIMEOUT),
+        )?;
+        self.continuous_service = true;
+        Ok(())
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn begin_service_request_v4(&mut self) -> Result<()> {
+        ensure!(
+            self.continuous_service,
+            "TLS continuous service not negotiated"
+        );
+        self.state.transition(
+            &self.scope.control,
+            Some(Instant::now() + SERVICE_REQUEST_TIMEOUT),
+        )
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn complete_service_request_v6(&mut self) -> Result<()> {
+        ensure!(
+            self.continuous_service,
+            "TLS continuous service not negotiated"
+        );
+        self.state.active_deadline(&self.scope.control)?;
+        self.state.transition(&self.scope.control, None)
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn service_request_deadline_v6(&mut self) -> Result<Instant> {
+        ensure!(
+            self.continuous_service,
+            "TLS continuous service not negotiated"
+        );
+        self.state.active_deadline(&self.scope.control)
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) async fn read_idle_service_frame_v6(&mut self) -> Result<Vec<u8>> {
+        let control = &self.scope.control;
+        let state = &self.state;
+        state.check(control)?;
+        ensure!(
+            self.continuous_service
+                && state
+                    .request_deadline
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("TLS request state poisoned"))?
+                    .is_none(),
+            "TLS service is not idle"
+        );
+        let mut guard = FrameGuard {
+            state,
+            complete: false,
+        };
+        let mut length = [0; 4];
+        control
+            .during(state, async {
+                state.io_result(control, self.tls.read_exact(&mut length[..1]).await)?;
+                Ok(())
+            })
+            .await?;
+        state.transition(control, Some(Instant::now() + SERVICE_REQUEST_TIMEOUT))?;
+        let bytes = control
+            .during(state, async {
+                state.io_result(control, self.tls.read_exact(&mut length[1..]).await)?;
+                let length = u32::from_be_bytes(length) as usize;
+                ensure!(
+                    length > 0 && length <= TLS_MAX_FRAME_V1,
+                    "TLS carrier frame limit"
+                );
+                let mut bytes = vec![0; length];
+                state.io_result(control, self.tls.read_exact(&mut bytes).await)?;
+                Ok(bytes)
+            })
+            .await?;
+        guard.complete = true;
+        Ok(bytes)
+    }
     pub fn binding(&self) -> Result<VerifiedTransportBinding> {
         self.state.check(&self.scope.control)?;
         Ok(VerifiedTransportBinding::from_authenticated_transport(
@@ -736,7 +888,7 @@ impl TlsStreamV1<'_> {
         Ok("tls-unclassified")
     }
     pub fn split_io(&mut self) -> Result<(TlsWriteHalfV1<'_>, TlsReadHalfV1<'_>)> {
-        self.state.check(&self.scope.control)?;
+        self.state.active_deadline(&self.scope.control)?;
         let (read, write) = tokio::io::split(&mut self.tls);
         Ok((
             TlsWriteHalfV1 {
@@ -763,7 +915,7 @@ impl TlsStreamV1<'_> {
     pub async fn finish(&mut self) -> Result<()> {
         let control = &self.scope.control;
         let state = &self.state;
-        state.check(control)?;
+        state.active_deadline(control)?;
         let mut guard = FrameGuard {
             state,
             complete: false,
