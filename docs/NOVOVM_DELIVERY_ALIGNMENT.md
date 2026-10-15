@@ -2150,3 +2150,12 @@ AOEM 经典隐私 JSON v2 源码已交付
 distinguish Windows network-monitor initialization from socket/TLS creation.
 No new listener, timeout extension or trust change. The original
 `iroh_transport.rs` scope remains owned; one build slot.
+
+**2026-10-16 measured Windows interface snapshot fix claim:** Monitor first polls
+block the executor for 2.167/4.162/1.161 seconds; standalone netdev 0.45.1
+enumeration takes 1.170/4.181/4.188 seconds. Root owns Cargo.toml/Cargo.lock
+patch entry, vendored netdev 0.45.1 and its Windows gateway enumeration only.
+Replace active SendARP metadata resolution with passive neighbor-cache lookup;
+preserve gateway IPs with unknown MAC and all authentication/deadline policy.
+No mainchain/SDK execution change, no network configuration change. Temporary
+iroh instrumentation will be removed after before/after measurement.
