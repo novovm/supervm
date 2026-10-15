@@ -1,5 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 structured pending/selection (active mainchain claim):** July
+recovery input3ed27bec, shared input6b6ce09d. Root owns APFL borrowed-row
+construction, integration and the single mainchain build/performance slot;
+native_execution_map owns existing pool/admission/gossip; july_reproduce owns
+the native load fixture; release_validation_map reviews the shared integration
+map read-only. Remove canonical row materialization/reparse between structured
+admission and selection, preserving signature identity, nonce reservations and
+both logical/retained-owner budgets. No mailbox owner/SDK deployment edits;
+preserve the NOVOCHAT claim below and all drafts. Native load observations must
+state their actual confirmation/query boundary; no new TPS claim yet.
+
 **2026-10-16 protected native mailbox owner activation (active claim):** NOVOCHAT
 session, input5905614b; downstream Application f076838. Reuse the existing
 Windows self-owned Owner, DPAPI identity/storage, mailbox.sqlite, sequence floor,
