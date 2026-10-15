@@ -1,0 +1,380 @@
+{
+  "profile": "native_execution_tick",
+  "experimental": true,
+  "core": "novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
+  "transport": "native_novorudp_apfl",
+  "consensus": "novovm-consensus/round_bft/journal",
+  "chain_id": 292,
+  "head": {
+    "height": 32,
+    "block_hash": [
+      92,
+      149,
+      205,
+      15,
+      221,
+      98,
+      31,
+      143,
+      253,
+      61,
+      58,
+      223,
+      130,
+      206,
+      237,
+      202,
+      186,
+      112,
+      78,
+      199,
+      59,
+      127,
+      169,
+      22,
+      79,
+      225,
+      8,
+      202,
+      121,
+      31,
+      118,
+      57
+    ],
+    "state_root": [
+      210,
+      105,
+      137,
+      138,
+      46,
+      234,
+      29,
+      59,
+      121,
+      36,
+      210,
+      125,
+      79,
+      148,
+      222,
+      36,
+      11,
+      178,
+      47,
+      155,
+      14,
+      241,
+      56,
+      151,
+      58,
+      104,
+      129,
+      52,
+      107,
+      20,
+      125,
+      217
+    ],
+    "receipt_batch_commitment": [
+      234,
+      181,
+      173,
+      142,
+      24,
+      104,
+      180,
+      190,
+      55,
+      216,
+      240,
+      157,
+      5,
+      72,
+      172,
+      87,
+      217,
+      54,
+      103,
+      214,
+      115,
+      83,
+      149,
+      162,
+      240,
+      154,
+      33,
+      26,
+      129,
+      26,
+      231,
+      248
+    ],
+    "state_version": 32768,
+    "decision_hash": [
+      57,
+      180,
+      254,
+      230,
+      249,
+      70,
+      225,
+      171,
+      19,
+      52,
+      178,
+      40,
+      44,
+      43,
+      244,
+      40,
+      141,
+      7,
+      15,
+      85,
+      1,
+      81,
+      230,
+      75,
+      109,
+      53,
+      58,
+      83,
+      54,
+      254,
+      70,
+      44
+    ]
+  },
+  "current_height": 33,
+  "round": 0,
+  "scheduled_proposer": "0x0becdc2bad0c6badb0bb45bc13bf8ab44d6575fb6c0a2c3faa9025a5025531eb",
+  "local_proposer": false,
+  "recovery_in_progress": false,
+  "pending": 8192,
+  "pending_bytes": 1302528,
+  "rpc_indexed_height": 32,
+  "projection_error": null,
+  "warm_projection_blocks": 32,
+  "archive_projection_blocks": 0,
+  "executed_batches": 32,
+  "durable_decisions": 32,
+  "execution_failures": 0,
+  "execution_backend": "aoem_semantic_v2_cpu_callbacks",
+  "execution_integer_rows_total": 0,
+  "execution_integer_plans_total": 0,
+  "execution_apfl_view_transactions_total": 32768,
+  "requested_bodies": 25,
+  "served_bodies": 24,
+  "native_pending_deliveries": 0,
+  "native_rejected_messages": 0,
+  "native_expired_sends": 0,
+  "successor_overlap_active": true,
+  "business_proof_required": false,
+  "business_proof_verified": false,
+  "mempool_gossip": true,
+  "gossip_delivery": "bounded_native_custody_not_durable_admission",
+  "gossip_repair": {
+    "omitted_recipient_inputs": 0,
+    "repair_batches_reserved": 4,
+    "repair_inputs_reserved": 4096,
+    "scope": "local omitted-recipient repair; not remote or durable receipt"
+  },
+  "gossip_verified_inputs": 40960,
+  "gossip_rejected_inputs": 0,
+  "authentication_cache_hits": 0,
+  "rpc_authentication": {
+    "owner": "same_resident_aoem_compute_session",
+    "http_waiting": 0,
+    "signature_batch_pending": false,
+    "submitted_batches": 40,
+    "completed_batches": 40,
+    "checked_rows": 40960,
+    "rejected_rows": 0,
+    "cancelled_http": 0,
+    "control_polls_while_checking": 34632,
+    "backpressured_polls": 0,
+    "scope": "local signature checks, not unique transactions or finality"
+  },
+  "pending_survives_restart": false,
+  "receipt_query_scope": "recent 65536 entries or explicit verified archive height",
+  "historical_receipt_queries": 0,
+  "pending_retained_payload_bytes": 1153296,
+  "pending_retained_apfl_owners": 8,
+  "stage_profile": {
+    "enabled": true,
+    "scope": "process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence",
+    "phases": {
+      "admission": {
+        "calls": 40,
+        "wall_ns": 429504900,
+        "max_wall_ns": 21561500
+      },
+      "authentication": {
+        "calls": 33,
+        "wall_ns": 386669200,
+        "max_wall_ns": 14110000
+      },
+      "bind": {
+        "calls": 8,
+        "wall_ns": 9340000,
+        "max_wall_ns": 1395300
+      },
+      "capture": {
+        "calls": 13674,
+        "wall_ns": 337086100,
+        "max_wall_ns": 85000
+      },
+      "finalize_capture": {
+        "calls": 32,
+        "wall_ns": 135203100,
+        "max_wall_ns": 4509100
+      },
+      "execute_cpu": {
+        "calls": 32,
+        "wall_ns": 324272100,
+        "max_wall_ns": 12171200
+      },
+      "execute_integer": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "integer_wire": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "reduction": {
+        "calls": 32,
+        "wall_ns": 286529900,
+        "max_wall_ns": 11050000
+      },
+      "state_tree": {
+        "calls": 32,
+        "wall_ns": 198142500,
+        "max_wall_ns": 8377300
+      },
+      "packet": {
+        "calls": 32,
+        "wall_ns": 292365800,
+        "max_wall_ns": 10067600
+      },
+      "io_nodes": {
+        "calls": 39,
+        "wall_ns": 3396500,
+        "max_wall_ns": 268000
+      },
+      "io_metadata_read": {
+        "calls": 2,
+        "wall_ns": 39200,
+        "max_wall_ns": 29000
+      },
+      "io_metadata_write": {
+        "calls": 133,
+        "wall_ns": 194289700,
+        "max_wall_ns": 2644500
+      },
+      "io_persist": {
+        "calls": 4256,
+        "wall_ns": 559507200,
+        "max_wall_ns": 10038400
+      },
+      "io_recover": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "lifecycle": {
+        "calls": 412932,
+        "wall_ns": 2654550400,
+        "max_wall_ns": 15864200
+      },
+      "consensus": {
+        "calls": 412932,
+        "wall_ns": 88140400,
+        "max_wall_ns": 896900
+      },
+      "projection": {
+        "calls": 412932,
+        "wall_ns": 75547900,
+        "max_wall_ns": 2486900
+      },
+      "gossip": {
+        "calls": 412932,
+        "wall_ns": 44906400,
+        "max_wall_ns": 3252100
+      },
+      "http": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "idle": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "yield": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "queue_admission": {
+        "calls": 40,
+        "wall_ns": 84877800,
+        "max_wall_ns": 22757900
+      },
+      "queue_candidate": {
+        "calls": 73,
+        "wall_ns": 32550100,
+        "max_wall_ns": 9480400
+      },
+      "integer_compile": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "integer_projection": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "candidate_registration": {
+        "calls": 76148,
+        "wall_ns": 26249600,
+        "max_wall_ns": 85700
+      },
+      "native_io": {
+        "calls": 412932,
+        "wall_ns": 1653133800,
+        "max_wall_ns": 15851800
+      },
+      "native_assembly": {
+        "calls": 412932,
+        "wall_ns": 375853000,
+        "max_wall_ns": 898400
+      },
+      "native_query": {
+        "calls": 412932,
+        "wall_ns": 270816400,
+        "max_wall_ns": 1174900
+      },
+      "native_selection": {
+        "calls": 375296,
+        "wall_ns": 35658800,
+        "max_wall_ns": 1758400
+      }
+    },
+    "integer_resource": null
+  },
+  "successor": {
+    "authentication_started": 8,
+    "execution_started": 6,
+    "completed_before_parent": 0,
+    "promoted": 8,
+    "discarded": 0,
+    "scope": "local_next_proposer_after_durable_parent_candidate"
+  },
+  "entry": "original_native_execution_tick",
+  "ticks": 412932
+}

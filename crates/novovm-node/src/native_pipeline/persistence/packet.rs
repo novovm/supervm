@@ -81,11 +81,11 @@ pub struct PreparedCandidate {
     summary: Summary,
     records: BTreeMap<Vec<u8>, Vec<u8>>,
     resources: Resources,
-    // Read-only selection hint from the actual executed receipts, in original
+    // Read-only query/selection view of actual executed receipts, in original
     // order. Bounded by transaction_count; actual allocation capacity is
     // charged below against the existing 2x maximum-packet reservation.
     // Not serialized or added to any business/consensus commitment.
-    receipt_nonces: Vec<(NodeHash, u64)>,
+    receipt_projection: Vec<ReceiptProjection>,
 }
 
 struct Resources {
@@ -149,7 +149,7 @@ impl PreparedCandidate {
     pub fn record_bytes(&self) -> usize {
         self.resources.total_bytes
     }
-    /// Logical record content plus the actual capacity of the read-only nonce
+    /// Logical record content plus the actual capacity of the read-only receipt
     /// projection. Runtime owners use this for retention, not storage encoding.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.resources.retained_bytes
@@ -157,8 +157,8 @@ impl PreparedCandidate {
     pub fn transaction_count(&self) -> usize {
         self.resources.transactions
     }
-    pub(crate) fn receipt_nonces(&self) -> &[(NodeHash, u64)] {
-        &self.receipt_nonces
+    pub(crate) fn receipt_projection(&self) -> &[ReceiptProjection] {
+        &self.receipt_projection
     }
     pub fn context(&self) -> &BatchContext {
         &self.summary.context
@@ -516,13 +516,9 @@ fn prepare(
     // The codec's independent recovery validator also checks structural receipt
     // relations, not business execution. Preparation never manufactures success.
     decode_document(&document, plan.commitment(), budget)?;
-    let receipt_nonces = receipts
+    let receipt_projection = receipts
         .iter()
-        .map(|bytes| -> Result<_> {
-            let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
-            ensure!(tail.is_empty(), "trailing executed receipt bytes");
-            Ok((receipt.signer_identity, receipt.delta.nonce_after))
-        })
+        .map(|bytes| ReceiptProjection::decode(bytes))
         .collect::<Result<Vec<_>>>()?;
     let digest = document_hash(&document);
     let mut records = BTreeMap::new();
@@ -548,18 +544,18 @@ fn prepare(
     for (key, value) in &records {
         account_record(&mut total, key, value, budget)?;
     }
-    let nonce_bytes = receipt_nonces
+    let projection_bytes = receipt_projection
         .capacity()
-        .checked_mul(std::mem::size_of::<(NodeHash, u64)>())
+        .checked_mul(std::mem::size_of::<ReceiptProjection>())
         .context("receipt projection size overflow")?;
     // Existing pipeline reservation contains 2 * maximum packet bytes. The
     // extra projection cannot silently widen that admitted memory contract.
     ensure!(
-        nonce_bytes <= total,
+        projection_bytes <= total,
         "receipt projection exceeds reserved packet allowance"
     );
     let retained_bytes = total
-        .checked_add(nonce_bytes)
+        .checked_add(projection_bytes)
         .context("packet retention overflow")?;
     let resources = Resources {
         transactions: plan.transaction_count(),
@@ -582,7 +578,7 @@ fn prepare(
         },
         records,
         resources,
-        receipt_nonces,
+        receipt_projection,
     })
 }
 
@@ -830,6 +826,30 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         node_hashes,
         receipts,
     })
+}
+
+/// Read-only projection; never execution, publication or signing authority.
+/// Retains no strings or separate nonce vector. Amounts preserve all 128 bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ReceiptProjection {
+    pub tx_hash: NodeHash,
+    pub signer_identity: NodeHash,
+    pub nonce_after: u64,
+    pub success: bool,
+    pub charged_fee: u128,
+}
+impl ReceiptProjection {
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
+        ensure!(tail.is_empty(), "trailing executed receipt bytes");
+        Ok(Self {
+            tx_hash: receipt.tx_hash,
+            signer_identity: receipt.signer_identity,
+            nonce_after: receipt.delta.nonce_after,
+            success: receipt.failure.is_none() && receipt.fee_failure.is_none(),
+            charged_fee: receipt.delta.fee_funding_delta,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -1,5 +1,21 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 ACK-bound projection implementation (validated; claim released):** input4cabc9a8.
+Root owns rpc projection wiring, final integration and the sole build/perf slot;
+native_execution_map owns packet compact receipt views, progress ACK-bound
+single-slot projection, lifecycle accessor and focused tests. No AOEM/transport/
+consensus policy changes. Reuse the original immutable execution output after
+the exact local journal publish ACK; cold/history/evicted cases still use the
+existing ArchiveRead. Snapshot totals are not speedup evidence; freeze the
+same-dependency baseline before measuring this change. Protected drafts stay.
+
+Release build and361 native tests pass; real ACK/cold boundary test and four
+actual CPU/algebraic process tests pass. A/B/A/B success TPS7212.183→7176.314
+(-0.50%), no demonstrated throughput gain; both pairs' observed tails lower.
+Separate height32 snapshots: warm32/archive0/io_recover0 on all four nodes.
+Retain bounded work elimination, not a high-throughput milestone. Evidence:
+[ACK projection](../artifacts/audit/native-ack-projection-20261016/README.md).
+
 **2026-10-16 root release dependency repair (integrated; claim released):** input0bcfa905.
 Root owns network rustls pin, root lockfile, bounded validation and evidence;
 one heavy build/performance slot. Fix the confirmed root security gate through
@@ -25,8 +41,8 @@ whole-chain attribution). Reuse only the exact local journal Decision ACK's
 owner-bound immutable candidate, with one budgeted read-only slot and compact
 receipt projection. No pre-ACK/competing/replayed-cold completion may populate
 it; exact head required, cold/history/miss retain original ArchiveRead checks.
-Not implemented yet. Do not claim reduced I/O or improved TPS until matched
-tests prove it; do not replace original consensus or create an authority cache.
+Implemented and checked above; normal replay elimination is observed, throughput
+improvement is NOT established. Do not replace original consensus or create an authority cache.
 **2026-10-16 continuous native carrier framing claim (active):** input ad2f9977,
 downstream9add600. Root owns iroh_transport/carrier_stream/native carrier IO and
 actual QUIC lifecycle tests; bounded TLS agent owns tls_transport counterpart

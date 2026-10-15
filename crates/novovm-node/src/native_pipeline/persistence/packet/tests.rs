@@ -196,6 +196,22 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
         .unwrap()
         .unwrap();
     assert!(packet.matches(&stored));
+    assert_eq!(packet.receipt_projection().len(), fixture.receipts.len());
+    for (index, hot) in packet.receipt_projection().iter().enumerate() {
+        let cold = stored.receipt_view(index).unwrap();
+        assert_eq!(hot.tx_hash, cold.tx_hash);
+        assert_eq!(hot.signer_identity, cold.signer_identity);
+        assert_eq!(hot.nonce_after, cold.nonce_after);
+        assert_eq!(hot.success, cold.success);
+        assert_eq!(hot.charged_fee, cold.charged_fee.parse::<u128>().unwrap());
+    }
+    let projection_bytes =
+        packet.receipt_projection.capacity() * std::mem::size_of::<ReceiptProjection>();
+    assert_eq!(
+        packet.retained_bytes(),
+        packet.record_bytes() + projection_bytes
+    );
+    assert!(packet.retained_bytes() <= packet.record_bytes() * 2);
     assert_eq!(stored.record_bytes(), packet.record_bytes());
     assert_eq!(stored.context(), fixture.plan.context());
     assert_eq!(
@@ -236,6 +252,34 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
         })
         .unwrap();
     assert_eq!(packet.records(), repeated.records());
+}
+
+#[test]
+fn receipt_projection_codec_preserves_u128_and_distinct_failure_conditions() {
+    // Codec-only mirror test, not construction of an executed capability.
+    let mut fixture = Fixture::new(&[4], 0, 0);
+    let receipt = &mut fixture.receipts[0];
+    receipt.delta.fee_funding_delta = u128::MAX;
+    let bytes = postcard::to_allocvec(receipt).unwrap();
+    let rejected = ReceiptProjection::decode(&bytes).unwrap();
+    assert_eq!(rejected.charged_fee, u128::MAX);
+    assert!(!rejected.success);
+    receipt.fee_failure = None;
+    assert!(
+        !ReceiptProjection::decode(&postcard::to_allocvec(receipt).unwrap())
+            .unwrap()
+            .success
+    );
+    receipt.failure = None;
+    assert!(
+        ReceiptProjection::decode(&postcard::to_allocvec(receipt).unwrap())
+            .unwrap()
+            .success
+    );
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(ReceiptProjection::decode(&trailing).is_err());
+    assert!(ReceiptProjection::decode(&bytes[..bytes.len() - 1]).is_err());
 }
 
 #[test]
