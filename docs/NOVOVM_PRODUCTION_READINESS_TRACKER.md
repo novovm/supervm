@@ -3,6 +3,49 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 候选绑定保留 APFL 共享结构
+
+恢复现场b93a9faa→1796346e，九个受影响文件与共享main d4f49d85的原件blob
+逐项一致，因此仅将这笔可复用数据契约变更接回main 131c0e54，不合并整个恢复树，
+不迁入bootstrap/controller或启用替代入口。原node tick的完整激活仍未完成。
+
+实际改变`SignatureCheckedBatch::bind → BatchPlan::from_source`：计划持有原
+`BatchSource::Apfl(Arc)`，不再调用整批into_raw。沿已有TransferView规范编码向
+SHA256流式更新重复检查和原计划承诺；保留原域、长度、签名字节、顺序、精确父域、
+计数/字节/声明预算。一次绑定不再创建N个完整raw行及其Vec容器；未测分配峰值，
+不将这一源码工作量削减直接换算为TPS收益。
+
+既有NVCAND01归档与NVEXIN01兼容证明输入在最终编码边界逐行投影；没有新增JSON、
+规范协议或证明服务。冷归档仍按原格式解码，prepare仍执行独立decode_document
+检查，它会重建归档raw；所以本项不是全持久化流程零物化。公开live-plan整批raw
+访问已移除，测试显式投影，冷StoredCandidate访问只允许原解码器创建的raw来源。
+
+恢复树Windows debug：普通native_pipeline组341通过、42忽略，17.89s；新增计划
+Arc保留/承诺/重复/预算/签名字节绑定及归档、证明输入全字节等价检查。首次编译因
+新测试sum类型歧义失败，显式usize后复跑通过；既有unused/dead-code/重复bin警告保留。
+真实库另跑：APFL→完整整数计划→耐久候选→冷经济读回7.22s；结构与raw业务/费用/
+nonce/失败/证明输入一致0.19s；完整费用容量失败后继依赖4.77s；窗口与诊断边界
+2.16s；CPU父无关鉴权/精确捕获/重启0.21s，均通过。原node binary check通过2.63s。
+执行后仍断言计划未保存raw副本。不是四验证者最终确认、Linux、主链TPS或新ZK生成。
+
+真实库使用已有共享SDK aab3f8bb Windows core，而不是强行让七月旧DLL承接新
+composition；没有替换历史SDK。DLL SHA256为
+`31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947`，
+与既有manifest匹配，并启用严格manifest要求。恢复树测试EXE SHA256为
+`dbff3bdaf22ac8ba42a2fe2e6b85a3073b586aa6d69341147e91e6d8c94bc7f6`。
+本轮没有修改AOEM，原49草稿、知识库、旧SDK、冻结性能证据和NOVOCHAT工作保留。
+
+下一接合仍限原`NativeExecutionPipelineUdpDriveV1`/tick：消费同一认证对象owner
+的结构批，拥有既有常驻鉴权/完整计划/候选服务，接唯一journal授权发布；不得把
+候选落盘直接标finalized，不恢复raw pending/JSON执行入口，也不创建新控制器。
+正式共同条件TPS应在该真实原节点闭环接上后测量，本轮无新增性能结论。
+
+共享main131c0e54随后独立复验：native_pipeline 407通过、64忽略（5.75s）；
+显式真实库业务组4通过（5.55s），CPU父绑定/冷恢复1通过（0.14s）；原node binary
+check通过15.90s，node lib严格Clippy通过23.25s。该树没有恢复现场专用July完整链路用例，不能把两个工作区的
+测试数合并成同一套测试。共享测试EXE SHA256为
+`209eaea569a2a5c26fd37bcd65ded5cef084f63c09db89b275d342918c379838`。
+
 ## 2026-10-16 同一原 UDP owner 的认证对象接合
 
 共享基线dd48c278；七月恢复现场由9797a346推进至本地b93a9faa。

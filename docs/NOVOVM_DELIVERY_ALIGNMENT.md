@@ -1,5 +1,21 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 APFL candidate binding (implementation verified in recovery):** root owns packet codec,
+integration and the single build slot in the existing July recovery worktree;
+native_execution_map owns BatchSource/BatchPlan/binding and plan tests;
+release_validation_map owns proof codec compatibility and existing body tests.
+Retain the shared structural source rather than materializing the full raw
+batch at bind. Preserve canonical commitments, budgets, archive/proof formats
+and recovery; no new business executor, publication authority or product mode.
+Main SDK/mobile work remains outside this change. Recovery1796346e is integrated
+as reusable source-only main131c0e54 after all nine base blobs matched; no
+bootstrap/controller migration. Recovery341 regular tests plus five explicit
+real-library execution/recovery tests pass. Main independently passed407 regular
+tests, five explicit real-library tests and original-node binary check.
+Original tick activation still follows this prerequisite, not accomplished by
+library tests alone. Agent file claims released; root retains integration and
+the single build/performance slot.
+
 **2026-10-16 original socket authentication handoff (shared slice verified):**
 July owner, shared input dd48c278; recovery checkpoint b93a9faa. Original
 NativeEndpoint/NativeObjectLink now expose bounded borrowed receive callbacks,
