@@ -493,8 +493,14 @@ jobs:
 
       - name: Native shared client transport and bounded public API
         run: |
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-protocol apfl_batch
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --lib novorudp -- --test-threads=1
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --test native_application_transport -- --test-threads=1
+
+      - name: Structured mailbox owner and native UDP custody (not Android acceptance)
+        run: |
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --lib mailbox_structured -- --test-threads=1
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_application_transport -- --test-threads=1
 
       - name: Product relay client daemon and overlay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_relay_

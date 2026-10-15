@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod apfl_batch;
+pub mod apfl_column;
 mod bincode_compat;
 
 pub mod block_binding;
