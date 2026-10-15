@@ -89,6 +89,27 @@ The original failed-performance baseline is `10920-1792097520681486100`.
 - Retained remote mailbox/locator regressions rerun:16 structured mailbox and10
   native endpoint tests pass. No mobile files or other machine's work changed.
 
+## Shared carrier merge verification
+
+`cb4bb9eb` merges the implementation with remote `d99b8b23` typed datagram
+provenance. Original UDP APIs/shared receive owner remain active; the carrier
+type does not activate TLS/WSS/Iroh on the mainchain. Merged source node check
+and 99 NovoRUDP tests pass. Release node rebuilt in 1m45s, SHA256
+`4f0d01cad009d66c4eb59def416e76950655c970f736ff407f885a1b0ae994f2`.
+The unchanged frozen test/SDK driver is `223b37a9...` identified above; this is
+also a compatibility check against that driver, not a rebuilt-client claim.
+
+Same plugged-in conditions, batch128: [raw report](merged-batch-1.json),
+65536 successes, zero business failures/transport failures/deadlines,
+10.672071s, **6140.888680 TPS**, P95 1.397271s/P99 1.569527s.
+All four final receipts, balances, nonce and cold recovery pass; cold receipt
+observation 0.330677s. Timed queries88618/not-final rows11080960 remain visible.
+This single merged sample does not establish stable capacity or restore 9K.
+Actual-process CPU2 cases2.20s and algebraic2 cases7.28s also pass; reports are
+`merged-cpu-closure.json`, `merged-cpu-minority.json`,
+`merged-algebraic-closure.json`, `merged-algebraic-minority.json`.
+No AOEM binary change, physical GPU or business-proof claim.
+
 ## Remaining, not hidden by this improvement
 
 Current native selection still waits for published parent/nonce projection;
