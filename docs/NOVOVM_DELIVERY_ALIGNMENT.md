@@ -1,4 +1,15 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 native mailbox listener (claim active):** NOVOCHAT session,
+input 43ab6d33 / documentation 89b36b3a. Scope: original product_rendezvous_owned
+node dispatcher, borrowed native listener module, native route resource bounds,
+shared session response metadata as needed and real-socket integration tests.
+Reuse NativeObjectLink/NativeMailboxServer and the SAME MailboxService/host,
+not another SDK, wire protocol, store or runtime. Concurrent Watch/work, bounded
+outputs, socket wakeup, original revocation and cancellation; explicit native-only
+entry plus optional existing-node listener. No mainchain/AOEM/finance edits.
+One implementation/build owner; read-only native_listener_review audits original
+limits/lifecycle, no competing heavy builds. Existing deployed phones unchanged.
+
 **2026-10-16 parallel execution (active, user authorized):** one integration
 owner (root), one July original-binary reproduction owner (`july_reproduce`),
 one read-only execution-wiring reviewer (`native_execution_map`), and one
