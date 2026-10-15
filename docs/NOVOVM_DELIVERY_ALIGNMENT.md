@@ -2144,3 +2144,9 @@ AOEM 经典隐私 JSON v2 源码已交付
 每次报告应说明“本次改变了什么用户能力、走哪条真实路径、有哪些证据、哪些仍未完成”。只有组件通过时写组件通过，只有本机验证时写本机验证。三条核心能力没有按其产品路径签收前，不得宣布已完整兑现高性能、隐匿资产、抗量子 Web3 的交付目标。
 
 用户后续明确批准的范围调整可以更新本文件；开发者不得自行把临时限制、兼容路径或局部验收改成最终产品定义。
+
+**2026-10-16 startup diagnosis claim extension:** Root temporarily instruments
+`vendor/iroh/src/socket.rs` and `endpoint.rs` around existing bind stages to
+distinguish Windows network-monitor initialization from socket/TLS creation.
+No new listener, timeout extension or trust change. The original
+`iroh_transport.rs` scope remains owned; one build slot.
