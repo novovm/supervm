@@ -186,9 +186,9 @@ fn empty_pinned_policy_is_not_open_and_listener_requires_explicit_limits() -> Re
     Ok(())
 }
 
-// This exercises the shared codec against the SAME durable mailbox owner over
-// real UDP. It is not a production driver: mobile routing/reconnect and the
-// application's live contact/revocation authority are not implemented here.
+// Shared session request state dispatches to the SAME durable owner over real
+// UDP, without out-of-band knowledge of the response ID or request context.
+// Mobile routing/reconnect and deployed revocation policy remain unwired.
 #[cfg(feature = "iroh-transport")]
 #[tokio::test]
 async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() -> Result<()> {
@@ -196,10 +196,12 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
         mailbox_rpc::{MailboxReplyV1 as Reply, MailboxRequestV1 as Request, MailboxServiceV1},
         mailbox_store::MailboxStore,
         mailbox_structured::{
-            decode_replies, encode_requests, execute_local_batch, STREAM as MAIL,
+            session::{
+                object_domain, NativeMailboxBudget, NativeMailboxClient, NativeMailboxServer,
+            },
+            STREAM as MAIL,
         },
     };
-    use zeroize::Zeroizing;
     let directory = tempfile::tempdir()?;
     let key = SigningKey::from_bytes(&[17; 32]);
     let pin = key.verifying_key().to_bytes();
@@ -216,6 +218,7 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
     let address = socket.local_addr()?;
     let mut config = lane();
     config.stream = MAIL;
+    config.domain = object_domain();
     let mut server = NativeObjectLink::new(
         NativeEndpoint::listen_clients(socket, key, 1, vec![MAIL], budget())?,
         vec![config.clone()],
@@ -238,11 +241,22 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64
         + 600;
-    let mut session = None;
+    let handshake_deadline = Instant::now() + Duration::from_secs(5);
+    while client.session_id(0).is_none() || server.session_id(0).is_none() {
+        ensure!(
+            Instant::now() < handshake_deadline,
+            "native handshake timeout"
+        );
+        let now = Instant::now();
+        let wall = 1000 + now.duration_since(origin).as_millis() as u64;
+        let _ = client.poll(wall, now, 64)?;
+        let _ = server.poll(wall, now, 64)?;
+        tokio::task::yield_now().await;
+    }
+    let session = client.session_id(0);
+    let mut caller = NativeMailboxClient::new(&client, 0)?;
+    let mut responder = NativeMailboxServer::new(&server, 0, NativeMailboxBudget::new(4)?)?;
     for round in 0..2u8 {
-        // A context is not authentication by itself. The fixture associates it
-        // with this exact request and checks peer/session before owner effects.
-        let context = [31 + round; 32];
         let requests = if round == 0 {
             vec![
                 Request::Register {
@@ -265,15 +279,15 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
                 read: [3; 32],
             }]
         };
-        let encoded = encode_requests(context, &requests)?;
-        let request = object(encoded.to_vec())?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let prepared = caller.prepare(&client, &requests, Instant::now(), deadline)?;
+        let request = prepared.body.clone();
         let mut sent = false;
         let mut handled = false;
         let mut response = None;
         let mut received = None;
         let mut request_done = false;
         let mut response_done = false;
-        let deadline = Instant::now() + Duration::from_secs(10);
         while !(request_done && response_done && received.is_some()) {
             ensure!(Instant::now() < deadline, "native mailbox fixture timeout");
             let now = Instant::now();
@@ -285,11 +299,10 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
             }
             for done in server.poll(wall, now, 64)?.completed {
                 assert_eq!(done.state, ObjectSendState::Delivered);
-                assert!(Arc::ptr_eq(&done.body, response.as_ref().unwrap()));
                 response_done = true;
             }
             if !sent {
-                sent = client.try_send(0, MAIL, &request, now)?;
+                sent = caller.try_send(&mut client, &prepared, now, |_| Ok(()))?;
             }
             if let Some(body) = server.poll_complete(MAIL, now, 64)? {
                 ensure!(
@@ -297,35 +310,31 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
                     "unexpected mailbox request"
                 );
                 ensure!(body.peer == server.peer_id(0)?, "mailbox request peer");
-                let bound = server.session_id(0).unwrap();
-                assert_eq!(Some(bound), client.session_id(0));
-                if let Some(previous) = session {
-                    assert_eq!(bound, previous);
-                }
-                session = Some(bound);
-                let bytes = Zeroizing::new(body.chunks.concat());
-                let encoded = execute_local_batch(&service, &bytes, context, || {
-                    ensure!(
-                        server.session_id(0) == Some(bound),
-                        "fixture authority changed"
-                    );
-                    Ok(())
-                })
-                .await?;
-                let reply = object(encoded.to_vec())?;
-                assert!(server.try_send(0, MAIL, &reply, Instant::now())?);
+                assert_eq!(server.session_id(0), session);
+                let duplicate = novovm_network::novorudp::fragments::CompletedMessage {
+                    peer: body.peer.clone(),
+                    id: body.id,
+                    chunks: body.chunks.clone(),
+                };
+                let job = responder.accept(&server, body, now, deadline)?;
+                assert!(responder.accept(&server, duplicate, now, deadline).is_err());
+                let reply = job
+                    .execute(&service, |binding| binding.check(&server))
+                    .await?;
+                assert!(reply.try_send(&mut server, Instant::now(), |_| Ok(()))?);
                 response = Some(reply);
                 handled = true;
             }
             if let Some(body) = client.poll_complete(MAIL, now, 64)? {
                 ensure!(received.is_none(), "duplicate mailbox response");
-                assert_eq!(body.id, response.as_ref().unwrap().id());
-                let bytes = Zeroizing::new(body.chunks.concat());
-                assert!(decode_replies(&bytes, [99; 32], requests.len()).is_err());
-                received = Some(decode_replies(&bytes, context, requests.len())?);
+                let (sequence, replies) = caller.receive(&client, body, now)?;
+                assert_eq!(sequence, prepared.sequence);
+                received = Some(replies);
             }
             tokio::task::yield_now().await;
         }
+        assert!(response.is_some());
+        assert_eq!(caller.pending_count(), 0);
         let replies = received.unwrap();
         if round == 0 {
             assert!(matches!(replies[0], Reply::Registered));

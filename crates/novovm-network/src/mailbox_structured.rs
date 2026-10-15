@@ -15,6 +15,8 @@ use novovm_protocol::{
 };
 use zeroize::Zeroizing;
 
+pub mod session;
+
 pub const STREAM: u64 = u64::from_be_bytes(*b"NVMBOX07");
 pub const REQUEST_SCHEMA: u64 = u64::from_be_bytes(*b"NVMREQ07");
 pub const REPLY_SCHEMA: u64 = u64::from_be_bytes(*b"NVMRES07");

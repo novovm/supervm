@@ -205,7 +205,7 @@ impl SlidingReplayWindowV1 {
         distance < u64::from(self.width) && (self.bitmap & (1u128 << distance)) == 0
     }
 
-    fn mark_authenticated(&mut self, sequence: u64) -> bool {
+    pub(crate) fn mark_authenticated(&mut self, sequence: u64) -> bool {
         if !self.would_accept(sequence) {
             return false;
         }

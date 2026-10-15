@@ -86,6 +86,10 @@ pub struct NativeEndpoint {
 }
 
 impl NativeEndpoint {
+    pub fn local_public_key(&self) -> [u8; 32] {
+        self.local_key
+    }
+
     /// Explicit bounded application listener, with no pre-enrolled client or
     /// validator dependency. Empty `bind` peers still fail; this constructor
     /// installs key-possession admission before the socket can receive data.

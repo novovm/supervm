@@ -672,3 +672,21 @@ additional JSON work is identified but is not proven to explain seconds of delay
 
 This entry changes the implementation contract only. No live protocol, finance,
 AOEM, consensus or July recovery source was changed by the NOVOCHAT session.
+
+## 2026-10-16 SDK选择：统一结构业务，多载体按证据接入
+
+用户要求比较原生SDK与原有链路。当前决策：继续一套NOVOVM SDK、UCA用途身份、
+APFL信箱语义及Message ID/回执/TTL；传输适配可以多种，不发展多套业务SDK。
+原生NovoRUDP/APFL是当前主线。既有QUIC/Iroh和自有TCP/TLS能力保留，后续仅在
+相同结构协议与原owner策略实际接合、验收后作为合格候选，禁止HTTP/JSON-RPC
+业务兼容入口和无声明JSON回退。不把“APFL已编码”误报为这些载体均已接通。
+
+本轮不同时扩展新载体。优先完成原生Android主路径的身份/数据保留、网络切换与
+实际延迟对照；再复用已有备用能力。可达性、丢包、RTT、队列/存储时延和设备资源
+共同选路，先满足用户隐私政策；不以协议名称固定选择更慢路径，不每消息重新赛跑，
+不为凑APFL批量人为等待。匿名路径不合格时不能为了低时延自动直连降级。
+
+原生结构编码减少JSON转换并统一原基础设施接口，但当前没有同条件编码/端到端
+性能对照证明其已全面更快。既有Iroh的NAT/Relay/迁移能力不能被一次本机UDP成功
+替代；现有手机约秒级延迟也不能直接归因于JSON。300ms仍是健康可达路径目标，
+不是任意地域/弱网/离线的保证。多载体不等于多账号、多个节点owner或多套消息库。

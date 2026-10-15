@@ -3,6 +3,31 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 NVMBOX07 原生会话请求接合与并行操作
+
+输入2f7ec54d，本节所在提交。复用共享NativeObjectLink/APFL/MailboxService，
+在原mailbox_structured::session接请求序号、角色/session绑定、乱序回复关联、
+原128位重放窗口和节点共享并发预算。原生对象sender新增短操作截止时间上限，
+重复入队不延期。无HTTP/JSON业务旁路、无新握手/账户/调度器/许可/金融语义。
+
+Windows debug：结构/会话7项通过0.33s；novorudp过滤82项通过0.80s；
+外部公共API真实UDP3项通过0.13s。含9KB寄存/领取与签名StoreReceipt，公共API
+不再预先知道请求context或回复object ID。新并行用例确认空信箱Watch正在等待，
+Put无需等待其2秒超时即可落盘、唤醒通知，并在同一会话独立接收乱序回复；
+一秒测试期限内通过不是手机P95性能结果。坏context/方向、跨会话、重复/未知/
+过期回复、乱序合法请求、并发预算、取消不重置重放记录均有反例。
+原store重启/保管/TTL/能力回归保留。20ms操作截止不因2s传输TTL或重复发送延长。
+
+新状态只用于显式NVMBOX07接线，旧NVMBOX01–06不换标签。会话对象必须由原owner
+唯一管理；operation到期或取消为未知结果，不是持久事务回滚。回复被背压保留时
+仍占节点工作预算。对同一批的有序语义不作并行承诺，Watch与即时Put分独立请求。
+
+尚未接部署node/Application循环、同key换源和槽回收、撤销时在途传输的定向取消、
+全部transport能力缓冲擦除及实际移动NAT。完成chunks/adapter缓冲已擦除不代表
+全部底层缓冲已处理。未更新手机、停止节点或新增手机时延数据；不称原生迁移、
+完整SDK、300ms或自主公网连通通过。主链恢复现场、账本、共识、AOEM保持未修改。
+本地日志在NOVOCHAT artifacts/native-mailbox-*.log（忽略产物）。
+
 ## 2026-10-16 结构信箱接原 owner：真实UDP持久回执与重启核对
 
 输入main `3a9dfcce`，本节所在提交。将原node APFL的Column实现原样提取到

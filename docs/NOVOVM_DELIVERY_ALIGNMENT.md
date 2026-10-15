@@ -1,4 +1,14 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 native mailbox request binding (claim released):** NOVOCHAT session,
+input 2f7ec54d. Consume the shared NVMBOX07 adapter in its existing module:
+session-bound request correlation, bounded concurrent operation ownership and
+replay rejection, with real UDP owner tests. Original object sender gains a
+per-operation deadline cap; endpoint adds public identity/lane readers. Reuse the original replay window;
+no new transport, account, scheduler, finance or recovery-tree edits. Android
+and mobile source-change routing are not yet wired; no deployment claim.
+Seven structure/session tests, 82 native regressions and three public UDP tests
+pass. Reply correlation no longer depends on fixture-known context/body IDs.
+
 **2026-10-16 structured mailbox adapter (claim released):** July recovery owner,
 main 3a9dfcce. Extract existing APFL column reuse into novovm-protocol; add
 versioned bounded mailbox batch encoding consumed by the existing mailbox owner.

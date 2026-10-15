@@ -198,3 +198,23 @@ fn scope_profile_and_quantum_reject_without_reserving_or_relabeling_bytes() -> R
     assert_eq!(a.outbound_usage(BODY)?, (0, 0));
     Ok(())
 }
+
+#[test]
+fn operation_deadline_caps_repairs_without_resetting_a_live_send() -> Result<()> {
+    let (mut a, _b, _c) = pair_and_third()?;
+    let now = Instant::now();
+    let deadline = now + Duration::from_millis(20);
+    let body = message(BODY, 11, 100)?;
+    assert!(a.try_send_until(0, BODY, &body, now, now).is_err());
+    assert_eq!(a.outbound_usage(BODY)?, (0, 0));
+    assert!(a.try_send_until(0, BODY, &body, now, deadline)?);
+    // Neither re-enqueue nor the normal two-second transport TTL extends 20ms.
+    assert!(a.try_send(0, BODY, &body, now + Duration::from_millis(10))?);
+    let report = a.poll(1030, now + Duration::from_millis(30), 64)?;
+    assert_eq!(report.completed.len(), 1);
+    assert_eq!(report.completed[0].state, ObjectSendState::Expired);
+    assert!(Arc::ptr_eq(&report.completed[0].body, &body));
+    assert_eq!(report.data_sent, 0);
+    assert_eq!(a.outbound_usage(BODY)?, (0, 0));
+    Ok(())
+}

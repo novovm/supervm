@@ -109,3 +109,33 @@ cargo test --locked -p novovm-protocol apfl_batch
 cargo test --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --lib mailbox_structured -- --test-threads=1
 cargo test --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_application_transport -- --test-threads=1
 ```
+
+## 2026-10-16 增量：原生信箱请求状态接合（尚未部署手机）
+
+共享 `mailbox_structured::session` 消费原 NativeObjectLink 和 MailboxService。
+NVMBOX07 的 fragment domain 为 SHA256("novovm/NVMBOX07/object/v1\0")。
+原 APFL context 的前8字节为非零小端请求序号，后24字节为版本域隔离摘要；
+摘要绑定原认证session、客户端/服务端方向及双方公钥派生peer ID。它不是新身份、
+握手、服务许可或签名；信任来自原生握手/AEAD，context用于关联和拒绝串会话回复。
+
+原Application/node owner在同一活会话内只保存一份客户端/服务端请求状态，不能
+每次业务任务重建序号或重放窗口。并发在途32项（非历史上限）；使用原128位重放
+窗口，允许乱序且重复只接受一次。最老在途请求不被新请求挤出窗口；取消/超时由
+原owner显式abandon，表示结果未知，不重置序号、不生成新业务Message ID。
+
+NativeMailboxClient::prepare/try_send/receive；NativeMailboxServer::accept；
+NativeMailboxJob::execute；NativeMailboxResponse::try_send，组成共享接线接口。
+服务端accept先验证完整结构再派发有界job；节点所有peer共用NativeMailboxBudget。
+job不持有link锁、不spawn调度器，可由原owner并发执行Watch和Put；同一批仍有序，
+调用者不得把长Watch与需即时执行的Put塞入同一批等待。回复在背压时继续占资源槽，
+取消或丢弃释放槽，但不擦除重放历史。每次实际执行和发送继续使用原owner实时
+撤销/Privacy/会话检查。健康连接不逐请求握手。
+
+try_send_until将操作截止时间传给原对象sender，取原传输TTL与剩余操作期限较小值；
+重新入队不会延长原任务。Transport Delivered不等于Stored或Device Delivered；
+调用者仍验证原存储回执签名和业务绑定。部分操作可能在超时/取消前已经落盘。
+原完成chunks和adapter缓冲退出时擦除；原传输层其他保留缓冲尚需统一处理。
+
+仍未交付：生产node/Application入站循环接线、实际撤销变化后的在途传输取消、
+同key换源/槽回收、移动NAT可达和Android部署。不能将这些会话组件称为完整
+原生手机SDK；也未对现有Iroh业务路径做静默替换或JSON降级。
