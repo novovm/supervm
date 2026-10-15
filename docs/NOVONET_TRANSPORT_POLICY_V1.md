@@ -627,6 +627,15 @@ implementation alone is not low-latency or autonomous-routing acceptance.
 
 ## 2026-10-16 Native DApp entry rule and mailbox migration boundary
 
+**Later same-day shared transport handoff:** the original network crate now
+exports the July recovery native endpoint/session/object implementation, with
+explicit bounded `listen_clients` / `connect_client` and public-API real UDP
+roundtrip coverage. See [shared client handoff](NOVORUDP_SHARED_CLIENT_HANDOFF.md).
+This removes the *unshared source* barrier for the transport layer only. The
+following audit of the current mailbox JSON/CarrierStream path still applies;
+structured mailbox adaptation, mobile reconnect and Android integration remain
+unaccepted. Do not treat opaque binary roundtrip as APFL mailbox completion.
+
 The user requires NOVOVM/NOVONET/NOVOCHAT native DApps to reuse the existing
 NovoRUDP/APFL structured SDK and native transport, not HTTP/JSON-RPC compatibility
 entries or silent fallback. This supersedes earlier compatibility-entry plans;

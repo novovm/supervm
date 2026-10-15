@@ -1,4 +1,6 @@
 use crate::novorudp::{NovoRudpTransportFrameDecodeErrorV0, NovoRudpTransportFrameV0};
+pub mod binary;
+pub mod handshake_wire;
 use chacha20poly1305::{
     aead::{Aead, Payload},
     ChaCha20Poly1305, KeyInit, Nonce,
@@ -305,16 +307,32 @@ impl NodeHandshakeInitiatorV1 {
         now_ms: u64,
         replay_cache: &mut HandshakeReplayCacheV1,
     ) -> Result<E2eSecureChannelV1, ProductOverlayErrorV1> {
-        validate_handshake_response_v1(&self.offer, response, now_ms, replay_cache)?;
-        let remote_public = PublicKey::from_sec1_bytes(&response.responder_ephemeral_public_key)
-            .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
-        let secrets = derive_session_secrets_v1(
-            &self.ephemeral_secret,
-            &remote_public,
-            &self.offer,
-            response,
-        )?;
-        Ok(E2eSecureChannelV1::for_initiator(&self.offer, secrets))
+        self.complete_owned(response, now_ms, replay_cache)
+            .map_err(|failure| failure.1)
+    }
+
+    /// Keep the same pending key/offer after malformed UDP responses. Only
+    /// success consumes the initiator; a live channel is never recreated.
+    pub fn complete_owned(
+        self,
+        response: &NodeHandshakeResponseV1,
+        now_ms: u64,
+        replay_cache: &mut HandshakeReplayCacheV1,
+    ) -> Result<E2eSecureChannelV1, Box<(Self, ProductOverlayErrorV1)>> {
+        let result = (|| {
+            validate_handshake_response_v1(&self.offer, response, now_ms, replay_cache)?;
+            let remote_public =
+                PublicKey::from_sec1_bytes(&response.responder_ephemeral_public_key)
+                    .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
+            let secrets = derive_session_secrets_v1(
+                &self.ephemeral_secret,
+                &remote_public,
+                &self.offer,
+                response,
+            )?;
+            Ok(E2eSecureChannelV1::for_initiator(&self.offer, secrets))
+        })();
+        result.map_err(|error| Box::new((self, error)))
     }
 }
 

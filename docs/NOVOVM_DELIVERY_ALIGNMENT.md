@@ -1,4 +1,14 @@
 # NOVOVM 产品目标与交付主线
+**2026-10-16 native shared transport (claim released):** July recovery owner,
+input main 66ac995b / recovery fb8fc69e. Publish reviewed original native
+session/object transport under novovm-network for the waiting NOVOCHAT consumer;
+explicit bounded client listener and real socket interoperability included.
+Scope: novorudp submodules, product_overlay binary/handshake adapters and handoff
+documentation. No mailbox business rewrite, finance, AOEM or mobile deployment.
+Recovery query drafts remain separate. This is not yet the complete APFL mailbox SDK.
+Public API bidirectional UDP tests pass with default and mailbox feature sets;
+see [consumer handoff](NOVORUDP_SHARED_CLIENT_HANDOFF.md) for exact APIs and gaps.
+
 **2026-10-16 L4 IO evidence (claim released):** NOVOCHAT session, baseline
 66ac995b. Scope: existing iroh_transport.rs typed IO diagnostics and its tests,
 plus this alignment and readiness record. Preserve sealed retry classification,

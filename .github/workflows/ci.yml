@@ -491,6 +491,11 @@ jobs:
       - name: Product overlay handshake clock-skew and authentication tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-network --lib product_overlay::tests
 
+      - name: Native shared client transport and bounded public API
+        run: |
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --lib novorudp -- --test-threads=1
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --test native_application_transport -- --test-threads=1
+
       - name: Product relay client daemon and overlay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_relay_
 
