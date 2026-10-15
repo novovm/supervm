@@ -1,0 +1,46 @@
+{
+  "schema": "july-original-reproduction-v1",
+  "started_utc": "2026-10-15T18:27:26.2920013Z",
+  "source_commit": "4fa89d80f241bf17523fa08c5f51f8800b339df9",
+  "original_commit": "4f45526d38c48676fbc118ae7cc5af254a90a676",
+  "source_difference": "",
+  "binary": "D:\\WorksArea\\SUPERVM\\docs\\temp\\july-native-rebuild\\target\\july-original-build-20261016\\original-gate-frozen.exe",
+  "binary_sha256": "1EAD93EDE803EF22FD14BA851DAE7B0585684EC2AB0DD9699AC318B9A43D0836",
+  "sdk_dll_sha256": "2B9A91AE7D7D8A518D9EE2363EA1B402AE48AB3509E51B424C3C564F61BF730E",
+  "manifest_sha256": "5AEE89C728998B988848E65798E5B2EC3801687CACFA7BE7C9C994EC54D42ADF",
+  "configuration": {
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_GAP_MS": "1",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_TIMEOUT_MS": "90000",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_EXECUTE_AOEM": "1",
+    "NOVOVM_AOEM_VARIANT": "core",
+    "NOVOVM_INGRESS_WORKERS": "16",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_ACK_INTERVAL_PACKETS": "32",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_LISTEN_ADDR": "127.0.0.1:39461",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_RECEIVER_ADDR": "127.0.0.1:39461",
+    "NOVOVM_NOVORUDP_TXS_PER_PAYLOAD": "128",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_TX_COUNT": "4800",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_SESSION_ID": "ab2fff77ebab4851bf0b38f5b47c1453",
+    "NOVOVM_AOEM_RUNTIME_PROFILE": "D:\\WorksArea\\SUPERVM\\docs\\temp\\july-native-rebuild\\aoem\\config\\aoem-runtime-profile.json",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_DATA_PACING_CHUNK_SIZE": "128",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_PAYLOAD_MODE": "native_transfer_apfl_v0",
+    "NOVOVM_NOVORUDP_AOEM_APFL_BULK_SIZE": "128",
+    "NOVOVM_AOEM_ROOT": "D:\\WorksArea\\SUPERVM\\docs\\temp\\july-native-rebuild\\aoem",
+    "NOVOVM_AOEM_MANIFEST": "D:\\WorksArea\\SUPERVM\\docs\\temp\\july-native-rebuild\\aoem\\manifest\\aoem-manifest.json",
+    "NOVOVM_NOVORUDP_NETWORK_ONLY_SENDER_BIND_ADDR": "127.0.0.1:0",
+    "NOVOVM_AOEM_DLL": "D:\\WorksArea\\SUPERVM\\docs\\temp\\july-native-rebuild\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+    "NOVOVM_AOEM_PERSIST_BACKEND": "none"
+  },
+  "environment": "Windows same-machine UDP loopback",
+  "finalized_tps": null,
+  "boundary": "Original July fixture: transport delivery and later AOEM opcode114 execution are separately timed. No BFT finality or cryptographic wallet-signature acceptance claim.",
+  "battery_observation": [
+    {
+      "BatteryStatus": 2,
+      "EstimatedChargeRemaining": 100
+    }
+  ],
+  "power_scheme": "电源方案 GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (平衡)",
+  "receiver_exit_code": 0,
+  "sender_exit_code": 0,
+  "finished_utc": "2026-10-15T18:27:31.2930768Z"
+}

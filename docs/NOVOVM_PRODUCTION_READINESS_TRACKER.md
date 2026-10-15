@@ -3,6 +3,23 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 七月原结构批路径实际复现，后续能力沿此迁入
+
+恢复树4fa89d80的原gate/transport与4f45526d无差异，exec/bindings含后续扩展；
+以原七月DLL/manifest完成release构建、小批smoke及三轮614400条loopback负载。
+实际走原NovoRUDP/APFL→常驻AOEM session→opcode114，不走新增resident早返回。
+三轮首包至执行后计时点3897/3608/3891ms，合并161740.96条/秒；每轮38 routes、
+190 reads、76 hot plans、614438 writes，canonical物化0，原报告错误0。
+
+这是原fixture接收加执行复现，非真实签名、RocksDB耐久或BFT最终确认TPS：原签名
+模式no_crypto、core backend=none，未测逐笔P95/P99或跨机器。原性能机制已复现，
+真实产品能力迁入仍未完成。不能继续称原快路径完全不可用，也不能称生产已就绪。
+测量边界、哈希、配置与三轮原始JSON见
+[复现证据](../artifacts/audit/july-native-reproduction-20261016/README.md)。
+
+并行实现限定在同一原路径：抽出原有有界结构批消费者、既有socket单owner分派、
+复用APFL真签名与完整语义计划。此处仅登记正在实施，不提前签收节点贯通。
+
 ## 2026-10-16 原生信箱自主目录：移除发现层强制 Iroh 依赖
 
 基线7a7bc0f6，认领27f047ce；同步另一机器a8687658文档纠偏（共享通讯源码未变）。
