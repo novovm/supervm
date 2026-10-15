@@ -3,30 +3,62 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
-## 2026-10-16 NVMBOX07 原生会话请求接合与并行操作
+## 2026-10-16 并行交付收敛：唯一原生SDK与操作截止下传
 
-输入2f7ec54d，本节所在提交。复用共享NativeObjectLink/APFL/MailboxService，
-在原mailbox_structured::session接请求序号、角色/session绑定、乱序回复关联、
-原128位重放窗口和节点共享并发预算。原生对象sender新增短操作截止时间上限，
-重复入队不延期。无HTTP/JSON业务旁路、无新握手/账户/调度器/许可/金融语义。
+输入本机未推送faf108c5和上游af77af16。两端在最后一次fetch后并行实现了相同
+请求关联缺口；本片明确选择上游mailbox_structured::native_session作为唯一实现，
+移除本机另一个session模块、重复身份getter和replay可见性调整。历史提交保留，
+最终活动源码没有第二套SDK/协议/调度器；七月恢复现场及金融/AOEM未修改。
 
-Windows debug：结构/会话7项通过0.33s；novorudp过滤82项通过0.80s；
-外部公共API真实UDP3项通过0.13s。含9KB寄存/领取与签名StoreReceipt，公共API
-不再预先知道请求context或回复object ID。新并行用例确认空信箱Watch正在等待，
-Put无需等待其2秒超时即可落盘、唤醒通知，并在同一会话独立接收乱序回复；
-一秒测试期限内通过不是手机P95性能结果。坏context/方向、跨会话、重复/未知/
-过期回复、乱序合法请求、并发预算、取消不重置重放记录均有反例。
-原store重启/保管/TTL/能力回归保留。20ms操作截止不因2s传输TTL或重复发送延长。
+本片保留一项独立补充：原NativeObjectLink增加try_send_until，原sender的重传
+期限取业务剩余时间与传输TTL较小者；共享请求及回复都调用它。20ms操作不会因
+默认2s传输TTL或重复入队被延长。无更短的周期性会话许可，无逐消息完整握手。
+共享四槽并发、实际Stored验签、回复类型校验、唯一序号owner及未知结果锁槽保持。
 
-新状态只用于显式NVMBOX07接线，旧NVMBOX01–06不换标签。会话对象必须由原owner
-唯一管理；operation到期或取消为未知结果，不是持久事务回滚。回复被背压保留时
-仍占节点工作预算。对同一批的有序语义不作并行承诺，Watch与即时Put分独立请求。
+合并后Windows debug实测：shared native_mailbox_session真实UDP3项通过0.31s，
+包含并行Watch/Put、丢回复保留已提交数据、撤销不能通过重试恢复；结构/会话单元
+7项通过0.23s，novorudp过滤83项通过0.86s。不能把合并前已删除实现的7项测试
+结果作为当前实现验收。组合feature的lib及全部tests严格Clippy（-D warnings）通过；已有Cargo重复bin提示保留。
 
-尚未接部署node/Application循环、同key换源和槽回收、撤销时在途传输的定向取消、
-全部transport能力缓冲擦除及实际移动NAT。完成chunks/adapter缓冲已擦除不代表
-全部底层缓冲已处理。未更新手机、停止节点或新增手机时延数据；不称原生迁移、
-完整SDK、300ms或自主公网连通通过。主链恢复现场、账本、共识、AOEM保持未修改。
-本地日志在NOVOCHAT artifacts/native-mailbox-*.log（忽略产物）。
+当前仍未更新原两部手机和Windows节点，没有新增手机时延。原生换源/故障槽恢复、
+在途撤销取消、transport能力缓冲擦除、原Application装配尚未完成；不是生产迁移
+或300ms验收。本地日志：NOVOCHAT artifacts/native-mailbox-unified-*.log。
+用户提出SDK优劣/多模式时，已冻结一套结构业务、多载体按实际接线验收的方向，
+不同时另造协议，不以移除JSON解释全部秒级延迟。见现有传输策略最新节。
+
+## 2026-10-16 原生信箱SDK会话接合：关联、并行通知与未知结果
+
+输入e5d04360，保留并合入另一设备2f7ec54d的I/O诊断，本节所在提交。
+新增`mailbox_structured::native_session`，由原NativeObjectLink socket owner驱动，
+不新建网络线程/调度器/身份/存储。客户端绑定已认证peer pin；服务端校验实际
+本地传输身份与原MailboxService签名key一致。4个有界逻辑槽独立序号，context
+绑定session、请求者/服务者身份及槽/序号；请求/回复方向分别持有owner，使L4同一
+身份可以提供和消费服务。重建适配器不能在同一认证session上重置序号。
+
+客户端校验完整回复对应的操作、数量、摘要及Put原StoreReceipt签名；传输DONE
+不是业务成功。服务任务不借用link，允许原owner继续收发并处理其他槽；提交后
+丢回复不回滚，明确重试原Object ID可恢复原回执。取消/超时/撤销锁住对应请求，
+不改旧签名、重置会话或放宽权限。30秒是有界请求期限，不是监听寿命/网络许可。
+
+Windows debug实际公共API UDP会话3项通过0.20s：10秒Watch尚在等待时同会话
+另一槽完成9KB密文Put并唤醒通知；真实提交后丢弃回复、旧请求重放拒绝、原ID
+回执恢复与跨新会话拒绝；撤销后再次发送仍拒绝且出站未新增。继续同槽的第3次
+请求序号正确；错误节点pin/重复owner/超时槽拒绝，其他槽仍可工作。
+结构/会话单元7项通过0.13s，另核未poll任务取消、已过期工作/错签名owner在
+存储前拒绝、假签名/错误操作/摘要拒绝及正反方向context。原公共传输3项通过
+0.09s（最终版本复验），根novorudp82通过0.64s；最终
+含信箱features的lib/全部tests严格Clippy与格式检查通过。
+
+三份通用transport文件同步至七月恢复现场e618180f，novorudp71通过0.98s；
+该现场7项查询草稿保留。根49草稿、AOEM/经济/共识未修改，无新TPS/GPU/证明声明。
+新增实际会话CI命令。前片e5d04360主CI38775477857结论为cancelled；独立Native
+auth relation (host checks only)通过，不能合称主CI通过。本片远端CI另行观察。
+
+尚未完成：应用owner正式装配（发现、撤销期间已排队数据的处置与节点总任务预算）、
+同key换源重连/代次回收、transport全部能力缓冲擦除、Android ARM64/实机。
+本片是实际可调用的会话适配，不是已部署手机闭环；不得把它当完整生产SDK，也不
+以HTTP/JSON/Iroh回退冒充原生验收。现有手机未切换，七月主链闭环目标继续。
+接口生命周期及调用例见[共享交接](NOVORUDP_SHARED_CLIENT_HANDOFF.md)。
 
 ## 2026-10-16 结构信箱接原 owner：真实UDP持久回执与重启核对
 

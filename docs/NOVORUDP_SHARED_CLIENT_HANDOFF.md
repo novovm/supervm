@@ -110,32 +110,55 @@ cargo test --locked -p novovm-network --features iroh-transport,tls-transport,ma
 cargo test --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_application_transport -- --test-threads=1
 ```
 
-## 2026-10-16 增量：原生信箱请求状态接合（尚未部署手机）
+## 2026-10-16 增量：原生认证会话上的实际 SDK 调用链
 
-共享 `mailbox_structured::session` 消费原 NativeObjectLink 和 MailboxService。
-NVMBOX07 的 fragment domain 为 SHA256("novovm/NVMBOX07/object/v1\0")。
-原 APFL context 的前8字节为非零小端请求序号，后24字节为版本域隔离摘要；
-摘要绑定原认证session、客户端/服务端方向及双方公钥派生peer ID。它不是新身份、
-握手、服务许可或签名；信任来自原生握手/AEAD，context用于关联和拒绝串会话回复。
+`mailbox_structured::native_session` 新增可调用适配，不新建 socket 或后台网络运行时。
+可编译消费例见 [native_mailbox_session.rs](../crates/novovm-network/tests/native_mailbox_session.rs)。
+它替代上一节夹具中手工拼 context、手工匹配回复的做法；仍未接入部署中的手机 owner。
 
-原Application/node owner在同一活会话内只保存一份客户端/服务端请求状态，不能
-每次业务任务重建序号或重放窗口。并发在途32项（非历史上限）；使用原128位重放
-窗口，允许乱序且重复只接受一次。最老在途请求不被新请求挤出窗口；取消/超时由
-原owner显式abandon，表示结果未知，不重置序号、不生成新业务Message ID。
+1. 使用原 `NativeEndpoint` 建立并验证同一身份会话；配置 NVMBOX07 `STREAM`、
+   `native_session::domain()` 与显式 node-wide/per-peer 收发预算。
+2. 认证建立后，`NativeMailboxClient::attach` 校验节点 pin；
+   `NativeMailboxServer::attach` 取得同一 peer 的服务接合。客户端和服务角色分别
+   认领，同一个 L4 peer 可以提供和消费服务，不是排他客户端/开发者许可证。
+3. 客户端 `begin(slot, requests, now)` 只准备有界批；`try_send` false 保留同一待发
+   对象。服务端从原 link 的 NVMBOX07 完整消息调用 `admit`，再异步执行
+   `MailboxWork::execute`；原 socket owner 在等待存储/Watch时继续轮询 link。
+4. `MailboxResponse::try_send` false 时保留原 handle，有额度再试；客户端
+   `receive` 校验完整回复、请求操作、数量、摘要及 Put 对应的原 StoreReceipt 签名。
+   `transport_complete` 只处理原传输完成/过期，不制造业务成功。
 
-NativeMailboxClient::prepare/try_send/receive；NativeMailboxServer::accept；
-NativeMailboxJob::execute；NativeMailboxResponse::try_send，组成共享接线接口。
-服务端accept先验证完整结构再派发有界job；节点所有peer共用NativeMailboxBudget。
-job不持有link锁、不spawn调度器，可由原owner并发执行Watch和Put；同一批仍有序，
-调用者不得把长Watch与需即时执行的Put塞入同一批等待。回复在背压时继续占资源槽，
-取消或丢弃释放槽，但不擦除重放历史。每次实际执行和发送继续使用原owner实时
-撤销/Privacy/会话检查。健康连接不逐请求握手。
+每方向每会话最多4个逻辑请求槽、每槽1个批次，每批原有1–16行/1.1MB上限。
+槽各自持有u64序号；context以固定域、认证session、请求者/服务者身份、槽和序号
+构造。方向分离，旧会话、旧序号和错误操作回复不能充当当前结果。
+`recipient_role` 只作同一lane的请求/回复路由提示，必须继续交给对应适配器完整验证。
+原link按peer/stream/role保留有界owner记录，不能丢掉适配器再从序号1重来。
+没有每消息握手、链RPC、全网许可或第二账户；本地身份持有仍不是链上UCA绑定证明。
 
-try_send_until将操作截止时间传给原对象sender，取原传输TTL与剩余操作期限较小值；
-重新入队不会延长原任务。Transport Delivered不等于Stored或Device Delivered；
-调用者仍验证原存储回执签名和业务绑定。部分操作可能在超时/取消前已经落盘。
-原完成chunks和adapter缓冲退出时擦除；原传输层其他保留缓冲尚需统一处理。
+Watch与Put可以占不同槽并行，批内操作仍有序且非原子。30秒是**一次有界业务操作**
+的期限，不是监听器寿命或网络许可证；空闲健康会话不按这个时间拆除。
+超时、撤销、取消和未知结果锁住受影响槽，不清空日志或静默重试。服务签名key必须
+是实际本地传输身份，不能在一个节点会话里发另一个节点的持久回执。
+丢回复后按原Object ID明确重试可以读回已提交的回执；不会重新算成未提交。
 
-仍未交付：生产node/Application入站循环接线、实际撤销变化后的在途传输取消、
-同key换源/槽回收、移动NAT可达和Android部署。不能将这些会话组件称为完整
-原生手机SDK；也未对现有Iroh业务路径做静默替换或JSON降级。
+应用集成仍必须提供原活跃身份/撤销/路径授权检查，持续驱动同一link，并限定节点级
+任务与回复队列，不将完成对象转移后遗忘资源预算。该适配没有另建调度器或数据库。
+**未完成：**同key换源重连、会话代次回收、transport中全部能力缓冲安全擦除、现有
+服务发现/手机owner的正式装配、Android ARM64/实机验证。不得启用旧HTTP/JSON或
+Iroh fallback来把这些项冒充原生验收；已有在用协议也没有被本片替换。
+
+```powershell
+cargo test --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_mailbox_session -- --test-threads=1
+```
+
+## 2026-10-16 消费端合并：只保留共享native_session
+
+另一机器af77af16与本机未推送faf108c5发生请求状态实现重叠。当前仅保留
+`native_session`：节点签名回执与请求类型核验、四个并发槽、原link唯一owner
+认领均沿共享实现；本机另一份session模块及重复公钥getter已移除，不形成两套SDK。
+保留本机`NativeObjectLink::try_send_until`并接到共享请求/回复发送：原对象sender
+取业务剩余期限与transport TTL较小者，重入队不延长原期限。没有延长30秒操作
+期限或把它变成连接寿命；原认证会话与临时操作仍分开。
+
+移动换源重连/故障槽恢复、在途撤销定向取消、能力缓冲全面擦除和正式Application
+接线仍待完成。四个请求槽是当前有界并发，不是聊天历史或累计发送条数上限。

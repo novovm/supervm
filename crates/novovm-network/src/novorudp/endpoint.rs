@@ -86,10 +86,6 @@ pub struct NativeEndpoint {
 }
 
 impl NativeEndpoint {
-    pub fn local_public_key(&self) -> [u8; 32] {
-        self.local_key
-    }
-
     /// Explicit bounded application listener, with no pre-enrolled client or
     /// validator dependency. Empty `bind` peers still fail; this constructor
     /// installs key-possession admission before the socket can receive data.
@@ -293,6 +289,9 @@ impl NativeEndpoint {
     }
     pub fn peer_count(&self) -> usize {
         self.peers.len()
+    }
+    pub fn local_identity(&self) -> [u8; 32] {
+        self.local_key
     }
     pub fn peer_id(&self, index: usize) -> Result<&str> {
         Ok(&self.peers.get(index).context("unknown native peer")?.id)

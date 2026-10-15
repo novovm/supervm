@@ -112,6 +112,44 @@ fn pair_and_third() -> Result<(NativeObjectLink, NativeObjectLink, NativeObjectL
 }
 
 #[test]
+fn application_sequence_owner_is_bound_to_peer_lane_and_authenticated_session() -> Result<()> {
+    let (mut a, _, _) = pair_and_third()?;
+    let role = NativeApplicationRole::Client;
+    assert!(a.claim_application_session(0, BODY, [9; 32], role).is_err());
+    assert!(a
+        .claim_application_session(99, BODY, [2; 32], role)
+        .is_err());
+    assert!(a.application_owners.is_empty());
+    assert_eq!(
+        Some(a.claim_application_session(0, BODY, [2; 32], role)?),
+        a.session_id(0)
+    );
+    assert!(a.claim_application_session(0, BODY, [2; 32], role).is_err());
+    assert_eq!(
+        Some(a.claim_application_session(1, BODY, [2; 32], role)?),
+        a.session_id(1)
+    );
+    assert_eq!(
+        Some(a.claim_application_session(0, CONTROL, [1; 32], role)?),
+        a.session_id(0)
+    );
+    assert_eq!(a.application_owners.len(), 3);
+    assert_eq!(
+        Some(a.claim_application_session(0, BODY, [2; 32], NativeApplicationRole::Service)?),
+        a.session_id(0)
+    );
+    assert!(a
+        .claim_application_session(0, BODY, [2; 32], NativeApplicationRole::Service)
+        .is_err());
+    assert_eq!(a.application_owners.len(), 4);
+    assert_eq!(
+        a.local_identity(),
+        SigningKey::from_bytes(&[23; 32]).verifying_key().to_bytes()
+    );
+    Ok(())
+}
+
+#[test]
 fn body_backpressure_and_offline_peer_do_not_consume_control_lane_or_other_peer_quota() -> Result<()>
 {
     let (mut a, mut b, c) = pair_and_third()?;

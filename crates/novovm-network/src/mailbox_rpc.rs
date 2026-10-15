@@ -210,6 +210,9 @@ impl RequestBudgetV4 {
     }
 }
 impl MailboxServiceV1 {
+    pub(crate) fn identity_public_key(&self) -> [u8; 32] {
+        self.signer.verifying_key().to_bytes()
+    }
     pub fn new(store: MailboxStore, signer: SigningKey) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),

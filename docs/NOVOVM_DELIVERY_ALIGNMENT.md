@@ -1,13 +1,25 @@
 # NOVOVM 产品目标与交付主线
-**2026-10-16 native mailbox request binding (claim released):** NOVOCHAT session,
-input 2f7ec54d. Consume the shared NVMBOX07 adapter in its existing module:
-session-bound request correlation, bounded concurrent operation ownership and
-replay rejection, with real UDP owner tests. Original object sender gains a
-per-operation deadline cap; endpoint adds public identity/lane readers. Reuse the original replay window;
-no new transport, account, scheduler, finance or recovery-tree edits. Android
-and mobile source-change routing are not yet wired; no deployment claim.
-Seven structure/session tests, 82 native regressions and three public UDP tests
-pass. Reply correlation no longer depends on fixture-known context/body IDs.
+**2026-10-16 native mailbox convergence (claim released):** NOVOCHAT session.
+Concurrent unpublished local faf108c5 overlapped upstream af77af16. Keep the
+shared native_session as the ONLY request/session adapter; remove local session
+module and duplicate identity readers/replay change. Retain the native sender's
+per-operation deadline cap and connect both shared request/reply sends to it.
+No second SDK, new protocol, scheduler, financial or recovery-tree changes.
+Existing mobile deployment is unchanged. Converged real UDP 3, structure/session 7, native regressions 83 pass; strict
+combined-feature lib/all-tests Clippy passes. No phone latency claim.
+
+**2026-10-16 native mailbox session (claim released):** July recovery owner,
+input main e5d04360. Bind the structured codec to the existing authenticated
+NativeObjectLink session; bounded multiplexed request counters, reply matching,
+failure latch and same MailboxService owner. No second socket runtime, identity,
+store, billing or mainchain executor. Scope: structured session adapter, bounded
+link ownership claim, public-API tests and handoff. Mobile route/reconnect and
+live listener activation are not silently enabled by this change.
+Real UDP session multiplex, lost response/retry and revocation regressions pass;
+native replay ownership is direction-separated so one L4 peer may both provide
+and consume service. Three generic files also synchronized to July e618180f.
+Upstream 2f7ec54d IO diagnostics retained. See shared handoff for owner integration
+and still-unexecuted Android/reconnect/capability-buffer erasure acceptance.
 
 **2026-10-16 structured mailbox adapter (claim released):** July recovery owner,
 main 3a9dfcce. Extract existing APFL column reuse into novovm-protocol; add
