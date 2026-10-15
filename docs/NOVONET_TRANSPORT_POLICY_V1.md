@@ -624,3 +624,42 @@ must both contain this correction for idle-then-send acceptance.
 
 Tests and Android evidence are tracked in NOVOVM_PRODUCTION_READINESS_TRACKER.md;
 implementation alone is not low-latency or autonomous-routing acceptance.
+
+## 2026-10-16 Native DApp entry rule and mailbox migration boundary
+
+The user requires NOVOVM/NOVONET/NOVOCHAT native DApps to reuse the existing
+NovoRUDP/APFL structured SDK and native transport, not HTTP/JSON-RPC compatibility
+entries or silent fallback. This supersedes earlier compatibility-entry plans;
+no second chat SDK, routing owner, account or execution system is authorized.
+
+Source audit at a8f95c44 / NOVOCHAT 9cd9b77: ordinary mobile mailbox operations
+call MailboxClientSessionV2 over authenticated CarrierStream/Iroh, not an HTTP
+JSON-RPC endpoint. However mailbox_rpc.rs::send serializes the body with
+serde_json::to_vec; receive_with_first deserializes with serde_json::from_slice.
+NovoRudpTransportFrameV0 sealing and Iroh framing do not make that body APFL or
+prove native UDP repair/pacing is active. This is a real migration gap.
+
+The current NVAPFLV3 ingress codec in novovm-node is signed Transfer-specific.
+Its transaction semantics must not be assigned to chat ciphertext. Common native
+SDK/session/structured-envelope integration belongs here; NOVOCHAT remains the
+consumer of those types and the owner of E2EE conversation state. Chat does not
+enter consensus merely to use the native transport. No HTTP workaround or new
+chat-only binary protocol should be introduced while the shared SDK is absent.
+
+The a8f95c44 readiness entry reports July recovery 2856c185 as not yet integrated
+into active main; its process check still submits loopback HTTP transactions.
+That is evidence of the recorded node/UDP lifecycle, not completed native mobile
+DApp ingress. The recovery worktree mentioned there is not present on this host.
+Do not claim a local or Android SDK based solely on a remote progress document.
+
+Next handoff needs the actual shared source/SDK revision, generic structured
+schema and original native entry, followed by Android ARM64 linking and real
+client/node interoperability. Explicit version negotiation must preserve existing
+custody, Message ID/TTL, StoreReceipt and device receipt; no in-place byte-format
+swap under an old selector, expired authority revival or silent compatibility
+fallback. Keep existing live data intact during coordinated node/mobile upgrades.
+Measure serialization size/time, connection, network, durable IO and UI separately:
+additional JSON work is identified but is not proven to explain seconds of delay.
+
+This entry changes the implementation contract only. No live protocol, finance,
+AOEM, consensus or July recovery source was changed by the NOVOCHAT session.
