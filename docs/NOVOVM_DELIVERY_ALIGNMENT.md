@@ -15,17 +15,19 @@ services around a silent peer, bidirectional data and duplicate/bound rejection.
 Android application multi-replica integration remains downstream work.
 
 
-**2026-10-16 structured pending/selection (source checkpoint; query handoff active):** July
+**2026-10-16 structured pending/selection (checkpoint complete; original-tick integration next):** July
 recovery input3ed27bec, shared input6b6ce09d. Root owns APFL borrowed-row
 construction, integration and the single mainchain build/performance slot;
 native_execution_map owns existing pool/admission/gossip; july_reproduce owns
-the native load fixture; both source tasks are complete. release_validation_map now
-owns only recovery consensus/native.rs and native/query.rs to repair consumed
-query requests lost while the prior reply awaits DONE. Root integrates/tests.
+the native load fixture; both source tasks are complete. release_validation_map
+completed recovery consensus/native.rs and native/query.rs query custody repair;
+agent file claims released. Root retains integration and one build/perf slot.
 Structured admission/selection no longer materializes/reparses canonical rows;
 signature identity, nonce reservations and logical/retained-owner budgets stay.
-Recovery f2d56b5b and the shared source pass bounded regressions; 4096 load
-prechecks failed in both frozen/candidate binaries, so no performance signoff.
+Recovery f2d56b5b and shared3c0acd60 pass bounded regressions. Initial4096 load
+prechecks failed in both frozen/candidate binaries; recovery3f0a95e4 query repair
+then passed4096/1024 four-node final receipts and cold recovery. Debug observed
+110.83TPS is a functional checkpoint, not release capacity/performance signoff.
 Shared original-tick integration follows NOVOVM_JULY_MAIN_INTEGRATION_MAP.md;
 it is not activated by these data changes. No mailbox owner/SDK deployment edits;
 preserve the NOVOCHAT claim below and all drafts. Native load observations must
