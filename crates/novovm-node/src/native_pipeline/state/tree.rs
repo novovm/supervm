@@ -22,6 +22,9 @@ mod batch_conformance;
 mod read_batch;
 
 #[cfg(test)]
+// Retained for the historical controller workload comparison; native tree
+// regressions exercise the counter directly in read_batch::tests.
+#[allow(unused_imports)]
 pub(crate) use read_batch::read_batch_stats_for_test;
 pub use read_batch::{read_state_values, MAX_BATCH_READ_KEYS};
 

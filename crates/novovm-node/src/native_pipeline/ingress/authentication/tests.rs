@@ -5,6 +5,45 @@ use ed25519_dalek::{Signer, SigningKey, Verifier};
 const CHAIN: u64 = 71;
 const MAX_BYTES: usize = 4096;
 
+#[test]
+fn structured_rows_keep_original_authority_without_owned_expansion() {
+    use super::super::apfl::ApflLimits;
+    let raw: Vec<_> = (0..3)
+        .map(|nonce| encode_transfer_v3(&signed(7, 32, nonce).1).unwrap())
+        .collect();
+    let limits = ApflLimits {
+        transactions: 3,
+        transaction_bytes: MAX_BYTES,
+        body_bytes: 3 * MAX_BYTES,
+    };
+    let encoded = ApflTransferBatch::from_raw(&raw, limits)
+        .unwrap()
+        .encode()
+        .unwrap();
+    let batch = Arc::new(ApflTransferBatch::decode(&encoded, limits).unwrap());
+    let checked: Vec<_> = (0..3)
+        .map(|index| authenticate_apfl_row(Arc::clone(&batch), index, CHAIN).unwrap())
+        .collect();
+    for (index, transaction) in checked.iter().enumerate() {
+        assert!(transaction.is_apfl_view());
+        let original = authenticate_transfer_v3(&raw[index], CHAIN, MAX_BYTES).unwrap();
+        assert_eq!(transaction.tx_hash(), original.tx_hash());
+        assert_eq!(transaction.nonce_identity(), original.nonce_identity());
+        assert_eq!(transaction.transfer(), original.transfer());
+    }
+    let parent = BTreeMap::from([(checked[0].nonce_identity(), 0)]);
+    let transitions = check_nonce_sequence(&checked, &parent).unwrap();
+    assert_eq!(transitions.last().unwrap().after, 3);
+    assert!(authenticate_apfl_row(Arc::clone(&batch), 0, CHAIN + 1).is_err());
+    assert!(authenticate_apfl_row(Arc::clone(&batch), 3, CHAIN).is_err());
+
+    let mut forged = signed(7, 32, 0).1;
+    forged.amount += 1;
+    let forged_raw = vec![encode_transfer_v3(&forged).unwrap()];
+    let forged_batch = Arc::new(ApflTransferBatch::from_raw(&forged_raw, limits).unwrap());
+    assert!(authenticate_apfl_row(forged_batch, 0, CHAIN).is_err());
+}
+
 fn account(key: &[u8; 32], width: usize) -> Vec<u8> {
     match width {
         20 => Sha256::digest(key)[12..32].to_vec(),

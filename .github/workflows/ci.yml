@@ -289,7 +289,7 @@ jobs:
       - name: Reject legacy Host writes by default during product restoration
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib restoration_host_guard --locked -- --test-threads=1
 
-      - name: Integrated resident core and actual original-node RPC
+      - name: Integrated original tick and native SDK closure
         # This functional gate is not a throughput/GPU/ZK or multi-machine claim.
         # Long load fixtures remain explicit, ignored tests with retained reports.
         timeout-minutes: 15
@@ -309,6 +309,9 @@ jobs:
           cargo test -p aoem-bindings --lib resident --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-exec --lib resident --locked -- --test-threads=1
           cargo test -p novovm-network --lib duplex --locked -- --test-threads=1
+            cargo test -p novovm-network --lib transport::native_ingress::tests --locked -- --test-threads=1
+            cargo test -p novovm-network --lib udp_ingress_ --locked -- --test-threads=1
+            cargo test -p novovm-protocol --lib native_query --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_pipeline --locked -- --test-threads=1
           # Retained test-only opaque attachment durability. This does not enable
           # the retired backend-specific product proof service or prove ZK/GPU.
@@ -316,19 +319,26 @@ jobs:
           cargo build -p novovm-node --bin novovm-node --locked
           target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
           export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
-          cargo test -p novovm-node --lib actual_product_rpc_signed_batches_failures_quorum_and_restart --locked -- --ignored --test-threads=1
-          cargo test -p novovm-node --lib actual_product_rpc_single_ingress_gossip_failures_and_restart --locked -- --ignored --test-threads=1
-          cargo test -p novovm-node --lib actual_product_rpc_offline_peer_isolation_quorum_catchup_and_restart --locked -- --ignored --test-threads=1
-          cargo test -p novovm-node --lib actual_product_rpc_a_a_b_equivocation_recovers_with_three_honest_signers --locked -- --ignored --test-threads=1
+            # Fail instead of silently passing a filter matching zero tests.
+            cargo test -p novovm-node --lib native_only_ --locked -- --ignored --list > target/native-test-list.txt
+            grep -q 'native_only_genesis_transactions_queries_and_cold_recovery: test' target/native-test-list.txt
+            grep -q 'native_only_minority_and_pending_signature_conflict_recover: test' target/native-test-list.txt
+            cargo test -p novovm-node --lib native_only_ --locked -- --ignored --test-threads=1
+            # Old Relay A/A/B and offline tests remain historical sources, not
+            # coverage of this native transport. Actual native combined-fault
+            # acceptance remains OPEN in the readiness tracker.
 
-      - name: Upload actual resident AAB evidence even on failure
+      - name: Upload native closure and historical AAB evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: resident-rpc-aab-evidence
+            name: native-and-historical-aab-evidence
           if-no-files-found: ignore
           # Explicit evidence allowlist: never upload configs, signing keys or DBs.
           path: |
+              target/native-product-rpc/**/report.json
+              target/native-product-rpc/**/*.stdout.log
+              target/native-product-rpc/**/*.stderr.log
             target/resident-rpc-aab-tests/**/result.json
             target/resident-rpc-aab-tests/**/byzantine-signed-proposals.json
             target/resident-rpc-aab-tests/**/a-a-b-before-recovery.json

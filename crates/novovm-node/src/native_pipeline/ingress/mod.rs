@@ -2,4 +2,6 @@
 pub mod apfl;
 pub mod authentication;
 pub mod batch;
+pub mod delivery;
+pub mod native;
 pub mod wire;

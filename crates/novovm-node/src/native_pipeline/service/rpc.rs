@@ -1,7 +1,7 @@
 //! Product RPC adapter for the resident core. No RPC handler mutates balances,
 //! publishes a head, constructs votes or substitutes a receipt for execution.
 //! This experimental profile has a bounded, NON-durable pool and best-effort
-//! signed-input fanout over the existing authenticated duplex channel. Receipt
+//! signed-input fanout over the existing authenticated native channel. Receipt
 //! queries, not transport admission, determine execution/finality. Clients must
 //! retain signed input until confirmed and may resubmit after loss/restart.
 
@@ -9,12 +9,13 @@ use super::{ResidentConfig, ResidentNode, StartMode};
 use crate::native_fresh_rpc::FreshRpcServer;
 use crate::native_pipeline::business::nov_transfer_batch::balance_key;
 use crate::native_pipeline::business::quoted_transfer::Account;
-use crate::native_pipeline::consensus::transport::{EarlyBodyScope, Message};
+use crate::native_pipeline::consensus::transport::Message;
 use crate::native_pipeline::consensus::wire::Hash;
 use crate::native_pipeline::consensus::ArchiveRead;
 use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 #[cfg(test)]
 use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
+#[cfg(test)]
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
 use crate::native_pipeline::ingress::wire::{decode_transfer_view_v3, TransferView};
 use crate::native_pipeline::persistence::io::IoTicket;
@@ -35,18 +36,18 @@ const MAX_SIGNERS: usize = 65_536;
 /// Bounded cooperative handoff after real progress, then the original sleep.
 /// Pending work alone cannot refresh the bound (offline peers/nonce gaps/slow
 /// native owners must not cause an indefinite busy loop).
-struct IdleBackoff {
+pub struct IdleBackoff {
     since: Instant,
     turns: u8,
 }
 impl IdleBackoff {
-    fn new(now: Instant) -> Self {
+    pub fn new(now: Instant) -> Self {
         Self {
             since: now,
             turns: 0,
         }
     }
-    fn should_sleep(&mut self, now: Instant, progress: bool) -> bool {
+    pub fn should_sleep(&mut self, now: Instant, progress: bool) -> bool {
         if progress {
             self.since = now;
             self.turns = 0;
@@ -60,13 +61,15 @@ impl IdleBackoff {
 mod admission;
 mod gossip;
 mod history;
+mod native_query;
+use novovm_protocol::native_query::{Balance, ReceiptState};
 
 struct BalanceQuery {
     account: Account,
     root: Hash,
     height: u64,
     ticket: Option<IoTicket<Option<Vec<u8>>>>,
-    result: Option<Value>,
+    result: Option<Balance>,
 }
 
 struct Pending {
@@ -163,12 +166,6 @@ struct Position {
     successor: bool,
 }
 
-struct EarlyOffer {
-    scope: EarlyBodyScope,
-    hint: Arc<Message>,
-    message: Arc<Message>,
-}
-
 struct GossipOffer {
     hashes: Vec<Hash>,
     message: Arc<Message>,
@@ -187,18 +184,18 @@ pub struct RpcLifecycle {
     pending_bytes: usize,
     pending_retention: PoolRetention,
     nonces: BTreeMap<Hash, u64>,
-    receipts: BTreeMap<Hash, Value>,
+    receipts: BTreeMap<Hash, ReceiptState>,
     recent: VecDeque<Hash>,
     indexed_height: u64,
     archive: Option<ArchiveRead>,
     offer: Option<(Position, Arc<Message>)>,
     offered: Option<Position>,
-    early_offer: Option<EarlyOffer>,
     gossip_order: VecDeque<Hash>,
     gossip_queued: BTreeSet<Hash>,
     gossip_offer: Option<GossipOffer>,
     gossip_repair: gossip::RepairHints,
     incoming: Option<(Arc<Message>, usize)>,
+    incoming_from_client: bool,
     ingress_batch_boundary: bool,
     gossip_verified: u64,
     gossip_rejected: u64,
@@ -210,6 +207,10 @@ pub struct RpcLifecycle {
 }
 
 impl RpcLifecycle {
+    /// Scheduling evidence only; pending work does not grant a busy-loop lease.
+    pub fn admission_progress(&self) -> bool {
+        self.admission.made_progress
+    }
     pub fn new(node: ResidentNode, batch_size: usize) -> Result<Self> {
         ensure!((1..=1024).contains(&batch_size), "invalid RPC batch limit");
         Ok(Self {
@@ -227,12 +228,12 @@ impl RpcLifecycle {
             archive: None,
             offer: None,
             offered: None,
-            early_offer: None,
             gossip_order: VecDeque::new(),
             gossip_queued: BTreeSet::new(),
             gossip_offer: None,
             gossip_repair: gossip::RepairHints::default(),
             incoming: None,
+            incoming_from_client: false,
             ingress_batch_boundary: false,
             gossip_verified: 0,
             gossip_rejected: 0,
@@ -262,6 +263,7 @@ impl RpcLifecycle {
         // Optional historical queries must not stall current-height selection.
         self.history.poll(&self.node.pipeline);
         self.poll_admission()?;
+        self.poll_native_query(now)?;
         {
             let _span = crate::native_pipeline::profile::span(
                 crate::native_pipeline::profile::Phase::Gossip,
@@ -271,9 +273,8 @@ impl RpcLifecycle {
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
             return Ok(());
         }
-        // Catch up query/nonces before proposing current-height user work. The
-        // core still prepares a successor from its private durable parent while
-        // that parent's consensus waits; no future signing permission is granted.
+        // Catch up the nonce query projection before selecting current work.
+        // Successor overlap is not yet activated by this native assembly.
         if self.indexed_height != self.node.controller.parent().height {
             return Ok(());
         }
@@ -284,57 +285,27 @@ impl RpcLifecycle {
         if self.incoming.is_some() && !self.ingress_batch_boundary {
             return Ok(());
         }
-        // Announce h+1 input while h is still executing/awaiting consensus.
-        // Its nonce prefix is a scheduling hint only; the existing core binds
-        // the exact durable parent and rechecks the real state before voting.
-        self.poll_early_offer()?;
-        let successor = self.node.controller.successor_parent()?;
-        let current_height = self.node.controller.context().height;
-        let (parent, position) = if self.node.controller.is_local_leader()?
-            && !self.node.controller.has_early_target(current_height)
-        {
-            let parent = self.node.controller.parent();
-            (
-                parent,
-                Position {
-                    height: parent.height + 1,
-                    round: self.node.controller.round(),
-                    parent: parent.block_hash,
-                    successor: false,
-                },
-            )
-        } else if let Some(parent) = successor {
-            (
-                parent,
-                Position {
-                    height: parent.height + 1,
-                    round: 0,
-                    parent: parent.block_hash,
-                    successor: true,
-                },
-            )
-        } else {
+        // Current-height native assembly. Existing successor/early mechanisms
+        // remain preserved assets; this profile does NOT claim their activation.
+        if !self.node.controller.is_local_leader()? {
             return Ok(());
+        }
+        let parent = self.node.controller.parent();
+        let position = Position {
+            height: parent.height + 1,
+            round: self.node.controller.round(),
+            parent: parent.block_hash,
+            successor: false,
         };
         if self.offered == Some(position) {
             return Ok(());
         }
         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
-            let mut next = BTreeMap::new();
-            if position.successor {
-                let Some(body) = self.node.controller.executed_body(parent.block_hash) else {
-                    return Ok(());
-                };
-                let Some(prefix) = pending_body_prefix(&body, &self.pending, &self.nonces)? else {
-                    return Ok(());
-                };
-                next = prefix;
-            }
             let selected = select_pending_batch(
                 &self.order,
                 &self.pending,
                 &self.nonces,
-                next,
+                BTreeMap::new(),
                 self.batch_size,
             );
             if selected.is_empty() {
@@ -355,66 +326,12 @@ impl RpcLifecycle {
             let batch = selected_apfl_batch(&selected, &self.pending, self.batch_size)?;
             self.offer = Some((position, Arc::new(Message::ApflBody { context, batch })));
         }
-        let body = &self.offer.as_ref().expect("prepared RPC body").1;
-        let accepted = if position.successor {
-            self.node.controller.try_submit_successor_body(body)?
-        } else {
-            self.node.controller.try_submit_body(body)?
-        };
-        if accepted {
-            self.offered = Some(position);
-        }
-        // Retain original signed inputs until an actual archive receipt confirms
-        // them, including re-proposals after changed rounds/parents.
-        Ok(())
-    }
-
-    fn poll_early_offer(&mut self) -> Result<()> {
-        let Some(scope) = self.node.controller.early_body_scope()? else {
-            self.early_offer = None;
-            return Ok(());
-        };
-        let Some(body) = self.node.controller.current_body_hint()? else {
-            self.early_offer = None;
-            return Ok(());
-        };
         if self
-            .early_offer
-            .as_ref()
-            .is_none_or(|old| old.scope != scope || !Arc::ptr_eq(&old.hint, &body))
-        {
-            let Some(next) = pending_body_prefix(&body, &self.pending, &self.nonces)? else {
-                return Ok(());
-            };
-            let selected = select_pending_batch(
-                &self.order,
-                &self.pending,
-                &self.nonces,
-                next,
-                self.batch_size,
-            );
-            if selected.is_empty() {
-                return Ok(());
-            }
-            let batch = selected_apfl_batch(&selected, &self.pending, self.batch_size)?;
-            self.early_offer = Some(EarlyOffer {
-                scope,
-                hint: body,
-                message: Arc::new(Message::ApflEarlyBody { scope, batch }),
-            });
-        }
-        let timestamp = self
             .node
-            .template
-            .timestamp_unix_ms
-            .checked_add(scope.target_height)
-            .context("resident early timestamp overflow")?;
-        if self.node.controller.try_submit_early_body(
-            &self.early_offer.as_ref().expect("early RPC body").message,
-            scope.target_height,
-            timestamp,
-        )? {
-            self.early_offer = None;
+            .controller
+            .offer(&self.offer.as_ref().expect("prepared RPC body").1)?
+        {
+            self.offered = Some(position);
         }
         Ok(())
     }
@@ -456,7 +373,16 @@ impl RpcLifecycle {
             let hash = receipt.tx_hash;
             self.receipts.insert(
                 hash,
-                receipt_json(receipt, block.point().height, block.point().block_hash),
+                ReceiptState::Finalized {
+                    success: receipt.success,
+                    nonce_after: receipt.nonce_after,
+                    charged_fee: receipt
+                        .charged_fee
+                        .parse()
+                        .context("invalid archived fee width")?,
+                    height: block.point().height,
+                    block_hash: block.point().block_hash,
+                },
             );
             self.recent.push_back(hash);
             while self.recent.len() > RECENT_RECEIPTS {
@@ -479,11 +405,7 @@ impl RpcLifecycle {
             self.pending_bytes -= entry.canonical_len;
             self.pending_retention.release(&entry.input);
             self.reservations.remove(&(entry.signer, entry.nonce));
-            self.receipts.insert(
-                hash,
-                json!({"tx_hash":hex(&hash),"state":"rejected_nonce",
-                "finalized":false,"executed":false}),
-            );
+            self.receipts.insert(hash, ReceiptState::RejectedNonce);
             self.recent.push_back(hash);
         }
         while self.recent.len() > RECENT_RECEIPTS {
@@ -504,7 +426,7 @@ impl RpcLifecycle {
         input: crate::native_pipeline::pipeline::AdmissionInput,
         checked: crate::native_pipeline::ingress::authentication::SignatureCheckedTransfer,
         broadcast: bool,
-    ) -> Result<Value> {
+    ) -> Result<Hash> {
         ensure!(
             self.projection_error.is_none(),
             "RPC projection unavailable"
@@ -532,14 +454,14 @@ impl RpcLifecycle {
             );
         }
         let hash = checked.tx_hash();
-        if let Some(result) = self.receipts.get(&hash) {
-            return Ok(result.clone());
+        if self.receipts.contains_key(&hash) {
+            return Ok(hash);
         }
         if self.pending.contains_key(&hash) {
             if broadcast {
                 self.queue_gossip(hash);
             }
-            return Ok(self.pending_status(hash));
+            return Ok(hash);
         }
         let signer = checked.nonce_identity();
         let nonce = checked.transfer().nonce;
@@ -574,7 +496,7 @@ impl RpcLifecycle {
         if broadcast {
             self.queue_gossip(hash);
         }
-        Ok(self.pending_status(hash))
+        Ok(hash)
     }
 
     fn queue_gossip(&mut self, hash: Hash) {
@@ -616,11 +538,11 @@ impl RpcLifecycle {
                 ),
             };
             query.ticket = None;
-            query.result = Some(
-                json!({"account":hex(query.account.as_bytes()),"asset":"NOV",
-                "balance":amount.to_string(),"state_root":hex(&query.root),
-                "block_height":query.height,"finalized":query.height>0,"query_complete":true}),
-            );
+            query.result = Some(Balance {
+                amount,
+                state_root: query.root,
+                height: query.height,
+            });
         }
         Ok(())
     }
@@ -647,11 +569,21 @@ impl RpcLifecycle {
             .context("account required")?;
         let bytes = super::config::decode_hex(text)?;
         let account = Account::try_from(bytes).map_err(anyhow::Error::msg)?;
+        let result = self.balance_read(account.clone())?;
+        Ok(match result {
+            Some(value) => json!({"account":hex(account.as_bytes()),"asset":"NOV",
+                "balance":value.amount.to_string(),"state_root":hex(&value.state_root),
+                "block_height":value.height,"finalized":value.height>0,"query_complete":true}),
+            None => json!({"query_complete":false,"state":"query_pending"}),
+        })
+    }
+
+    fn balance_read(&mut self, account: Account) -> Result<Option<Balance>> {
         if let Some(position) = self.balances.iter().position(|q| q.account == account) {
             if self.balances[position].result.is_some() {
-                return Ok(self.balances.remove(position).unwrap().result.unwrap());
+                return Ok(self.balances.remove(position).unwrap().result);
             }
-            return Ok(json!({"query_complete":false,"state":"query_pending"}));
+            return Ok(None);
         }
         reserve_balance_slot(&mut self.balances)?;
         let (root, height) = self
@@ -667,84 +599,46 @@ impl RpcLifecycle {
             ticket: None,
             result: None,
         });
-        Ok(json!({"query_complete":false,"state":"query_pending"}))
+        Ok(None)
     }
 
     pub fn status(&self) -> Value {
-        let controller = &self.node.controller;
-        let stats = controller.stats();
+        let core = &self.node.controller;
         let backend = match self.node.pipeline.execution_backend() {
             crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks => {
                 "aoem_semantic_v2_cpu_callbacks"
             }
             crate::native_pipeline::pipeline::ExecutionBackend::AoemIntegerV7 => {
-                "aoem_integer_v10_complete_effect_composition"
+                "aoem_integer_complete_effect_composition"
             }
         };
-        let leader = self
-            .node
-            .validators
-            .leader(controller.context().height, controller.round())
-            .ok();
-        let apfl_transport = match controller.channel_status() {
-            Ok(channel) => json!({"prepared":channel.apfl_prepared,
-                "received":channel.apfl_received,
-                "scope":"application codec work, not unique transactions or TLS delivery"}),
-            Err(error) => json!({"error":error.to_string()}),
-        };
-        let stage_profile = crate::native_pipeline::profile::snapshot();
-        let bound_gpu = stage_profile["integer_resource"]["calls"]
-            .as_u64()
-            .is_some_and(|n| n > 0)
-            && matches!(
-                stage_profile["integer_resource"]["last"]["diagnostics"]["device_type"].as_u64(),
-                Some(1 | 2)
-            );
-        let mut status = json!({"profile":"native-resident-v1","experimental":true,
+        let mut status = json!({"profile":self.node.profile,"experimental":true,
             "core":"novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
-            "consensus":"novovm-consensus/round_bft/journal",
-            "chain_id":self.node.template.chain_id,"head":controller.head(),
-            "current_height":controller.context().height,"round":controller.round(),
-            "scheduled_proposer":leader.map(|h|hex(&h)),"local_proposer":controller.is_local_leader().ok(),
+            "transport":"native_novorudp_apfl","consensus":"novovm-consensus/round_bft/journal",
+            "chain_id":self.node.template.chain_id,"head":core.head(),
+            "current_height":core.context().height,"round":core.round(),
+            "scheduled_proposer":self.node.validators.leader(core.context().height,core.round()).ok().map(|h|hex(&h)),
+            "local_proposer":core.is_local_leader().ok(),"recovery_in_progress":core.is_recovering(),
             "pending":self.pending.len(),"pending_bytes":self.pending_bytes,
             "rpc_indexed_height":self.indexed_height,"projection_error":self.projection_error,
-            "recovery_in_progress":controller.is_recovering(),
-            "executed_batches":stats.executed_batches,"durable_decisions":stats.durable_decisions,
-            "execution_components_total":stats.execution_components_total,
-            "execution_credit_only_accounts_total":stats.execution_credit_only_accounts_total,
-            "execution_peak_callbacks":stats.execution_peak_callbacks,
-            "execution_integer_rows_total":stats.execution_gpu_rows_total,
-            "execution_integer_waves_total":stats.execution_gpu_waves_total,
-            "execution_integer_waves_scope":"legacy field: complete composition delegations, not physical GPU dispatches",
-            "execution_recomputed_transactions_total":stats.execution_recomputed_transactions_total,
-            "apfl_view_transactions_total":stats.apfl_view_transactions_total,
-            "apfl_transport":apfl_transport,
-            "successor_reused":stats.successor_reused,"capture_seed_nodes":stats.capture_seed_nodes,
-            "early_authentication_started":stats.early_authentication_started,
-            "early_authentication_completed":stats.early_authentication_completed,
-            "early_authentication_completed_before_parent":stats.early_authentication_completed_before_parent,
-            "early_bind_reused":stats.early_bind_reused,"early_discarded":stats.early_discarded,
-            "execution_failures":stats.execution_failures,"last_error":stats.last_error,
-            "execution_backend":backend,
-            "stage_profile":stage_profile,
-            "business_vulkan_integer_active":stats.execution_gpu_rows_total > 0,
-            "business_gpu_active":if matches!(self.node.pipeline.execution_backend(), crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks) { Some(false) } else if bound_gpu { Some(stats.execution_gpu_rows_total > 0) } else { None },
-            "physical_gpu_verified":bound_gpu,
-            "physical_gpu_verification_scope":"local driver-reported bound resource after completed diagnostic dispatch; not hardware/remote attestation; false when unobserved",
-            "integer_observation_scope":"AOEM Vulkan non-padding predictions in completed candidates, including stale; fees/ordered repairs remain AOEM CPU; local diagnostics are not business commitments",
-            "business_proof_required":false,"business_proof_verified":false,
-            "mempool_gossip":true,"gossip_delivery":"best_effort_not_durable",
-            "transaction_gossip":self.node.controller.transactions_stats(),
-            "input_availability":controller.input_availability(),
-            "gossip_repair":self.gossip_repair.status(),
-            "gossip_verified_inputs":self.gossip_verified,"gossip_rejected_inputs":self.gossip_rejected,
-            "authentication_cache_hits":self.authentication_cache_hits,
-            "rpc_authentication":self.admission.status(),
-            "pending_survives_restart":false,
-            "receipt_query_scope":"hash only: recent 65536 entries; optional block height: verified durable archive",
+            "executed_batches":core.executed(),"durable_decisions":core.head().map_or(0,|h|h.height),
+            "execution_failures":core.rejected_execution(),"execution_backend":backend,
+            "execution_integer_rows_total":core.integer_execution().0,
+            "execution_integer_plans_total":core.integer_execution().1,
+            "execution_apfl_view_transactions_total":core.apfl_execution_rows(),
+            "requested_bodies":core.requested_bodies,"served_bodies":core.served_bodies,
+            "native_pending_deliveries":core.pending_deliveries(),"native_rejected_messages":core.rejected_messages,
+            "native_expired_sends":core.expired_sends,
+            "successor_overlap_active":false,"business_proof_required":false,"business_proof_verified":false,
+            "mempool_gossip":true,"gossip_delivery":"bounded_native_custody_not_durable_admission",
+            "gossip_repair":self.gossip_repair.status(),"gossip_verified_inputs":self.gossip_verified,
+            "gossip_rejected_inputs":self.gossip_rejected,"authentication_cache_hits":self.authentication_cache_hits,
+            "rpc_authentication":self.admission.status(),"pending_survives_restart":false,
+            "receipt_query_scope":"recent 65536 entries or explicit verified archive height",
             "historical_receipt_queries":self.history.len()});
         status["pending_retained_payload_bytes"] = json!(self.pending_retention.bytes);
         status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
+        status["stage_profile"] = crate::native_pipeline::profile::snapshot();
         status
     }
 
@@ -793,14 +687,7 @@ impl RpcLifecycle {
                             self.node.validators.clone(),
                         );
                     }
-                    if let Some(result) = self.receipts.get(&hash) {
-                        return Ok(result.clone());
-                    }
-                    if self.pending.contains_key(&hash) {
-                        return Ok(self.pending_status(hash));
-                    }
-                    Ok(json!({"tx_hash":hex(&hash),"state":"not_in_recent_index",
-                        "finalized":false,"lookup_complete":false,"indexed_height":self.indexed_height}))
+                    Ok(self.receipt_status_json(hash))
                 }
                 _ => anyhow::bail!("method not connected to resident profile; no legacy fallback"),
             }
@@ -816,6 +703,7 @@ impl RpcLifecycle {
 /// The canonical transaction hash deliberately omits the signature; hash
 /// equality alone is NOT authentication. Unknown/altered/gapped input makes
 /// lookahead unavailable, never changes finalized nonce or removes pending.
+#[cfg(test)]
 fn pending_body_prefix(
     body: &Message,
     pending: &BTreeMap<Hash, Pending>,
@@ -830,6 +718,7 @@ fn pending_body_prefix(
     }
 }
 
+#[cfg(test)]
 fn pending_apfl_prefix(
     batch: &ApflTransferBatch,
     pending: &BTreeMap<Hash, Pending>,
@@ -856,6 +745,7 @@ fn pending_apfl_prefix(
     Ok(Some(next))
 }
 
+#[cfg(test)]
 fn pending_raw_prefix(
     raw_transactions: &[Vec<u8>],
     pending: &BTreeMap<Hash, Pending>,
@@ -870,6 +760,7 @@ fn pending_raw_prefix(
     Ok(Some(next))
 }
 
+#[cfg(test)]
 fn advance_pending_raw(
     raw: &[u8],
     next: &mut BTreeMap<Hash, u64>,
@@ -1025,13 +916,21 @@ pub fn hex(bytes: &[u8]) -> String {
 
 pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()> {
     let config = ResidentConfig::load(path)?;
-    // Reserve the actual product endpoint before opening any signer/storage.
-    let mut rpc = FreshRpcServer::bind_with_max_request(config.rpc_addr, 4 * 1024 * 1024)?;
+    // Never open an HTTP endpoint in the native release. Explicit historical
+    // builds alone may observe the old RPC contract for same-core comparison.
+    let mut rpc = config
+        .historical_http_addr()?
+        .map(|address| FreshRpcServer::bind_with_max_request(address, 4 * 1024 * 1024))
+        .transpose()?;
     let batch_size = config.batch_size;
     let mut lifecycle = RpcLifecycle::new(ResidentNode::start(config, mode)?, batch_size)?;
     let started = Instant::now();
     let mut idle = IdleBackoff::new(started);
-    println!("resident_rpc_listening={}", rpc.local_addr()?);
+    if let Some(rpc) = &rpc {
+        println!("historical_rpc_listening={}", rpc.local_addr()?);
+    } else {
+        println!("native_application_runtime=true http_json_rpc=false");
+    }
     let result = (|| -> Result<()> {
         loop {
             let now = Instant::now();
@@ -1041,7 +940,10 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Http,
                 );
-                rpc.poll_deferred(&mut lifecycle)?
+                match &mut rpc {
+                    Some(rpc) => rpc.poll_deferred(&mut lifecycle)?,
+                    None => false,
+                }
             };
             if run_for.is_some_and(|limit| started.elapsed() >= limit) {
                 break;
@@ -1071,20 +973,17 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
 }
 
 /// O(1) scheduling hint, never an execution, publication or signing permit.
-fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 10] {
-    let controller = &lifecycle.node.controller;
-    let stats = controller.stats();
+pub fn control_progress(lifecycle: &RpcLifecycle) -> [u64; 8] {
+    let core = &lifecycle.node.controller;
     [
-        stats.executed_batches,
-        stats.durable_votes,
-        stats.durable_decisions,
-        stats.received_votes,
-        stats.head_advances,
-        stats.early_authentication_completed,
-        stats.successor_started,
-        stats.successor_reused,
-        controller.round(),
+        core.executed(),
+        core.context().height,
+        core.round(),
+        core.pending_deliveries() as u64,
+        core.requested_bodies,
+        core.served_bodies,
         lifecycle.indexed_height,
+        lifecycle.gossip_verified,
     ]
 }
 
@@ -1163,6 +1062,13 @@ mod tests {
             );
         }
         let signer = authenticate_transfer_v3(&raws[0], 71, 1024)?.nonce_identity();
+        // A protocol hint is never a verified candidate-body prefix.
+        assert!(pending_body_prefix(
+            &Message::RequestBody { body_id: [0; 32] },
+            &pending,
+            &BTreeMap::new(),
+        )?
+        .is_none());
         let mut altered = raws[0].clone();
         *altered.last_mut().unwrap() ^= 1;
         let cases = [
@@ -1470,7 +1376,11 @@ mod tests {
             root: [index; 32],
             height: 1,
             ticket: None,
-            result: complete.then(|| json!({"balance":"7","query_complete":true})),
+            result: complete.then_some(Balance {
+                amount: 7,
+                state_root: [index; 32],
+                height: 1,
+            }),
         }
     }
 
@@ -1495,7 +1405,11 @@ mod tests {
             balances.iter().map(|q| q.root[0]).collect::<Vec<_>>(),
             (0..8).collect::<Vec<_>>()
         );
-        balances[4].result = Some(json!({"query_complete":true}));
+        balances[4].result = Some(Balance {
+            amount: 7,
+            state_root: [4; 32],
+            height: 1,
+        });
         reserve_balance_slot(&mut balances).unwrap();
         assert_eq!(
             balances.iter().map(|q| q.root[0]).collect::<Vec<_>>(),

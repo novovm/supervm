@@ -1,21 +1,25 @@
-//! Original-node assembly of the fixed fast pipeline, not another node/runtime.
-//! Experimental fresh profile only: no production activation, legacy opt-in,
-//! fixture wallet, implicit key creation, or second authority head.
+//! Original July node startup, reusing the reviewed genesis/store/RPC contracts.
+//! Native NovoRUDP owns transport; no Relay controller or alternate chain head.
+pub mod client;
 pub mod config;
 pub mod rpc;
-pub use config::{GenesisAllocation, GenesisConfig, GenesisValidator, ResidentConfig};
-
+#[cfg(test)]
+mod tests;
 use super::business::nov_transfer_batch::{
     effect_contract, program_id, receipt_codec, SEMANTIC_VERSION,
 };
-use super::consensus::channel::{ChannelConfig, HostChannel, LaneBudget, QueueBudget};
-use super::consensus::collector::CollectorLimits;
-use super::consensus::controller::{Controller, ControllerConfig, ControllerLimits};
-use super::consensus::pacemaker::TimeoutPolicy;
-use super::consensus::statement::ParentPoint;
-use super::consensus::transport::DecodeLimits;
-use super::consensus::wire::{Context as ConsensusContext, Validator, ValidatorSet};
-use super::consensus::ValidatorJournal;
+use super::consensus::{
+    bodies::{BodyLimits, CandidateBodies},
+    collector::CollectorLimits,
+    native::{LaneLimits, MessageDomain, NativeChannel},
+    native_lifecycle::{DeliveryLimits, NativeLifecycle},
+    pacemaker::TimeoutPolicy,
+    progress::{ProgressLimits, RoundProgress},
+    statement::ParentPoint,
+    transport::DecodeLimits,
+    wire::{Context as ConsensusContext, Validator, ValidatorSet},
+    ValidatorJournal,
+};
 use super::execution::plan::{BatchContext, PlanBudget};
 use super::ingress::batch::AuthenticationBudget;
 use super::persistence::io::IoBudget;
@@ -24,14 +28,23 @@ use super::pipeline::{CandidatePipeline, PipelineConfig};
 use super::state::frontier::CaptureBudget;
 use super::state::tree::{empty_root, StateNodeReader};
 use anyhow::{ensure, Context, Result};
+pub use config::{
+    GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, ResidentConfig,
+};
 use ed25519_dalek::SigningKey;
 use novovm_exec::resident::StorageConfig;
-use novovm_network::duplex::fragments::ReassemblyLimits;
-use novovm_network::duplex::peer_id_from_ed25519_public_key_v1;
-use novovm_network::duplex::worker::{NetworkWorker, NetworkWorkerConfig, WorkerLimits};
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use novovm_network::novorudp::{
+    endpoint::NativePeer,
+    fragments::ReassemblyLimits,
+    object_link::{NativeSendLimits, NativeSendPolicy},
+    NovoRudpPacingProfile, NovoRudpWindowConfig,
+};
+use novovm_network::UdpTransport;
+use novovm_protocol::NodeId;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StartMode {
@@ -40,16 +53,38 @@ pub enum StartMode {
 }
 
 pub struct ResidentNode {
-    pub controller: Controller,
+    pub profile: String,
+    pub controller: NativeLifecycle,
     pub pipeline: CandidatePipeline,
     pub template: BatchContext,
     pub validators: Arc<ValidatorSet>,
 }
 
 impl ResidentNode {
+    /// Historical convenience startup. Bind the original UDP owner exactly
+    /// once, then use the same supplied-transport initialization as the node tick.
+    /// The local route label is not a validator or client authentication identity.
+    pub fn start(mut config: ResidentConfig, mode: StartMode) -> Result<Self> {
+        config.normalize_native_paths();
+        config.validate()?;
+        let public = read_signer(&config)?.verifying_key().to_bytes();
+        let local_route = NodeId(u64::from_le_bytes(public[..8].try_into()?));
+        let transport = UdpTransport::bind_for_chain(
+            local_route,
+            &config.udp_addr.to_string(),
+            config.genesis.chain_id,
+        )?;
+        Self::start_on_transport(config, mode, transport)
+    }
+
     /// Blocking startup only. Existing mode verifies the complete pinned genesis
     /// content; never installs it, clears logs or repairs an interrupted create.
-    pub fn start(mut config: ResidentConfig, mode: StartMode) -> Result<Self> {
+    /// Consumes the original node's socket owner; never binds another listener.
+    pub fn start_on_transport(
+        mut config: ResidentConfig,
+        mode: StartMode,
+        transport: UdpTransport,
+    ) -> Result<Self> {
         config.normalize_native_paths();
         config.validate()?;
         let (validators, initial) = config.genesis.prepare()?;
@@ -96,9 +131,18 @@ impl ResidentNode {
             timestamp_unix_ms: config.genesis.timestamp_unix_ms,
         };
         let pipeline = CandidatePipeline::start(pipeline_config, OpenMode::Existing)?;
-        let result = start_controller(&config, &pipeline, template, validators.clone(), key, local);
+        let result = start_native(
+            &config,
+            &pipeline,
+            template,
+            validators.clone(),
+            key,
+            local,
+            transport,
+        );
         match result {
             Ok(controller) => Ok(Self {
+                profile: config.profile.clone(),
                 controller,
                 pipeline,
                 template,
@@ -114,6 +158,8 @@ impl ResidentNode {
     }
 
     pub fn poll(&mut self, now: Instant) -> Result<()> {
+        let wall_ms = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+        self.controller.poll_io(wall_ms, now)?;
         self.controller.poll(&self.pipeline, now)
     }
 
@@ -121,11 +167,9 @@ impl ResidentNode {
     /// reports failure. Call this on normal exit, not inside a control poll.
     /// Under unwinding the contained owners retain their established Drop rules:
     /// channel stops/joins, pipeline disconnects/wakes without cancelling work.
-    pub fn shutdown(mut self) -> Result<()> {
-        let network = self.controller.shutdown();
+    pub fn shutdown(self) -> Result<()> {
         drop(self.controller);
-        let pipeline = self.pipeline.shutdown();
-        network.and(pipeline)
+        self.pipeline.shutdown()
     }
 }
 
@@ -201,14 +245,15 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
     }
 }
 
-fn start_controller(
+fn start_native(
     config: &ResidentConfig,
     pipeline: &CandidatePipeline,
     template: BatchContext,
     validators: Arc<ValidatorSet>,
     key: SigningKey,
     local: [u8; 32],
-) -> Result<Controller> {
+    transport: UdpTransport,
+) -> Result<NativeLifecycle> {
     let context = ConsensusContext {
         chain_id: template.chain_id,
         genesis_config_commitment: template.genesis_config_commitment,
@@ -240,114 +285,125 @@ fn start_controller(
         );
         std::thread::sleep(Duration::from_millis(1));
     };
-    let peers: BTreeMap<_, _> = validators
-        .members()
-        .iter()
-        .filter(|v| v.id() != local)
-        .map(|v| (v.id(), peer_id_from_ed25519_public_key_v1(v.public_key())))
-        .collect();
-    let channel = channel(
-        config,
-        validators.clone(),
-        peers.values().cloned().collect(),
-        key,
-    )?;
-    let mut limits = ControllerLimits::default();
-    let reserve = validators.members().len() * 2 + limits.max_inflight + 2;
-    limits.max_body_bytes = limits
-        .max_body_bytes
-        .max(channel.preparation_charge() * reserve);
-    Controller::new(
-        ControllerConfig {
-            validators: validators.clone(),
-            local_validator: local,
-            peers,
-            execution: template,
-            collector: CollectorLimits {
-                max_retained_rounds: 2,
-                max_future_round_span: 64,
-                max_votes: validators.members().len() * 7,
-            },
-            timeouts: TimeoutPolicy {
-                propose: Duration::from_secs(5),
-                prevote: Duration::from_secs(5),
-                precommit: Duration::from_secs(5),
-                round_increment: Duration::from_secs(1),
-            },
-            limits,
-            retransmit: Duration::from_millis(100),
-        },
-        journal,
-        channel,
-    )
-}
 
-fn channel(
-    config: &ResidentConfig,
-    validators: Arc<ValidatorSet>,
-    peers: Vec<String>,
-    key: SigningKey,
-) -> Result<HostChannel> {
-    let network = NetworkWorker::start(
-        NetworkWorkerConfig {
-            chain_id: config.genesis.chain_id,
-            relay: config.relay.clone(),
-            peers: peers.clone(),
-            limits: WorkerLimits::default(),
-            handshake_timeout_ms: 5_000,
-            reconnect_delay_ms: 50,
-            heartbeat_interval_ms: 1_000,
-            queue_ttl_ms: 30_000,
-        },
-        key,
-    )?;
+    ensure!(
+        config
+            .peers
+            .iter()
+            .all(|p| p.public_key != key.verifying_key().to_bytes()),
+        "remote route contains local signer"
+    );
+    ensure!(
+        validators
+            .members()
+            .iter()
+            .filter(|v| v.id() != local)
+            .all(|v| config.peers.iter().any(|p| &p.public_key == v.public_key())),
+        "missing pinned validator route"
+    );
     let codec = DecodeLimits {
         transactions: config.batch_size,
         transaction_bytes: 1024,
         body_bytes: body_byte_limit(config.batch_size),
         message_bytes: 512 * 1024,
     };
-    let peer_reservation = peers.len() * (codec.message_bytes * 4 + 4096) * 2;
-    let lane = LaneBudget {
-        control: QueueBudget {
-            messages: 32.max(peers.len() * 4),
-            bytes: (64 * 1024 * 1024).max(peer_reservation),
+    let progress = RoundProgress::new(
+        journal,
+        pipeline,
+        validators.clone(),
+        ProgressLimits {
+            candidates: (validators.members().len() * 2 + 2).min(64),
+            candidate_bytes: 256 * 1024 * 1024,
+            votes: CollectorLimits {
+                max_retained_rounds: 2,
+                max_future_round_span: 64,
+                max_votes: validators.members().len() * 7,
+            },
         },
-        body: QueueBudget {
-            messages: 8.max(peers.len() * 2),
-            bytes: (32 * 1024 * 1024).max(peer_reservation),
+        TimeoutPolicy {
+            propose: Duration::from_secs(5),
+            prevote: Duration::from_secs(5),
+            precommit: Duration::from_secs(5),
+            round_increment: Duration::from_secs(1),
         },
-        ingress: QueueBudget {
-            messages: 8.max(peers.len() * 2),
-            bytes: (32 * 1024 * 1024).max(peer_reservation),
+    )?;
+    let bodies = CandidateBodies::new(
+        pipeline,
+        template,
+        config.genesis.policy.clone(),
+        codec,
+        BodyLimits {
+            bodies: (validators.members().len() * 2 + 4).min(64),
+            bytes: 64 * 1024 * 1024,
+            inflight: 2,
         },
-    };
-    HostChannel::start(
-        network,
-        ChannelConfig {
-            chain_id: config.genesis.chain_id,
-            genesis: config.genesis.genesis_config_commitment,
-            protocol: config.genesis.protocol_commitment,
-            peers,
-            validators,
-            policy: config.genesis.policy.clone(),
-            codec,
-            reassembly: ReassemblyLimits {
+    )?;
+    let channel = NativeChannel::from_transport(
+        transport,
+        key,
+        config
+            .peers
+            .iter()
+            .map(|p| NativePeer {
+                key: p.public_key,
+                address: p.address,
+            })
+            .collect(),
+        config.native_client_limit,
+        MessageDomain {
+            chain_id: template.chain_id,
+            genesis: template.genesis_config_commitment,
+            protocol: template.protocol_commitment,
+            validators: validators.clone(),
+        },
+        codec,
+        std::array::from_fn(|_| LaneLimits {
+            receive: ReassemblyLimits {
                 max_message_bytes: codec.message_bytes,
                 messages: 32,
-                bytes: 8 * 1024 * 1024,
-                peer_messages: 8,
+                bytes: 16 * 1024 * 1024,
+                peer_messages: 4,
                 peer_bytes: 2 * 1024 * 1024,
                 ttl: Duration::from_secs(30),
             },
-            prepare: lane,
-            send: lane,
-            receive: lane,
+            send: NativeSendLimits {
+                messages: 32,
+                bytes: 16 * 1024 * 1024,
+                peer_messages: 4,
+                peer_bytes: 2 * 1024 * 1024,
+            },
+        }),
+        NativeSendPolicy {
+            window: NovoRudpWindowConfig {
+                packet_copies: 1,
+                tail_packet_copies: 1,
+                batch_size: 32,
+                batch_pause_ms: 0,
+                ack_wait_ms: 10,
+                no_progress_backoff: false,
+                ..Default::default()
+            },
+            pacing: NovoRudpPacingProfile {
+                packet_copies: 1,
+                tail_packet_copies: 1,
+                batch_size: 32,
+                batch_pause_ms: 0,
+                ack_wait_ms: 10,
+                no_progress_backoff: false,
+            },
             ttl: Duration::from_secs(30),
         },
+    )?;
+    NativeLifecycle::new(
+        progress,
+        bodies,
+        channel,
+        &validators,
+        DeliveryLimits {
+            messages_per_peer: 32,
+            bytes_per_peer: 4 * 1024 * 1024,
+        },
+        config.genesis.policy.clone(),
+        codec,
     )
 }
-
-#[cfg(test)]
-#[path = "service/tests.rs"]
-mod tests;

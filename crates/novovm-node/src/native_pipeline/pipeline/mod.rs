@@ -461,6 +461,9 @@ impl CandidatePipeline {
     /// At most one optional background job, reserving one whole ordinary job's
     /// maximum logical content and admission slot. This is scheduling only,
     /// never authority to use a speculative parent or publish its result.
+    // Retained and regression-tested for successor integration; the original
+    // native tick does not yet activate cross-height speculative scheduling.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn try_submit_background_owned(
         &self,
         request: BatchRequest,

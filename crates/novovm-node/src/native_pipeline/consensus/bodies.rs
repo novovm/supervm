@@ -1,0 +1,361 @@
+//! Assembly/execution handoff for the original native node. Adapted from
+//! keep_body/submit_executions/poll_executions at 58e3aade, without its Relay
+//! controller. RoundProgress owns consensus; CandidatePipeline owns actual
+//! authentication, algebraic execution and persistence. No business loop here.
+use super::{
+    progress::RoundProgress,
+    transport::{self, DecodeLimits, Message},
+    wire::Hash,
+};
+use crate::native_pipeline::{
+    business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch::effect_contract},
+    execution::plan::BatchContext,
+    pipeline::{
+        BatchRequest, CandidatePipeline, DurableCandidate, FailureStage, PipelineFailure,
+        PipelineTicket, Submission,
+    },
+};
+use anyhow::{ensure, Context, Result};
+use std::{collections::BTreeMap, sync::Arc};
+
+#[derive(Clone, Copy)]
+pub struct BodyLimits {
+    pub bodies: usize,
+    pub bytes: usize,
+    pub inflight: usize,
+}
+
+enum Work {
+    Pending(Option<BatchRequest>),
+    Running(PipelineTicket),
+    Ready(DurableCandidate),
+    Registered(DurableCandidate),
+    Failed,
+}
+struct Body {
+    message: Arc<Message>,
+    context: BatchContext,
+    charge: usize,
+    local_round: Option<u64>,
+    work: Work,
+}
+
+/// Bounded input ownership only. A peer body is accepted only for an existing
+/// verified proposal/decision hint, with the exact requested body ID and parent.
+/// No arbitrary peer can fill the queue with unsolicited speculative candidates.
+pub struct CandidateBodies {
+    owner: Arc<()>,
+    pin: BatchContext,
+    policy: DirectNovFeePolicy,
+    codec: DecodeLimits,
+    limits: BodyLimits,
+    bodies: BTreeMap<Hash, Body>,
+    bytes: usize,
+    frozen: bool,
+    pub executed: u64,
+    pub rejected_execution: u64,
+    pub integer_rows: u64,
+    pub integer_plans: u64,
+    pub apfl_rows: u64,
+}
+impl CandidateBodies {
+    pub fn new(
+        pipeline: &CandidatePipeline,
+        pin: BatchContext,
+        policy: DirectNovFeePolicy,
+        codec: DecodeLimits,
+        limits: BodyLimits,
+    ) -> Result<Self> {
+        ensure!(
+            limits.bodies > 0
+                && limits.bodies <= 64
+                && limits.bytes > 0
+                && limits.inflight > 0
+                && limits.inflight <= limits.bodies,
+            "invalid body budget"
+        );
+        ensure!(
+            pin.effect_contract == effect_contract(&policy)?,
+            "body policy pin mismatch"
+        );
+        transport::encode(&Message::RequestBody { body_id: [1; 32] }, codec)?;
+        let domain = pipeline.storage_domain();
+        ensure!(
+            pin.chain_id == domain.chain_id
+                && pin.genesis_config_commitment == domain.genesis_config_commitment
+                && pin.protocol_commitment == domain.protocol_commitment,
+            "body pipeline domain mismatch"
+        );
+        Ok(Self {
+            owner: pipeline.owner_identity(),
+            pin,
+            policy,
+            codec,
+            limits,
+            bodies: BTreeMap::new(),
+            bytes: 0,
+            frozen: false,
+            executed: 0,
+            rejected_execution: 0,
+            integer_rows: 0,
+            integer_plans: 0,
+            apfl_rows: 0,
+        })
+    }
+
+    pub fn is_frozen(&self) -> bool {
+        self.frozen
+    }
+    pub fn retained(&self) -> (usize, usize) {
+        (self.bodies.len(), self.bytes)
+    }
+
+    /// Borrowed admission: backpressure never consumes the caller's input.
+    /// Local selection is still not proposal authority; RoundProgress checks
+    /// leader/lock/QC and an acknowledged durable execution before signing.
+    pub fn offer(
+        &mut self,
+        message: &Arc<Message>,
+        local: bool,
+        progress: &RoundProgress,
+    ) -> Result<bool> {
+        ensure!(!self.frozen, "body owner frozen");
+        ensure!(!progress.is_frozen(), "consensus owner frozen");
+        if progress.is_recovering() {
+            return Ok(false);
+        }
+        let context = match message.as_ref() {
+            Message::Body { context, .. } | Message::ApflBody { context, .. } => context,
+            _ => anyhow::bail!("candidate input must be an exact body"),
+        };
+        ensure!(
+            matches_context(context, &self.pin, progress),
+            "body parent/business pins mismatch"
+        );
+        let id = match message.as_ref() {
+            Message::Body {
+                raw_transactions, ..
+            } => transport::body_id(context, raw_transactions, self.codec)?,
+            Message::ApflBody { batch, .. } => transport::apfl_body_id(context, batch, self.codec)?,
+            _ => unreachable!(),
+        };
+        ensure!(
+            local || progress.missing_bodies().any(|(_, wanted)| wanted == id),
+            "unsolicited body or different ordered input"
+        );
+        if let Some(known) = self.bodies.get_mut(&id) {
+            if local {
+                known.local_round = Some(progress.round());
+            }
+            return Ok(true);
+        }
+        // Charge canonical input plus a request copy. The pipeline separately
+        // reserves its own execution/capture/output memory before taking work.
+        let charge = transport::encode(message, self.codec)?
+            .len()
+            .checked_mul(2)
+            .context("body charge overflow")?;
+        if self.bodies.len() >= self.limits.bodies
+            || charge > self.limits.bytes.saturating_sub(self.bytes)
+        {
+            return Ok(false);
+        }
+        let request = match message.as_ref() {
+            Message::Body {
+                raw_transactions, ..
+            } => BatchRequest::new(raw_transactions.clone(), *context, self.policy.clone())?,
+            Message::ApflBody { batch, .. } => {
+                BatchRequest::from_apfl(batch.clone(), *context, self.policy.clone())?
+            }
+            _ => unreachable!(),
+        };
+        self.bodies.insert(
+            id,
+            Body {
+                message: message.clone(),
+                context: *context,
+                charge,
+                local_round: local.then_some(progress.round()),
+                work: Work::Pending(Some(request)),
+            },
+        );
+        self.bytes += charge;
+        Ok(true)
+    }
+
+    /// Exact missing IDs and their authenticated proposer. The native delivery
+    /// owner deduplicates/retries prepared requests; no full-body blind gossip.
+    pub fn requests(&self, progress: &RoundProgress) -> Vec<(Hash, Hash)> {
+        progress
+            .missing_bodies()
+            .filter(|(_, id)| !self.bodies.contains_key(id))
+            .collect()
+    }
+
+    /// Original canonical input is reused, not rebuilt from balances/receipts.
+    /// Returning it is not evidence that the peer may vote or publish it.
+    pub fn response(&self, id: Hash, progress: &RoundProgress) -> Option<Arc<Message>> {
+        self.bodies
+            .get(&id)
+            .map(|b| b.message.clone())
+            .or_else(|| progress.candidate_body(id))
+    }
+
+    /// Nonblocking AOEM handoff, separate from native socket/control polling.
+    /// Completed stale work is drained before retirement; no cancelled tickets
+    /// or unknown persistence result is silently retried.
+    pub fn poll(
+        &mut self,
+        pipeline: &CandidatePipeline,
+        progress: &mut RoundProgress,
+    ) -> Result<()> {
+        ensure!(!self.frozen, "body owner frozen");
+        let result = self.poll_inner(pipeline, progress);
+        if result.is_err() {
+            self.frozen = true;
+        }
+        result
+    }
+
+    fn poll_inner(
+        &mut self,
+        pipeline: &CandidatePipeline,
+        progress: &mut RoundProgress,
+    ) -> Result<()> {
+        ensure!(
+            Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
+            "body execution owner changed"
+        );
+        let mut retired = Vec::new();
+        for (id, body) in &mut self.bodies {
+            let current = matches_context(&body.context, &self.pin, progress);
+            if let Work::Running(ticket) = &mut body.work {
+                match ticket.try_take() {
+                    Ok(None) => continue,
+                    Ok(Some(done)) => {
+                        self.executed += 1;
+                        self.integer_rows += done.observation.gpu_rows as u64;
+                        self.integer_plans += done.observation.gpu_waves as u64;
+                        self.apfl_rows += done.observation.apfl_view_transactions as u64;
+                        body.work = Work::Ready(done.candidate().clone());
+                    }
+                    Err(error) => {
+                        // Authentication/domain failures are input rejection.
+                        // Persist failures (including unknown commit outcome)
+                        // and unclassified owner failures stop this lifecycle.
+                        if error
+                            .downcast_ref::<PipelineFailure>()
+                            .is_none_or(|failure| !matches!(failure.stage, FailureStage::Prepare))
+                        {
+                            return Err(error.context("body execution/storage owner failed"));
+                        }
+                        self.rejected_execution += 1;
+                        body.work = Work::Failed;
+                    }
+                }
+            }
+            if !current {
+                // Keep the immediately preceding decided body's ORIGINAL input
+                // for an honest peer whose finality lags this node. Older
+                // catch-up belongs to the verified archive, not an unbounded
+                // in-memory body cache.
+                if !matches!(body.work, Work::Registered(_))
+                    || body.context.height.saturating_add(1) < progress.context().height
+                {
+                    retired.push(*id);
+                }
+                continue;
+            }
+            if body.local_round != Some(progress.round())
+                && !progress.retains_body(*id)
+                && !progress.missing_bodies().any(|(_, needed)| needed == *id)
+            {
+                retired.push(*id);
+                continue;
+            }
+            if let Work::Ready(candidate) = &body.work {
+                if progress.register_candidate(
+                    *id,
+                    candidate,
+                    body.local_round == Some(progress.round()),
+                )? {
+                    body.work = Work::Registered(candidate.clone());
+                }
+            }
+            if let Work::Registered(candidate) = &body.work {
+                let local = body.local_round == Some(progress.round());
+                if local || progress.missing_bodies().any(|(_, needed)| needed == *id) {
+                    // Reuse the same owner-bound completion across a permitted
+                    // new round. No re-execution, signature replay or lock reset.
+                    progress.register_candidate(*id, candidate, local)?;
+                }
+            }
+        }
+        for id in retired {
+            let body = self.bodies.remove(&id).expect("retired body");
+            self.bytes -= body.charge;
+        }
+        if progress.is_recovering() || progress.is_frozen() {
+            return Ok(());
+        }
+        let mut running = self
+            .bodies
+            .values()
+            .filter(|b| matches!(b.work, Work::Running(_)))
+            .count();
+        let demanded = progress
+            .missing_bodies()
+            .map(|(_, id)| id)
+            .collect::<Vec<_>>();
+        let leader = progress.is_local_proposer()?;
+        for (id, body) in &mut self.bodies {
+            if running >= self.limits.inflight {
+                break;
+            }
+            if !(demanded.contains(id) || leader && body.local_round == Some(progress.round())) {
+                continue;
+            }
+            let Work::Pending(request) = &mut body.work else {
+                continue;
+            };
+            let owned = request
+                .take()
+                .context("body request lost on backpressure")?;
+            match pipeline.try_submit_owned(owned) {
+                Ok(Submission::Accepted(ticket)) => {
+                    body.work = Work::Running(ticket);
+                    running += 1;
+                }
+                Ok(Submission::Backpressured(returned)) => {
+                    *request = Some(returned);
+                    break;
+                }
+                Err(rejected) => {
+                    *request = Some(rejected.request);
+                    return Err(rejected.error);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// Original controller parent/business checks, unchanged. Slot/time are part of
+// the body identity and execution statement, never inferred from arrival time.
+fn matches_context(body: &BatchContext, pin: &BatchContext, progress: &RoundProgress) -> bool {
+    let context = progress.context();
+    let parent = progress.parent();
+    body.chain_id == context.chain_id
+        && body.genesis_config_commitment == context.genesis_config_commitment
+        && body.protocol_commitment == context.protocol_commitment
+        && body.height == context.height
+        && body.parent_height == parent.height
+        && body.parent_block_hash == parent.block_hash
+        && body.parent_state_root == parent.state_root
+        && body.parent_receipt_root == parent.receipt_batch_commitment
+        && body.parent_state_version == parent.state_version
+        && body.business_program == pin.business_program
+        && body.semantic_version == pin.semantic_version
+        && body.effect_contract == pin.effect_contract
+        && body.receipt_codec == pin.receipt_codec
+}

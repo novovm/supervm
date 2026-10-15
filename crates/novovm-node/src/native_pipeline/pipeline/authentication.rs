@@ -160,6 +160,8 @@ impl CandidatePipeline {
     /// Static feasibility, not queue availability or a reservation. Controllers
     /// must not hold current-height input forever when optional background
     /// authentication cannot fit even an otherwise empty configured pipeline.
+    // Retained feasibility contract for the not-yet-active successor adapter.
+    #[allow(dead_code)]
     pub(crate) fn can_authenticate_background(
         &self,
         request: &AuthenticationRequest,
@@ -240,6 +242,8 @@ impl CandidatePipeline {
     /// Continue optional future work without promoting its scheduling priority
     /// before the exact parent ACK. This reuses its original background permit;
     /// it neither reserves a second slot nor grants any parent authority.
+    // Successor scheduling is retained/tested, not yet active in the native tick.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn try_submit_authenticated_background_owned(
         &self,
         request: AuthenticatedRequest,

@@ -21,6 +21,46 @@ fn input() -> AuthenticationRequest {
 }
 
 #[test]
+fn native_socket_handoff_retains_structured_work_when_authentication_is_full() -> Result<()> {
+    use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+    let raw = vec![signed(1, 10), signed(2, 20)];
+    let limits = ApflLimits {
+        transactions: 16,
+        transaction_bytes: 4096,
+        body_bytes: 65_536,
+    };
+    let batch = ApflTransferBatch::from_raw(&raw, limits)?;
+    let request = crate::native_pipeline::ingress::native::socket::tests::deliver(
+        batch.encode()?,
+        limits,
+        policy(),
+    )?;
+    let mut config = cfg();
+    config.max_batches = 1;
+    let (pipeline, receiver) = inert_pipeline(config);
+    let AuthenticationSubmission::Backpressured(returned) =
+        pipeline.try_authenticate_owned(request).unwrap()
+    else {
+        panic!("native receipt bypassed authentication capacity");
+    };
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(returned.body_bytes, raw.iter().map(Vec::len).sum::<usize>());
+    assert_eq!(returned.transaction_count, raw.len());
+    let BatchSource::Apfl(batch) = returned.request.raw_transactions else {
+        panic!("socket handoff expanded APFL");
+    };
+    assert_eq!(
+        batch.encode()?,
+        ApflTransferBatch::from_raw(&raw, limits)?.encode()?
+    );
+    assert_eq!(usage(&pipeline), (0, 0, 0));
+    Ok(())
+}
+
+#[test]
 fn apfl_authentication_reserves_expanded_body_and_returns_same_shared_source() {
     use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
     let raw = vec![signed(1, 10), signed(2, 20)];
@@ -495,7 +535,13 @@ fn wait_some<T>(mut poll: impl FnMut() -> Result<Option<T>>) -> Result<T> {
 }
 
 fn real_authenticate(pipeline: &CandidatePipeline, raw: Vec<Vec<u8>>) -> Result<AuthenticatedBody> {
-    let mut request = AuthenticationRequest::new(raw, policy())?;
+    real_authenticate_request(pipeline, AuthenticationRequest::new(raw, policy())?)
+}
+
+fn real_authenticate_request(
+    pipeline: &CandidatePipeline,
+    mut request: AuthenticationRequest,
+) -> Result<AuthenticatedBody> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         ensure!(
@@ -542,6 +588,31 @@ fn real_bind(
 #[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; real two-stage local pipeline and database reopen, not finality/TPS"]
 fn real_parent_independent_authentication_rebinds_only_through_fresh_capture_and_recovers(
 ) -> Result<()> {
+    real_authentication_recovery(ExecutionBackend::CpuCallbacks, false)
+}
+
+#[test]
+#[ignore = "requires trusted AOEM/Vulkan; actual APFL to full plan to durable candidate and cold recovery, not finality/TPS"]
+fn july_apfl_complete_plan_persists_and_recovers_on_original_pipeline() -> Result<()> {
+    real_authentication_recovery(ExecutionBackend::AoemIntegerV7, true)
+}
+
+fn real_authentication_recovery(backend: ExecutionBackend, structured: bool) -> Result<()> {
+    let authenticate = |pipeline: &CandidatePipeline, raw: Vec<Vec<u8>>| {
+        if !structured {
+            return real_authenticate(pipeline, raw);
+        }
+        use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
+        use crate::native_pipeline::ingress::native::socket::tests::deliver;
+        let limits = ApflLimits {
+            transactions: 16,
+            transaction_bytes: 4096,
+            body_bytes: 65_536,
+        };
+        let wire = ApflTransferBatch::from_raw(&raw, limits)?.encode()?;
+        let request = deliver(wire, limits, policy())?;
+        real_authenticate_request(pipeline, request)
+    };
     let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/runtime-rebuild/pipeline-authentication-tests")
         .join(format!(
@@ -551,6 +622,7 @@ fn real_parent_independent_authentication_rebinds_only_through_fresh_capture_and
         ));
     std::fs::create_dir_all(&directory)?;
     let mut config = cfg();
+    config.execution_backend = backend;
     config.store.database = directory.join("state.rocksdb");
     config.store.library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
         .context("explicit trusted AOEM test library required")?
@@ -574,17 +646,18 @@ fn real_parent_independent_authentication_rebinds_only_through_fresh_capture_and
     let pipeline = CandidatePipeline::start(config.clone(), OpenMode::Existing)?;
     let mut bad = raw.clone();
     *bad[0].last_mut().unwrap() ^= 1;
-    assert!(real_authenticate(&pipeline, bad).is_err());
+    assert!(authenticate(&pipeline, bad).is_err());
+    assert!(authenticate(&pipeline, vec![raw[0].clone(), raw[0].clone()]).is_err());
     // A valid signature body can still fail program binding; this does not
     // poison the resident owner or grant permission to query another domain.
-    let body = real_authenticate(&pipeline, raw.clone())?;
+    let body = authenticate(&pipeline, raw.clone())?;
     let mut wrong = context(parents[0].1);
     wrong.business_program[0] ^= 1;
     assert!(real_bind(&pipeline, body.bind(wrong)).is_err());
 
     let mut references = Vec::new();
     for (memory, root) in &parents {
-        let body = real_authenticate(&pipeline, raw.clone())?;
+        let body = authenticate(&pipeline, raw.clone())?;
         assert_eq!(usage(&pipeline).0, 1);
         assert_eq!(usage(&pipeline).2, 1);
         // Context is deliberately selected only AFTER actual authentication.
@@ -633,13 +706,21 @@ fn real_parent_independent_authentication_rebinds_only_through_fresh_capture_and
             result.persisted.statement_commitment,
             expected.statement_commitment()
         );
-        assert!(result.observation.peak_callbacks > 0);
+        match backend {
+            ExecutionBackend::CpuCallbacks => assert!(result.observation.peak_callbacks > 0),
+            ExecutionBackend::AoemIntegerV7 => {
+                assert_eq!(result.observation.peak_callbacks, 0);
+                assert_eq!(result.observation.recomputed_transactions, 0);
+                assert_eq!(result.observation.gpu_waves, 1);
+                assert_eq!(result.observation.gpu_rows, raw.len());
+            }
+        }
         references.push((expected, expected_values));
     }
     assert_ne!(references[0].0.state_root(), references[1].0.state_root());
     // An unbound completed token is retained content, not active work or an I/O
     // handle. Administrative drain must not wait for its external owner.
-    let held_body = real_authenticate(&pipeline, raw.clone())?;
+    let held_body = authenticate(&pipeline, raw.clone())?;
     let retained = pipeline.usage.clone();
     pipeline.shutdown()?;
     assert_eq!(retained.lock().unwrap().batches, 1);
@@ -789,6 +870,67 @@ fn real_background_bind_keeps_original_permit_through_shutdown_and_unconsumed_su
             value,
             "background bind changed the cold economic projection"
         );
+    }
+    Ok(())
+}
+#[test]
+fn original_node_receives_1024_signed_apfl_rows_over_native_encrypted_datagrams() -> Result<()> {
+    use crate::native_pipeline::ingress::native::tests::deliver;
+    use crate::native_pipeline::ingress::{
+        apfl::{ApflLimits, ApflTransferBatch},
+        authentication::authenticate_apfl_row,
+        wire::*,
+    };
+    use ed25519_dalek::Signer;
+    use ed25519_dalek::SigningKey;
+    use std::sync::Arc;
+    let key = SigningKey::from_bytes(&[17; 32]);
+    let limits = ApflLimits {
+        transactions: 1024,
+        transaction_bytes: 4096,
+        body_bytes: 1024 * 1024,
+    };
+    let raw = (0..1024)
+        .map(|nonce| {
+            let mut tx = TransferV3 {
+                chain_id: domain().chain_id,
+                from: key.verifying_key().to_bytes().to_vec(),
+                to: vec![19; 32],
+                asset: "NOV".into(),
+                amount: 7,
+                nonce,
+                fee_policy: FeePolicy {
+                    pay_asset: "NOV".into(),
+                    max_pay_amount: 30,
+                    slippage_bps: 0,
+                },
+                signature: vec![],
+            };
+            let signature = key.sign(&signing_message(&tx)?);
+            tx.signature
+                .extend_from_slice(key.verifying_key().as_bytes());
+            tx.signature.extend_from_slice(&signature.to_bytes());
+            encode_transfer_v3(&tx)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let wire = ApflTransferBatch::from_raw(&raw, limits)?.encode()?;
+    assert!(
+        wire.len() > 65_507,
+        "fixture must exceed a maximum UDP payload"
+    );
+    let request = deliver(wire, limits, policy())?;
+    // The normal adapter is shared with the real-AOEM pipeline test. Here verify
+    // all unchanged signed rows, rather than claiming network bytes as TPS.
+    let crate::native_pipeline::ingress::batch::BatchSource::Apfl(batch) =
+        request.request.raw_transactions
+    else {
+        panic!("native delivery expanded structural input");
+    };
+    assert_eq!(batch.len(), 1024);
+    for index in 0..1024 {
+        let checked = authenticate_apfl_row(Arc::clone(&batch), index, domain().chain_id)?;
+        assert!(checked.is_apfl_view());
+        assert_eq!(checked.transfer().nonce, index as u64);
     }
     Ok(())
 }

@@ -30,6 +30,7 @@ enum Target {
     },
     Gossip {
         complete_body: bool,
+        broadcast: bool,
     },
 }
 
@@ -51,6 +52,7 @@ pub(super) struct AdmissionState {
     next_token: u64,
     last_http: u64,
     prefer_gossip: bool,
+    prefer_client: bool,
     work: Option<Work>,
     submitted_batches: u64,
     completed_batches: u64,
@@ -168,7 +170,7 @@ impl RpcLifecycle {
         &mut self,
         input: &AdmissionInput,
         broadcast: bool,
-    ) -> Result<Option<Value>> {
+    ) -> Result<Option<Hash>> {
         ensure!(
             self.projection_error.is_none(),
             "RPC projection unavailable"
@@ -189,7 +191,7 @@ impl RpcLifecycle {
         if broadcast {
             self.queue_gossip(hash);
         }
-        Ok(Some(self.pending_status(hash)))
+        Ok(Some(hash))
     }
 
     pub(super) fn poll_admission(&mut self) -> Result<()> {
@@ -305,9 +307,10 @@ impl RpcLifecycle {
                         bytes += raw.len();
                         let input = AdmissionInput::Raw(raw);
                         match self.cached_admission(&input, true) {
-                            Ok(Some(value)) => {
-                                slots.push(ResponseSlot::Ready(response(id, Ok(value))))
-                            }
+                            Ok(Some(hash)) => slots.push(ResponseSlot::Ready(response(
+                                id,
+                                Ok(self.receipt_status_json(hash)),
+                            ))),
                             Err(err) => slots.push(ResponseSlot::Ready(response(id, Err(err)))),
                             Ok(None) => {
                                 inputs.push(input);
@@ -346,11 +349,29 @@ impl RpcLifecycle {
             return Ok(None);
         }
         if self.incoming.is_none() {
-            self.incoming = self
-                .node
-                .controller
-                .take_transactions()
-                .map(|r| (r.message, 0));
+            let source = if self.admission.prefer_client {
+                self.node
+                    .controller
+                    .take_client_transactions()
+                    .map(|m| (m, true))
+                    .or_else(|| self.node.controller.take_transactions().map(|m| (m, false)))
+            } else {
+                self.node
+                    .controller
+                    .take_transactions()
+                    .map(|m| (m, false))
+                    .or_else(|| {
+                        self.node
+                            .controller
+                            .take_client_transactions()
+                            .map(|m| (m, true))
+                    })
+            };
+            if let Some((message, client)) = source {
+                self.incoming_from_client = client;
+                self.admission.prefer_client = !client;
+                self.incoming = Some((message, 0));
+            }
         }
         let Some((message, mut index)) = self.incoming.take() else {
             return Ok(None);
@@ -377,7 +398,7 @@ impl RpcLifecycle {
                 _ => unreachable!(),
             };
             index += 1;
-            match self.cached_admission(&input, false) {
+            match self.cached_admission(&input, self.incoming_from_client) {
                 Ok(Some(_)) => self.gossip_verified += 1,
                 Err(_) => self.gossip_rejected += 1,
                 Ok(None) => inputs.push(input),
@@ -396,7 +417,10 @@ impl RpcLifecycle {
         }
         let rows = inputs.len();
         Ok(Some(Work {
-            target: Target::Gossip { complete_body },
+            target: Target::Gossip {
+                complete_body,
+                broadcast: self.incoming_from_client,
+            },
             phase: Phase::Queued(SignatureAdmissionRequest::new(inputs)?),
             rows,
         }))
@@ -440,7 +464,10 @@ impl RpcLifecycle {
                             ResponseSlot::Checked(id) => response(
                                 id,
                                 results.pop_front().expect("count checked").and_then(
-                                    |(input, checked)| self.admit_checked(input, checked, true),
+                                    |(input, checked)| {
+                                        self.admit_checked(input, checked, true)
+                                            .map(|hash| self.receipt_status_json(hash))
+                                    },
                                 ),
                             ),
                         });
@@ -449,10 +476,13 @@ impl RpcLifecycle {
                     self.admission.http.insert(token, work);
                 }
             }
-            Target::Gossip { complete_body } => {
+            Target::Gossip {
+                complete_body,
+                broadcast,
+            } => {
                 for result in results {
                     match result
-                        .and_then(|(input, checked)| self.admit_checked(input, checked, false))
+                        .and_then(|(input, checked)| self.admit_checked(input, checked, broadcast))
                     {
                         Ok(_) => self.gossip_verified += 1,
                         Err(_) => self.gossip_rejected += 1,

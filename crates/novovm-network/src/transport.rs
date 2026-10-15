@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use crate::novorudp::{NovoRudpTransportFrameV0, NOVORUDP_TRANSPORT_FRAME_V0_MAGIC};
 use crate::{
     build_eth_fullnode_native_bodies_request_v1, build_eth_fullnode_native_bootstrap_messages_v1,
     build_eth_fullnode_native_rlpx_status_v1, build_eth_fullnode_native_status_message_v1,
@@ -9605,11 +9606,31 @@ impl Transport for InMemoryTransport {
 /// UDP transport for multi-process probe and lightweight local-node networking.
 type UdpDrainQueueV1 = Arc<Mutex<VecDeque<(Vec<u8>, SocketAddr)>>>;
 
+/// Explicit ingress classification for the existing UDP socket owner.
+/// A decoded native frame is NOT an authenticated peer or an admitted transaction.
+/// Its checksum and session fields confer no identity, execution or ACK authority.
+#[derive(Debug)]
+pub enum UdpIngressV1 {
+    Protocol(ProtocolMessage),
+    UntrustedNovoRudpFrame {
+        src: SocketAddr,
+        frame: NovoRudpTransportFrameV0,
+    },
+}
+
+#[path = "transport/native_ingress.rs"]
+mod native_ingress;
+pub use native_ingress::{AuthenticatedUdpIngressV1, NativeUdpIngressConfigV1, NativeUdpPollV1};
+
+/// One socket/drain owner shared by the legacy protocol and explicit native ingress.
 #[derive(Debug, Clone)]
 pub struct UdpTransport {
     node: NodeId,
     chain_id: u64,
     socket: Arc<UdpSocket>,
+    // Shared by all clones; installing authenticated ingress permanently retires
+    // the legacy receive API, so no competing reader can steal its datagrams.
+    receive_owner: Arc<Mutex<bool>>,
     peers: Arc<DashMap<NodeId, SocketAddr>>,
     peer_addr_index: Arc<DashMap<SocketAddr, NodeId>>,
     peer_ip_hint_index: Arc<DashMap<IpAddr, u64>>,
@@ -9897,6 +9918,7 @@ impl UdpTransport {
             node,
             chain_id,
             socket: Arc::new(socket),
+            receive_owner: Arc::new(Mutex::new(false)),
             peers: Arc::new(DashMap::new()),
             peer_addr_index: Arc::new(DashMap::new()),
             peer_ip_hint_index: Arc::new(DashMap::new()),
@@ -9946,6 +9968,11 @@ impl UdpTransport {
         self.socket
             .local_addr()
             .map_err(|e| NetworkError::Io(e.to_string()))
+    }
+
+    /// Configured domain of this socket owner, not a peer-supplied claim.
+    pub fn chain_id_v1(&self) -> u64 {
+        self.chain_id
     }
 
     fn send_internal(&self, to: NodeId, msg: &ProtocolMessage) -> Result<(), NetworkError> {
@@ -11199,12 +11226,54 @@ impl Transport for UdpTransport {
     }
 
     fn try_recv(&self, me: NodeId) -> Result<Option<ProtocolMessage>, NetworkError> {
+        match self.try_recv_ingress_internal(me, false)? {
+            Some(UdpIngressV1::Protocol(message)) => Ok(Some(message)),
+            None => Ok(None),
+            Some(UdpIngressV1::UntrustedNovoRudpFrame { .. }) => Err(NetworkError::Decode(
+                "native frame requires explicit untrusted ingress consumer".to_string(),
+            )),
+        }
+    }
+}
+
+impl UdpTransport {
+    /// Consume from this transport's existing socket and bounded drain queue.
+    /// Call from the same receive owner, never concurrently with `try_recv`.
+    /// Protocol messages retain their original policy/observation path. Native
+    /// frames are only decoded: callers must independently authenticate, bound,
+    /// deduplicate and authorize them before admission, execution or replies.
+    /// This method does not send ACKs, learn native peers or add native pending work.
+    pub fn try_recv_ingress(&self, me: NodeId) -> Result<Option<UdpIngressV1>, NetworkError> {
+        self.try_recv_ingress_internal(me, true)
+    }
+
+    fn try_recv_ingress_internal(
+        &self,
+        me: NodeId,
+        allow_native: bool,
+    ) -> Result<Option<UdpIngressV1>, NetworkError> {
         if me != self.node {
             return Err(NetworkError::LocalNodeMismatch {
                 expected: self.node,
                 got: me,
             });
         }
+        let claimed = self
+            .receive_owner
+            .lock()
+            .map_err(|_| NetworkError::Io("udp receive owner lock poisoned".into()))?;
+        if *claimed {
+            return Err(NetworkError::Io(
+                "udp receive owned by authenticated ingress".into(),
+            ));
+        }
+        let packet_input = self
+            .receive_packet_v1()
+            .map_err(|e| NetworkError::Io(e.to_string()))?;
+        self.decode_ingress_packet_v1(packet_input, allow_native)
+    }
+
+    fn receive_packet_v1(&self) -> std::io::Result<Option<(Vec<u8>, SocketAddr)>> {
         observe_network_runtime_receiver_recv_loop_iteration_v1(self.chain_id);
         observe_network_runtime_receiver_drain_first_config_v1(
             self.chain_id,
@@ -11223,7 +11292,7 @@ impl Transport for UdpTransport {
             let mut queue = self
                 .drain_queue
                 .lock()
-                .map_err(|_| NetworkError::Io("udp drain queue lock poisoned".to_string()))?;
+                .map_err(|_| std::io::Error::other("udp drain queue lock poisoned"))?;
             let mut drained = 0u64;
             while queue.len() < self.drain_queue_limit
                 && drained < self.drain_batch_max.try_into().unwrap_or(u64::MAX)
@@ -11249,7 +11318,7 @@ impl Transport for UdpTransport {
                     }
                     Err(e) => {
                         if queue.is_empty() {
-                            return Err(NetworkError::Io(e.to_string()));
+                            return Err(e);
                         }
                         break;
                     }
@@ -11286,12 +11355,32 @@ impl Transport for UdpTransport {
                 {
                     None
                 }
-                Err(e) => return Err(NetworkError::Io(e.to_string())),
+                Err(e) => return Err(e),
             }
         };
+        Ok(packet_input)
+    }
+
+    fn decode_ingress_packet_v1(
+        &self,
+        packet_input: Option<(Vec<u8>, SocketAddr)>,
+        allow_native: bool,
+    ) -> Result<Option<UdpIngressV1>, NetworkError> {
         let Some((packet, src)) = packet_input else {
             return Ok(None);
         };
+        // Reserve the native frame family before bincode decoding. An invalid
+        // version/header/checksum must not fall back to an unrelated protocol.
+        if packet.starts_with(&NOVORUDP_TRANSPORT_FRAME_V0_MAGIC[..7]) {
+            if !allow_native {
+                return Err(NetworkError::Decode(
+                    "native frame requires explicit untrusted ingress consumer".to_string(),
+                ));
+            }
+            let frame = NovoRudpTransportFrameV0::decode(&packet)
+                .map_err(|error| NetworkError::Decode(format!("native frame: {error}")))?;
+            return Ok(Some(UdpIngressV1::UntrustedNovoRudpFrame { src, frame }));
+        }
         observe_network_runtime_receiver_udp_packet_decode_attempt_v1(self.chain_id);
         let decoded = match protocol_decode(packet.as_slice()) {
             Ok(decoded) => {
@@ -11443,7 +11532,7 @@ impl Transport for UdpTransport {
                 }
             }
         }
-        Ok(Some(decoded))
+        Ok(Some(UdpIngressV1::Protocol(decoded)))
     }
 }
 
@@ -16025,6 +16114,151 @@ mod tests {
             eth_fullnode_native_budget_capped_headers_batch_v1(32, &budget),
             32
         );
+    }
+
+    #[test]
+    fn udp_ingress_same_socket_preserves_protocol_and_marks_native_untrusted() {
+        use crate::novorudp::NovoRudpTransportFrameKindV0;
+        let _lock = eth_rlpx_env_test_lock_v1().lock().unwrap();
+        let _restore = [
+            "NOVOVM_NOVORUDP_SOURCE_PINNING_ENABLED",
+            "NOVOVM_NETWORK_SOURCE_PINNING_ENABLED",
+            "NOVOVM_NOVORUDP_SOURCE_PINNING_REQUIRED",
+            "NOVOVM_NETWORK_SOURCE_PINNING_REQUIRED",
+            "NOVOVM_NOVORUDP_ENDPOINT_RECORD_REQUIRED",
+            "NOVOVM_NETWORK_ENDPOINT_RECORD_REQUIRED",
+        ]
+        .map(clear_test_env_var_v1);
+        for drain_first in [false, true] {
+            let local = NodeId(72_100 + u64::from(drain_first));
+            let remote = NodeId(72_102);
+            let mut rx = UdpTransport::bind_for_chain(local, "127.0.0.1:0", local.0).unwrap();
+            rx.drain_first_enabled = drain_first;
+            rx.drain_batch_max = 2;
+            rx.drain_queue_limit = 2;
+            let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+            let address = rx.local_addr().unwrap();
+            let frame = NovoRudpTransportFrameV0::new(
+                NovoRudpTransportFrameKindV0::Data,
+                [3; 16],
+                1,
+                2,
+                3,
+                0,
+                b"NNX1untrusted".to_vec(),
+            );
+            sender.send_to(&frame.encode(), address).unwrap();
+            assert!(matches!(
+                rx.try_recv_ingress(remote),
+                Err(NetworkError::LocalNodeMismatch { .. })
+            ));
+            let got = wait_udp_ingress(&rx, local).unwrap();
+            match got {
+                UdpIngressV1::UntrustedNovoRudpFrame { src, frame: actual } => {
+                    assert_eq!(src, sender.local_addr().unwrap());
+                    assert_eq!(actual, frame);
+                }
+                _ => panic!("native frame was interpreted as authenticated protocol"),
+            }
+            assert!(rx.peers.is_empty());
+            assert!(rx.peer_addr_index.is_empty());
+            assert!(rx.runtime_peer_registered.is_empty());
+            assert!(rx.source_pins.is_empty());
+            assert!(snapshot_network_runtime_native_pending_txs_v1(local.0, 8).is_empty());
+            let message = ProtocolMessage::Gossip(GossipMessage::Heartbeat {
+                from: remote,
+                shard: ShardId(7),
+            });
+            sender
+                .send_to(&protocol_encode(&message).unwrap(), address)
+                .unwrap();
+            assert!(matches!(wait_udp_ingress(&rx, local).unwrap(),
+                UdpIngressV1::Protocol(ProtocolMessage::Gossip(GossipMessage::Heartbeat { from, .. })) if from == remote));
+            assert_eq!(
+                rx.peers.get(&remote).map(|value| *value),
+                Some(sender.local_addr().unwrap())
+            );
+            assert_eq!(rx.local_addr().unwrap(), address);
+            assert!(rx.try_recv_ingress(local).unwrap().is_none());
+        }
+    }
+
+    fn wait_udp_ingress(rx: &UdpTransport, local: NodeId) -> Result<UdpIngressV1, NetworkError> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(event) = rx.try_recv_ingress(local)? {
+                return Ok(event);
+            }
+            assert!(Instant::now() < deadline, "UDP ingress deadline");
+            thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn udp_ingress_native_invalid_header_checksum_and_length_never_fall_back() {
+        use crate::novorudp::NovoRudpTransportFrameKindV0;
+        let local = NodeId(72_110);
+        let rx = UdpTransport::bind_for_chain(local, "127.0.0.1:0", local.0).unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let valid = NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [4; 16],
+            1,
+            2,
+            3,
+            0,
+            vec![9; 8],
+        )
+        .encode();
+        for offset in [7usize, 8, 11, 60, valid.len() - 1] {
+            let mut broken = valid.clone();
+            broken[offset] ^= 1;
+            sender.send_to(&broken, rx.local_addr().unwrap()).unwrap();
+            match wait_udp_ingress(&rx, local) {
+                Err(NetworkError::Decode(message)) => assert!(message.starts_with("native frame:")),
+                other => panic!("malformed native frame was not rejected: {other:?}"),
+            }
+        }
+        assert!(rx.peers.is_empty());
+        assert!(rx.source_pins.is_empty());
+        assert!(snapshot_network_runtime_native_pending_txs_v1(local.0, 8).is_empty());
+    }
+
+    #[test]
+    fn udp_ingress_legacy_caller_explicitly_rejects_native_without_side_effects() {
+        use crate::novorudp::NovoRudpTransportFrameKindV0;
+        let local = NodeId(72_111);
+        let rx = UdpTransport::bind_for_chain(local, "127.0.0.1:0", local.0).unwrap();
+        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let frame = NovoRudpTransportFrameV0::new(
+            NovoRudpTransportFrameKindV0::Data,
+            [5; 16],
+            1,
+            2,
+            3,
+            0,
+            vec![1],
+        );
+        sender
+            .send_to(&frame.encode(), rx.local_addr().unwrap())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match rx.try_recv(local) {
+                Err(NetworkError::Decode(message)) => {
+                    assert!(message.contains("explicit untrusted ingress consumer"));
+                    break;
+                }
+                Ok(None) => {
+                    assert!(Instant::now() < deadline, "legacy UDP deadline");
+                    thread::yield_now();
+                }
+                other => panic!("legacy caller silently accepted native frame: {other:?}"),
+            }
+        }
+        assert!(rx.peers.is_empty());
+        assert!(rx.source_pins.is_empty());
+        assert!(snapshot_network_runtime_native_pending_txs_v1(local.0, 8).is_empty());
     }
 
     #[test]

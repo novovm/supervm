@@ -35373,7 +35373,8 @@ impl NativeExecutionPipelineBroadcastDriveV1 {
 struct NativeExecutionPipelineUdpDriveV1 {
     chain_id: u64,
     local_node: NodeId,
-    transport: UdpTransport,
+    transport: Option<UdpTransport>,
+    product: Option<novovm_node::native_pipeline::service::rpc::RpcLifecycle>,
     peers: Vec<NodeId>,
     recv_budget: usize,
     broadcast_enabled: bool,
@@ -35383,6 +35384,59 @@ struct NativeExecutionPipelineUdpDriveV1 {
 
 impl NativeExecutionPipelineUdpDriveV1 {
     fn from_env(chain_id: u64) -> Result<Option<Self>> {
+        if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG") {
+            use novovm_node::native_pipeline::service::rpc::RpcLifecycle;
+            use novovm_node::native_pipeline::service::{
+                config::ORIGINAL_PROFILE, ResidentConfig, ResidentNode, StartMode,
+            };
+            let config = ResidentConfig::load(Path::new(&path))?;
+            anyhow::ensure!(
+                config.profile == ORIGINAL_PROFILE,
+                "original tick requires native_execution_tick deployment profile"
+            );
+            anyhow::ensure!(
+                config.genesis.chain_id == chain_id,
+                "tick/config chain domain differs"
+            );
+            anyhow::ensure!(
+                config.rpc_addr.is_none(),
+                "native tick does not open HTTP/JSON-RPC"
+            );
+            anyhow::ensure!(
+                !bool_env("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION"),
+                "native tick cannot enable the legacy Host executor"
+            );
+            let mode = match string_env_nonempty("NOVOVM_NATIVE_EXECUTION_START").as_deref() {
+                Some("create") => StartMode::CreateNew,
+                Some("existing") => StartMode::Existing,
+                _ => bail!("explicit NOVOVM_NATIVE_EXECUTION_START=create|existing required"),
+            };
+            let local_node = NodeId(u64_env_allow_zero(
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE",
+                9_990_001,
+            )?);
+            let transport = UdpTransport::bind_for_chain(
+                local_node,
+                config.udp_addr.to_string().as_str(),
+                chain_id,
+            )?;
+            let batch_size = config.batch_size;
+            let node = ResidentNode::start_on_transport(config, mode, transport)?;
+            return Ok(Some(Self {
+                chain_id,
+                local_node,
+                transport: None,
+                product: Some(RpcLifecycle::new(node, batch_size)?),
+                peers: Vec::new(),
+                recv_budget: 0,
+                broadcast_enabled: false,
+                broadcast_max_per_tick: 0,
+                max_propagations: 0,
+            }));
+        }
+        anyhow::ensure!(bool_env("NOVOVM_JULY_HISTORICAL_FIXTURE"),
+            "native tick requires NOVOVM_NATIVE_EXECUTION_CONFIG; raw July fixture requires explicit NOVOVM_JULY_HISTORICAL_FIXTURE=1 and is not a product executor");
+
         if !bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED") {
             return Ok(None);
         }
@@ -35411,7 +35465,8 @@ impl NativeExecutionPipelineUdpDriveV1 {
         Ok(Some(Self {
             chain_id,
             local_node,
-            transport,
+            transport: Some(transport),
+            product: None,
             peers,
             recv_budget: usize_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_RECV_BUDGET",
@@ -35434,12 +35489,13 @@ impl NativeExecutionPipelineUdpDriveV1 {
     }
 
     fn drive_once(&self) -> serde_json::Value {
+        let transport = self.transport.as_ref().expect("historical transport only");
         let mut received = 0u64;
         let mut native_ingress_accepted_count = 0u64;
         let mut native_ingress_rejected_count = 0u64;
         let mut native_ingress_error_sample = Vec::<String>::new();
         for _ in 0..self.recv_budget {
-            match self.transport.try_recv(self.local_node) {
+            match transport.try_recv(self.local_node) {
                 Ok(Some(msg)) => {
                     received = received.saturating_add(1);
                     if let ProtocolMessage::EvmNative(EvmNativeMessage::Transactions {
@@ -35497,7 +35553,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
         if self.broadcast_enabled {
             for peer in &self.peers {
                 match dispatch_network_runtime_native_pending_tx_broadcast_to_transport_v1(
-                    &self.transport,
+                    transport,
                     self.chain_id,
                     self.local_node,
                     *peer,
@@ -35524,8 +35580,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
             }
         }
 
-        let local_addr = self
-            .transport
+        let local_addr = transport
             .local_addr()
             .map(|addr| addr.to_string())
             .unwrap_or_else(|err| format!("unavailable:{err}"));
@@ -42931,6 +42986,9 @@ mod native_execution_pipeline_tests {
         let previous_enabled = std::env::var(enabled_key).ok();
         let previous_transport = std::env::var(transport_key).ok();
         let previous_role = std::env::var(role_key).ok();
+        let fixture_key = "NOVOVM_JULY_HISTORICAL_FIXTURE";
+        let previous_fixture = std::env::var(fixture_key).ok();
+        std::env::set_var(fixture_key, "1");
         std::env::set_var(enabled_key, "1");
         std::env::remove_var(transport_key);
 
@@ -42960,6 +43018,11 @@ mod native_execution_pipeline_tests {
             std::env::set_var(role_key, value);
         } else {
             std::env::remove_var(role_key);
+        }
+        if let Some(value) = previous_fixture {
+            std::env::set_var(fixture_key, value);
+        } else {
+            std::env::remove_var(fixture_key);
         }
     }
 
@@ -43090,7 +43153,8 @@ mod native_execution_pipeline_tests {
         let drive = NativeExecutionPipelineUdpDriveV1 {
             chain_id,
             local_node: local,
-            transport: local_transport,
+            transport: Some(local_transport),
+            product: None,
             peers: vec![remote],
             recv_budget: 4,
             broadcast_enabled: true,
@@ -43786,9 +43850,23 @@ fn run_native_execution_tick_node_mode_v1(
     verbose: bool,
     seal_config_path: Option<PathBuf>,
 ) -> Result<()> {
+    let configured_product = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG").is_some();
+    if configured_product {
+        validate_original_native_tick_selection_v1("native_execution_tick")?;
+        anyhow::ensure!(
+            seal_config_path.is_none(),
+            "native tick cannot activate the old seal owner"
+        );
+    } else {
+        anyhow::ensure!(bool_env("NOVOVM_JULY_HISTORICAL_FIXTURE"),
+            "native tick requires NOVOVM_NATIVE_EXECUTION_CONFIG; old raw/recovery wiring is historical-fixture only");
+    }
     let _semantic_session_scope =
         novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
-    let max_ticks = u64_env_allow_zero("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", 1)?;
+    let max_ticks = u64_env_allow_zero(
+        "NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS",
+        if configured_product { 0 } else { 1 },
+    )?;
     let interval_ms = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", 250)?;
     let full_async_runtime_engine_enabled = bool_env("NOVOVM_AOEM_FULL_ASYNC_RUNTIME_ENGINE");
     let aoem_runtime_worker_pipeline_enabled =
@@ -43803,111 +43881,159 @@ fn run_native_execution_tick_node_mode_v1(
             interval_ms.min(10)
         },
     )?;
-    let chain_id = u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?;
-    let startup_recovery_params = native_execution_tick_params_from_env_v1()?;
-    let seal_config = seal_config_path
-        .as_ref()
-        .map(|path| NovNativeSealServiceConfigV1::load(path, chain_id))
-        .transpose()?;
-    if let Some(config) = &seal_config {
-        let native_path = nov_native_execution_store_path_v1();
-        let ledger_path =
-            novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(&native_path);
-        let overlay_path = PathBuf::from(
-            string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
-                .context("native seal requires the Product Overlay configuration")?,
+    let chain_id = if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG") {
+        let id = novovm_node::native_pipeline::service::ResidentConfig::load(Path::new(&path))?
+            .genesis
+            .chain_id;
+        anyhow::ensure!(
+            u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", id)? == id,
+            "tick/config chain domain differs"
         );
-        let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;
-        let mut writes =
-            novovm_node::tx_ingress::native_persistence_write_paths_v1(&startup_recovery_params)
-                .into_iter()
-                .filter(|(label, _)| *label != "native block ledger")
-                .map(|(_, path)| path)
-                .collect::<Vec<_>>();
-        writes.push(overlay.overlay.cache_path.clone());
-        // Bootstrap cache replacement writes this fixed staging file first.
-        writes.push(overlay.overlay.cache_path.with_extension("json.tmp"));
-        if let Some(journal) = overlay.delivery_journal_path {
-            writes.push(journal);
+        id
+    } else {
+        u64_env_positive("NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID", 1)?
+    };
+    if configured_product {
+        // No second input consumer, fixture executor or publication authority.
+        for name in [
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_DRIVE_ENABLED",
+            "NOVOVM_JULY_HISTORICAL_FIXTURE",
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID",
+        ] {
+            anyhow::ensure!(
+                !bool_env(name),
+                "{name} cannot be combined with authenticated original tick"
+            );
         }
         for name in [
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
-            "NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH",
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX",
+            "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE",
         ] {
-            if let Some(path) = string_env_nonempty(name) {
-                writes.push(PathBuf::from(path));
-            }
+            anyhow::ensure!(
+                string_env_nonempty(name).is_none(),
+                "{name} bypasses authenticated original input"
+            );
         }
-        let mut reads = vec![overlay_path, overlay.identity_key_path];
-        if let novovm_node::product_relay_client::ProductRelayTlsTrustV1::ExplicitCa {
-            certificate_path,
-        } = overlay.tls_trust
-        {
-            reads.push(certificate_path);
-        }
-        // Before startup AOEM recovery, cache updates, journal creation or report writes.
-        validate_service_paths_v1(config, &ledger_path, &writes, &reads)?;
     }
-    if seal_config
-        .as_ref()
-        .is_some_and(|config| config.is_fresh_genesis())
-    {
-        let config = seal_config.context("fresh genesis seal configuration missing")?;
-        // Windows' main stack is smaller than the bounded genesis/candidate
-        // verification call chain in debug builds. One joined lifecycle thread
-        // supplies an explicit stack; this is not a transaction worker pool.
-        return std::thread::Builder::new()
-            .name("fresh-genesis-confirmation".into())
-            .stack_size(
-                novovm_node::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1,
+    let mut product_overlay_drive = None;
+    if !configured_product {
+        let startup_recovery_params = native_execution_tick_params_from_env_v1()?;
+        let seal_config = seal_config_path
+            .as_ref()
+            .map(|path| NovNativeSealServiceConfigV1::load(path, chain_id))
+            .transpose()?;
+        if let Some(config) = &seal_config {
+            let native_path = nov_native_execution_store_path_v1();
+            let ledger_path =
+                novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(&native_path);
+            let overlay_path = PathBuf::from(
+                string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
+                    .context("native seal requires the Product Overlay configuration")?,
+            );
+            let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;
+            let mut writes = novovm_node::tx_ingress::native_persistence_write_paths_v1(
+                &startup_recovery_params,
             )
-            .spawn(move || {
-                run_fresh_genesis_confirmation_v1(
-                    config,
-                    &startup_recovery_params,
-                    max_ticks,
-                    interval_ms,
+            .into_iter()
+            .filter(|(label, _)| *label != "native block ledger")
+            .map(|(_, path)| path)
+            .collect::<Vec<_>>();
+            writes.push(overlay.overlay.cache_path.clone());
+            // Bootstrap cache replacement writes this fixed staging file first.
+            writes.push(overlay.overlay.cache_path.with_extension("json.tmp"));
+            if let Some(journal) = overlay.delivery_journal_path {
+                writes.push(journal);
+            }
+            for name in [
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH",
+            ] {
+                if let Some(path) = string_env_nonempty(name) {
+                    writes.push(PathBuf::from(path));
+                }
+            }
+            let mut reads = vec![overlay_path, overlay.identity_key_path];
+            if let novovm_node::product_relay_client::ProductRelayTlsTrustV1::ExplicitCa {
+                certificate_path,
+            } = overlay.tls_trust
+            {
+                reads.push(certificate_path);
+            }
+            // Before startup AOEM recovery, cache updates, journal creation or report writes.
+            validate_service_paths_v1(config, &ledger_path, &writes, &reads)?;
+        }
+        if seal_config
+            .as_ref()
+            .is_some_and(|config| config.is_fresh_genesis())
+        {
+            let config = seal_config.context("fresh genesis seal configuration missing")?;
+            // Windows' main stack is smaller than the bounded genesis/candidate
+            // verification call chain in debug builds. One joined lifecycle thread
+            // supplies an explicit stack; this is not a transaction worker pool.
+            return std::thread::Builder::new()
+                .name("fresh-genesis-confirmation".into())
+                .stack_size(
+                    novovm_node::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1,
                 )
-            })
-            .context("start fresh genesis confirmation lifecycle")?
-            .join()
-            .map_err(|_| anyhow::anyhow!("fresh genesis confirmation lifecycle panicked"))?;
+                .spawn(move || {
+                    run_fresh_genesis_confirmation_v1(
+                        config,
+                        &startup_recovery_params,
+                        max_ticks,
+                        interval_ms,
+                    )
+                })
+                .context("start fresh genesis confirmation lifecycle")?
+                .join()
+                .map_err(|_| anyhow::anyhow!("fresh genesis confirmation lifecycle panicked"))?;
+        }
+        apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
+        verify_native_business_protocol_config_pin_for_aoem_production_v1(&startup_recovery_params)
+            .context("validate cross-machine NOV protocol configuration pin at startup failed")?;
+        let startup_recovery =
+            recover_nov_native_host_projection_from_aoem_v1(&startup_recovery_params)
+                .context("recover native host projection from AOEM authority at startup failed")?;
+        if verbose {
+            println!(
+                "native_execution_startup_recovery: {}",
+                serde_json::to_string(&startup_recovery)
+                    .context("encode native execution startup recovery report failed")?
+            );
+        }
+        let startup_block_recovery =
+            recover_nov_native_block_ledger_from_aoem_v1(&startup_recovery_params)
+                .context("recover durable native block ledger at startup failed")?;
+        if verbose {
+            println!(
+                "native_block_ledger_startup_recovery: {}",
+                serde_json::to_string(&startup_block_recovery)
+                    .context("encode native block ledger startup recovery report failed")?
+            );
+        }
+        product_overlay_drive = NativeExecutionPipelineProductOverlayDriveV1::from_env(
+            chain_id,
+            seal_config,
+            &startup_recovery_params,
+        )?;
     }
-    apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
-    verify_native_business_protocol_config_pin_for_aoem_production_v1(&startup_recovery_params)
-        .context("validate cross-machine NOV protocol configuration pin at startup failed")?;
-    let startup_recovery =
-        recover_nov_native_host_projection_from_aoem_v1(&startup_recovery_params)
-            .context("recover native host projection from AOEM authority at startup failed")?;
-    if verbose {
-        println!(
-            "native_execution_startup_recovery: {}",
-            serde_json::to_string(&startup_recovery)
-                .context("encode native execution startup recovery report failed")?
-        );
-    }
-    let startup_block_recovery =
-        recover_nov_native_block_ledger_from_aoem_v1(&startup_recovery_params)
-            .context("recover durable native block ledger at startup failed")?;
-    if verbose {
-        println!(
-            "native_block_ledger_startup_recovery: {}",
-            serde_json::to_string(&startup_block_recovery)
-                .context("encode native block ledger startup recovery report failed")?
-        );
-    }
-    let mut network_drive = native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?;
-    let mut ingress_drive = NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?;
-    let mut product_overlay_drive = NativeExecutionPipelineProductOverlayDriveV1::from_env(
-        chain_id,
-        seal_config,
-        &startup_recovery_params,
-    )?;
-    let udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
-    let broadcast_drive = NativeExecutionPipelineBroadcastDriveV1::from_env(
-        chain_id,
-        product_overlay_drive.is_some(),
-    )?;
+    let mut network_drive = if configured_product {
+        None
+    } else {
+        native_execution_pipeline_network_drive_from_env_v1(chain_id, verbose)?
+    };
+    let mut ingress_drive = if configured_product {
+        None
+    } else {
+        NativeExecutionPipelineIngressDriveV1::from_env(chain_id)?
+    };
+    let broadcast_drive = if configured_product {
+        None
+    } else {
+        Some(NativeExecutionPipelineBroadcastDriveV1::from_env(
+            chain_id,
+            product_overlay_drive.is_some(),
+        )?)
+    };
     let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
     let progress_report_path =
         string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH")
@@ -43925,7 +44051,11 @@ fn run_native_execution_tick_node_mode_v1(
         0,
     )?;
     let novorudp_window_size = u64_env_positive("NOVOVM_NOVORUDP_WINDOW_SIZE", 64)?;
-    if novorudp_child_receiver_mode_v1() && novorudp_expected_tx_count == 0 {
+    anyhow::ensure!(
+        !configured_product || novorudp_expected_tx_count == 0,
+        "fixed fixture transaction totals are not native publication criteria"
+    );
+    if !configured_product && novorudp_child_receiver_mode_v1() && novorudp_expected_tx_count == 0 {
         bail!("receiver_expected_total_missing: transport=novorudp role=receiver expected_total=0");
     }
     if novorudp_expected_tx_count > 0 {
@@ -43940,9 +44070,72 @@ fn run_native_execution_tick_node_mode_v1(
         .unwrap_or_else(Instant::now);
     let mut ticks = 0u64;
     let mut aggregate = NativeExecutionPipelineAggregateV1::new();
+    let mut product_idle =
+        novovm_node::native_pipeline::service::rpc::IdleBackoff::new(Instant::now());
+    let product_run_ms = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_RUN_MS")
+        .map(|v| v.parse::<u64>())
+        .transpose()?;
+    // Parse every setting before activating the signer and resident owners.
+    let mut udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
+    if configured_product {
+        println!("native_tick_start: owner=original_udp execution=resident_aoem publication=round_bft_journal http=false legacy_pending_executor=false");
+    }
+    let product_started = Instant::now();
     loop {
         if max_ticks > 0 && ticks >= max_ticks {
             break;
+        }
+        if let Some(product) = udp_drive.as_mut().and_then(|drive| drive.product.as_mut()) {
+            // This is the original tick's receive owner. Reuse the reviewed
+            // admission/projection and protocol drivers; do NOT call the old
+            // raw pending executor or its progress-derived ledger closure.
+            let before = novovm_node::native_pipeline::service::rpc::control_progress(product);
+            if let Err(error) = product.poll(Instant::now()) {
+                let product = udp_drive.as_mut().unwrap().product.take().unwrap();
+                let drain = product.node.shutdown();
+                return Err(error.context(format!("original tick stopped; drain={drain:?}")));
+            }
+            ticks = ticks.saturating_add(1);
+            if last_progress_report_at.elapsed()
+                >= Duration::from_millis(progress_report_interval_ms)
+            {
+                let mut status = product.status();
+                status["entry"] = serde_json::json!("original_native_execution_tick");
+                status["ticks"] = serde_json::json!(ticks);
+                if let Some(path) = &progress_report_path {
+                    let saved = (|| -> Result<()> {
+                        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(path, serde_json::to_vec_pretty(&status)?)?;
+                        Ok(())
+                    })();
+                    if let Err(error) = saved {
+                        let product = udp_drive.as_mut().unwrap().product.take().unwrap();
+                        let drain = product.node.shutdown();
+                        return Err(error.context(format!(
+                            "progress report failed; original tick drained: {drain:?}"
+                        )));
+                    }
+                }
+                if verbose {
+                    println!("{}", status);
+                }
+                last_progress_report_at = Instant::now();
+            }
+            if product_run_ms
+                .is_some_and(|ms| product_started.elapsed() >= Duration::from_millis(ms))
+            {
+                break;
+            }
+            let progressed = product.admission_progress()
+                || before != novovm_node::native_pipeline::service::rpc::control_progress(product);
+            if product_idle.should_sleep(Instant::now(), progressed) {
+                std::thread::sleep(Duration::from_millis(1));
+            } else if !progressed {
+                std::thread::yield_now();
+            }
+            continue;
         }
         if novorudp_expected_tx_count > 0 {
             novovm_network::ensure_runtime_novorudp_sequence_expected_total_v1(
@@ -44017,7 +44210,10 @@ fn run_native_execution_tick_node_mode_v1(
             "udp": udp_drive_out,
             "product_overlay": product_overlay_drive_out,
         });
-        let broadcast_drive_out = broadcast_drive.drive_once();
+        let broadcast_drive_out = broadcast_drive
+            .as_ref()
+            .expect("historical broadcast only")
+            .drive_once();
         let mut params = native_execution_tick_params_from_env_v1()?;
         if let Some(obj) = params.as_object_mut() {
             let repair_final_missing_sequence_start =
@@ -44201,6 +44397,24 @@ fn run_native_execution_tick_node_mode_v1(
             std::thread::yield_now();
         }
     }
+    if let Some(product) = udp_drive.as_mut().and_then(|drive| drive.product.take()) {
+        let mut status = product.status();
+        status["entry"] = serde_json::json!("original_native_execution_tick");
+        status["ticks"] = serde_json::json!(ticks);
+        let drain = product.node.shutdown();
+        if let Some(path) =
+            string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH")
+        {
+            let path = PathBuf::from(path);
+            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(path, serde_json::to_vec_pretty(&status)?)?;
+        }
+        println!("{}", status);
+        return drain;
+    }
+
     let mut summary = aggregate.to_json();
     if let Some(drive) = product_overlay_drive.as_ref() {
         drive.decorate_summary(&mut summary);
@@ -44263,9 +44477,96 @@ fn run_native_execution_tick_node_mode_v1(
 #[path = "../native_candidate_node_mode.rs"]
 mod native_candidate_node_mode;
 
+/// Configuration-only preflight, before any old recovery, signer or listener.
+fn validate_original_native_tick_selection_v1(node_mode: &str) -> Result<()> {
+    let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG") else {
+        return Ok(());
+    };
+    anyhow::ensure!(
+        node_mode.eq_ignore_ascii_case("native_execution_tick")
+            || node_mode.eq_ignore_ascii_case("native_execution_pipeline")
+            || (node_mode.eq_ignore_ascii_case("full")
+                && bool_env("NOVOVM_NATIVE_EXECUTION_TICK_ENABLED")),
+        "native execution config requires the original native tick"
+    );
+    anyhow::ensure!(
+        mainline_query_method_from_env().is_none(),
+        "native tick configuration cannot be combined with a query override"
+    );
+    for name in [
+        "NOVOVM_NATIVE_SEAL_ENABLED",
+        "NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED",
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_DRIVE_ENABLED",
+        "NOVOVM_JULY_HISTORICAL_FIXTURE",
+        "NOVOVM_ALLOW_LEGACY_HOST_EXECUTION",
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID",
+    ] {
+        anyhow::ensure!(
+            !bool_env(name),
+            "{name} cannot coexist with the original native product owner"
+        );
+    }
+    for name in [
+        "NOVOVM_NATIVE_SEAL_CONFIG",
+        "NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG",
+        "NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_PATH",
+        "NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_COMMITMENT",
+        "NOVOVM_NATIVE_CANDIDATE_PLAN_PATH",
+        "NOVOVM_NATIVE_CANDIDATE_PLAN_COMMITMENT",
+        "NOVOVM_NATIVE_FRESH_RPC_BIND",
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX",
+        "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE",
+    ] {
+        anyhow::ensure!(
+            std::env::var_os(name).is_none(),
+            "{name} cannot coexist with the original native product owner"
+        );
+    }
+    anyhow::ensure!(
+        u64_env_alias_allow_zero(
+            &[
+                "NOVOVM_NATIVE_PIPELINE_TX_COUNT",
+                "NOVOVM_NATIVE_EXECUTION_PIPELINE_EXPECTED_TX_COUNT",
+            ],
+            0
+        )? == 0,
+        "fixed fixture transaction totals are not native publication criteria"
+    );
+    anyhow::ensure!(
+        matches!(
+            string_env_nonempty("NOVOVM_NATIVE_EXECUTION_START").as_deref(),
+            Some("create") | Some("existing")
+        ),
+        "explicit NOVOVM_NATIVE_EXECUTION_START=create|existing required"
+    );
+    let config = novovm_node::native_pipeline::service::ResidentConfig::load(Path::new(&path))?;
+    anyhow::ensure!(
+        config.profile == novovm_node::native_pipeline::service::config::ORIGINAL_PROFILE,
+        "original tick requires native_execution_tick deployment profile"
+    );
+    anyhow::ensure!(
+        config.rpc_addr.is_none(),
+        "native tick does not open HTTP/JSON-RPC"
+    );
+    anyhow::ensure!(
+        u64_env_positive(
+            "NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID",
+            config.genesis.chain_id
+        )? == config.genesis.chain_id,
+        "tick/config chain domain differs"
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
-    if node_mode.eq_ignore_ascii_case("native_resident") {
+    validate_original_native_tick_selection_v1(&node_mode)?;
+    if node_mode.eq_ignore_ascii_case("native_resident")
+        || node_mode.eq_ignore_ascii_case("native-resident-udp-v1")
+        || node_mode.eq_ignore_ascii_case("native_resident_udp_v1")
+    {
+        anyhow::ensure!(cfg!(feature = "historical-http"),
+            "resident replacement bootstrap is retired; use original native_execution_tick with NOVOVM_NATIVE_EXECUTION_CONFIG and explicit START");
         return novovm_node::native_pipeline::service::rpc::run_from_env();
     }
     let candidate_mode = native_candidate_node_mode::selected(
@@ -44407,7 +44708,12 @@ fn main() -> Result<()> {
         || node_mode.eq_ignore_ascii_case("native_execution_tick")
         || bool_env("NOVOVM_NATIVE_EXECUTION_TICK_ENABLED")
     {
-        return run_native_execution_tick_node_mode_v1(verbose, seal_config_path);
+        return std::thread::Builder::new()
+            .name("novovm-native-tick".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || run_native_execution_tick_node_mode_v1(verbose, seal_config_path))?
+            .join()
+            .map_err(|_| anyhow::anyhow!("original native tick panicked"))?;
     }
     if !node_mode.eq_ignore_ascii_case("full") {
         bail!("non-full node_mode is disabled: novovm-node keeps only production path");

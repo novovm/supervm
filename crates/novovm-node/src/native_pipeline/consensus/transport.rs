@@ -12,7 +12,7 @@ use super::wire::{self, Hash, Proposal, Quorum, Vote};
 use crate::native_pipeline::execution::plan::BatchContext;
 use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 use anyhow::{ensure, Context, Result};
-use novovm_network::duplex::fragments::{OutgoingMessage, MAX_MESSAGE_BYTES};
+use novovm_network::novorudp::fragments::{OutgoingMessage, MAX_MESSAGE_BYTES};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 

@@ -3,12 +3,15 @@
 use super::*;
 use crate::native_pipeline::business::nov_transfer_batch::nonce_key;
 use crate::native_pipeline::consensus::chain::ChainRecord;
+use crate::native_pipeline::consensus::native::{tests::Mesh, MessageDomain};
 use crate::native_pipeline::consensus::{transport, ArchiveBlock, ArchiveRead};
+use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
 use crate::native_pipeline::persistence::packet::marker_key;
+use crate::native_pipeline::pipeline::ExecutionBackend;
 use novovm_exec::resident::{StorageSession, StorageWrite};
 
-fn raw_at(height: u64) -> Result<Vec<Vec<u8>>> {
+pub(super) fn raw_at(height: u64) -> Result<Vec<Vec<u8>>> {
     [(1, if height == 2 { 2_000_000 } else { 100 }), (3, 50)]
         .into_iter()
         .map(|(seed, amount)| {
@@ -39,6 +42,8 @@ fn execute_height(
     services: &Services,
     context: ConsensusContext,
     parent: ParentPoint,
+    native: Option<&mut Mesh>,
+    backend: ExecutionBackend,
 ) -> Result<Vec<DurableCandidate>> {
     let mut execution = batch_context(parent.state_root);
     execution.height = context.height;
@@ -49,9 +54,43 @@ fn execute_height(
     execution.parent_state_version = parent.state_version;
     execution.slot = context.height - 1;
     execution.timestamp_unix_ms += context.height;
+    let messages = if let Some(mesh) = native {
+        let batch = Arc::new(ApflTransferBatch::from_raw(
+            &raw_at(context.height)?,
+            ApflLimits {
+                transactions: 8,
+                transaction_bytes: 1024,
+                body_bytes: 8192,
+            },
+        )?);
+        Some(mesh.broadcast(
+            0,
+            &transport::Message::ApflBody {
+                context: execution,
+                batch,
+            },
+        )?)
+    } else {
+        None
+    };
     let mut tickets = Vec::new();
-    for pipeline in &services.0 {
-        let request = BatchRequest::new(raw_at(context.height)?, execution, policy())?;
+    for (i, pipeline) in services.0.iter().enumerate() {
+        let request = if let Some(messages) = &messages {
+            let transport::Message::ApflBody {
+                context: received_context,
+                batch,
+            } = &messages[i]
+            else {
+                bail!("native candidate received different message kind");
+            };
+            ensure!(
+                *received_context == execution,
+                "native body changed exact execution parent"
+            );
+            BatchRequest::from_apfl(batch.clone(), *received_context, policy())?
+        } else {
+            BatchRequest::new(raw_at(context.height)?, execution, policy())?
+        };
         let Submission::Accepted(ticket) = pipeline.try_submit(request)? else {
             bail!("empty resident pipeline rejected fixture admission");
         };
@@ -70,9 +109,22 @@ fn execute_height(
             };
             if let Some(done) = pending.try_take()? {
                 ensure!(
-                    done.observation.peak_callbacks > 0 && !done.persisted.already_present,
+                    !done.persisted.already_present,
                     "height did not execute new real AOEM work"
                 );
+                match backend {
+                    ExecutionBackend::CpuCallbacks => ensure!(
+                        done.observation.peak_callbacks > 0,
+                        "CPU execution bypassed AOEM"
+                    ),
+                    ExecutionBackend::AoemIntegerV7 => ensure!(
+                        done.observation.peak_callbacks == 0
+                            && done.observation.recomputed_transactions == 0
+                            && done.observation.gpu_waves == 1
+                            && done.observation.gpu_rows == 2,
+                        "full algebraic candidate fell back to Host callbacks/recomputation"
+                    ),
+                }
                 candidates[index] = Some(done.candidate().clone());
                 ticket.take();
             }
@@ -216,7 +268,7 @@ fn submit_without_ack(journal: &mut ValidatorJournal, pipeline: &CandidatePipeli
     Ok(())
 }
 
-fn value(pipeline: &CandidatePipeline, root: Hash, key: Vec<u8>) -> Result<Vec<u8>> {
+pub(super) fn value(pipeline: &CandidatePipeline, root: Hash, key: Vec<u8>) -> Result<Vec<u8>> {
     let deadline = Instant::now() + DEADLINE;
     let mut ticket = loop {
         ensure!(Instant::now() < deadline, "query admission timed out");
@@ -309,6 +361,22 @@ fn reject_partial_rollback(
 #[ignore = "requires real AOEM; four local stores, not network or production finality"]
 fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_rejection() -> Result<()>
 {
+    three_heights(false, ExecutionBackend::CpuCallbacks)
+}
+
+#[test]
+#[ignore = "requires real AOEM; four native UDP sockets and stores in ONE process, not node processes or TPS"]
+fn native_udp_apfl_three_heights_durable_votes_publication_and_cold_recovery() -> Result<()> {
+    three_heights(true, ExecutionBackend::CpuCallbacks)
+}
+
+#[test]
+#[ignore = "requires real AOEM integer backend; four native sockets/stores in one process, not TPS"]
+fn native_udp_apfl_full_algebraic_plan_three_heights_and_recovery() -> Result<()> {
+    three_heights(true, ExecutionBackend::AoemIntegerV7)
+}
+
+fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
     let _ = library()?;
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/runtime-rebuild/consensus-tests")
@@ -338,14 +406,28 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
         parent_block_hash: [0; 32],
         parent_decision_hash: [0; 32],
     };
+    let mut native = use_native
+        .then(|| {
+            Mesh::new(
+                &(0..4).map(validator_key).collect::<Vec<_>>(),
+                MessageDomain {
+                    chain_id: CHAIN,
+                    genesis: GENESIS,
+                    protocol: PROTOCOL,
+                    validators: set.clone(),
+                },
+            )
+        })
+        .transpose()?;
     let mut services = Services::default();
     let mut roots = Vec::new();
     for path in &paths {
         roots.push(initialize(path)?);
-        services.0.push(CandidatePipeline::start(
-            pipeline_config(path)?,
-            OpenMode::Existing,
-        )?);
+        let mut config = pipeline_config(path)?;
+        config.execution_backend = backend;
+        services
+            .0
+            .push(CandidatePipeline::start(config, OpenMode::Existing)?);
     }
     ensure!(
         roots.iter().all(|r| *r == roots[0]),
@@ -419,7 +501,7 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
                 );
             }
         }
-        let candidates = execute_height(&services, context, parent)?;
+        let candidates = execute_height(&services, context, parent, native.as_mut(), backend)?;
         let block_hash =
             BlockStatement::from_executed(candidates[0].packet(), context, &set, &parent)?.hash();
         let leader = (0..4)
@@ -436,11 +518,35 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
         else {
             bail!("missing proposal");
         };
-        let proposal = wire::decode_proposal(&wire::encode_proposal(&proposal)?)?.verify(&set)?;
+        let body_id = transport::body_id(
+            candidates[0].packet().context(),
+            &raw_at(height)?,
+            crate::native_pipeline::consensus::native::tests::codec(),
+        )?;
+        let proposal_message = transport::Message::Proposal {
+            proposal: proposal.clone(),
+            valid_quorum: None,
+            body_id,
+        };
+        let proposals = if let Some(mesh) = &mut native {
+            mesh.broadcast(leader, &proposal_message)?
+        } else {
+            vec![proposal_message; 4]
+        };
+        let proposals = proposals
+            .into_iter()
+            .map(|message| {
+                let transport::Message::Proposal { proposal, .. } = message else {
+                    bail!("expected proposal")
+                };
+                proposal.verify(&set)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let proposal = &proposals[0];
         let mut prevotes = Vec::new();
         for (i, journal) in journals.iter_mut().enumerate() {
             let journal = journal.as_mut().unwrap();
-            journal.accept_proposal(&proposal, &candidates[i], None)?;
+            journal.accept_proposal(&proposals[i], &candidates[i], None)?;
             prevotes.push(wire_vote(
                 complete(journal, &services.0[i])?,
                 &set,
@@ -448,11 +554,27 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
                 block_hash,
             )?);
         }
-        let prevote_qc = Quorum::from_votes(&set, prevotes[..3].to_vec())?.verify(&set)?;
+        let mut received_prevotes = vec![Vec::new(); 4];
+        for (sender, vote) in prevotes.iter().enumerate() {
+            let message = transport::Message::Vote(vote.clone());
+            let messages = if let Some(mesh) = &mut native {
+                mesh.broadcast(sender, &message)?
+            } else {
+                vec![message; 4]
+            };
+            for (receiver, message) in messages.into_iter().enumerate() {
+                let transport::Message::Vote(vote) = message else {
+                    bail!("expected prevote")
+                };
+                received_prevotes[receiver].push(vote);
+            }
+        }
         let mut precommits = Vec::new();
         for (i, journal) in journals.iter_mut().enumerate() {
             let journal = journal.as_mut().unwrap();
-            journal.observe_prevotes(&prevote_qc, Some((&proposal, &candidates[i])))?;
+            let prevote_qc =
+                Quorum::from_votes(&set, received_prevotes[i][..3].to_vec())?.verify(&set)?;
+            journal.observe_prevotes(&prevote_qc, Some((&proposals[i], &candidates[i])))?;
             precommits.push(wire_vote(
                 complete(journal, &services.0[i])?,
                 &set,
@@ -460,13 +582,28 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
                 block_hash,
             )?);
         }
+        let mut received_precommits = vec![Vec::new(); 4];
+        for (sender, vote) in precommits.iter().enumerate() {
+            let message = transport::Message::Vote(vote.clone());
+            let messages = if let Some(mesh) = &mut native {
+                mesh.broadcast(sender, &message)?
+            } else {
+                vec![message; 4]
+            };
+            for (receiver, message) in messages.into_iter().enumerate() {
+                let transport::Message::Vote(vote) = message else {
+                    bail!("expected precommit")
+                };
+                received_precommits[receiver].push(vote);
+            }
+        }
         // Every node uses a DIFFERENT legal 3/4 subset for the SAME value.
         let mut certificate_bytes = Vec::new();
         records.clear();
         for i in 0..4 {
             let quorum = Quorum::from_votes(
                 &set,
-                precommits
+                received_precommits[i]
                     .iter()
                     .enumerate()
                     .filter(|(j, _)| *j != i)
@@ -481,7 +618,7 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
             certificate_bytes.push(bytes.clone());
             let verified = wire::decode_quorum(&bytes)?.verify(&set)?;
             let journal = journals[i].as_mut().unwrap();
-            journal.observe_decision(&proposal, &candidates[i], &verified)?;
+            journal.observe_decision(&proposals[i], &candidates[i], &verified)?;
             ensure!(
                 journal.head() == expected_head && journal.decided().is_none(),
                 "head was published before durable ACK"
@@ -535,6 +672,29 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
             );
             previous_revisions[i] = sequence;
             records.push(record);
+        }
+        if let Some(mesh) = &mut native {
+            for i in 0..4 {
+                let DurableMessage::Decision {
+                    proposal,
+                    certificate,
+                } = journals[i]
+                    .as_ref()
+                    .unwrap()
+                    .last_durable_message()
+                    .unwrap()
+                else {
+                    bail!("missing published decision")
+                };
+                mesh.broadcast(
+                    i,
+                    &transport::Message::Decision {
+                        proposal: proposal.clone(),
+                        certificate: certificate.clone(),
+                        body_id,
+                    },
+                )?;
+            }
         }
         let head = journals[0].as_ref().unwrap().head().unwrap();
         ensure!(
@@ -795,6 +955,6 @@ fn real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_reje
         );
     }
     services.shutdown()?;
-    println!("real AOEM four stores x three consecutive blocks: six distinct transactions / 24 executions, different QC subsets, global signer log, stale-head guard, lost decision/advance ACK, cold recovery, historical/latest archive replay before and after reopen, balance/nonces, partial rollback and four corruption rejections PASS; same process, no network/TPS/proof claim; {}", directory.display());
+    println!("real AOEM four stores x three consecutive blocks: six distinct transactions / 24 executions, different QC subsets, global signer log, stale-head guard, lost decision/advance ACK, cold recovery, historical/latest archive replay before and after reopen, balance/nonces, partial rollback and four corruption rejections PASS; native_udp={use_native}, backend={backend:?}; same process, NOT independent node processes/TPS/proof; {}", directory.display());
     Ok(())
 }

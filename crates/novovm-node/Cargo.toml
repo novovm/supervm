@@ -5,6 +5,11 @@ edition = "2021"
 license = "GPL-3.0-or-later"
 autobins = false
 
+[features]
+default = []
+# Explicit historical comparison only; never a native release listener.
+historical-http = []
+
 [dependencies]
 anyhow = "1"
 aoem-bindings = { path = "../aoem-bindings" }

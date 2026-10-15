@@ -13,6 +13,7 @@ pub mod messages;
 pub mod native_arithmetic;
 pub mod native_nonce;
 pub mod native_parent_nonce;
+pub mod native_query;
 pub mod native_treasury;
 pub mod protocol_catalog;
 pub mod tx_wire;

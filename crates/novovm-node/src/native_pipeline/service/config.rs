@@ -9,9 +9,6 @@ use crate::native_pipeline::state::tree::{
     empty_root, stage_state_update, StagedStateUpdate, StateChange, StateNodeReader,
 };
 use anyhow::{ensure, Context, Result};
-use novovm_network::duplex::product_relay_client::{
-    ProductRelayClientConfigV1, ProductRelayTlsTrustV1,
-};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
@@ -19,7 +16,9 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub const PROFILE: &str = "native-resident-v1";
+pub const PROFILE: &str = "native-resident-udp-v1";
+/// Existing original node tick mode, not another bootstrap/runtime mode.
+pub const ORIGINAL_PROFILE: &str = "native_execution_tick";
 
 /// Local deployment settings do not enter the genesis commitment.
 #[derive(Clone, Debug, Deserialize)]
@@ -28,9 +27,16 @@ pub struct ResidentConfig {
     pub profile: String,
     pub library: PathBuf,
     pub database: PathBuf,
-    pub rpc_addr: SocketAddr,
+    /// Historical test observer only. The native release needs no HTTP address.
+    #[serde(default)]
+    pub rpc_addr: Option<SocketAddr>,
     pub signing_key_file: PathBuf,
-    pub relay: ProductRelayClientConfigV1,
+    pub udp_addr: SocketAddr,
+    pub peers: Vec<NativePeerConfig>,
+    /// Explicit bounded key-possession admission, never a client allowlist.
+    /// Zero preserves the old validator-only deployment contract.
+    #[serde(default)]
+    pub native_client_limit: usize,
     pub genesis: GenesisConfig,
     /// AOEM ingress workers, not the V2 semantic callback pool size. The latter
     /// uses AOEM_SEMANTIC_GRAPH_V2_WORKERS (or available parallelism) at context
@@ -41,6 +47,15 @@ pub struct ResidentConfig {
     #[serde(default)]
     pub execution_backend: crate::native_pipeline::pipeline::ExecutionBackend,
     pub batch_size: usize,
+}
+
+/// Local pinned validator routes for this development profile, not a global
+/// NOVONET admission list. Transport endpoints do not enter consensus hashes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePeerConfig {
+    pub public_key: Hash,
+    pub address: SocketAddr,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -83,6 +98,11 @@ pub fn protocol_commitment() -> Hash {
 }
 
 impl ResidentConfig {
+    pub(crate) fn historical_http_addr(&self) -> Result<Option<SocketAddr>> {
+        ensure!(self.rpc_addr.is_none() || cfg!(feature = "historical-http"),
+            "HTTP/JSON-RPC is excluded from the native release; remove rpc_addr (historical comparisons require historical-http)");
+        Ok(self.rpc_addr)
+    }
     pub fn load(path: &Path) -> Result<Self> {
         let path = path
             .canonicalize()
@@ -101,10 +121,6 @@ impl ResidentConfig {
         ] {
             resolve_relative(base, target);
         }
-        if let ProductRelayTlsTrustV1::ExplicitCa { certificate_path } = &mut config.relay.tls_trust
-        {
-            resolve_relative(base, certificate_path);
-        }
         config.normalize_native_paths();
         config.validate()?;
         Ok(config)
@@ -118,18 +134,16 @@ impl ResidentConfig {
         ] {
             *target = native_path(target);
         }
-        if let ProductRelayTlsTrustV1::ExplicitCa { certificate_path } = &mut self.relay.tls_trust {
-            *certificate_path = native_path(certificate_path);
-        }
     }
 
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            self.profile == PROFILE,
-            "only explicit native-resident-v1 experimental profile is supported"
+            self.profile == ORIGINAL_PROFILE || self.profile == PROFILE,
+            "configuration must select native_execution_tick or the historical native-resident-udp-v1 profile"
         );
         ensure!(
-            self.rpc_addr.ip().is_loopback(),
+            self.rpc_addr
+                .is_none_or(|address| address.ip().is_loopback()),
             "resident RPC must bind loopback; public authentication is not configured"
         );
         ensure!(
@@ -147,21 +161,36 @@ impl ResidentConfig {
             "load resident paths relative to their configuration file first"
         );
         ensure!(
-            self.relay.endpoint.starts_with("wss://")
-                && !self.relay.expected_relay_peer_id.is_empty(),
-            "resident relay requires explicit WSS endpoint and peer identity"
+            !self.udp_addr.ip().is_multicast(),
+            "invalid native bind address"
         );
         ensure!(
-            !matches!(
-                self.relay.tls_trust,
-                ProductRelayTlsTrustV1::NodeKeyBoundEncrypted
-            ),
-            "insecure test relay trust is not a resident profile option"
+            self.peers.len() + 1 == self.genesis.validators.len(),
+            "every remote validator route required"
         );
-        if let ProductRelayTlsTrustV1::ExplicitCa { certificate_path } = &self.relay.tls_trust {
+        let mut addresses = BTreeSet::new();
+        let mut keys = BTreeSet::new();
+        ensure!(
+            self.native_client_limit <= 64usize.saturating_sub(self.peers.len()),
+            "native client slot bound"
+        );
+        for peer in &self.peers {
             ensure!(
-                certificate_path.is_absolute() && certificate_path.is_file(),
-                "explicit relay CA missing or unresolved"
+                peer.address.port() != 0
+                    && !peer.address.ip().is_unspecified()
+                    && !peer.address.ip().is_multicast(),
+                "invalid native remote address"
+            );
+            ensure!(
+                addresses.insert(peer.address) && keys.insert(peer.public_key),
+                "duplicate native peer route"
+            );
+            ensure!(
+                self.genesis
+                    .validators
+                    .iter()
+                    .any(|v| v.public_key == peer.public_key),
+                "unconfigured native peer key"
             );
         }
         self.genesis.validate()?;
@@ -383,11 +412,8 @@ mod tests {
             "database": "not-opened-database",
             "rpc_addr": "127.0.0.1:0",
             "signing_key_file": "not-read-key",
-            "relay": {
-                "endpoint": "wss://127.0.0.1:9/not-opened",
-                "expected_relay_peer_id": "not-connected-test-peer",
-                "tls_trust": "native_web_pki"
-            },
+            "udp_addr": "127.0.0.1:0",
+            "peers": [],
             "genesis": genesis(),
             "workers": 1,
             "batch_size": 2
@@ -396,6 +422,18 @@ mod tests {
         let config: ResidentConfig = serde_json::from_value(base.clone()).unwrap();
         assert_eq!(config.profile, PROFILE);
         assert_eq!(config.batch_size, 2);
+        assert_eq!(
+            config.historical_http_addr().is_ok(),
+            cfg!(feature = "historical-http")
+        );
+        let mut native_only = base.clone();
+        native_only.as_object_mut().unwrap().remove("rpc_addr");
+        let native_only: ResidentConfig = serde_json::from_value(native_only).unwrap();
+        assert_eq!(native_only.historical_http_addr().unwrap(), None);
+        assert_eq!(
+            native_only.native_client_limit, 0,
+            "omitted policy must not silently open admission"
+        );
         for retired in [
             serde_json::Value::Null,
             serde_json::json!({}),
@@ -542,22 +580,23 @@ mod tests {
         let mut genesis = genesis();
         genesis.genesis_config_commitment = genesis.derive_commitment()?;
         let config = ResidentConfig {
+            native_client_limit: 0,
             profile: PROFILE.into(),
             library,
             database: root.join("state.rocksdb"),
-            rpc_addr: "127.0.0.1:0".parse()?,
+            rpc_addr: Some("127.0.0.1:0".parse()?),
             signing_key_file: key_file,
-            relay: ProductRelayClientConfigV1 {
-                endpoint: "wss://127.0.0.1:9/resident-startup-only".into(),
-                expected_relay_peer_id: novovm_network::duplex::peer_id_from_ed25519_public_key_v1(
-                    &ed25519_dalek::SigningKey::from_bytes(&[9; 32])
-                        .verifying_key()
-                        .to_bytes(),
-                ),
-                connect_timeout_ms: 100,
-                read_timeout_ms: 10,
-                tls_trust: ProductRelayTlsTrustV1::NativeWebPki,
-            },
+            udp_addr: "127.0.0.1:0".parse()?,
+            peers: genesis
+                .validators
+                .iter()
+                .skip(1)
+                .enumerate()
+                .map(|(i, v)| NativePeerConfig {
+                    public_key: v.public_key,
+                    address: std::net::SocketAddr::from(([127, 0, 0, 1], 31002 + i as u16)),
+                })
+                .collect(),
             genesis,
             workers: 2,
             execution_backend: Default::default(),

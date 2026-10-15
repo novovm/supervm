@@ -25,6 +25,9 @@ pub mod native_round_bft;
 pub mod native_state_records;
 pub mod native_state_storage;
 pub mod native_state_tree;
+pub mod native_structural_ingress;
+#[cfg(test)]
+mod native_structural_socket_tests;
 pub mod native_transfer_delta;
 pub mod native_transfer_executor;
 pub mod product_delivery_journal;

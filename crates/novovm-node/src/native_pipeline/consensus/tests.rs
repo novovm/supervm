@@ -5,27 +5,22 @@
 
 #[path = "chain_integration.rs"]
 mod chain_integration;
-
-#[path = "pacemaker_integration.rs"]
-mod pacemaker_integration;
-
-#[path = "network_integration.rs"]
-mod network_integration;
-
-#[path = "controller_integration.rs"]
-mod controller_integration;
-
-#[path = "controller_workload.rs"]
-mod controller_workload;
-
-#[path = "controller/tests.rs"]
-mod controller_tests;
-
+// Historical relay/controller suites remain on disk, not in this native build:
+// network_integration, controller_integration, controller_workload,
+// controller/tests, resident_rpc_process (including aab/load/offline).
+// Their old service/duplex dependencies are not an alternate active signer.
+// Exclusion is NOT a passing result: progress_split tests do not replace actual
+// native-node A/A/B, interrupted-signing or offline catch-up integration gates.
+// Native product and load tests below exercise the original tick entrance;
+// journal/pacemaker/chain tests retain durability and recovery counterexamples.
 #[path = "journal_recovery_integration.rs"]
 mod journal_recovery_integration;
-
-#[path = "resident_rpc_process.rs"]
-mod resident_rpc_process;
+#[path = "native_product_rpc.rs"]
+mod native_product_rpc;
+#[path = "pacemaker_integration.rs"]
+mod pacemaker_integration;
+#[path = "progress_integration.rs"]
+mod progress_integration;
 
 use super::statement::{BlockStatement, ParentPoint};
 use super::wire::{

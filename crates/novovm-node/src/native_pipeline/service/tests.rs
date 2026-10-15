@@ -7,9 +7,6 @@ use crate::native_pipeline::ingress::wire::{
     encode_transfer_v3, signing_message, FeePolicy, TransferV3,
 };
 use ed25519_dalek::Signer;
-use novovm_network::duplex::product_relay_client::{
-    ProductRelayClientConfigV1, ProductRelayTlsTrustV1,
-};
 
 pub(super) fn signed_raw(index: u64, nonce: u64) -> Vec<u8> {
     let mut seed = [0x5a; 32];
@@ -65,21 +62,17 @@ fn config(size: usize) -> ResidentConfig {
         mapped_asset_reorg_response_policy: "report_only".into(),
     };
     ResidentConfig {
-        profile: config::PROFILE.into(),
+        profile: config::ORIGINAL_PROFILE.into(),
         library: "not-opened-library".into(),
         database: "not-opened-database".into(),
         signing_key_file: "not-read-test-key".into(),
-        rpc_addr: "127.0.0.1:0".parse().unwrap(),
+        rpc_addr: None,
+        udp_addr: "127.0.0.1:0".parse().unwrap(),
+        peers: Vec::new(),
+        native_client_limit: 1,
         workers: 1,
         execution_backend: Default::default(),
         batch_size: size,
-        relay: ProductRelayClientConfigV1 {
-            endpoint: "wss://127.0.0.1:9/not-opened".into(),
-            expected_relay_peer_id: "not-connected-test-peer".into(),
-            connect_timeout_ms: 100,
-            read_timeout_ms: 10,
-            tls_trust: ProductRelayTlsTrustV1::NativeWebPki,
-        },
         genesis: GenesisConfig {
             chain_id: 71,
             validator_epoch: 1,

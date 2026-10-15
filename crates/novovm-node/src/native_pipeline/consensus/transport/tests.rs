@@ -5,7 +5,7 @@ use crate::native_pipeline::consensus::wire::{
     Context as ConsensusContext, Phase, Validator, ValidatorSet,
 };
 use ed25519_dalek::SigningKey;
-use novovm_network::duplex::fragments::{FragmentAdmission, Reassembler, ReassemblyLimits};
+use novovm_network::novorudp::fragments::{FragmentAdmission, Reassembler, ReassemblyLimits};
 use std::time::{Duration, Instant};
 
 fn limits() -> DecodeLimits {

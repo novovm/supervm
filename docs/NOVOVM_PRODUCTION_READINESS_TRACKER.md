@@ -3,6 +3,32 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-16 共享 main 的原 tick 完整依赖组接通（功能，不是吞吐签收）
+
+输入共享 `cb4b3dd1`，保留协调更新至 `5c95c084`；来源恢复 `3f0a95e4`。
+按[接回表](NOVOVM_JULY_MAIN_INTEGRATION_MAP.md)迁入实际调用：原 tick/UdpDrive
+→ 原 UdpTransport 唯一认证 owner → NativeChannel / NativeLifecycle
+→ 原 CandidatePipeline / exec / bindings / AOEM → RoundProgress / round_bft /
+ValidatorJournal → 原生二进制查询。旧 controller/channel 不再是活动模块；源码
+与旧测试保留，未执行的旧 A/A/B/offline 测试不算新路径通过。
+
+原生配置启动前拒绝旧 seal/overlay/raw/Host 等并行入口，默认拒绝 resident
+替代 bootstrap；不复制第二份 HTTP parser。保留 main 的真实签名格式、EVM、
+proof、SDK、原服务预算测试及另一设备 endpoint/信箱更新；49份原草稿未纳入提交。
+CPU 与完整代数后端沿同一入口分别通过两项真实四进程用例：新创世、签名转账、
+费用/nonce/失败、少数票不发布、恢复法定人数、全节点回执/余额与冷重启后继。
+测试整体耗时分别6.28s和14.98s，不是TPS或逐笔延迟。
+
+共享库/主程序check、debug构建及严格lib/bin Clippy通过；普通pipeline350通过/
+43忽略，原传输/查询/结构回归28项通过。实际binary18项冲突入口/退役模式拒绝
+检查通过。CI改为原生入口，并显式检查测试名存在，防止旧过滤器零项假通过；
+远端CI尚未验收。详见[程序/DLL身份与原始报告](../artifacts/audit/july-main-tick-20261016/README.md)。
+
+release主程序已构建通过（2m28s），对应哈希记录在证据中；正式负载仍未验收。
+未完成：release同条件65,536笔负载、原生实际A/A/B与离线追赶、跨高度后继重叠、
+Linux/多机/生产签收。原tick接线通过不等于七月十几万TPS恢复，更不是百万级
+或完整业务证明完成。下一项是同一共享源码的release构建与负载，不继续增加入口。
+
 ## 2026-10-16 APFL 准入及选批保留结构，负载预检暴露查询交接缺口
 
 恢复 `3ed27bec`→`f2d56b5b`；共享 main 仅接相同的五文件数据契约修改，
