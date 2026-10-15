@@ -42,6 +42,8 @@ pub enum RelayTransportV1 {
     Quic443,
     /// NOVOVM opaque rendezvous over the explicitly versioned Iroh carrier.
     IrohRendezvousV1,
+    /// Raw-key TLS over TCP; not WSS, a public CA, or an anonymity claim.
+    TlsTcpV1,
     Udp,
 }
 
@@ -562,6 +564,7 @@ fn validate_endpoint_v1(endpoint: &RelayEndpointV1) -> Result<(), ProductDirecto
             endpoint.uri.starts_with("quic://") && endpoint.uri.contains(":443")
         }
         RelayTransportV1::IrohRendezvousV1 => endpoint.uri.starts_with("iroh-rendezvous-v1://"),
+        RelayTransportV1::TlsTcpV1 => endpoint.uri.starts_with("tls-service-v1://"),
         RelayTransportV1::Udp => endpoint.uri.starts_with("udp://"),
     };
     if !valid || endpoint.max_sessions == 0 || endpoint.max_bytes_per_minute == 0 {
@@ -587,6 +590,7 @@ fn candidate_snapshot_v1(candidate: &RelayCandidateRuntimeV1) -> Option<RelayCan
         RelayTransportV1::Wss443 => 300i64,
         RelayTransportV1::Quic443 => 250,
         RelayTransportV1::IrohRendezvousV1 => 200,
+        RelayTransportV1::TlsTcpV1 => 200,
         RelayTransportV1::Udp => 150,
     };
     let success_bonus = candidate.last_success_ms.map_or(0, |_| 80);
@@ -609,6 +613,7 @@ fn endpoint_score_v1(endpoint: &RelayEndpointV1) -> u8 {
         RelayTransportV1::Wss443 => 0,
         RelayTransportV1::Quic443 => 1,
         RelayTransportV1::IrohRendezvousV1 => 3,
+        RelayTransportV1::TlsTcpV1 => 3,
         RelayTransportV1::Udp => 2,
     }
 }
@@ -744,6 +749,7 @@ fn strategy_decision_bytes_v1(decision: &StrategyDecisionV1) -> Vec<u8> {
                 RelayTransportV1::Wss443 => "wss_443",
                 RelayTransportV1::Quic443 => "quic_443",
                 RelayTransportV1::IrohRendezvousV1 => "iroh_rendezvous_v1",
+                RelayTransportV1::TlsTcpV1 => "tls_tcp_v1",
                 RelayTransportV1::Udp => "udp",
             }),
     );
@@ -772,6 +778,7 @@ fn append_endpoints_v1(out: &mut Vec<u8>, endpoints: &[RelayEndpointV1]) {
                 RelayTransportV1::Wss443 => b"wss_443",
                 RelayTransportV1::Quic443 => b"quic_443",
                 RelayTransportV1::IrohRendezvousV1 => b"iroh_rendezvous_v1",
+                RelayTransportV1::TlsTcpV1 => b"tls_tcp_v1",
                 RelayTransportV1::Udp => b"udp",
             },
         );
@@ -829,6 +836,7 @@ mod tests {
             RelayTransportV1::Wss443 => format!("wss://{host}:443/novovm"),
             RelayTransportV1::Quic443 => format!("quic://{host}:443"),
             RelayTransportV1::IrohRendezvousV1 => panic!("use typed service fixture"),
+            RelayTransportV1::TlsTcpV1 => panic!("use typed service fixture"),
             RelayTransportV1::Udp => format!("udp://{host}:41030"),
         };
         RelayEndpointV1 {

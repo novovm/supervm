@@ -27,6 +27,11 @@ use std::{
 };
 
 type Store = Arc<Mutex<RendezvousStoreV1>>;
+#[cfg(feature = "tls-transport")]
+#[path = "product_rendezvous_tls.rs"]
+mod tls;
+#[cfg(feature = "tls-transport")]
+pub use tls::TlsMailboxListenerV1;
 struct Generation {
     store: Store,
     expires_ms: u64,
@@ -57,6 +62,34 @@ pub async fn run_self_owned_node_v1(
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
     let node = Node::new(key, clients, stop, mailbox, IROH_MAX_CONNECTIONS_V1)?;
+    let revoked = node.stop.clone();
+    with_iroh_owned_listener_v1(
+        carrier,
+        move || {
+            ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
+            Ok(())
+        },
+        move |scope| Box::pin(node.serve(scope, activate, publish)),
+    )
+    .await
+}
+
+/// Optional TLS listener on the SAME node owner, signed locator, persistent
+/// mailbox and connection budget. The platform must provide a reachable route.
+#[cfg(feature = "tls-transport")]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_self_owned_node_with_tls_v1(
+    carrier: IrohConfigV1,
+    key: SigningKey,
+    clients: BTreeSet<[u8; 32]>,
+    stop: Arc<AtomicBool>,
+    mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
+    tls: TlsMailboxListenerV1,
+    activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<()> {
+    let mut node = Node::new(key, clients, stop, Some(mailbox), IROH_MAX_CONNECTIONS_V1)?;
+    node.tls = Some(tls);
     let revoked = node.stop.clone();
     with_iroh_owned_listener_v1(
         carrier,
@@ -107,6 +140,8 @@ pub async fn run_self_owned_mailbox_on_endpoint_v1(
         stop,
         mailbox: Some(mailbox),
         max_connections: 2,
+        #[cfg(feature = "tls-transport")]
+        tls: None,
     }
     .on_endpoint(endpoint, activate, publish)
     .await
@@ -118,6 +153,8 @@ struct Node {
     stop: Arc<AtomicBool>,
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     max_connections: usize,
+    #[cfg(feature = "tls-transport")]
+    tls: Option<TlsMailboxListenerV1>,
 }
 
 impl Node {
@@ -162,6 +199,8 @@ impl Node {
             stop,
             mailbox,
             max_connections,
+            #[cfg(feature = "tls-transport")]
+            tls: None,
         })
     }
 
@@ -177,8 +216,16 @@ impl Node {
             stop,
             mailbox,
             max_connections,
+            #[cfg(feature = "tls-transport")]
+            tls,
         } = self;
-        if scope.uses_relays() {
+        #[cfg(feature = "tls-transport")]
+        let has_tls_listener = tls.is_some();
+        #[cfg(not(feature = "tls-transport"))]
+        let has_tls_listener = false;
+        // A bound TCP listener must not wait for a separate relay registration.
+        // The signed QUIC locator is a candidate, never proof that it is online.
+        if scope.uses_relays() && !has_tls_listener {
             tokio::time::timeout(Duration::from_secs(20), scope.online()).await??;
         }
         let mut endpoint = IrohServiceEndpointV1 {
@@ -189,8 +236,32 @@ impl Node {
             .checked_add(90_000)
             .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
         let host = activate(&endpoint, expires_ms)?;
-        let first = host.rotate_self_owned(&endpoint, now_ms()?, expires_ms)?;
+        #[cfg(feature = "tls-transport")]
+        let first = host.rotate_self_owned_with_tls_v1(
+            &endpoint,
+            tls.as_ref().map(TlsMailboxListenerV1::route),
+            now_ms()?,
+            expires_ms,
+        )?;
+        #[cfg(not(feature = "tls-transport"))]
+        let first = host.rotate_self_owned_with_tls_v1(&endpoint, None, now_ms()?, expires_ms)?;
         publish(&first)?;
+        let slots = Arc::new(tokio::sync::Semaphore::new(max_connections));
+        #[cfg(feature = "tls-transport")]
+        let extra_serving = async {
+            if let Some(tls) = &tls {
+                let service = mailbox
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("TLS mailbox missing"))?;
+                return tls
+                    .serve(&key, &clients, &host, service, slots.clone())
+                    .await;
+            }
+            std::future::pending::<Result<()>>().await
+        };
+        #[cfg(not(feature = "tls-transport"))]
+        let extra_serving = std::future::pending::<Result<()>>();
+        tokio::pin!(extra_serving);
         let generation = Arc::new(Mutex::new(Generation {
             store: Arc::new(Mutex::new(RendezvousStoreV1::new(
                 endpoint.instance,
@@ -245,10 +316,12 @@ impl Node {
                     host.check_route(endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
                 }
                 result = &mut sweeping => { result?; unreachable!("mailbox maintenance is continuous"); }
+                result = &mut extra_serving => { result?; anyhow::bail!("TLS mailbox listener ended"); }
                 Some(_) = active.next(), if !active.is_empty() => {}
                 accepted = &mut incoming, if active.len() < max_connections => {
                     incoming = Box::pin(scope.accept_inbound());
                     if let Ok(stream) = accepted {
+                        let Ok(permit) = slots.clone().try_acquire_owned() else { drop(stream); continue };
                         let host = host.clone();
                         let generation = generation.clone();
                         let key = &key;
@@ -259,6 +332,7 @@ impl Node {
                         let mailbox=mailbox.clone();
                         let transport = endpoint.address.endpoint_key;
                         active.push(async move {
+                            let _permit = permit;
                             let mut stream: CarrierStreamV1<'_> = stream.into();
                             loop {
                                 let admitted_at = Instant::now();

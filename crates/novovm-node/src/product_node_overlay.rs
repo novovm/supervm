@@ -441,6 +441,7 @@ mod tests {
             RelayTransportV1::Wss443 => format!("wss://{name}.example:443/novovm"),
             RelayTransportV1::Quic443 => format!("quic://{name}.example:443"),
             RelayTransportV1::IrohRendezvousV1 => panic!("not a legacy overlay fixture"),
+            RelayTransportV1::TlsTcpV1 => panic!("not a legacy overlay fixture"),
             RelayTransportV1::Udp => format!("udp://{name}.example:41030"),
         };
         sign_relay_record_v1(

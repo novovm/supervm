@@ -1,5 +1,16 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-15 signed TLS service routes (claim released):** NOVOCHAT session,
+input 0ccf3dbd, docs-only upstream c8edc570 retained. Existing signed node record,
+service book and node owner now support an optional TCP/TLS mailbox listener,
+with the same storage and combined connection budget. Four real node/route tests,
+four QUIC multiplex regressions, 14 TLS and six directory tests pass; strict lib
+Clippy and legacy Iroh binary check pass. Lease suite 49/50: original one-second
+deadline assertion fails again individually, retained unresolved. No finance or
+July rebuild changes; one node test fixture adds the exhaustive enum arm only.
+Windows protected TLS configuration and Android route selection remain unwired;
+no phone latency or CGNAT reachability claim. See production tracker.
+
 **2026-10-15 carrier-neutral mailbox dispatch (claim released):** NOVOCHAT session,
 input 8c06b87a. Existing NVMBOX06 selector/dispatcher and cross-carrier storage
 tests only; no new listener, protocol, account, financial or July-recovery work.

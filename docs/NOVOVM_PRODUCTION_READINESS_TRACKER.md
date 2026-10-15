@@ -3,6 +3,37 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-15 原自主节点接通签名 TLS 地址与共同信箱监听
+
+输入0ccf3dbd；提交前保留远端仅文档c8edc570。product_service_tls定义原签名
+节点记录内的可选TLS地址/原始公钥；新连接要求新鲜且完全匹配的地址，健康
+连接不因普通地址期限结束而断开，删除、换密钥及撤销仍拒绝。原加密历史、
+序号和回滚规则复用，正常声明更新保留TLS，明确停用时移除。旧纯Iroh记录
+继续有效；含新枚举的双地址记录需要升级客户端后才能发布，不能静默降级。
+
+product_rendezvous_owned::run_self_owned_node_with_tls_v1在同一Node owner中
+轮询原QUIC入口及借用的TcpListener；共用MailboxService、维护循环及总连接
+额度，不新增调度器或信箱。TLS沿既有NVMBOX06、原始公钥TLS1.3、exporter绑定
+及bound session处理请求。平台传入受保护的用途密钥；未把密钥写入地址记录。
+已有可用TLS监听不再等待独立Iroh Relay注册；签名QUIC地址仍只是候选而非在线
+证明。发现控制链仍需要Iroh，此轮不是纯TLS自主引导。
+
+mailbox_tls_node四项真实本机测试通过（14.07秒）：签名/过期/撤销/回滚，原
+节点TLS寄存→QUIC领取与确认，同一托管种子重启身份稳定，加密历史恢复后
+保留/移除地址，以及可选Relay不可达时TCP信箱仍工作。原mailbox_multiplex
+四项通过（122.13秒）；TLS14项通过（30.99秒）；directory六项通过。
+联合feature严格lib Clippy通过6.08秒；原iroh-only节点binary检查通过8.95秒。
+
+lease回归49通过1失败（114.67秒）：bootstrap_recovery_original_deadline_and_
+permission_prevent_dials的一秒耗时断言失败，原样单独复测1.19秒仍失败；
+没有放宽期限或将失败算通过，具体清理耗时仍待定位。本轮夹具初期类型、历史
+附加顺序和非法Relay端口失败修正后再测，产品验证保持。证据在忽略artifacts/
+tls-node-*.log、tls-route-*.log；不是全仓全绿、独立多节点或手机性能验收。
+
+Windows受保护策略的TLS配置与Android Application选路尚未接通，本轮未安装
+手机、重启正式节点或调整VPN。TCP监听不能自动突破CGNAT；当前约两秒旧链路
+样本未改善。后续接原平台owner配置及客户端有界通道，必须如实验证实际可达性。
+
 ## 2026-10-15 七月恢复现场：原生 socket 与同 owner 耐久签票/归档适配
 
 恢复现场fe89340b→本地643ecf57，祖先仍七月4f45526d；不是根main已切换。

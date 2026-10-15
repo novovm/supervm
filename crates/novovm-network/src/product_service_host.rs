@@ -27,6 +27,16 @@ pub struct ServiceLeaseHostV1 {
 }
 
 impl ServiceLeaseHostV1 {
+    pub fn check_continuous_tls_peer_v1(
+        &self,
+        endpoint: &TlsServiceEndpointV1,
+        now: u64,
+    ) -> Result<()> {
+        self.book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?
+            .check_continuous_tls_peer_v1(self.key.verifying_key().to_bytes(), endpoint, now)
+    }
     /// Local stable service identity supervision for the explicit V4 protocol.
     /// It issues no lease, updates no locator and does not bypass tombstones.
     pub fn check_continuous_peer_v4(&self, endpoint: [u8; 32], now: u64) -> Result<()> {
@@ -152,6 +162,38 @@ impl ServiceLeaseHostV1 {
             .book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?;
+        let entry = book
+            .entries
+            .get(&self.key.verifying_key().to_bytes())
+            .context("service revoked")?;
+        let tls = TlsServiceEndpointV1::from_record(&entry.current)?;
+        self.rotate_with_routes(&mut book, endpoint, tls.as_ref(), now, expires)
+    }
+
+    /// Explicit owner publication/removal of the optional TLS listener. This
+    /// signs the existing node record and commits through the same durable book.
+    pub fn rotate_self_owned_with_tls_v1(
+        &self,
+        endpoint: &IrohServiceEndpointV1,
+        tls: Option<&TlsServiceEndpointV1>,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        let mut book = self
+            .book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?;
+        self.rotate_with_routes(&mut book, endpoint, tls, now, expires)
+    }
+
+    fn rotate_with_routes(
+        &self,
+        book: &mut ServiceLeaseBookV1,
+        endpoint: &IrohServiceEndpointV1,
+        tls: Option<&TlsServiceEndpointV1>,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
         ensure!(book.is_self_owned(), "self-owned policy required");
         let pin = self.key.verifying_key().to_bytes();
         let entry = book.entries.get(&pin).context("service revoked")?;
@@ -162,10 +204,14 @@ impl ServiceLeaseHostV1 {
                 == endpoint.address.endpoint_key,
             "self-owned transport changed"
         );
+        let mut endpoints = vec![endpoint.endpoint()?];
+        if let Some(tls) = tls {
+            endpoints.push(tls.endpoint()?);
+        }
         let record = directory::sign_relay_record_v1(
             &self.key,
             entry.grant.record_id.clone(),
-            vec![endpoint.endpoint()?],
+            endpoints,
             now,
             expires,
             entry

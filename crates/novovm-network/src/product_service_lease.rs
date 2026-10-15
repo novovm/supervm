@@ -26,6 +26,10 @@ pub const MAX_SERVICE_LEASE_MS: u64 = 120_000;
 pub const MAX_BOOTSTRAP_LEASE_MS: u64 = 600_000;
 pub const MAX_SERVICE_LEASE_BYTES: usize = 8192;
 
+#[path = "product_service_tls.rs"]
+mod tls_endpoint;
+pub use tls_endpoint::TlsServiceEndpointV1;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IrohServiceEndpointV1 {
@@ -69,8 +73,23 @@ impl IrohServiceEndpointV1 {
         })
     }
     pub fn from_record(record: &PeerSignedRelayRecordV1) -> Result<Self> {
-        ensure!(record.endpoints.len() == 1, "one service endpoint required");
-        let endpoint = &record.endpoints[0];
+        ensure!(
+            (1..=2).contains(&record.endpoints.len()),
+            "service endpoint budget"
+        );
+        let mut routes = record
+            .endpoints
+            .iter()
+            .filter(|e| e.transport == RelayTransportV1::IrohRendezvousV1);
+        let endpoint = routes.next().context("Iroh service endpoint required")?;
+        ensure!(routes.next().is_none(), "duplicate Iroh service endpoint");
+        // Explicit extension: one optional raw-key TLS alternative. Unknown,
+        // duplicate or malformed alternatives reject the whole signed record.
+        let tls = TlsServiceEndpointV1::from_record(record)?;
+        ensure!(
+            record.endpoints.len() == 1 + usize::from(tls.is_some()),
+            "unsupported service alternative"
+        );
         ensure!(
             endpoint.transport == RelayTransportV1::IrohRendezvousV1 && endpoint.uri.len() <= 4096,
             "different service transport"

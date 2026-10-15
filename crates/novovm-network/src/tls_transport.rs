@@ -472,16 +472,36 @@ impl TlsScopeV1 {
         })
     }
     pub fn new(control: TlsControlV1) -> Result<Self> {
+        let mut seed = Zeroizing::new([0; 32]);
+        rand::rngs::OsRng
+            .try_fill_bytes(seed.as_mut())
+            .context("TLS key randomness unavailable")?;
+        Self::from_seed(control, seed)
+    }
+
+    /// A platform-owned service transport key, separate from wallet spending
+    /// and node signing keys. The platform supplies protected persistence.
+    #[cfg(feature = "iroh-transport")]
+    pub fn new_owned_continuous_v1(
+        seed: Zeroizing<[u8; 32]>,
+        authority: impl Fn() -> Result<()> + Send + Sync + 'static,
+    ) -> Result<Self> {
+        Self::from_seed(
+            TlsControlV1 {
+                deadline: None,
+                authority: Arc::new(authority),
+            },
+            seed,
+        )
+    }
+
+    fn from_seed(control: TlsControlV1, seed: Zeroizing<[u8; 32]>) -> Result<Self> {
         control.check()?;
         let admission = SCOPE_LIMIT
             .get_or_init(|| Arc::new(Semaphore::new(4)))
             .clone()
             .try_acquire_owned()
             .context("TLS scope capacity exhausted")?;
-        let mut seed = Zeroizing::new([0; 32]);
-        rand::rngs::OsRng
-            .try_fill_bytes(seed.as_mut())
-            .context("TLS key randomness unavailable")?;
         let key = Arc::new(SigningKey::from_bytes(&seed));
         let endpoint = key.verifying_key().to_bytes();
         let mut spki = ED25519_SPKI_PREFIX.to_vec();
