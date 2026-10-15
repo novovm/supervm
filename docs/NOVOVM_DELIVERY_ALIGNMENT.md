@@ -1,5 +1,15 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-16 continuous native carrier framing claim (active):** input ad2f9977,
+downstream9add600. Root owns iroh_transport/carrier_stream/native carrier IO and
+actual QUIC lifecycle tests; bounded TLS agent owns tls_transport counterpart
+and focused tests, review read-only. One root build slot. Add explicit native
+continuous framing to existing owners: idle first-byte wait, bounded complete
+frame IO, independent original mailbox request deadlines. No finite-scope upgrade,
+no per-fragment extension of business TTL, no new service protocol/scheduler,
+no signature/revocation bypass. Keep explicit signed native capability and actual
+mailbox runtime activation separate until wired; mainchain remains untouched.
+
 **2026-10-16 native receive reuse (integrated; claim released):** input17c9479c.
 Root owns existing profile counters, tests/evidence and the sole build/performance
 slot. Candidate registration measured only54–58ms/node, so no speculative cache.
