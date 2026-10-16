@@ -2,6 +2,20 @@
 use std::{collections::HashSet, fs::OpenOptions, io::Write, sync::Mutex,
           time::{Instant, SystemTime, UNIX_EPOCH}};
 
+// Same Linux CLOCK_MONOTONIC epoch as Python time.monotonic_ns(). Wall time is
+// diagnostic only: WSL clock adjustment must not become transaction latency.
+fn monotonic_ns() -> u128 {
+    #[repr(C)]
+    struct Timespec { seconds: std::ffi::c_long, nanos: std::ffi::c_long }
+    unsafe extern "C" {
+        fn clock_gettime(clock: std::ffi::c_int, output: *mut Timespec) -> std::ffi::c_int;
+    }
+    let mut value = Timespec { seconds: 0, nanos: 0 };
+    assert_eq!(unsafe { clock_gettime(1, &mut value) }, 0, "CLOCK_MONOTONIC unavailable");
+    assert!(value.seconds >= 0 && (0..1_000_000_000).contains(&value.nanos));
+    value.seconds as u128 * 1_000_000_000 + value.nanos as u128
+}
+
 pub struct FixedLoad {
     pub count: usize,
     state: Mutex<(std::fs::File, HashSet<String>)>,
@@ -37,6 +51,7 @@ impl FixedLoad {
             assert!(guard.1.insert(signature.clone()), "duplicate generated signature");
             assert!(guard.1.len() <= self.count, "fixed count exceeded");
             let row = serde_json::json!({"signature": signature,
+                "queue_attempt_monotonic_ns": monotonic_ns(),
                 "queue_attempt_elapsed_ns": self.start.elapsed().as_nanos(),
                 "queue_attempt_unix_ns": SystemTime::now().duration_since(UNIX_EPOCH)
                     .expect("clock").as_nanos(), "boundary": "before_client_queue"});

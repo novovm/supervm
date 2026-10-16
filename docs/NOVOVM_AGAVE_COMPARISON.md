@@ -39,6 +39,40 @@ Current finalized TPS comparison: NOT EXECUTED. No change to production policies
 
 ## Actual native TPU smoke (2026-10-16)
 
+### Concurrent finality timing (next checkpoint)
+
+`measure-agave-fixed-load.py` starts before the fixed-count producer and queries
+each signature on all four validators (bounded256/status request). Successful
+latency ends at the slowest finalized HTTP response; business failures are
+separate, unmatched signatures suppress TPS. This includes observer scheduling,
+not pure consensus time. Economics still requires the original block audit.
+Three timing unit tests plus five observer tests pass.
+
+The initial wall-time experiment in `four-validator-E3DJkC` detected a1.3127s
+wall/monotonic discrepancy; its timing numbers were suppressed despite32/32
+success and160000 lamports fees. A256-transaction preparation using an amount
+range of1e9 hit its30s generation deadline: upstream `choose_multiple` scans
+the range. This is a generator cost, not a validator capacity measurement.
+Both failures remain in the ignored run; no throughput is signed off.
+
+Producer timestamps and observer now both use Linux CLOCK_MONOTONIC on the
+same host; wall clock is diagnostic only. Updated release built successfully
+in1m03s; binary SHA256
+`a2e782d0320a1bde048f32166b140c89e0720cc5e7014af8904274cfe1a23f9b`.
+Actual run `four-validator-5GqLem` uses256 transactions,target100/s,batch1,
+two funded payers,amount range1..1000000,ordinary TPU QUIC, no parallel build.
+At common finalized slot46 the block audit found255 successes,0 failures,
+1275000 lamports fees and four-node receipt/conservation agreement. One exact
+submitted signature remained absent; successful generation is not delivery.
+Final timing report is retained as `timing.json` alongside `timed.jsonl`.
+At the90s observer deadline:255 successful,0 business failures,1 unconfirmed,
+no RPC observation errors. Successful-subset P95=27.774618459s,
+P99=27.841233342s; these are NOT whole-workload percentiles. TPS remains null.
+This low-supply, two-account test is not Solana's maximum throughput and cannot
+be compared to NOVOVM's65536-transaction workload. Next isolate the missing
+signature's queue/shutdown path before any high-load capacity claim.
+No matched NOVOVM capacity comparison or NOVOVM runtime change is claimed.
+
 ### Submission coverage checkpoint
 
 Fixed-count producer is now wired into the existing official generator via
