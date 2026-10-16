@@ -12349,3 +12349,26 @@ CI 已将该用例独立执行并启用 `--nocapture` 与 backtrace，原候选�
   regression: 13 PASS (`artifacts/l4-local-rpc-regression.log`).
 - This enables local L4 consumption; it does not prove Android adaptive routing
   or 300 ms delivery. No financial runtime or deployed node changed.
+
+## 2026-10-16: relay network-change backoff wake and redacted connect stages
+
+- Existing call chain remains Android Application network change -> persistent
+  Iroh owner -> Endpoint network_change -> RelayActor CheckConnection -> existing
+  ActiveRelayActor. The backoff loop previously did not read this ordinary inbox.
+  It now wakes for that event only; role updates do not shorten the timer and
+  subsequent failures retain exponential backoff. No protocol/identity/policy change.
+- Paused-time fault regression failed before correction (10s delay did not wake
+  within 100ms); relay actor suite 7 PASS after correction. Shared persistent
+  transport suite 11 PASS, including actual local QUIC, independent bindings,
+  network change, revocation, deadline, cancellation and OS resource cleanup.
+- connect_observed uses the original connect path and 30s continuous dial bound,
+  separating retained lookup, address readiness, QUIC handshake, stream setup and
+  local home-relay connection/backoff state. At most 32 relay state observations;
+  no endpoint address, key or remote error text. Observations grant no authority.
+- Historical Android 9.222s offer-to-carrier interval had no finer observations.
+  This defect is proved locally but is not yet established as its unique cause.
+  Mobile deployment/timing acceptance belongs to NOVOCHAT's current round.
+- Logs: NOVOCHAT/artifacts/relay-network-wake-{before,after}.log,
+  carrier-connect-stages-test.log and carrier-connect-persistent-regression.log.
+  Standalone vendor dependency lock is retained locally with evidence, not added
+  as a second product dependency graph. Current running laptop node is unchanged.

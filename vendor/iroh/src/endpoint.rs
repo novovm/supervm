@@ -1945,6 +1945,12 @@ impl RelayStatus {
         self.state.is_connected()
     }
 
+    /// Whether a failed local relay dial is currently waiting for retry backoff.
+    /// This is diagnostic only, not proof of peer reachability or retry authority.
+    pub fn is_backing_off(&self) -> bool {
+        matches!(self.state, RelayConnectionState::BackingOff { .. })
+    }
+
     /// Returns the most recent connection error.
     ///
     /// Returns `None` when the relay is connected, or when the endpoint has

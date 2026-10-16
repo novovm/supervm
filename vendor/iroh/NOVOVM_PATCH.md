@@ -67,3 +67,30 @@ Cargo tracks the general artifact collision class in
 https://github.com/rust-lang/cargo/issues/6313 . This incident is established by
 our actual linker map and endpoint regression, not by assuming that issue
 alone diagnoses all reactor errors. See the production tracker for validation.
+
+## Network-change wake during relay backoff (2026-10-16)
+
+`ActiveRelayActor::sleep_backoff` previously consumed only cancellation and
+priority route queries. `RelayActor::send_check_connection` sends the platform
+network-change event on the ordinary inbox, so a restored network could wait
+out the old network's remaining backoff (configured maximum 16 seconds).
+The existing actor now consumes that inbox during backoff: CheckConnection
+retries immediately; home-role changes do not shorten the delay. Subsequent
+failures retain the same exponential policy; normal dialing/connected
+authentication and identity verification are unchanged. No extra actor or
+retry timer is introduced.
+
+A paused-time regression fails before the patch: an injected network change
+does not wake a ten-second backoff within 100ms. It passes after the patch,
+including the check that a home-role update alone does not wake it. All seven
+relay actor tests pass, including reconnect, inactivity, priority lookup and
+cancelled close. This fixture proves a lifecycle defect, not the cause of any
+specific historical phone latency.
+
+`RelayStatus::is_backing_off` exposes a fixed local diagnostic state through
+the existing home-relay watcher. It conveys no peer reachability or authority.
+NOVOVM's existing connect method additionally supports bounded, redacted
+progress observations separating retained lookup, address resolution, QUIC
+handshake and stream setup. The original deadline, error classification and
+stream binding remain in effect. Home-relay readiness is not a claim about
+which route the peer connection selected.

@@ -28,6 +28,20 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Bounded, address-free connection progress. Observations never grant authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrohConnectProgressV1 {
+    Started,
+    Retained,
+    DialStarted,
+    AddressReady,
+    QuicReady,
+    StreamReady,
+    RelayUnavailable,
+    RelayConnected,
+    RelayBackoff,
+}
+
 pub const IROH_ALPN_V1: &[u8] = BOUND_TRANSPORT_ALPN_V1;
 pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
 /// Adapter-owned active connections, including outbound attempts and inbound
@@ -1115,12 +1129,27 @@ impl IrohScopeV1 {
     }
 
     pub async fn connect(&self, peer: &IrohAddressV1) -> Result<IrohStreamV1<'_>> {
+        self.connect_observed(peer, |_| {}).await
+    }
+
+    /// Same connection, deadline and validation as `connect`. The callback must
+    /// be nonblocking; no address, identity or remote error text is exposed.
+    pub async fn connect_observed(
+        &self,
+        peer: &IrohAddressV1,
+        observe: impl Fn(IrohConnectProgressV1) + Send + Sync,
+    ) -> Result<IrohStreamV1<'_>> {
+        use futures_util::StreamExt;
+        use iroh::Watcher;
+        use IrohConnectProgressV1::*;
+        observe(Started);
         ensure!(
             self.listener_budget.is_none(),
             "service listener cannot initiate connections"
         );
         let address = self.peer_address(peer)?;
         if let Some(stream) = self.retained(peer.endpoint_key, true).await? {
+            observe(Retained);
             return Ok(stream);
         }
         // Reserve before dialing: outbound work shares the same active budget
@@ -1130,7 +1159,47 @@ impl IrohScopeV1 {
             .clone()
             .try_acquire_owned()
             .context("carrier connection limit")?;
-        let connecting = self.endpoint.connect(address, IROH_ALPN_V1);
+        observe(DialStarted);
+        let connecting = async {
+            let pending = self
+                .endpoint
+                .connect_with_opts(address, IROH_ALPN_V1, Default::default())
+                .await?;
+            observe(AddressReady);
+            let connection = pending.await?;
+            observe(QuicReady);
+            Ok::<_, iroh::endpoint::ConnectError>(connection)
+        };
+        let connecting = async {
+            tokio::pin!(connecting);
+            let statuses = self.endpoint.home_relay_status().stream();
+            tokio::pin!(statuses);
+            let mut last = None;
+            let mut remaining = 32u8;
+            loop {
+                tokio::select! {
+                    biased;
+                    result = &mut connecting => break result,
+                    update = statuses.next(), if remaining > 0 => {
+                        let Some(update) = update else { remaining = 0; continue };
+                        // This is the local home-relay state, not evidence that
+                        // the peer route is available or that the dial used it.
+                        let state = if update.iter().any(|status| status.is_connected()) {
+                            RelayConnected
+                        } else if update.iter().any(|status| status.is_backing_off()) {
+                            RelayBackoff
+                        } else {
+                            RelayUnavailable
+                        };
+                        if last != Some(state) {
+                            observe(state);
+                            last = Some(state);
+                            remaining -= 1;
+                        }
+                    }
+                }
+            }
+        };
         let connection = if self.continuous_service {
             tokio::time::timeout(Duration::from_secs(30), connecting)
                 .await
@@ -1152,6 +1221,7 @@ impl IrohScopeV1 {
         )
         .await
         .context("carrier stream setup deadline")?
+        .inspect(|_| observe(StreamReady))
     }
 
     /// Accept a known TLS endpoint. Unknown endpoints are closed, never treated
@@ -2367,7 +2437,36 @@ mod tests {
                 Box::pin(async move {
                     client_tx.send(scope.address()?).unwrap();
                     let peer = server_rx.await?;
-                    let mut control_stream = scope.connect(&peer).await?;
+                    let progress = std::sync::Mutex::new(Vec::new());
+                    let mut control_stream = scope
+                        .connect_observed(&peer, |event| {
+                            progress.lock().unwrap().push(event);
+                        })
+                        .await?;
+                    let dial = progress
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .copied()
+                        .filter(|p| {
+                            !matches!(
+                                p,
+                                IrohConnectProgressV1::RelayUnavailable
+                                    | IrohConnectProgressV1::RelayConnected
+                                    | IrohConnectProgressV1::RelayBackoff
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        dial,
+                        vec![
+                            IrohConnectProgressV1::Started,
+                            IrohConnectProgressV1::DialStarted,
+                            IrohConnectProgressV1::AddressReady,
+                            IrohConnectProgressV1::QuicReady,
+                            IrohConnectProgressV1::StreamReady,
+                        ]
+                    );
                     let control_binding = control_stream.binding_material()?;
                     control_stream.write_frame(b"control").await?;
                     ensure!(

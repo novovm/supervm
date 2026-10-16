@@ -332,7 +332,9 @@ impl ActiveRelayActor {
             let last_failure = Some(Arc::new(RelayConnectionFailure::new(err)));
             self.my_relay.set_status(
                 &self.url,
-                RelayConnectionState::Disconnected { last_failure },
+                RelayConnectionState::Disconnected {
+                    last_failure: last_failure.clone(),
+                },
             );
             if !was_established {
                 // If dialing failed, or if the relay connection failed before we received a pong,
@@ -342,6 +344,8 @@ impl ActiveRelayActor {
                     break;
                 };
                 debug!("retry in {delay:?}");
+                self.my_relay
+                    .set_status(&self.url, RelayConnectionState::BackingOff { last_failure });
                 if !self.sleep_backoff(delay).await {
                     break;
                 }
@@ -362,6 +366,8 @@ impl ActiveRelayActor {
     /// disconnected relay cannot have an endpoint route) keeps that lookup from stalling
     /// for however long is left of this relay's own unrelated backoff.
     ///
+    /// A platform network-change notification wakes the retry on the new network.
+    /// Home-role changes and route queries do not shorten the delay.
     /// Returns `false` if the actor should shut down instead of retrying.
     async fn sleep_backoff(&mut self, delay: Duration) -> bool {
         let sleep = time::sleep(delay);
@@ -385,6 +391,19 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = &mut sleep => return true,
+                msg = self.inbox.recv() => {
+                    let Some(msg) = msg else { return false };
+                    match msg {
+                        // The platform has observed a different network. Retry
+                        // there now; later failures still use the original backoff.
+                        ActiveRelayMessage::CheckConnection { .. } => return true,
+                        ActiveRelayMessage::SetHomeRelay(is_home) => self.set_home_relay(is_home),
+                        #[cfg(test)]
+                        ActiveRelayMessage::GetLocalAddr(sender) => { sender.send(None).ok(); }
+                        #[cfg(test)]
+                        ActiveRelayMessage::PingServer(sender) => { drop(sender); }
+                    }
+                }
             }
         }
     }
@@ -976,6 +995,10 @@ pub(crate) enum RelayConnectionState {
     Disconnected {
         last_failure: Option<Arc<RelayConnectionFailure>>,
     },
+    /// Waiting before retrying a failed dial; exposed only as a diagnostic state.
+    BackingOff {
+        last_failure: Option<Arc<RelayConnectionFailure>>,
+    },
 }
 
 impl RelayConnectionState {
@@ -985,7 +1008,9 @@ impl RelayConnectionState {
 
     pub(crate) fn last_failure(&self) -> Option<&RelayConnectionFailure> {
         match self {
-            Self::Disconnected { last_failure } => last_failure.as_deref(),
+            Self::Disconnected { last_failure } | Self::BackingOff { last_failure } => {
+                last_failure.as_deref()
+            }
             _ => None,
         }
     }
@@ -995,7 +1020,8 @@ impl PartialEq for RelayConnectionState {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Connecting, Self::Connecting) | (Self::Connected, Self::Connected) => true,
-            (Self::Disconnected { last_failure: a }, Self::Disconnected { last_failure: b }) => {
+            (Self::Disconnected { last_failure: a }, Self::Disconnected { last_failure: b })
+            | (Self::BackingOff { last_failure: a }, Self::BackingOff { last_failure: b }) => {
                 match (a, b) {
                     (None, None) => true,
                     (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -1927,6 +1953,65 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_network_change_wakes_backoff() {
+        tokio::time::pause();
+        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
+        let url: RelayUrl = "https://relay.invalid".parse().unwrap();
+        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
+        let (inbox_tx, inbox_rx) = mpsc::channel(16);
+        let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
+        let (recv_datagram_tx, _recv_datagram_rx) = mpsc::channel(16);
+        let opts = ActiveRelayActorOptions {
+            url,
+            prio_inbox_: prio_inbox_rx,
+            inbox: inbox_rx,
+            relay_datagrams_send: send_datagram_rx,
+            relay_datagrams_recv: recv_datagram_tx,
+            connection_opts: RelayConnectionOptions {
+                secret_key,
+                dns_resolver: DnsResolver::new(),
+                proxy_url: None,
+                prefer_ipv6: Arc::new(AtomicBool::new(true)),
+                tls_config: CaTlsConfig::insecure_skip_verify()
+                    .client_config(default_provider())
+                    .expect("infallible"),
+                auth_token: None,
+            },
+            stop_token: CancellationToken::new(),
+            metrics: Default::default(),
+            my_relay: Default::default(),
+        };
+        let mut actor = ActiveRelayActor::new(opts);
+
+        let backoff = tokio::spawn(async move {
+            let retry = actor.sleep_backoff(Duration::from_secs(10)).await;
+            (actor, retry)
+        });
+        // An ordinary home-role update must not bypass the existing retry budget.
+        inbox_tx
+            .send(ActiveRelayMessage::SetHomeRelay(true))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(
+            !backoff.is_finished(),
+            "ordinary role update shortened backoff"
+        );
+        // A newly observed network invalidates the reason for waiting on the old one.
+        inbox_tx
+            .send(ActiveRelayMessage::CheckConnection { local_ips: vec![] })
+            .await
+            .unwrap();
+        let (actor, retry) = tokio::time::timeout(Duration::from_millis(100), backoff)
+            .await
+            .expect("network change waited for old network backoff")
+            .expect("actor panicked");
+        assert!(retry);
+        assert!(actor.is_home_relay);
     }
 
     #[tokio::test]
