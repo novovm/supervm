@@ -1,6 +1,6 @@
 --- a/src/generator/simple_transfers_generator.rs
 +++ b/src/generator/simple_transfers_generator.rs
-@@ -125,6 +125,14 @@
+@@ -125,5 +125,13 @@
  fn unique_random_numbers(count: usize, lamports_to_transfer: u64) -> Vec<u64> {
 +    if std::env::var_os("AGAVE_REFERENCE_SEQUENTIAL_AMOUNTS").is_some() {
 +        assert!(std::env::var_os("AGAVE_REFERENCE_COUNT").is_some());
@@ -14,4 +14,3 @@
          count as u64 <= lamports_to_transfer,
          "Not enough unique values in range: {count} > {lamports_to_transfer}"
      );
- 
