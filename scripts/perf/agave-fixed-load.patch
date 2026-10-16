@@ -20,7 +20,7 @@
          let payers = Arc::new(self.accounts.payers);
          let len_payers = payers.len();
          let mut index_payer: usize = 0;
-@@ -108,7 +114,15 @@
+@@ -108,7 +114,16 @@
          let start = Instant::now();
          let mut next_batch_at = self.target_tps.map(|_| start);
          loop {
@@ -29,6 +29,7 @@
 +                    result.expect("fixed load task failed");
 +                }
 +                reference.as_ref().unwrap().finish();
++                reference.as_ref().unwrap().settle(&self.transactions_senders).await;
 +                break;
 +            }
              if let Some(run_duration) = self.run_duration

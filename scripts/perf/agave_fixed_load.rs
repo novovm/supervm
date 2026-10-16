@@ -20,6 +20,7 @@ pub struct FixedLoad {
     pub count: usize,
     state: Mutex<(std::fs::File, HashSet<String>)>,
     start: Instant,
+    retry_bytes: Mutex<Vec<Vec<u8>>>,
 }
 
 impl FixedLoad {
@@ -35,6 +36,7 @@ impl FixedLoad {
                     .expect("new manifest path required; never overwrite evidence");
                 Some(std::sync::Arc::new(Self {
                     count, state: Mutex::new((file, HashSet::new())), start: Instant::now(),
+                    retry_bytes: Mutex::new(Vec::new()),
                 }))
             }
             _ => panic!("COUNT and MANIFEST must be supplied together"),
@@ -43,6 +45,13 @@ impl FixedLoad {
 
     // Captured immediately before existing queue submission, NOT network delivery.
     pub fn record(&self, batch: &[Vec<u8>]) {
+        if std::env::var_os("AGAVE_REFERENCE_RETRY").is_some() {
+            let mut cache = self.retry_bytes.lock().expect("retry cache");
+            let bytes: usize = cache.iter().map(Vec::len).sum::<usize>()
+                + batch.iter().map(Vec::len).sum::<usize>();
+            assert!(bytes <= 64 * 1024 * 1024, "reference retry cache exceeds 64 MiB");
+            cache.extend_from_slice(batch);
+        }
         let mut guard = self.state.lock().expect("manifest lock");
         for bytes in batch {
             let tx: solana_transaction::versioned::VersionedTransaction =
@@ -66,5 +75,60 @@ impl FixedLoad {
             .expect("completion marker");
         guard.0.flush().expect("manifest flush");
         guard.0.sync_all().expect("manifest sync");
+    }
+
+    pub async fn settle(&self, senders: &[tokio::sync::mpsc::Sender<
+        solana_tpu_client_next::transaction_batch::TransactionBatch>]) {
+        if std::env::var_os("AGAVE_REFERENCE_RETRY").is_none() { return; }
+        let bytes = self.retry_bytes.lock().expect("retry cache").clone();
+        let signatures: Vec<_> = bytes.iter().map(|bytes| {
+            let tx: solana_transaction::versioned::VersionedTransaction =
+                wincode::deserialize(bytes).expect("retry decode");
+            tx.signatures[0]
+        }).collect();
+        let clients: Vec<_> = [18899, 18999, 19099, 19199].into_iter().map(|port|
+            solana_rpc_client::nonblocking::rpc_client::RpcClient::new_with_timeout(
+                format!("http://127.0.0.1:{port}"), std::time::Duration::from_secs(2))).collect();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut retries = vec![0u8; bytes.len()];
+        // Original sender handles stay alive while this bounded operation runs.
+        let operation = async {
+            loop {
+                let mut all_final = true;
+                let mut missing = vec![false; bytes.len()];
+                for client in &clients {
+                    for (chunk_index, chunk) in signatures.chunks(256).enumerate() {
+                        match client.get_signature_statuses(chunk).await {
+                            Ok(response) => {
+                                assert_eq!(response.value.len(), chunk.len());
+                                for (index, status) in response.value.iter().enumerate() {
+                                    match status {
+                                        None => { missing[chunk_index * 256 + index] = true; all_final = false; }
+                                        Some(status) => all_final &= status.satisfies_commitment(
+                                            solana_commitment_config::CommitmentConfig::finalized()),
+                                    }
+                                }
+                            }
+                            Err(error) => { all_final = false; log::warn!("reference retry observation: {error}"); }
+                        }
+                    }
+                }
+                if all_final { break; }
+                for (index, absent) in missing.into_iter().enumerate() {
+                    if absent && retries[index] < 8 {
+                        senders[index % senders.len()].send(
+                            solana_tpu_client_next::transaction_batch::TransactionBatch::new(
+                                vec![bytes[index].clone()])).await.expect("retry queue closed");
+                        retries[index] += 1;
+                        log::info!("reference_retry signature={} attempt={}", signatures[index], retries[index]);
+                    }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        };
+        assert!(tokio::time::timeout_at(deadline, operation).await.is_ok(),
+                "reference completion deadline; keep original manifest as incomplete evidence");
+        log::info!("reference_retry completed unique={} retransmissions={}",
+            signatures.len(), retries.iter().map(|v| usize::from(*v)).sum::<usize>());
     }
 }

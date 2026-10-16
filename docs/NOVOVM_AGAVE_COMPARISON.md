@@ -39,6 +39,35 @@ Current finalized TPS comparison: NOT EXECUTED. No change to production policies
 
 ## Actual native TPU smoke (2026-10-16)
 
+### Exact-byte bounded retry closure
+
+Pinned connection_worker.rs260-299 explicitly reconnects WITHOUT resending
+the failed transaction batch. This establishes a transport contract limitation,
+not the proven cause of a historical missing signature. Optional
+`AGAVE_REFERENCE_RETRY=1` now retains at most64MiB of original signed bytes,
+keeps the existing generator sender handles alive, observes all four local
+validators, and resubmits through the SAME TPU queues when a status is absent.
+At most8 retries per signature,1s intervals,60s overall completion deadline;
+no re-signing, RPC submission, validator change or new transport. Status absence
+may just be propagation lag: retry counts are not packet-loss counts. Original
+manifest and first-submit timestamps remain unchanged. Mode is a reference
+fixture option, not NOVOVM product behavior or an upstream Agave patch.
+
+Actual `four-validator-ORo39N`:256 unique transfers,target100/s,batch1,two payers,
+range1..1000000,queue trace OFF, no competing build. All256 finalized on four
+nodes,0 business failures,0 missing,45 exact-byte retransmissions,1280000 lamport
+fees; independent block audit confirms receipt equality and balance conservation.
+Common slot68/hash `H4oMQMbNByPVfJGXAKUyT7KFcaX1bto6Xc9JzMHmMaRB`.
+Elapsed31.473661185s; finite-window8.133785 successful tx/s, P95/P99
+29.244413057/29.344047636s. These include low-rate supply and finality drain;
+NOT capacity, NOT comparable with the65536 NOVOVM workload. All original records
+remain in that ignored run (`retry.jsonl`, `client.log`, `timing.json`).
+Release build passed25.25s; binary SHA256
+`4943719d46ef2dd6822cd180b655a2b7433aef687aab96bfc8a2c5fddbb9afe1`.
+Eight Python regression tests pass. Owned validators stopped after audit.
+Historical253/255 failures remain recorded; this one success does not prove
+which previous packets failed or sign off sustained reliable capacity.
+
 ### Bounded queue diagnosis
 
 The previous missing signature was zero-based index31/256, not the tail. No
