@@ -1,0 +1,43 @@
+--- a/src/backpressured_broadcaster.rs
++++ b/src/backpressured_broadcaster.rs
+@@ -27,6 +27,8 @@
+ /// to all peers, canceling the others as soon as one accepts them.
+ pub struct BackpressuredBroadcaster;
+ 
++include!(concat!(env!("NOVOVM_AGAVE_ADAPTER_ROOT"), "/scripts/perf/agave_queue_trace.rs"));
++
+ #[async_trait]
+ impl WorkersBroadcaster for BackpressuredBroadcaster {
+     async fn send_to_workers(
+@@ -37,6 +39,7 @@
+     ) -> Result<(), ConnectionWorkersSchedulerError> {
+         // this part is taken from NonblockingBroadcaster with modification of
+         // counting successful try_send.
++        reference_queue_trace(&transaction_batch, "scheduler_received");
+         let mut num_delivered: usize = 0;
+         for new_leader in leaders {
+             if !workers.contains(new_leader) {
+@@ -62,6 +65,7 @@
+         }
+ 
+         if num_delivered != 0 {
++            reference_queue_trace(&transaction_batch, "worker_enqueued");
+             // If we managed to enqueue with at least one worker it is good
+             // enough. See doc comment for the [`BackpressuredBroadcaster`]
+             // definition.
+@@ -80,6 +84,7 @@
+                 .await;
+             match send_res {
+                 Ok(()) => {
++                    reference_queue_trace(&transaction_batch, "worker_enqueued_after_wait");
+                     // Delivery to a single leader is enough.
+                     return Ok(());
+                 }
+@@ -105,6 +110,7 @@
+         // could retry faster. They still need to rely on checks later in the
+         // processing chain, but a faster retry could improve latency for cases
+         // when the leaders are overloaded.
++        reference_queue_trace(&transaction_batch, "no_worker_accepted");
+         Ok(())
+     }
+ }

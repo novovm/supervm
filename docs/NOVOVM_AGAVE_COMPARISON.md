@@ -39,6 +39,34 @@ Current finalized TPS comparison: NOT EXECUTED. No change to production policies
 
 ## Actual native TPU smoke (2026-10-16)
 
+### Bounded queue diagnosis
+
+The previous missing signature was zero-based index31/256, not the tail. No
+per-signature old queue trace exists, so its cause cannot be reconstructed.
+Optional `AGAVE_REFERENCE_QUEUE_TRACE=1` now records scheduler receipt and
+worker enqueue/no-worker-accepted on the ORIGINAL broadcaster; it changes no
+routing, retries, quorum or validator code. Do not enable it for formal TPS.
+Reproducible source patch: `scripts/perf/agave-queue-trace.patch`. Release build
+passed25.86s; binary SHA256
+`4efc87a82e9b17c1677df25f46f3febd31f7b3a9db366b6f0027a12512ebe9c3`.
+
+Actual diagnostic run `four-validator-NZCNkf`: same256/count100/s/batch1/two
+payers. All256 signatures reached scheduler and worker enqueue,0 no-worker
+acceptance failures. At90s:253 four-node finalized successes,0 business
+failures,3 unconfirmed,0 observation errors. TPS remains null; successful-subset
+P95/P99=30.233594/30.292812s are not whole-workload latency or capacity evidence.
+Raw client.log, trace.jsonl and timing.json remain in the ignored run. Eight
+Python regression tests pass. Owned validators stopped after observation.
+
+Pinned scheduler exits on producer channel close, then WorkersCache::shutdown
+cancels outstanding sends (scheduler245-250,302; workers_cache314-316). This
+is a source-level teardown risk, NOT proof of the missing signatures' cause.
+The new trace narrows the current missing subset to AFTER worker enqueue;
+enqueue is not QUIC delivery or validator acceptance. Further comparison needs
+a bounded transport-completion/retry contract and must count the original exact
+signatures, not freshly signed replacements. Do not turn this fixture diagnosis
+into a Solana consensus rewrite or claim NOVOVM superiority from incomplete load.
+
 ### Concurrent finality timing (next checkpoint)
 
 `measure-agave-fixed-load.py` starts before the fixed-count producer and queries
