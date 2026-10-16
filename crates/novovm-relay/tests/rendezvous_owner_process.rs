@@ -377,6 +377,99 @@ async fn owned_exchange(
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn self_owned_process_unavailable_relay_keeps_direct_listener_across_startup_and_rotation(
+) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(90), async {
+        // Occupy the approved HTTPS port without accepting or serving TLS. This
+        // is a real, persistently unavailable relay, not a fake online response.
+        // Fail explicitly if another service owns the port; never change that
+        // service or relax the production relay URL/certificate policy.
+        let _unavailable_relay = std::net::TcpListener::bind("127.0.0.1:443")
+            .context("unavailable-relay fixture requires unused loopback TCP 443")?;
+        let fixture = Fixture::new()?;
+        fixture.owned_config()?;
+        let config_path = fixture.0.join("owned.json");
+        let mut input: serde_json::Value = serde_json::from_slice(&std::fs::read(&config_path)?)?;
+        input["relays"] = serde_json::json!(["https://127.0.0.1/"]);
+        std::fs::write(&config_path, serde_json::to_vec(&input)?)?;
+
+        let mut owner = fixture.launch_owned("--provision-self-owned")?;
+        let pid = owner.0.id();
+        // The existing eight-second publication bound also verifies that an
+        // unavailable relay cannot delay the usable localhost listener by 20s.
+        let first = fixture.owned_record(0).await?;
+        validate_relay_record_v1(&first, now_ms()?)?;
+        let published_at = tokio::time::Instant::now();
+        let endpoint = IrohServiceEndpointV1::from_record(&first)?;
+        ensure!(!endpoint.address.direct.is_empty(), "direct route missing");
+        ensure!(
+            endpoint
+                .address
+                .direct
+                .iter()
+                .all(|address| address.ip().is_loopback()),
+            "fixture advertised a non-loopback direct route"
+        );
+        let keys = std::fs::read(fixture.0.join("keys.dpapi"))?;
+        let mut history = ServiceLeaseBookV1::new_self_owned(
+            SelfOwnedTrustV1 {
+                version: 1,
+                node_pins: [first.relay_public_key].into(),
+            },
+            vec![first.clone()],
+            now_ms()?,
+        )?;
+        history = owned_exchange(&first, history)
+            .await
+            .context("direct discovery while relay startup is unavailable")?;
+
+        tokio::time::sleep_until(published_at + Duration::from_secs(21)).await;
+        ensure!(owner.0.try_wait()?.is_none(), "owner exited after 20s");
+        ensure!(owner.0.id() == pid, "owner process changed");
+        history = owned_exchange(&first, history)
+            .await
+            .context("direct discovery beyond the old relay startup deadline")?;
+
+        tokio::time::sleep_until(published_at + Duration::from_secs(61)).await;
+        ensure!(owner.0.try_wait()?.is_none(), "owner exited at rotation");
+        ensure!(owner.0.id() == pid, "owner process changed at rotation");
+        let rotated = fixture.owned_record(first.sequence).await?;
+        validate_relay_record_v1(&rotated, now_ms()?)?;
+        let next = IrohServiceEndpointV1::from_record(&rotated)?;
+        ensure!(
+            rotated.relay_public_key == first.relay_public_key
+                && next.address.endpoint_key == endpoint.address.endpoint_key,
+            "node or endpoint identity changed during relay outage"
+        );
+        ensure!(
+            next.address.direct == endpoint.address.direct,
+            "direct listener rebound during relay outage"
+        );
+        ensure!(
+            next.instance != endpoint.instance && rotated.sequence > first.sequence,
+            "same listener did not publish its next signed instance"
+        );
+        ensure!(
+            keys == std::fs::read(fixture.0.join("keys.dpapi"))?,
+            "protected node identity changed"
+        );
+        // Keep using the original cached locator. The existing exchange obtains
+        // and verifies a fresh signed offer, then performs real Put/Get/Ack and
+        // duplicate-Ack rejection against the next instance on the same node.
+        owned_exchange(&first, history)
+            .await
+            .context("direct discovery across signed instance rotation")?;
+        ensure!(
+            owner.0.try_wait()?.is_none(),
+            "owner stopped after exchange"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("unavailable-relay owner process fixture exceeded 90 seconds")?
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn self_owned_process_migrates_without_publisher_keeps_listener_across_instances_and_restarts(
 ) -> Result<()> {
     let fixture = Fixture::new()?;

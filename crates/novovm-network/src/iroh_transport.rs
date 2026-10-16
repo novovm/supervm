@@ -1061,8 +1061,11 @@ impl IrohScopeV1 {
 
     pub fn address(&self) -> Result<IrohAddressV1> {
         self.control.check()?;
-        let address = self.endpoint.addr();
-        Ok(IrohAddressV1 {
+        Ok(self.filtered_address(self.endpoint.addr()))
+    }
+
+    fn filtered_address(&self, address: EndpointAddr) -> IrohAddressV1 {
+        IrohAddressV1 {
             endpoint_key: *address.id.as_bytes(),
             direct: if self.relay_only {
                 Vec::new()
@@ -1074,7 +1077,42 @@ impl IrohScopeV1 {
                 .take(4)
                 .map(ToString::to_string)
                 .collect(),
-        })
+        }
+    }
+
+    /// LAN service need not wait for a WAN relay. Without a local candidate or
+    /// another already-bound service listener, wait for a real relay handshake:
+    /// a selected relay URL alone does not prove connectivity. The original
+    /// scope supervisor retains cancellation/deadline ownership.
+    pub(crate) async fn available_address(
+        &self,
+        has_other_listener: bool,
+    ) -> Result<IrohAddressV1> {
+        use iroh::Watcher;
+        let mut addresses = self.endpoint.watch_addr();
+        let online = async {
+            if self.relays.is_empty() {
+                std::future::pending::<()>().await;
+            }
+            self.endpoint.online().await;
+        };
+        tokio::pin!(online);
+        let mut relay_online = false;
+        loop {
+            self.control.check()?;
+            let address = self.filtered_address(addresses.get());
+            if !address.direct.is_empty()
+                || (!address.relays.is_empty() && (has_other_listener || relay_online))
+            {
+                return Ok(address);
+            }
+            tokio::select! {
+                biased;
+                _ = self.endpoint.closed() => anyhow::bail!("carrier endpoint closed"),
+                () = &mut online, if !relay_online => { relay_online = true; }
+                update = addresses.updated() => { update.context("carrier address observation ended")?; }
+            }
+        }
     }
 
     pub async fn online(&self) -> Result<()> {
@@ -3102,51 +3140,59 @@ mod tests {
     #[tokio::test]
     async fn relay_only_online_wait_is_revoked_and_releases_its_endpoint_admission() {
         let _permit = SERIAL.acquire().await.unwrap();
-        let revoked = Arc::new(AtomicBool::new(false));
-        let check_revoked = revoked.clone();
-        let gate = IrohControlV1::new(Instant::now() + Duration::from_secs(5), move || {
-            ensure!(
-                !check_revoked.load(Ordering::Acquire),
-                "relay scope revoked"
-            );
-            Ok(())
-        })
-        .unwrap();
-        let dropped = Arc::new(AtomicBool::new(false));
-        struct DropMarker(Arc<AtomicBool>);
-        impl Drop for DropMarker {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::Release);
-            }
-        }
-        let marker = DropMarker(dropped.clone());
-        let (ready, started) = oneshot::channel();
-        let operation = with_iroh_scope_v1(local_relay_only_config(), gate, move |scope| {
-            Box::pin(async move {
-                let _marker = marker;
-                assert!(scope.endpoint.bound_sockets().is_empty());
-                ready.send(()).unwrap();
-                scope.online().await
+        // Keep the original public online() cancellation regression, and also
+        // verify the listener's candidate/handshake wait under the same owner.
+        for wait_for_address in [false, true] {
+            let revoked = Arc::new(AtomicBool::new(false));
+            let check_revoked = revoked.clone();
+            let gate = IrohControlV1::new(Instant::now() + Duration::from_secs(5), move || {
+                ensure!(
+                    !check_revoked.load(Ordering::Acquire),
+                    "relay scope revoked"
+                );
+                Ok(())
             })
-        });
-        let trigger = async {
-            started.await.unwrap();
-            // Give the real online future a poll; no server is required on the
-            // loopback relay. Revocation must interrupt the entire owner.
-            tokio::task::yield_now().await;
-            revoked.store(true, Ordering::Release);
-        };
-        let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
-            tokio::join!(operation, trigger)
-        })
-        .await
-        .expect("relay-only online wait ignored revocation");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("relay scope revoked"));
-        assert!(dropped.load(Ordering::Acquire));
-        assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 4);
+            .unwrap();
+            let dropped = Arc::new(AtomicBool::new(false));
+            struct DropMarker(Arc<AtomicBool>);
+            impl Drop for DropMarker {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Release);
+                }
+            }
+            let marker = DropMarker(dropped.clone());
+            let (ready, started) = oneshot::channel();
+            let operation = with_iroh_scope_v1(local_relay_only_config(), gate, move |scope| {
+                Box::pin(async move {
+                    let _marker = marker;
+                    assert!(scope.endpoint.bound_sockets().is_empty());
+                    ready.send(()).unwrap();
+                    if wait_for_address {
+                        scope.available_address(false).await.map(|_| ())
+                    } else {
+                        scope.online().await
+                    }
+                })
+            });
+            let trigger = async {
+                started.await.unwrap();
+                // Give the real online future a poll; no server is required on the
+                // loopback relay. Revocation must interrupt the entire owner.
+                tokio::task::yield_now().await;
+                revoked.store(true, Ordering::Release);
+            };
+            let (result, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::join!(operation, trigger)
+            })
+            .await
+            .expect("relay-only online wait ignored revocation");
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("relay scope revoked"));
+            assert!(dropped.load(Ordering::Acquire));
+            assert_eq!(ENDPOINT_LIMIT.get().unwrap().available_permits(), 4);
+        }
     }
 
     #[test]

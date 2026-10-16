@@ -349,17 +349,15 @@ impl Node {
             tls,
         } = self;
         #[cfg(feature = "tls-transport")]
-        let has_tls_listener = tls.is_some();
+        let has_other_listener = native.is_some() || tls.is_some();
         #[cfg(not(feature = "tls-transport"))]
-        let has_tls_listener = false;
-        // A bound TCP listener must not wait for a separate relay registration.
-        // The signed QUIC locator is a candidate, never proof that it is online.
-        if scope.uses_relays() && !has_tls_listener && native.is_none() {
-            tokio::time::timeout(Duration::from_secs(20), scope.online()).await??;
-        }
+        let has_other_listener = native.is_some();
+        // Relay unavailability is not an owner failure. A local candidate can
+        // already accept authenticated LAN peers; the same endpoint maintains
+        // its relay connection in parallel. No fabricated/empty route is signed.
         let mut endpoint = IrohServiceEndpointV1 {
             instance: rand::random(),
-            address: scope.address()?,
+            address: scope.available_address(has_other_listener).await?,
         };
         let expires_ms = now_ms()?
             .checked_add(90_000)
@@ -450,7 +448,15 @@ impl Node {
                         // startup snapshot would preserve stale NAT/interface
                         // candidates forever. Read the SAME endpoint here; the
                         // host below still rejects a changed transport identity.
-                        endpoint.address = scope.address()?;
+                        let address = scope.address()?;
+                        if address.direct.is_empty() && address.relays.is_empty() {
+                            // Keep the listener, signer and durable custody alive
+                            // while no interface is usable. Do not re-sign stale
+                            // addresses or extend old locator/request lifetimes.
+                            host.check_route(endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
+                            continue;
+                        }
+                        endpoint.address = address;
                         endpoint.instance = rand::random();
                         let expiry = now_ms()?.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
                         let next = Arc::new(Mutex::new(RendezvousStoreV1::new(endpoint.instance, now + Duration::from_secs(90))?));

@@ -27,6 +27,145 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+// Fixed vocabulary only: never serialize an anyhow message, address, path,
+// identity or configuration. Context attaches at the actual owner boundary.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FailureStage {
+    StatusWrite,
+    MailboxOpen,
+    CarrierSetup,
+    NativeBind,
+    #[cfg(feature = "tls-transport")]
+    TlsBind,
+    Activate,
+    Publish,
+    TransportRun,
+}
+impl std::fmt::Display for FailureStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "owner stage {self:?}")
+    }
+}
+fn stage_result<T>(result: Result<T>, stage: FailureStage) -> Result<T> {
+    result.map_err(|error| {
+        if error.downcast_ref::<FailureStage>().is_some() {
+            error
+        } else {
+            error.context(stage)
+        }
+    })
+}
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FailureKind {
+    Io,
+    Timeout,
+    Encoding,
+    Other,
+}
+#[derive(Serialize)]
+struct FailureEvidence {
+    stage: FailureStage,
+    kind: FailureKind,
+    #[serde(rename = "ioKind", skip_serializing_if = "Option::is_none")]
+    io_kind: Option<&'static str>,
+    #[serde(rename = "snapshotWriteFailed")]
+    snapshot_write_failed: bool,
+}
+impl FailureEvidence {
+    fn from_error(error: &anyhow::Error) -> Self {
+        // anyhow preserves typed contexts through outer transport wrappers.
+        let stage = error
+            .downcast_ref::<FailureStage>()
+            .copied()
+            .unwrap_or(FailureStage::TransportRun);
+        let io = error.downcast_ref::<std::io::Error>();
+        let kind = if io.is_some() {
+            FailureKind::Io
+        } else if error
+            .downcast_ref::<tokio::time::error::Elapsed>()
+            .is_some()
+        {
+            FailureKind::Timeout
+        } else if error.downcast_ref::<serde_json::Error>().is_some() {
+            FailureKind::Encoding
+        } else {
+            FailureKind::Other
+        };
+        let io_kind = io.map(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => "not_found",
+            std::io::ErrorKind::PermissionDenied => "permission_denied",
+            std::io::ErrorKind::AddrInUse => "address_in_use",
+            std::io::ErrorKind::AddrNotAvailable => "address_unavailable",
+            std::io::ErrorKind::TimedOut => "timed_out",
+            std::io::ErrorKind::WouldBlock => "would_block",
+            std::io::ErrorKind::Interrupted => "interrupted",
+            std::io::ErrorKind::InvalidData => "invalid_data",
+            std::io::ErrorKind::WriteZero => "write_zero",
+            std::io::ErrorKind::UnexpectedEof => "unexpected_eof",
+            _ => "other",
+        });
+        Self {
+            stage,
+            kind,
+            io_kind,
+            snapshot_write_failed: false,
+        }
+    }
+}
+#[derive(Debug)]
+struct EvidenceWriteFailed;
+impl std::fmt::Display for EvidenceWriteFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("owner failure evidence could not be fully persisted")
+    }
+}
+// Created only from an opened owner. Keeps its exclusive file lock alive through
+// both snapshots, including after run_inner consumes the owner. No new writer.
+struct RunEvidence {
+    root: PathBuf,
+    _lock: Arc<File>,
+}
+impl RunEvidence {
+    fn finish(&self, result: Result<()>) -> Result<()> {
+        let mut result = result;
+        let failure = result.as_ref().err().map(FailureEvidence::from_error);
+        let snapshot = serde_json::json!({
+            "version": 2,
+            "phase": if result.is_ok() { "stopped" } else { "failed_closed" },
+            "anonymous": false,
+            "failure": failure,
+        });
+        let written = atomic(
+            &self.root.join("status.json"),
+            snapshot.to_string().as_bytes(),
+        );
+        let snapshot_failed = written.is_err();
+        if result.is_ok() {
+            result = written.context(FailureStage::StatusWrite);
+        }
+        if let Err(error) = result {
+            let mut evidence = FailureEvidence::from_error(&error);
+            evidence.snapshot_write_failed = snapshot_failed;
+            // One bounded record survives later starts/serving/stops. It is
+            // diagnostic only, never an input to identity or service authority.
+            let saved = atomic(
+                &self.root.join("last-failure.json"),
+                serde_json::json!({"version": 1, "failure": evidence})
+                    .to_string()
+                    .as_bytes(),
+            );
+            return Err(if snapshot_failed || saved.is_err() {
+                error.context(EvidenceWriteFailed)
+            } else {
+                error
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -416,20 +555,20 @@ impl Owner {
         // Only the lock holder writes runtime status. A failed second start
         // must not overwrite the live owner's status; failed binding must not
         // leave an earlier process's "serving" snapshot behind.
-        let root = self.policy.config.root.clone();
-        let _status_lock = self._lock.clone();
-        atomic(
-            &root.join("status.json"),
+        let evidence = RunEvidence {
+            root: self.policy.config.root.clone(),
+            _lock: self._lock.clone(),
+        };
+        let started = atomic(
+            &evidence.root.join("status.json"),
             br#"{"version":2,"phase":"starting","anonymous":false}"#,
-        )?;
-        let result = self.run_inner(stop).await;
-        atomic(
-            &root.join("status.json"),
-            &serde_json::to_vec(
-                &serde_json::json!({"version":2,"phase":if result.is_ok() {"stopped"} else {"failed_closed"},"anonymous":false}),
-            )?,
-        )?;
-        result
+        )
+        .context(FailureStage::StatusWrite);
+        let result = match started {
+            Ok(()) => self.run_inner(stop).await,
+            Err(error) => Err(error),
+        };
+        evidence.finish(result)
     }
 
     fn activate_book(
@@ -533,30 +672,35 @@ impl Owner {
         let publish_root = config.root.clone();
         let mailbox_path = config.root.join("mailbox.sqlite");
         let mailbox_started = config.root.join("mailbox.started");
-        check_path(&mailbox_path)?;
-        if mailbox_started.try_exists()? {
-            ensure!(mailbox_path.is_file(), "missing enrolled mailbox storage");
-        } else {
-            ensure!(!mailbox_path.try_exists()?, "unrecognized mailbox storage");
-            create(&mailbox_started, b"NOVONET shared mailbox v1")?;
-        }
-        let mailbox = Arc::new(
-            novovm_network::mailbox_rpc::MailboxServiceV1::new(
-                novovm_network::mailbox_store::MailboxStore::open(
-                    &mailbox_path,
-                    Default::default(),
-                )?,
-                key.clone(),
-            )
-            // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
-            // conservative mobile default (2 requests/s for the entire node) makes
-            // those lanes queue behind one another even on healthy connections.
-            // This remains one shared budget; reconnecting cannot replenish it.
-            // Keep storage, byte quotas and connection bounds unchanged.
-            .with_continuous_request_rate_v4(64, 32)?,
-        );
+        let mailbox = (|| -> Result<_> {
+            check_path(&mailbox_path)?;
+            if mailbox_started.try_exists()? {
+                ensure!(mailbox_path.is_file(), "missing enrolled mailbox storage");
+            } else {
+                ensure!(!mailbox_path.try_exists()?, "unrecognized mailbox storage");
+                create(&mailbox_started, b"NOVONET shared mailbox v1")?;
+            }
+            let mailbox = Arc::new(
+                novovm_network::mailbox_rpc::MailboxServiceV1::new(
+                    novovm_network::mailbox_store::MailboxStore::open(
+                        &mailbox_path,
+                        Default::default(),
+                    )?,
+                    key.clone(),
+                )
+                // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
+                // conservative mobile default (2 requests/s for the entire node) makes
+                // those lanes queue behind one another even on healthy connections.
+                // This remains one shared budget; reconnecting cannot replenish it.
+                // Keep storage, byte quotas and connection bounds unchanged.
+                .with_continuous_request_rate_v4(64, 32)?,
+            );
+            Ok(mailbox)
+        })()
+        .context(FailureStage::MailboxOpen)?;
         let mailbox_status = mailbox.clone();
         let publish = move |record: &novovm_network::product_directory::PeerSignedRelayRecordV1| {
+            (|| -> Result<()> {
             atomic(
                 &publish_root.join("self-owned-record.json"),
                 &serde_json::to_vec(record)?,
@@ -567,40 +711,56 @@ impl Owner {
                     &serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if native_selected {"native"} else if relay_only {"relay-only"} else {"automatic"},"mailboxTimings":mailbox_status.timing_snapshot_v1()}),
                 )?,
             )
+            })().context(FailureStage::Publish)
         };
         if let Some(settings) = native_settings {
             let listener = novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_with_wire_budget(
                 settings.listen, settings.advertised, key.clone(), stop.clone(),
                 settings.max_connections, settings.max_bytes_per_minute,
-            )?;
-            return novovm_network::product_rendezvous_owned::run_self_owned_native_mailbox_v7(
-                listener,
-                key,
-                stop,
-                mailbox,
-                move |endpoint, expires| {
-                    let mut book = self.activate_book(vec![endpoint.endpoint()?], expires)?;
-                    book.check_native_mailbox_route_v7(self.policy.node_pin, endpoint, now_ms()?)?;
-                    Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
-                },
-                publish,
-            )
-            .await;
+            ).context(FailureStage::NativeBind)?;
+            let result =
+                novovm_network::product_rendezvous_owned::run_self_owned_native_mailbox_v7(
+                    listener,
+                    key,
+                    stop,
+                    mailbox,
+                    move |endpoint, expires| {
+                        (|| -> Result<_> {
+                            let mut book =
+                                self.activate_book(vec![endpoint.endpoint()?], expires)?;
+                            book.check_native_mailbox_route_v7(
+                                self.policy.node_pin,
+                                endpoint,
+                                now_ms()?,
+                            )?;
+                            Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
+                        })()
+                        .context(FailureStage::Activate)
+                    },
+                    publish,
+                )
+                .await;
+            return stage_result(result, FailureStage::TransportRun);
         }
-        let mut carrier = IrohConfigV1::new(&config.relays, config.nameserver)?
-            .with_owned_service_identity(self.transport.clone())?;
-        if let Some(bind) = config.bind_address {
-            carrier = carrier.with_bind_address(bind)?;
-        }
-        if relay_only {
-            carrier = carrier.with_relay_only()?;
-        }
+        let carrier = (|| -> Result<_> {
+            let mut carrier = IrohConfigV1::new(&config.relays, config.nameserver)?
+                .with_owned_service_identity(self.transport.clone())?;
+            if let Some(bind) = config.bind_address {
+                carrier = carrier.with_bind_address(bind)?;
+            }
+            if relay_only {
+                carrier = carrier.with_relay_only()?;
+            }
+            Ok(carrier)
+        })()
+        .context(FailureStage::CarrierSetup)?;
         #[cfg(feature = "tls-transport")]
         let tls = if let Some(settings) = &self.policy.tls_listener {
             let mut seed = Zeroizing::new([0u8; 32]);
             hkdf::Hkdf::<sha2::Sha256>::new(Some(&self.policy.node_pin), self.transport.as_ref())
                 .expand(b"NOVOVM/self-owned/TLS-transport/v1", seed.as_mut())
-                .map_err(|_| anyhow::anyhow!("TLS key derivation failed"))?;
+                .map_err(|_| anyhow::anyhow!("TLS key derivation failed"))
+                .context(FailureStage::CarrierSetup)?;
             Some(
                 novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind_with_capacity(
                     settings.listen,
@@ -609,7 +769,8 @@ impl Owner {
                     stop.clone(),
                     settings.max_connections,
                 )
-                .await?,
+                .await
+                .context(FailureStage::TlsBind)?,
             )
         } else {
             None
@@ -617,14 +778,17 @@ impl Owner {
         let activate =
             move |endpoint: &novovm_network::product_service_lease::IrohServiceEndpointV1,
                   expires| {
-                let mut book = self.activate_book(vec![endpoint.endpoint()?], expires)?;
-                book.check_route(
-                    self.policy.node_pin,
-                    endpoint.address.endpoint_key,
-                    endpoint.instance,
-                    now_ms()?,
-                )?;
-                Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
+                (|| -> Result<_> {
+                    let mut book = self.activate_book(vec![endpoint.endpoint()?], expires)?;
+                    book.check_route(
+                        self.policy.node_pin,
+                        endpoint.address.endpoint_key,
+                        endpoint.instance,
+                        now_ms()?,
+                    )?;
+                    Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
+                })()
+                .context(FailureStage::Activate)
             };
         #[cfg(feature = "tls-transport")]
         let result = if let Some(tls) = tls {
@@ -662,7 +826,7 @@ impl Owner {
             publish,
         )
         .await;
-        result
+        stage_result(result, FailureStage::TransportRun)
     }
 }
 fn relay_only(policy: &Policy) -> bool {
@@ -797,6 +961,153 @@ mod tests {
             max_connections: 4,
             max_bytes_per_minute: 64 * 1024 * 1024,
         }
+    }
+
+    #[test]
+    fn failure_evidence_keeps_typed_first_boundary_without_private_error_text() -> Result<()> {
+        let error = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "private-path-and-identity",
+        ))
+        .context(FailureStage::Publish);
+        let error = stage_result::<()>(Err(error), FailureStage::TransportRun).unwrap_err();
+        let evidence = FailureEvidence::from_error(&error);
+        assert_eq!(evidence.stage, FailureStage::Publish);
+        assert_eq!(evidence.kind, FailureKind::Io);
+        assert_eq!(evidence.io_kind, Some("permission_denied"));
+        let encoded = serde_json::to_string(&evidence)?;
+        assert!(!encoded.contains("private-path"));
+        // A similar-looking message is not promoted to an IO or timeout class.
+        let untyped = FailureEvidence::from_error(&anyhow::anyhow!("permission denied timeout"));
+        assert_eq!(untyped.kind, FailureKind::Other);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn mailbox_start_failure_is_retained_and_duplicate_start_cannot_overwrite_it(
+    ) -> Result<()> {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let root = &fixture.0.root;
+        // Real incompatible local storage fails before any network is opened.
+        std::fs::create_dir(root.join("mailbox.sqlite"))?;
+        owner
+            .run(Arc::new(AtomicBool::new(false)))
+            .await
+            .unwrap_err();
+        let bytes = std::fs::read(root.join("last-failure.json"))?;
+        let failure: serde_json::Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(failure["failure"]["stage"], "mailbox_open");
+        let status: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("status.json"))?)?;
+        assert_eq!(status["phase"], "failed_closed");
+        assert_eq!(status["failure"], failure["failure"]);
+        let reopened = fixture.open()?;
+        let status_before = std::fs::read(root.join("status.json"))?;
+        assert!(fixture.open().is_err());
+        assert_eq!(std::fs::read(root.join("status.json"))?, status_before);
+        assert_eq!(std::fs::read(root.join("last-failure.json"))?, bytes);
+        // Successful later lifecycle reporting does not erase the last failure.
+        let evidence = RunEvidence {
+            root: root.clone(),
+            _lock: reopened._lock.clone(),
+        };
+        atomic(
+            &root.join("status.json"),
+            br#"{"version":2,"phase":"starting"}"#,
+        )?;
+        evidence.finish(Ok(()))?;
+        assert_eq!(std::fs::read(root.join("last-failure.json"))?, bytes);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn occupied_native_listener_reports_binding_without_changing_identity_or_journal(
+    ) -> Result<()> {
+        let fixture = Fixture::new()?;
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        let mut listener = settings();
+        listener.listen = socket.local_addr()?;
+        listener.advertised = socket.local_addr()?;
+        fixture.provision()?.set_native_listener(Some(listener))?;
+        let root = &fixture.0.root;
+        let baseline = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"]
+            .map(|name| std::fs::read(root.join(name)).unwrap());
+        let error = fixture
+            .open()?
+            .run(Arc::new(AtomicBool::new(false)))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<FailureStage>(),
+            Some(&FailureStage::NativeBind)
+        );
+        let bytes = std::fs::read(root.join("last-failure.json"))?;
+        assert!(
+            bytes.len() < 512,
+            "one fixed-size diagnostic, not an error log"
+        );
+        let failure: serde_json::Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(failure["failure"]["kind"], "io");
+        assert_eq!(failure["failure"]["ioKind"], "address_in_use");
+        for (name, expected) in ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"]
+            .iter()
+            .zip(baseline)
+        {
+            assert_eq!(std::fs::read(root.join(name))?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn failed_status_write_does_not_replace_original_runtime_failure() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let root = &fixture.0.root;
+        std::fs::create_dir(root.join("status.json"))?;
+        let evidence = RunEvidence {
+            root: root.clone(),
+            _lock: owner._lock.clone(),
+        };
+        let original = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "private-listener-address",
+        ))
+        .context(FailureStage::NativeBind);
+        let returned = evidence.finish(Err(original)).unwrap_err();
+        assert!(returned.downcast_ref::<EvidenceWriteFailed>().is_some());
+        assert_eq!(
+            returned.downcast_ref::<FailureStage>(),
+            Some(&FailureStage::NativeBind)
+        );
+        assert_eq!(
+            returned.downcast_ref::<std::io::Error>().unwrap().kind(),
+            std::io::ErrorKind::AddrInUse
+        );
+        let bytes = std::fs::read(root.join("last-failure.json"))?;
+        let saved: serde_json::Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(saved["failure"]["stage"], "native_bind");
+        assert_eq!(saved["failure"]["snapshotWriteFailed"], true);
+        assert!(!String::from_utf8(bytes)?.contains("private-listener"));
+        // The lock outlives Owner consumption and still excludes a second writer.
+        drop(owner);
+        assert!(fixture.open().is_err());
+        drop(evidence);
+        drop(fixture.open()?);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn typed_timeout_is_not_reported_as_an_io_or_rejection() -> Result<()> {
+        let elapsed = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+            .await
+            .unwrap_err();
+        let evidence = FailureEvidence::from_error(
+            &anyhow::Error::new(elapsed).context(FailureStage::TransportRun),
+        );
+        assert_eq!(evidence.kind, FailureKind::Timeout);
+        assert_eq!(evidence.io_kind, None);
+        Ok(())
     }
 
     #[test]

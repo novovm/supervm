@@ -3,6 +3,53 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-17 NOVOCHAT 节点启动可用性与退出首错（当前修复）
+
+输入7643b062，认领aabaebed。只修改既有 Iroh/self-owned owner 运行链，
+不涉及主链、AOEM、账户、经济规则或手机安装。此前现场节点的意外退出
+只留下failed_closed，不能追溯认定其原因。本轮另行复现一个确定缺口：
+原安装release程序在隔离DPAPI目录、不可用loopback Relay及有效localhost
+直连配置下，22.797秒后exit1/failed_closed，未发布节点声明。
+
+`Node::serve -> IrohScopeV1::available_address` 现在允许实际本地候选先服务；
+纯Relay路径等待真实握手，选中的Relay URL不等于在线。原scope负责取消与
+期限，不新增端点、定时器、调度器或重启循环。已有TLS/native监听沿用免等
+Relay握手规则，复合声明仍须非空Iroh候选，未声称完全独立启动。更新时无
+候选则暂缓发布，原check_route及请求期限不变，不重签旧地址延长TTL。
+
+Windows Owner持原独占锁记录固定stage/kind/ioKind，单份last-failure.json
+跨后续正常启动保留；不写原始异常文本、地址、私钥或聊天内容。状态写失败
+不替换原运行错误。Owner::open及Tokio runtime创建失败仍在本片之外；
+计划任务配置的三次重启不等于本机自动恢复已通过，未增加无限重启包装。
+
+已通过：owner定向9项；真实进程不可用Relay回归1项（68.93秒），在启动、
+21秒、61秒完成签名发现与Put/Get/Ack、重复Ack拒绝，同PID/端点/托管身份
+跨声明更新。该项证明Relay失联不阻塞本地服务，不证明公网Relay恢复。
+旧程序复现保留于artifacts/node-availability-before/result.json。
+取消回归1项（原online与新listener等待两分支，0.68秒）、来源/身份/撤销/
+期限回归50项（161.38秒）通过。首次仅启用tls-transport的网络测试命令
+匹配0项，已纠正为iroh-transport,tls-transport，不将0项当通过。
+严格Clippy通过（40.82秒）、release构建通过（7分04秒）、定向格式及diff
+检查通过。新二进制SHA-256：
+`633727e36f8d3b38d88dcd19c2454d1b081e102d7eca6c526acae7cb928038c1`。
+已通过原用户计划任务安装，新PID25320，停旧节点至新serving观察4.009秒；
+keys.dpapi、self-owned-policy.dpapi摘要及节点签名公钥不变，journal沿原历史
+续写，声明sequence26891→26893→26897，原目录、VPN和手机APK不变。
+
+两台原v22 Android在Wi-Fi/蜂窝下自动恢复L3会话（从停旧节点算23.946/
+27.002秒），并各用普通输入框发送一条9283/9284，双方屏幕均显示且各有
+设备持久回执。L4 prepare→持久回执1.869/1.820秒，不是点击至屏幕/P95。
+Wi-Fi L3观察为direct，蜂窝L3及双方L4仍经过外部Iroh Relay；不称自主传输。
+180秒观察64个设备样本无采样错误，两端PID不变，结束时L3=1/L4=1且
+L4SendReady=true。Wi-Fi任务1、蜂窝任务5在该窗口内持续，未出现first_failure。
+构建前曾观察蜂窝attempt1，更新采样开始前已为5，过渡日志未保留，不把整个
+构建期间算作单任务连续性通过；该变化原因待定位。此前现场退出根因仍未确认。
+
+本机证据：SUPERVM artifacts/node-availability-{installed,final}.json；
+NOVOCHAT artifacts/node-availability-phone-{observe,summary}.json及final手机
+截图/状态、9283/9284防重复发送记录。不是长期运行、OS崩溃自动重启、全断网
+恢复、完全自主或匿名网络验收；保留已有用户登录计划任务，不改变启动身份。
+
 ## 2026-10-16 返回主链：原生 CPU／完整代数后端同条件复测
 
 输入 main 1ec5b0d8；不再扩大 Agave 对照。本轮无产品代码变更，复用冻结

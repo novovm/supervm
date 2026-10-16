@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-17 NOVOCHAT-machine node availability claim (in progress):** input7643b062.
+**2026-10-17 NOVOCHAT-machine node availability (validated; claim released):** input7643b062.
 Current installed self-owned L3 previously exited with only failed_closed;
 the original cause is not established. Root owns the existing
 product_rendezvous_owned/Iroh startup path and focused real-process validation,
@@ -12,6 +12,16 @@ network protocol, approval policy, task or relaxed authentication. Preserve
 unexpected storage/identity/revocation failures as terminal and observable.
 No mainchain, AOEM, consensus, economics or phone UI edits. Windows scheduled
 recovery is not assumed to work merely because three restarts are configured.
+
+Old installed release reproduced exit1/failed_closed after22.797s with a
+blackholed loopback relay and usable local bind. Same-endpoint availability fix
+passes real-process signed discovery/Put/Get/Ack at startup,21s and61s (68.93s).
+Owner9, cancellation1(two waits), authority50 and strictClippy pass; release
+633727e3… installed through the existing user task, identity/policy unchanged.
+Two unchanged v22 phones delivered new bidirectional messages and recoveredL3
+automatically. L3 reauthentication23.946/27.002s is not a latency improvement;
+external Iroh Relay remains. Cellular attempt1→5 happened before update sampling,
+cause unobserved; do not claim whole-build continuous-task acceptance. See tracker.
 
 **2026-10-16 ACK-bound projection implementation (validated; claim released):** input4cabc9a8.
 Root owns rpc projection wiring, final integration and the sole build/perf slot;
