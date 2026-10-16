@@ -20,7 +20,7 @@ use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
 use crate::native_pipeline::ingress::wire::{decode_transfer_view_v3, TransferView};
 use crate::native_pipeline::persistence::io::IoTicket;
-use crate::native_pipeline::persistence::packet::ReceiptView;
+use crate::native_pipeline::persistence::packet::{ReceiptProjection, ReceiptView};
 use crate::native_pipeline::pipeline::AdmissionInput;
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
@@ -190,6 +190,8 @@ pub struct RpcLifecycle {
     receipts: BTreeMap<Hash, ReceiptState>,
     recent: VecDeque<Hash>,
     indexed_height: u64,
+    warm_projection_blocks: u64,
+    archive_projection_blocks: u64,
     archive: Option<ArchiveRead>,
     offer: Option<(Position, Arc<Message>)>,
     offered: Option<Position>,
@@ -228,6 +230,8 @@ impl RpcLifecycle {
             receipts: BTreeMap::new(),
             recent: VecDeque::new(),
             indexed_height: 0,
+            warm_projection_blocks: 0,
+            archive_projection_blocks: 0,
             archive: None,
             offer: None,
             offered: None,
@@ -377,7 +381,13 @@ impl RpcLifecycle {
         if self.indexed_height >= head.height {
             return Ok(());
         }
-        if self.archive.is_none() {
+        // Only the next exact, locally acknowledged published head is eligible.
+        // Never abandon an in-flight archive read (including its error) for a
+        // cache hit. Cold/history/missed-slot paths retain the full validator.
+        let warm = self.archive.is_none()
+            && self.indexed_height.checked_add(1) == Some(head.height)
+            && self.node.controller.published_packet(head).is_some();
+        if !warm && self.archive.is_none() {
             self.archive = Some(ArchiveRead::new(
                 self.indexed_height + 1,
                 head,
@@ -385,12 +395,49 @@ impl RpcLifecycle {
                 self.node.validators.clone(),
             )?);
         }
-        let Some(block) = self.archive.as_mut().unwrap().poll(&self.node.pipeline)? else {
-            return Ok(());
+        let block = if warm {
+            None
+        } else {
+            let Some(block) = self.archive.as_mut().unwrap().poll(&self.node.pipeline)? else {
+                return Ok(());
+            };
+            Some(block.context("decided block missing during RPC projection")?)
         };
-        let block = block.context("decided block missing during RPC projection")?;
-        for index in 0..block.stored().receipt_bytes().len() {
-            let receipt = block.stored().receipt_view(index)?;
+        let point = block.as_ref().map_or(head, |block| block.point());
+        let count = match &block {
+            Some(block) => block.stored().receipt_bytes().len(),
+            None => self
+                .node
+                .controller
+                .published_packet(head)
+                .context("published projection lost exact head")?
+                .receipt_projection()
+                .len(),
+        };
+        for index in 0..count {
+            // Copy one fixed-size view, not a full packet/document/vector. No
+            // business recomputation, persistence or signing capability here.
+            let receipt = match &block {
+                Some(block) => {
+                    let receipt = block.stored().receipt_view(index)?;
+                    ReceiptProjection {
+                        tx_hash: receipt.tx_hash,
+                        signer_identity: receipt.signer_identity,
+                        nonce_after: receipt.nonce_after,
+                        success: receipt.success,
+                        charged_fee: receipt
+                            .charged_fee
+                            .parse()
+                            .context("invalid archived fee width")?,
+                    }
+                }
+                None => self
+                    .node
+                    .controller
+                    .published_packet(head)
+                    .context("published projection lost exact head")?
+                    .receipt_projection()[index],
+            };
             ensure!(
                 self.nonces.contains_key(&receipt.signer_identity)
                     || self.nonces.len() < MAX_SIGNERS,
@@ -410,12 +457,9 @@ impl RpcLifecycle {
                 ReceiptState::Finalized {
                     success: receipt.success,
                     nonce_after: receipt.nonce_after,
-                    charged_fee: receipt
-                        .charged_fee
-                        .parse()
-                        .context("invalid archived fee width")?,
-                    height: block.point().height,
-                    block_hash: block.point().block_hash,
+                    charged_fee: receipt.charged_fee,
+                    height: point.height,
+                    block_hash: point.block_hash,
                 },
             );
             self.recent.push_back(hash);
@@ -450,7 +494,12 @@ impl RpcLifecycle {
             .retain(|hash| self.pending.contains_key(hash));
         self.gossip_queued
             .retain(|hash| self.pending.contains_key(hash));
-        self.indexed_height = block.point().height;
+        self.indexed_height = point.height;
+        if warm {
+            self.warm_projection_blocks = self.warm_projection_blocks.saturating_add(1);
+        } else {
+            self.archive_projection_blocks = self.archive_projection_blocks.saturating_add(1);
+        }
         self.archive = None;
         Ok(())
     }
@@ -656,6 +705,8 @@ impl RpcLifecycle {
             "local_proposer":core.is_local_leader().ok(),"recovery_in_progress":core.is_recovering(),
             "pending":self.pending.len(),"pending_bytes":self.pending_bytes,
             "rpc_indexed_height":self.indexed_height,"projection_error":self.projection_error,
+            "warm_projection_blocks":self.warm_projection_blocks,
+            "archive_projection_blocks":self.archive_projection_blocks,
             "executed_batches":core.executed(),"durable_decisions":core.head().map_or(0,|h|h.height),
             "execution_failures":core.rejected_execution(),"execution_backend":backend,
             "execution_integer_rows_total":core.integer_execution().0,

@@ -19,6 +19,8 @@ use std::collections::VecDeque;
 
 #[path = "native_lifecycle_integration.rs"]
 mod lifecycle;
+#[path = "published_projection_integration.rs"]
+mod published_projection;
 #[path = "progress_split_integration.rs"]
 mod split;
 #[path = "native_successor_integration.rs"]

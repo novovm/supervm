@@ -149,6 +149,15 @@ impl NativeLifecycle {
     pub fn executed(&self) -> u64 {
         self.bodies.executed
     }
+    pub(crate) fn published_packet(
+        &self,
+        expected: super::statement::ParentPoint,
+    ) -> Option<&crate::native_pipeline::persistence::PreparedCandidate> {
+        if self.is_frozen() {
+            return None;
+        }
+        self.progress.published_packet(expected)
+    }
     pub fn rejected_execution(&self) -> u64 {
         self.bodies.rejected_execution
     }

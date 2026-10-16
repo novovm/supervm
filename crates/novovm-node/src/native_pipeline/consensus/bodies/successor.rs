@@ -175,7 +175,11 @@ impl CandidateBodies {
                 parent,
                 // Repeated signer entries intentionally keep the LAST actual
                 // receipt nonce; failure need not mean unchanged nonce.
-                nonce_after: packet.receipt_nonces().iter().copied().collect(),
+                nonce_after: packet
+                    .receipt_projection()
+                    .iter()
+                    .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
+                    .collect(),
             }));
         }
         Ok(None)

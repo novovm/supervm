@@ -38,6 +38,13 @@ struct Candidate {
     candidate: DurableCandidate,
     local_round: Option<u64>,
 }
+// A disposable read-only view of THIS owner's acknowledged publication. Not
+// another head, archive, signing capability or replay cache. At most one slot.
+struct PublishedCandidate {
+    point: ParentPoint,
+    candidate: DurableCandidate,
+    charge: usize,
+}
 struct Offered {
     proposal: VerifiedProposal,
     valid: Option<VerifiedQuorum>,
@@ -63,6 +70,7 @@ pub struct RoundProgress {
     pacemaker: Pacemaker,
     candidates: BTreeMap<Hash, Candidate>,
     candidate_bytes: usize,
+    published: Option<PublishedCandidate>,
     offers: BTreeMap<(Hash, bool), Offered>,
     // Native object completion is acknowledged once. An authenticated future
     // proposal must survive a pending local round ACK, not rely on repeating
@@ -118,6 +126,7 @@ impl RoundProgress {
             limits,
             candidates: BTreeMap::new(),
             candidate_bytes: 0,
+            published: None,
             offers: BTreeMap::new(),
             future_offers: BTreeMap::new(),
             proposed_round: None,
@@ -142,6 +151,23 @@ impl RoundProgress {
     }
     pub fn head(&self) -> Option<ParentPoint> {
         self.journal.head()
+    }
+    /// Available only after this owner's actual Decision ACK. Cold opening,
+    /// remote evidence and speculative execution never populate this view.
+    /// A miss uses the original checked ArchiveRead path, not relaxed finality.
+    pub(crate) fn published_packet(
+        &self,
+        expected: ParentPoint,
+    ) -> Option<&crate::native_pipeline::persistence::PreparedCandidate> {
+        if self.is_frozen() || self.recovering || self.journal.head() != Some(expected) {
+            return None;
+        }
+        self.published
+            .as_ref()
+            .filter(|p| p.point == expected)?
+            .candidate
+            .bind_to(&self.owner)
+            .ok()
     }
     pub fn round(&self) -> u64 {
         self.journal.round()
@@ -246,6 +272,20 @@ impl RoundProgress {
                     .saturating_sub(self.candidate_bytes)
         {
             return Ok(false);
+        }
+        // This optional query view may never take capacity from consensus.
+        // Account its full packet conservatively even while sharing the Arc.
+        if self.published.as_ref().is_some_and(|p| {
+            self.candidates.len().saturating_add(2) > self.limits.candidates
+                || bytes.checked_add(p.charge).is_none_or(|charge| {
+                    charge
+                        > self
+                            .limits
+                            .candidate_bytes
+                            .saturating_sub(self.candidate_bytes)
+                })
+        }) {
+            self.published = None;
         }
         self.candidates.insert(
             value,
@@ -382,11 +422,15 @@ impl RoundProgress {
             return Ok(());
         }
         let context = self.context();
+        let parent = self.parent();
         let round = self.round();
         // A QC may arrive while a round transition is waiting for its ACK.
         // Capture it before that ACK retires the old collector buckets.
         self.pin_decisions()?;
         if let Some(message) = self.journal.poll(pipeline)? {
+            if let Some(DurableMessage::Decision { proposal, .. }) = &message {
+                self.retain_published(proposal, context, parent)?;
+            }
             if self.context() != context {
                 self.collector.reset_context(self.context(), self.round())?;
                 self.candidates.clear();
@@ -452,6 +496,66 @@ impl RoundProgress {
         self.receive(self.journal.local_validator(), &message)?;
         ensure!(self.outbox.is_none(), "unconsumed durable outbox");
         self.outbox = Some(message);
+        Ok(())
+    }
+    // Called ONLY by the actual journal.poll ACK branch above, never emit,
+    // receive, replay, registration, or candidate persistence completion.
+    fn retain_published(
+        &mut self,
+        proposal: &super::wire::Proposal,
+        context: VoteContext,
+        parent: ParentPoint,
+    ) -> Result<()> {
+        self.published = None;
+        ensure!(
+            !self.recovering,
+            "publication ACK during unresolved recovery"
+        );
+        ensure!(proposal.context == context, "publication context mismatch");
+        let candidate = &self
+            .candidates
+            .get(&proposal.value)
+            .context("acknowledged publication lost its local candidate")?
+            .candidate;
+        let packet = candidate.bind_to(&self.owner)?;
+        let statement = CandidatePipeline::checked_statement(
+            candidate,
+            &self.owner,
+            context,
+            &self.domain.validators,
+            &parent,
+        )?;
+        let expected = ParentPoint {
+            height: context.height,
+            block_hash: statement.hash(),
+            state_root: packet.state_root(),
+            receipt_batch_commitment: packet.receipt_batch_commitment(),
+            state_version: statement.state_version(),
+            decision_hash: super::chain::decision_id(&context, statement.hash()),
+        };
+        ensure!(
+            statement.hash() == proposal.value && self.journal.head() == Some(expected),
+            "publication ACK differs from exact owner-bound executed candidate"
+        );
+        let Some(charge) = packet
+            .retained_bytes()
+            .checked_add(std::mem::size_of::<PublishedCandidate>())
+        else {
+            return Ok(());
+        };
+        if self.candidates.len() < self.limits.candidates
+            && charge
+                <= self
+                    .limits
+                    .candidate_bytes
+                    .saturating_sub(self.candidate_bytes)
+        {
+            self.published = Some(PublishedCandidate {
+                point: expected,
+                candidate: candidate.clone(),
+                charge,
+            });
+        }
         Ok(())
     }
     fn materialize(&mut self, message: DurableMessage) -> Result<Message> {
