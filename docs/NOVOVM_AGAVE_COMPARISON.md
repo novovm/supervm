@@ -36,3 +36,29 @@ shared recipient, and dependent same-account transfers separately. Match hardwar
 resource budget, native ingress, success accounting, sustained supply and recovery;
 document protocol finality differences rather than pretending identical semantics.
 Current finalized TPS comparison: NOT EXECUTED. No change to production policies.
+
+## Four-process preparation (2026-10-16)
+
+- Isolated build initially failed to find `libudev.h`; the extracted dependency
+  was present. Added its include directory via `CPATH`, without modifying Agave
+  source or Cargo.lock. Rebuild is still in progress; no binary success claim.
+- `scripts/perf/run-agave-four-validator-reference.sh` creates fresh keys and a
+  shared development genesis with four equal bootstrap stakes and BLS keys.
+  It starts four independent, loopback-bound validators for a bounded window,
+  terminates only its own children and retains all logs/ledgers. Bash syntax
+  checks passed; actual startup has NOT YET been executed. This minimal genesis
+  is not a claim of full official demo program coverage. Do not reuse its fresh
+  genesis leader-start flag for recovery of existing validators.
+- Before load: verify four expected vote identities with equal nonzero active
+  stake, identical genesis hash, increasing finalized slots and an identical
+  blockhash at a common non-skipped finalized slot. Four running processes or
+  four gossip identities alone are insufficient.
+- Official wrapper's external `solana-transaction-bench` is pinned at 0.1.0;
+  downloaded crate SHA256:
+  `9ab43a2e638a761a854954f3b579d19702a6d72da45dbd3ccc9fa31ede64d997`.
+  Its reported `successfully_sent` is transport-worker accounting, NOT unique
+  successful finalized transactions. Do not use it as the comparison numerator.
+  Per-signature successful finalization and economic checks remain outstanding.
+- Reference RPC is loopback observation/configuration only; it does not change
+  the NOVOVM native-only product policy. No NOVOVM/AOEM runtime code was changed
+  by this preparation. No new TPS result or production readiness is claimed.
