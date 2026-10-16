@@ -1,0 +1,30 @@
+{
+  "scope": "local_four_process_finality_and_one_rpc_transfer_not_tps",
+  "source_commit": "825efd18292aff6ffcf9daa0f7612f21b3531a72",
+  "validator_sha256": "d8b30cd730811392941423d36952d584d666c55b287349b736237d32b244a09b",
+  "genesis_binary_sha256": "2778cb3a8769f56b3d7a98abb6d9ed1bd79a77923b88176963a9a66e28678c07",
+  "local_run": "target/reference-agave/v4.3.0/four-validator-QCHYsu",
+  "validator_pids": [47462, 47464, 47901, 47903],
+  "rpc_ports": [18899, 18999, 19099, 19199],
+  "genesis_hash": "1mN8mc3Ag6zwnBacTbCYcpFUCQLfApyPhePfpUx7Cev",
+  "equal_active_stake_lamports": 999997717120,
+  "first_finalized_slots": [41, 41, 41, 41],
+  "second_finalized_slots": [47, 47, 47, 47],
+  "common_finalized_slot": 47,
+  "common_blockhash": "2NwnzkVBjmPgsfuTZUQ45FrEKC2HP1JzCEyJP4tzQRiJ",
+  "transfer": {
+    "signature": "3FNfsSHt4G8BuU8bDafJNaSEfsRpCU1AUHMSWg4FDb81rLDZAY7U45ao2zfW9hVfLMzuXthn4U9ZQsCtcy6Crqrr",
+    "observed_on_all_four_finalized": true,
+    "slot": 110,
+    "err": null,
+    "fee_lamports": 5000,
+    "pre_balances": [100000000000000, 0, 1],
+    "post_balances": [99998999995000, 1000000000, 1],
+    "ingress": "RPC: CLI accepts --use-tpu-client but wallet.rs uses rpc_client send"
+  },
+  "initial_check": "Failed before rooted voting history was available: all four were delinquent at finalized genesis; retained, not counted as pass",
+  "transaction_tps": null,
+  "tpu_ingress_verified": false,
+  "cold_recovery_verified": false,
+  "same_conditions_novovm_comparison": false
+}
