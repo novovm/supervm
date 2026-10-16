@@ -27,7 +27,15 @@ def main():
     parser.add_argument("--accounts", type=Path,
                         help="TPU tool's saved accounts; only public keys enter output")
     parser.add_argument("--from-slot", type=int)
+    parser.add_argument("--manifest", type=Path,
+                        help="JSON object with signatures: exact unique submitted signatures")
     args = parser.parse_args()
+    submitted = None
+    if args.manifest is not None:
+        if args.accounts is None:
+            parser.error("--manifest requires --accounts and --from-slot")
+        with args.manifest.open() as stream:
+            submitted = submission_signatures(json.load(stream))
     expected = {}
     for i in range(4):
         def public_key(role):
@@ -84,7 +92,7 @@ def main():
             payers = {p["publicKey"] for p in json.load(stream)["payers"]}
         if not payers:
             raise RuntimeError("Empty workload payer set")
-        load = audit_load(ports, args.from_slot, common, payers)
+        load = audit_load(ports, args.from_slot, common, payers, submitted)
     print(json.dumps({"scope": "four_local_validator_finality_only", "passed": True,
                       "genesis_hash": genesis[0], "equal_active_stake": stakes[0],
                       "expected_vote_identities": expected, "first_slots": first,
@@ -93,7 +101,38 @@ def main():
                       "transaction_tps": None}, indent=2))
 
 
-def audit_load(ports, first, last, payers):
+def submission_signatures(manifest):
+    """Reject ambiguous denominators; never silently deduplicate submissions."""
+    rows = manifest.get("signatures") if isinstance(manifest, dict) else None
+    if not isinstance(rows, list) or not rows or len(rows) > 1_000_000:
+        raise ValueError("Manifest requires 1..1000000 signatures")
+    alphabet = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+    for value in rows:
+        if not isinstance(value, str) or not 64 <= len(value) <= 88 or set(value) - alphabet:
+            raise ValueError("Invalid base58 signature")
+        number = 0
+        for char in value:
+            number = number * 58 + "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz".index(char)
+        size = (number.bit_length() + 7) // 8 + len(value) - len(value.lstrip("1"))
+        if size != 64:
+            raise ValueError("Signature must encode exactly 64 bytes")
+    if len(set(rows)) != len(rows):
+        raise ValueError("Duplicate submitted signature")
+    return set(rows)
+
+
+def reconcile_submissions(submitted, receipts):
+    unexpected = set(receipts) - submitted
+    if unexpected:
+        raise RuntimeError("Finalized payer transactions outside submission manifest")
+    missing = sorted(submitted - set(receipts))
+    return {"submitted_unique": len(submitted),
+            "unconfirmed_at_observation": len(missing),
+            "unconfirmed_signatures": missing,
+            "all_submitted_finalized": not missing}
+
+
+def audit_load(ports, first, last, payers, submitted=None):
     """Count exact workload signatures, never votes or account-funding traffic."""
     commitment = {"commitment": "finalized"}
     slots = rpc(ports[0], "getBlocks", [first, last, commitment])
@@ -128,12 +167,15 @@ def audit_load(ports, first, last, payers):
     successful = sum(value[2] is None for value in reference.values())
     if not reference:
         raise RuntimeError("No finalized workload transactions; not a successful load test")
+    coverage = reconcile_submissions(submitted, reference) if submitted is not None else None
     return {"from_slot": first, "through_slot": last,
             "unique_finalized_success": successful,
             "unique_finalized_failure": len(reference) - successful,
             "fees_lamports": sum(value[3] for value in reference.values()),
             "four_node_receipts_equal": True, "balance_fee_conservation": True,
-            "unlanded_or_unsent": "unknown without a submission manifest",
+            "submission_coverage": coverage,
+            "unlanded_or_unsent": "unknown without a submission manifest" if coverage is None
+            else "not inferred: unconfirmed may still land after this observation",
             "latency_percentiles": None}
 
 

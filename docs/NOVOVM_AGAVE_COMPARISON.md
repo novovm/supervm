@@ -39,6 +39,23 @@ Current finalized TPS comparison: NOT EXECUTED. No change to production policies
 
 ## Actual native TPU smoke (2026-10-16)
 
+### Submission coverage checkpoint
+
+The observer now accepts `--manifest FILE`, containing
+`{"signatures":["base58 signature", "..."]}`. It rejects empty, duplicate,
+malformed and non-64-byte signatures, and finalized workload signatures absent
+from the manifest. It reports exact unconfirmed signatures separately from
+finalized business failures; absence at observation does not prove permanent
+loss. Four local unit tests pass, including rejection cases. No new live load
+was run for this checkpoint; no TPS or latency result is added.
+
+Source inspection of the pinned tool confirms that `send_batch` measures queue
+insertion, while `BackpressuredBroadcaster::send_to_workers` may return `Ok(())`
+even when no leader queue accepted the batch. Neither is finality evidence.
+Remaining work is an actual fixed-count manifest producer at the existing TPU
+submission boundary, first-submit timing and concurrent four-node observation.
+The optional manifest check alone does not complete that producer or benchmark.
+
 `solana-transaction-bench`0.1.0 release build passed in5m12s, binary SHA256
 `9966a39206d00f2ecf93b197f95e47650a6bca38db4eb31462597c818dd1f6d7`.
 Build uses the published Cargo.lock (client dependencies4.0.0-rc.0), not the

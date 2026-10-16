@@ -11,6 +11,24 @@ spec.loader.exec_module(observer)
 
 
 class LoadAuditTests(unittest.TestCase):
+    def test_manifest_rejects_ambiguous_denominator(self):
+        signature = "1" * 64
+        self.assertEqual(observer.submission_signatures({"signatures": [signature]}), {signature})
+        for values in [[], [signature, signature], ["0" * 64], ["1" * 65], [None]]:
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                observer.submission_signatures({"signatures": values})
+
+    def test_missing_submission_is_not_success_or_declared_lost(self):
+        result = observer.reconcile_submissions({"ok", "failed", "pending"},
+                                                {"ok": [], "failed": []})
+        self.assertEqual(result["unconfirmed_signatures"], ["pending"])
+        self.assertFalse(result["all_submitted_finalized"])
+        self.assertEqual(result["submitted_unique"], 3)
+        with self.assertRaises(RuntimeError):
+            observer.reconcile_submissions({"ok"}, {"unexpected": []})
+        self.assertTrue(observer.reconcile_submissions({"ok"}, {"ok": []})[
+            "all_submitted_finalized"])
+
     def check(self, mode="normal"):
         def rpc(port, method, params):
             if method == "getBlocks":
