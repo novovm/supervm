@@ -6,15 +6,23 @@ base="$root/target/reference-agave"
 bin="$base/build/release"
 keygen="$base/v4.3.0/solana-release/bin/solana-keygen"
 duration="${1:-180}"
+resume="${2:-}"
 [[ "$duration" =~ ^[0-9]+$ ]] && (( duration >= 30 && duration <= 1800 ))
 for tool in "$bin/agave-validator" "$bin/solana-genesis" "$keygen"; do
   test -x "$tool" || { echo "Missing executable: $tool" >&2; exit 1; }
   "$tool" --version
 done
 # No reset, deletion, system installation, faucet listener or public RPC.
-run=$(mktemp -d "$base/v4.3.0/four-validator-XXXXXX")
+if [[ -n "$resume" ]]; then
+  run=$(realpath -e "$resume")
+  case "$run" in "$base/v4.3.0/"four-validator-*) ;; *) exit 1 ;; esac
+  for i in 0 1 2 3; do test -d "$run/node$i/ledger"; done
+else
+  run=$(mktemp -d "$base/v4.3.0/four-validator-XXXXXX")
+fi
 echo "REFERENCE_RUN=$run"
 export LD_LIBRARY_PATH="$base/sysroot/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if [[ -z "$resume" ]]; then
 "$keygen" new --no-passphrase --silent --outfile "$run/funder.json"
 genesis_args=()
 # Use the pinned source's exact embedded Core BPF artifacts. The official demo
@@ -48,6 +56,7 @@ done
   --bootstrap-validator-stake-lamports 1000000000000 \
   --faucet-pubkey "$run/funder.json" --faucet-lamports 100000000000000 \
   "${genesis_args[@]}"
+fi
 pids=()
 stop_children() {
   # Non-interactive shell background children may inherit SIGINT as ignored.
@@ -57,7 +66,11 @@ stop_children() {
 trap stop_children EXIT
 trap 'exit 130' INT TERM
 for i in 0 1 2 3; do
-  cp -a "$run/genesis" "$run/node$i/ledger"
+  fresh_flags=()
+  if [[ -z "$resume" ]]; then
+    cp -a "$run/genesis" "$run/node$i/ledger"
+    fresh_flags=(--no-wait-for-vote-to-start-leader)
+  fi
   low=$((20000 + i * 1000))
   entry=()
   if (( i != 0 )); then entry=(--entrypoint 127.0.0.1:18001); fi
@@ -70,10 +83,21 @@ for i in 0 1 2 3; do
     --private-rpc --full-rpc-api --enable-rpc-transaction-history \
     --allow-private-addr --no-genesis-fetch --no-snapshot-fetch --no-port-check \
     --no-os-network-limits-test --no-poh-speed-test \
-    --no-wait-for-vote-to-start-leader --no-xdp "${entry[@]}" \
+    "${fresh_flags[@]}" --no-xdp "${entry[@]}" \
     --log "$run/node$i/validator.log" >"$run/node$i/console.log" 2>&1 &
   pids+=("$!")
   echo "node=$i pid=$! rpc=$((18899 + i * 100))"
+  if (( i == 0 )); then
+    # Followers ask the entrypoint's IP echo service during startup. Cold replay
+    # can delay it; wait for the actual listener instead of racing its creation.
+    ready=0
+    for (( attempt=0; attempt<60; attempt++ )); do
+      kill -0 "${pids[0]}" 2>/dev/null || exit 1
+      if (exec 3<>/dev/tcp/127.0.0.1/18001) 2>/dev/null; then ready=1; break; fi
+      sleep 1
+    done
+    (( ready == 1 )) || exit 1
+  fi
 done
 # Fail if any validator exits; bounded lifetime leaves all evidence intact.
 for (( elapsed=0; elapsed<duration; elapsed++ )); do

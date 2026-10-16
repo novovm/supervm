@@ -24,6 +24,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run", type=Path)
     parser.add_argument("--keygen", required=True)
+    parser.add_argument("--accounts", type=Path,
+                        help="TPU tool's saved accounts; only public keys enter output")
+    parser.add_argument("--from-slot", type=int)
     args = parser.parse_args()
     expected = {}
     for i in range(4):
@@ -73,11 +76,65 @@ def main():
     hashes = [b["blockhash"] for b in blocks]
     if len(set(hashes)) != 1:
         raise RuntimeError("Finalized block hashes differ")
+    load = None
+    if args.accounts is not None:
+        if args.from_slot is None or not 0 <= args.from_slot <= common:
+            raise RuntimeError("Load audit requires a valid --from-slot")
+        with args.accounts.open() as stream:
+            payers = {p["publicKey"] for p in json.load(stream)["payers"]}
+        if not payers:
+            raise RuntimeError("Empty workload payer set")
+        load = audit_load(ports, args.from_slot, common, payers)
     print(json.dumps({"scope": "four_local_validator_finality_only", "passed": True,
                       "genesis_hash": genesis[0], "equal_active_stake": stakes[0],
                       "expected_vote_identities": expected, "first_slots": first,
                       "second_slots": second, "common_slot": slot,
-                      "common_blockhash": hashes[0], "transaction_tps": None}, indent=2))
+                      "common_blockhash": hashes[0], "load": load,
+                      "transaction_tps": None}, indent=2))
+
+
+def audit_load(ports, first, last, payers):
+    """Count exact workload signatures, never votes or account-funding traffic."""
+    commitment = {"commitment": "finalized"}
+    slots = rpc(ports[0], "getBlocks", [first, last, commitment])
+    reference = None
+    for port in ports:
+        if rpc(port, "getBlocks", [first, last, commitment]) != slots:
+            raise RuntimeError("Finalized block ranges differ")
+        receipts = {}
+        for slot in slots:
+            block = rpc(port, "getBlock", [slot, {**commitment, "encoding": "json",
+                        "transactionDetails": "full", "rewards": False,
+                        "maxSupportedTransactionVersion": 0}])
+            if block is None:
+                raise RuntimeError(f"{port}: missing block {slot}")
+            for entry in block["transactions"]:
+                tx, meta = entry["transaction"], entry["meta"]
+                if tx["message"]["accountKeys"][0] not in payers:
+                    continue
+                if meta is None:
+                    raise RuntimeError("Missing execution metadata")
+                signature = tx["signatures"][0]
+                if signature in receipts:
+                    raise RuntimeError("Duplicate finalized workload signature")
+                if sum(meta["preBalances"]) - sum(meta["postBalances"]) != meta["fee"]:
+                    raise RuntimeError("Workload balance/fee conservation failed")
+                receipts[signature] = [slot, block["blockhash"], meta["err"],
+                                       meta["fee"], meta["preBalances"], meta["postBalances"]]
+        if reference is None:
+            reference = receipts
+        elif receipts != reference:
+            raise RuntimeError("Workload receipts differ between validators")
+    successful = sum(value[2] is None for value in reference.values())
+    if not reference:
+        raise RuntimeError("No finalized workload transactions; not a successful load test")
+    return {"from_slot": first, "through_slot": last,
+            "unique_finalized_success": successful,
+            "unique_finalized_failure": len(reference) - successful,
+            "fees_lamports": sum(value[3] for value in reference.values()),
+            "four_node_receipts_equal": True, "balance_fee_conservation": True,
+            "unlanded_or_unsent": "unknown without a submission manifest",
+            "latency_percentiles": None}
 
 
 if __name__ == "__main__":

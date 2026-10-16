@@ -37,6 +37,47 @@ resource budget, native ingress, success accounting, sustained supply and recove
 document protocol finality differences rather than pretending identical semantics.
 Current finalized TPS comparison: NOT EXECUTED. No change to production policies.
 
+## Actual native TPU smoke (2026-10-16)
+
+`solana-transaction-bench`0.1.0 release build passed in5m12s, binary SHA256
+`9966a39206d00f2ecf93b197f95e47650a6bca38db4eb31462597c818dd1f6d7`.
+Build uses the published Cargo.lock (client dependencies4.0.0-rc.0), not the
+validator4.3.0 lock. The extracted manifest required an empty `[workspace]`
+table to isolate it from SUPERVM; no Rust source or dependency change. Build
+entry is `scripts/perf/build-agave-tpu-reference.sh`; archive hash checked.
+
+Fresh run `target/reference-agave/v4.3.0/four-validator-Q8PVm6`:
+two pre-funded payers, one transfer instruction, batch1, one generator,
+target10tx/s for2s, amount range1..100000 lamports, CU budget600, WS leader
+tracking, default fanout1. **No staked identity, mock RPC, or validator exemption**.
+Funding used RPC confirmed before load; workload used actual TPU QUIC.
+Generator and scheduler exited successfully. Four-node finalized audit found
+21 unique successful workload signatures,0 failures, fees105000 lamports,
+matching per-signature slot/block/error/fee/pre/post balances and conservation.
+Votes and funding transactions are excluded by exact workload payer identities.
+All four finalized slots advanced35->40, common blockhash
+`CqyZBKDKgzXmTBBXLtoxzcnii5VsyVGdhMGTAF9gweAz` at40, genesis
+`BfbgyayMHFUDFxQdPhGfhA8p1BEHAHmyKZRjNpBDnwxx`.
+
+This is a **low-rate TPU functionality sample, NOT capacity TPS**. No full
+submission manifest, per-transaction latency, unlanded count or matched NOVOVM
+load exists yet. Do not divide21 by2 and present it as capacity. The observer's
+two tests cover success/failure separation, vote exclusion, and rejection of
+unequal receipts, bad conservation, duplicate signatures and empty results.
+
+Preserved unsuccessful preparation in `four-validator-r6om9m`: finalized
+funding completed10/16 before the360s cluster window ended; tool saved partial
+test keys, moved from root into that ignored run as `partial-payers.json`.
+Two-payer/batch10 initial TPU sample formed self-transfers and is not normal
+transfer evidence; its finality audit missed the shutdown window. Resume kept
+keys/ledgers/towers and omitted the fresh-genesis leader-start flag. Initial
+entrypoint IP-echo startup race was fixed by waiting for its TCP listener; an
+attempted `--advertised-ip` was unsupported and removed. Resume later converged
+to finalized343 but did not advance in the observed windows; the next TPU
+scheduler did not exit and was stopped. **Cold recovery remains NOT PASSED**;
+no lock reset or safety bypass was used. This comparison fixture issue does
+not establish a Solana production defect or NOVOVM performance advantage.
+
 ## Actual four-process result (2026-10-16; supersedes preparation status below)
 
 Pinned release build completed in 15m23s. Four independent validators started
