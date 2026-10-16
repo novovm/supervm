@@ -1,0 +1,17 @@
+--- a/src/generator/simple_transfers_generator.rs
++++ b/src/generator/simple_transfers_generator.rs
+@@ -125,6 +125,14 @@
+ fn unique_random_numbers(count: usize, lamports_to_transfer: u64) -> Vec<u64> {
++    if std::env::var_os("AGAVE_REFERENCE_SEQUENTIAL_AMOUNTS").is_some() {
++        assert!(std::env::var_os("AGAVE_REFERENCE_COUNT").is_some());
++        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
++        let first = NEXT.fetch_add(count as u64, std::sync::atomic::Ordering::Relaxed);
++        let end = first.checked_add(count as u64).expect("amount overflow");
++        assert!(end - 1 <= lamports_to_transfer, "unique amount range exhausted");
++        return (first..end).collect();
++    }
+     assert!(
+         count as u64 <= lamports_to_transfer,
+         "Not enough unique values in range: {count} > {lamports_to_transfer}"
+     );
+ 

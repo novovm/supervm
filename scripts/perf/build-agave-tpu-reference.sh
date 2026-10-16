@@ -27,4 +27,8 @@ if ! git apply --reverse --check "$root/scripts/perf/agave-queue-trace.patch" 2>
   git apply --check "$root/scripts/perf/agave-queue-trace.patch"
   git apply "$root/scripts/perf/agave-queue-trace.patch"
 fi
+if ! git apply --reverse --check "$root/scripts/perf/agave-sequential-amounts.patch" 2>/dev/null; then
+  git apply --check "$root/scripts/perf/agave-sequential-amounts.patch"
+  git apply "$root/scripts/perf/agave-sequential-amounts.patch"
+fi
 cargo +1.97.1 build --release --locked -j 4 --bin solana-transaction-bench

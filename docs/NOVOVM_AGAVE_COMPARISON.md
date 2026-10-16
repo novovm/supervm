@@ -39,6 +39,55 @@ Current finalized TPS comparison: NOT EXECUTED. No change to production policies
 
 ## Actual native TPU smoke (2026-10-16)
 
+### 4,096-transfer supply diagnostic (not capacity acceptance)
+
+Optional `AGAVE_REFERENCE_SEQUENTIAL_AMOUNTS=1` replaces the reference
+generator's range sampling with bounded, unique amounts 1..4096. It requires
+fixed-count mode; manifest duplicate rejection remains enabled. This changes
+the reference workload, not validator rules, and is not an equivalent random
+amount workload. The tracked patch is applied by the existing isolated builder.
+
+Run: `target/reference-agave/v4.3.0/four-validator-knyata`, WSL four validators,
+two funded payers, batch1, workers-pull16, exact-byte retry enabled, queue trace
+disabled, no competing build. These alternating accounts have high contention;
+they are NOT the NOVOVM shared-recipient workload. Release build passed; client
+SHA256 `c5085edcf037e2a989821dcf715530e13e070f0bf6fc4836efb287ee1333b8b9`.
+
+| Metric | target10,000/s | no target pacing |
+| --- | ---: | ---: |
+| Unique submitted / four-node finalized successes | 4096 / 4096 | 4096 / 4096 |
+| Business failures / unconfirmed | 0 / 0 | 0 / 0 |
+| First-to-last submission span | about16.53s | about16.29s |
+| Supply rate across that span | about247.72/s | about251.42/s |
+| First submission to last four-node observation | 44.978330678s | 48.722641247s |
+| Finite-window successful tx/s, NOT capacity | 91.066074 | 84.067692 |
+| P95 / P99 seconds | 32.370108 / 35.106443 | 38.907119 / 41.152064 |
+| Exact-byte retransmissions | 440 | 935 |
+
+Both observers completed without observation errors. Finality latency includes
+the slowest of four HTTP status observations, not merely execution latency.
+The second run follows the first on the same chain; it is a supply diagnostic,
+not a controlled capacity A/B. Removing target pacing did NOT remove slow
+generation/submission. Neither result is a Solana capacity limit or a matched
+NOVOVM ranking. Retry counts do not establish network packet loss.
+
+First-run independent finalized-block audit passed:4096 successes,20480000
+lamport fees, equal receipts on all four nodes and balance/fee conservation.
+Finalized slots67->73; common slot73 hash
+`BMDSJmrmD1AqRntmLvkH4PWfX1oc31JY7PaAeWe5MBRv`; genesis
+`EB7YdPpKf9PD6bYq3jG148gpM5t1BwW18eq9eD6V7deV`.
+Second-run independent economics audit (from slot74) was NOT COMPLETED: the
+bounded240s cluster window had exited before the audit, which received connection
+refused. Its all-finalized observer result is retained, not upgraded to audited
+economics or restart recovery. Logs, ledgers, manifests and timing JSON remain
+in the run directory; private payer keys are not committed.
+
+Remaining reference gap: identify generator/manifest/queue supply cost before
+capacity testing. The fixture currently writes each manifest row directly to a
+file and rescans cached retry lengths per batch; these are source-visible costs,
+not yet proven explanations for the16s span. No NOVOVM/AOEM product path changed.
+Do not indefinitely extend this fixture or count it as mainchain delivery.
+
 ### Exact-byte bounded retry closure
 
 Pinned connection_worker.rs260-299 explicitly reconnects WITHOUT resending
