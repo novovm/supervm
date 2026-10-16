@@ -39,6 +39,32 @@ Current finalized TPS comparison: NOT EXECUTED. No change to production policies
 
 ## Actual native TPU smoke (2026-10-16)
 
+### Bounded fixture correction and comparison stop (2026-10-16)
+
+Reference-only `FixedLoad::record` now uses a64KiB buffered manifest writer
+and an incrementally checked retry-byte count. This removes direct per-row
+file writes and the per-batch traversal of all cached transactions. Original
+signature uniqueness, pre-queue timestamps,64MiB retry bound and explicit
+completion flush/fsync remain. Buffered visibility can delay status observation;
+do not mix old and new latency measurements without declaring this change.
+Incomplete/aborted buffered manifests are not complete-load evidence.
+
+Release client build passed24.66s. Added a65,536 signed-transfer manifest
+regression (identity/order/completion/streaming visibility); it is NOT EXECUTED:
+the crate test command began downloading a large additional development graph
+and was stopped to honor the comparison time limit. Existing Python observer
+tests remain separate from this Rust regression. No measured supply gain or
+new chain TPS is claimed.
+
+The inspected upstream generator cycles its payer pool and chooses receivers
+relative to each batch. Two-payer alternating transfers are not the NOVOVM
+1024-payer/shared-recipient workload, and increasing count alone does not fix
+that. Matching the signed preparation boundary and account topology requires
+additional fixture work. Per the user's explicit time bound, stop expanding
+this reference fixture now: matched capacity comparison remains NOT OBTAINED.
+Return development to NOVOVM's existing native mainline; do not infer either
+chain's capacity or ranking from these supply-limited samples.
+
 ### 4,096-transfer supply diagnostic (not capacity acceptance)
 
 Optional `AGAVE_REFERENCE_SEQUENTIAL_AMOUNTS=1` replaces the reference

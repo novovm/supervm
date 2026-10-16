@@ -1,5 +1,5 @@
 // Reference load instrumentation only. No validator or product changes.
-use std::{collections::HashSet, fs::OpenOptions, io::Write, sync::Mutex,
+use std::{collections::HashSet, fs::OpenOptions, io::{BufWriter, Write}, sync::Mutex,
           time::{Instant, SystemTime, UNIX_EPOCH}};
 
 // Same Linux CLOCK_MONOTONIC epoch as Python time.monotonic_ns(). Wall time is
@@ -16,11 +16,54 @@ fn monotonic_ns() -> u128 {
     value.seconds as u128 * 1_000_000_000 + value.nanos as u128
 }
 
+#[cfg(test)]
+mod reference_manifest_tests {
+    use super::*;
+    use solana_signer::Signer;
+
+    #[test]
+    fn buffered_manifest_preserves_signed_workload_and_completion() {
+        let path = std::env::temp_dir().join(format!("agave-manifest-{}-{}.jsonl",
+            std::process::id(), monotonic_ns()));
+        let file = OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
+        let count = 65_536;
+        let load = FixedLoad {
+            count, state: Mutex::new((BufWriter::with_capacity(64 * 1024, file), HashSet::new())),
+            start: Instant::now(), retry_bytes: Mutex::new((Vec::new(), 0)),
+        };
+        let payer = solana_keypair::Keypair::new();
+        let recipient = solana_keypair::Keypair::new();
+        let signed: Vec<_> = (1..=count).map(|amount| {
+            crate::generator::transaction_builder::create_serialized_signed_transaction(
+                &payer, solana_hash::Hash::default(),
+                vec![solana_system_interface::instruction::transfer(
+                    &payer.pubkey(), &recipient.pubkey(), amount as u64)], vec![], 600)
+        }).collect();
+        let start = Instant::now();
+        // Match the earlier per-transaction recording call, without network or chain.
+        for row in &signed { load.record(std::slice::from_ref(row)); }
+        assert!(std::fs::metadata(&path).unwrap().len() > 0, "streaming visibility");
+        load.finish();
+        eprintln!("manifest_only count={count} seconds={:.6}; NOT chain TPS", start.elapsed().as_secs_f64());
+        let data = std::fs::read_to_string(&path).unwrap();
+        let rows: Vec<serde_json::Value> = data.lines().map(|s| serde_json::from_str(s).unwrap()).collect();
+        assert_eq!(rows.len(), count + 1);
+        for (row, bytes) in rows.iter().zip(&signed) {
+            let tx: solana_transaction::versioned::VersionedTransaction = wincode::deserialize(bytes).unwrap();
+            assert_eq!(row["signature"], tx.signatures[0].to_string());
+            assert_eq!(row["boundary"], "before_client_queue");
+        }
+        assert_eq!(rows[count]["generated_complete"], count);
+        drop(load);
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 pub struct FixedLoad {
     pub count: usize,
-    state: Mutex<(std::fs::File, HashSet<String>)>,
+    state: Mutex<(BufWriter<std::fs::File>, HashSet<String>)>,
     start: Instant,
-    retry_bytes: Mutex<Vec<Vec<u8>>>,
+    retry_bytes: Mutex<(Vec<Vec<u8>>, usize)>,
 }
 
 impl FixedLoad {
@@ -35,8 +78,8 @@ impl FixedLoad {
                 let file = OpenOptions::new().write(true).create_new(true).open(path)
                     .expect("new manifest path required; never overwrite evidence");
                 Some(std::sync::Arc::new(Self {
-                    count, state: Mutex::new((file, HashSet::new())), start: Instant::now(),
-                    retry_bytes: Mutex::new(Vec::new()),
+                    count, state: Mutex::new((BufWriter::with_capacity(64 * 1024, file), HashSet::new())), start: Instant::now(),
+                    retry_bytes: Mutex::new((Vec::new(), 0)),
                 }))
             }
             _ => panic!("COUNT and MANIFEST must be supplied together"),
@@ -47,10 +90,11 @@ impl FixedLoad {
     pub fn record(&self, batch: &[Vec<u8>]) {
         if std::env::var_os("AGAVE_REFERENCE_RETRY").is_some() {
             let mut cache = self.retry_bytes.lock().expect("retry cache");
-            let bytes: usize = cache.iter().map(Vec::len).sum::<usize>()
-                + batch.iter().map(Vec::len).sum::<usize>();
+            let bytes = batch.iter().try_fold(cache.1, |sum, row|
+                sum.checked_add(row.len())).expect("retry byte count overflow");
             assert!(bytes <= 64 * 1024 * 1024, "reference retry cache exceeds 64 MiB");
-            cache.extend_from_slice(batch);
+            cache.0.extend_from_slice(batch);
+            cache.1 = bytes;
         }
         let mut guard = self.state.lock().expect("manifest lock");
         for bytes in batch {
@@ -74,13 +118,13 @@ impl FixedLoad {
         writeln!(guard.0, "{}", serde_json::json!({"generated_complete": self.count}))
             .expect("completion marker");
         guard.0.flush().expect("manifest flush");
-        guard.0.sync_all().expect("manifest sync");
+        guard.0.get_ref().sync_all().expect("manifest sync");
     }
 
     pub async fn settle(&self, senders: &[tokio::sync::mpsc::Sender<
         solana_tpu_client_next::transaction_batch::TransactionBatch>]) {
         if std::env::var_os("AGAVE_REFERENCE_RETRY").is_none() { return; }
-        let bytes = self.retry_bytes.lock().expect("retry cache").clone();
+        let bytes = self.retry_bytes.lock().expect("retry cache").0.clone();
         let signatures: Vec<_> = bytes.iter().map(|bytes| {
             let tx: solana_transaction::versioned::VersionedTransaction =
                 wincode::deserialize(bytes).expect("retry decode");
