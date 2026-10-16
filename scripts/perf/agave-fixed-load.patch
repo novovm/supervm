@@ -1,0 +1,73 @@
+--- a/src/generator/transaction_generator.rs
++++ b/src/generator/transaction_generator.rs
+@@ -23,6 +23,10 @@
+ const SIMPLE_TRANSFER_INSTRUCTION_CU_COST: u32 = 150;
+ const PADDED_TRANSFER_INSTRUCTION_CU_COST: u32 = 3_000;
+ 
++mod reference_load {
++    include!(concat!(env!("NOVOVM_AGAVE_ADAPTER_ROOT"), "/scripts/perf/agave_fixed_load.rs"));
++}
++
+ #[derive(Error, Debug)]
+ pub enum TransactionGeneratorError {
+     #[error("Transactions receiver has been dropped unexpectedly.")]
+@@ -78,6 +82,8 @@
+ 
+     #[allow(clippy::arithmetic_side_effects)]
+     pub async fn run(self) -> Result<(), TransactionGeneratorError> {
++        let reference = reference_load::FixedLoad::from_env();
++        let mut scheduled = 0usize;
+         let payers = Arc::new(self.accounts.payers);
+         let len_payers = payers.len();
+         let mut index_payer: usize = 0;
+@@ -108,7 +114,15 @@
+         let start = Instant::now();
+         let mut next_batch_at = self.target_tps.map(|_| start);
+         loop {
++            if reference.as_ref().is_some_and(|r| scheduled == r.count) {
++                while let Some(result) = futures.join_next().await {
++                    result.expect("fixed load task failed");
++                }
++                reference.as_ref().unwrap().finish();
++                break;
++            }
+             if let Some(run_duration) = self.run_duration
+                 && start.elapsed() >= run_duration
+             {
++                assert!(reference.is_none(), "fixed load deadline reached before completion");
+                 info!("Transaction generator is stopping...");
+@@ -124,10 +138,14 @@
+             let blockhash = *self.blockhash_receiver.borrow();
+ 
+             while futures.len() < self.workers_pull_size {
++                if reference.as_ref().is_some_and(|r| scheduled == r.count) { break; }
+                 if let Some(next_batch_deadline) = next_batch_at {
+                     tokio::time::sleep_until(next_batch_deadline).await;
+                 }
+-                let send_batch_size = self.send_batch_size;
++                let send_batch_size = reference.as_ref().map_or(self.send_batch_size,
++                    |r| self.send_batch_size.min(r.count - scheduled));
++                scheduled += send_batch_size;
++                let reference = reference.clone();
+                 let transaction_params = self.transaction_params.clone();
+                 let compute_unit_price = self.compute_unit_price;
+                 let priority_fee_mode = self.priority_fee_mode.clone();
+@@ -162,6 +180,7 @@
+                                 return;
+                             };
+ 
++                            if let Some(r) = &reference { r.record(&wired_tx_batch); }
+                             send_batch(wired_tx_batch, transactions_sender).await;
+                         });
+                         let total_pairs = num_send_instructions_per_tx * send_batch_size;
+@@ -184,7 +203,9 @@
+                     );
+                 }
+             }
+-            futures.join_next().await;
++            if let Some(result) = futures.join_next().await {
++                result.expect("transaction generation task failed");
++            }
+         }
+         Ok(())
+     }

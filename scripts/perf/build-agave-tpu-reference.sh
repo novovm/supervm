@@ -17,5 +17,10 @@ export CPATH="$base/sysroot/usr/include${CPATH:+:$CPATH}"
 export PKG_CONFIG_PATH="$base/sysroot/usr/lib/x86_64-linux-gnu/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LD_LIBRARY_PATH="$base/sysroot/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export RUSTFLAGS="-L native=$base/sysroot/usr/lib/x86_64-linux-gnu"
+export NOVOVM_AGAVE_ADAPTER_ROOT="$root"
 cd "$base/solana-transaction-bench-0.1.0"
+if ! git apply --reverse --check "$root/scripts/perf/agave-fixed-load.patch" 2>/dev/null; then
+  git apply --check "$root/scripts/perf/agave-fixed-load.patch"
+  git apply "$root/scripts/perf/agave-fixed-load.patch"
+fi
 cargo +1.97.1 build --release --locked -j 4 --bin solana-transaction-bench

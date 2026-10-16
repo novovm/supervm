@@ -41,6 +41,34 @@ Current finalized TPS comparison: NOT EXECUTED. No change to production policies
 
 ### Submission coverage checkpoint
 
+Fixed-count producer is now wired into the existing official generator via
+`scripts/perf/agave-fixed-load.patch` and `agave_fixed_load.rs`; validators,
+TPU scheduler and business instructions are unchanged. Build script applies
+the checked patch or verifies its reverse. Set `AGAVE_REFERENCE_COUNT` and
+`AGAVE_REFERENCE_MANIFEST` (new `.jsonl` path) together. Each decoded signed
+transaction is recorded immediately BEFORE the original client queue attempt;
+this is not proof of enqueue or delivery. Duplicate signatures, incomplete
+generation and deadlines fail; a completion marker is required by the observer.
+Serialization/file output and generation are instrumentation costs, not excluded
+pre-signing work; this mode is NOT yet a matched NOVOVM performance fixture.
+
+Actual run `target/reference-agave/v4.3.0/four-validator-1zYZvL`:
+32 transactions, target10/s, batch1, two funded distinct payers, ordinary TPU
+QUIC identity. Generator and scheduler exited0. The first audit preceded
+finalization and rejected zero workload receipts; the later audit verified
+32/32 finalized successes,0 failures,0 missing,160000 lamports fees, identical
+four-node receipts and fee/balance conservation. Common finalized slot143,
+hash `7edtRPN9hdVeFiounVGSxZkuomWuMGzYjVThLq8BySns`, genesis
+`B6jW5PrFopQLmjdR55N6EcJnftMKXZ3NkAkKJNvtHyHx`. Manifest is
+`attempts-now.jsonl` in that retained ignored run; keys are not published.
+All five observer unit tests pass. Four owned validators were stopped with
+SIGTERM after observation; no recovery claim. Release compilation passed in
+3m29s; editing the wrapper during that invocation caused a subsequent shell
+line-offset error, not a compiler error. A redundant rebuild was stopped;
+the successful fixed-count run used the completed binary. No formal TPS was
+measured while compiling. Concurrent per-signature finality timestamps and a
+matched large workload remain pending; no NOVOVM runtime or AOEM changes.
+
 The observer now accepts `--manifest FILE`, containing
 `{"signatures":["base58 signature", "..."]}`. It rejects empty, duplicate,
 malformed and non-64-byte signatures, and finalized workload signatures absent

@@ -34,8 +34,7 @@ def main():
     if args.manifest is not None:
         if args.accounts is None:
             parser.error("--manifest requires --accounts and --from-slot")
-        with args.manifest.open() as stream:
-            submitted = submission_signatures(json.load(stream))
+        submitted = read_manifest(args.manifest)
     expected = {}
     for i in range(4):
         def public_key(role):
@@ -99,6 +98,25 @@ def main():
                       "second_slots": second, "common_slot": slot,
                       "common_blockhash": hashes[0], "load": load,
                       "transaction_tps": None}, indent=2))
+
+
+def read_manifest(path):
+    if path.stat().st_size > 256 * 1024 * 1024:
+        raise ValueError("Manifest exceeds bounded size")
+    with path.open() as stream:
+        if path.suffix != ".jsonl":
+            return submission_signatures(json.load(stream))
+        rows = [json.loads(line) for line in stream]
+    if not rows or rows[-1].get("generated_complete") != len(rows) - 1:
+        raise ValueError("Missing or incomplete generator completion marker")
+    for row in rows[:-1]:
+        if (row.get("boundary") != "before_client_queue"
+                or type(row.get("queue_attempt_elapsed_ns")) is not int
+                or row["queue_attempt_elapsed_ns"] < 0
+                or type(row.get("queue_attempt_unix_ns")) is not int
+                or row["queue_attempt_unix_ns"] <= 0):
+            raise ValueError("Invalid submission boundary or timestamp")
+    return submission_signatures({"signatures": [r.get("signature") for r in rows[:-1]]})
 
 
 def submission_signatures(manifest):

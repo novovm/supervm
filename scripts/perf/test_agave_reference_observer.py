@@ -1,4 +1,6 @@
 import copy
+import json
+import tempfile
 import importlib.util
 from pathlib import Path
 import unittest
@@ -11,6 +13,17 @@ spec.loader.exec_module(observer)
 
 
 class LoadAuditTests(unittest.TestCase):
+    def test_actual_generator_manifest_requires_completion(self):
+        row = {"signature": "1" * 64, "boundary": "before_client_queue",
+               "queue_attempt_elapsed_ns": 1, "queue_attempt_unix_ns": 2}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "attempts.jsonl"
+            path.write_text(json.dumps(row) + "\n")
+            with self.assertRaises(ValueError):
+                observer.read_manifest(path)
+            path.write_text(json.dumps(row) + '\n{"generated_complete":1}\n')
+            self.assertEqual(observer.read_manifest(path), {"1" * 64})
+
     def test_manifest_rejects_ambiguous_denominator(self):
         signature = "1" * 64
         self.assertEqual(observer.submission_signatures({"signatures": [signature]}), {signature})
