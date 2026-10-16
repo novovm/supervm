@@ -17,6 +17,22 @@ echo "REFERENCE_RUN=$run"
 export LD_LIBRARY_PATH="$base/sysroot/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 "$keygen" new --no-passphrase --silent --outfile "$run/funder.json"
 genesis_args=()
+# Use the pinned source's exact embedded Core BPF artifacts. The official demo
+# installs these too; do not silently omit migrated builtins or fetch latest.
+source_dir="$base/v4.3.0/source-linux"
+test "$(git -C "$source_dir" rev-parse HEAD)" = 825efd18292aff6ffcf9daa0f7612f21b3531a72
+test -z "$(git -C "$source_dir" status --porcelain)"
+programs="$source_dir/program-binaries/src/programs"
+add_core_program() {
+  test -f "$programs/$2"
+  sha256sum "$programs/$2"
+  genesis_args+=(--upgradeable-program "$1"
+    BPFLoaderUpgradeab1e11111111111111111111111 "$programs/$2" none)
+}
+add_core_program AddressLookupTab1e1111111111111111111111111 core_bpf_address_lookup_table-3.0.0.so
+add_core_program Config1111111111111111111111111111111111111 core_bpf_config-3.0.0.so
+add_core_program Feature111111111111111111111111111111111111 core_bpf_feature_gate-0.0.1.so
+add_core_program Stake11111111111111111111111111111111111111 core_bpf_stake-5.1.0.so
 for i in 0 1 2 3; do
   mkdir "$run/node$i"
   for role in identity vote stake; do
@@ -34,7 +50,8 @@ done
   "${genesis_args[@]}"
 pids=()
 stop_children() {
-  for pid in "${pids[@]}"; do kill -INT "$pid" 2>/dev/null || true; done
+  # Non-interactive shell background children may inherit SIGINT as ignored.
+  for pid in "${pids[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
   for pid in "${pids[@]}"; do wait "$pid" || true; done
 }
 trap stop_children EXIT

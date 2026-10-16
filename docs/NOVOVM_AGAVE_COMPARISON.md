@@ -37,6 +37,33 @@ resource budget, native ingress, success accounting, sustained supply and recove
 document protocol finality differences rather than pretending identical semantics.
 Current finalized TPS comparison: NOT EXECUTED. No change to production policies.
 
+## Actual four-process result (2026-10-16; supersedes preparation status below)
+
+Pinned release build completed in 15m23s. Four independent validators started
+from a new shared genesis; the four pinned Core BPF programs are loaded from
+the clean reference source's embedded artifacts, not downloaded as latest.
+Syntax/CLI checks passed. Equal active stake was 999997717120 lamports each;
+all four finalized slots advanced 41 -> 47 and returned the same blockhash at47.
+The early check failed while finalized genesis still classified all validators
+as delinquent; the later actual progress check passed without changing criteria.
+
+A real signed 1 SOL transfer finalized at slot110 on all four nodes: error null,
+fee5000 lamports and identical pre/post balances. **This transfer used RPC**:
+the CLI accepts `--use-tpu-client` but `cli/src/wallet.rs:1066-1077` still calls
+`rpc_client.send_transaction_with_config` / spinner-and-config. The flag is only
+declared in clap_app.rs; do NOT claim native TPU verification from this command.
+No NOVOVM ingress policy changed. Native TPU load and successful finalized TPS,
+matched NOVOVM comparison, and restart recovery are still NOT EXECUTED.
+
+[Recorded observations and exact binaries](../artifacts/audit/agave-four-validator-20261016/observed.json).
+Local logs and ledgers remain under the ignored run path recorded there; keys
+are not committed. `check-agave-four-validator-reference.py` only performs
+read-only genesis/stake/finalized-block checks, and never reports TPS.
+The first runner's SIGINT shutdown was ignored by background children. After
+checking the four owned PIDs, SIGTERM stopped them and the runner exited0.
+The runner now uses SIGTERM; ledgers/logs are retained. This is not a graceful
+shutdown or cold-recovery acceptance claim.
+
 ## Four-process preparation (2026-10-16)
 
 - Isolated build initially failed to find `libudev.h`; the extracted dependency
