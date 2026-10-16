@@ -1,5 +1,18 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-17 NOVOCHAT-machine native mailbox carrier (active claim):** input64bb8658.
+Root owns product_service_host selector, product_rendezvous_owned dispatch,
+integration tests and the single build slot. Bounded native-body agent owns
+product_rendezvous_native: share the existing NativeMailboxServer work loop
+between UDP readiness and NativeCarrierPump, retaining the inbound permit.
+Bounded locator agent owns the existing service endpoint codec/book tests and
+signed explicit NVMBOX07 capability. Actual chain is original node selector ->
+structured Finished -> NativeCarrierPump -> NativeObjectLink -> the SAME
+MailboxService/custody store. No second SDK, server, scheduler or finance path.
+Old selectors remain explicit; native selection cannot fall back to JSON.
+Keep installed v24 phones/node operational until client/L4 integration passes.
+Local real-carrier results are not Android or autonomous relay acceptance.
+
 **2026-10-17 NOVOCHAT-machine node availability (validated; claim released):** input7643b062.
 Current installed self-owned L3 previously exited with only failed_closed;
 the original cause is not established. Root owns the existing
