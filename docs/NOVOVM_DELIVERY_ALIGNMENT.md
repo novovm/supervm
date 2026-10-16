@@ -1,5 +1,18 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-17 NOVOCHAT-machine node availability claim (in progress):** input7643b062.
+Current installed self-owned L3 previously exited with only failed_closed;
+the original cause is not established. Root owns the existing
+product_rendezvous_owned/Iroh startup path and focused real-process validation,
+plus the single build slot. Bounded agent owns self-owned Windows owner status
+and typed failure evidence, preserving the original exclusive lock, keys,
+journal and custody. Replace the fixed 20-second relay-startup exit with the
+same endpoint's cancellable availability handling; no restart wrapper, new
+network protocol, approval policy, task or relaxed authentication. Preserve
+unexpected storage/identity/revocation failures as terminal and observable.
+No mainchain, AOEM, consensus, economics or phone UI edits. Windows scheduled
+recovery is not assumed to work merely because three restarts are configured.
+
 **2026-10-16 ACK-bound projection implementation (validated; claim released):** input4cabc9a8.
 Root owns rpc projection wiring, final integration and the sole build/perf slot;
 native_execution_map owns packet compact receipt views, progress ACK-bound
