@@ -111,6 +111,89 @@ async fn structured_native_quic_reuses_completed_open_service_session() {
     native_roundtrip(true).await;
 }
 
+// An independently signed, carrier-bound offer can fail before any business
+// request when the initiator's UTC is ahead of the responder's clock. Keep the
+// original policy and error visible; a closed carrier is not evidence that
+// authentication succeeded or that the network is unavailable.
+#[tokio::test]
+async fn structured_future_clock_is_rejected_before_authentication_completes() {
+    use crate::{
+        iroh_transport::IrohStreamIoFailureV1, transport_binding::TransportBindingErrorV1,
+    };
+    let _permit = SERIAL.acquire().await.unwrap();
+    let (server_tx, server_rx) = oneshot::channel();
+    let (client_tx, client_rx) = oneshot::channel();
+    let (done_tx, done_rx) = oneshot::channel();
+    let server = with_iroh_scope_v1(config(), control(), move |scope| {
+        Box::pin(async move {
+            server_tx.send(scope.address()?).unwrap();
+            let peer: IrohAddressV1 = client_rx.await?;
+            let mut stream: CarrierStreamV1<'_> = scope.accept(peer.endpoint_key).await?.into();
+            let mut stages = Vec::new();
+            let result = authenticate_structured_service_client_observed(
+                &mut stream,
+                &key(2),
+                ServicePeerPolicyV1::AnyAuthenticated,
+                &mut HandshakeReplayCacheV1::new(8),
+                &mut |stage, _| {
+                    stages.push(stage);
+                    Ok(())
+                },
+            )
+            .await;
+            let error = result.err().expect("future-clock offer must be rejected");
+            assert!(matches!(error, BoundSessionError::Authentication(_)));
+            let BoundSessionError::Authentication(cause) = error else {
+                unreachable!()
+            };
+            assert!(matches!(
+                cause.downcast_ref::<TransportBindingErrorV1>(),
+                Some(TransportBindingErrorV1::Expired)
+            ));
+            assert!(
+                stages.is_empty(),
+                "future offer must not produce a completed authentication step"
+            );
+            drop(stream); // Same original stream teardown as a rejected node operation.
+            done_rx.await?;
+            Ok(())
+        })
+    });
+    let client = with_iroh_scope_v1(config(), control(), move |scope| {
+        Box::pin(async move {
+            client_tx.send(scope.address()?).unwrap();
+            let mut stream: CarrierStreamV1<'_> = scope.connect(&server_rx.await?).await?.into();
+            // Eight seconds leaves margin for local fixture scheduling while
+            // remaining within the original 30-second signed handshake TTL.
+            let start = BoundHandshakeInitiatorV1::start(
+                &key(1),
+                public(2),
+                stream.binding()?,
+                now_ms()? + 8_000,
+                BOUND_HANDSHAKE_MAX_TTL_MS_V1,
+            )?;
+            stream
+                .write_frame(&crate::transport_binding::structured::encode_offer(
+                    start.offer(),
+                )?)
+                .await?;
+            let error = stream
+                .read_frame()
+                .await
+                .expect_err("rejected offer cannot return a response");
+            // The reader can observe stream EOF before the QUIC close frame;
+            // do not equate a particular client close code with the server's
+            // verified authentication reason. No response/channel was exposed.
+            assert!(error.is::<IrohStreamIoFailureV1>(), "{error:#}");
+            let _ = done_tx.send(());
+            Ok(())
+        })
+    });
+    let (server, client) = tokio::join!(server, client);
+    server.unwrap();
+    client.unwrap();
+}
+
 // Multiple native lanes send simultaneously in both directions. Cancellation
 // of a select branch must preserve the pump's partially polled frame futures.
 async fn exchange_objects(
