@@ -423,9 +423,12 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
                 record,
                 crate::product_rendezvous_daemon::now_ms()?,
             )?;
+            let carrier =
+                crate::product_service_lease::NativeCarrierMailboxEndpointV7::from_record(record)?;
             ensure!(
-                crate::product_service_lease::NativeMailboxEndpointV7::from_record(record)?
-                    .is_some(),
+                carrier.is_some()
+                    || crate::product_service_lease::NativeMailboxEndpointV7::from_record(record)?
+                        .is_some(),
                 "mailbox native locator missing"
             );
             Ok(())

@@ -5,7 +5,9 @@ use crate::{
         sign_relay_record_v1, validate_relay_record_v1, PeerSignedRelayRecordV1, RelayEndpointV1,
         RelayTransportV1,
     },
-    product_service_lease::NativeMailboxEndpointV7,
+    product_service_lease::{
+        IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7,
+    },
 };
 use ed25519_dalek::SigningKey;
 
@@ -271,5 +273,92 @@ async fn locator_owner_does_not_serve_an_expired_snapshot() -> Result<()> {
         service.request_local_v1(Request::ServiceRecordV7).await?,
         Reply::Rejected(MailboxRejectionV1::Invalid)
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_invalid_updates(
+) -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let key = SigningKey::from_bytes(&[72; 32]);
+    let service = MailboxServiceV1::new(
+        MailboxStore::open_contributor(
+            directory.path().join("mailbox.db"),
+            Default::default(),
+            true,
+        )?,
+        key.clone(),
+    );
+    let carrier = NativeCarrierMailboxEndpointV7 {
+        iroh: IrohServiceEndpointV1 {
+            instance: [7; 32],
+            address: crate::iroh_transport::IrohAddressV1 {
+                endpoint_key: SigningKey::from_bytes(&[73; 32]).verifying_key().to_bytes(),
+                direct: vec!["127.0.0.1:4434".parse()?],
+                relays: Vec::new(),
+            },
+        },
+    };
+    let now = now()?;
+    let make = |signer: &SigningKey, endpoints, issued, expires, sequence| {
+        sign_relay_record_v1(
+            signer,
+            "carrier-locator",
+            endpoints,
+            issued,
+            expires,
+            sequence,
+        )
+    };
+    let signed = make(&key, vec![carrier.endpoint()?], now - 10, now + 60_000, 42)?;
+    service.update_native_record_v7(signed.clone())?;
+    service.update_native_record_v7(signed.clone())?;
+    let mut forged = signed.clone();
+    forged.signature[0] ^= 1;
+    let mut malformed = carrier.endpoint()?;
+    malformed.uri.push('/');
+    // Even an otherwise valid UDP-native alternative cannot smuggle this
+    // malformed service URI into the retained native locator snapshot.
+    let udp = record(&key, now, now + 60_000, 43)?.endpoints.remove(0);
+    for rejected in [
+        forged,
+        make(
+            &SigningKey::from_bytes(&[74; 32]),
+            vec![carrier.endpoint()?],
+            now,
+            now + 60_000,
+            43,
+        )?,
+        make(&key, vec![carrier.iroh.endpoint()?], now, now + 60_000, 43)?,
+        make(&key, vec![udp, malformed], now, now + 60_000, 43)?,
+        make(&key, vec![carrier.endpoint()?], now - 100, now - 1, 43)?,
+        make(
+            &key,
+            vec![carrier.endpoint()?],
+            now + 60_000,
+            now + 120_000,
+            43,
+        )?,
+        make(&key, vec![carrier.endpoint()?], now, now + 60_000, 41)?,
+        make(&key, vec![carrier.endpoint()?], now - 11, now + 60_000, 43)?,
+        make(&key, vec![carrier.endpoint()?], now - 10, now + 60_001, 42)?,
+    ] {
+        assert!(service.update_native_record_v7(rejected).is_err());
+        let Reply::ServiceRecordV7 { record: actual } =
+            service.request_local_v1(Request::ServiceRecordV7).await?
+        else {
+            anyhow::bail!("carrier snapshot lost after rejected update")
+        };
+        assert_eq!(actual, signed);
+    }
+    let newer = make(&key, vec![carrier.endpoint()?], now, now + 60_000, 43)?;
+    service.update_native_record_v7(newer.clone())?;
+    let request = encode_requests(CONTEXT, &[Request::ServiceRecordV7])?;
+    let response = execute_local_batch(&service, &request, CONTEXT, || Ok(())).await?;
+    let replies = decode_replies(&response, CONTEXT, 1)?;
+    let Reply::ServiceRecordV7 { record: actual } = &replies[0] else {
+        anyhow::bail!("wrong carrier locator reply")
+    };
+    assert_eq!(actual, &newer);
     Ok(())
 }

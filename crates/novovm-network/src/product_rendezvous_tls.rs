@@ -1,7 +1,10 @@
 //! Optional TCP listener borrowed by the existing self-owned node owner.
 //! No independent store, identity authority, maintenance loop or task spawn.
 use super::*;
-use crate::{product_service_lease::TlsServiceEndpointV1, tls_transport::TlsScopeV1};
+use crate::{
+    product_service_lease::{serve_self_owned_node_selected_v4, TlsServiceEndpointV1},
+    tls_transport::TlsScopeV1,
+};
 use std::net::SocketAddr;
 use tokio::{net::TcpListener, sync::Semaphore};
 use zeroize::Zeroizing;

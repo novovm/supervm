@@ -13,7 +13,7 @@ use crate::{
         Capability, ContributionStatusV1, MailboxCursorV1, MailboxGrant, MailboxStore, StoreError,
     },
     product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
-    product_service_lease::NativeMailboxEndpointV7,
+    product_service_lease::{NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7},
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Result};
@@ -251,8 +251,12 @@ impl MailboxServiceV1 {
             "mailbox locator node mismatch"
         );
         validate_relay_record_v1(&record, crate::product_rendezvous_daemon::now_ms()?)?;
+        // Parse the complete canonical service inventory before checking either
+        // native capability. A UDP entry cannot hide a malformed carrier/TLS
+        // alternative, and a legacy Iroh address never implies NVMBOX07.
+        let carrier = NativeCarrierMailboxEndpointV7::from_record(&record)?;
         ensure!(
-            NativeMailboxEndpointV7::from_record(&record)?.is_some(),
+            carrier.is_some() || NativeMailboxEndpointV7::from_record(&record)?.is_some(),
             "mailbox native locator missing"
         );
         let mut current = self

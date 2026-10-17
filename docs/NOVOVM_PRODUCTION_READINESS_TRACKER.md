@@ -3,6 +3,60 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-17 原生信箱复用既有 Carrier 宿主（本机接线）
+
+输入64bb8658，认领23150c04。原 `product_rendezvous_owned` 增加显式
+NVMBOX07 分派，结构化 Finished 之后由 NativeCarrierPump 驱动同一个
+NativeObjectLink/NativeMailboxServer 与 MailboxService/SQLite。与原 UDP
+宿主共用 jobs/active/pending 执行体，复用入站 permit；不另建网络、账号、
+调度器或存储，不涉及主链/AOEM/经济语义。旧选择器继续按原版本处理，
+不从一次原生失败静默降级。TLS 入口仍保留原版，未宣称本轮接通 TLS 原生信箱。
+
+原签名 Iroh URI 中显式发布 `/novonet-mailbox/v7`，新连接核对完整新鲜路由，
+持续连接核对原节点/传输身份、撤销和能力。正常任期更新保留能力，正常声明
+到期不拆健康会话；移除能力仍终止受影响连接。旧解析器拒绝新 URI，所以
+此次仅交付共享宿主接口，未更换已部署节点、手机版本或现用签名入口。
+
+`mailbox_native_carrier` 真实 loopback QUIC 最终集成2项通过（64.03秒）：
+
+- 同一持久端点/操作范围/认证会话并行等待 WatchFetchV6 与 Put，真实落盘
+  StoreReceipt 验签；Fetch/Consume、错误读取能力及已消费重复寄存拒绝。
+- 空闲62秒实际跨越原节点60秒声明换代，从同一会话的ServiceRecordV7
+  取得并验证新记录，实例/序号前进而传输身份和原生session保持；停服后
+  重开同一 SQLite/受保护声明日志，密文、
+  原始期限及重复 Put 返回的签名存储回执一致。未模拟进程写盘中途断电。
+- 没有签名原生能力的节点拒绝 NVMBOX07；运行中撤回能力后，请求在有界
+  时间内关闭/拒绝，原存储核对没有新寄存。取消仍保留已承诺的持久数据。
+
+首轮2项基础载体测试通过36.82秒；增加真实声明刷新后，两项曾以
+`mailbox native locator missing`失败，定位到原NativeMailboxClient回包
+校验写死UDP。补齐服务端快照、book导入及客户端回包的显式Carrier判断，
+保持原验签/身份/期限/序号检查，最终两项通过，未删除该刷新验收。
+
+原service_lease回归71项通过（426.16秒，声明刷新补片前）；最终相关
+库回归26项通过（32.66秒），包括结构化真实载体、locator编码/更新/拒绝、
+回包身份验证与本地信任。原UDP native节点2项通过（1.38秒）；旧持续
+连接2项通过（150.64秒）、多路及V6推送4项通过（13.37秒）。后两组在
+最终仅原生回包校验补片前完成，未变更其实现。命令均用
+`cargo test -p novovm-network --features iroh-transport,tls-transport`，
+串行执行；最终库筛选为`native_carrier locator_ native_owner native_async`。
+严格Clippy通过（28.21秒，lib及mailbox_native_carrier，`-D warnings`），
+定向rustfmt与diff检查通过。
+源码位置及客户端接口见[共享交接](NOVORUDP_SHARED_CLIENT_HANDOFF.md)。
+UDP 原有带宽计量不等于已实现 Carrier 全局带宽计量；现有工作槽、lane、
+存储和 Carrier scope 资源边界保留。实测为本机节点宿主，不是手机原生
+迁移、消息 E2EE、跨 NAT、自有公网 Relay 或匿名性签收。
+
+原 v24 两台 Android 在网络恢复后，用普通聊天输入框发送9293/9294并取得
+双向持久回执；没有升级/清理数据，也没有 ADB 业务隧道。本轮未测量点击
+到屏幕时延。蜂窝首错保存显示网络代次8→9，旧task2退出、新task3恢复，
+缺少触发网络变化的系统回调，不能据此关闭未知任务替换根因。
+手机证据位于 NOVOCHAT ignored artifacts/continuity26-*，详见其P0记录。
+
+下一片只接原 Application/IO owner 的 L3 原生子流程，同时保留原 L4 收发
+和回执消费。现有原生分支会清空 L4 来源且不驱动其任务，这是手机发布前
+必须补齐的接缝；不能用本机宿主通过冒充 L3/L4 并行移动运行已完成。
+
 ## 2026-10-17 NOVOCHAT 节点启动可用性与退出首错（当前修复）
 
 输入7643b062，认领aabaebed。只修改既有 Iroh/self-owned owner 运行链，

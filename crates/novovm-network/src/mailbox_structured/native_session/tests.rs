@@ -166,6 +166,83 @@ fn reply_semantics_are_checked_not_only_context_and_row_count() -> Result<()> {
     assert!(verify_reply(node, &watch, &Reply::Notice(vec![])).is_err());
     Ok(())
 }
+
+#[test]
+fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_record() -> Result<()>
+{
+    use crate::{
+        iroh_transport::IrohAddressV1,
+        product_directory::sign_relay_record_v1,
+        product_service_lease::{
+            IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7,
+        },
+    };
+    use ed25519_dalek::SigningKey;
+    let key = SigningKey::from_bytes(&[72; 32]);
+    let node = key.verifying_key().to_bytes();
+    let carrier = NativeCarrierMailboxEndpointV7 {
+        iroh: IrohServiceEndpointV1 {
+            instance: [7; 32],
+            address: IrohAddressV1 {
+                endpoint_key: SigningKey::from_bytes(&[73; 32]).verifying_key().to_bytes(),
+                direct: vec!["127.0.0.1:4434".parse()?],
+                relays: Vec::new(),
+            },
+        },
+    };
+    let udp = NativeMailboxEndpointV7 {
+        address: "127.0.0.1:4433".parse()?,
+        max_connections: 4,
+        max_bytes_per_minute: 8 * 1024 * 1024,
+    }
+    .endpoint()?;
+    let now = crate::product_rendezvous_daemon::now_ms()?;
+    let sign = |endpoints, issued, expires| {
+        sign_relay_record_v1(&key, "native-reply", endpoints, issued, expires, 1)
+    };
+    let signed = sign(vec![carrier.endpoint()?], now, now + 60_000)?;
+    for endpoints in [
+        vec![carrier.endpoint()?],
+        vec![udp.clone()],
+        vec![carrier.endpoint()?, udp.clone()],
+    ] {
+        verify_reply(
+            node,
+            &Request::ServiceRecordV7,
+            &Reply::ServiceRecordV7 {
+                record: sign(endpoints, now, now + 60_000)?,
+            },
+        )?;
+    }
+    assert!(verify_reply(
+        [99; 32],
+        &Request::ServiceRecordV7,
+        &Reply::ServiceRecordV7 {
+            record: signed.clone()
+        }
+    )
+    .is_err());
+    let mut forged = signed;
+    forged.signature[0] ^= 1;
+    let mut malformed = carrier.endpoint()?;
+    malformed.uri.push('/');
+    for rejected in [
+        forged,
+        sign(vec![carrier.iroh.endpoint()?], now, now + 60_000)?,
+        sign(vec![carrier.endpoint()?], now - 100, now - 1)?,
+        sign(vec![carrier.endpoint()?], now + 60_000, now + 120_000)?,
+        sign(vec![udp, malformed], now, now + 60_000)?,
+    ] {
+        assert!(verify_reply(
+            node,
+            &Request::ServiceRecordV7,
+            &Reply::ServiceRecordV7 { record: rejected }
+        )
+        .is_err());
+    }
+    Ok(())
+}
+
 #[test]
 fn waiting_watch_classification_uses_validated_batch_and_zero_wait_is_immediate() -> Result<()> {
     let context = [71; 32];

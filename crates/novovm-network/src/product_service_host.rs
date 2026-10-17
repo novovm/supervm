@@ -8,6 +8,7 @@ const MAILBOX_REQUEST_V2: &[u8; 8] = b"NVMBOX02";
 const MAILBOX_REQUEST_V3: &[u8; 8] = b"NVMBOX03";
 const MAILBOX_REQUEST_V4: &[u8; 8] = b"NVMBOX04";
 const MAILBOX_REQUEST_V6: &[u8] = b"NVMBOX06";
+const MAILBOX_REQUEST_V7: &[u8; 8] = b"NVMBOX07";
 const MAILBOX_REQUEST_V5: &[u8; 8] = b"NVMBOX05";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
@@ -27,6 +28,62 @@ pub struct ServiceLeaseHostV1 {
 }
 
 impl ServiceLeaseHostV1 {
+    pub fn check_continuous_native_carrier_v7(&self, transport: [u8; 32], now: u64) -> Result<()> {
+        self.book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?
+            .check_continuous_native_carrier_v7(self.key.verifying_key().to_bytes(), transport, now)
+    }
+
+    /// Explicit publication/removal of NVMBOX07 on the existing carrier.
+    /// This changes a signed capability, not the node identity, custody or
+    /// network participation policy. Old clients reject the versioned locator;
+    /// callers must coordinate client upgrades before enabling it.
+    pub fn rotate_native_carrier_mailbox_v7(
+        &self,
+        enabled: bool,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        let mut book = self
+            .book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?;
+        ensure!(book.is_self_owned(), "self-owned policy required");
+        let entry = book
+            .entries
+            .get(&self.key.verifying_key().to_bytes())
+            .context("service revoked")?;
+        let route = IrohServiceEndpointV1::from_record(&entry.current)?;
+        let mut endpoints = entry.current.endpoints.clone();
+        let endpoint = endpoints
+            .iter_mut()
+            .find(|e| e.transport == RelayTransportV1::IrohRendezvousV1)
+            .context("Iroh service endpoint required")?;
+        // Resource policy belongs to the node; toggling a codec cannot reset it.
+        endpoint.uri = if enabled {
+            NativeCarrierMailboxEndpointV7 { iroh: route }
+                .endpoint()?
+                .uri
+        } else {
+            route.endpoint()?.uri
+        };
+        let record = directory::sign_relay_record_v1(
+            &self.key,
+            entry.grant.record_id.clone(),
+            endpoints,
+            now,
+            expires,
+            entry
+                .current
+                .sequence
+                .checked_add(1)
+                .context("host sequence exhausted")?,
+        )?;
+        book.replace_self_owned_records(vec![record.clone()], now)?;
+        Ok(record)
+    }
+
     pub fn check_continuous_native_peer_v7(&self, now: u64) -> Result<()> {
         self.book
             .lock()
@@ -255,7 +312,15 @@ impl ServiceLeaseHostV1 {
                 == endpoint.address.endpoint_key,
             "self-owned transport changed"
         );
-        let mut endpoints = vec![endpoint.endpoint()?];
+        let carrier = if NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_some() {
+            NativeCarrierMailboxEndpointV7 {
+                iroh: endpoint.clone(),
+            }
+            .endpoint()?
+        } else {
+            endpoint.endpoint()?
+        };
+        let mut endpoints = vec![carrier];
         if let Some(tls) = tls {
             endpoints.push(tls.endpoint()?);
         }
@@ -559,6 +624,7 @@ pub async fn serve_service_offer_selected_v2<T>(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NodeServiceV1 {
+    MailboxNative,
     MailboxPrefetch,
     Rendezvous,
     Mailbox,
@@ -625,6 +691,18 @@ pub async fn request_mailbox_continuous_v6(stream: &mut CarrierStreamV1<'_>) -> 
     request_prefetch_selector(stream).await
 }
 
+/// Explicit structured mailbox service. A matching echo is only selection;
+/// structured Finished on this exact carrier MUST precede NativeCarrierPump.
+/// Unsupported peers fail here; there is no fallback to a JSON mailbox codec.
+pub async fn request_mailbox_native_v7(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
+    stream.write_frame(MAILBOX_REQUEST_V7).await?;
+    ensure!(
+        stream.read_frame().await?.as_slice() == MAILBOX_REQUEST_V7,
+        "native mailbox version rejected"
+    );
+    Ok(())
+}
+
 pub async fn request_mailbox_multiplex_lane_v6(stream: &mut CarrierStreamV1<'_>) -> Result<()> {
     ensure!(
         stream.is_multiplexed(),
@@ -676,8 +754,26 @@ pub async fn serve_self_owned_node_selected_v4<T>(
     select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
     continuous: impl FnOnce() -> Result<()>,
 ) -> Result<(NodeServiceV1, Option<T>)> {
+    serve_self_owned_node_selected_v7(stream, select, continuous, || {
+        anyhow::bail!("native mailbox not enabled on this listener")
+    })
+    .await
+}
+
+/// The same service dispatcher with an explicit native capability check.
+/// Legacy callers use the wrapper above and continue rejecting NVMBOX07.
+pub async fn serve_self_owned_node_selected_v7<T>(
+    stream: &mut CarrierStreamV1<'_>,
+    select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
+    continuous: impl FnOnce() -> Result<()>,
+    native: impl FnOnce() -> Result<()>,
+) -> Result<(NodeServiceV1, Option<T>)> {
     let request = stream.read_frame().await?;
-    if request.as_slice() == MAILBOX_REQUEST_V6 {
+    if request.as_slice() == MAILBOX_REQUEST_V7 {
+        native()?;
+        stream.write_frame(MAILBOX_REQUEST_V7).await?;
+        Ok((NodeServiceV1::MailboxNative, None))
+    } else if request.as_slice() == MAILBOX_REQUEST_V6 {
         continuous()?;
         stream.write_frame(MAILBOX_REQUEST_V6).await?;
         Ok((NodeServiceV1::MailboxPrefetch, None))

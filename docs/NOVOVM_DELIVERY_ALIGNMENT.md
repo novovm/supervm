@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-17 NOVOCHAT-machine native mailbox carrier (active claim):** input64bb8658.
+**2026-10-17 NOVOCHAT-machine native mailbox carrier (validated; claim released):** input64bb8658, claim23150c04.
 Root owns product_service_host selector, product_rendezvous_owned dispatch,
 integration tests and the single build slot. Bounded native-body agent owns
 product_rendezvous_native: share the existing NativeMailboxServer work loop
@@ -12,6 +12,17 @@ MailboxService/custody store. No second SDK, server, scheduler or finance path.
 Old selectors remain explicit; native selection cannot fall back to JSON.
 Keep installed v24 phones/node operational until client/L4 integration passes.
 Local real-carrier results are not Android or autonomous relay acceptance.
+
+Final real QUIC mailbox2 pass64.03s, including same-session ServiceRecordV7
+across the actual60s instance rotation,62s idle, durable restart/receipt and
+capability withdrawal. Initial expanded test found the SDK reply still required
+UDP; fixed the existing snapshot/book/reply capability chain, retained rejection.
+Final focused library26 pass32.66s, native UDP node2 pass1.38s. Before the final
+native-only reply correction, existing continuous2/multiplex4 passed and the
+initial service-book71 passed. StrictClippy28.21s and scoped formatting pass.
+No deployed node/phone change: original v24 phones delivered9293/9294 after
+network recovery. Next mobile slice replaces only L3 business with nativeHandle,
+retaining original L4/receipt consumers and owner; no smartphone latency claim.
 
 **2026-10-17 NOVOCHAT-machine node availability (validated; claim released):** input7643b062.
 Current installed self-owned L3 previously exited with only failed_closed;

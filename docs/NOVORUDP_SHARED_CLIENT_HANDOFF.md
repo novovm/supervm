@@ -1,5 +1,50 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-10-17 原信箱宿主接通结构化 Carrier（本机运行验证）
+
+输入64bb8658，认领23150c04。本轮由 NOVOCHAT 设备接通通用宿主，复用原
+`product_rendezvous_native` 执行体与同一个 MailboxService/SQLite，不另建
+信箱或 SDK。手机 v24 与已部署节点保持原版本，移动调用者尚未切换。
+
+服务端实际调用链：`run_self_owned_node_v1` →
+`serve_self_owned_node_selected_v7` → 显式 `NVMBOX07` →
+`authenticate_structured_service_client_observed` →
+`NativeCarrierPump::attach_continuous_v7` → `NativeObjectLink` →
+原 `NativeMailboxServer` 的 jobs/active/pending → 原 MailboxService。
+UDP 与 Carrier 复用一个工作循环；Carrier 保留入站已经取得的 permit，
+不会为同一连接再次申请额度。未增加后台任务、调度器或账户/许可体系。
+
+客户端在原签名目录中读取 `native_carrier_mailbox_candidates_v7`，通过
+`check_native_carrier_route_v7` 核对新连接的完整新鲜路由；连接后通过
+`check_continuous_native_carrier_v7` 检查撤销、身份及能力。调用
+`request_mailbox_native_v7`，再完成结构化 Finished，随后将原生对象通道
+交给既有 NativeMailboxClient/Driver。不能把普通 Iroh 地址当作原生能力，
+也不能把一次原生选择失败回退到 JSON。
+
+`NativeCarrierMailboxEndpointV7` 在原 Iroh URI 增加节点签名覆盖的
+`/novonet-mailbox/v7`；还是同一个物理入口，最多三个不同载体入口的边界
+不变。宿主显式 `rotate_native_carrier_mailbox_v7(true, ...)` 后才声明
+此能力，普通任期/地址更新保留它，显式关闭则让受影响连接退出。健康连接
+不会因正常声明过期被周期拆除；新连接仍须取得新鲜声明。旧解析器会拒绝
+新后缀，因此必须先升级消费者，再协调发布能力，不能直接翻转现用节点。
+
+真实 loopback QUIC 最终回归2项通过（64.03秒）：同一认证连接上的等待通知
+与 Put 并行、Fetch/Consume、真实 SQLite 回执、空闲62秒后继续请求、
+停服重开原库后密文/期限/回执一致；未声明能力与运行中撤回能力均拒绝。
+实际跨越原节点60秒声明换代，在同一认证会话
+取得并验签/导入新的 ServiceRecordV7，实例与序号前进而连接身份不变。
+宿主首次发布及正常更新时将原已落盘签名记录交给既有信箱快照；客户端
+回包、服务端快照、本地目录导入三处都识别显式 Carrier 与 UDP 原生能力。
+其中客户端原有UDP-only条件由扩展真实测试捕获并修复，普通Iroh仍被拒绝。
+这不是 Android、跨 NAT、外部 Relay 独立性或 E2EE 手机闭环验收。
+原有 lane、工作槽、存储及 Carrier scope 资源界限保留；UDP 签名字节预算
+尚不是跨全部 Carrier 的节点级全局带宽预算，不作该项已实现声明。
+
+下一片由 NOVOCHAT 原 Application/IO owner 借用持久 Endpoint，替换 L3
+业务子流程的 Handle，并保持既有 `run_fast_lane`、`run_local_owner` 和
+本机回执队列消费。原生分支当前清空 L4 来源且未运行这些分支，不能只改
+发现选路后就发布；L3 载体失败也不能连带取消仍健康的 L4 路径。
+
 ## 原对象 owner 的异步载体接线（2026-10-16）
 
 `novorudp::carrier_io::NativeCarrierPump::attach` 消费结构化 Finished 后的原通道，
@@ -16,11 +61,9 @@
 
 重要边界：BoundSecureChannel只证明Finished及实际exporter绑定，本身不携带
 structured codec或NVMBOX07选择证明；正式入口须显式选择服务并调用结构化握手。
-当前实际QUIC对象收发和TLS分帧测试不是正式信箱或Android接线验收。
-下一片将product_rendezvous_native现有jobs/active/pending执行体复用于UDP与
-carrier readiness；复用入站已取得的连接permit，避免同一额度重复申请死锁。
-同时增加明确签名的原生carrier能力，正常声明换代须保留它，旧Iroh记录不能
-被静默解释为NVMBOX07。之后接原Application owner并重新验收两台手机。
+本节当时的QUIC对象收发和TLS分帧测试不是正式信箱或Android接线验收。
+上述2026-10-17增量已接通原宿主执行体、入站permit复用和签名原生能力；
+原Application owner与两台手机仍待接线验收。
 
 ## 结构化载体认证接线（2026-10-16）
 
@@ -36,8 +79,9 @@ Finished 复用严格 NVRLY002 Data 二进制封装，不自动探测或回退 J
 建立过程，不成为健康会话的周期终止条件。开放服务继续证明密钥持有，无需
 固定用户名单；接收者信箱能力、资源边界和撤销检查仍由原业务执行。
 
-尚未交付：原生 IO 与 Iroh owner 的实际收发连接、明确服务版本的加密绑定及
-原生节点身份对应、旧流取消后的排队数据清理、手机跨 NAT 与独立副本验证。
+本节完成时尚未交付：原生 IO 与 Iroh owner 的实际收发连接、明确服务版本的
+加密绑定及原生节点身份对应、旧流取消后的排队数据清理、手机跨 NAT 与独立
+副本验证。前几项后续接线见顶部2026-10-17增量；手机与独立副本仍待验证。
 仅完成本节认证不能直接放开 NativeRoute::Carrier；原生帧必须继续绑定到
 这个已认证流及其 channel，不能改走裸流、伪造 SocketAddr 或本地 UDP 代理。
 
