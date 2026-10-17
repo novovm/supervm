@@ -3,6 +3,10 @@
 //! packet progress, so it cannot hold the transport receive loop hostage.
 use crate::{
     bound_session::{authenticate_structured_service_client_observed, ServicePeerPolicyV1},
+    bound_session::{
+        peer_time::send_peer_time_v8,
+        session_clock::authenticate_structured_service_client_v2_observed,
+    },
     carrier_stream::CarrierStreamV1,
     duplex::HandshakeReplayCacheV1,
     mailbox_rpc::MailboxServiceV1,
@@ -10,6 +14,7 @@ use crate::{
         native_session::{domain, MailboxResponse, NativeMailboxServer, REQUEST_DEADLINE, SLOTS},
         LIMITS, STREAM,
     },
+    network_time::ClockAnchorV1,
     novorudp::{
         carrier_io::NativeCarrierPump,
         endpoint::{NativeEndpoint, NativeHandshakeBudget},
@@ -133,10 +138,21 @@ fn mailbox_link(endpoint: NativeEndpoint) -> Result<NativeObjectLink> {
     )
 }
 
-/// The owner has explicitly selected NVMBOX07 and reserved its existing slot.
+#[derive(Clone, Copy)]
+pub(super) enum NativeCarrierHandshake {
+    UtcV7,
+    SessionClockV8 {
+        received: Option<ClockAnchorV1>,
+        deadline: Instant,
+    },
+}
+
+/// The owner has explicitly selected NVMBOX07/08 and reserved its existing slot.
 /// Reuse the carrier scope's resource bounds and the mailbox/lane quotas; the
 /// UDP listener's signed wire budget is not a global cross-carrier rate limit.
-pub(super) async fn serve_carrier_v7(
+// One common owner/pump for both explicit handshake versions.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn serve_carrier(
     stream: &mut CarrierStreamV1<'_>,
     key: &SigningKey,
     policy: ServicePeerPolicyV1<'_>,
@@ -144,6 +160,7 @@ pub(super) async fn serve_carrier_v7(
     stop: Arc<AtomicBool>,
     permit: Arc<OwnedSemaphorePermit>,
     authority: impl Fn() -> Result<()> + Copy + Sync,
+    handshake: NativeCarrierHandshake,
 ) -> Result<()> {
     ensure!(
         key.verifying_key().to_bytes() == service.identity_public_key(),
@@ -154,14 +171,32 @@ pub(super) async fn serve_carrier_v7(
         authority()
     };
     check()?;
-    let (channel, _) = authenticate_structured_service_client_observed(
-        stream,
-        key,
-        policy,
-        &mut HandshakeReplayCacheV1::new(8),
-        &mut |_, _| check(),
-    )
-    .await?;
+    let (mut channel, _) = match handshake {
+        NativeCarrierHandshake::UtcV7 => {
+            authenticate_structured_service_client_observed(
+                stream,
+                key,
+                policy,
+                &mut HandshakeReplayCacheV1::new(8),
+                &mut |_, _| check(),
+            )
+            .await?
+        }
+        NativeCarrierHandshake::SessionClockV8 { deadline, .. } => {
+            authenticate_structured_service_client_v2_observed(
+                stream,
+                key,
+                policy,
+                deadline,
+                &mut HandshakeReplayCacheV1::new(8),
+                &mut |_, _| check(),
+            )
+            .await?
+        }
+    };
+    if let NativeCarrierHandshake::SessionClockV8 { received, deadline } = handshake {
+        send_peer_time_v8(stream, &mut channel, received, deadline, check).await?;
+    }
     check()?;
     // The Finished channel is bound to this exact carrier; do not establish a
     // second UDP handshake or substitute another peer's authentication result.

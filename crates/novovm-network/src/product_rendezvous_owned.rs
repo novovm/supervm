@@ -11,8 +11,8 @@ use crate::{
     product_directory::PeerSignedRelayRecordV1,
     product_rendezvous_daemon::now_ms,
     product_service_lease::{
-        serve_self_owned_node_selected_v7, IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7,
-        NativeMailboxEndpointV7, NodeServiceV1, ServiceLeaseHostV1,
+        serve_self_owned_node_selected_v8, IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7,
+        NativeCarrierMailboxEndpointV8, NativeMailboxEndpointV7, NodeServiceV1, ServiceLeaseHostV1,
     },
 };
 use anyhow::{ensure, Result};
@@ -384,11 +384,15 @@ impl Node {
             first
         };
         ensure!(
-            mailbox.is_some() || NativeCarrierMailboxEndpointV7::from_record(&first)?.is_none(),
+            mailbox.is_some()
+                || (NativeCarrierMailboxEndpointV7::from_record(&first)?.is_none()
+                    && NativeCarrierMailboxEndpointV8::from_record(&first)?.is_none()),
             "native mailbox capability without custody service"
         );
         if let Some(service) = &mailbox {
-            if NativeMailboxEndpointV7::from_record(&first)?.is_some()
+            if NativeCarrierMailboxEndpointV8::from_record(&first)?.is_some() {
+                service.update_native_record_v8(first.clone())?;
+            } else if NativeMailboxEndpointV7::from_record(&first)?.is_some()
                 || NativeCarrierMailboxEndpointV7::from_record(&first)?.is_some()
             {
                 // Publish the exact already-journaled signed record through the
@@ -480,7 +484,9 @@ impl Node {
                         let record = host.rotate_self_owned(&endpoint, now_ms()?, expiry)?;
                         *current = Generation { store: next, expires_ms: expiry };
                         if let Some(service) = &mailbox {
-                            if NativeMailboxEndpointV7::from_record(&record)?.is_some()
+                            if NativeCarrierMailboxEndpointV8::from_record(&record)?.is_some() {
+                                service.update_native_record_v8(record.clone())?;
+                            } else if NativeMailboxEndpointV7::from_record(&record)?.is_some()
                                 || NativeCarrierMailboxEndpointV7::from_record(&record)?.is_some()
                             {
                                 service.update_native_record_v7(record.clone())?;
@@ -514,18 +520,24 @@ impl Node {
                             let mut stream: CarrierStreamV1<'_> = stream.into();
                             loop {
                                 let admitted_at = Instant::now();
-                                    let (kind, selected) = tokio::time::timeout(Duration::from_secs(3), serve_self_owned_node_selected_v7(&mut stream, || {
+                                    let (kind, selected, clock) = tokio::time::timeout(Duration::from_secs(3), serve_self_owned_node_selected_v8(&mut stream, || {
                                         let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
                                         let offer = host.offer_until(now_ms()?, current.expires_ms)?;
                                         let until = offer.lease.as_ref().map_or(0, |lease| lease.expires_at_ms);
                                         Ok((offer, (current.store.clone(), until)))
                                     }, || host.check_continuous_peer_v4(transport, now_ms()?),
-                                    || host.check_continuous_native_carrier_v7(transport, now_ms()?))).await??;
-                                if kind == NodeServiceV1::MailboxNative {
+                                    || host.check_continuous_native_carrier_v7(transport, now_ms()?),
+                                    || host.check_continuous_native_carrier_v8(transport, now_ms()?))).await??;
+                                if matches!(kind, NodeServiceV1::MailboxNative | NodeServiceV1::MailboxNativeV8) {
                                     let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
-                                    return native::serve_carrier_v7(
+                                    let handshake = if kind == NodeServiceV1::MailboxNativeV8 {
+                                        native::NativeCarrierHandshake::SessionClockV8 { received: clock, deadline: admitted_at + Duration::from_secs(30) }
+                                    } else { native::NativeCarrierHandshake::UtcV7 };
+                                    return native::serve_carrier(
                                         &mut stream, key, mailbox_policy, mailbox, native_stop, permit,
-                                        || host.check_continuous_native_carrier_v7(transport, now_ms()?),
+                                        || if kind == NodeServiceV1::MailboxNativeV8 {
+                                            host.check_continuous_native_carrier_v8(transport, now_ms()?)
+                                        } else { host.check_continuous_native_carrier_v7(transport, now_ms()?) }, handshake,
                                     ).await;
                                 }
                                 if kind == NodeServiceV1::MailboxPrefetch {
@@ -561,7 +573,7 @@ impl Node {
                                 let until = if kind == NodeServiceV1::MailboxWindow { window_until } else { legacy_until };
                                 let again = tokio::time::timeout_at(until.into(), async {
                                     match kind {
-                                        NodeServiceV1::MailboxNative | NodeServiceV1::MailboxContinuous | NodeServiceV1::MailboxMultiplex | NodeServiceV1::MailboxPrefetch => anyhow::bail!("continuous service in legacy dispatch"),
+                                        NodeServiceV1::MailboxNative | NodeServiceV1::MailboxNativeV8 | NodeServiceV1::MailboxContinuous | NodeServiceV1::MailboxMultiplex | NodeServiceV1::MailboxPrefetch => anyhow::bail!("continuous service in legacy dispatch"),
                                         NodeServiceV1::Rendezvous => { crate::discovery_control::serve_rendezvous(&mut stream,key,clients,store).await?; },
                                         NodeServiceV1::Mailbox | NodeServiceV1::MailboxRealtime | NodeServiceV1::MailboxWindow => {
                                             let mailbox=mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;

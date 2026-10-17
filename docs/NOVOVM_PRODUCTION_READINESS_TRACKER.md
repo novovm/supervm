@@ -3,6 +3,45 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 NVMBOX08 原信箱运行链与连接内相对时间测量（未部署手机）
+
+基线 `de9a3de6`。原 `run_self_owned_node_v1` / node dispatcher →
+`product_rendezvous_native::serve_carrier` → 原 NativeCarrierPump →
+NativeMailboxServer/SQLite 增加显式 V8 选择。原签名目录增加准确的 V8 能力标记，
+轮换、持久恢复、撤销及资源参数使用同一 host/book；不新增网络/存储/任务 owner。
+V7 的 UTC 身份握手仍保持原义，V8 使用已验证的 session-clock V2。节点实际配置
+与 Android 未切换，不以新增入口或 reviewed pin 宣称已上线。
+
+`bound_session::peer_time::authenticate_mailbox_native_v8` 在同一原截止内完成
+选择、双向 Finished 和一次加密 APFL 时间响应；首次响应严格绑定本次会话、
+固定对端、方向及业务序号1。原 channel 随后交给持续 pump，不重置 AEAD 或
+防重放。系统钟异常只影响时间候选；身份/格式/MAC/撤销错误仍拒绝。通用
+`network_time` 保留有符号差分区间、单调锚、驻留纳秒、量化/捕获误差、年龄及
+漂移。单个认证对端不是可信全球 UTC，不修改 TTL、highwater 或金融语义。
+
+本机回归：network_time 10、transport_binding 34、bound_session 33、
+product_service_lease 76、mailbox_structured 18，共171项通过；包含24项新增测试
+中的22项。另4项真实节点集成（其中2项新增V8）全通过，耗时128.15秒：
+原正式入口签名发布V8、连接认证/测量、原生Register/Put/WatchFetch/Fetch/Consume、
+实际SQLite及StoreReceipt；跨实际60秒声明换代和62秒空闲保持同一会话，节点重启
+后保留密文/原TTL/原存储回执，重复Put/已Consume拒绝与撤销后不落盘均验证。
+原V7同样跑完整生命周期；没有把两个fixture进程算独立容灾节点。
+
+新增真实QUIC测试用平台注入的正负36小时候选（未修改Windows钟），完成新身份
+握手、时间区间与后续原加密通道通信；时间不可用/数值不一致仍能传业务，MAC/
+会话/格式/重放错误拒绝，selector和时间帧停滞遵守原截止。此偏差测试不是整个
+节点目录/业务TTL的大时差验收。首轮数学7/10：Windows Instant减1ns可能仍为同一
+计时刻度，3项倒退fixture改为1ms并验证确实更早，随后10/10；生产检查未放宽。
+初始编译中的测试语法、两个既有envelope类型转换及Context导入已修正。原始
+失败与通过日志均保留在ignored `artifacts/continuity34-*`。严格lib Clippy通过
+（16.05秒）；TLS-only特性编译（15.53秒）、本片format与diff检查通过；仅保留
+仓库原有重复bin target提示。
+
+尚未完成：Android L3/L4共同迁移、新版冷启动时间来源资格与区间消费、持久时间
+防回滚迁移、真实换网/分钟小时级时差手机验收、历史E214与蜂窝长尾关闭。单源
+相对测量不能代替UTC正确性，首次等待服务端时间帧也可能增加一次往返延迟；
+不宣称性能改善、无L3跨公网冷启动、自主传输、匿名或生产签收。
+
 ## 2026-10-18 session-clock V2 身份证明组件（未部署手机或节点）
 
 基线 `a2212ced`。实际接缝为既有 `transport_binding` → APFL structured codec →

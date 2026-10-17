@@ -4,7 +4,12 @@
 use anyhow::{bail, ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_network::{
-    bound_session::authenticate_structured_bound_session_observed,
+    bound_session::{
+        authenticate_structured_bound_session_observed,
+        peer_time::{
+            authenticate_mailbox_native_v8, request_mailbox_native_v8, PeerTimeObservationV1,
+        },
+    },
     carrier_stream::CarrierStreamV1,
     duplex::HandshakeReplayCacheV1,
     iroh_transport::{IrohConfigV1, IrohEndpointOwnerV1},
@@ -26,7 +31,8 @@ use novovm_network::{
     product_rendezvous_owned::run_self_owned_node_v1,
     product_service_lease::{
         request_mailbox_native_v7, IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7,
-        SelfOwnedTrustV1, ServiceLeaseBookV1, ServiceLeaseFileV1, ServiceLeaseHostV1,
+        NativeCarrierMailboxEndpointV8, SelfOwnedTrustV1, ServiceLeaseBookV1, ServiceLeaseFileV1,
+        ServiceLeaseHostV1,
     },
 };
 use std::{
@@ -104,17 +110,36 @@ struct Client<'a> {
     received: Vec<(RequestId, Vec<Reply>)>,
 }
 impl<'a> Client<'a> {
-    async fn attach(stream: &'a mut CarrierStreamV1<'_>) -> Result<Self> {
-        request_mailbox_native_v7(stream).await?;
-        let channel = authenticate_structured_bound_session_observed(
-            stream,
-            &key(83),
-            pin(),
-            true,
-            &mut HandshakeReplayCacheV1::new(8),
-            &mut |_, _| Ok(()),
-        )
-        .await?;
+    async fn attach(stream: &'a mut CarrierStreamV1<'_>, v8: bool) -> Result<Self> {
+        let channel = if v8 {
+            let (channel, observed) = authenticate_mailbox_native_v8(
+                stream,
+                &key(83),
+                pin(),
+                Instant::now() + Duration::from_secs(5),
+                &mut HandshakeReplayCacheV1::new(8),
+                &mut |_, _| Ok(()),
+            )
+            .await?;
+            ensure!(observed.peer_identity_public_key == pin());
+            ensure!(
+                matches!(observed.observation, PeerTimeObservationV1::Candidate(_)),
+                "loopback clock observation missing"
+            );
+            channel
+        } else {
+            request_mailbox_native_v7(stream).await?;
+            let channel = authenticate_structured_bound_session_observed(
+                stream,
+                &key(83),
+                pin(),
+                true,
+                &mut HandshakeReplayCacheV1::new(8),
+                &mut |_, _| Ok(()),
+            )
+            .await?;
+            channel
+        };
         let (endpoint, pump) =
             NativeCarrierPump::attach_continuous_v7(stream, channel, vec![STREAM])?;
         let mut link = NativeObjectLink::new(endpoint, vec![lane()], policy())?;
@@ -218,6 +243,7 @@ enum Case {
 async fn verified_record(
     client: &mut Client<'_>,
     book: &mut ServiceLeaseBookV1,
+    v8: bool,
 ) -> Result<PeerSignedRelayRecordV1> {
     // Metadata uses the original fourth logical slot on this same native
     // session, not a fixture shortcut into the node's authority owner.
@@ -225,10 +251,17 @@ async fn verified_record(
     let Reply::ServiceRecordV7 { record } = client.until(request).await? else {
         bail!("native carrier omitted its signed service record")
     };
-    let endpoint = NativeCarrierMailboxEndpointV7::from_record(&record)?
-        .context("native carrier marker missing from service record")?;
-    book.accept_native_record_v7(pin(), record.clone(), now_ms()?)?;
-    book.check_native_carrier_route_v7(pin(), &endpoint, now_ms()?)?;
+    if v8 {
+        let endpoint =
+            NativeCarrierMailboxEndpointV8::from_record(&record)?.context("V8 marker missing")?;
+        book.accept_native_record_v8(pin(), record.clone(), now_ms()?)?;
+        book.check_native_carrier_route_v8(pin(), &endpoint, now_ms()?)?;
+    } else {
+        let endpoint =
+            NativeCarrierMailboxEndpointV7::from_record(&record)?.context("V7 marker missing")?;
+        book.accept_native_record_v7(pin(), record.clone(), now_ms()?)?;
+        book.check_native_carrier_route_v7(pin(), &endpoint, now_ms()?)?;
+    }
     Ok(record)
 }
 
@@ -237,10 +270,10 @@ async fn native_carrier_owner_multiplexes_and_keeps_custody_across_idle_and_rest
 {
     let directory = tempfile::tempdir()?;
     let expires = (now_ms()? / 1000) as i64 + 600;
-    let receipt = round(directory.path(), expires, Case::Store)
+    let receipt = round(directory.path(), expires, Case::Store, false)
         .await?
         .context("no original StoreReceipt")?;
-    round(directory.path(), expires, Case::Restore(receipt)).await?;
+    round(directory.path(), expires, Case::Restore(receipt), false).await?;
     Ok(())
 }
 
@@ -249,12 +282,18 @@ async fn native_carrier_requires_explicit_capability_and_rejects_withdrawn_live_
 ) -> Result<()> {
     for case in [Case::Undeclared, Case::Withdraw] {
         let directory = tempfile::tempdir()?;
-        round(directory.path(), (now_ms()? / 1000) as i64 + 600, case).await?;
+        round(
+            directory.path(),
+            (now_ms()? / 1000) as i64 + 600,
+            case,
+            false,
+        )
+        .await?;
     }
     Ok(())
 }
 
-async fn round(path: &Path, expires: i64, case: Case) -> Result<Option<StoreReceiptV1>> {
+async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option<StoreReceiptV1>> {
     let enabled = !matches!(case, Case::Undeclared);
     let journal = path.join("authority.bin");
     let service = Arc::new(MailboxServiceV1::new(
@@ -298,7 +337,11 @@ async fn round(path: &Path, expires: i64, case: Case) -> Result<Option<StoreRece
             };
             let host = Arc::new(ServiceLeaseHostV1::new(key(17), book)?);
             host.rotate_self_owned(endpoint, at, until)?;
-            host.rotate_native_carrier_mailbox_v7(enabled, at, until)?;
+            if v8 {
+                host.rotate_native_carrier_mailbox_v8(enabled, at, until)?;
+            } else {
+                host.rotate_native_carrier_mailbox_v7(enabled, at, until)?;
+            }
             *activated.lock().unwrap() = Some(host.clone());
             Ok(host)
         },
@@ -323,28 +366,40 @@ async fn round(path: &Path, expires: i64, case: Case) -> Result<Option<StoreRece
         let route = IrohServiceEndpointV1::from_record(&record)?;
         book.check_continuous_peer_v4(pin(), route.address.endpoint_key, now_ms()?)?;
         ensure!(
-            NativeCarrierMailboxEndpointV7::from_record(&record)?.is_some() == enabled,
+            carrier_route(&record, v8)?.is_some() == enabled,
             "node changed explicit capability unexpectedly"
         );
-        if let Some(native) = NativeCarrierMailboxEndpointV7::from_record(&record)? {
-            book.check_native_carrier_route_v7(pin(), &native, now_ms()?)?;
+        if enabled {
+            if v8 {
+                book.check_native_carrier_route_v8(
+                    pin(),
+                    &NativeCarrierMailboxEndpointV8::from_record(&record)?.unwrap(),
+                    now_ms()?,
+                )?;
+            } else {
+                book.check_native_carrier_route_v7(
+                    pin(),
+                    &NativeCarrierMailboxEndpointV7::from_record(&record)?.unwrap(),
+                    now_ms()?,
+                )?;
+            }
         }
         let owner = IrohEndpointOwnerV1::bind(config()?, || Ok(())).await?;
         let before = owner.snapshot();
         let result = owner.with_continuous_service_v4(|| Ok(()), move |scope| Box::pin(async move {
             let mut stream: CarrierStreamV1<'_> = scope.connect(&route.address).await?.into();
             if matches!(case, Case::Undeclared) {
-                ensure!(request_mailbox_native_v7(&mut stream).await.is_err(),
+                ensure!(if v8 { request_mailbox_native_v8(&mut stream, Instant::now() + Duration::from_secs(3)).await.is_err() } else { request_mailbox_native_v7(&mut stream).await.is_err() },
                     "undeclared native service accepted");
                 return Ok(None);
             }
-            let mut client = Client::attach(&mut stream).await?;
-            let first_record = verified_record(&mut client, &mut book).await?;
+            let mut client = Client::attach(&mut stream, v8).await?;
+            let first_record = verified_record(&mut client, &mut book, v8).await?;
             ensure!(first_record.sequence >= record.sequence,
                 "service snapshot predates published locator");
-            let first_route = NativeCarrierMailboxEndpointV7::from_record(&first_record)?
+            let first_route = carrier_route(&first_record, v8)?
                 .context("initial native carrier locator missing")?;
-            ensure!(first_route.iroh.address.endpoint_key == route.address.endpoint_key,
+            ensure!(first_route.address.endpoint_key == route.address.endpoint_key,
                 "service record changed authenticated transport identity");
             if let Case::Restore(original) = case {
                 ensure!(matches!(client.request(fetch(99)).await?,
@@ -370,9 +425,13 @@ async fn round(path: &Path, expires: i64, case: Case) -> Result<Option<StoreRece
             }).await?, Reply::Registered));
             if matches!(case, Case::Withdraw) {
                 let at = now_ms()?;
-                host.rotate_native_carrier_mailbox_v7(false, at, at + 90_000)?;
-                ensure!(host.check_continuous_native_carrier_v7(
-                    route.address.endpoint_key, now_ms()?).is_err());
+                if v8 {
+                    host.rotate_native_carrier_mailbox_v8(false, at, at + 90_000)?;
+                    ensure!(host.check_continuous_native_carrier_v8(route.address.endpoint_key, now_ms()?).is_err());
+                } else {
+                    host.rotate_native_carrier_mailbox_v7(false, at, at + 90_000)?;
+                    ensure!(host.check_continuous_native_carrier_v7(route.address.endpoint_key, now_ms()?).is_err());
+                }
                 let result = tokio::time::timeout(Duration::from_secs(3),
                     client.request(put(expires, 5))).await
                     .context("withdrawn session neither closed nor rejected the request")?;
@@ -402,12 +461,12 @@ async fn round(path: &Path, expires: i64, case: Case) -> Result<Option<StoreRece
             // Cross the production node's actual 60-second locator rotation,
             // also exceeding the old 30-second initial carrier IO window.
             client.idle(Duration::from_secs(62)).await?;
-            let next_record = verified_record(&mut client, &mut book).await?;
-            let next_route = NativeCarrierMailboxEndpointV7::from_record(&next_record)?
+            let next_record = verified_record(&mut client, &mut book, v8).await?;
+            let next_route = carrier_route(&next_record, v8)?
                 .context("rotated native carrier locator missing")?;
             ensure!(next_record.sequence > first_record.sequence
-                && next_route.iroh.instance != first_route.iroh.instance
-                && next_route.iroh.address.endpoint_key == first_route.iroh.address.endpoint_key,
+                && next_route.instance != first_route.instance
+                && next_route.address.endpoint_key == first_route.address.endpoint_key,
                 "node did not publish a fresh instance on the stable native carrier");
             ensure!(client.link.session_id(0) == session, "idle replaced native session");
             ensure!(matches!(client.request(fetch(3)).await?, Reply::Object { expires: actual, .. }
@@ -439,4 +498,42 @@ async fn round(path: &Path, expires: i64, case: Case) -> Result<Option<StoreRece
         );
     }
     Ok(result)
+}
+
+fn carrier_route(
+    record: &PeerSignedRelayRecordV1,
+    v8: bool,
+) -> Result<Option<IrohServiceEndpointV1>> {
+    if v8 {
+        Ok(NativeCarrierMailboxEndpointV8::from_record(record)?.map(|e| e.iroh))
+    } else {
+        Ok(NativeCarrierMailboxEndpointV7::from_record(record)?.map(|e| e.iroh))
+    }
+}
+
+#[tokio::test]
+async fn v8_native_owner_keeps_same_session_over_rotation_and_custody_across_restart() -> Result<()>
+{
+    let directory = tempfile::tempdir()?;
+    let expires = (now_ms()? / 1000) as i64 + 600;
+    let receipt = round(directory.path(), expires, Case::Store, true)
+        .await?
+        .context("missing receipt")?;
+    round(directory.path(), expires, Case::Restore(receipt), true).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn v8_native_owner_rejects_undeclared_and_withdrawn_capability() -> Result<()> {
+    for case in [Case::Undeclared, Case::Withdraw] {
+        let directory = tempfile::tempdir()?;
+        round(
+            directory.path(),
+            (now_ms()? / 1000) as i64 + 600,
+            case,
+            true,
+        )
+        .await?;
+    }
+    Ok(())
 }

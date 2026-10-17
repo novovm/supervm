@@ -606,6 +606,17 @@ pub struct BoundSecureChannelV1 {
 }
 
 impl BoundSecureChannelV1 {
+    /// Locally verified handshake mode, not a version supplied by a new frame.
+    /// Explicit time-aware services must reject a completed legacy channel.
+    pub fn uses_session_clock_v2(&self) -> bool {
+        self.context.version == BoundClockMode::SessionV2.version()
+    }
+
+    /// Role fixed by the completed, carrier-bound handshake.
+    pub fn local_is_initiator(&self) -> bool {
+        self.initiator
+    }
+
     /// Recheck this completed channel against the actual local carrier before
     /// transferring ownership. Neither a node key nor a route flag substitutes
     /// for the exact connection/stream exporter and authenticated direction.

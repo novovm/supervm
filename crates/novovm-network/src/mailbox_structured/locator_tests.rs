@@ -276,9 +276,7 @@ async fn locator_owner_does_not_serve_an_expired_snapshot() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_invalid_updates(
-) -> Result<()> {
+async fn native_carrier_locator_case(v8: bool) -> Result<()> {
     let directory = tempfile::tempdir()?;
     let key = SigningKey::from_bytes(&[72; 32]);
     let service = MailboxServiceV1::new(
@@ -299,6 +297,23 @@ async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_inv
             },
         },
     };
+    let carrier_endpoint = || -> Result<RelayEndpointV1> {
+        if v8 {
+            crate::product_service_lease::NativeCarrierMailboxEndpointV8 {
+                iroh: carrier.iroh.clone(),
+            }
+            .endpoint()
+        } else {
+            carrier.endpoint()
+        }
+    };
+    let update = |record| {
+        if v8 {
+            service.update_native_record_v8(record)
+        } else {
+            service.update_native_record_v7(record)
+        }
+    };
     let now = now()?;
     let make = |signer: &SigningKey, endpoints, issued, expires, sequence| {
         sign_relay_record_v1(
@@ -310,12 +325,17 @@ async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_inv
             sequence,
         )
     };
-    let signed = make(&key, vec![carrier.endpoint()?], now - 10, now + 60_000, 42)?;
-    service.update_native_record_v7(signed.clone())?;
-    service.update_native_record_v7(signed.clone())?;
+    let signed = make(&key, vec![carrier_endpoint()?], now - 10, now + 60_000, 42)?;
+    if v8 {
+        assert!(service.update_native_record_v7(signed.clone()).is_err());
+    } else {
+        assert!(service.update_native_record_v8(signed.clone()).is_err());
+    }
+    update(signed.clone())?;
+    update(signed.clone())?;
     let mut forged = signed.clone();
     forged.signature[0] ^= 1;
-    let mut malformed = carrier.endpoint()?;
+    let mut malformed = carrier_endpoint()?;
     malformed.uri.push('/');
     // Even an otherwise valid UDP-native alternative cannot smuggle this
     // malformed service URI into the retained native locator snapshot.
@@ -324,26 +344,26 @@ async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_inv
         forged,
         make(
             &SigningKey::from_bytes(&[74; 32]),
-            vec![carrier.endpoint()?],
+            vec![carrier_endpoint()?],
             now,
             now + 60_000,
             43,
         )?,
         make(&key, vec![carrier.iroh.endpoint()?], now, now + 60_000, 43)?,
         make(&key, vec![udp, malformed], now, now + 60_000, 43)?,
-        make(&key, vec![carrier.endpoint()?], now - 100, now - 1, 43)?,
+        make(&key, vec![carrier_endpoint()?], now - 100, now - 1, 43)?,
         make(
             &key,
-            vec![carrier.endpoint()?],
+            vec![carrier_endpoint()?],
             now + 60_000,
             now + 120_000,
             43,
         )?,
-        make(&key, vec![carrier.endpoint()?], now, now + 60_000, 41)?,
-        make(&key, vec![carrier.endpoint()?], now - 11, now + 60_000, 43)?,
-        make(&key, vec![carrier.endpoint()?], now - 10, now + 60_001, 42)?,
+        make(&key, vec![carrier_endpoint()?], now, now + 60_000, 41)?,
+        make(&key, vec![carrier_endpoint()?], now - 11, now + 60_000, 43)?,
+        make(&key, vec![carrier_endpoint()?], now - 10, now + 60_001, 42)?,
     ] {
-        assert!(service.update_native_record_v7(rejected).is_err());
+        assert!(update(rejected).is_err());
         let Reply::ServiceRecordV7 { record: actual } =
             service.request_local_v1(Request::ServiceRecordV7).await?
         else {
@@ -351,8 +371,8 @@ async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_inv
         };
         assert_eq!(actual, signed);
     }
-    let newer = make(&key, vec![carrier.endpoint()?], now, now + 60_000, 43)?;
-    service.update_native_record_v7(newer.clone())?;
+    let newer = make(&key, vec![carrier_endpoint()?], now, now + 60_000, 43)?;
+    update(newer.clone())?;
     let request = encode_requests(CONTEXT, &[Request::ServiceRecordV7])?;
     let response = execute_local_batch(&service, &request, CONTEXT, || Ok(())).await?;
     let replies = decode_replies(&response, CONTEXT, 1)?;
@@ -361,4 +381,11 @@ async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_inv
     };
     assert_eq!(actual, &newer);
     Ok(())
+}
+
+#[tokio::test]
+async fn locator_owner_accepts_explicit_native_carrier_and_rejects_legacy_or_invalid_updates(
+) -> Result<()> {
+    native_carrier_locator_case(false).await?;
+    native_carrier_locator_case(true).await
 }

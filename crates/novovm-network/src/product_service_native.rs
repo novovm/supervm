@@ -5,6 +5,7 @@ use crate::novorudp::wire_budget::{MAX_BYTES_PER_MINUTE, MIN_BYTES_PER_MINUTE};
 use std::net::SocketAddr;
 
 pub(super) const SUFFIX: &str = "/novonet-mailbox/v7";
+pub(super) const SUFFIX_V8: &str = "/novonet-mailbox/v8";
 
 /// Explicit NVMBOX07 capability on the existing Iroh carrier. The marker is
 /// part of the original node-signed URI; an ordinary Iroh address is not proof
@@ -27,6 +28,27 @@ impl NativeCarrierMailboxEndpointV7 {
     /// belong to ServiceLeaseBookV1. Never infers NVMBOX07 from legacy Iroh/UDP.
     pub fn from_record(record: &PeerSignedRelayRecordV1) -> Result<Option<Self>> {
         Ok(ServiceEndpoints::from_record(record)?.native_carrier)
+    }
+}
+
+/// Explicit NVMBOX08 capability on the same physical carrier. Selection uses
+/// session-clock V2 authentication; it does not qualify a peer clock as UTC or
+/// grant mailbox resource capabilities. V7 never infers this version.
+#[derive(Clone, Debug)]
+pub struct NativeCarrierMailboxEndpointV8 {
+    pub iroh: IrohServiceEndpointV1,
+}
+
+impl NativeCarrierMailboxEndpointV8 {
+    pub fn endpoint(&self) -> Result<RelayEndpointV1> {
+        let mut endpoint = self.iroh.endpoint()?;
+        endpoint.uri.push_str(SUFFIX_V8);
+        ensure!(endpoint.uri.len() <= 4096, "native carrier URI budget");
+        Ok(endpoint)
+    }
+
+    pub fn from_record(record: &PeerSignedRelayRecordV1) -> Result<Option<Self>> {
+        Ok(ServiceEndpoints::from_record(record)?.native_carrier_v8)
     }
 }
 
@@ -116,6 +138,7 @@ pub(super) struct ServiceEndpoints {
     pub tls: Option<TlsServiceEndpointV1>,
     pub native: Option<NativeMailboxEndpointV7>,
     pub native_carrier: Option<NativeCarrierMailboxEndpointV7>,
+    pub native_carrier_v8: Option<NativeCarrierMailboxEndpointV8>,
 }
 impl ServiceEndpoints {
     pub(super) fn from_record(record: &PeerSignedRelayRecordV1) -> Result<Self> {
@@ -140,6 +163,12 @@ impl ServiceEndpoints {
             }
             _ => None,
         };
+        let native_carrier_v8 = match (&iroh, carrier) {
+            (Some(iroh), Some(endpoint)) if endpoint.uri.ends_with(SUFFIX_V8) => {
+                Some(NativeCarrierMailboxEndpointV8 { iroh: iroh.clone() })
+            }
+            _ => None,
+        };
         let tls = TlsServiceEndpointV1::from_record(record)?;
         let native = NativeMailboxEndpointV7::from_record(record)?;
         ensure!(
@@ -160,6 +189,7 @@ impl ServiceEndpoints {
             tls,
             native,
             native_carrier,
+            native_carrier_v8,
         })
     }
 }
@@ -173,6 +203,12 @@ pub struct NativeMailboxCandidateV7 {
 pub struct NativeCarrierMailboxCandidateV7 {
     pub public_key: [u8; 32],
     pub endpoint: NativeCarrierMailboxEndpointV7,
+    pub record_expires_at_ms: u64,
+}
+
+pub struct NativeCarrierMailboxCandidateV8 {
+    pub public_key: [u8; 32],
+    pub endpoint: NativeCarrierMailboxEndpointV8,
     pub record_expires_at_ms: u64,
 }
 
@@ -264,6 +300,85 @@ impl ServiceLeaseBookV1 {
         Ok(())
     }
 
+    /// Fresh signed candidates only. The actual carrier Finished and bound
+    /// native handshake are required separately before any mailbox request.
+    pub fn native_carrier_mailbox_candidates_v8(
+        &mut self,
+        now: u64,
+    ) -> Result<Vec<NativeCarrierMailboxCandidateV8>> {
+        self.observe(now)?;
+        ensure!(self.is_self_owned(), "native carrier requires local trust");
+        let mut candidates = Vec::new();
+        for entry in self.entries.values_mut() {
+            if entry.current.expires_at_ms <= now {
+                continue;
+            }
+            let public_key = entry.current.relay_public_key;
+            let record_expires_at_ms = entry.current.expires_at_ms;
+            if let Some(endpoint) = &entry.decoded_current()?.routes.native_carrier_v8 {
+                candidates.push(NativeCarrierMailboxCandidateV8 {
+                    public_key,
+                    endpoint: endpoint.clone(),
+                    record_expires_at_ms,
+                });
+            }
+        }
+        Ok(candidates)
+    }
+
+    /// Supervise an already authenticated NVMBOX08 session on this exact
+    /// transport identity. Ordinary locator expiry/instance rotation does not
+    /// end it; capability removal, key change, revocation and retirement do.
+    /// This does not admit a new dial or replace live native session checks.
+    pub fn check_continuous_native_carrier_v8(
+        &mut self,
+        pin: [u8; 32],
+        transport: [u8; 32],
+        now: u64,
+    ) -> Result<()> {
+        self.observe(now)?;
+        ensure!(self.is_self_owned(), "native carrier requires local trust");
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let current = entry
+            .decoded_current()?
+            .routes
+            .native_carrier_v8
+            .as_ref()
+            .context("native carrier mailbox service removed")?;
+        ensure!(
+            current.iroh.address.endpoint_key == transport,
+            "native carrier transport changed"
+        );
+        Ok(())
+    }
+
+    /// New business connections require the exact fresh, signed locator. An
+    /// expired locator or old instance is not authority for a new NVMBOX08 dial.
+    pub fn check_native_carrier_route_v8(
+        &mut self,
+        pin: [u8; 32],
+        endpoint: &NativeCarrierMailboxEndpointV8,
+        now: u64,
+    ) -> Result<()> {
+        self.check_continuous_native_carrier_v8(pin, endpoint.iroh.address.endpoint_key, now)?;
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        ensure!(
+            entry.current.expires_at_ms > now,
+            "native carrier route expired"
+        );
+        let current = entry
+            .decoded_current()?
+            .routes
+            .native_carrier_v8
+            .as_ref()
+            .context("native carrier mailbox service removed")?;
+        ensure!(
+            current.endpoint()?.uri == endpoint.endpoint()?.uri,
+            "native carrier route changed"
+        );
+        Ok(())
+    }
+
     pub fn native_mailbox_bootstrap_v7(
         &mut self,
         now: u64,
@@ -325,6 +440,39 @@ impl ServiceLeaseBookV1 {
         let decoded = verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
         ensure!(
             decoded.native.is_some() || decoded.native_carrier.is_some(),
+            "native service missing"
+        );
+        let mut entries = self.entries.clone();
+        let entry = entries
+            .get_mut(&expected_pin)
+            .context("untrusted or revoked self-owned node")?;
+        newer(&entry.current, &record)?;
+        if entry.current == record {
+            return Ok(());
+        }
+        entry.grant = record.clone();
+        entry.current = record;
+        self.publish(Vec::new(), entries, self.tombstones.clone())
+    }
+
+    /// Update exactly one existing local pin; other offline nodes need not have
+    /// fresh records. The explicit V8 carrier capability uses this
+    /// record path. Original durable publish, high-water and tombstones apply.
+    pub fn accept_native_record_v8(
+        &mut self,
+        expected_pin: [u8; 32],
+        record: PeerSignedRelayRecordV1,
+        now: u64,
+    ) -> Result<()> {
+        self.observe(now)?;
+        ensure!(self.is_self_owned(), "native refresh requires local trust");
+        ensure!(
+            record.relay_public_key == expected_pin,
+            "native refresh wrong node"
+        );
+        let decoded = verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+        ensure!(
+            decoded.native_carrier_v8.is_some(),
             "native service missing"
         );
         let mut entries = self.entries.clone();

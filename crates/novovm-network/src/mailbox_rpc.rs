@@ -245,6 +245,16 @@ impl MailboxServiceV1 {
     /// Local owner publication only. The directory journal remains authoritative;
     /// this is a single current snapshot for authenticated native clients.
     pub fn update_native_record_v7(&self, record: PeerSignedRelayRecordV1) -> Result<()> {
+        self.update_native_record(record, false)
+    }
+
+    /// Same signed locator and durable owner; V8 is an explicit carrier
+    /// capability, not permission to reinterpret an expired V7 credential.
+    pub fn update_native_record_v8(&self, record: PeerSignedRelayRecordV1) -> Result<()> {
+        self.update_native_record(record, true)
+    }
+
+    fn update_native_record(&self, record: PeerSignedRelayRecordV1, v8: bool) -> Result<()> {
         crate::mailbox_structured::locator::validate(&record)?;
         ensure!(
             record.relay_public_key == self.identity_public_key(),
@@ -254,9 +264,14 @@ impl MailboxServiceV1 {
         // Parse the complete canonical service inventory before checking either
         // native capability. A UDP entry cannot hide a malformed carrier/TLS
         // alternative, and a legacy Iroh address never implies NVMBOX07.
-        let carrier = NativeCarrierMailboxEndpointV7::from_record(&record)?;
+        let carrier = if v8 {
+            crate::product_service_lease::NativeCarrierMailboxEndpointV8::from_record(&record)?
+                .is_some()
+        } else {
+            NativeCarrierMailboxEndpointV7::from_record(&record)?.is_some()
+        };
         ensure!(
-            carrier.is_some() || NativeMailboxEndpointV7::from_record(&record)?.is_some(),
+            carrier || (!v8 && NativeMailboxEndpointV7::from_record(&record)?.is_some()),
             "mailbox native locator missing"
         );
         let mut current = self

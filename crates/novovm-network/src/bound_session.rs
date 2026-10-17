@@ -16,6 +16,7 @@ use crate::{
 use ed25519_dalek::SigningKey;
 use thiserror::Error;
 
+pub mod peer_time;
 pub mod session_clock;
 
 /// A completed local handshake step. This contains no peer or session data.

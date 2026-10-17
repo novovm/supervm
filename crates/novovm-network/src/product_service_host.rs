@@ -9,6 +9,7 @@ const MAILBOX_REQUEST_V3: &[u8; 8] = b"NVMBOX03";
 const MAILBOX_REQUEST_V4: &[u8; 8] = b"NVMBOX04";
 const MAILBOX_REQUEST_V6: &[u8] = b"NVMBOX06";
 const MAILBOX_REQUEST_V7: &[u8; 8] = b"NVMBOX07";
+const MAILBOX_REQUEST_V8: &[u8; 8] = b"NVMBOX08";
 const MAILBOX_REQUEST_V5: &[u8; 8] = b"NVMBOX05";
 const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
 const MAX_OFFER_BYTES: usize = 16 * 1024;
@@ -55,6 +56,12 @@ impl ServiceLeaseHostV1 {
             .get(&self.key.verifying_key().to_bytes())
             .context("service revoked")?;
         let route = IrohServiceEndpointV1::from_record(&entry.current)?;
+        if !enabled {
+            ensure!(
+                NativeCarrierMailboxEndpointV8::from_record(&entry.current)?.is_none(),
+                "different native carrier version active"
+            );
+        }
         let mut endpoints = entry.current.endpoints.clone();
         let endpoint = endpoints
             .iter_mut()
@@ -63,6 +70,68 @@ impl ServiceLeaseHostV1 {
         // Resource policy belongs to the node; toggling a codec cannot reset it.
         endpoint.uri = if enabled {
             NativeCarrierMailboxEndpointV7 { iroh: route }
+                .endpoint()?
+                .uri
+        } else {
+            route.endpoint()?.uri
+        };
+        let record = directory::sign_relay_record_v1(
+            &self.key,
+            entry.grant.record_id.clone(),
+            endpoints,
+            now,
+            expires,
+            entry
+                .current
+                .sequence
+                .checked_add(1)
+                .context("host sequence exhausted")?,
+        )?;
+        book.replace_self_owned_records(vec![record.clone()], now)?;
+        Ok(record)
+    }
+
+    pub fn check_continuous_native_carrier_v8(&self, transport: [u8; 32], now: u64) -> Result<()> {
+        self.book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?
+            .check_continuous_native_carrier_v8(self.key.verifying_key().to_bytes(), transport, now)
+    }
+
+    /// Explicit publication/removal of NVMBOX08 on the existing carrier.
+    /// This changes a signed capability, not the node identity, custody or
+    /// network participation policy. Old clients reject the versioned locator;
+    /// callers must coordinate client upgrades before enabling it.
+    pub fn rotate_native_carrier_mailbox_v8(
+        &self,
+        enabled: bool,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        let mut book = self
+            .book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?;
+        ensure!(book.is_self_owned(), "self-owned policy required");
+        let entry = book
+            .entries
+            .get(&self.key.verifying_key().to_bytes())
+            .context("service revoked")?;
+        let route = IrohServiceEndpointV1::from_record(&entry.current)?;
+        if !enabled {
+            ensure!(
+                NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_none(),
+                "different native carrier version active"
+            );
+        }
+        let mut endpoints = entry.current.endpoints.clone();
+        let endpoint = endpoints
+            .iter_mut()
+            .find(|e| e.transport == RelayTransportV1::IrohRendezvousV1)
+            .context("Iroh service endpoint required")?;
+        // Resource policy belongs to the node; toggling a codec cannot reset it.
+        endpoint.uri = if enabled {
+            NativeCarrierMailboxEndpointV8 { iroh: route }
                 .endpoint()?
                 .uri
         } else {
@@ -312,7 +381,13 @@ impl ServiceLeaseHostV1 {
                 == endpoint.address.endpoint_key,
             "self-owned transport changed"
         );
-        let carrier = if NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_some() {
+        let mut carrier = if NativeCarrierMailboxEndpointV8::from_record(&entry.current)?.is_some()
+        {
+            NativeCarrierMailboxEndpointV8 {
+                iroh: endpoint.clone(),
+            }
+            .endpoint()?
+        } else if NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_some() {
             NativeCarrierMailboxEndpointV7 {
                 iroh: endpoint.clone(),
             }
@@ -320,6 +395,16 @@ impl ServiceLeaseHostV1 {
         } else {
             endpoint.endpoint()?
         };
+        // Address/instance renewal does not reset node-owned resource policy.
+        let previous = entry
+            .current
+            .endpoints
+            .iter()
+            .find(|e| e.transport == RelayTransportV1::IrohRendezvousV1)
+            .context("Iroh service endpoint required")?;
+        carrier.priority = previous.priority;
+        carrier.max_sessions = previous.max_sessions;
+        carrier.max_bytes_per_minute = previous.max_bytes_per_minute;
         let mut endpoints = vec![carrier];
         if let Some(tls) = tls {
             endpoints.push(tls.endpoint()?);
@@ -625,6 +710,7 @@ pub async fn serve_service_offer_selected_v2<T>(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NodeServiceV1 {
     MailboxNative,
+    MailboxNativeV8,
     MailboxPrefetch,
     Rendezvous,
     Mailbox,
@@ -768,28 +854,124 @@ pub async fn serve_self_owned_node_selected_v7<T>(
     continuous: impl FnOnce() -> Result<()>,
     native: impl FnOnce() -> Result<()>,
 ) -> Result<(NodeServiceV1, Option<T>)> {
-    let request = stream.read_frame().await?;
-    if request.as_slice() == MAILBOX_REQUEST_V7 {
-        native()?;
-        stream.write_frame(MAILBOX_REQUEST_V7).await?;
-        Ok((NodeServiceV1::MailboxNative, None))
-    } else if request.as_slice() == MAILBOX_REQUEST_V6 {
-        continuous()?;
-        stream.write_frame(MAILBOX_REQUEST_V6).await?;
-        Ok((NodeServiceV1::MailboxPrefetch, None))
-    } else if request.as_slice() == MAILBOX_REQUEST_V5 {
-        continuous()?;
-        stream.write_frame(MAILBOX_REQUEST_V5).await?;
-        Ok((NodeServiceV1::MailboxMultiplex, None))
-    } else if request.as_slice() == MAILBOX_REQUEST_V4 {
-        continuous()?;
-        stream.write_frame(MAILBOX_REQUEST_V4).await?;
-        Ok((NodeServiceV1::MailboxContinuous, None))
+    let (kind, selected, _) = dispatch_self_owned_node(
+        stream,
+        select,
+        continuous,
+        native,
+        || anyhow::bail!("session-clock mailbox not enabled on this listener"),
+        false,
+    )
+    .await?;
+    Ok((kind, selected))
+}
+
+/// Explicit V8 listener. The selector only selects the existing mailbox and
+/// captures a local clock candidate before callback work. Authentication and
+/// encrypted time exchange still follow; the candidate is not trusted UTC.
+/// An unavailable local wall clock must not prevent identity authentication.
+pub async fn serve_self_owned_node_selected_v8<T>(
+    stream: &mut CarrierStreamV1<'_>,
+    select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
+    continuous: impl FnOnce() -> Result<()>,
+    native_v7: impl FnOnce() -> Result<()>,
+    native_v8: impl FnOnce() -> Result<()>,
+) -> Result<(
+    NodeServiceV1,
+    Option<T>,
+    Option<crate::network_time::ClockAnchorV1>,
+)> {
+    dispatch_self_owned_node(stream, select, continuous, native_v7, native_v8, true).await
+}
+
+fn self_owned_node_service(request: &[u8], allow_v8: bool) -> Result<NodeServiceV1> {
+    Ok(if request == MAILBOX_REQUEST_V8 && allow_v8 {
+        NodeServiceV1::MailboxNativeV8
+    } else if request == MAILBOX_REQUEST_V7 {
+        NodeServiceV1::MailboxNative
+    } else if request == MAILBOX_REQUEST_V6 {
+        NodeServiceV1::MailboxPrefetch
+    } else if request == MAILBOX_REQUEST_V5 {
+        NodeServiceV1::MailboxMultiplex
+    } else if request == MAILBOX_REQUEST_V4 {
+        NodeServiceV1::MailboxContinuous
     } else {
-        let kind = legacy_node_service(&request)?;
-        let (offer, selected) = select()?;
-        stream.write_frame(&encode(&offer)?).await?;
-        Ok((kind, Some(selected)))
+        legacy_node_service(request)?
+    })
+}
+
+async fn dispatch_self_owned_node<T>(
+    stream: &mut CarrierStreamV1<'_>,
+    select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
+    continuous: impl FnOnce() -> Result<()>,
+    native_v7: impl FnOnce() -> Result<()>,
+    native_v8: impl FnOnce() -> Result<()>,
+    allow_v8: bool,
+) -> Result<(
+    NodeServiceV1,
+    Option<T>,
+    Option<crate::network_time::ClockAnchorV1>,
+)> {
+    let request = stream.read_frame().await?;
+    let anchor = if request.as_slice() == MAILBOX_REQUEST_V8 && allow_v8 {
+        crate::network_time::ClockAnchorV1::capture().ok()
+    } else {
+        None
+    };
+    let kind = self_owned_node_service(&request, allow_v8)?;
+    match kind {
+        NodeServiceV1::MailboxNativeV8 => {
+            native_v8()?;
+            stream.write_frame(MAILBOX_REQUEST_V8).await?;
+            Ok((kind, None, anchor))
+        }
+        NodeServiceV1::MailboxNative => {
+            native_v7()?;
+            stream.write_frame(MAILBOX_REQUEST_V7).await?;
+            Ok((kind, None, None))
+        }
+        NodeServiceV1::MailboxPrefetch
+        | NodeServiceV1::MailboxMultiplex
+        | NodeServiceV1::MailboxContinuous => {
+            continuous()?;
+            stream.write_frame(&request).await?;
+            Ok((kind, None, None))
+        }
+        _ => {
+            let (offer, selected) = select()?;
+            stream.write_frame(&encode(&offer)?).await?;
+            Ok((kind, Some(selected), None))
+        }
+    }
+}
+
+#[cfg(test)]
+mod v8_selector_tests {
+    use super::*;
+
+    #[test]
+    fn selector_v8_is_explicit_and_legacy_entrypoints_reject_it() -> Result<()> {
+        assert!(self_owned_node_service(MAILBOX_REQUEST_V8, false).is_err());
+        assert!(legacy_node_service(MAILBOX_REQUEST_V8).is_err());
+        assert!(matches!(
+            self_owned_node_service(MAILBOX_REQUEST_V8, true)?,
+            NodeServiceV1::MailboxNativeV8
+        ));
+        for allow_v8 in [false, true] {
+            assert!(matches!(
+                self_owned_node_service(MAILBOX_REQUEST_V7, allow_v8)?,
+                NodeServiceV1::MailboxNative
+            ));
+            for invalid in [
+                b"NVMBOX09".as_slice(),
+                b"NVMBOX08x",
+                b"NVMBOX0",
+                b"nvmBOX08",
+            ] {
+                assert!(self_owned_node_service(invalid, allow_v8).is_err());
+            }
+        }
+        Ok(())
     }
 }
 

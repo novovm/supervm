@@ -33,7 +33,8 @@ pub use tls_endpoint::TlsServiceEndpointV1;
 mod native_endpoint;
 use native_endpoint::ServiceEndpoints;
 pub use native_endpoint::{
-    NativeCarrierMailboxCandidateV7, NativeCarrierMailboxEndpointV7, NativeMailboxBootstrapV7,
+    NativeCarrierMailboxCandidateV7, NativeCarrierMailboxCandidateV8,
+    NativeCarrierMailboxEndpointV7, NativeCarrierMailboxEndpointV8, NativeMailboxBootstrapV7,
     NativeMailboxCandidateV7, NativeMailboxEndpointV7,
 };
 
@@ -93,11 +94,12 @@ impl IrohServiceEndpointV1 {
             .uri
             .strip_prefix(PREFIX)
             .context("service URI version")?;
-        // The only additional spelling is an exact, node-signed NVMBOX07
-        // marker. Unknown versions/trailing data still fail base64/canonical
+        // Additional spellings are exact, node-signed NVMBOX07/08
+        // markers. Unknown versions/trailing data still fail base64/canonical
         // validation. Ordinary Iroh parsing does not confer native capability.
         let encoded = encoded
             .strip_suffix(native_endpoint::SUFFIX)
+            .or_else(|| encoded.strip_suffix(native_endpoint::SUFFIX_V8))
             .unwrap_or(encoded);
         let bytes = URL_SAFE_NO_PAD.decode(encoded)?;
         let value: Self = serde_json::from_slice(&bytes)?;
@@ -589,8 +591,8 @@ pub use host::{
     request_mailbox_multiplex_lane_v6, request_mailbox_multiplex_v5, request_mailbox_multiplex_v6,
     request_mailbox_native_v7, request_service_offer_v2, serve_bootstrap_sources_v2,
     serve_self_owned_node_selected_v4, serve_self_owned_node_selected_v7,
-    serve_service_offer_selected_v2, serve_service_offer_v2, ServiceLeaseHostV1,
-    ServiceLeaseOfferV2, ServiceOfferStepV2,
+    serve_self_owned_node_selected_v8, serve_service_offer_selected_v2, serve_service_offer_v2,
+    ServiceLeaseHostV1, ServiceLeaseOfferV2, ServiceOfferStepV2,
 };
 pub use host::{
     request_mailbox_offer_v1, request_mailbox_offer_v2, request_mailbox_offer_v3,
