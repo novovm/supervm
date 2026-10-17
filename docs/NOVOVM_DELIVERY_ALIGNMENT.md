@@ -1,5 +1,18 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-17 Android v27 follow-up; no SUPERVM runtime change:** baseline b6cc81f9,
+NOVOCHAT d5e547b.
+The original Android network owner now compares Parcel snapshots before advancing
+generation for LinkProperties; genuine changes still propagate. Kotlin 17/Python 27
+pass; installed phones retain five identity/key hashes each, without business tunnels.
+9302/9303 device receipts 1492/1573 ms. One 18s outage: 9304 stored at L3 before
+recovery, L4 deposit failed, automatic fetch completed with total receipt 18.516s;
+9305 then stored on both paths with receipt 1717 ms. Cellular had one actual-outage
+code 1/task replacement; final 55s/42 samples had no new first failure. No duplicate
+callback was captured, so unit-tested correction is not proof of historical cause.
+Details/SHA in [tracker](NOVOVM_PRODUCTION_READINESS_TRACKER.md); external Iroh,
+autonomous/anonymous transport and five-round acceptance remain open.
+
 **2026-10-17 Android native follow-up (bounded device acceptance):** input 4888b7da,
 NOVOCHAT e3e9c78/v26. Same-self-owned profile preview is now side-effect-free; approval
 still rechecks all checkpoints, revocation and signatures. In-place installation

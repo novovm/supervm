@@ -1,5 +1,17 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-10-17 Android v27 跟进（共享runtime未改）
+
+SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
+仍增代次的问题，使用Parcel快照/equals，真实变化继续通知原native owner。
+17项Kotlin、27项Python通过；两机原位安装保持各5项身份/密钥hash且无业务隧道。
+9302/9303设备回执1492/1573ms；一次18秒断网中9304先由L3真实寄存、L4失败，
+恢复后自动领取，总DeviceReceipt18.516秒，不能将该条计作冗余成功。
+随后9305两路寄存、设备回执1717ms。蜂窝仅实际断网1次code1并自动接替，
+最后55秒/42样本无新增首错。实机未捕获重复属性回调，不认定历史code1已
+归因；完整分段和APK标识见[台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)。
+仍依赖外部Iroh，不称五轮、P95、自主公网或匿名通过。
+
 ## 2026-10-17 Android v26 原生L3与原L4实机跟进
 
 输入SUPERVM4888b7da，手机NOVOCHAT e3e9c78/v26。另仓修复同self-owned profile

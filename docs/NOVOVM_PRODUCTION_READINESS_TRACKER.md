@@ -3,6 +3,28 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-17 Android v27 网络属性去重与一次恢复
+
+SUPERVM基线b6cc81f9，runtime未改。NOVOCHAT d5e547b原NetworkLifecycleOwner采用
+Parcel平台快照和equals：完全相同的LinkProperties不再无条件增代次或调用
+native update，真实变化保留。17项Kotlin、27项Python测试通过。两端原位安装
+v27，APK SHA-256 `ef9bb3cd13add5092514453aa66abc3ef88b0e012d5166a438c82aa8d36fd46f`；
+各5项身份/密钥hash保持，无ADB业务隧道。
+
+正常9302/9303都有原生L3及原L4真实存储、DeviceReceipt1492/1573ms。
+一次18秒蜂窝断网中，9304的L3存储284ms，完成早于恢复命令约8.47–8.59秒；
+L4该条寄存失败，不能算独立冗余。恢复后自动领取，消息总DeviceReceipt
+18.516秒；随后9305的L3存储972ms、L4存储1079ms、首次设备回执1717ms。
+系统available至L3 ready为5.857秒、原消息入库7.840秒、L4回执通道11.397秒。
+
+本轮依次观察启动110秒/86样本、正常消息35秒/24样本、断网140秒/98样本
+（断网期间6次route probe错误）、最后55秒/42样本无新增首错。蜂窝只有
+实际断网对应的1次code1，task1→2；Wi-Fi始终task1。恢复时两次link=true
+的属性值不同，没有捕获duplicate：已修复代码缺口并通过单测，但不能据此
+认定历史code1根因已实机证实。以上不是点击至屏幕或P95，不签收五轮；
+外部Iroh依赖、自主公网/匿名及Windows崩溃自动恢复仍开放。完整移动证据
+和后续工作由NOVOCHAT本轮P0记录，不扩大SUPERVM运行时范围。
+
 ## 2026-10-17 Android v26 原生L3双向投递及一次断网恢复
 
 输入SUPERVM4888b7da，手机NOVOCHAT e3e9c78/v26。另仓修复同self-owned profile
