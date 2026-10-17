@@ -159,6 +159,20 @@ mod windows {
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
+        if args[0] == "--set-self-owned-native-carrier" {
+            use super::rendezvous_self_owned_owner::{Config, Owner};
+            ensure!(
+                args.len() == 3,
+                "usage: --set-self-owned-native-carrier CONFIG on|off"
+            );
+            let enabled = match args[2].to_str() {
+                Some("on") => true,
+                Some("off") => false,
+                _ => anyhow::bail!("native carrier selection must be on or off"),
+            };
+            return Owner::open(Config::load(&path)?, false, None)?
+                .set_native_carrier_mailbox_v7(enabled);
+        }
         if args[0] == "--set-self-owned-native" {
             use super::rendezvous_self_owned_owner::{Config, NativeListenerConfig, Owner};
             ensure!(

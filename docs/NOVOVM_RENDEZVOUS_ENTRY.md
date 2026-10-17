@@ -1,5 +1,27 @@
 # 自有寻址服务可执行入口
 
+## 2026-10-17 原 Windows owner 的 Carrier V7 选择
+
+使用原服务程序、v2 配置、DPAPI 身份和信箱。先升级能识别签名
+`/novonet-mailbox/v7` 的客户端，再停止本机 owner 并执行：
+
+```text
+novovm-rendezvous-service.exe --set-self-owned-native-carrier <absolute-existing-config> on
+novovm-rendezvous-service.exe --set-self-owned-native-carrier <absolute-existing-config> off
+```
+
+原独占锁下仅原子修改受保护策略中的协议选择，原配置、托管节点/传输密钥、
+撤销日志和密文不重建。旧策略缺字段时默认关闭，不因升级自动启用。
+重新启动仍由原 Iroh/Node::serve 宿主先签名发布显式能力，再处理 NVMBOX07。
+这是原通路的结构化协议接线，不增加端口、账号、许可或调度器；实际载体可能
+仍经过外部 Iroh Relay。TLS 监听仍用其原协议；与 UDP-only listener 互斥，
+不能把某个分支提前返回当作混合自动选路已经完成。
+
+关闭选项后仍用本轮二进制启动兼容协议。新受保护策略写入后，旧二进制的
+严格字段校验可能拒绝读取，即使选项已设为 false；不得恢复旧策略/日志备份
+来回退，也不得重置消息、签名序号或身份。`--check` 仅验证配置格式，不代表
+原生能力已启用、节点在线或手机验收通过。实际验证与部署状态见生产台账。
+
 ## 2026-10-14 通知携带首份密文
 
 `NVMBOX06` 复用原长期连接、多流宿主和 MailboxService；显式选择后还必须完成

@@ -3,6 +3,46 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-17 Windows Carrier V7 节点激活与部署（手机尚未切换）
+
+输入1d533c76，认领4a0a5d23。仅在原Windows self-owned owner/CLI加入显式
+协议选择：DPAPI Policy的 `native_carrier_mailbox_v7` 默认false，旧策略缺字段
+仍可读取且不隐式写回；原锁下原子保存，与UDP-only listener双向互斥。
+原Iroh activation在首次发布前启用签名能力，复用ServiceLeaseHost及原任期、
+传输seed、节点身份、journal、MailboxService/SQLite。TLS仍是原协议；
+没有新增监听、账户、许可、调度器或金融执行路径。
+
+本机验证（本轮最终源码）：
+
+- owner回归12/12通过，14.20秒；包含旧schema缺省、持久开关、原身份和日志
+  保留、独占锁、冲突不落盘及冲突策略在监听前拒绝。
+- `windows_native_carrier_cli_preserves_identity_custody_and_rotation` 最终
+  1/1通过，65.34秒。真实独立进程先以V6寄存，再通过CLI启用V7；同一原生
+  会话跨62秒等待和正常声明换代，取回原密文、TTL及签名StoreReceipt。
+  确认落盘后结束进程、重启同目录再核对原保管数据，最后显式关闭能力，
+  节点/传输公钥保持。未模拟写盘中途断电，也不等于系统自动重启通过。
+- 首轮该进程测试失败，7.79秒，旧V6预寄存夹具报
+  `multiplex owner stopped`。修正夹具的原多路选择/绑定及owner生命周期后
+  重跑通过；保留失败日志，不计为首次通过，不放宽产品验签或退出规则。
+- 严格Clippy通过（13.45秒），release构建通过（3分30秒）。本机日志：
+  `artifacts/native-carrier-owner-{unit,test,test-final,clippy,release}.log`。
+
+原用户计划任务已部署新release并显式开启V7，部署时PID22224，二进制SHA-256：
+`7686ecf478b4004f3a2f07ce5bed93bd0b99e6ed7c521fd748dea9024c6f18ea`。
+安装证据 `artifacts/native-carrier-node-installed.json`：nodeKeysUnchanged、
+nodeSignerUnchanged、custodyUnchangedBySelection均为true；序号27202→27205，
+nativeCarrierDeclared=true，VPN未变。原信箱保管数据未因选择而修改；受保护
+策略的协议选择本身有意更新，不能将其表述为policy密文字节不变。
+
+NOVOCHAT2ef8f7d/v25已安装，两台原Android恢复旧V6 L3+L4兼容运行，但尚未
+切换V7。现有UI `checkBootstrap` 将同self-owned声明更新误判为信任迁移，
+正在NOVOCHAT修复；节点签名发布不代表手机已选择原生协议。手机V7双向
+消息、实际恢复时延和连续性仍未验收，未改变原联系人、密钥或聊天历史。
+外部Iroh Relay依赖、自主传输、匿名性及Windows崩溃自动恢复分别保留未完成。
+本slice认领释放；下一步由NOVOCHAT原Application owner完成客户端选择与实测，
+不继续扩展另一套节点/传输。接口及迁移边界见
+[共享交接](NOVORUDP_SHARED_CLIENT_HANDOFF.md)和[运行入口](NOVOVM_RENDEZVOUS_ENTRY.md)。
+
 ## 2026-10-17 原生信箱复用既有 Carrier 宿主（本机接线）
 
 输入64bb8658，认领23150c04。原 `product_rendezvous_owned` 增加显式

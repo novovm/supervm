@@ -24,6 +24,9 @@ mod tls_owner;
 #[path = "support/native_owner.rs"]
 mod native_owner;
 
+#[path = "support/native_carrier_owner.rs"]
+mod native_carrier_owner;
+
 fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }

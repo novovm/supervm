@@ -213,6 +213,10 @@ struct Policy {
     tls_listener: Option<TlsListenerConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_listener: Option<NativeListenerConfig>,
+    // Explicit signed NVMBOX07 capability on the existing Iroh carrier. Older
+    // protected policies remain disabled until the local owner opts in.
+    #[serde(default)]
+    native_carrier_mailbox_v7: bool,
     node_pin: [u8; 32],
     sequence_floor: u64,
     legacy: Option<crate::rendezvous_owner::Config>,
@@ -392,6 +396,7 @@ impl Owner {
                 carrier_mode: None,
                 tls_listener: None,
                 native_listener: None,
+                native_carrier_mailbox_v7: false,
                 node_pin: key.verifying_key().to_bytes(),
                 sequence_floor,
                 legacy,
@@ -417,6 +422,10 @@ impl Owner {
         let transport = Zeroizing::new(<[u8; 32]>::try_from(&protected[8..40])?);
         let policy: Policy = serde_json::from_slice(&protected[40..])?;
         ensure!(policy.config == config, "protected local policy differs");
+        ensure!(
+            !policy.native_carrier_mailbox_v7 || policy.native_listener.is_none(),
+            "native carrier mailbox conflicts with native-only listener"
+        );
         if let Some(tls) = &policy.tls_listener {
             ensure!(
                 cfg!(feature = "tls-transport"),
@@ -525,6 +534,10 @@ impl Owner {
         if let Some(value) = &listener {
             value.validate()?;
             ensure!(
+                !self.native_carrier_mailbox_v7(),
+                "disable native carrier mailbox before enabling native-only listener"
+            );
+            ensure!(
                 !relay_only(&self.policy),
                 "native listener conflicts with relay-only policy"
             );
@@ -533,6 +546,21 @@ impl Owner {
         // They never cause a hidden fallback while native is selected.
         self.policy.native_listener = listener;
         self.save_policy()
+    }
+
+    /// Uses the same protected policy and exclusive owner lock. This selects
+    /// a mailbox codec, without changing admission, identity or resource limits.
+    pub fn set_native_carrier_mailbox_v7(mut self, enabled: bool) -> Result<()> {
+        ensure!(
+            !enabled || self.policy.native_listener.is_none(),
+            "disable native-only listener before enabling native carrier mailbox"
+        );
+        self.policy.native_carrier_mailbox_v7 = enabled;
+        self.save_policy()
+    }
+
+    fn native_carrier_mailbox_v7(&self) -> bool {
+        self.policy.native_carrier_mailbox_v7
     }
 
     fn save_policy(&self) -> Result<()> {
@@ -786,7 +814,14 @@ impl Owner {
                         endpoint.instance,
                         now_ms()?,
                     )?;
-                    Ok(Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?))
+                    let host = Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?);
+                    if self.native_carrier_mailbox_v7() {
+                        // Publish the explicit capability before Node::serve sees
+                        // this host. It uses the same identity, journal and term;
+                        // the optional TLS listener retains its existing codec.
+                        host.rotate_native_carrier_mailbox_v7(true, now_ms()?, expires)?;
+                    }
+                    Ok(host)
                 })()
                 .context(FailureStage::Activate)
             };
@@ -1107,6 +1142,121 @@ mod tests {
         );
         assert_eq!(evidence.kind, FailureKind::Timeout);
         assert_eq!(evidence.io_kind, None);
+        Ok(())
+    }
+
+    #[test]
+    fn native_carrier_policy_opens_old_schema_without_rewriting_custody() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let pin = owner.policy.node_pin;
+        let transport = owner.transport.clone();
+        let baseline = ["keys.dpapi", "service.journal"]
+            .map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
+        let mut old_policy = serde_json::to_value(&owner.policy)?;
+        old_policy
+            .as_object_mut()
+            .context("policy object")?
+            .remove("native_carrier_mailbox_v7");
+        let mut material = Zeroizing::new(Vec::new());
+        material.extend_from_slice(b"NVOWN002");
+        material.extend_from_slice(owner.transport.as_ref());
+        material.extend_from_slice(&serde_json::to_vec(&old_policy)?);
+        let path = fixture.0.root.join("self-owned-policy.dpapi");
+        replace_protected(&path, &windows_custody::protect(&material)?)?;
+        drop(owner);
+        let old_custody = std::fs::read(&path)?;
+
+        let owner = fixture.open()?;
+        assert!(!owner.native_carrier_mailbox_v7());
+        assert_eq!(owner.policy.node_pin, pin);
+        assert!(*owner.transport == *transport);
+        assert_eq!(std::fs::read(&path)?, old_custody);
+        owner.set_native_carrier_mailbox_v7(true)?;
+        let owner = fixture.open()?;
+        assert!(owner.native_carrier_mailbox_v7());
+        assert_eq!(owner.policy.node_pin, pin);
+        assert!(*owner.transport == *transport);
+        // Opt-in adds only the new setting; no provenance or trust migration.
+        let mut new_policy = serde_json::to_value(&owner.policy)?;
+        assert_eq!(new_policy["native_carrier_mailbox_v7"], true);
+        new_policy
+            .as_object_mut()
+            .context("policy object")?
+            .remove("native_carrier_mailbox_v7");
+        assert_eq!(new_policy, old_policy);
+        for (name, expected) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+            assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_carrier_policy_roundtrip_preserves_identity_and_rejects_udp_conflicts() -> Result<()>
+    {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        assert!(!owner.native_carrier_mailbox_v7());
+        let policy = serde_json::to_value(&owner.policy)?;
+        let pin = owner.policy.node_pin;
+        let transport = owner.transport.clone();
+        let baseline = ["keys.dpapi", "service.journal"]
+            .map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
+        let path = fixture.0.root.join("self-owned-policy.dpapi");
+
+        owner.set_native_carrier_mailbox_v7(true)?;
+        let owner = fixture.open()?;
+        assert!(owner.native_carrier_mailbox_v7());
+        assert!(
+            fixture.open().is_err(),
+            "the existing owner lock still applies"
+        );
+        let enabled = std::fs::read(&path)?;
+        assert!(owner.set_native_listener(Some(settings())).is_err());
+        assert_eq!(std::fs::read(&path)?, enabled);
+
+        fixture.open()?.set_native_carrier_mailbox_v7(false)?;
+        let owner = fixture.open()?;
+        assert!(!owner.native_carrier_mailbox_v7());
+        owner.set_native_listener(Some(settings()))?;
+        let native = std::fs::read(&path)?;
+        assert!(fixture.open()?.set_native_carrier_mailbox_v7(true).is_err());
+        assert_eq!(std::fs::read(&path)?, native);
+        let owner = fixture.open()?;
+        assert_eq!(owner.policy.native_listener, Some(settings()));
+        assert!(!owner.native_carrier_mailbox_v7());
+        owner.set_native_listener(None)?;
+
+        fixture.open()?.set_native_carrier_mailbox_v7(true)?;
+        fixture.open()?.set_native_carrier_mailbox_v7(false)?;
+        let owner = fixture.open()?;
+        assert_eq!(serde_json::to_value(&owner.policy)?, policy);
+        assert_eq!(owner.policy.node_pin, pin);
+        assert!(*owner.transport == *transport);
+        for (name, expected) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+            assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_carrier_policy_rejects_authenticated_conflicting_state_before_start() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let mut owner = fixture.provision()?;
+        // A correctly sealed but contradictory policy must fail at open, not
+        // select one branch silently or wait until after a listener is bound.
+        owner.policy.native_carrier_mailbox_v7 = true;
+        owner.policy.native_listener = Some(settings());
+        owner.save_policy()?;
+        drop(owner);
+        let names = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"];
+        let baseline = names.map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
+        assert!(fixture.open().is_err());
+        for (name, expected) in names.iter().zip(baseline) {
+            assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
+        }
+        assert!(!fixture.0.root.join("mailbox.started").exists());
+        assert!(!fixture.0.root.join("status.json").exists());
         Ok(())
     }
 

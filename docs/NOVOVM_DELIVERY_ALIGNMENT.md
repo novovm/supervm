@@ -1,6 +1,6 @@
 # NOVOVM 产品目标与交付主线
 
-**2026-10-17 NOVOCHAT-machine native Carrier activation (active claim):** input1d533c76.
+**2026-10-17 NOVOCHAT-machine native Carrier activation (node deployed; claim released):** input1d533c76, claim4a0a5d23.
 NOVOCHAT2ef8f7d/v25 has preserved L4 alongside Carrier V7 and passed installed
 legacy-node compatibility on both original phones. Root owns existing
 `rendezvous_service.rs` CLI/host wiring, focused process validation, deployment,
@@ -12,6 +12,29 @@ Enable the explicit signed capability through the original self-owned host
 only after consumers are upgraded. Do not combine with the UDP-only early
 return. Native Android/L4/recovery timing remains unaccepted until measured;
 external Iroh Relay and Windows crash-restart gaps remain separate.
+
+Original Windows owner now persists default-off native_carrier_mailbox_v7 in
+the same DPAPI policy. Old missing-field policies open without rewriting;
+enable/disable uses the original exclusive lock and atomic replacement.
+Original Iroh activation signs the explicit capability before first publication,
+retaining identity, transport seed, journal and term; TLS keeps its existing
+codec. Owner12/12 pass14.20s; actual CLI process1/1 final pass65.34s covers
+legacy custody -> V7 activation -> same-session rotation -> durable restart ->
+disable. First process run failed7.79s in the V6 custody fixture with
+`multiplex owner stopped`; correcting its original multiplex binding/owner
+lifetime produced the final pass, not a first-pass result. StrictClippy13.45s
+and release3m30s pass; logs are artifacts/native-carrier-owner-*.log.
+
+Deployed through the existing user task, deployment PID22224; binary SHA256
+7686ecf478b4004f3a2f07ce5bed93bd0b99e6ed7c521fd748dea9024c6f18ea.
+artifacts/native-carrier-node-installed.json confirms original keys/signer and
+custody preserved by selection, sequence27202->27205, V7 declared, VPN unchanged.
+The protected protocol-selection policy intentionally changes. Installed v25
+phones recovered legacy V6 L3+L4, but have NOT switched to V7: their old UI
+checkBootstrap treats a same-self-owned locator update as trust migration.
+NOVOCHAT owns that correction and actual mobile acceptance; do not count node
+deployment as phone native-message or latency acceptance. This node slice is
+released without claiming independent relays or automatic OS crash recovery.
 
 **2026-10-17 NOVOCHAT-machine native mailbox carrier (validated; claim released):** input64bb8658, claim23150c04.
 Root owns product_service_host selector, product_rendezvous_owned dispatch,

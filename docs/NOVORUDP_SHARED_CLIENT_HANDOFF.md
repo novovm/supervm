@@ -1,5 +1,37 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-10-17 Windows 原节点已启用 Carrier V7；手机迁移待验收
+
+输入1d533c76，认领4a0a5d23；本片节点实现、验证及部署已完成，认领释放。
+NOVOCHAT2ef8f7d/v25已安装在两台原手机，保留L4及旧V6兼容能力；这不等于
+手机已实际选择原生V7。下文较早章节的待办是各轮当时状态，以本节为准。
+
+原 `novovm-rendezvous-service --set-self-owned-native-carrier CONFIG on|off`
+在原独占Owner锁下原子更新DPAPI策略，缺少新字段的旧策略默认关闭、读取不写回。
+`Owner::run_inner` 的原Iroh activation构建同一个ServiceLeaseHost，首次发布前
+调用 `rotate_native_carrier_mailbox_v7`，沿用原任期、签名身份、传输seed和日志。
+未增加监听端口、身份或调度器；与UDP-only listener明确互斥，TLS仍使用原协议。
+启停方式及旧二进制回退限制见[运行入口](NOVOVM_RENDEZVOUS_ENTRY.md)。
+
+Windows owner回归12/12通过（14.20秒），真实CLI独立进程1/1最终通过
+（65.34秒）：旧协议预寄存、显式开启、同原生会话跨声明换代、进程重启后
+原密文/TTL/签名回执保留、显式关闭及原身份/传输公钥保持。首次进程测试
+在旧V6预寄存夹具报 `multiplex owner stopped`（7.79秒）；修正夹具的原多路
+选择/绑定与owner生命周期后重跑通过，不能写成首次即通过。严格Clippy、
+release构建通过；日志 `artifacts/native-carrier-owner-{unit,test,test-final,clippy,release}.log`。
+
+已用原用户计划任务部署并显式开启原节点，部署时PID22224，SHA-256：
+`7686ecf478b4004f3a2f07ce5bed93bd0b99e6ed7c521fd748dea9024c6f18ea`。
+`artifacts/native-carrier-node-installed.json` 记录原节点密钥/签名身份及选择操作
+前后原信箱保管数据保持，签名序号27202→27205并已声明V7；VPN未改。
+DPAPI策略中协议选择有意更新，不称其文件字节完全不变。
+
+两台v25手机现已恢复旧V6的L3+L4，尚未切到V7。当前客户端旧
+`checkBootstrap` 把同一self-owned节点的声明更新误作信任迁移；NOVOCHAT
+正在修正这一接缝，不能据节点发布或本机测试宣称手机原生消息通过。
+下一步是原身份/历史下实际V7双向交付和恢复测量；外部Iroh Relay、自主传输、
+低延迟及Windows崩溃自动重启仍独立验收。
+
 ## 2026-10-17 原信箱宿主接通结构化 Carrier（本机运行验证）
 
 输入64bb8658，认领23150c04。本轮由 NOVOCHAT 设备接通通用宿主，复用原
