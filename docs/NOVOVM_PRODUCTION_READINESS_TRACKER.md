@@ -3,6 +3,35 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 session-clock V2 身份证明组件（未部署手机或节点）
+
+基线 `a2212ced`。实际接缝为既有 `transport_binding` → APFL structured codec →
+`bound_session` → 原 NativeCarrierPump/NativeObjectLink；增加显式 V2 身份活性
+入口，原 V1 调用链不替换。独立签名用途/版本与 `NVBOFR02`/`NVBRES02` schema
+拒绝混用和回退，封闭适配器仅使用固定协议相对时间，不读取双方系统 UTC。
+全握手及同步观察回调前后共用原本地单调截止，不扩大期限；本地截止单独归类
+Local(HandshakeDeadline)，安全证明错误仍为 Authentication。
+
+34 项 transport_binding 回归与 25 项 bound_session 回归通过，其中新增 15 项：
+5 项核心、3 项 APFL 边界及 7 项真实 localhost QUIC。真实 IO 覆盖开放/固定对端
+身份握手、原 NativeCarrierPump 双向 1024 字节加密对象及 ACK、V1/V2 混用拒绝、
+首帧停滞和最终观察回调超期/撤销；既有未来 8 秒 V1 拒绝及持续载体空闲回归保持。
+新 V2 使用普通 attach，尚未证明其连续空闲服务生命周期。测试未修改系统钟，
+也不以本机 QUIC 证明多来源 UTC 正确或真实公网/手机恢复。
+
+首轮 session_clock 为 9/12：一项仍断言旧 Authentication(Expired)，两项 fixture
+客户端提前关闭，未进入目标 final observer。更正断言为本地截止，并保持客户端
+流至服务端完成目标检查；未改产品期限或忽略实际错误。随后定向 v2_ 为 18/18
+（含 3 项既有同名测试），上述两组完整回归 59/59。所有首轮日志保留，证据为
+ignored `artifacts/continuity33-*`。严格 lib Clippy 复测通过（15.08秒）；首次因
+共用私有 responder 增加第8个参数触发样式检查，局部说明并允许该项，保留同一个
+验证实现及原V1参数，不压低全库检查级别。format/diff检查通过。
+
+没有发布 V8 服务能力、修改正式服务选择或安装 Android；手机仍为原 v30，
+运行节点二进制不变。自动四时间戳测量、合格时间区间、节点记录/广告/TTL 与
+持久 highwater 迁移，以及无 L3 跨公网冷启动尚待接线和验收。本片不关闭历史
+E214/蜂窝长尾，不签收匿名、自主传输或生产可靠性。
+
 ## 2026-10-18 Android v30入站观察、时间偏差与L3停止后的L4真实投递
 
 NOVOCHAT源码`7e99646`、网络输入`31e5abff`，官方profile v30已保留数据安装

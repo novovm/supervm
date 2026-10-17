@@ -16,6 +16,8 @@ use crate::{
 use ed25519_dalek::SigningKey;
 use thiserror::Error;
 
+pub mod session_clock;
+
 /// A completed local handshake step. This contains no peer or session data.
 /// `FinishedVerified` does not prove that the remote side has received our
 /// Finished, nor that a business message has been delivered.
@@ -469,6 +471,7 @@ where
 #[cfg(all(test, feature = "iroh-transport"))]
 mod tests {
     mod native_carrier;
+    mod session_clock;
     use super::*;
     use crate::{
         duplex::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},

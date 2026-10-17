@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::Zeroize;
 
+pub mod session_clock;
 pub mod structured;
 
 pub const BOUND_TRANSPORT_ALPN_V1: &[u8] = b"novovm/bound-carrier/1";
@@ -34,7 +35,44 @@ pub const BOUND_CHANNEL_MAX_PAYLOAD_BYTES_V1: usize = 64 * 1024;
 const PEER_ID_BYTES: usize = b"novovm-ed25519:".len() + 32 * 2;
 const FINISHED_STREAM: u64 = u64::MAX;
 const PURPOSE: &[u8] = b"novovm.network.bound-reliable-carrier.v1";
+const SESSION_CLOCK_PURPOSE_V2: &[u8] = b"novovm.network.bound-reliable-carrier.session-clock.v2";
 const FINISHED_DOMAIN: &[u8] = b"novovm.bound-carrier.finished.v1";
+
+/// Selected by an explicit local entry, never inferred as a fallback from a
+/// peer's version. Both signatures and Finished commit to version and purpose.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BoundClockMode {
+    UtcV1,
+    SessionV2,
+}
+
+impl BoundClockMode {
+    fn version(self) -> u16 {
+        match self {
+            Self::UtcV1 => 1,
+            Self::SessionV2 => 2,
+        }
+    }
+    fn purpose(self) -> &'static [u8] {
+        match self {
+            Self::UtcV1 => PURPOSE,
+            Self::SessionV2 => SESSION_CLOCK_PURPOSE_V2,
+        }
+    }
+    fn from_validated_version(version: u16) -> Result<Self> {
+        match version {
+            1 => Ok(Self::UtcV1),
+            2 => Ok(Self::SessionV2),
+            _ => Err(TransportBindingErrorV1::Invalid("bound channel mode")),
+        }
+    }
+    fn check_times(self, issued: u64, expires: u64) -> Result<()> {
+        if self == Self::SessionV2 && (issued != 0 || expires != BOUND_HANDSHAKE_MAX_TTL_MS_V1) {
+            return Err(TransportBindingErrorV1::Invalid("session clock fields"));
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum TransportBindingErrorV1 {
@@ -42,6 +80,10 @@ pub enum TransportBindingErrorV1 {
     Invalid(&'static str),
     #[error("bound transport handshake has expired")]
     Expired,
+    /// Local liveness budget, distinct from an expired UTC credential or a
+    /// failed signature. Never infer identity rejection from this condition.
+    #[error("bound session monotonic handshake deadline elapsed")]
+    HandshakeDeadline,
     #[error(
         "bound transport context does not match the authenticated carrier and pinned identities"
     )]
@@ -126,17 +168,27 @@ impl VerifiedTransportBinding {
         result
     }
 
+    #[cfg(test)]
     fn context(&self, initiator: [u8; 32], responder: [u8; 32]) -> Result<BoundHandshakeContextV1> {
+        self.context_for_mode(initiator, responder, BoundClockMode::UtcV1)
+    }
+
+    fn context_for_mode(
+        &self,
+        initiator: [u8; 32],
+        responder: [u8; 32],
+        mode: BoundClockMode,
+    ) -> Result<BoundHandshakeContextV1> {
         let context = BoundHandshakeContextV1 {
-            version: BOUND_HANDSHAKE_VERSION_V1,
-            purpose: Sha256::digest(PURPOSE).into(),
+            version: mode.version(),
+            purpose: Sha256::digest(mode.purpose()).into(),
             initiator_identity_public_key: initiator,
             responder_identity_public_key: responder,
             initiator_transport_public_key: self.initiator_endpoint,
             responder_transport_public_key: self.responder_endpoint,
             connection_binding: self.connection_binding,
         };
-        check_context(&context)?;
+        check_context_for_mode(&context, mode)?;
         Ok(context)
     }
 }
@@ -205,6 +257,7 @@ impl BoundNodeHandshakeResponseV1 {
 pub struct BoundHandshakeInitiatorV1 {
     inner: NodeHandshakeInitiatorV1,
     offer: BoundNodeHandshakeOfferV1,
+    mode: BoundClockMode,
 }
 
 impl BoundHandshakeInitiatorV1 {
@@ -217,11 +270,41 @@ impl BoundHandshakeInitiatorV1 {
         now_ms: u64,
         ttl_ms: u64,
     ) -> Result<Self> {
+        Self::start_with_mode(
+            identity,
+            expected_remote_key,
+            binding,
+            now_ms,
+            ttl_ms,
+            BoundClockMode::UtcV1,
+        )
+    }
+
+    fn start_with_mode(
+        identity: &SigningKey,
+        expected_remote_key: [u8; 32],
+        binding: VerifiedTransportBinding,
+        now_ms: u64,
+        ttl_ms: u64,
+        mode: BoundClockMode,
+    ) -> Result<Self> {
         if !binding.local_is_initiator {
             return Err(TransportBindingErrorV1::BindingMismatch);
         }
         check_ttl(ttl_ms)?;
-        let context = binding.context(identity.verifying_key().to_bytes(), expected_remote_key)?;
+        if mode == BoundClockMode::SessionV2 {
+            mode.check_times(
+                now_ms,
+                now_ms
+                    .checked_add(ttl_ms)
+                    .ok_or(TransportBindingErrorV1::Expired)?,
+            )?;
+        }
+        let context = binding.context_for_mode(
+            identity.verifying_key().to_bytes(),
+            expected_remote_key,
+            mode,
+        )?;
         let inner = NodeHandshakeInitiatorV1::start(
             identity,
             peer_id_from_ed25519_public_key_v1(&expected_remote_key),
@@ -237,8 +320,8 @@ impl BoundHandshakeInitiatorV1 {
             .sign(&offer_signing_digest(&offer))
             .to_bytes()
             .to_vec();
-        check_offer_shape(&offer)?;
-        Ok(Self { inner, offer })
+        check_offer_shape_for_mode(&offer, mode)?;
+        Ok(Self { inner, offer, mode })
     }
 
     #[must_use]
@@ -252,7 +335,7 @@ impl BoundHandshakeInitiatorV1 {
         now_ms: u64,
         replay_cache: &mut HandshakeReplayCacheV1,
     ) -> Result<PendingBoundChannelV1> {
-        check_response_shape(response)?;
+        check_response_shape_for_mode(response, self.mode)?;
         check_window(
             self.offer.e2e.issued_at_ms,
             self.offer.e2e.expires_at_ms,
@@ -300,13 +383,50 @@ impl BoundHandshakeResponderV1 {
         ttl_ms: u64,
         replay_cache: &mut HandshakeReplayCacheV1,
     ) -> Result<Self> {
+        Self::respond_with_mode(
+            offer,
+            identity,
+            expected_remote_key,
+            binding,
+            now_ms,
+            ttl_ms,
+            replay_cache,
+            BoundClockMode::UtcV1,
+        )
+    }
+
+    // Keep the existing V1 proof inputs intact while selecting an explicit
+    // local mode. Both entries must share this verifier, not duplicate it.
+    #[allow(clippy::too_many_arguments)]
+    fn respond_with_mode(
+        offer: &BoundNodeHandshakeOfferV1,
+        identity: &SigningKey,
+        expected_remote_key: [u8; 32],
+        binding: VerifiedTransportBinding,
+        now_ms: u64,
+        ttl_ms: u64,
+        replay_cache: &mut HandshakeReplayCacheV1,
+        mode: BoundClockMode,
+    ) -> Result<Self> {
         if binding.local_is_initiator {
             return Err(TransportBindingErrorV1::BindingMismatch);
         }
         check_ttl(ttl_ms)?;
-        check_offer_shape(offer)?;
+        if mode == BoundClockMode::SessionV2 {
+            mode.check_times(
+                now_ms,
+                now_ms
+                    .checked_add(ttl_ms)
+                    .ok_or(TransportBindingErrorV1::Expired)?,
+            )?;
+        }
+        check_offer_shape_for_mode(offer, mode)?;
         check_window(offer.e2e.issued_at_ms, offer.e2e.expires_at_ms, now_ms)?;
-        let context = binding.context(expected_remote_key, identity.verifying_key().to_bytes())?;
+        let context = binding.context_for_mode(
+            expected_remote_key,
+            identity.verifying_key().to_bytes(),
+            mode,
+        )?;
         if offer.context != context {
             return Err(TransportBindingErrorV1::BindingMismatch);
         }
@@ -334,7 +454,7 @@ impl BoundHandshakeResponderV1 {
             .sign(&response_signing_digest(&response))
             .to_bytes()
             .to_vec();
-        check_response_shape(&response)?;
+        check_response_shape_for_mode(&response, mode)?;
         let transcript = transcript_hash(offer, &response);
         let expires_at_ms = offer.e2e.expires_at_ms.min(response.e2e.expires_at_ms);
         let context = response.context.clone();
@@ -490,11 +610,13 @@ impl BoundSecureChannelV1 {
     /// transferring ownership. Neither a node key nor a route flag substitutes
     /// for the exact connection/stream exporter and authenticated direction.
     pub fn verify_transport_binding(&self, binding: &VerifiedTransportBinding) -> Result<()> {
+        let mode = BoundClockMode::from_validated_version(self.context.version)?;
         if self.initiator != binding.local_is_initiator
             || self.context
-                != binding.context(
+                != binding.context_for_mode(
                     self.context.initiator_identity_public_key,
                     self.context.responder_identity_public_key,
+                    mode,
                 )?
         {
             return Err(TransportBindingErrorV1::BindingMismatch);
@@ -562,9 +684,9 @@ fn check_public_key(bytes: &[u8; 32]) -> Result<()> {
     Ok(())
 }
 
-fn check_context(context: &BoundHandshakeContextV1) -> Result<()> {
-    if context.version != BOUND_HANDSHAKE_VERSION_V1
-        || context.purpose != <[u8; 32]>::from(Sha256::digest(PURPOSE))
+fn check_context_for_mode(context: &BoundHandshakeContextV1, mode: BoundClockMode) -> Result<()> {
+    if context.version != mode.version()
+        || context.purpose != <[u8; 32]>::from(Sha256::digest(mode.purpose()))
     {
         return Err(TransportBindingErrorV1::Invalid("version or purpose"));
     }
@@ -611,9 +733,17 @@ fn check_window(issued_at_ms: u64, expires_at_ms: u64, now_ms: u64) -> Result<()
 }
 
 fn check_offer_shape(offer: &BoundNodeHandshakeOfferV1) -> Result<()> {
+    check_offer_shape_for_mode(offer, BoundClockMode::UtcV1)
+}
+
+fn check_offer_shape_for_mode(
+    offer: &BoundNodeHandshakeOfferV1,
+    mode: BoundClockMode,
+) -> Result<()> {
     let e = &offer.e2e;
-    check_context(&offer.context)?;
+    check_context_for_mode(&offer.context, mode)?;
     check_lifetime(e.issued_at_ms, e.expires_at_ms)?;
+    mode.check_times(e.issued_at_ms, e.expires_at_ms)?;
     if e.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1
         || e.signature.len() != 64
         || offer.signature.len() != 64
@@ -630,9 +760,17 @@ fn check_offer_shape(offer: &BoundNodeHandshakeOfferV1) -> Result<()> {
 }
 
 fn check_response_shape(response: &BoundNodeHandshakeResponseV1) -> Result<()> {
+    check_response_shape_for_mode(response, BoundClockMode::UtcV1)
+}
+
+fn check_response_shape_for_mode(
+    response: &BoundNodeHandshakeResponseV1,
+    mode: BoundClockMode,
+) -> Result<()> {
     let e = &response.e2e;
-    check_context(&response.context)?;
+    check_context_for_mode(&response.context, mode)?;
     check_lifetime(e.issued_at_ms, e.expires_at_ms)?;
+    mode.check_times(e.issued_at_ms, e.expires_at_ms)?;
     if e.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1
         || e.signature.len() != 64
         || response.signature.len() != 64

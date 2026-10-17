@@ -1,7 +1,8 @@
-//! Explicit structured representation of the existing bound handshake.
+//! Explicit structured representations of the UTC V1 and session-clock V2
+//! bound handshakes. The caller selects the mode before reading peer input.
 //! Decoding checks shape, not authority: callers must still run respond/complete
 //! and the bidirectional Finished exchange on the actual authenticated carrier.
-//! No JSON fallback or changes to the existing signed transcript are permitted.
+//! No JSON fallback or reinterpretation of the V1 signed transcript is permitted.
 use super::*;
 use anyhow::{ensure, Result};
 use novovm_protocol::{
@@ -11,6 +12,8 @@ use novovm_protocol::{
 
 pub const OFFER_SCHEMA: u64 = u64::from_be_bytes(*b"NVBOFR01");
 pub const RESPONSE_SCHEMA: u64 = u64::from_be_bytes(*b"NVBRES01");
+pub const OFFER_SCHEMA_V2: u64 = u64::from_be_bytes(*b"NVBOFR02");
+pub const RESPONSE_SCHEMA_V2: u64 = u64::from_be_bytes(*b"NVBRES02");
 const OFFER_WIDTHS: [usize; 14] = [2, 32, 32, 32, 32, 32, 2, 16, 33, 32, 8, 8, 64, 64];
 const RESPONSE_WIDTHS: [usize; 17] = [
     2, 32, 32, 32, 32, 32, 2, 16, 33, 32, 8, 8, 64, 64, 32, 32, 32,
@@ -57,7 +60,7 @@ fn fixed<const N: usize>(batch: &BatchView<'_>, column: usize) -> Result<[u8; N]
         .try_into()
         .map_err(|_| anyhow::anyhow!("bound structured field width"))
 }
-fn context(batch: &BatchView<'_>) -> Result<BoundHandshakeContextV1> {
+fn context(batch: &BatchView<'_>, mode: BoundClockMode) -> Result<BoundHandshakeContextV1> {
     let result = BoundHandshakeContextV1 {
         version: u16::from_le_bytes(fixed(batch, 0)?),
         purpose: fixed(batch, 1)?,
@@ -67,16 +70,29 @@ fn context(batch: &BatchView<'_>) -> Result<BoundHandshakeContextV1> {
         responder_transport_public_key: fixed(batch, 5)?,
         connection_binding: batch.context,
     };
-    check_context(&result)?;
+    check_context_for_mode(&result, mode)?;
     Ok(result)
 }
 
 pub fn encode_offer(value: &BoundNodeHandshakeOfferV1) -> Result<Vec<u8>> {
-    check_offer_shape(value)?;
+    encode_offer_with_mode(value, OFFER_SCHEMA, BoundClockMode::UtcV1)
+}
+
+/// Explicit session-clock schema. Never inferred from a peer's version field.
+pub fn encode_offer_v2(value: &BoundNodeHandshakeOfferV1) -> Result<Vec<u8>> {
+    encode_offer_with_mode(value, OFFER_SCHEMA_V2, BoundClockMode::SessionV2)
+}
+
+fn encode_offer_with_mode(
+    value: &BoundNodeHandshakeOfferV1,
+    schema: u64,
+    mode: BoundClockMode,
+) -> Result<Vec<u8>> {
+    check_offer_shape_for_mode(value, mode)?;
     let c = &value.context;
     let e = &value.e2e;
     encode(
-        OFFER_SCHEMA,
+        schema,
         c.connection_binding,
         &[
             &c.version.to_le_bytes(),
@@ -97,8 +113,20 @@ pub fn encode_offer(value: &BoundNodeHandshakeOfferV1) -> Result<Vec<u8>> {
     )
 }
 pub fn decode_offer(wire: &[u8]) -> Result<BoundNodeHandshakeOfferV1> {
-    let batch = decode(wire, OFFER_SCHEMA, &OFFER_WIDTHS)?;
-    let c = context(&batch)?;
+    decode_offer_with_mode(wire, OFFER_SCHEMA, BoundClockMode::UtcV1)
+}
+
+pub fn decode_offer_v2(wire: &[u8]) -> Result<BoundNodeHandshakeOfferV1> {
+    decode_offer_with_mode(wire, OFFER_SCHEMA_V2, BoundClockMode::SessionV2)
+}
+
+fn decode_offer_with_mode(
+    wire: &[u8],
+    schema: u64,
+    mode: BoundClockMode,
+) -> Result<BoundNodeHandshakeOfferV1> {
+    let batch = decode(wire, schema, &OFFER_WIDTHS)?;
+    let c = context(&batch, mode)?;
     // These redundant signed fields are determined exactly by context; shape
     // validation on encoding ensures this representation preserves the object.
     let e2e = NodeHandshakeOfferV1 {
@@ -118,15 +146,27 @@ pub fn decode_offer(wire: &[u8]) -> Result<BoundNodeHandshakeOfferV1> {
         e2e,
         signature: field(&batch, 13)?.to_vec(),
     };
-    check_offer_shape(&result)?;
+    check_offer_shape_for_mode(&result, mode)?;
     Ok(result)
 }
 pub fn encode_response(value: &BoundNodeHandshakeResponseV1) -> Result<Vec<u8>> {
-    check_response_shape(value)?;
+    encode_response_with_mode(value, RESPONSE_SCHEMA, BoundClockMode::UtcV1)
+}
+
+pub fn encode_response_v2(value: &BoundNodeHandshakeResponseV1) -> Result<Vec<u8>> {
+    encode_response_with_mode(value, RESPONSE_SCHEMA_V2, BoundClockMode::SessionV2)
+}
+
+fn encode_response_with_mode(
+    value: &BoundNodeHandshakeResponseV1,
+    schema: u64,
+    mode: BoundClockMode,
+) -> Result<Vec<u8>> {
+    check_response_shape_for_mode(value, mode)?;
     let c = &value.context;
     let e = &value.e2e;
     encode(
-        RESPONSE_SCHEMA,
+        schema,
         c.connection_binding,
         &[
             &c.version.to_le_bytes(),
@@ -150,8 +190,20 @@ pub fn encode_response(value: &BoundNodeHandshakeResponseV1) -> Result<Vec<u8>> 
     )
 }
 pub fn decode_response(wire: &[u8]) -> Result<BoundNodeHandshakeResponseV1> {
-    let batch = decode(wire, RESPONSE_SCHEMA, &RESPONSE_WIDTHS)?;
-    let c = context(&batch)?;
+    decode_response_with_mode(wire, RESPONSE_SCHEMA, BoundClockMode::UtcV1)
+}
+
+pub fn decode_response_v2(wire: &[u8]) -> Result<BoundNodeHandshakeResponseV1> {
+    decode_response_with_mode(wire, RESPONSE_SCHEMA_V2, BoundClockMode::SessionV2)
+}
+
+fn decode_response_with_mode(
+    wire: &[u8],
+    schema: u64,
+    mode: BoundClockMode,
+) -> Result<BoundNodeHandshakeResponseV1> {
+    let batch = decode(wire, schema, &RESPONSE_WIDTHS)?;
+    let c = context(&batch, mode)?;
     let e2e = NodeHandshakeResponseV1 {
         version: u16::from_le_bytes(fixed(&batch, 6)?),
         session_id: fixed(&batch, 7)?,
@@ -172,7 +224,7 @@ pub fn decode_response(wire: &[u8]) -> Result<BoundNodeHandshakeResponseV1> {
         e2e,
         signature: field(&batch, 13)?.to_vec(),
     };
-    check_response_shape(&result)?;
+    check_response_shape_for_mode(&result, mode)?;
     Ok(result)
 }
 fn check_finished(value: &SecureNovoRudpEnvelopeV1) -> Result<()> {

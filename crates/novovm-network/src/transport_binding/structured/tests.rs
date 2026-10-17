@@ -257,3 +257,142 @@ fn finished_still_requires_both_roles_and_rejects_tampering_or_replay() {
     assert!(b.into_channel(NOW).is_err());
     assert_ne!(fresh.session_id, af.session_id);
 }
+
+fn v2_pair() -> (BoundNodeHandshakeOfferV1, BoundNodeHandshakeResponseV1) {
+    use super::super::session_clock::{
+        SessionClockDeadlineV2, SessionClockInitiatorV2, SessionClockResponderV2,
+    };
+    use std::time::{Duration, Instant};
+
+    let deadline = SessionClockDeadlineV2::new(Instant::now() + Duration::from_secs(30)).unwrap();
+    let initiator =
+        SessionClockInitiatorV2::start(&key(1), public(2), binding(true, 7), deadline).unwrap();
+    let offer = decode_offer_v2(&encode_offer_v2(initiator.offer()).unwrap()).unwrap();
+    assert_eq!(&offer, initiator.offer());
+    let responder = SessionClockResponderV2::respond(
+        &offer,
+        &key(2),
+        public(1),
+        binding(false, 7),
+        deadline,
+        &mut HandshakeReplayCacheV1::new(8),
+    )
+    .unwrap();
+    let response = decode_response_v2(&encode_response_v2(responder.response()).unwrap()).unwrap();
+    assert_eq!(&response, responder.response());
+    (offer, response)
+}
+
+fn reschema(wire: &[u8], source: u64, target: u64) -> Vec<u8> {
+    let view = apfl_batch::decode(wire, source, LIMITS).unwrap();
+    let fields: Vec<_> = (0..view.columns())
+        .map(|i| view.field(0, i).unwrap())
+        .collect();
+    encode(target, view.context, &fields).unwrap()
+}
+
+#[test]
+fn v2_schemas_roundtrip_and_cannot_negotiate_or_retag_v1() {
+    let v1 = start();
+    let v1_responder = respond(v1.offer(), 7, 1, &mut HandshakeReplayCacheV1::new(8)).unwrap();
+    let v1_offer = encode_offer(v1.offer()).unwrap();
+    let v1_response = encode_response(v1_responder.response()).unwrap();
+    let (offer, response) = v2_pair();
+    let v2_offer = encode_offer_v2(&offer).unwrap();
+    let v2_response = encode_response_v2(&response).unwrap();
+
+    assert_eq!(offer.e2e.issued_at_ms, 0);
+    assert_eq!(offer.e2e.expires_at_ms, 30_000);
+    assert_eq!(response.e2e.issued_at_ms, 0);
+    assert_eq!(response.e2e.expires_at_ms, 30_000);
+    assert!(decode_offer(&v2_offer).is_err());
+    assert!(decode_response(&v2_response).is_err());
+    assert!(decode_offer_v2(&v1_offer).is_err());
+    assert!(decode_response_v2(&v1_response).is_err());
+    assert!(encode_offer(&offer).is_err());
+    assert!(encode_response(&response).is_err());
+    assert!(encode_offer_v2(v1.offer()).is_err());
+    assert!(encode_response_v2(v1_responder.response()).is_err());
+    assert!(decode_offer_v2(&reschema(&v1_offer, OFFER_SCHEMA, OFFER_SCHEMA_V2)).is_err());
+    assert!(
+        decode_response_v2(&reschema(&v1_response, RESPONSE_SCHEMA, RESPONSE_SCHEMA_V2)).is_err()
+    );
+    assert!(decode_offer(&reschema(&v2_offer, OFFER_SCHEMA_V2, OFFER_SCHEMA)).is_err());
+    assert!(decode_response(&reschema(&v2_response, RESPONSE_SCHEMA_V2, RESPONSE_SCHEMA)).is_err());
+}
+
+#[test]
+fn v2_offer_rejects_wrong_purpose_clock_shape_widths_and_trailing() {
+    let (offer, _) = v2_pair();
+    let wire = encode_offer_v2(&offer).unwrap();
+    let v1 = start();
+    assert!(decode_response_v2(&wire).is_err());
+    assert!(decode_offer_v2(&serde_json::to_vec(&offer).unwrap()).is_err());
+    for (column, replacement) in [
+        (0, 1u16.to_le_bytes().to_vec()),
+        (1, v1.offer().context.purpose.to_vec()),
+        (10, 1u64.to_le_bytes().to_vec()),
+        (11, 29_999u64.to_le_bytes().to_vec()),
+        (11, 30_001u64.to_le_bytes().to_vec()),
+    ] {
+        assert!(decode_offer_v2(&rebuild(&wire, OFFER_SCHEMA_V2, column, &replacement)).is_err());
+    }
+    for (column, width) in OFFER_WIDTHS.iter().enumerate() {
+        assert!(decode_offer_v2(&rebuild(
+            &wire,
+            OFFER_SCHEMA_V2,
+            column,
+            &vec![0; width - 1]
+        ))
+        .is_err());
+    }
+    for end in 0..wire.len() {
+        assert!(decode_offer_v2(&wire[..end]).is_err());
+    }
+    let mut trailing = wire.clone();
+    trailing.push(0);
+    assert!(decode_offer_v2(&trailing).is_err());
+    assert!(decode_offer_v2(&vec![0; BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1 + 1]).is_err());
+    let mut bad = offer;
+    bad.e2e.initiator_peer_id.push('x');
+    assert!(encode_offer_v2(&bad).is_err());
+}
+
+#[test]
+fn v2_response_rejects_wrong_purpose_clock_shape_widths_and_trailing() {
+    let (_, response) = v2_pair();
+    let wire = encode_response_v2(&response).unwrap();
+    let v1 = start();
+    assert!(decode_offer_v2(&wire).is_err());
+    assert!(decode_response_v2(&serde_json::to_vec(&response).unwrap()).is_err());
+    for (column, replacement) in [
+        (0, 1u16.to_le_bytes().to_vec()),
+        (1, v1.offer().context.purpose.to_vec()),
+        (10, 1u64.to_le_bytes().to_vec()),
+        (11, 29_999u64.to_le_bytes().to_vec()),
+        (11, 30_001u64.to_le_bytes().to_vec()),
+    ] {
+        assert!(
+            decode_response_v2(&rebuild(&wire, RESPONSE_SCHEMA_V2, column, &replacement)).is_err()
+        );
+    }
+    for (column, width) in RESPONSE_WIDTHS.iter().enumerate() {
+        assert!(decode_response_v2(&rebuild(
+            &wire,
+            RESPONSE_SCHEMA_V2,
+            column,
+            &vec![0; width - 1]
+        ))
+        .is_err());
+    }
+    for end in 0..wire.len() {
+        assert!(decode_response_v2(&wire[..end]).is_err());
+    }
+    let mut trailing = wire;
+    trailing.push(0);
+    assert!(decode_response_v2(&trailing).is_err());
+    assert!(decode_response_v2(&vec![0; BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1 + 1]).is_err());
+    let mut bad = response;
+    bad.e2e.responder_identity_public_key = public(6);
+    assert!(encode_response_v2(&bad).is_err());
+}
