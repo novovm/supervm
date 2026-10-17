@@ -1,5 +1,24 @@
 # 自有寻址服务可执行入口
 
+## 2026-10-18 原 Windows owner 的显式 Carrier V8 选择
+
+同一个命令新增 `v7`、`v8`，`on` 仍表示 V7，`off` 同时关闭 V7/V8：
+
+```text
+novovm-rendezvous-service.exe --set-self-owned-native-carrier <absolute-existing-config> v8
+```
+
+只在两端都已支持签名 `/novonet-mailbox/v8` 能力且原 owner 停止后选择。
+已有 DPAPI 策略、文件锁和原子保存保证 V7/V8 互斥；native-only UDP listener
+仍互斥。旧策略缺 V8 字段时保持原版本，打开或升级程序不自动重写或启用。
+实际启动仍调用原 `activate_carrier` → `run_self_owned_node_v1`，使用原节点
+身份、传输密钥、签名日志和信箱；撤销不因切换版本复活。
+
+V8 改为 session-clock V2 身份握手，并在同一加密通道测量一次相对时间。
+它不等于可信全球 UTC；来源新鲜度、业务 TTL、持久防回滚及 L4 的 V1 时间
+使用仍须后续迁接。当前仅实现并验证代码，本轮未切换运行节点或正式手机。
+新策略仍受下节所述旧二进制严格字段检查约束，不通过恢复旧备份回退状态。
+
 ## 2026-10-17 原 Windows owner 的 Carrier V7 选择
 
 使用原服务程序、v2 配置、DPAPI 身份和信箱。先升级能识别签名

@@ -3,6 +3,41 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 V8 Application 消费与原 Windows owner 显式选择（未部署）
+
+基线 SUPERVM `00e690ec`、NOVOCHAT `ba36c537`。手机 Core 的原 Application
+owner 按经过验证的签名能力准确选择 V7/V8，V8 拨号、selector、双向 Finished
+及一次相对时间观察共用原本地单调截止，随后原通道/AEAD 序号继续交给
+NativeCarrierPump/持续信箱。过期来源在原 metadata 槽刷新后才进入业务，
+协议不匹配不降级。原 L4 V6 并行寄存、回执、通知及资源 owner 均保留。
+精确 Local(HandshakeDeadline) 及 Transport 包装可由原 owner 接替；安全
+拒绝、其他 Local、旧 UTC Expired 或相同文本不因此变成可重试错误。
+
+原 Windows `rendezvous_self_owned_owner` DPAPI 策略新增默认关闭的 V8 字段；
+现有 `--set-self-owned-native-carrier CONFIG on|off|v7|v8` 中 on 仍是 V7，
+off 关闭两版本。原独占锁与原子保存下选择互斥，native-only listener 冲突拒绝。
+实际启动的 `activate_carrier` 先发布所选签名能力，再进入原 Node::serve；
+没有另建许可、网络或调度器。旧策略打开不重写，不因升级自动改变版本。
+
+最终定向验证共 18 项：NOVOCHAT 网络边界 6、primary reconnect 1、真实
+Application/节点/QUIC/SQLite V7/V8 集成 4（460.40 秒）；本仓真实 Windows
+DPAPI/旧 schema/原子选择/冲突/启动激活/撤销与 CLI 7（0.82 秒）。两版本
+都跨声明更新持续收发、刷新过期来源，并在 L3 停止后由 L4 完成原新消息和
+设备持久回执；V8 两端各观察一次时间。selector 停滞走合法恢复，版本拒绝
+不启动业务。节点身份、传输密钥、原声明期限和日志序号保持；切换不复活撤销。
+本机 fixture 不算手机跨公网性能、独立故障域或长期容量证明。
+
+Core 首轮构建因磁盘已满退出，仅清理经核验的本仓 ignored debug/incremental
+缓存后重跑通过；原始失败日志保留，未删除数据/产物。严格 Core lib Clippy、
+Windows 节点 bin Clippy（14.88 秒）及改动文件 format/diff 通过；仅保留仓库
+已有重复 bin target 提示。证据为两仓 ignored `artifacts/continuity35-*`。
+运行中的 Windows 节点和两台 Android 未切换，手机仍保留既有 v30。
+
+边界仍在：单节点时间观察不是可信全球 UTC，尚未接共同时间区间、冷启动
+来源资格、目录高水位及 TTL 的完整迁移；L4 仍使用 V6/V1。无 L3 的同 Wi-Fi
+手机投递已有下文历史实测，本片继续守住 L4 回归；无 L3 跨公网冷启动、全部
+地址变化后重发现、蜂窝连续换网、外部 Iroh 独立性和匿名网络均未签收。
+
 ## 2026-10-18 NVMBOX08 原信箱运行链与连接内相对时间测量（未部署手机）
 
 基线 `de9a3de6`。原 `run_self_owned_node_v1` / node dispatcher →

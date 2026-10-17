@@ -217,6 +217,10 @@ struct Policy {
     // protected policies remain disabled until the local owner opts in.
     #[serde(default)]
     native_carrier_mailbox_v7: bool,
+    // Explicit NVMBOX08 opt-in. Missing fields retain the existing codec;
+    // accepting a new binary never upgrades a protected owner policy.
+    #[serde(default)]
+    native_carrier_mailbox_v8: bool,
     node_pin: [u8; 32],
     sequence_floor: u64,
     legacy: Option<crate::rendezvous_owner::Config>,
@@ -397,6 +401,7 @@ impl Owner {
                 tls_listener: None,
                 native_listener: None,
                 native_carrier_mailbox_v7: false,
+                native_carrier_mailbox_v8: false,
                 node_pin: key.verifying_key().to_bytes(),
                 sequence_floor,
                 legacy,
@@ -423,7 +428,12 @@ impl Owner {
         let policy: Policy = serde_json::from_slice(&protected[40..])?;
         ensure!(policy.config == config, "protected local policy differs");
         ensure!(
-            !policy.native_carrier_mailbox_v7 || policy.native_listener.is_none(),
+            !(policy.native_carrier_mailbox_v7 && policy.native_carrier_mailbox_v8),
+            "native carrier mailbox versions are mutually exclusive"
+        );
+        ensure!(
+            !(policy.native_carrier_mailbox_v7 || policy.native_carrier_mailbox_v8)
+                || policy.native_listener.is_none(),
             "native carrier mailbox conflicts with native-only listener"
         );
         if let Some(tls) = &policy.tls_listener {
@@ -534,7 +544,7 @@ impl Owner {
         if let Some(value) = &listener {
             value.validate()?;
             ensure!(
-                !self.native_carrier_mailbox_v7(),
+                !(self.native_carrier_mailbox_v7() || self.native_carrier_mailbox_v8()),
                 "disable native carrier mailbox before enabling native-only listener"
             );
             ensure!(
@@ -556,11 +566,28 @@ impl Owner {
             "disable native-only listener before enabling native carrier mailbox"
         );
         self.policy.native_carrier_mailbox_v7 = enabled;
+        self.policy.native_carrier_mailbox_v8 = false;
+        self.save_policy()
+    }
+
+    /// Explicit codec selection, atomically replacing V7 in the same custody.
+    /// Disabling either selector disables the carrier codec, including V8.
+    pub fn set_native_carrier_mailbox_v8(mut self, enabled: bool) -> Result<()> {
+        ensure!(
+            !enabled || self.policy.native_listener.is_none(),
+            "disable native-only listener before enabling native carrier mailbox"
+        );
+        self.policy.native_carrier_mailbox_v7 = false;
+        self.policy.native_carrier_mailbox_v8 = enabled;
         self.save_policy()
     }
 
     fn native_carrier_mailbox_v7(&self) -> bool {
         self.policy.native_carrier_mailbox_v7
+    }
+
+    fn native_carrier_mailbox_v8(&self) -> bool {
+        self.policy.native_carrier_mailbox_v8
     }
 
     fn save_policy(&self) -> Result<()> {
@@ -690,6 +717,29 @@ impl Owner {
         Ok(book)
     }
 
+    fn activate_carrier(
+        &self,
+        endpoint: &novovm_network::product_service_lease::IrohServiceEndpointV1,
+        expires: u64,
+    ) -> Result<Arc<ServiceLeaseHostV1>> {
+        let mut book = self.activate_book(vec![endpoint.endpoint()?], expires)?;
+        book.check_route(
+            self.policy.node_pin,
+            endpoint.address.endpoint_key,
+            endpoint.instance,
+            now_ms()?,
+        )?;
+        let host = Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?);
+        // Publish the selected capability before Node::serve sees this host.
+        // Identity, journal and term are unchanged; TLS keeps its own codec.
+        if self.native_carrier_mailbox_v8() {
+            host.rotate_native_carrier_mailbox_v8(true, now_ms()?, expires)?;
+        } else if self.native_carrier_mailbox_v7() {
+            host.rotate_native_carrier_mailbox_v7(true, now_ms()?, expires)?;
+        }
+        Ok(host)
+    }
+
     async fn run_inner(self, stop: Arc<AtomicBool>) -> Result<()> {
         let _running_lock = self._lock.clone();
         let config = self.policy.config.clone();
@@ -806,24 +856,8 @@ impl Owner {
         let activate =
             move |endpoint: &novovm_network::product_service_lease::IrohServiceEndpointV1,
                   expires| {
-                (|| -> Result<_> {
-                    let mut book = self.activate_book(vec![endpoint.endpoint()?], expires)?;
-                    book.check_route(
-                        self.policy.node_pin,
-                        endpoint.address.endpoint_key,
-                        endpoint.instance,
-                        now_ms()?,
-                    )?;
-                    let host = Arc::new(ServiceLeaseHostV1::new(self.key.clone(), book)?);
-                    if self.native_carrier_mailbox_v7() {
-                        // Publish the explicit capability before Node::serve sees
-                        // this host. It uses the same identity, journal and term;
-                        // the optional TLS listener retains its existing codec.
-                        host.rotate_native_carrier_mailbox_v7(true, now_ms()?, expires)?;
-                    }
-                    Ok(host)
-                })()
-                .context(FailureStage::Activate)
+                self.activate_carrier(endpoint, expires)
+                    .context(FailureStage::Activate)
             };
         #[cfg(feature = "tls-transport")]
         let result = if let Some(tls) = tls {
@@ -1158,6 +1192,10 @@ mod tests {
             .as_object_mut()
             .context("policy object")?
             .remove("native_carrier_mailbox_v7");
+        old_policy
+            .as_object_mut()
+            .context("policy object")?
+            .remove("native_carrier_mailbox_v8");
         let mut material = Zeroizing::new(Vec::new());
         material.extend_from_slice(b"NVOWN002");
         material.extend_from_slice(owner.transport.as_ref());
@@ -1169,6 +1207,7 @@ mod tests {
 
         let owner = fixture.open()?;
         assert!(!owner.native_carrier_mailbox_v7());
+        assert!(!owner.native_carrier_mailbox_v8());
         assert_eq!(owner.policy.node_pin, pin);
         assert!(*owner.transport == *transport);
         assert_eq!(std::fs::read(&path)?, old_custody);
@@ -1184,8 +1223,45 @@ mod tests {
             .as_object_mut()
             .context("policy object")?
             .remove("native_carrier_mailbox_v7");
+        assert_eq!(new_policy["native_carrier_mailbox_v8"], false);
+        new_policy
+            .as_object_mut()
+            .context("policy object")?
+            .remove("native_carrier_mailbox_v8");
         assert_eq!(new_policy, old_policy);
         for (name, expected) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+            assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_carrier_v8_does_not_upgrade_old_v7_policy_on_open() -> Result<()> {
+        let fixture = Fixture::new()?;
+        fixture.provision()?.set_native_carrier_mailbox_v7(true)?;
+        let owner = fixture.open()?;
+        let mut old_policy = serde_json::to_value(&owner.policy)?;
+        old_policy
+            .as_object_mut()
+            .context("policy object")?
+            .remove("native_carrier_mailbox_v8");
+        let mut material = Zeroizing::new(Vec::new());
+        material.extend_from_slice(b"NVOWN002");
+        material.extend_from_slice(owner.transport.as_ref());
+        material.extend_from_slice(&serde_json::to_vec(&old_policy)?);
+        let path = fixture.0.root.join("self-owned-policy.dpapi");
+        replace_protected(&path, &windows_custody::protect(&material)?)?;
+        let pin = owner.policy.node_pin;
+        let transport = owner.transport.clone();
+        drop(owner);
+        let names = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"];
+        let baseline = names.map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
+        let owner = fixture.open()?;
+        assert!(owner.native_carrier_mailbox_v7());
+        assert!(!owner.native_carrier_mailbox_v8());
+        assert_eq!(owner.policy.node_pin, pin);
+        assert!(*owner.transport == *transport);
+        for (name, expected) in names.iter().zip(baseline) {
             assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
         }
         Ok(())
@@ -1215,19 +1291,36 @@ mod tests {
         assert!(owner.set_native_listener(Some(settings())).is_err());
         assert_eq!(std::fs::read(&path)?, enabled);
 
+        fixture.open()?.set_native_carrier_mailbox_v8(true)?;
+        let owner = fixture.open()?;
+        assert!(!owner.native_carrier_mailbox_v7());
+        assert!(owner.native_carrier_mailbox_v8());
+        let enabled = std::fs::read(&path)?;
+        assert!(owner.set_native_listener(Some(settings())).is_err());
+        assert_eq!(std::fs::read(&path)?, enabled);
+
+        // The existing CLI's off action must also disable a selected V8.
         fixture.open()?.set_native_carrier_mailbox_v7(false)?;
         let owner = fixture.open()?;
         assert!(!owner.native_carrier_mailbox_v7());
+        assert!(!owner.native_carrier_mailbox_v8());
         owner.set_native_listener(Some(settings()))?;
         let native = std::fs::read(&path)?;
         assert!(fixture.open()?.set_native_carrier_mailbox_v7(true).is_err());
+        assert_eq!(std::fs::read(&path)?, native);
+        assert!(fixture.open()?.set_native_carrier_mailbox_v8(true).is_err());
         assert_eq!(std::fs::read(&path)?, native);
         let owner = fixture.open()?;
         assert_eq!(owner.policy.native_listener, Some(settings()));
         assert!(!owner.native_carrier_mailbox_v7());
         owner.set_native_listener(None)?;
 
+        fixture.open()?.set_native_carrier_mailbox_v8(true)?;
         fixture.open()?.set_native_carrier_mailbox_v7(true)?;
+        let owner = fixture.open()?;
+        assert!(owner.native_carrier_mailbox_v7());
+        assert!(!owner.native_carrier_mailbox_v8());
+        drop(owner);
         fixture.open()?.set_native_carrier_mailbox_v7(false)?;
         let owner = fixture.open()?;
         assert_eq!(serde_json::to_value(&owner.policy)?, policy);
@@ -1241,22 +1334,134 @@ mod tests {
 
     #[test]
     fn native_carrier_policy_rejects_authenticated_conflicting_state_before_start() -> Result<()> {
-        let fixture = Fixture::new()?;
-        let mut owner = fixture.provision()?;
-        // A correctly sealed but contradictory policy must fail at open, not
-        // select one branch silently or wait until after a listener is bound.
-        owner.policy.native_carrier_mailbox_v7 = true;
-        owner.policy.native_listener = Some(settings());
-        owner.save_policy()?;
-        drop(owner);
-        let names = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"];
-        let baseline = names.map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
-        assert!(fixture.open().is_err());
-        for (name, expected) in names.iter().zip(baseline) {
-            assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
+        for (v7, v8, native) in [
+            (true, false, true),
+            (false, true, true),
+            (true, true, false),
+        ] {
+            let fixture = Fixture::new()?;
+            let mut owner = fixture.provision()?;
+            // A correctly sealed but contradictory policy must fail at open,
+            // before choosing a version or binding any transport.
+            owner.policy.native_carrier_mailbox_v7 = v7;
+            owner.policy.native_carrier_mailbox_v8 = v8;
+            owner.policy.native_listener = native.then(settings);
+            owner.save_policy()?;
+            drop(owner);
+            let names = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"];
+            let baseline = names.map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
+            assert!(fixture.open().is_err());
+            for (name, expected) in names.iter().zip(baseline) {
+                assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
+            }
+            assert!(!fixture.0.root.join("mailbox.started").exists());
+            assert!(!fixture.0.root.join("status.json").exists());
         }
-        assert!(!fixture.0.root.join("mailbox.started").exists());
-        assert!(!fixture.0.root.join("status.json").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn native_carrier_activation_switches_signed_version_without_identity_or_expiry_reset(
+    ) -> Result<()> {
+        use novovm_network::{
+            iroh_transport::IrohAddressV1,
+            product_service_lease::{
+                IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7,
+                NativeCarrierMailboxEndpointV8,
+            },
+        };
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let pin = owner.policy.node_pin;
+        let transport = owner.transport.clone();
+        let key_custody = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let endpoint = IrohServiceEndpointV1 {
+            instance: [7; 32],
+            address: IrohAddressV1 {
+                endpoint_key: SigningKey::from_bytes(&owner.transport)
+                    .verifying_key()
+                    .to_bytes(),
+                direct: vec!["127.0.0.1:23456".parse()?],
+                relays: vec![],
+            },
+        };
+        drop(owner);
+        let expires = now_ms()? + 90_000;
+        let mut sequence = 0;
+        for version in [0, 7, 8, 7, 8, 0] {
+            let owner = fixture.open()?;
+            match version {
+                8 => owner.set_native_carrier_mailbox_v8(true)?,
+                7 => owner.set_native_carrier_mailbox_v7(true)?,
+                _ => owner.set_native_carrier_mailbox_v7(false)?,
+            }
+            let owner = fixture.open()?;
+            assert_eq!(owner.policy.node_pin, pin);
+            assert!(*owner.transport == *transport);
+            // This is the activation path actually passed to the running Node.
+            drop(owner.activate_carrier(&endpoint, expires)?);
+            let (_journal, bytes) = ServiceLeaseFileV1::open(
+                &fixture.0.root.join("service.journal"),
+                owner.storage.clone(),
+            )?;
+            let book = ServiceLeaseBookV1::restore_self_owned(trust(pin), &bytes, now_ms()?)?;
+            let records = book.self_owned_records()?;
+            assert_eq!(records.len(), 1);
+            let record = &records[0];
+            assert_eq!(record.relay_public_key, pin);
+            assert_eq!(record.expires_at_ms, expires);
+            assert!(record.sequence > sequence);
+            assert_eq!(
+                NativeCarrierMailboxEndpointV7::from_record(record)?.is_some(),
+                version == 7
+            );
+            assert_eq!(
+                NativeCarrierMailboxEndpointV8::from_record(record)?.is_some(),
+                version == 8
+            );
+            let actual = IrohServiceEndpointV1::from_record(record)?;
+            assert_eq!(actual.instance, endpoint.instance);
+            assert_eq!(actual.address.endpoint_key, endpoint.address.endpoint_key);
+            assert_eq!(actual.address.direct, endpoint.address.direct);
+            assert_eq!(
+                std::fs::read(fixture.0.root.join("keys.dpapi"))?,
+                key_custody
+            );
+            sequence = record.sequence;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn native_carrier_v8_selection_cannot_revive_revoked_journal() -> Result<()> {
+        use novovm_network::{
+            iroh_transport::IrohAddressV1, product_service_lease::IrohServiceEndpointV1,
+        };
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let pin = owner.policy.node_pin;
+        let endpoint = IrohServiceEndpointV1 {
+            instance: [7; 32],
+            address: IrohAddressV1 {
+                endpoint_key: SigningKey::from_bytes(&owner.transport)
+                    .verifying_key()
+                    .to_bytes(),
+                direct: vec!["127.0.0.1:23456".parse()?],
+                relays: vec![],
+            },
+        };
+        let mut book = owner.activate_book(vec![endpoint.endpoint()?], now_ms()? + 90_000)?;
+        book.revoke_self_owned(pin, now_ms()?)?;
+        drop(book);
+        let path = fixture.0.root.join("service.journal");
+        let revoked = std::fs::read(&path)?;
+        owner.set_native_carrier_mailbox_v8(true)?;
+        let owner = fixture.open()?;
+        assert!(owner.native_carrier_mailbox_v8());
+        assert!(owner
+            .activate_carrier(&endpoint, now_ms()? + 90_000)
+            .is_err());
+        assert_eq!(std::fs::read(&path)?, revoked);
         Ok(())
     }
 

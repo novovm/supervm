@@ -38,6 +38,23 @@ mod windows {
     static CONFIG: OnceLock<PathBuf> = OnceLock::new();
     define_windows_service!(service_entry, service_main);
 
+    #[derive(Debug, PartialEq, Eq)]
+    enum NativeCarrierSelection {
+        Off,
+        V7,
+        V8,
+    }
+    impl NativeCarrierSelection {
+        fn parse(value: &std::ffi::OsStr) -> Result<Self> {
+            match value.to_str() {
+                Some("off") => Ok(Self::Off),
+                Some("on" | "v7") => Ok(Self::V7),
+                Some("v8") => Ok(Self::V8),
+                _ => anyhow::bail!("native carrier selection must be on, off, v7 or v8"),
+            }
+        }
+    }
+
     fn execute(config: &std::path::Path, stop: Arc<AtomicBool>, epochs: Option<u64>) -> Result<()> {
         let version = serde_json::from_slice::<serde_json::Value>(
             &super::windows_owner_files::read_bounded(config, 65536)?,
@@ -163,15 +180,15 @@ mod windows {
             use super::rendezvous_self_owned_owner::{Config, Owner};
             ensure!(
                 args.len() == 3,
-                "usage: --set-self-owned-native-carrier CONFIG on|off"
+                "usage: --set-self-owned-native-carrier CONFIG on|off|v7|v8"
             );
-            let enabled = match args[2].to_str() {
-                Some("on") => true,
-                Some("off") => false,
-                _ => anyhow::bail!("native carrier selection must be on or off"),
+            let selection = NativeCarrierSelection::parse(&args[2])?;
+            let owner = Owner::open(Config::load(&path)?, false, None)?;
+            return match selection {
+                NativeCarrierSelection::Off => owner.set_native_carrier_mailbox_v7(false),
+                NativeCarrierSelection::V7 => owner.set_native_carrier_mailbox_v7(true),
+                NativeCarrierSelection::V8 => owner.set_native_carrier_mailbox_v8(true),
             };
-            return Owner::open(Config::load(&path)?, false, None)?
-                .set_native_carrier_mailbox_v7(enabled);
         }
         if args[0] == "--set-self-owned-native" {
             use super::rendezvous_self_owned_owner::{Config, NativeListenerConfig, Owner};
@@ -276,6 +293,27 @@ mod windows {
             execute(&path, Arc::new(AtomicBool::new(false)), Some(epochs))?;
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn native_carrier_cli_requires_explicit_version_and_preserves_on() -> Result<()> {
+            for (input, expected) in [
+                ("off", NativeCarrierSelection::Off),
+                ("on", NativeCarrierSelection::V7),
+                ("v7", NativeCarrierSelection::V7),
+                ("v8", NativeCarrierSelection::V8),
+            ] {
+                assert_eq!(NativeCarrierSelection::parse(input.as_ref())?, expected);
+            }
+            for invalid in ["", "V8", "v9", "automatic", "v7,v8"] {
+                assert!(NativeCarrierSelection::parse(invalid.as_ref()).is_err());
+            }
+            Ok(())
+        }
     }
 }
 fn main() -> anyhow::Result<()> {
