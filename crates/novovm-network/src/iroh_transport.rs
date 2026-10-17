@@ -42,6 +42,97 @@ pub enum IrohConnectProgressV1 {
     RelayBackoff,
 }
 
+/// Local inbound setup observations only. They never authorize a retry or
+/// establish application trust, and contain no peer address, key or reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IrohInboundPhaseV1 {
+    /// Awaiting Iroh's incoming connection future: TLS and its post-handshake
+    /// connection registration/hooks, not a measurement of cryptography alone.
+    Tls = 1,
+    Stream = 2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IrohInboundOutcomeV1 {
+    Started = 1,
+    Ready = 2,
+    Failed = 3,
+    Deadline = 4,
+    PeerRejected = 5,
+    CapacityRejected = 6,
+    OwnerRejected = 7,
+    Cancelled = 8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrohInboundObservationV1 {
+    /// Process-local ordinal, never a peer identity or on-wire correlation ID.
+    pub attempt: u64,
+    pub phase: IrohInboundPhaseV1,
+    pub outcome: IrohInboundOutcomeV1,
+    /// Since this Incoming was dequeued, including both setup phases.
+    pub elapsed_ms: u64,
+}
+
+type InboundObserver = Arc<dyn Fn(IrohInboundObservationV1) + Send + Sync>;
+static INBOUND_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+
+struct InboundAttempt<'a> {
+    observer: &'a Option<InboundObserver>,
+    ordinal: u64,
+    started: Instant,
+    phase: IrohInboundPhaseV1,
+    ended: bool,
+}
+
+impl<'a> InboundAttempt<'a> {
+    fn new(observer: &'a Option<InboundObserver>) -> Self {
+        let value = Self {
+            observer,
+            ordinal: INBOUND_ATTEMPTS.fetch_add(1, Ordering::Relaxed) + 1,
+            started: Instant::now(),
+            phase: IrohInboundPhaseV1::Tls,
+            ended: false,
+        };
+        value.emit(IrohInboundOutcomeV1::Started);
+        value
+    }
+
+    fn emit(&self, outcome: IrohInboundOutcomeV1) {
+        if let Some(observe) = self.observer {
+            observe(IrohInboundObservationV1 {
+                attempt: self.ordinal,
+                phase: self.phase,
+                outcome,
+                elapsed_ms: self.started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            });
+        }
+    }
+
+    fn stream_started(&mut self) {
+        self.emit(IrohInboundOutcomeV1::Ready);
+        self.phase = IrohInboundPhaseV1::Stream;
+        self.emit(IrohInboundOutcomeV1::Started);
+    }
+
+    fn finish(&mut self, outcome: IrohInboundOutcomeV1) {
+        if !self.ended {
+            self.ended = true;
+            self.emit(outcome);
+        }
+    }
+}
+
+impl Drop for InboundAttempt<'_> {
+    fn drop(&mut self) {
+        // A cancelled future has no returned error. Explicit timeout, owner or
+        // peer decisions mark their outcome first, so cleanup cannot relabel it.
+        self.finish(IrohInboundOutcomeV1::Cancelled);
+    }
+}
+
 pub const IROH_ALPN_V1: &[u8] = BOUND_TRANSPORT_ALPN_V1;
 pub const IROH_MAX_FRAME_V1: usize = 16 * 1024;
 /// Adapter-owned active connections, including outbound attempts and inbound
@@ -341,6 +432,7 @@ pub struct IrohConfigV1 {
     bind_address: Option<SocketAddr>,
     relay_only: bool,
     service_identity: Option<iroh::SecretKey>,
+    inbound_observer: Option<InboundObserver>,
 }
 
 impl IrohConfigV1 {
@@ -373,7 +465,19 @@ impl IrohConfigV1 {
             bind_address: None,
             relay_only: false,
             service_identity: None,
+            inbound_observer: None,
         })
+    }
+
+    /// Optional local diagnostics on the original endpoint/owner. The callback
+    /// must be fast, non-blocking and non-panicking; retain only bounded events.
+    /// It cannot alter admission, deadlines, error classification or wire data.
+    pub fn with_inbound_observer(
+        mut self,
+        observe: impl Fn(IrohInboundObservationV1) + Send + Sync + 'static,
+    ) -> Self {
+        self.inbound_observer = Some(Arc::new(observe));
+        self
     }
 
     /// An explicitly provisioned distribution service may retain its independent
@@ -437,6 +541,7 @@ pub struct IrohScopeV1 {
     listener_budget: Option<Duration>,
     continuous_service: bool,
     reuse: Option<(Arc<reuse::Pool>, u8)>,
+    inbound_observer: Option<InboundObserver>,
 }
 
 /// Process-local diagnostics, not identifiers, receipts or permission to retry.
@@ -515,6 +620,7 @@ pub struct IrohEndpointOwnerV1 {
     close_gate: tokio::sync::Mutex<()>,
     close_started: AtomicBool,
     permit: std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
+    inbound_observer: Option<InboundObserver>,
 }
 
 impl IrohEndpointOwnerV1 {
@@ -579,6 +685,7 @@ impl IrohEndpointOwnerV1 {
             close_gate: tokio::sync::Mutex::new(()),
             close_started: AtomicBool::new(false),
             permit: std::sync::Mutex::new(Some(permit)),
+            inbound_observer: config.inbound_observer,
         })
     }
 
@@ -766,6 +873,7 @@ impl IrohEndpointOwnerV1 {
             listener_budget,
             continuous_service,
             reuse: lane.map(|lane| (self.reuse.clone(), lane)),
+            inbound_observer: self.inbound_observer.clone(),
         };
         let mut reuse_guard =
             reuse::OperationGuard::new(scope.reuse.as_ref().map(|(pool, _)| pool.clone()));
@@ -1018,6 +1126,7 @@ where
         listener_budget,
         continuous_service: false,
         reuse: None,
+        inbound_observer: config.inbound_observer,
     };
     let result = tokio::select! {
         biased;
@@ -1307,10 +1416,14 @@ impl IrohScopeV1 {
         for _ in 0..8 {
             self.control.check()?;
             let incoming = self.endpoint.accept().await.context("endpoint closed")?;
-            self.control.check()?;
+            let mut observation = InboundAttempt::new(&self.inbound_observer);
+            self.control.check().inspect_err(|_| {
+                observation.finish(IrohInboundOutcomeV1::OwnerRejected);
+            })?;
             let admission = match self.connections.clone().try_acquire_owned() {
                 Ok(admission) => admission,
                 Err(error) => {
+                    observation.finish(IrohInboundOutcomeV1::CapacityRejected);
                     incoming.refuse();
                     return Err(error).context("carrier connection limit");
                 }
@@ -1318,11 +1431,19 @@ impl IrohScopeV1 {
             let deadline = tokio::time::Instant::now() + INCOMING_SETUP_TIMEOUT;
             let connection = match tokio::time::timeout_at(deadline, incoming).await {
                 Ok(Ok(connection)) => connection,
-                _ => continue,
+                Ok(Err(_)) => {
+                    observation.finish(IrohInboundOutcomeV1::Failed);
+                    continue;
+                }
+                Err(_) => {
+                    observation.finish(IrohInboundOutcomeV1::Deadline);
+                    continue;
+                }
             };
             let remote = *connection.remote_id().as_bytes();
             let pending = PendingConnection::new(connection);
             if expected.is_some_and(|expected| expected != remote) {
+                observation.finish(IrohInboundOutcomeV1::PeerRejected);
                 // PendingConnection also closes on timeout/cancellation before
                 // the stream becomes an owned, admitted IrohStreamV1.
                 pending
@@ -1332,38 +1453,74 @@ impl IrohScopeV1 {
                     .close(1u32.into(), b"unexpected endpoint");
                 continue;
             }
-            return tokio::time::timeout_at(
+            observation.stream_started();
+            let result = tokio::time::timeout_at(
                 deadline,
-                self.stream(pending, remote, false, admission),
+                self.stream_observed(pending, remote, false, admission, Some(&mut observation)),
             )
-            .await
-            .context("incoming stream setup deadline")?;
+            .await;
+            match result {
+                Ok(result) => {
+                    observation.finish(if result.is_ok() {
+                        IrohInboundOutcomeV1::Ready
+                    } else {
+                        IrohInboundOutcomeV1::Failed
+                    });
+                    return result;
+                }
+                Err(error) => {
+                    observation.finish(IrohInboundOutcomeV1::Deadline);
+                    return Err(error).context("incoming stream setup deadline");
+                }
+            }
         }
         bail!("incoming peer budget exhausted")
     }
 
     async fn stream<'a>(
         &'a self,
+        pending: PendingConnection,
+        expected: [u8; 32],
+        initiator: bool,
+        admission: tokio::sync::OwnedSemaphorePermit,
+    ) -> Result<IrohStreamV1<'a>> {
+        self.stream_observed(pending, expected, initiator, admission, None)
+            .await
+    }
+
+    async fn stream_observed<'a>(
+        &'a self,
         mut pending: PendingConnection,
         expected: [u8; 32],
         initiator: bool,
         admission: tokio::sync::OwnedSemaphorePermit,
+        mut observation: Option<&mut InboundAttempt<'_>>,
     ) -> Result<IrohStreamV1<'a>> {
         let connection = pending
             .connection
             .as_ref()
             .context("missing pending connection")?;
-        self.control.check()?;
-        ensure!(
-            connection.remote_id().as_bytes() == &expected && connection.alpn() == IROH_ALPN_V1,
-            "transport peer/ALPN mismatch"
-        );
+        self.control.check().inspect_err(|_| {
+            if let Some(observation) = observation.as_mut() {
+                observation.finish(IrohInboundOutcomeV1::OwnerRejected);
+            }
+        })?;
+        if connection.remote_id().as_bytes() != &expected || connection.alpn() != IROH_ALPN_V1 {
+            if let Some(observation) = observation.as_mut() {
+                observation.finish(IrohInboundOutcomeV1::PeerRejected);
+            }
+            bail!("transport peer/ALPN mismatch");
+        }
         let (send, recv) = if initiator {
             connection.open_bi().await?
         } else {
             connection.accept_bi().await?
         };
-        self.control.check()?;
+        self.control.check().inspect_err(|_| {
+            if let Some(observation) = observation.as_mut() {
+                observation.finish(IrohInboundOutcomeV1::OwnerRejected);
+            }
+        })?;
         Ok(IrohStreamV1 {
             scope: self,
             io_control: IrohControlV1 {
@@ -1987,6 +2144,8 @@ mod tests {
     use super::*;
     use tokio::sync::oneshot;
     pub(super) static SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+    include!("iroh_inbound_tests.rs");
 
     #[test]
     fn stream_diagnostics_preserve_typed_cause_without_granting_retry() {
