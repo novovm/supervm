@@ -1,5 +1,18 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-17 NOVOCHAT-machine native Carrier activation (active claim):** input1d533c76.
+NOVOCHAT2ef8f7d/v25 has preserved L4 alongside Carrier V7 and passed installed
+legacy-node compatibility on both original phones. Root owns existing
+`rendezvous_service.rs` CLI/host wiring, focused process validation, deployment,
+evidence and the single build slot. Bounded owner agent owns only
+`rendezvous_self_owned_owner.rs`: default-off protected policy selection and
+atomic update under the existing exclusive owner. No new runtime, identity,
+listener, scheduler or authorization system; original keys/history/custody stay.
+Enable the explicit signed capability through the original self-owned host
+only after consumers are upgraded. Do not combine with the UDP-only early
+return. Native Android/L4/recovery timing remains unaccepted until measured;
+external Iroh Relay and Windows crash-restart gaps remain separate.
+
 **2026-10-17 NOVOCHAT-machine native mailbox carrier (validated; claim released):** input64bb8658, claim23150c04.
 Root owns product_service_host selector, product_rendezvous_owned dispatch,
 integration tests and the single build slot. Bounded native-body agent owns
