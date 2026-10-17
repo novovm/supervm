@@ -1,5 +1,40 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-17 Android native follow-up (bounded device acceptance):** input 4888b7da,
+NOVOCHAT e3e9c78/v26. Same-self-owned profile preview is now side-effect-free; approval
+still rechecks all checkpoints, revocation and signatures. In-place installation
+kept five protected-file hashes unchanged. After UI import under the same pin
+and restart of the original node, both phones selected V7 in their original
+task 1, retaining L4. Healthy V6 sessions do not acquire V7 automatically; this
+was coordinated activation, not fully automatic old-client migration.
+
+9297/9298: native L3 plus existing L4 custody and device receipts; prepare to
+first DeviceReceipt 1375/1432 ms, L3 Put-to-Store 331/768 ms, L4 959/1091 ms.
+One 18s cellular outage: 9299 L3 Store 393 ms, L4 deposit failed, DeviceReceipt 9.940s;
+first system available-to-native-ready 5.443s, subsequent network-generation
+change-to-next-task-ready 5.492s. After recovery, 9300: L3 Store 722 ms, L4 863 ms,
+DeviceReceipt 1369 ms; L4 first, L3 duplicate receipt deduplicated. 132 samples:
+seven cellular route-probe failures during outage, two code 1 transitions matched
+network generations and recovered; final Wi-Fi task 1/cellular task 3, L3/L4 ready.
+Normal-message L4 Relay RTT 482-522 ms; native authentication also used Relay,
+but per-Put paths were not independently sampled.
+
+After force-stop and normal launcher opening, screenshots confirm original
+9299/9300 and Delivered retained; both phones restored native L3. This is not
+automatic wake after force-stop. First 45s: cellular remained available=true/
+mask2 but logged gen8/task7 code1; automatic cleanup created task2 in 2.975s,
+L3 ready 4.995s and L4 receipt lane 9.608s after the first failure. Wi-Fi also
+recovered from L4 code63. Following 60s/46 samples had no new first failures or
+issues; final Wi-Fi task1/cellular task2, L3/L4 ready. Code1 is not resolved:
+next investigate unconditional generation advancement on LinkPropertiesChanged;
+existing logs lack property diffs, so the actual cause is not established.
+Post-reopen message9301 also has native L3/L4 custody and a device receipt:
+Put-to-Store193/1344ms, prepare-to-first-device-receipt1695ms. Final30s/24 samples
+have no probe issues; the same Wi-Fi task1/cellular task2 retain L3/L4 readiness.
+NOVOCHAT artifacts/continuity28-* retain evidence. No five-round, P95 or
+click-to-screen claim. External Iroh, autonomous public transport, all-UDP
+migration, privacy and Windows crash recovery remain open.
+
 **2026-10-17 NOVOCHAT-machine native Carrier activation (node deployed; claim released):** input1d533c76, claim4a0a5d23.
 NOVOCHAT2ef8f7d/v25 has preserved L4 alongside Carrier V7 and passed installed
 legacy-node compatibility on both original phones. Root owns existing

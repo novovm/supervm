@@ -3,6 +3,49 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-17 Android v26 原生L3双向投递及一次断网恢复
+
+输入SUPERVM4888b7da，手机NOVOCHAT e3e9c78/v26。另仓修复同self-owned profile
+预检误报：先做无副作用preview，approve仍重新核验全部checkpoint、撤销
+和签名。两台原位安装前后五份受保护文件hash一致。同信任pin从界面导入
+新声明、重启原Windows节点后，两端各自原task1自动切换NVMBOX07，原L4
+继续并行服务。健康旧V6会话不会自动获得V7能力，不能称全自动旧版升级。
+
+| 普通消息 | prepare→首次DeviceReceipt | L3 Put→StoreReceipt | L4 Put→StoreReceipt |
+| --- | ---: | ---: | ---: |
+| 9297 | 1375ms | 331ms | 959ms |
+| 9298 | 1432ms | 768ms | 1091ms |
+| 9300（断网恢复后） | 1369ms | 722ms | 863ms |
+
+上述消息均经原生L3及既有L4真实寄存并取得设备回执；9300由L4先回，L3
+重复回执仍沿原去重处理。不是点击发送至对方屏幕时间，也不是P95样本。
+另进行一次18秒蜂窝断网：9299的L3寄存393ms、L4寄存失败，首次设备回执
+9.940秒；系统首次available至native ready为5.443秒，随后再次network
+generation变化至下一task ready为5.492秒，两段分别记录，不拼作单次恢复。
+
+132个采样中蜂窝7次路由probe失败均发生于断网，2次code1均与网络代次
+变更对应并正常接替；结束Wi-Fi task1、蜂窝task3，L3/L4 ready。正常两条
+消息的L4实测Relay RTT482–522ms；原生认证也使用Relay，未独立采样每次
+Put的实际路径，不能将认证时路径当成全部请求路径。
+
+最终重开验证：force-stop后从正常入口打开，两机截图确认9299/9300原消息
+和Delivered状态保留，两机原生L3恢复。这验证普通重新打开后的恢复，不是
+系统强停后自动唤醒。首45秒中蜂窝available=true/mask2仍记录gen8/task7的
+code1；2.975秒自动回收并创建task2，首错至L3就绪4.995秒、至L4回执通道
+就绪9.608秒。Wi-Fi曾出现L4 code63后恢复。随后60秒46个样本无新增首错
+或issues，最终Wi-Fi task1、蜂窝task2，L3/L4 ready。
+不能据此宣布code1根治；下一刀定位LinkPropertiesChanged无条件增加网络
+代次的影响。现有日志没有属性差分，尚不能将它确认为该次变化的唯一根因。
+
+重开后追加9301也取得原生L3及L4存储确认和设备回执，分别为Put→Store
+193/1344ms、prepare→首设备回执1695ms；两端屏幕核对送达。最后30秒24个
+采样无问题，两端L3/L4/sendReady保持，原Wi-Fi task1/蜂窝task2持续运行。
+
+证据在NOVOCHAT ignored `artifacts/continuity28-*`。本轮只签收上述原生L3
+与原L4实机交付、一次断网恢复及上述重开保存，不称五轮、长期稳定或低延迟
+目标完成；外部Iroh依赖、自主公网、全UDP迁移、隐私及Windows崩溃自动
+恢复仍未签收。以下旧记录保持其当时边界。
+
 ## 2026-10-17 Windows Carrier V7 节点激活与部署（手机尚未切换）
 
 输入1d533c76，认领4a0a5d23。仅在原Windows self-owned owner/CLI加入显式
