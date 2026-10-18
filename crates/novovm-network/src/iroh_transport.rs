@@ -1728,7 +1728,32 @@ async fn confirm_send_completion(send: &mut SendStream) -> Result<()> {
     Ok(())
 }
 
+fn selected_connection_rtt(connection: &Connection) -> Option<(&'static str, Duration)> {
+    connection.paths().iter().find_map(|path| {
+        if !path.is_selected() {
+            return None;
+        }
+        let kind = if path.is_ip() {
+            "direct"
+        } else if path.is_relay() {
+            "relay"
+        } else {
+            return None;
+        };
+        Some((kind, path.rtt()))
+    })
+}
+
 impl IrohWriteHalfV1<'_> {
+    /// Passive telemetry only. Never call an authority callback or mutate the
+    /// stream from an observation; the enclosing IO owner performs those checks.
+    pub(crate) fn selected_rtt(&self) -> Option<(&'static str, Duration)> {
+        if self.failed.load(Ordering::Acquire) || self.connection.close_reason().is_some() {
+            return None;
+        }
+        selected_connection_rtt(self.connection)
+    }
+
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
         if self.native {
             return native_frames::write(
@@ -1865,19 +1890,7 @@ impl IrohStreamV1<'_> {
 
     /// Local QUIC smoothed RTT, not a probe, identity or delivery proof.
     pub(crate) fn selected_rtt(&self) -> Option<(&'static str, Duration)> {
-        self.connection.paths().iter().find_map(|path| {
-            if !path.is_selected() {
-                return None;
-            }
-            let kind = if path.is_ip() {
-                "direct"
-            } else if path.is_relay() {
-                "relay"
-            } else {
-                return None;
-            };
-            Some((kind, path.rtt()))
-        })
+        selected_connection_rtt(&self.connection)
     }
 
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {

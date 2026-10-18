@@ -132,6 +132,16 @@ pub struct NativeCarrierPump<'a> {
     writing: Option<Writing<'a>>,
 }
 impl<'a> NativeCarrierPump<'a> {
+    /// Passive current carrier path and smoothed RTT. Missing/busy/closed or
+    /// unsupported observations remain None, never a zero-latency path. No
+    /// probe, cloned connection, admission decision or extra task is created.
+    pub fn carrier_observation_v1(&self) -> Option<(&'static str, std::time::Duration)> {
+        if self.io.state().failed {
+            return None;
+        }
+        self.writer.as_ref()?.selected_rtt()
+    }
+
     pub fn attach(
         stream: &'a mut CarrierStreamV1<'_>,
         channel: BoundSecureChannelV1,

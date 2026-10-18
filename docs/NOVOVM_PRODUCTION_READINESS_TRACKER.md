@@ -3,6 +3,18 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 原生载体被动路径观察（Android 部署待验证）
+
+现有 `NativeCarrierPump` 暴露当前 Iroh 选中路径类别和 QUIC 平滑 RTT，沿用
+原连接及 I/O owner；没有新探测包、定时器、连接、认证或选路决策。写半部忙、
+关闭、失败或不支持观察时返回 None，不以零 RTT 或旧缓存冒充当前路径。
+观测不包含地址或身份，也不能证明设备送达、匿名性或完全自主传输。
+
+`novovm-network` carrier_io 三项取消/失败/排队 lib 回归通过。客户端接入及
+真实连接观察仍须分别验证；这项组件变化没有升级 Windows 节点或 Android。
+NOVOCHAT 当前手机保留 v35，其无 L3 五轮换网及冷启动证据记录在该仓库
+`docs/implementation/P0_CHECKPOINT.md`，不把历史结果计为本次新产物验收。
+
 ## 2026-10-18 Windows 修复部署及 Android 原生 L4 无 L3 投递
 
 原 Windows rendezvous owner 原位升级至 `2f7cdf94` release，保留原 V7 选择、

@@ -297,6 +297,15 @@ impl CarrierStreamV1<'_> {
 }
 
 impl CarrierWriteHalfV1<'_> {
+    pub(crate) fn selected_rtt(&self) -> Option<(&'static str, std::time::Duration)> {
+        match &self.inner {
+            #[cfg(feature = "iroh-transport")]
+            WriteHalf::Iroh(write) => write.selected_rtt(),
+            #[cfg(feature = "tls-transport")]
+            WriteHalf::Tls(_) => None,
+        }
+    }
+
     pub async fn write_frame(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         match &mut self.inner {
             #[cfg(feature = "iroh-transport")]
