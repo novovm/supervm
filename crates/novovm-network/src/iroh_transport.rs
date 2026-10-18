@@ -247,6 +247,14 @@ pub fn is_iroh_scope_deadline_v1(error: &anyhow::Error) -> bool {
 #[error("carrier connect unavailable: {0:#}")]
 pub struct IrohConnectUnavailableV1(#[source] anyhow::Error);
 
+/// An actual outbound QUIC handshake was refused before a stream existed.
+/// This is NOT a generic retry grant: a caller can await newer verified node
+/// evidence and make a fresh authorized attempt. Authentication, stream and
+/// protocol failures elsewhere never construct this marker.
+#[derive(Debug, thiserror::Error)]
+#[error("carrier handshake refused before stream establishment")]
+pub struct IrohConnectRefusedV1(#[source] anyhow::Error);
+
 /// Fixed, non-sensitive diagnostic categories. These are NOT retry permission.
 /// In particular a remote close, even code zero, does not authorize a redial.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -323,6 +331,16 @@ fn connect_unavailable(error: &iroh::endpoint::ConnectError) -> bool {
             ..
         }
     )
+}
+
+fn connect_refused(error: &iroh::endpoint::ConnectError) -> bool {
+    use iroh::endpoint::{ConnectError, ConnectingError, ConnectionError, TransportErrorCode};
+    matches!(error,
+        ConnectError::Connecting {
+            source: ConnectingError::ConnectionError {
+                source: ConnectionError::ConnectionClosed(close), ..
+            }, ..
+        } if close.error_code == TransportErrorCode::CONNECTION_REFUSED)
 }
 
 /// Protocol-only diagnostics. Origin 1 = version mismatch, 2 = locally
@@ -1357,6 +1375,8 @@ impl IrohScopeV1 {
         .map_err(|error| {
             if connect_unavailable(&error) {
                 anyhow::Error::new(IrohConnectUnavailableV1(error.into()))
+            } else if connect_refused(&error) {
+                anyhow::Error::new(IrohConnectRefusedV1(error.into()))
             } else {
                 error.into()
             }
@@ -2242,6 +2262,36 @@ mod tests {
                 None
             );
         }
+    }
+
+    #[test]
+    fn handshake_refusal_does_not_include_protocol_or_application_rejection() {
+        use iroh::endpoint::{
+            ApplicationClose, ConnectError, ConnectingError, ConnectionError, TransportError,
+            TransportErrorCode, VarInt,
+        };
+        for failure in [
+            ConnectionError::VersionMismatch,
+            ConnectionError::TransportError(TransportError::new(
+                TransportErrorCode::CONNECTION_REFUSED,
+                "local transport error with the same numeric code".into(),
+            )),
+            ConnectionError::TransportError(TransportError::new(
+                TransportErrorCode::from(VarInt::from_u32(256)),
+                "TLS failure".into(),
+            )),
+            ConnectionError::ApplicationClosed(ApplicationClose {
+                error_code: VarInt::from_u32(2),
+                reason: Default::default(),
+            }),
+            ConnectionError::TimedOut,
+            ConnectionError::LocallyClosed,
+        ] {
+            let error = ConnectError::from(ConnectingError::from(failure));
+            assert!(!connect_refused(&error));
+            assert!(!anyhow::Error::new(error).is::<IrohConnectRefusedV1>());
+        }
+        assert!(!anyhow::anyhow!("CONNECTION_REFUSED code 2").is::<IrohConnectRefusedV1>());
     }
 
     #[test]
@@ -3600,6 +3650,10 @@ mod tests {
                         Some(IrohProtocolDiagnosticV1 { origin: 3, code: 2 })
                     );
                     assert!(!error.is::<IrohConnectUnavailableV1>());
+                    assert!(error.is::<IrohConnectRefusedV1>());
+                    let wrapped: anyhow::Error =
+                        crate::bound_session::BoundSessionError::Authentication(error).into();
+                    assert!(!wrapped.is::<IrohConnectRefusedV1>());
                     Ok(())
                 })
             })

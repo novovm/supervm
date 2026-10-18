@@ -3,6 +3,28 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 连接建立拒接分型与唯一 L3 更新
+
+共享载体仍走 IrohScopeV1::connect_observed → 真实 QUIC connecting → 原流绑定。
+新增不可由外部直接构造的 IrohConnectRefusedV1，仅在出站握手期间收到对端
+transport CONNECTION_REFUSED 时生成；不加入通用可重试 IO，不根据 E214 或
+文字判定，不覆盖身份认证、应用关闭、TLS/版本或本地协议错误。调用方可按
+新验证的节点证据重新尝试；本轮不改变签名、撤销、期限或业务准入。
+
+真实 draining endpoint 试验在 Offer 交换前产生 origin=3/code=2，验证新分型；
+认证错误包装不暴露该重试提示。负向测试涵盖相同数字的本地 transport 错误、
+应用关闭、TLS、版本、超时和字符串。iroh_transport::tests 共 53 项串行通过
+（35.10 秒测试时间，非消息延迟），日志 NOVOCHAT/artifacts/continuity62-iroh-tests.log。
+该新增分型尚未安装手机，Application 侧恢复接线仍需验证。
+
+另已完成此前 schema 3 版本的唯一笔记本 L3 原位更新（不包含本次新增分型）：
+原身份/配置/持久数据保持，程序 SHA256 为
+`4f9d83508a935fe948e05047dd7e4f0938e3229d0f690bb5169142e7f6adb05f`。
+只读检查 schema=3、quick_check=ok、envelopes=0、consumed=0。两台 v41 App
+保持原进程双向发送 9452/9453，接收页各一条，Put 至设备回执 711/565 ms；
+观测均 running、L3/L4 就绪。非点击至屏幕/P95，外部 Iroh 依赖仍在。
+证据 NOVOCHAT/artifacts/continuity61-{node-upgrade,observe,summary}.json。
+
 ## 2026-10-18 v41 手机已部署：临时信箱清理与换网投递
 
 NOVOCHAT `9e5053f` 输入共享 `89768258`，正式 profile v41 已覆盖两台原安装；
