@@ -544,3 +544,7 @@ async fn v8_native_owner_rejects_undeclared_and_withdrawn_capability() -> Result
     }
     Ok(())
 }
+
+#[cfg(feature = "tls-transport")]
+#[path = "support/native_tls.rs"]
+mod native_tls;

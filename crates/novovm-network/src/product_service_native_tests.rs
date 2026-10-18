@@ -179,6 +179,7 @@ fn native_host_publication_is_durable_and_keeps_legacy_alternatives_on_rotation(
         address: "127.0.0.1:40211".parse()?,
         endpoint_key: pin(),
         max_connections: 4,
+        native_mailbox_v8: false,
     };
     let b = ServiceLeaseBookV1::new_self_owned(
         trust(),
@@ -468,6 +469,7 @@ fn native_carrier_marker_is_explicit_signed_and_not_a_fourth_physical_route() ->
         address: "127.0.0.1:40211".parse()?,
         endpoint_key: pin(),
         max_connections: 4,
+        native_mailbox_v8: false,
     };
     let explicit = record(
         vec![endpoint.endpoint()?, tls.endpoint()?, route().endpoint()?],
@@ -659,6 +661,7 @@ fn native_carrier_host_rotation_preserves_marker_and_udp_until_explicit_disable(
         address: "127.0.0.1:40211".parse()?,
         endpoint_key: pin(),
         max_connections: 4,
+        native_mailbox_v8: false,
     };
     let b = ServiceLeaseBookV1::new_self_owned(
         trust(),
@@ -978,5 +981,59 @@ fn native_carrier_v8_host_uses_same_durable_owner_and_preserves_resource_policy(
         NativeMailboxEndpointV7::from_record(&disabled)?,
         Some(route())
     );
+    Ok(())
+}
+
+#[test]
+fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<()> {
+    let native = carrier_v8();
+    let tls = TlsServiceEndpointV1 {
+        address: "127.0.0.1:40443".parse()?,
+        endpoint_key: SigningKey::from_bytes(&[88; 32]).verifying_key().to_bytes(),
+        max_connections: 4,
+        native_mailbox_v8: true,
+    };
+    let signed = |tls: &TlsServiceEndpointV1, sequence, at| {
+        record(vec![native.endpoint()?, tls.endpoint()?], sequence, at)
+    };
+    let first = signed(&tls, 1, 1000)?;
+    let mut b = ServiceLeaseBookV1::new_self_owned(trust(), vec![first.clone()], 1000)?;
+    b.check_continuous_native_tls_v8(pin(), &tls, 2000)?;
+    b.check_tls_route_v1(pin(), &tls, 2000)?;
+    // Expiry only retires new dialing, not the healthy authenticated session.
+    b.check_continuous_native_tls_v8(pin(), &tls, 91_000)?;
+    assert!(b.check_tls_route_v1(pin(), &tls, 91_000).is_err());
+    let mut moved = tls.clone();
+    moved.address.set_port(40444);
+    b.replace_self_owned_records(vec![signed(&moved, 2, 91_000)?], 91_000)?;
+    b.check_continuous_native_tls_v8(pin(), &tls, 91_001)?;
+    assert!(b.check_tls_route_v1(pin(), &tls, 91_001).is_err());
+    b.check_tls_route_v1(pin(), &moved, 91_001)?;
+    let mut wrong = moved.clone();
+    wrong.endpoint_key = SigningKey::from_bytes(&[89; 32]).verifying_key().to_bytes();
+    assert!(b
+        .check_continuous_native_tls_v8(pin(), &wrong, 91_001)
+        .is_err());
+    let saved = b.checkpoint()?;
+    let mut forged = signed(&wrong, 3, 91_002)?;
+    forged.signature[0] ^= 1;
+    assert!(b.replace_self_owned_records(vec![forged], 91_001).is_err());
+    assert_eq!(saved, b.checkpoint()?);
+    moved.native_mailbox_v8 = false;
+    b.replace_self_owned_records(vec![signed(&moved, 3, 91_002)?], 91_002)?;
+    assert!(b
+        .check_continuous_native_tls_v8(pin(), &tls, 91_002)
+        .is_err());
+    // Removing only the native bit leaves the separately selected legacy service.
+    b.check_continuous_tls_peer_v1(pin(), &tls, 91_002)?;
+    assert!(b.replace_self_owned_records(vec![first], 91_002).is_err());
+    b.revoke_self_owned(pin(), 91_003)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &b.checkpoint()?, 91_004)?;
+    assert!(b
+        .check_continuous_native_tls_v8(pin(), &tls, 91_004)
+        .is_err());
+    assert!(b
+        .replace_self_owned_records(vec![signed(&tls, 4, 91_004)?], 91_004)
+        .is_err());
     Ok(())
 }

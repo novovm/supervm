@@ -3,6 +3,28 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 原生信箱复用 TLS 载体：节点真实 I/O 已通过，手机未部署
+
+隔离故障准备发现 `TlsMailboxListenerV1` 只分派旧 NVMBOX06；原生 NVMBOX08
+客户端不能把旧 TLS 成功当作自己的 UDP 失效后备。本轮在同一监听/节点 owner
+内接 `serve_self_owned_node_selected_v8` → 原结构化认证 → `native::serve_carrier`
+→ 原 NativeObjectLink/信箱/SQLite；不新增服务器、调度器或 JSON 业务回退。
+
+TLS 地址记录增加可选 `native_mailbox_v8`（默认 false 且省略，旧编码保持）；
+节点必须显式调用 `with_native_mailbox_v8()` 并保留同一签名记录内的原生 V8
+服务声明才启用。TLS 存在或相邻 QUIC 声明本身不证明 TLS 支持原生业务。
+旧客户端会拒绝不认识的新字段，部署须先核对双方版本，不静默忽略新能力。
+TLS 公钥、服务身份、当前撤销和有限资源仍分别验证；新拨号仍要求新鲜准确地址，
+普通声明换代不拆健康连接，能力撤回或密钥改变终止受影响的原生会话。
+
+验证：原生 TLS 真实 TCP/TLS/SQLite 2 项（客户端没有 QUIC Endpoint），覆盖
+寄存与 Watch 并行、签名 StoreReceipt、重启后密文/TTL/回执不变、错误 TLS 公钥、
+错误领取能力、未声明原生入口及撤销拒绝；直接检查撤销后没有多存对象。
+原生 TLS 声明/期限/地址更新/伪签名/持久撤销 1 项通过；既有 TLS 节点 4 项通过。
+单次本机 Put+Notify 为 405 ms，仅该组件样本，不是手机投递或 P95。
+手机 v37 和 Windows 在用节点均未修改；Application 自动载体接线及受限入口
+验证正在 NOVOCHAT 继续，尚不签收 Android UDP 全封锁、跨运营商、DPI 或匿名性。
+
 ## 2026-10-18 Android v37 本机信箱就绪状态及双向换网回归
 
 NOVOCHAT `78e6c05` 继续消费 `1696b21e` 网络输入，本轮没有修改 SUPERVM

@@ -214,6 +214,16 @@ impl ServiceLeaseHostV1 {
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
             .check_continuous_tls_peer_v1(self.key.verifying_key().to_bytes(), endpoint, now)
     }
+    pub fn check_continuous_native_tls_v8(
+        &self,
+        endpoint: &TlsServiceEndpointV1,
+        now: u64,
+    ) -> Result<()> {
+        self.book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?
+            .check_continuous_native_tls_v8(self.key.verifying_key().to_bytes(), endpoint, now)
+    }
     /// Local stable service identity supervision for the explicit V4 protocol.
     /// It issues no lease, updates no locator and does not bypass tombstones.
     pub fn check_continuous_peer_v4(&self, endpoint: [u8; 32], now: u64) -> Result<()> {

@@ -69,6 +69,7 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
         address: "127.0.0.1:3001".parse()?,
         endpoint_key: key(5).verifying_key().to_bytes(),
         max_connections: 4,
+        native_mailbox_v8: false,
     };
     let pin = key(1).verifying_key().to_bytes();
     let first = sign(&ir, Some(&tls), 1, 1000)?;
@@ -400,6 +401,7 @@ fn host_rotation_preserves_tls_until_explicit_removal_and_persists_it() -> Resul
         address: "127.0.0.1:3001".parse()?,
         endpoint_key: key(5).verifying_key().to_bytes(),
         max_connections: 4,
+        native_mailbox_v8: false,
     };
     let mut book =
         ServiceLeaseBookV1::new_self_owned(trust(), vec![sign(&ir, None, 1, 1000)?], 1000)?;

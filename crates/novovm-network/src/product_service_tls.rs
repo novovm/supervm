@@ -15,6 +15,13 @@ pub struct TlsServiceEndpointV1 {
         skip_serializing_if = "is_default_connections"
     )]
     pub max_connections: u16,
+    /// Explicit NVMBOX08 on this TLS endpoint. Omitted legacy records remain
+    /// legacy-only; observing TLS or a sibling QUIC marker never enables it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub native_mailbox_v8: bool,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 fn default_connections() -> u16 {
     4
@@ -84,6 +91,26 @@ impl TlsServiceEndpointV1 {
 }
 
 impl ServiceLeaseBookV1 {
+    /// The same signed record must retain both TLS identity and explicit native
+    /// service capability. Locator rotation/expiry does not kill a live stream.
+    pub fn check_continuous_native_tls_v8(
+        &mut self,
+        pin: [u8; 32],
+        endpoint: &TlsServiceEndpointV1,
+        now: u64,
+    ) -> Result<()> {
+        self.check_continuous_tls_peer_v1(pin, endpoint, now)?;
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let routes = &entry.decoded_current()?.routes;
+        ensure!(
+            endpoint.native_mailbox_v8
+                && routes.tls.as_ref().is_some_and(|tls| tls.native_mailbox_v8)
+                && routes.native_carrier_v8.is_some(),
+            "native TLS mailbox service removed"
+        );
+        Ok(())
+    }
+
     /// Live session supervision under the existing durable self-owned policy.
     /// Locator expiry does not terminate a healthy session. Key changes,
     /// removal, revocation and owner retirement still invalidate this route.

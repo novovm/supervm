@@ -2,7 +2,7 @@
 //! No independent store, identity authority, maintenance loop or task spawn.
 use super::*;
 use crate::{
-    product_service_lease::{serve_self_owned_node_selected_v4, TlsServiceEndpointV1},
+    product_service_lease::{serve_self_owned_node_selected_v8, TlsServiceEndpointV1},
     tls_transport::TlsScopeV1,
 };
 use std::net::SocketAddr;
@@ -13,6 +13,7 @@ pub struct TlsMailboxListenerV1 {
     listener: TcpListener,
     scope: TlsScopeV1,
     route: TlsServiceEndpointV1,
+    stop: Arc<AtomicBool>,
 }
 
 impl TlsMailboxListenerV1 {
@@ -33,8 +34,12 @@ impl TlsMailboxListenerV1 {
         stop: Arc<AtomicBool>,
         max_connections: u16,
     ) -> Result<Self> {
+        let scope_stop = stop.clone();
         let scope = TlsScopeV1::new_owned_continuous_v1(seed, move || {
-            ensure!(!stop.load(Ordering::Acquire), "service stopped by owner");
+            ensure!(
+                !scope_stop.load(Ordering::Acquire),
+                "service stopped by owner"
+            );
             Ok(())
         })?
         .with_connection_limit(usize::from(max_connections))?;
@@ -46,13 +51,22 @@ impl TlsMailboxListenerV1 {
             address: advertised,
             endpoint_key: scope.endpoint_key(),
             max_connections,
+            native_mailbox_v8: false,
         };
         route.endpoint()?;
         Ok(Self {
             listener,
             scope,
             route,
+            stop,
         })
+    }
+
+    /// Opt in before publication; legacy listeners keep their exact old record.
+    /// The host's native capability must also be present and remains revocable.
+    pub fn with_native_mailbox_v8(mut self) -> Self {
+        self.route.native_mailbox_v8 = true;
+        self
     }
 
     pub fn route(&self) -> &TlsServiceEndpointV1 {
@@ -83,16 +97,29 @@ impl TlsMailboxListenerV1 {
                     let Ok(permit) = slots.clone().try_acquire_owned() else { drop(tcp); continue };
                     tcp.set_nodelay(true)?;
                     active.push(async move {
-                        let _permit = permit;
+                        let permit = Arc::new(permit);
                         let check = || host.check_continuous_tls_peer_v1(&self.route, now_ms()?);
                         check()?;
                         let mut stream = CarrierStreamV1::from(self.scope.accept(tcp, None).await?);
-                        let (kind, _): (_, Option<()>) = tokio::time::timeout(
+                        let admitted_at = Instant::now();
+                        let (kind, _, clock): (_, Option<()>, _) = tokio::time::timeout(
                             Duration::from_secs(3),
-                            serve_self_owned_node_selected_v4(&mut stream,
-                                || anyhow::bail!("TLS listener requires NVMBOX06"), check),
+                            serve_self_owned_node_selected_v8(&mut stream,
+                                || anyhow::bail!("TLS listener requires explicit mailbox selector"), check,
+                                || anyhow::bail!("TLS listener does not advertise NVMBOX07"),
+                                || host.check_continuous_native_tls_v8(&self.route, now_ms()?)),
                         ).await??;
+                        if kind == NodeServiceV1::MailboxNativeV8 {
+                            return native::serve_carrier(
+                                &mut stream, key, policy, service, self.stop.clone(), permit,
+                                || host.check_continuous_native_tls_v8(&self.route, now_ms()?),
+                                native::NativeCarrierHandshake::SessionClockV8 {
+                                    received: clock, deadline: admitted_at + Duration::from_secs(30),
+                                },
+                            ).await;
+                        }
                         ensure!(kind == NodeServiceV1::MailboxPrefetch, "TLS listener requires NVMBOX06");
+                        let _permit = permit;
                         crate::mailbox_rpc::serve_mailbox_prefetch_with_policy_v6(
                             stream, key, policy, service, check,
                         ).await
