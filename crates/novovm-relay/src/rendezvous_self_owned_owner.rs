@@ -245,6 +245,11 @@ pub struct TlsListenerConfig {
     pub advertised: SocketAddr,
     #[serde(default = "default_tls_connections")]
     pub max_connections: u16,
+    #[serde(default, skip_serializing_if = "tls_native_disabled")]
+    pub native_mailbox_v8: bool,
+}
+fn tls_native_disabled(value: &bool) -> bool {
+    !value
 }
 fn default_tls_connections() -> u16 {
     4
@@ -443,6 +448,10 @@ impl Owner {
             );
             tls.validate()?;
             ensure!(
+                !tls.native_mailbox_v8 || policy.native_carrier_mailbox_v8,
+                "native TLS requires the V8 carrier mailbox"
+            );
+            ensure!(
                 !relay_only(&policy),
                 "TLS listener conflicts with relay-only policy"
             );
@@ -536,6 +545,13 @@ impl Owner {
                 "TLS listener conflicts with relay-only policy"
             );
         }
+        ensure!(
+            !listener
+                .as_ref()
+                .is_some_and(|value| value.native_mailbox_v8)
+                || self.native_carrier_mailbox_v8(),
+            "select the V8 carrier mailbox before enabling native TLS"
+        );
         self.policy.tls_listener = listener;
         self.save_policy()
     }
@@ -565,6 +581,14 @@ impl Owner {
             !enabled || self.policy.native_listener.is_none(),
             "disable native-only listener before enabling native carrier mailbox"
         );
+        ensure!(
+            !self
+                .policy
+                .tls_listener
+                .as_ref()
+                .is_some_and(|tls| tls.native_mailbox_v8),
+            "disable native TLS before leaving the V8 carrier mailbox"
+        );
         self.policy.native_carrier_mailbox_v7 = enabled;
         self.policy.native_carrier_mailbox_v8 = false;
         self.save_policy()
@@ -576,6 +600,15 @@ impl Owner {
         ensure!(
             !enabled || self.policy.native_listener.is_none(),
             "disable native-only listener before enabling native carrier mailbox"
+        );
+        ensure!(
+            enabled
+                || !self
+                    .policy
+                    .tls_listener
+                    .as_ref()
+                    .is_some_and(|tls| tls.native_mailbox_v8),
+            "disable native TLS before leaving the V8 carrier mailbox"
         );
         self.policy.native_carrier_mailbox_v7 = false;
         self.policy.native_carrier_mailbox_v8 = enabled;
@@ -839,7 +872,7 @@ impl Owner {
                 .expand(b"NOVOVM/self-owned/TLS-transport/v1", seed.as_mut())
                 .map_err(|_| anyhow::anyhow!("TLS key derivation failed"))
                 .context(FailureStage::CarrierSetup)?;
-            Some(
+            let listener =
                 novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind_with_capacity(
                     settings.listen,
                     settings.advertised,
@@ -848,8 +881,12 @@ impl Owner {
                     settings.max_connections,
                 )
                 .await
-                .context(FailureStage::TlsBind)?,
-            )
+                .context(FailureStage::TlsBind)?;
+            Some(if settings.native_mailbox_v8 {
+                listener.with_native_mailbox_v8()
+            } else {
+                listener
+            })
         } else {
             None
         };
@@ -1465,6 +1502,166 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "tls-transport")]
+    fn tls_settings(native: bool) -> TlsListenerConfig {
+        TlsListenerConfig {
+            version: 1,
+            listen: "127.0.0.1:0".parse().unwrap(),
+            advertised: "127.0.0.1:0".parse().unwrap(),
+            max_connections: 4,
+            native_mailbox_v8: native,
+        }
+    }
+
+    #[cfg(feature = "tls-transport")]
+    #[test]
+    fn native_tls_policy_requires_explicit_v8_and_preserves_old_custody() -> Result<()> {
+        let old = r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":4}"#;
+        let parsed: TlsListenerConfig = serde_json::from_str(old)?;
+        assert!(!parsed.native_mailbox_v8);
+        assert_eq!(serde_json::to_string(&parsed)?, old);
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let pin = owner.policy.node_pin;
+        let transport = owner.transport.clone();
+        let baseline = ["keys.dpapi", "service.journal"]
+            .map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
+        let policy_path = fixture.0.root.join("self-owned-policy.dpapi");
+        let original = std::fs::read(&policy_path)?;
+        assert!(owner.set_tls_listener(Some(tls_settings(true))).is_err());
+        assert_eq!(std::fs::read(&policy_path)?, original);
+        fixture.open()?.set_native_carrier_mailbox_v8(true)?;
+        fixture.open()?.set_tls_listener(Some(tls_settings(true)))?;
+        let enabled = std::fs::read(&policy_path)?;
+        assert!(fixture.open()?.set_native_carrier_mailbox_v7(true).is_err());
+        assert!(fixture
+            .open()?
+            .set_native_carrier_mailbox_v7(false)
+            .is_err());
+        assert!(fixture
+            .open()?
+            .set_native_carrier_mailbox_v8(false)
+            .is_err());
+        assert_eq!(std::fs::read(&policy_path)?, enabled);
+        let owner = fixture.open()?;
+        assert!(
+            owner
+                .policy
+                .tls_listener
+                .as_ref()
+                .unwrap()
+                .native_mailbox_v8
+        );
+        assert_eq!(owner.policy.node_pin, pin);
+        assert_eq!(*owner.transport, *transport);
+        assert!(fixture.open().is_err());
+        owner.set_tls_listener(Some(tls_settings(false)))?;
+        fixture.open()?.set_native_carrier_mailbox_v7(true)?;
+        for (name, bytes) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+            assert_eq!(std::fs::read(fixture.0.root.join(name))?, bytes);
+        }
+        // Even an internally sealed contradictory policy fails before binding.
+        let mut owner = fixture.open()?;
+        owner.policy.tls_listener = Some(tls_settings(true));
+        owner.save_policy()?;
+        drop(owner);
+        let contradictory = std::fs::read(&policy_path)?;
+        assert!(fixture.open().is_err());
+        assert_eq!(std::fs::read(&policy_path)?, contradictory);
+        assert!(!fixture.0.root.join("status.json").exists());
+        Ok(())
+    }
+
+    #[cfg(feature = "tls-transport")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn native_tls_real_owner_publishes_and_authenticates_after_restart() -> Result<()> {
+        use novovm_network::{
+            bound_session::peer_time::authenticate_mailbox_native_v8,
+            carrier_stream::CarrierStreamV1, duplex::HandshakeReplayCacheV1,
+            product_service_lease::TlsServiceEndpointV1, tls_transport::TlsScopeV1,
+        };
+        let fixture = Fixture::new()?;
+        fixture.provision()?.set_native_carrier_mailbox_v8(true)?;
+        fixture.open()?.set_tls_listener(Some(tls_settings(true)))?;
+        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let mut sequence = 0;
+        let mut tls_key = None;
+        for _ in 0..2 {
+            let owner = fixture.open()?;
+            let pin = owner.policy.node_pin;
+            let root = fixture.0.root.clone();
+            let stop = Arc::new(AtomicBool::new(false));
+            let serving = owner.run(stop.clone());
+            tokio::pin!(serving);
+            let work = async move {
+                let until = Instant::now() + Duration::from_secs(10);
+                let record: PeerSignedRelayRecordV1 = loop {
+                    ensure!(Instant::now() < until, "native TLS publication deadline");
+                    if let Ok(bytes) = std::fs::read(root.join("self-owned-record.json")) {
+                        let record: PeerSignedRelayRecordV1 = serde_json::from_slice(&bytes)?;
+                        let status: serde_json::Value =
+                            serde_json::from_slice(&std::fs::read(root.join("status.json"))?)?;
+                        if status["phase"] == "serving" && record.sequence > sequence {
+                            break record;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                };
+                assert_eq!(record.relay_public_key, pin);
+                let route =
+                    TlsServiceEndpointV1::from_record(&record)?.context("TLS record missing")?;
+                assert!(route.native_mailbox_v8);
+                assert_ne!(route.address.port(), 0);
+                if let Some(prior) = tls_key {
+                    assert_eq!(route.endpoint_key, prior);
+                }
+                let scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
+                let tcp = tokio::net::TcpStream::connect(route.address).await?;
+                tcp.set_nodelay(true)?;
+                let mut stream =
+                    CarrierStreamV1::from(scope.connect(tcp, route.endpoint_key).await?);
+                let (_, observed) = authenticate_mailbox_native_v8(
+                    &mut stream,
+                    &SigningKey::from_bytes(&[41; 32]),
+                    pin,
+                    until,
+                    &mut HandshakeReplayCacheV1::new(8),
+                    &mut |_, _| Ok(()),
+                )
+                .await?;
+                assert_eq!(observed.peer_identity_public_key, pin);
+                Ok::<_, anyhow::Error>((record.sequence, route.endpoint_key))
+            };
+            tokio::pin!(work);
+            let outcome = tokio::select! {
+                biased;
+                result = &mut serving => { result?; anyhow::bail!("native TLS owner ended early") },
+                result = tokio::time::timeout(Duration::from_secs(12), &mut work) => result?,
+            };
+            stop.store(true, Ordering::Release);
+            let stopped = tokio::time::timeout(Duration::from_secs(5), &mut serving).await?;
+            // Existing owned Iroh scope reports explicit owner stop at its final
+            // authority check. Match only that known terminal result in this
+            // fixture; do not suppress transport/authentication failures in runtime.
+            if let Err(error) = stopped {
+                assert_eq!(
+                    FailureEvidence::from_error(&error).stage,
+                    FailureStage::TransportRun
+                );
+                ensure!(
+                    error.root_cause().to_string() == "service stopped by owner",
+                    "unexpected stop: {error:#}"
+                );
+            }
+            let (next, key) = outcome?;
+            assert!(next > sequence);
+            sequence = next;
+            tls_key = Some(key);
+            assert_eq!(std::fs::read(fixture.0.root.join("keys.dpapi"))?, keys);
+        }
+        Ok(())
+    }
+
     #[test]
     fn native_listener_policy_roundtrip_preserves_identity_and_history() -> Result<()> {
         let fixture = Fixture::new()?;
@@ -1480,6 +1677,7 @@ mod tests {
             listen: "127.0.0.1:0".parse()?,
             advertised: "127.0.0.1:0".parse()?,
             max_connections: 4,
+            native_mailbox_v8: false,
         }))?;
         fixture.open()?.set_native_listener(Some(settings()))?;
         let owner = fixture.open()?;

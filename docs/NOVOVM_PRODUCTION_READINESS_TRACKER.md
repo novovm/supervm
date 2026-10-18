@@ -3,6 +3,25 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 Windows 原节点原生 TLS 配置接线：启动/重启验证通过
+
+原 `--set-self-owned-tls` → 原 DPAPI policy → `Owner::run_inner` → 同一
+`TlsMailboxListenerV1` 新增显式 `native_mailbox_v8`（默认关闭，false 不编码）。
+仅原 V8 服务可启用；离开 V8 前关闭此选项，矛盾状态拒绝且原 policy 不变。
+旧配置打开和存回保持旧编码，不更换节点/存储/载体密钥，不新增许可或进程。
+
+原 `novovm-rendezvous-service` 20 项测试通过（13.16 秒），包括真实启动、
+TCP/TLS/V8 认证及第二次启动后原 TLS 身份保持，原节点密钥文件不变、签名
+序号递增；原 UDP 寄存重启、旧配置、互斥、撤销及锁回归同时通过。
+新增测试初次编译修正了导入及 async 捕获；首次运行暴露既有 owned Iroh scope
+主动停机返回 `service stopped by owner`，夹具仅匹配此特定终态并确认 owner
+退出。未改运行时吞错，尚未签收正常停机状态呈现修复。
+
+Windows 在用节点 PID 已确认仍运行原二进制，未启用新能力。两机保留 v37；
+NOVOCHAT v38 官方 profile 构建正在准备，安装及 TLS 真手机路径尚未验收。
+部署说明见 NOVOVM_RENDEZVOUS_ENTRY 同日节。不得以此配置测试宣称全 UDP
+阻断、发现独立、DPI 或匿名通过。
+
 ## 2026-10-18 原生 TLS 后备 Application 故障验证通过，保留手机 v37
 
 NOVOCHAT `09f7069` 消费 SUPERVM `97365d56`，原 Application owner 只在当前

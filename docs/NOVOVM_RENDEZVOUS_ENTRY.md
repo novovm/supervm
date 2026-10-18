@@ -319,6 +319,37 @@ novovm-rendezvous-service.exe --set-self-owned-tls <absolute-existing-config> of
 和接好选路后再启用部署。当前发现控制仍使用 Iroh，TLS 本身不解决 CGNAT 入站。
 此入口不代表 Android 自动选择、直连成功、低延迟或匿名路径已经验收。
 
+### 2026-10-18 同一 TLS 监听显式承载原生 NVMBOX08
+
+原 `--set-self-owned-tls` 配置增加可选 `native_mailbox_v8`，省略/false 保持
+旧 TLS 行为且序列化不新增字段；不能从邻接 QUIC 的 V8 声明推断 TLS 也支持。
+不新增 CLI、节点身份或服务进程。启用前先部署识别新字段的客户端，停止原
+owner 后按顺序使用原命令：
+
+```powershell
+novovm-rendezvous-service.exe --set-self-owned-native-carrier <absolute-existing-config> v8
+novovm-rendezvous-service.exe --set-self-owned-tls <absolute-existing-config> <absolute-listener-json>
+```
+
+监听配置示例（地址须填实际可达入口，不自动创建公网映射）：
+
+```json
+{"version":1,"listen":"<local-IP>:<port>","advertised":"<reachable-IP>:<port>","max_connections":4,"native_mailbox_v8":true}
+```
+
+正常启动沿用原服务入口。该选项必须与原生 V8 服务同时启用；不一致的配置在
+保护策略写入前拒绝，已有不一致状态在绑定前拒绝。切回 V7/旧协议时先用原
+TLS 命令设 false 或 off，再选择协议，不篡改 DPAPI 或恢复旧授权日志。
+原生 TLS 一条安全流承载多个操作，与旧 V6 的多 TCP lane 不同。节点与客户端
+继续验证原身份、当前撤销、资源配额和能力；不新增周期性通行许可。
+
+真实 Windows owner 重启两次均发布原生 TLS、完成 V8 认证，签名节点及派生
+TLS 身份保持。原服务程序 20 项测试通过，包含旧配置、互斥、持久撤销及原生
+UDP 信箱回归。当前明确停机仍由 owned Iroh scope 返回已知 `service stopped
+by owner` 终态，本测试只接受这个特定结果，不据此宣称平滑停机修复。
+在用节点尚未启用，手机安装与跨网可达性单独签收。TLS 不绕过 CGNAT，当前
+冷发现仍有 Iroh 依赖；不是全 UDP 封锁后仍可冷启动的证明。
+
 ## 2026-10-16 原 owner 的 NovoRUDP/APFL 信箱入口
 
 复用同一个服务程序和原 v2 配置。停止该 owner 后，可显式选择原生信箱监听：
