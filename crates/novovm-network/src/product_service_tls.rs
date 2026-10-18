@@ -91,6 +91,25 @@ impl TlsServiceEndpointV1 {
 }
 
 impl ServiceLeaseBookV1 {
+    /// Probe only the exact retained, signed native TLS endpoint to fetch a
+    /// fresh ServiceRecordV7. This is not authority for mailbox business or a
+    /// new address: TLS/structured Finished and fresh record acceptance must
+    /// complete before Register/Put/Fetch. Legacy fresh-dial rules are unchanged.
+    pub fn check_native_tls_bootstrap_v8(
+        &mut self,
+        pin: [u8; 32],
+        endpoint: &TlsServiceEndpointV1,
+        now: u64,
+    ) -> Result<()> {
+        self.check_continuous_native_tls_v8(pin, endpoint, now)?;
+        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        ensure!(
+            entry.decoded_current()?.routes.tls.as_ref() == Some(endpoint),
+            "native TLS bootstrap route changed"
+        );
+        Ok(())
+    }
+
     /// The same signed record must retain both TLS identity and explicit native
     /// service capability. Locator rotation/expiry does not kill a live stream.
     pub fn check_continuous_native_tls_v8(

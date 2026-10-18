@@ -1000,19 +1000,31 @@ fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<(
     let mut b = ServiceLeaseBookV1::new_self_owned(trust(), vec![first.clone()], 1000)?;
     b.check_continuous_native_tls_v8(pin(), &tls, 2000)?;
     b.check_tls_route_v1(pin(), &tls, 2000)?;
-    // Expiry only retires new dialing, not the healthy authenticated session.
+    // Expiry retires new business dialing, but the exact retained endpoint may
+    // still retrieve fresh metadata. Neither path renews the old declaration.
     b.check_continuous_native_tls_v8(pin(), &tls, 91_000)?;
     assert!(b.check_tls_route_v1(pin(), &tls, 91_000).is_err());
+    let expired_checkpoint = b.checkpoint()?;
+    b.check_native_tls_bootstrap_v8(pin(), &tls, 91_000)?;
+    assert_eq!(expired_checkpoint, b.checkpoint()?);
+    assert!(b.native_carrier_mailbox_candidates_v8(91_000)?.is_empty());
     let mut moved = tls.clone();
     moved.address.set_port(40444);
     b.replace_self_owned_records(vec![signed(&moved, 2, 91_000)?], 91_000)?;
     b.check_continuous_native_tls_v8(pin(), &tls, 91_001)?;
     assert!(b.check_tls_route_v1(pin(), &tls, 91_001).is_err());
     b.check_tls_route_v1(pin(), &moved, 91_001)?;
+    assert!(b
+        .check_native_tls_bootstrap_v8(pin(), &tls, 91_001)
+        .is_err());
+    b.check_native_tls_bootstrap_v8(pin(), &moved, 91_001)?;
     let mut wrong = moved.clone();
     wrong.endpoint_key = SigningKey::from_bytes(&[89; 32]).verifying_key().to_bytes();
     assert!(b
         .check_continuous_native_tls_v8(pin(), &wrong, 91_001)
+        .is_err());
+    assert!(b
+        .check_native_tls_bootstrap_v8(pin(), &wrong, 91_001)
         .is_err());
     let saved = b.checkpoint()?;
     let mut forged = signed(&wrong, 3, 91_002)?;
@@ -1024,6 +1036,9 @@ fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<(
     assert!(b
         .check_continuous_native_tls_v8(pin(), &tls, 91_002)
         .is_err());
+    assert!(b
+        .check_native_tls_bootstrap_v8(pin(), &moved, 91_002)
+        .is_err());
     // Removing only the native bit leaves the separately selected legacy service.
     b.check_continuous_tls_peer_v1(pin(), &tls, 91_002)?;
     assert!(b.replace_self_owned_records(vec![first], 91_002).is_err());
@@ -1031,6 +1046,9 @@ fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<(
     let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &b.checkpoint()?, 91_004)?;
     assert!(b
         .check_continuous_native_tls_v8(pin(), &tls, 91_004)
+        .is_err());
+    assert!(b
+        .check_native_tls_bootstrap_v8(pin(), &tls, 91_004)
         .is_err());
     assert!(b
         .replace_self_owned_records(vec![signed(&tls, 4, 91_004)?], 91_004)
