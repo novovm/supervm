@@ -19,7 +19,9 @@ pub struct StoreReceiptV1 {
     pub signature: Vec<u8>,
 }
 impl StoreReceiptV1 {
-    // Called by the service ONLY after a successful store transaction.
+    // Called ONLY after a durable commit or exact verification of its consumed
+    // tombstone. Re-signing the same tuple recovers the original deterministic
+    // evidence; it creates no new custody, retention, reward or device delivery.
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn committed(
         key: &SigningKey,

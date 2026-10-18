@@ -3,6 +3,28 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 已消费对象的原存储证明恢复（手机部署待验证）
+
+本轮定位到原信箱收件链的队头阻塞：设备已持久保存消息，回执也已在节点提交，
+但回执 Put 的响应丢失；另一端先领取并 Consume 回执后，本端重试得到 Consumed，
+于是不能结束原消息的 Consume，后续消息及 L4 联系人声明维护都可能排在它后面。
+手机日志与此循环吻合，但日志没有对象关联字段，尚不能断言具体是哪条历史消息。
+
+修复落在原 `MailboxServiceV1::execute` → `MailboxStore`，原生 structured、
+Iroh/TLS 与 L4 本地服务共用。低层 `put()` 仍拒绝复活已消费对象；服务仅在有效
+写能力、同邮箱/对象、原密文摘要及原绝对期限全部匹配时，从持久墓碑恢复原
+确定性 StoreReceipt。撤销、过期、冲突继续拒绝，不恢复 payload，不延长 TTL，
+不增加通知序号或新保管义务。没有新增协议、请求、账户或调度器。
+
+这是历史落盘证据，不是当前仍有副本的证明、DeviceReceipt 或新奖励事件；重试
+返回的存储事件不能被计作新增服务收入。真正 Delivered 继续由收件设备签名确认。
+39 项 mailbox 定向 lib 测试通过，包含 3 项新故障/拒绝测试及既有 structured、
+通知、TLS 和撤销回归；另 19 项真实 I/O/存储测试通过：native carrier 4（128 秒）、
+native UDP 2、原 mailbox runtime 6（70.22 秒）、store 7。V7/V8 跨声明换代、
+重启及已消费对象恢复的签名与原证明一致，Fetch 仍为空，保管字节不增加。
+低层 put 的 Consumed 拒绝及撤销回归保留。Android 迁移与原待发消息仍在验证中。
+本段未将组件通过记为手机无 L3 或生产验收。证据：`artifacts/continuity38-*`。
+
 ## 2026-10-18 V8 Application 消费与原 Windows owner 显式选择（未部署）
 
 基线 SUPERVM `00e690ec`、NOVOCHAT `ba36c537`。手机 Core 的原 Application

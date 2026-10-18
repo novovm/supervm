@@ -320,10 +320,16 @@ async fn round(
                 Reply::Consumed
             ));
             ensure!(matches!(receiver.request(fetch(3)).await?, Reply::Empty));
-            ensure!(matches!(
-                receiver.request(put(expires, 4)).await?,
-                Reply::Rejected(MailboxRejectionV1::Consumed)
-            ));
+            let before = service.contribution_status().await?;
+            let Reply::Stored(historical) = receiver.request(put(expires, 4)).await? else {
+                bail!("native consumed Put lost historical evidence")
+            };
+            historical.verify(pin, [1; 32], [4; 32], &ciphertext, expires)?;
+            ensure!(historical.signature == original.signature);
+            ensure!(matches!(receiver.request(fetch(3)).await?, Reply::Empty));
+            let after = service.contribution_status().await?;
+            ensure!(before.retained_objects == 0 && after.retained_objects == 0);
+            ensure!(before.retained_bytes == 0 && after.retained_bytes == 0);
             return Ok(receipt);
         }
         ensure!(matches!(

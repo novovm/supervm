@@ -515,6 +515,52 @@ impl MailboxStore {
         tx.commit()?;
         Ok(PutResult::Stored)
     }
+    /// Recover evidence of an exact earlier commit after its payload was consumed.
+    /// This never restores custody or advances a notification cursor. The service
+    /// may re-sign the ORIGINAL storage receipt only after this check succeeds.
+    /// Ordinary `put` keeps rejecting consumed object IDs.
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn verify_consumed_deposit(
+        &mut self,
+        mailbox: &Id,
+        write: &Capability,
+        object: &Id,
+        ciphertext: &[u8],
+        expires: i64,
+        now: i64,
+    ) -> Result<(), StoreError> {
+        if *object == [0; 32]
+            || ciphertext.is_empty()
+            || ciphertext.len() > self.limits.object_bytes
+            || expires <= now
+            || expires.checked_sub(now).is_none_or(|ttl| ttl > MAX_TTL)
+        {
+            return Err(StoreError::Invalid);
+        }
+        let digest = Sha256::digest(ciphertext);
+        let tx = self.begin(now)?;
+        let lease = authorize(&tx, mailbox, write, true, now)?;
+        if expires > lease {
+            return Err(StoreError::Invalid);
+        }
+        let existing: Option<(Vec<u8>, i64, bool)> = tx
+            .query_row(
+                "SELECT digest,expires,consumed FROM envelopes WHERE mailbox=?1 AND id=?2",
+                params![mailbox, object],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((original_digest, original_expiry, true)) = existing else {
+            return Err(StoreError::Consumed);
+        };
+        if !bool::from(original_digest.as_slice().ct_eq(digest.as_slice()))
+            || original_expiry != expires
+        {
+            return Err(StoreError::Conflict);
+        }
+        tx.commit()?;
+        Ok(())
+    }
     /// Snapshot AFTER notification observation is installed. Put increments the
     /// cursor in the same transaction as its ciphertext. Fetch stays authoritative
     /// across lost notifications and node restarts; cursor never consumes data.

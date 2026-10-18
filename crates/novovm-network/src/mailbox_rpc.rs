@@ -29,6 +29,9 @@ pub use metrics::MailboxTimingsV1;
 pub const MAX_SESSION_REQUESTS_V2: u16 = 64;
 
 #[cfg(test)]
+#[path = "mailbox_consumed_evidence_tests.rs"]
+mod consumed_evidence_tests;
+#[cfg(test)]
 #[path = "mailbox_local_tests.rs"]
 mod local_tests;
 
@@ -460,6 +463,7 @@ impl MailboxServiceV1 {
             let mut store = store
                 .lock()
                 .map_err(|_| anyhow::anyhow!("mailbox store unavailable"))?;
+            let mut historical_put = false;
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
@@ -492,14 +496,25 @@ impl MailboxServiceV1 {
                         ciphertext,
                         expires,
                     } => {
-                        store.put(
-                            mailbox,
-                            &Capability::from_bytes(*write)?,
-                            object,
-                            ciphertext,
-                            *expires,
-                            now,
-                        )?;
+                        let capability = Capability::from_bytes(*write)?;
+                        match store.put(mailbox, &capability, object, ciphertext, *expires, now) {
+                            Ok(_) => {}
+                            Err(StoreError::Consumed) => {
+                                // The original Put ACK can be lost while its
+                                // reader already consumes the object. Recover
+                                // only exact durable evidence, never its payload.
+                                store.verify_consumed_deposit(
+                                    mailbox,
+                                    &capability,
+                                    object,
+                                    ciphertext,
+                                    *expires,
+                                    now,
+                                )?;
+                                historical_put = true;
+                            }
+                            Err(error) => return Err(error),
+                        }
                         Ok(MailboxReplyV1::Stored(StoreReceiptV1::committed(
                             &signer, *mailbox, *object, ciphertext, *expires,
                         )))
@@ -548,6 +563,7 @@ impl MailboxServiceV1 {
             // Inside the blocking commit worker: even cancellation after commit
             // cannot drop the wakeup. Private durable positions remain authority.
             if result.is_ok()
+                && !historical_put
                 && matches!(
                     &request,
                     MailboxRequestV1::Put { .. }

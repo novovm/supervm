@@ -416,8 +416,15 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
                     mailbox: [1; 32], read: [3; 32], object, digest,
                 }).await?, Reply::Consumed));
                 ensure!(matches!(client.request(fetch(3)).await?, Reply::Empty));
-                ensure!(matches!(client.request(put(expires, 4)).await?,
-                    Reply::Rejected(MailboxRejectionV1::Consumed)));
+                let before = service.contribution_status().await?;
+                let Reply::Stored(historical) = client.request(put(expires, 4)).await?
+                    else { bail!("consumed Put lost historical evidence") };
+                historical.verify(pin(), [1; 32], [4; 32], &ciphertext, expires)?;
+                ensure!(historical.signature == original.signature);
+                ensure!(matches!(client.request(fetch(3)).await?, Reply::Empty));
+                let after = service.contribution_status().await?;
+                ensure!(before.retained_objects == 0 && after.retained_objects == 0
+                    && before.retained_bytes == 0 && after.retained_bytes == 0);
                 return Ok(Some(recovered));
             }
             ensure!(matches!(client.request(Request::Register {

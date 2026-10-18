@@ -597,10 +597,32 @@ async fn contributor_same_authenticated_protocol_retains_objects_across_opt_out_
     }
     assert_eq!(service.contribution_status().await?.retained_objects, 0);
     service.set_contribution_enabled(true).await?;
+    let MailboxReplyV1::Stored(historical) = rpc(service.clone(), 2, put(&phone, [8; 32])).await?
+    else {
+        anyhow::bail!("consumed receipt evidence missing")
+    };
+    historical.verify(
+        key(1).verifying_key().to_bytes(),
+        phone.id,
+        [8; 32],
+        &data,
+        expiry,
+    )?;
+    assert_eq!(historical.signature, receipt.signature);
     assert!(matches!(
-        rpc(service.clone(), 2, put(&phone, [8; 32])).await?,
-        MailboxReplyV1::Rejected(MailboxRejectionV1::Consumed)
+        rpc(
+            service.clone(),
+            3,
+            MailboxRequestV1::Fetch {
+                mailbox: phone.id,
+                read: *phone.read.as_bytes(),
+            }
+        )
+        .await?,
+        MailboxReplyV1::Empty
     ));
+    assert_eq!(service.contribution_status().await?.retained_objects, 0);
+    assert_eq!(service.contribution_status().await?.retained_bytes, 0);
     let MailboxReplyV1::Stored(receipt) = rpc(service.clone(), 2, put(&phone, [9; 32])).await?
     else {
         anyhow::bail!("explicit resume did not restore admission")
@@ -672,6 +694,7 @@ async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full(
         expires,
     };
     // Recipient has no socket/runtime session during either Put.
+    let mut original_signature = None;
     for _ in 0..2 {
         let MailboxReplyV1::Stored(receipt) = rpc(service.clone(), 2, put()).await? else {
             anyhow::bail!("not stored")
@@ -683,6 +706,11 @@ async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full(
             &payload,
             expires,
         )?;
+        if let Some(signature) = original_signature.as_ref() {
+            assert_eq!(&receipt.signature, signature);
+        } else {
+            original_signature = Some(receipt.signature.clone());
+        }
         assert!(receipt
             .verify(
                 key(2).verifying_key().to_bytes(),
@@ -788,10 +816,31 @@ async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full(
             MailboxReplyV1::Consumed
         ));
     }
+    let MailboxReplyV1::Stored(historical) = rpc(service.clone(), 2, put()).await? else {
+        anyhow::bail!("consumed receipt evidence missing after restart")
+    };
+    historical.verify(
+        key(1).verifying_key().to_bytes(),
+        grant.id,
+        object,
+        &payload,
+        expires,
+    )?;
+    assert_eq!(Some(historical.signature), original_signature);
     assert!(matches!(
-        rpc(service.clone(), 2, put()).await?,
-        MailboxReplyV1::Rejected(MailboxRejectionV1::Consumed)
+        rpc(
+            service.clone(),
+            3,
+            MailboxRequestV1::Fetch {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+            }
+        )
+        .await?,
+        MailboxReplyV1::Empty
     ));
+    assert_eq!(service.contribution_status().await?.retained_objects, 0);
+    assert_eq!(service.contribution_status().await?.retained_bytes, 0);
     assert!(matches!(
         rpc(
             service.clone(),
