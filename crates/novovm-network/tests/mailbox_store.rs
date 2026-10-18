@@ -1,6 +1,78 @@
 use novovm_network::mailbox_store::*;
 
 #[test]
+fn equal_expiry_objects_do_not_overtake_by_random_object_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("arrival.db");
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    let grant = store.create(1000, 600).unwrap();
+    // Expiry is in seconds: a description and its following ICE candidates
+    // commonly share one deadline despite different random encrypted IDs.
+    for id in [240, 2, 1] {
+        store
+            .put(&grant.id, &grant.write, &[id; 32], &[id; 8], 1200, 1000)
+            .unwrap();
+    }
+    assert_eq!(
+        store
+            .fetch_one(&grant.id, &grant.read, 1000)
+            .unwrap()
+            .unwrap()
+            .id,
+        [240; 32]
+    );
+    let cursor = store.observe(&grant.id, &grant.read, 1000).unwrap().0;
+    assert_eq!(
+        store
+            .put(&grant.id, &grant.write, &[240; 32], &[240; 8], 1200, 1000)
+            .unwrap(),
+        PutResult::Duplicate
+    );
+    assert_eq!(
+        store.observe(&grant.id, &grant.read, 1000).unwrap().0,
+        cursor
+    );
+    drop(store);
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    assert_eq!(
+        store
+            .fetch(&grant.id, &grant.read, 1001)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect::<Vec<_>>(),
+        vec![[240; 32], [2; 32], [1; 32]]
+    );
+    // Keep earliest-expiry precedence, signed content/TTL, and real consume.
+    store
+        .put(&grant.id, &grant.write, &[250; 32], &[250; 8], 1100, 1001)
+        .unwrap();
+    let first = store
+        .fetch_one(&grant.id, &grant.read, 1001)
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.id, [250; 32]);
+    store
+        .consume(&grant.id, &grant.read, &first.id, &first.digest, 1001)
+        .unwrap();
+    assert_eq!(
+        store
+            .fetch_one(&grant.id, &grant.read, 1001)
+            .unwrap()
+            .unwrap()
+            .id,
+        [240; 32]
+    );
+    assert!(store
+        .fetch(&grant.id, &Capability::from_bytes([99; 32]).unwrap(), 1001)
+        .is_err());
+    assert!(store
+        .fetch(&grant.id, &grant.read, 1200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn durable_cursor_migration_commit_atomicity_and_recreation() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cursor.db");

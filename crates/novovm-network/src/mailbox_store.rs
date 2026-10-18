@@ -579,7 +579,12 @@ impl MailboxStore {
         let tx = self.begin(now)?;
         authorize(&tx, id, read, false, now)?;
         let rows = {
-            let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 ORDER BY expires,id LIMIT ?3")?;
+            // Seconds-resolution expiries often tie for a burst of controls.
+            // Do not let their random object IDs reorder that burst. rowid is
+            // only a local arrival tie-break, never identity, replay protection
+            // or a persistent/wire cursor (maintenance may renumber it).
+            // Recipients still handle out-of-order delivery across replicas.
+            let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 ORDER BY expires,rowid LIMIT ?3")?;
             let result = statement
                 .query_map(params![id, now, limit], |r| {
                     Ok(StoredEnvelope {
