@@ -3,6 +3,34 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-18 Windows 原生 TLS 实际部署与 v38 双机互操作
+
+`2b7cda37` release 节点构建成功（3m21s），程序 SHA-256
+`5fbaabc95eff3f610ec6e748d18581ee472c5f584997a919128521f3980a5976`。
+原安装器替换原用户登录任务程序，保留旧二进制、DPAPI keys、节点 pin、数据
+目录和序号历史；原 CLI 依次启用 V8 与显式 native_mailbox_v8 TLS 监听。
+keys.dpapi 哈希不变、签名序号递增，同一 owner 持续服务 TCP 443；现有防火墙
+与 VPN 程序分流未改变。两台 v38 通过原审阅入口更新同一 pin 的新鲜记录，
+不重建聊天身份、联系人或消息；邀请文件夹具的两次保存前失败保留。
+
+两台 Wi-Fi 手机与该 PID 的 TCP 443 都有 Established 连接，L3 活跃数各1，
+B 有明确 TLS selected/native authenticated 事件；A 首次事件已出有限窗口，
+以连接、L3状态及节点真实 Put/Fetch/Consume 交叉验证，不虚构缺失事件。
+B Wi-Fi→蜂窝→Wi-Fi 后自动接续 Relay、再选 TLS，原 L4 并行保留；手机
+PID 不变，无 Connect 或重启，无 ADB 业务隧道。120 采样无采集异常，状态均
+running；B任务3→4→5→6的可恢复 code=1 首错仍在，不表示没有传输错误。
+
+六条新消息均在对端显示并取得设备持久回执。按单条发送窗口关联、同进程
+最早 Put 至首个回执：双 Wi-Fi 588/521 ms，Wi-Fi/蜂窝 **11040/608 ms**，
+返回 Wi-Fi 552/651 ms。L4 并行仍工作，不算纯 TLS 或点击至屏幕/P95。
+慢样本首个 StoreReceipt 在280 ms提交，DeviceReceipt在11040 ms提交；
+接收处理与回执等待还需定位，不能猜测10秒Watch就是原因。本轮不签收低延迟。
+
+TLS 入口是内网地址，蜂窝仍依赖可达 Iroh Relay；全 UDP 阻断、发现独立、
+公网 TCP 后备、独立多副本、DPI/主动探测/流量关联尚未验收。原节点长期在线、
+两机正常聊天保持；具体数据和后续定位见 NOVOCHAT P0_CHECKPOINT 同日节。
+ignored 证据：本仓 native-tls-v38-*；NOVOCHAT continuity49-*。
+
 ## 2026-10-18 Android v38 客户端升级及 L4 换网回归
 
 NOVOCHAT `b94bacd` 已把 `09f7069` 原生 TLS 客户端接线构建为 v38 并原位
