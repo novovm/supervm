@@ -19,9 +19,10 @@ pub struct StoreReceiptV1 {
     pub signature: Vec<u8>,
 }
 impl StoreReceiptV1 {
-    // Called ONLY after a durable commit or exact verification of its consumed
-    // tombstone. Re-signing the same tuple recovers the original deterministic
-    // evidence; it creates no new custody, retention, reward or device delivery.
+    // Called ONLY after real custody commits (or its still-retained duplicate).
+    // Schema 3 retains no consumed-object evidence. A retry after deletion must
+    // commit ciphertext again. The same tuple gives the same signature, never
+    // a second reward, extended original TTL or proof of device delivery.
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn committed(
         key: &SigningKey,

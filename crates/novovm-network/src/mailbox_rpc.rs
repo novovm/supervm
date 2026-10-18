@@ -346,7 +346,7 @@ impl MailboxServiceV1 {
     /// In-process capability client of the SAME mailbox owner. A phone may
     /// receive its own stored ciphertext without dialing itself through a relay.
     /// This is not a privileged database reader: capabilities, quotas, TTL,
-    /// tombstones, durable notifications and the node-wide request budget are
+    /// revocation, durable notifications and the node-wide request budget are
     /// identical to remote operations. The embedding owner must check its live
     /// identity/contact policy before and after awaiting this method.
     /// Transport negotiation belongs to authenticated network streams only.
@@ -463,7 +463,6 @@ impl MailboxServiceV1 {
             let mut store = store
                 .lock()
                 .map_err(|_| anyhow::anyhow!("mailbox store unavailable"))?;
-            let mut historical_put = false;
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
@@ -497,24 +496,10 @@ impl MailboxServiceV1 {
                         expires,
                     } => {
                         let capability = Capability::from_bytes(*write)?;
-                        match store.put(mailbox, &capability, object, ciphertext, *expires, now) {
-                            Ok(_) => {}
-                            Err(StoreError::Consumed) => {
-                                // The original Put ACK can be lost while its
-                                // reader already consumes the object. Recover
-                                // only exact durable evidence, never its payload.
-                                store.verify_consumed_deposit(
-                                    mailbox,
-                                    &capability,
-                                    object,
-                                    ciphertext,
-                                    *expires,
-                                    now,
-                                )?;
-                                historical_put = true;
-                            }
-                            Err(error) => return Err(error),
-                        }
+                        // A retried Put after deletion is new real custody,
+                        // subject to the same resource bounds and original TTL.
+                        // Never sign an unverifiable historical storage claim.
+                        store.put(mailbox, &capability, object, ciphertext, *expires, now)?;
                         Ok(MailboxReplyV1::Stored(StoreReceiptV1::committed(
                             &signer, *mailbox, *object, ciphertext, *expires,
                         )))
@@ -563,7 +548,6 @@ impl MailboxServiceV1 {
             // Inside the blocking commit worker: even cancellation after commit
             // cannot drop the wakeup. Private durable positions remain authority.
             if result.is_ok()
-                && !historical_put
                 && matches!(
                     &request,
                     MailboxRequestV1::Put { .. }

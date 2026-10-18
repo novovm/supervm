@@ -597,18 +597,61 @@ async fn contributor_same_authenticated_protocol_retains_objects_across_opt_out_
     }
     assert_eq!(service.contribution_status().await?.retained_objects, 0);
     service.set_contribution_enabled(true).await?;
-    let MailboxReplyV1::Stored(historical) = rpc(service.clone(), 2, put(&phone, [8; 32])).await?
+    let MailboxReplyV1::Stored(restored) = rpc(service.clone(), 2, put(&phone, [8; 32])).await?
     else {
-        anyhow::bail!("consumed receipt evidence missing")
+        anyhow::bail!("retry did not restore actual custody")
     };
-    historical.verify(
+    restored.verify(
         key(1).verifying_key().to_bytes(),
         phone.id,
         [8; 32],
         &data,
         expiry,
     )?;
-    assert_eq!(historical.signature, receipt.signature);
+    // Identical deterministic receipt bytes do not prove cleanup or custody.
+    // Verify the actual stored object before acknowledging this retry.
+    let MailboxReplyV1::Object {
+        object: retried,
+        ciphertext,
+        digest,
+        expires: original_ttl,
+    } = rpc(
+        service.clone(),
+        3,
+        MailboxRequestV1::Fetch {
+            mailbox: phone.id,
+            read: *phone.read.as_bytes(),
+        },
+    )
+    .await?
+    else {
+        anyhow::bail!("retry signed without retained ciphertext")
+    };
+    assert_eq!(
+        (retried, ciphertext, original_ttl),
+        ([8; 32], data.clone(), expiry)
+    );
+    assert_eq!(service.contribution_status().await?.retained_objects, 1);
+    assert_eq!(
+        service.contribution_status().await?.retained_bytes,
+        data.len() as u64
+    );
+    for _ in 0..2 {
+        assert!(matches!(
+            rpc(
+                service.clone(),
+                3,
+                MailboxRequestV1::Consume {
+                    mailbox: phone.id,
+                    read: *phone.read.as_bytes(),
+                    object: retried,
+                    digest,
+                }
+            )
+            .await?,
+            MailboxReplyV1::Consumed
+        ));
+    }
     assert!(matches!(
         rpc(
             service.clone(),
@@ -816,17 +859,59 @@ async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full(
             MailboxReplyV1::Consumed
         ));
     }
-    let MailboxReplyV1::Stored(historical) = rpc(service.clone(), 2, put()).await? else {
-        anyhow::bail!("consumed receipt evidence missing after restart")
+    let MailboxReplyV1::Stored(restored) = rpc(service.clone(), 2, put()).await? else {
+        anyhow::bail!("retry did not restore custody after restart")
     };
-    historical.verify(
+    restored.verify(
         key(1).verifying_key().to_bytes(),
         grant.id,
         object,
         &payload,
         expires,
     )?;
-    assert_eq!(Some(historical.signature), original_signature);
+    // The retry must represent new durable custody with the original TTL.
+    let MailboxReplyV1::Object {
+        object: retried,
+        ciphertext,
+        digest,
+        expires: original_ttl,
+    } = rpc(
+        service.clone(),
+        3,
+        MailboxRequestV1::Fetch {
+            mailbox: grant.id,
+            read: *grant.read.as_bytes(),
+        },
+    )
+    .await?
+    else {
+        anyhow::bail!("retry signed without retained ciphertext")
+    };
+    assert_eq!(
+        (retried, ciphertext, original_ttl),
+        (object, payload.clone(), expires)
+    );
+    assert_eq!(service.contribution_status().await?.retained_objects, 1);
+    assert_eq!(
+        service.contribution_status().await?.retained_bytes,
+        payload.len() as u64
+    );
+    for _ in 0..2 {
+        assert!(matches!(
+            rpc(
+                service.clone(),
+                3,
+                MailboxRequestV1::Consume {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                    object: retried,
+                    digest,
+                }
+            )
+            .await?,
+            MailboxReplyV1::Consumed
+        ));
+    }
     assert!(matches!(
         rpc(
             service.clone(),

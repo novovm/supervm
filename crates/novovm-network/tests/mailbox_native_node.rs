@@ -321,15 +321,41 @@ async fn round(
             ));
             ensure!(matches!(receiver.request(fetch(3)).await?, Reply::Empty));
             let before = service.contribution_status().await?;
-            let Reply::Stored(historical) = receiver.request(put(expires, 4)).await? else {
-                bail!("native consumed Put lost historical evidence")
+            // A lost Put ACK after cleanup causes a real, quota-accounted
+            // deposit, never a signed claim backed only by historical metadata.
+            let Reply::Stored(restored) = receiver.request(put(expires, 4)).await? else {
+                bail!("native retry did not restore actual custody")
             };
-            historical.verify(pin, [1; 32], [4; 32], &ciphertext, expires)?;
-            ensure!(historical.signature == original.signature);
-            ensure!(matches!(receiver.request(fetch(3)).await?, Reply::Empty));
+            restored.verify(pin, [1; 32], [4; 32], &ciphertext, expires)?;
+            let Reply::Object {
+                object: retried,
+                ciphertext: body,
+                digest: hash,
+                expires: ttl,
+            } = receiver.request(fetch(3)).await?
+            else {
+                bail!("native retry signed without custody")
+            };
+            ensure!(retried == object && body == ciphertext && hash == digest && ttl == expires);
             let after = service.contribution_status().await?;
-            ensure!(before.retained_objects == 0 && after.retained_objects == 0);
-            ensure!(before.retained_bytes == 0 && after.retained_bytes == 0);
+            ensure!(before.retained_objects == 0 && after.retained_objects == 1);
+            ensure!(before.retained_bytes == 0 && after.retained_bytes == ciphertext.len() as u64);
+            for _ in 0..2 {
+                ensure!(matches!(
+                    receiver
+                        .request(Request::Consume {
+                            mailbox: [1; 32],
+                            read: [3; 32],
+                            object,
+                            digest,
+                        })
+                        .await?,
+                    Reply::Consumed
+                ));
+            }
+            ensure!(matches!(receiver.request(fetch(3)).await?, Reply::Empty));
+            let cleaned = service.contribution_status().await?;
+            ensure!(cleaned.retained_objects == 0 && cleaned.retained_bytes == 0);
             return Ok(receipt);
         }
         ensure!(matches!(

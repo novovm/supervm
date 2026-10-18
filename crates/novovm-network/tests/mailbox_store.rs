@@ -146,7 +146,7 @@ fn contributor_choice_survives_restart_without_losing_retention_or_limits() {
     ));
     assert!(matches!(
         store.put(&phone.id, &phone.write, &[1; 32], &[7; 8], 1300, 1003),
-        Err(StoreError::Consumed)
+        Err(StoreError::Quota)
     ));
     store.set_resources_available(false);
     assert_eq!(
@@ -275,10 +275,16 @@ fn restart_dedup_device_ack_and_ttl() {
         store.fetch(&tablet.id, &tablet.read, 1001).unwrap().len(),
         1
     );
-    assert!(matches!(
-        store.put(&phone.id, &phone.write, &object, &data, 2000, 1001),
-        Err(StoreError::Consumed)
-    ));
+    assert_eq!(
+        store
+            .put(&phone.id, &phone.write, &object, &data, 2000, 1001)
+            .unwrap(),
+        PutResult::Stored
+    );
+    assert_eq!(
+        store.fetch(&phone.id, &phone.read, 1001).unwrap()[0].expires,
+        2000
+    );
     store.renew(&tablet.id, &tablet.read, 1001, 7200).unwrap();
     assert!(store
         .fetch(&tablet.id, &tablet.read, 2000)
@@ -339,7 +345,7 @@ fn capabilities_conflicts_and_resource_budgets() {
 }
 
 #[test]
-fn consumed_tombstones_are_bounded_and_wrong_digest_cannot_delete() {
+fn consumed_rows_release_quota_and_wrong_digest_cannot_delete() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = MailboxStore::open(
         dir.path().join("test.db"),
@@ -359,10 +365,130 @@ fn consumed_tombstones_are_bounded_and_wrong_digest_cannot_delete() {
     let row = s.fetch(&a.id, &a.read, 100).unwrap().remove(0);
     s.consume(&a.id, &a.read, &row.id, &row.digest, 100)
         .unwrap();
-    assert!(matches!(
-        s.put(&a.id, &a.write, &[2; 32], &[5; 32], 250, 100),
-        Err(StoreError::Quota)
-    ));
+    assert_eq!(
+        s.put(&a.id, &a.write, &[2; 32], &[5; 32], 250, 100)
+            .unwrap(),
+        PutResult::Stored
+    );
     s.sweep(501).unwrap();
     assert!(s.put(&a.id, &a.write, &[2; 32], &[5; 32], 600, 501).is_ok());
+}
+
+#[test]
+fn retention_v3_migrates_only_consumed_rows_atomically() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("retention.db");
+    let mut s = MailboxStore::open(&path, Limits::default()).unwrap();
+    let a = s.create(100, 1000).unwrap();
+    let b = s.create(100, 1000).unwrap();
+    s.put(&a.id, &a.write, &[1; 32], &[5; 32], 600, 100)
+        .unwrap();
+    s.put(&b.id, &b.write, &[2; 32], &[6; 32], 700, 100)
+        .unwrap();
+    let cursor = s.observe(&b.id, &b.read, 100).unwrap().0;
+    s.set_contribution_enabled(false, 100).unwrap();
+    drop(s);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    // Construct the exact previous v2 consumed state, preserving a second
+    // device's outstanding custody and the owner's persistent opt-out.
+    db.execute(
+        "UPDATE envelopes SET consumed=1,payload=x'' WHERE mailbox=?1",
+        [a.id],
+    )
+    .unwrap();
+    db.execute_batch(
+        "PRAGMA user_version=2;
+      CREATE TRIGGER fail_cleanup BEFORE DELETE ON envelopes
+      BEGIN SELECT RAISE(ABORT,'fixture'); END;",
+    )
+    .unwrap();
+    assert!(MailboxStore::open_contributor(&path, Limits::default(), true).is_err());
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM envelopes", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    db.execute_batch("DROP TRIGGER fail_cleanup;").unwrap();
+    let mut s = MailboxStore::open_contributor(&path, Limits::default(), true).unwrap();
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM envelopes", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM envelopes WHERE mailbox=?1",
+            [a.id],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert!(!s.contribution_status(100).unwrap().enabled);
+    assert_eq!(s.observe(&b.id, &b.read, 100).unwrap().0, cursor);
+    let row = s.fetch(&b.id, &b.read, 100).unwrap().remove(0);
+    assert_eq!(
+        (row.id, row.ciphertext, row.expires),
+        ([2; 32], vec![6; 32], 700)
+    );
+    assert!(matches!(
+        s.fetch(&b.id, &b.read, 99),
+        Err(StoreError::ClockRollback)
+    ));
+    s.sweep(700).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM envelopes", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    drop(s);
+    db.execute_batch("PRAGMA user_version=99;").unwrap();
+    assert!(MailboxStore::open(&path, Limits::default()).is_err());
+}
+
+#[test]
+fn consume_delete_failure_preserves_custody_and_retry_removes_all_object_columns() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("consume.db");
+    let mut s = MailboxStore::open(&path, Limits::default()).unwrap();
+    let a = s.create(100, 1000).unwrap();
+    s.put(&a.id, &a.write, &[1; 32], &[7; 32], 600, 100)
+        .unwrap();
+    let row = s.fetch(&a.id, &a.read, 100).unwrap().remove(0);
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_delete BEFORE DELETE ON envelopes
+      BEGIN SELECT RAISE(ABORT,'fixture'); END;",
+    )
+    .unwrap();
+    assert!(s
+        .consume(&a.id, &a.read, &row.id, &row.digest, 101)
+        .is_err());
+    assert_eq!(
+        s.fetch(&a.id, &a.read, 100).unwrap()[0].ciphertext,
+        vec![7; 32]
+    );
+    db.execute_batch("DROP TRIGGER fail_delete;").unwrap();
+    s.consume(&a.id, &a.read, &row.id, &row.digest, 101)
+        .unwrap();
+    drop(s);
+    let mut s = MailboxStore::open(&path, Limits::default()).unwrap();
+    s.consume(&a.id, &a.read, &row.id, &row.digest, 102)
+        .unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM envelopes", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    assert!(s.fetch(&a.id, &a.read, 102).unwrap().is_empty());
 }

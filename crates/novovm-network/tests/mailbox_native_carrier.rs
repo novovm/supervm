@@ -417,14 +417,25 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
                 }).await?, Reply::Consumed));
                 ensure!(matches!(client.request(fetch(3)).await?, Reply::Empty));
                 let before = service.contribution_status().await?;
-                let Reply::Stored(historical) = client.request(put(expires, 4)).await?
-                    else { bail!("consumed Put lost historical evidence") };
-                historical.verify(pin(), [1; 32], [4; 32], &ciphertext, expires)?;
-                ensure!(historical.signature == original.signature);
-                ensure!(matches!(client.request(fetch(3)).await?, Reply::Empty));
+                // No tombstone remains: an ACK-loss retry must acquire real
+                // custody again, with the original object and fixed expiry.
+                let Reply::Stored(restored) = client.request(put(expires, 4)).await?
+                    else { bail!("consumed Put failed to restore actual custody") };
+                restored.verify(pin(), [1; 32], [4; 32], &ciphertext, expires)?;
+                let Reply::Object { object: retried, ciphertext: body, digest: hash, expires: ttl } =
+                    client.request(fetch(3)).await? else { bail!("retry signed without actual custody") };
+                ensure!(retried == object && body == ciphertext && hash == digest && ttl == expires);
                 let after = service.contribution_status().await?;
-                ensure!(before.retained_objects == 0 && after.retained_objects == 0
-                    && before.retained_bytes == 0 && after.retained_bytes == 0);
+                ensure!(before.retained_objects == 0 && after.retained_objects == 1
+                    && before.retained_bytes == 0 && after.retained_bytes == ciphertext.len() as u64);
+                for _ in 0..2 {
+                    ensure!(matches!(client.request(Request::Consume {
+                        mailbox: [1; 32], read: [3; 32], object, digest,
+                    }).await?, Reply::Consumed));
+                }
+                ensure!(matches!(client.request(fetch(3)).await?, Reply::Empty));
+                let cleaned = service.contribution_status().await?;
+                ensure!(cleaned.retained_objects == 0 && cleaned.retained_bytes == 0);
                 return Ok(Some(recovered));
             }
             ensure!(matches!(client.request(Request::Register {

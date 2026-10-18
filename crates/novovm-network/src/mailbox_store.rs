@@ -2,6 +2,8 @@
 //! Moved from NOVOCHAT P0; this is the sole implementation. Platform owns the private directory.
 //! Each mailbox belongs to one recipient device. Read capabilities never leave that device.
 //! No wallet keys, UCA identifiers, plaintext indexing, or chain/RPC dependency.
+//! Store schema 3 deletes object metadata with consumed/expired ciphertext. A later
+//! authorized Put is new custody; end-device journals own message deduplication.
 use rand::RngCore;
 use rusqlite::{
     params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
@@ -223,7 +225,7 @@ impl MailboxStore {
                 PRAGMA user_version=1;",
             )?;
             tx.commit()?;
-        } else if version != 1 && version != 2 {
+        } else if version != 1 && version != 2 && version != 3 {
             return Err(StoreError::Invalid);
         }
         if version <= 1 {
@@ -262,6 +264,18 @@ impl MailboxStore {
         if missing != 0 {
             return Err(StoreError::Invalid);
         }
+        if version < 3 {
+            // Retention contract v3: consumed objects leave no per-object
+            // evidence at the intermediary. Preserve live custody, capability
+            // revocations, notification positions and the clock guard. Older
+            // readers reject version 3 rather than restoring tombstone semantics.
+            let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(
+                "DELETE FROM envelopes WHERE consumed=1;
+                 PRAGMA user_version=3;",
+            )?;
+            tx.commit()?;
+        }
         Ok(Self {
             db,
             limits,
@@ -282,15 +296,9 @@ impl MailboxStore {
             return Err(StoreError::ClockRollback);
         }
         tx.execute("UPDATE clock_guard SET high_water=?1 WHERE id=1", [now])?;
-        // Preserve bounded tombstones after expiry, then remove the device mailbox.
-        tx.execute(
-            "UPDATE envelopes SET payload=x'',consumed=1 WHERE consumed=0 AND expires<=?1",
-            [now],
-        )?;
-        tx.execute(
-            "DELETE FROM envelopes WHERE expires<=?1",
-            [now - REPLAY_WINDOW],
-        )?;
+        // Expired ciphertext and its object metadata have no further custody
+        // purpose. Only capability revocation retains its bounded replay window.
+        tx.execute("DELETE FROM envelopes WHERE expires<=?1", [now])?;
         tx.execute(
             "DELETE FROM mailboxes WHERE expires<=?1",
             [now - REPLAY_WINDOW],
@@ -465,17 +473,14 @@ impl MailboxStore {
         if expires > lease {
             return Err(StoreError::Invalid);
         }
-        let existing: Option<(Vec<u8>, i64, bool)> = tx
+        let existing: Option<(Vec<u8>, i64)> = tx
             .query_row(
-                "SELECT digest,expires,consumed FROM envelopes WHERE mailbox=?1 AND id=?2",
+                "SELECT digest,expires FROM envelopes WHERE mailbox=?1 AND id=?2",
                 params![mailbox, object],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        if let Some((old_digest, old_expiry, consumed)) = existing {
-            if consumed {
-                return Err(StoreError::Consumed);
-            }
+        if let Some((old_digest, old_expiry)) = existing {
             if old_digest != digest || old_expiry != expires {
                 return Err(StoreError::Conflict);
             }
@@ -514,52 +519,6 @@ impl MailboxStore {
         }
         tx.commit()?;
         Ok(PutResult::Stored)
-    }
-    /// Recover evidence of an exact earlier commit after its payload was consumed.
-    /// This never restores custody or advances a notification cursor. The service
-    /// may re-sign the ORIGINAL storage receipt only after this check succeeds.
-    /// Ordinary `put` keeps rejecting consumed object IDs.
-    #[cfg(feature = "iroh-transport")]
-    pub(crate) fn verify_consumed_deposit(
-        &mut self,
-        mailbox: &Id,
-        write: &Capability,
-        object: &Id,
-        ciphertext: &[u8],
-        expires: i64,
-        now: i64,
-    ) -> Result<(), StoreError> {
-        if *object == [0; 32]
-            || ciphertext.is_empty()
-            || ciphertext.len() > self.limits.object_bytes
-            || expires <= now
-            || expires.checked_sub(now).is_none_or(|ttl| ttl > MAX_TTL)
-        {
-            return Err(StoreError::Invalid);
-        }
-        let digest = Sha256::digest(ciphertext);
-        let tx = self.begin(now)?;
-        let lease = authorize(&tx, mailbox, write, true, now)?;
-        if expires > lease {
-            return Err(StoreError::Invalid);
-        }
-        let existing: Option<(Vec<u8>, i64, bool)> = tx
-            .query_row(
-                "SELECT digest,expires,consumed FROM envelopes WHERE mailbox=?1 AND id=?2",
-                params![mailbox, object],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        let Some((original_digest, original_expiry, true)) = existing else {
-            return Err(StoreError::Consumed);
-        };
-        if !bool::from(original_digest.as_slice().ct_eq(digest.as_slice()))
-            || original_expiry != expires
-        {
-            return Err(StoreError::Conflict);
-        }
-        tx.commit()?;
-        Ok(())
     }
     /// Snapshot AFTER notification observation is installed. Put increments the
     /// cursor in the same transaction as its ciphertext. Fetch stays authoritative
@@ -645,13 +604,13 @@ impl MailboxStore {
             "UPDATE mailboxes SET expires=?2 WHERE id=?1",
             params![id, now],
         )?;
-        tx.execute(
-            "UPDATE envelopes SET payload=x'',consumed=1 WHERE mailbox=?1",
-            [id],
-        )?;
+        tx.execute("DELETE FROM envelopes WHERE mailbox=?1", [id])?;
         tx.commit()?;
         Ok(())
     }
+    /// Remove this object's ciphertext AND metadata after recipient durable commit.
+    /// Success means absent, not proof of delivery. A caller losing this deletion
+    /// ACK may repeat it; retained end-device receipts establish delivery instead.
     pub fn consume(
         &mut self,
         mailbox: &Id,
@@ -662,16 +621,24 @@ impl MailboxStore {
     ) -> Result<(), StoreError> {
         let tx = self.begin(now)?;
         authorize(&tx, mailbox, read, false, now)?;
-        let current: Vec<u8> = tx.query_row(
-            "SELECT digest FROM envelopes WHERE mailbox=?1 AND id=?2",
-            params![mailbox, object],
-            |r| r.get(0),
-        )?;
-        if !bool::from(current.ct_eq(digest)) {
+        let current: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT digest FROM envelopes WHERE mailbox=?1 AND id=?2",
+                params![mailbox, object],
+                |r| r.get(0),
+            )
+            .optional()?;
+        // Absence is an idempotent deletion result, never delivery evidence.
+        // Check read authority even when absent. A delayed Consume cannot erase
+        // a different object currently using this ID.
+        if current
+            .as_ref()
+            .is_some_and(|value| !bool::from(value.ct_eq(digest)))
+        {
             return Err(StoreError::Conflict);
         }
         tx.execute(
-            "UPDATE envelopes SET payload=x'',consumed=1 WHERE mailbox=?1 AND id=?2",
+            "DELETE FROM envelopes WHERE mailbox=?1 AND id=?2",
             params![mailbox, object],
         )?;
         tx.commit()?;
