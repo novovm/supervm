@@ -3,17 +3,38 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
-## 2026-10-18 原生载体被动路径观察（Android 部署待验证）
+## 2026-10-18 原生载体被动路径观察及 Android v36 换网回归
 
 现有 `NativeCarrierPump` 暴露当前 Iroh 选中路径类别和 QUIC 平滑 RTT，沿用
 原连接及 I/O owner；没有新探测包、定时器、连接、认证或选路决策。写半部忙、
 关闭、失败或不支持观察时返回 None，不以零 RTT 或旧缓存冒充当前路径。
 观测不包含地址或身份，也不能证明设备送达、匿名性或完全自主传输。
 
-`novovm-network` carrier_io 三项取消/失败/排队 lib 回归通过。客户端接入及
-真实连接观察仍须分别验证；这项组件变化没有升级 Windows 节点或 Android。
-NOVOCHAT 当前手机保留 v35，其无 L3 五轮换网及冷启动证据记录在该仓库
-`docs/implementation/P0_CHECKPOINT.md`，不把历史结果计为本次新产物验收。
+`novovm-network` carrier_io 三项取消/失败/排队 lib 回归通过。随后 NOVOCHAT
+`81ec2ea` 消费 `1696b21e`，沿原 I/O 循环只记录首次路径或类别变化，不增加
+探测。真实 Application/QUIC/SQLite 单 L4 双向及后续消息测试通过（41.85 秒），
+Rust 诊断 1 项、Python 契约 7 项、Android JVM 125 项通过。
+
+正式 profile v36 已保留数据原位安装两台 Android，包 SHA-256
+`53e4be91a90cd84c713da6a0d4c6eed1860e3f12ed0ca194f5ae93a5f6707f99`。
+原签名及每端 5 个受保护身份/密钥文件一致，无 ADB 业务隧道。PKL110 保持
+Wi-Fi，PCLM50 从 Wi-Fi 切蜂窝再回 Wi-Fi，不重开/手动连接；6 条新消息均有
+接收屏幕和持久设备回执。发送方同进程 Put 至首个 DeviceReceipt 三组双向值
+为 649/646、495/524、537/568 ms，非点击至屏幕、非 P95、非新的五轮验收。
+网络首次可用至首次 L4 认证桥接估算约 3.705/3.522 秒。A 原任务保持、B 两次
+自动接替，无永久停止；保留一次独立 ADB 路由查询超时。
+
+首次选中 L4 路径实测为 direct：初始 Wi-Fi A/B RTT 4.482/5.863 ms，B 蜂窝
+76.844 ms、回 Wi-Fi 7.406 ms。各为当时 QUIC 平滑样本，不是每条消息 RTT。
+外部 Iroh Relay 配置保留，这不证明引导/发现无外部依赖、匿名或抗封锁。
+本轮未升级或停止 Windows L3；原进程存在，但手机 L3=0，不能报告其已就绪。
+手机仍有入站返回信箱未计入出站状态的问题，通信可用不应被错误显示为离线。
+完整证据及剩余项见 NOVOCHAT `docs/implementation/P0_CHECKPOINT.md` v36 节。
+
+用户新增抗封锁参考已在 NOVOCHAT 原传输策略与交付计划登记隔离实验顺序：
+端口/IP/DNS、UDP/Relay、独立入口故障域、DPI/主动探测、元数据关联。
+通用载体/选路能力仍归 SUPERVM，不再建立聊天专用网络；未执行的完整抗封锁
+矩阵继续列为未验收。不得以普通直连/Relay 的成功替代 Privacy 路径资格。
 
 ## 2026-10-18 Windows 修复部署及 Android 原生 L4 无 L3 投递
 
