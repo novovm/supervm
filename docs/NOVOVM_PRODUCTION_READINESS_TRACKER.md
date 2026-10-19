@@ -3,6 +3,36 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-19 reuse audit and Android v77 bounded local reads
+
+No SDK production code or deployed L3 changed in this round. Both repositories
+now require cross-project capability checks before new implementation; concrete
+interfaces and same-carrier release results are in [reuse index](NOVONET_REUSE_INDEX.md).
+For 1,600,067 bytes: continuous framed carrier 12–14ms, native object integrity ACK
+210–217ms, bulk durable Put 212–216ms. Same mailbox session/store legacy sequential
+49-block Put 529–801ms. These are Windows loopback samples, not v74's exact window,
+Android/public Relay throughput or P95. Native framing cost precedes SQLite;
+there is no evidence that every fragment necessarily sleeps for one millisecond.
+
+NOVOCHAT reused its existing source index and protected journal to batch local
+source/history reads; no new network, scheduler, account or storage engine.
+Rust3/Dart22 targeted tests and analyze passed. Official signed profile v77 was
+installed preserving both phones' five protected identity hashes and all history;
+APK SHA256 `dfad5d920aad1c2ce2f5dfadd15d5a385d2aac6d2323ebd60ca1ed8ff88ab1dc`.
+Retained v76 APK remains available. B post-install UI dump exited137 after install/
+identity assertions; independent installed hash/version recheck and normal chat
+entry succeeded, not a failed APK install or app data reset.
+
+Two normal-picker transfers of the same PNG: A->B inbox3.679s/receipt4.388s,
+B->A inbox3.683s/receipt3.751s. Both previews decoded; first screenshots already
+showed decoded pixels by1.344s/0.984s including screenshot/navigation cost, not
+pure decoder latency. Subsequent text receipts1.582s/1.068s. Both phones Wi-Fi,
+external Iroh dependent, no ADB business forwarding. All timings are small mixed
+host/device-clock samples, not a stable speedup claim or one-second gate PASS.
+A independent L4 dial still not ready as before; B-originated bidirectional L4
+return custody and L3 remain active. This round does not close that path defect.
+See NOVOCHAT MEDIA_REUSE/P0_CHECKPOINT and local v77 evidence for full boundaries.
+
 ## 2026-10-19 v75/v76 Android object delivery verified; speed remains open
 
 SDK `07bed362` deployed to the existing Windows L3 using the managed installer;

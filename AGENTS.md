@@ -1,5 +1,27 @@
 # Agent Highest Law
 
+## 2026-10-19 reuse-first implementation rule
+
+Before changing a feature, inspect the relevant existing implementations,
+interfaces, tests and versions across SUPERVM/NOVONET, AOEM, NOVOCHAT and related
+products. State the source locations, reusable capabilities, actual gap, minimal
+change and user-facing acceptance briefly, then proceed within authorization.
+Prefer reuse, then thin adaptation, then extension; a new implementation needs
+a demonstrated gap. Do not duplicate transport, routing, scheduling, crypto,
+accounts or storage because a product already has temporary wiring.
+
+Preserving one owner does not require sending files as independent tiny mailbox
+RPCs. Reusing AOEM does not mean imposing transaction/chain-state semantics on
+chat ciphertext. Fix a real scenario, carrier, payload and timing boundary before
+performance changes; after one ineffective targeted round reconsider the layer
+and bottleneck instead of endlessly tuning slots. Preserve identity binding,
+E2EE, privacy, durability, TTL, revocation and existing data. Distinguish component
+throughput, durable custody, device receipt and screen display; retain failures
+and the working mobile APK. New foundational protocols/security changes need
+an explicit architecture assessment, not a new routine approval bureaucracy.
+See [source-linked reuse index](docs/NOVONET_REUSE_INDEX.md).
+
+
 - 2026-10-16 user explicitly authorizes concurrent agents toward the active
   NOVOVM release goal. Parallelize bounded implementation, source verification
   and validation preparation on the SAME mainline; do not let agents create
