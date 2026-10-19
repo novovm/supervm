@@ -1,5 +1,14 @@
 # Agent Highest Law
 
+## 2026-10-19 keep the active source unambiguous
+
+At each coherent round, remove proven-unused superseded code and its obsolete
+configuration after checking callers, feature/platform builds and compatibility
+obligations. Do not retain parallel abandoned implementations. Mark still-used
+compatibility adapters explicitly, with their callers and removal condition;
+mark superseded design guidance with the current source/version. Preserve user
+data, required regression tests and the working APK rollback baseline.
+
 ## 2026-10-19 reuse-first implementation rule
 
 Before changing a feature, inspect the relevant existing implementations,

@@ -1,5 +1,9 @@
 # Cross-project capability reuse index
 
+Current architecture review: [2026-10-19 delivery comparison](NOVONET_DELIVERY_ARCHITECTURE_REVIEW_2026-10-19.md)
+checks v77/native bulk, official upstream designs, mailbox hotpaths and remaining
+measurement gaps. The implementation snapshots below retain their dated scope.
+
 Source audit: 2026-10-19. SUPERVM `1ed21cc3` (communications implementation
 `07bed362`), NOVOCHAT `f807314` / Android v76, AOEM local `1bfa7037`.
 These are implementation pointers, not blanket production acceptance.

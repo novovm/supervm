@@ -1,4 +1,6 @@
-//! One L3/L4 protocol over the existing Finished-bound carrier. No chat IDs.
+//! Shared L3/L4 mailbox operations and legacy carrier wire adapters. No chat IDs.
+//! Native V7/V8 APFL callers enter through mailbox_structured/native_session and
+//! request_local_v1; the JSON send/receive helpers below are not their wire path.
 //! Owner admits the service path; credentials are never sent before peer authentication.
 use crate::{
     bound_session::{
