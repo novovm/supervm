@@ -1,0 +1,14 @@
+{
+  "status": "predeclared_not_accepted",
+  "product_source": "e7e41e50; frozen original-tick native node 91e1da7cbfbfc1d4fe2f65079f2cb62c99aa9edc402ab2f57b6537e96d227e9b",
+  "aoem_base": "31b14d6d2033be3c71d973e41ca9c3a20e69c9bc",
+  "reuse": "Exact twelve runtime files from da80f306, with current model/session changes retained; no node business or transport changes",
+  "baseline_library": "95b7133d5f04a10b2d782d06d57f208f8ef387e3131668418f7096f58d399307",
+  "build": "Rust 1.94.0 release locked FULLMAX; same target cache and features",
+  "controls": "AC Windows, RTX 5090 selection, four original nodes/stores, single native SDK entry, 65536 real signed transfers, 1024 senders x64 nonces/shared recipient, batch1024, window8192, query128, all-four finalized receipt completion; no HTTP",
+  "sequence": ["baseline-integer-1", "candidate-integer-1", "candidate-cpu-1", "baseline-cpu-1", "candidate-integer-2", "baseline-integer-2", "baseline-cpu-2", "candidate-cpu-2"],
+  "promotion": "All correctness/cold economics pass; integer aggregate successful TPS improves; CPU aggregate does not decline; consistent worsening of both tail pairs blocks. No added favorable samples. Diagnostic samples excluded.",
+  "diagnostics": "Existing actual v10 binary-path stage profiles, not old JSON single-row profiler. Compare inclusive integer_wire wall time per observed batch; not kernel time or additive CPU time.",
+  "historical_blocker": "Prior resident candidate failed end-to-end promotion on HTTP observations; CPU effects were inconsistent. Current native route is the explicit new condition, not permission to erase the earlier failures.",
+  "limits": "Frozen node predates 0b47ba7e carrier-feedback changes; these are held constant, not represented as benchmarked. No new proof, physical multi-machine, Linux or million-TPS acceptance. Protected drafts untouched."
+}
