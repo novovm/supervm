@@ -395,7 +395,11 @@ pub fn iroh_protocol_diagnostic_v1(error: &anyhow::Error) -> Option<IrohProtocol
 }
 
 const CHECK_INTERVAL: Duration = Duration::from_millis(20);
-const INCOMING_SETUP_TIMEOUT: Duration = Duration::from_secs(3);
+// Let a real transport handshake survive retransmission/path repair within
+// the existing QUIC idle bound. An authenticated peer must still open its
+// first stream promptly; that separate budget must not include TLS latency.
+const TRANSPORT_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+const STREAM_SETUP_TIMEOUT: Duration = Duration::from_secs(3);
 static ENDPOINT_LIMIT: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
 /// Fast local authorization/cancellation check. Never do RPC or blocking IO here.
@@ -1089,7 +1093,7 @@ async fn bind_carrier_endpoint(
         .receive_window(65536u32.into())
         .send_window(128 * 1024)
         .max_remote_nat_traversal_addresses(8)
-        .max_idle_timeout(Some(Duration::from_secs(15).try_into()?))
+        .max_idle_timeout(Some(TRANSPORT_IDLE_TIMEOUT.try_into()?))
         .keep_alive_interval(Duration::from_secs(5))
         .datagram_receive_buffer_size(None)
         .build();
@@ -1383,7 +1387,7 @@ impl IrohScopeV1 {
         })?;
         let pending = PendingConnection::new(connection);
         tokio::time::timeout(
-            INCOMING_SETUP_TIMEOUT,
+            STREAM_SETUP_TIMEOUT,
             self.stream(pending, peer.endpoint_key, true, admission),
         )
         .await
@@ -1411,8 +1415,9 @@ impl IrohScopeV1 {
     /// admission is shared with connect(); excess Incoming objects are refused
     /// before starting TLS. iroh 1.3 does not expose a Builder setter for its
     /// endpoint-wide pending-Incoming queue, whose library limit still applies.
-    /// The three-second budget starts when an Incoming is dequeued, and covers
-    /// TLS plus opening the first bidirectional stream, not application auth.
+    /// Transport setup is bounded by the existing QUIC idle limit. Once TLS
+    /// and connection registration complete, the first bidirectional stream
+    /// has its own three-second budget. Neither grants application authority.
     pub async fn accept_inbound(&self) -> Result<IrohStreamV1<'_>> {
         ensure!(
             self.reuse.is_none(),
@@ -1448,8 +1453,7 @@ impl IrohScopeV1 {
                     return Err(error).context("carrier connection limit");
                 }
             };
-            let deadline = tokio::time::Instant::now() + INCOMING_SETUP_TIMEOUT;
-            let connection = match tokio::time::timeout_at(deadline, incoming).await {
+            let connection = match tokio::time::timeout(TRANSPORT_IDLE_TIMEOUT, incoming).await {
                 Ok(Ok(connection)) => connection,
                 Ok(Err(_)) => {
                     observation.finish(IrohInboundOutcomeV1::Failed);
@@ -1474,8 +1478,8 @@ impl IrohScopeV1 {
                 continue;
             }
             observation.stream_started();
-            let result = tokio::time::timeout_at(
-                deadline,
+            let result = tokio::time::timeout(
+                STREAM_SETUP_TIMEOUT,
                 self.stream_observed(pending, remote, false, admission, Some(&mut observation)),
             )
             .await;

@@ -2,6 +2,43 @@
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
+## 2026-10-20 inbound setup phase separation: local regression passed
+
+Reused the existing IrohScope accept path and QUIC idle bound. Transport TLS /
+registration now has at most the existing 15-second idle bound; first-stream
+setup independently retains three seconds. No fixed delay, retry whitelist,
+new owner, peer-policy change or business-authority extension. Admission remains
+bounded and caller cancellation still drops pending setup and releases resources.
+
+A loopback UDP proxy delays the first real server flight by 3400 ms. The old
+implementation failed (finite scope expired after repeatedly cancelling setup);
+the same encrypted request/reply succeeds after separating the phases. The
+inbound filter passed 16 tests with one existing release-only test ignored,
+including wrong pin/ALPN, real pre-handshake code 12, post-handshake empty stream,
+cancellation and active-admission release. Formatting passed. Mobile candidate
+still requires cellular verification; this does not prove Relay recovery fixed.
+
+## 2026-10-20 v80 Android endpoint delivery and cellular failure
+
+NOVOCHAT e9f3a6a / 29a1a20, SDK 87e0ce3d: both original Android installs
+upgraded in place to v80 with five protected identity/key hashes unchanged.
+On two Wi-Fi paths, real endpoint DeviceReceipts completed in 802/894 ms
+(worker wake to receipt, not tap-to-screen or P95). Images, voice, independent
+offline fetch with sender offline, and explicit process reopen also passed.
+Later text samples were 2297/847 ms; images 4879/2366 ms. L3 replicas remain
+independent; APFL endpoint delivery does not prove physical UDP direct routing.
+
+Cellular switch FAILED: during a 45-second window neither new message obtained
+a DeviceReceipt. Both original messages delivered automatically after restoring
+Wi-Fi, without restarting either App. The Wi-Fi receiver logged six incoming
+TLS/registration deadlines at 3001-3002 ms; cellular observed RelayUnavailable /
+RelayBackoff and QUIC peer APPLICATION_ERROR (origin 3, code 12). Existing local
+accept code shares a three-second deadline between transport handshake and first
+stream. Reproduce with delayed real UDP before changing this boundary; do not
+whitelist arbitrary protocol errors. Relay availability may be another cause.
+No claim of full native priority, seamless cellular recovery or Relay removal.
+Phone evidence is in NOVOCHAT P0_CHECKPOINT and ignored v80-cellular reports.
+
 ## 2026-10-19 原生持续会话设备文字交付：本机通过，手机待验收
 
 `5ece1d93` / `87e0ce3d` 在原 MailboxService/APFL 分发器增加可选进程内

@@ -1,6 +1,66 @@
 // Included in iroh_transport::tests. These loopback fixtures exercise the
 // existing accept path; observations do not alter authority or retry policy.
 
+#[tokio::test(flavor = "current_thread")]
+async fn inbound_delayed_handshake_does_not_consume_first_stream_budget() {
+    let _permit = SERIAL.acquire().await.unwrap();
+    let (config, capture) = inbound_diagnostic_config();
+    let (address_tx, address_rx) = oneshot::channel();
+    let server = with_iroh_scope_v1(config, control(), move |scope| {
+        Box::pin(async move {
+            address_tx.send(scope.address()?).unwrap();
+            let mut stream = scope.accept_inbound().await?;
+            ensure!(stream.read_frame().await? == b"delayed handshake");
+            stream.write_frame(b"received").await?;
+            stream.finish().await?;
+            capture.assert_terminal(IrohInboundPhaseV1::Stream, IrohInboundOutcomeV1::Ready);
+            Ok(())
+        })
+    });
+    let client = with_iroh_scope_v1(local_config(), control(), move |scope| {
+        Box::pin(async move {
+            let mut address = address_rx.await?;
+            let destination = address.direct[0];
+            let proxy = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
+            address.direct = vec![proxy.local_addr()?];
+            // A real UDP forwarding fixture stalls the first server flight.
+            // It reproduces the mobile three-second cancellation without
+            // altering authentication, clocks or the transport implementation.
+            let mut workers = tokio::task::JoinSet::new();
+            workers.spawn(async move {
+                let mut buffer = [0u8; 65536];
+                let mut client = None;
+                let mut delayed = false;
+                loop {
+                    let (len, source) = proxy.recv_from(&mut buffer).await?;
+                    let target = if source == destination {
+                        if !delayed {
+                            delayed = true;
+                            tokio::time::sleep(Duration::from_millis(3400)).await;
+                        }
+                        client.context("server flight before client")?
+                    } else {
+                        client = Some(source);
+                        destination
+                    };
+                    proxy.send_to(&buffer[..len], target).await?;
+                }
+                #[allow(unreachable_code)]
+                Ok::<_, anyhow::Error>(())
+            });
+            let mut stream = scope.connect(&address).await?;
+            stream.write_frame(b"delayed handshake").await?;
+            ensure!(stream.read_frame().await? == b"received");
+            stream.finish().await?;
+            workers.shutdown().await;
+            Ok(())
+        })
+    });
+    let (server, client) = tokio::join!(server, client);
+    server.unwrap();
+    client.unwrap();
+}
+
 #[derive(Default)]
 struct InboundDiagnosticCapture {
     events: std::sync::Mutex<Vec<IrohInboundObservationV1>>,

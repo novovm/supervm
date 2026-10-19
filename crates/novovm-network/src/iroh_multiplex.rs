@@ -109,7 +109,7 @@ impl<'scope> IrohMultiplexV1<'scope> {
         let (send, recv) = tokio::select! {
             biased;
             error = self.scope.control.revoked() => return Err(error),
-            result = tokio::time::timeout(INCOMING_SETUP_TIMEOUT, self.shared.connection.open_bi()) => {
+            result = tokio::time::timeout(STREAM_SETUP_TIMEOUT, self.shared.connection.open_bi()) => {
                 result.map_err(|_| IrohFrameDeadlineV1(()))?
                     .map_err(|error| IrohStreamIoFailureV1(error.into()))?
             }
