@@ -2,6 +2,20 @@
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
+## 2026-10-20 v81 Android follow-up: two cellular switches delivered
+
+SDK cca78183 / NOVOCHAT 1dc2a13 installed in place on both original phones;
+protected identity/key hashes unchanged. Normal two-Wi-Fi text endpoint receipts
+were 614/711 ms from sender-worker wake (not tap-to-screen/P95/native UDP proof).
+Two consecutive Wi-Fi -> cellular -> Wi-Fi trials, without restarting the Apps,
+delivered both new messages per round during the cellular observation window,
+before restoring Wi-Fi. Both L3/L4 paths were ready afterwards. No three-second
+inbound deadline recurred; cancellation/protocol/IO retry events still occurred.
+Relay reachability differed from the failed v80 run, so the improvement cannot
+be attributed entirely to deadline separation. No seamless-second-level or
+five-round/production gate is claimed. Physical native priority and independent
+Relay removal remain open. Detailed phone evidence: NOVOCHAT P0_CHECKPOINT.
+
 ## 2026-10-20 inbound setup phase separation: local regression passed
 
 Reused the existing IrohScope accept path and QUIC idle bound. Transport TLS /
