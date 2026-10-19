@@ -17,6 +17,8 @@ use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 use crate::native_pipeline::pipeline::ExecutionBackend;
 use std::collections::VecDeque;
 
+#[path = "native_deadline_integration.rs"]
+mod deadline;
 #[path = "native_lifecycle_integration.rs"]
 mod lifecycle;
 #[path = "published_projection_integration.rs"]

@@ -71,6 +71,32 @@ pub struct NativeLifecycle {
     pub expired_sends: u64,
 }
 impl NativeLifecycle {
+    #[cfg(test)]
+    pub(crate) fn retain_control_for_deadline_test(
+        &mut self,
+        peer: Hash,
+        message: Message,
+    ) -> Result<()> {
+        ensure!(
+            matches!(
+                &message,
+                Message::Proposal { .. } | Message::Vote(_) | Message::Decision { .. }
+            ),
+            "deadline fixture requires control"
+        );
+        let peer = self
+            .peers
+            .iter()
+            .position(|id| *id == peer)
+            .context("unknown fixture peer")?;
+        ensure!(self.pending[0].is_none(), "fixture control slot occupied");
+        self.pending[0] = Some(Incoming {
+            peer,
+            message: Arc::new(message),
+        });
+        Ok(())
+    }
+
     pub fn new(
         progress: RoundProgress,
         bodies: CandidateBodies,
@@ -291,7 +317,7 @@ impl NativeLifecycle {
         self.progress
             .poll_recovery(pipeline, &self.policy, self.codec)?;
         self.bodies.poll(pipeline, &mut self.progress)?;
-        self.progress.poll(pipeline, now)?;
+        self.progress.poll_acknowledgements(pipeline)?;
         if self.height != self.progress.context().height {
             self.height = self.progress.context().height;
             self.requested.clear();
@@ -370,6 +396,10 @@ impl NativeLifecycle {
                 }
             }
         }
+        // ACK/context first, then the bounded native ingress above, then ready
+        // evidence and deadlines. A control message already in custody must
+        // not lose to the timeout of the same poll and force an avoidable round.
+        self.progress.poll_after_receive(now)?;
         if let Some(message) = self.progress.pending_message() {
             if self.outbox.is_none() {
                 self.outbox = Some(self.channel.prepare(message)?);

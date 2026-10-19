@@ -393,17 +393,48 @@ impl RoundProgress {
     /// latches until explicit reopening/recovery; it cannot be retried as a new
     /// signer. Peer rejection is intentionally outside this failure boundary.
     pub fn poll(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
+        self.poll_acknowledgements(pipeline)?;
+        self.poll_after_receive(now)
+    }
+
+    /// Advance durable ACK/context and recovery before receiving control for
+    /// the new context. Native ingress must get its bounded turn before any
+    /// failure deadline; receiving after a staged nil vote is too late.
+    pub(crate) fn poll_acknowledgements(&mut self, pipeline: &CandidatePipeline) -> Result<()> {
         let _phase = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::Consensus,
         );
         ensure!(!self.is_frozen(), "progress frozen");
-        let result = self.poll_inner(pipeline, now);
+        let result = self.poll_inner(pipeline);
         if result.is_err() {
             self.frozen = true;
         }
         result
     }
-    fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
+
+    /// Process already qualified proposals/QCs before the unchanged local
+    /// timer. Outbox/recovery backpressure still prevents another transition.
+    pub(crate) fn poll_after_receive(&mut self, now: Instant) -> Result<()> {
+        let _phase = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::Consensus,
+        );
+        ensure!(!self.is_frozen(), "progress frozen");
+        if self.outbox.is_some() || self.recovering {
+            return Ok(());
+        }
+        let result = (|| {
+            self.drive_consensus()?;
+            self.pacemaker
+                .poll(&mut self.journal, &self.collector, now)?;
+            Ok(())
+        })();
+        if result.is_err() {
+            self.frozen = true;
+        }
+        result
+    }
+
+    fn poll_inner(&mut self, pipeline: &CandidatePipeline) -> Result<()> {
         ensure!(
             Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
             "progress owner changed"
@@ -487,9 +518,6 @@ impl RoundProgress {
                 return Ok(());
             }
         }
-        self.drive_consensus()?;
-        self.pacemaker
-            .poll(&mut self.journal, &self.collector, now)?;
         Ok(())
     }
     fn emit(&mut self, message: Message) -> Result<()> {

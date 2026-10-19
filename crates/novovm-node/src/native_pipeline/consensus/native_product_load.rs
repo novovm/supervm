@@ -33,6 +33,87 @@ const MAX_MESSAGE: usize = 512 * 1024;
 // Existing endpoint/object sender/reassembly contracts all cap a turn at 64.
 const IO_QUANTUM: usize = 64;
 
+/// Diagnostic only. The ABI opens databases read/write even for reads: callers
+/// must supply an offline COPY, never the measured store or a running signer.
+/// Reuses the product archive codec and signature verifier; creates no votes.
+#[test]
+#[ignore = "requires explicit offline database copy and its original config"]
+fn inspect_copied_first_height_decision() -> Result<()> {
+    use crate::native_pipeline::consensus::chain::ChainRecord;
+    use novovm_consensus::round_bft::{journal::codec::decode_archived_decision, VerifiedDecision};
+    let database = PathBuf::from(std::env::var("NOVOVM_AUDIT_DATABASE_COPY")?);
+    ensure!(
+        database
+            .file_name()
+            .is_some_and(|n| n == "audit-copy.rocksdb"),
+        "audit requires an explicitly named offline copy"
+    );
+    let config: ResidentConfig =
+        serde_json::from_slice(&fs::read(std::env::var("NOVOVM_AUDIT_ORIGINAL_CONFIG")?)?)?;
+    let genesis = config.genesis;
+    let set = ValidatorSet::new(
+        genesis.chain_id,
+        genesis.validator_epoch,
+        1,
+        genesis
+            .validators
+            .iter()
+            .map(|v| Validator::new(v.public_key, v.weight))
+            .collect::<Result<Vec<_>>>()?,
+    )?;
+    let store = CandidateStore::open(
+        StoreConfig {
+            library: library()?,
+            database,
+            domain: StorageDomain {
+                chain_id: genesis.chain_id,
+                genesis_config_commitment: genesis.genesis_config_commitment,
+                protocol_commitment: genesis.protocol_commitment,
+            },
+            storage: StorageConfig::default(),
+            packet_budget: PacketBudget::default(),
+        },
+        OpenMode::Existing,
+    )?;
+    let read = |key| -> Result<Vec<u8>> {
+        store
+            .read_metadata(&[key])?
+            .values
+            .pop()
+            .flatten()
+            .context("archive metadata missing")
+    };
+    let record = ChainRecord::decode(&read(MetaKey::ChainBlock { height: 1 })?)?;
+    let outbox = record.outbox_key();
+    let MetaKey::ConsensusOutbox { sequence, .. } = outbox else {
+        bail!("wrong outbox key")
+    };
+    let (proposal, certificate) = decode_archived_decision(&read(outbox)?, sequence)?;
+    let point = record.point();
+    VerifiedDecision::verify(
+        &proposal,
+        &certificate,
+        &set,
+        record.context(),
+        point.block_hash,
+    )?;
+    let stored = store
+        .recover(record.candidate_id())?
+        .context("candidate absent")?;
+    let statement = BlockStatement::from_stored(&stored, record.context(), &set, &record.parent())?;
+    ensure!(
+        statement.hash() == point.block_hash && stored.state_root() == point.state_root,
+        "archive does not bind executed result"
+    );
+    println!(
+        "{}",
+        json!({"height":1,"round":proposal.round,
+        "qc_signatures":certificate.votes.len(),"transactions":stored.raw_transactions().len(),
+        "verified_decision":true,"scope":"offline copy; no timing attribution"})
+    );
+    Ok(())
+}
+
 fn body_budget(batch: usize) -> usize {
     // Same original service::body_byte_limit, not a wider client-only budget.
     (batch * 1024).min(384 * 1024)
@@ -645,6 +726,9 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
             .collect::<Result<Vec<_>>>()?;
         let initial = ready(&mut nodes, &mut clients)?;
         ensure!(initial.iter().all(|s| s.height == 0), "not a fresh genesis");
+        // Existing readiness replies only: no extra observation traffic and no
+        // timer reset. These precede APFL preparation, not the first submission.
+        evidence["startup_status_before_apfl_preparation"] = json!(initial);
         for endpoint in &nodes.endpoints {
             let address: SocketAddr = endpoint.trim_start_matches("http://").parse()?;
             ensure!(
@@ -761,6 +845,11 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         })
         .collect();
     latency.sort_unstable();
+    evidence["first_height_all_receipts_observed_us"] = json!(observations
+        .iter()
+        .filter(|row| matches!(row.receipt, Some(ReceiptState::Finalized { height: 1, .. })))
+        .flat_map(|row| row.finalized_us.iter().flatten())
+        .max());
     evidence["phase"] = json!(phase);
     evidence["passed"] = json!(result.is_ok());
     evidence["error"] = json!(result.as_ref().err().map(|e| format!("{e:#}")));
