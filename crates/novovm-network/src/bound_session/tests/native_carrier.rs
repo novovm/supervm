@@ -5,6 +5,7 @@ use crate::novorudp::{
     carrier::{NativeRoute, VerifiedCarrierRoute},
     datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES},
 };
+use anyhow::Context;
 
 async fn native_roundtrip(open: bool) {
     let _permit = SERIAL.acquire().await.unwrap();
@@ -307,8 +308,10 @@ async fn exchange_objects(
                 ensure!(completion.state == ObjectSendState::Delivered);
                 sent += 1;
             }
+            let mut completed_object = false;
             for lane in [1, 2] {
                 if let Some(body) = link.poll_complete(lane, Instant::now(), 16)? {
+                    completed_object = true;
                     ensure!(received.insert(lane), "duplicate object presentation");
                     ensure!(body.chunks.concat() == vec![3 - value + wave; 3500 + lane as usize]);
                 }
@@ -316,14 +319,20 @@ async fn exchange_objects(
             if sent == 2 && received.len() == 2 && ready.is_none() {
                 ready = Some(Box::pin(done.wait()));
             }
+            // Completion queues integrity feedback after link.poll. Flush that
+            // work on the same owner; no periodic timer drives native frames.
+            if completed_object {
+                continue;
+            }
             tokio::select! {
                 biased;
                 _ = async { match &mut ready {
                     Some(wait) => { wait.await; },
                     None => std::future::pending::<()>().await,
                 }} => break,
-                result = pump.progress() => result?,
-                _ = tokio::time::sleep(Duration::from_millis(1)) => {},
+                result = tokio::time::timeout(Duration::from_secs(5), pump.progress()) => {
+                    result.context("native carrier stalled without a polling timer")??;
+                },
             }
         }
     }

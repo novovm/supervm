@@ -728,6 +728,13 @@ impl NativeEndpoint {
         self.io.deferred_writes()
     }
 
+    pub(crate) fn peer_uses_reliable_carrier(&self, peer: usize) -> bool {
+        self.peers
+            .get(peer)
+            .and_then(|peer| peer.session.as_ref())
+            .is_some_and(NativeUdpSession::is_bound_reliable_carrier)
+    }
+
     pub(crate) fn cancel_object_send(
         &mut self,
         peer: usize,

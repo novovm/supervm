@@ -61,6 +61,16 @@ impl NativeUdpSession {
             pending: None,
         })
     }
+    pub(crate) fn is_bound_reliable_carrier(&self) -> bool {
+        #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+        {
+            matches!(self.channel, NativeChannel::Bound(_))
+                && matches!(self.remote, NativeRoute::Carrier(_))
+        }
+        #[cfg(not(any(feature = "iroh-transport", feature = "tls-transport")))]
+        false
+    }
+
     pub fn remote_peer_id(&self) -> &str {
         match &self.channel {
             NativeChannel::Udp(channel) => channel.remote_peer_id(),

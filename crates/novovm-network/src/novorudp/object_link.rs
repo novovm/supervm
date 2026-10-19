@@ -6,7 +6,7 @@ use super::{
     fragments::{
         CompletedMessage, FragmentAdmission, FragmentProfile, OutgoingMessage, ReassemblyLimits,
     },
-    object_ack::encode_object_ack,
+    object_ack::{encode_object_ack, OBJECT_WINDOW},
     object_receiver::NativeObjectReceiver,
     object_sender::{NativeObjectSender, ObjectSendState},
     NovoRudpPacingProfile, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
@@ -571,7 +571,18 @@ impl NativeObjectLink {
                         } else {
                             report.duplicate_fragments += 1;
                         }
-                        lane.feedback(received.peer(), frame.payload[40..72].try_into()?);
+                        // Reliable bound carriers already deliver initial data in order.
+                        // Report window progress without adding a second per-fragment
+                        // ACK stream. Completion still ACKs only after poll_complete's
+                        // whole-object verification; probes/repairs remain immediate.
+                        // Deferred writes alone are not evidence of a reliable carrier.
+                        if !self.endpoint.peer_uses_reliable_carrier(received.peer())
+                            || admission != FragmentAdmission::Accepted
+                            || frame.kind != NovoRudpTransportFrameKindV0::Data
+                            || frame.sequence % OBJECT_WINDOW == OBJECT_WINDOW - 1
+                        {
+                            lane.feedback(received.peer(), frame.payload[40..72].try_into()?);
+                        }
                     }
                     Err(_) => report.rejected += 1,
                 }

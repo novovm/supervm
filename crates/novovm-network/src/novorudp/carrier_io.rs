@@ -26,6 +26,7 @@ enum WriteState {
 }
 struct State {
     write: WriteState,
+    capacity_released: bool,
     incoming: Option<Vec<u8>>,
     failed: bool,
     wake: Option<Waker>,
@@ -78,6 +79,7 @@ impl NativeDatagramIo for CarrierIo {
         match &state.write {
             WriteState::Idle => {
                 state.write = WriteState::Queued(bytes.into());
+                state.capacity_released = false;
                 Self::wake(&mut state);
                 Err(io::ErrorKind::WouldBlock.into())
             }
@@ -86,6 +88,8 @@ impl NativeDatagramIo for CarrierIo {
             }
             WriteState::Complete(old) if old.as_ref() == bytes => {
                 state.write = WriteState::Idle;
+                state.capacity_released = true;
+                Self::wake(&mut state);
                 Ok(bytes.len())
             }
             _ => Err(io::ErrorKind::InvalidInput.into()),
@@ -110,6 +114,7 @@ impl NativeDatagramIo for CarrierIo {
             _ => return Err(io::ErrorKind::InvalidInput.into()),
         };
         state.write = WriteState::Idle;
+        state.capacity_released = true;
         Self::wake(&mut state);
         Ok(completed)
     }
@@ -175,6 +180,7 @@ impl<'a> NativeCarrierPump<'a> {
             route: NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(&binding)),
             state: Mutex::new(State {
                 write: WriteState::Idle,
+                capacity_released: false,
                 incoming: None,
                 failed: false,
                 wake: None,
@@ -219,6 +225,11 @@ impl<'a> NativeCarrierPump<'a> {
                 .into()));
             }
             state.wake = Some(cx.waker().clone());
+            // Completing a deferred write and consuming that completion are
+            // separate owner turns. After consumption, expose the freed slot
+            // once so the same owner can fill it without an unrelated incoming
+            // ACK or a fallback timer. Idle alone never counts as progress.
+            progressed |= std::mem::take(&mut state.capacity_released);
             if let WriteState::Queued(bytes) = &state.write {
                 let Some(writer) = self.writer.take() else {
                     drop(state);
@@ -312,6 +323,7 @@ mod tests {
             route: NativeRoute::Udp("127.0.0.1:12345".parse().unwrap()),
             state: Mutex::new(State {
                 write: WriteState::Idle,
+                capacity_released: false,
                 incoming: None,
                 failed: false,
                 wake: None,
@@ -340,6 +352,27 @@ mod tests {
         io.state().write = WriteState::Complete(bytes.as_slice().into());
         assert_eq!(io.try_send(&bytes, io.route).unwrap(), bytes.len());
         assert!(matches!(io.state().write, WriteState::Idle));
+    }
+
+    #[test]
+    fn released_capacity_wakes_owner_once_without_idle_spin() {
+        let io = Arc::new(fixture());
+        let mut pump = NativeCarrierPump {
+            io: io.clone(),
+            reading: None,
+            writer: None,
+            writing: None,
+        };
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(pump.poll_progress(&mut cx).is_pending());
+        io.state().write = WriteState::Complete([1, 2, 3].as_slice().into());
+        assert_eq!(io.try_send(&[1, 2, 3], io.route).unwrap(), 3);
+        assert!(matches!(pump.poll_progress(&mut cx), Poll::Ready(Ok(()))));
+        assert!(pump.poll_progress(&mut cx).is_pending());
+        // Even an unconsumed capacity edge cannot revive a failed carrier.
+        io.state().capacity_released = true;
+        io.state().failed = true;
+        assert!(matches!(pump.poll_progress(&mut cx), Poll::Ready(Err(_))));
     }
 
     #[test]

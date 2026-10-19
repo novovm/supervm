@@ -921,6 +921,10 @@ fn transcript_hash(
 
 #[cfg(test)]
 mod tests {
+    mod carrier_feedback_tests {
+        include!("transport_binding/carrier_feedback_tests.rs");
+    }
+
     use super::*;
 
     const NOW: u64 = 100_000;

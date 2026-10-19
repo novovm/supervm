@@ -3,6 +3,54 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-19 reliable native object feedback and capacity wake (local validation)
+
+Starting source: `4e17d3b6`. Reuse `NativeObjectLink -> NativeUdpSession ->
+NativeCarrierPump`; no new wire version, transport, owner, storage or authentication.
+On a Finished/exporter-bound reliable carrier only, accepted initial Data now
+queues progress feedback at existing 64-fragment window boundaries. UDP remains
+unchanged. Duplicate/Repair feedback stays immediate; DONE still requires whole
+object hash verification and handoff. Transport DONE is not durable StoreReceipt
+or receiving-device Delivered.
+
+The scoped pump reports a consumed completed write's newly free capacity once,
+allowing its original owner to refill without an incoming packet or periodic timer.
+Idle itself never reports progress; failure, bounded retained writes, cancellation,
+session binding, TTL and original frame limits are unchanged.
+
+Same release Windows localhost Iroh carrier, authenticated native object, 1,600,067
+bytes / 2,084 native fragments, three rounds, integrity ACK and receiver hash reply:
+
+| Variant | Integrity ACK ms | Receiver progress/DONE feedback frames |
+| --- | --- | --- |
+| Original | 176.518 / 180.081 / 197.442 | 2084 / 2085 / 2086 |
+| Coalescing alone, rejected candidate | 22069.350 / 22858.310 / 21584.456 | 34 / 34 / 33 |
+| Coalescing + capacity edge | 47.176 / 49.628 / 46.480 | 49 / 46 / 46 |
+
+The rejected candidate exposed the minimal benchmark owner's completion-to-next-write
+wait: dense reverse feedback had masked reliance on its fallback timer. The production
+App and node already contain explicit progress yields/continues; this is NOT evidence
+of a production 22-second defect. Deferred feedback may emit a retained snapshot plus
+a newer snapshot, so counts need not equal precisely ceil(fragments/64).
+These samples measure object transport on one host, not Android, Relay, custody,
+screen display, energy usage or P95. Current installed phones remain v77.
+
+Raw local evidence: NOVOCHAT `artifacts/object-profile-baseline.log`,
+`object-profile-candidate.log` (failed comparison), `object-profile-capacity.log`;
+existing `artifacts/carrier-baseline/src/bin/object.rs` records bounded counters only.
+Validation: 119 native/UDP/resource tests, 3 feedback/integrity tests, 5 actual QUIC
+tests (including two-way/two-wave transfer without a periodic poll timer and a
+31-second idle continuous session), and 1 bulk durable Put/Fetch/small-followup
+integration test passed. No-default-feature library check passed. Strict Clippy
+finds the unchanged `mailbox_store::put_bounded` 8-argument baseline warning;
+this unrelated signature was not rewritten for a transport change. The initial
+feedback-count test omitted a legitimate duplicate Repair after the initial send;
+it now counts observed duplicates and separately bounds them, rather than changing
+production repair semantics to meet a test count. Original failed run is retained.
+Android application-local
+import overhead remains separately under review; small-message Watch transactions
+and capacity expansion have not been mixed into this change.
+
 ## 2026-10-19 reuse audit and Android v77 bounded local reads
 
 No SDK production code or deployed L3 changed in this round. Both repositories
