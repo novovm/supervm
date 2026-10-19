@@ -3,6 +3,31 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-19 v75/v76 Android object delivery verified; speed remains open
+
+SDK `07bed362` deployed to the existing Windows L3 using the managed installer;
+protected node identity/key/policy hashes were unchanged. Both original Android
+installs now run corrected v76, package SHA256
+`9957e7c506a06cdc05c57468998a971a6d7d84c8d24d04225df0bf731568d795`.
+Five protected identity files per phone are unchanged. No ADB business forwarding.
+
+The same 1,600,067-byte/49-block PNG now uses one bounded native object per node.
+v75 selection-to-device-receipt was 10.569s. v76 also batches local staging in one
+protected owner transaction: A-to-B inbox 3.761s / receipt 4.502s; reverse inbox
+4.177s / receipt 4.395s. Both complete image previews decoded. Subsequent ordinary
+bidirectional text receipts were 1.618s/1.023s. These are individual mixed host/device
+clock measurements, both Wi-Fi with external Iroh dependency; not P95, cellular,
+raw throughput or the one-second performance goal. v74 comparable receipt35.889s.
+
+Initial v76 failed before outbox publication because the Android result validator
+omitted the new local opcode35; corrected and rebuilt before these successes.
+L3 and L4 return/local delivery traces prove actual object custody and receipts;
+A's separately dialled L4 path still reports unavailable E211 while the reverse
+bidirectional session works. Do not call all-path stability passed. Local source
+preparation, preview block reads and native-carrier throughput remain optimization
+work. Tests and details are in NOVOCHAT MEDIA_REUSE.md; no new network owner/server.
+
+
 ## 2026-10-19 Native mailbox object transfer: host verification only
 
 The existing NativeObjectLink/NVMBOX07 session now carries explicitly versioned
