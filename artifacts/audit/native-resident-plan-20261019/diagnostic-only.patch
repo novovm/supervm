@@ -1,0 +1,112 @@
+warning: in the working copy of 'crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs', LF will be replaced by CRLF the next time Git touches it
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs
+index de10647d..59ba1125 100644
+--- a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs
+@@ -493,6 +493,8 @@ impl ResidentIntegerDispatch {
+         exports: usize,
+         read_words: usize,
+     ) -> Result<Vec<u32>, VulkanError> {
++        let diagnostic = std::env::var_os("AOEM_COMPOSITION_DIAGNOSTIC").is_some();
++        let started = std::time::Instant::now();
+         if inputs.is_empty()
+             || inputs.len() > self.input_count * 2
+             || levels.is_empty()
+@@ -550,8 +552,17 @@ impl ResidentIntegerDispatch {
+             size: (read_words * 4) as u64,
+         });
+         // A failed submit/wait cannot expose old mapped memory as a new result.
+-        self.runtime.dispatch_compute_ops(&ops)?;
+-        self.runtime.read_u32_slice(readback, read_words)
++        let prepared = started.elapsed();
++        if diagnostic {
++            let profile = self.runtime.dispatch_compute_ops_profiled(&ops)?;
++            let completed = started.elapsed();
++            let result = self.runtime.read_u32_slice(readback, read_words)?;
++            eprintln!("AOEM_COMPOSITION_DEVICE prepare_us={} read_us={} profile={:?}", prepared.as_micros(), (started.elapsed()-completed).as_micros(), profile);
++            Ok(result)
++        } else {
++            self.runtime.dispatch_compute_ops(&ops)?;
++            self.runtime.read_u32_slice(readback, read_words)
++        }
+     }
+ 
+     pub(super) fn execute_profiled(
+diff --git a/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs b/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs
+index 2a2de931..8c6dda23 100644
+--- a/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs
++++ b/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs
+@@ -137,6 +137,8 @@ impl Plan {
+         programs: &[Arc<Mutex<Program>>],
+         owner: &IntegerResources,
+     ) -> Result<Vec<Value>, Failure> {
++        let diagnostic = std::env::var_os("AOEM_COMPOSITION_DIAGNOSTIC").is_some();
++        let started = std::time::Instant::now();
+         use aoem_gpu_kernels::integer_outcome::{
+             create_integer_composition, ApflIntegerCompositionNode, ApflIntegerCompositionPlan,
+             ApflIntegerValueBinding,
+@@ -174,6 +176,7 @@ impl Plan {
+             .cache
+             .lock()
+             .map_err(|_| unavailable("composition cache poisoned"))?;
++        let lowered = started.elapsed();
+         if cache
+             .composition
+             .as_ref()
+@@ -208,13 +211,18 @@ impl Plan {
+                 _permit: permit,
+             });
+         }
+-        cache
++        let prepared = started.elapsed();
++        let result = cache
+             .composition
+             .as_mut()
+             .unwrap()
+             .operator
+             .run(&plan)
+-            .map_err(|e| unavailable(e.to_string()))
++            .map_err(|e| unavailable(e.to_string()));
++        if diagnostic {
++            eprintln!("AOEM_COMPOSITION_PARTS lower_us={} prepare_us={} run_us={}", lowered.as_micros(), (prepared-lowered).as_micros(), (started.elapsed()-prepared).as_micros());
++        }
++        result
+     }
+ }
+ 
+@@ -228,6 +236,8 @@ impl IntegerResources {
+         count: usize,
+         bytes: &[u8],
+     ) -> Result<Vec<u8>, Failure> {
++        let diagnostic = std::env::var_os("AOEM_COMPOSITION_DIAGNOSTIC").is_some();
++        let started = std::time::Instant::now();
+         let mut reader = Reader(bytes);
+         let n = reader.word()? as usize;
+         let exports = reader.word()? as usize;
+@@ -259,6 +269,7 @@ impl IntegerResources {
+             programs.push(program);
+         }
+         let plan = Plan::parse(&mut reader, count, exports, &shapes)?;
++        let parsed = started.elapsed();
+         for p in &programs {
+             p.lock()
+                 .map_err(|_| unavailable("composition program poisoned"))?
+@@ -267,6 +278,7 @@ impl IntegerResources {
+         // Any partial execution/invalid guard/domain rejection leaves all
+         // participating resources latched. No result from an earlier request.
+         let values = plan.execute(&programs, self)?;
++        let executed = started.elapsed();
+         let mut wire = Vec::with_capacity(32 + values.len() * 128);
+         wire.extend_from_slice(b"AOIR0002");
+         wire.extend(anchor.to_le_bytes());
+@@ -283,6 +295,9 @@ impl IntegerResources {
+                 .map_err(|_| unavailable("composition program poisoned"))?
+                 .poisoned = false;
+         }
++        if diagnostic {
++            eprintln!("AOEM_COMPOSITION_TOTAL parse_us={} execute_us={} encode_us={}", parsed.as_micros(), (executed-parsed).as_micros(), (started.elapsed()-executed).as_micros());
++        }
+         Ok(wire)
+     }
+ }

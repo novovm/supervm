@@ -1,0 +1,1641 @@
+{
+  "status": "not_promoted",
+  "diagnostic_libraries": {
+    "parts_sha256": "a2d5a2f7e426db4344e78dc88cb0c60dd36bd05d578c0ca6820cd1bb346b73f9",
+    "device_sha256": "4fb81ac900ec2656cd3b61e33cb536443fbc8ede86f528c784ea4eae4c79942e"
+  },
+  "candidate_sha256": "621319cd7bc408eb08a77d5dfd8679513eb228fce1531027bb7e8a0f456a9e68",
+  "formal": [
+    {
+      "run": "baseline-integer-1",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\9728-1792404619097668100",
+      "tps": 3595.627134519557,
+      "seconds": 18.226584,
+      "p95": 2311049,
+      "p99": 2404113,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 71225,
+        "observation_rows_received": 9116800,
+        "observation_not_final": 8854656,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "30B30235D1FEE9D632773979819B942C04C25D4151D084BFD76EBD651C50ADD7"
+    },
+    {
+      "run": "candidate-integer-1",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\15932-1792404647503011300",
+      "tps": 4128.914675564935,
+      "seconds": 15.872452,
+      "p95": 2036468,
+      "p99": 2480829,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 67007,
+        "observation_rows_received": 8576896,
+        "observation_not_final": 8314752,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "27D29BFE909EC1380A220D0E9D64CED2CC00CEC46A1C3886CDBD352D95398550"
+    },
+    {
+      "run": "candidate-cpu-1",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\680-1792404673917608700",
+      "tps": 7659.526027089542,
+      "seconds": 8.556143,
+      "p95": 1112066,
+      "p99": 1238018,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 35965,
+        "observation_rows_received": 4603520,
+        "observation_not_final": 4341376,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "E5801C2B4301D1410E09CAA35D9EF315E0CD904B24CB1F256602FECCFA8F0E44"
+    },
+    {
+      "run": "baseline-cpu-1",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\14312-1792404691223766200",
+      "tps": 7642.702715120985,
+      "seconds": 8.574977,
+      "p95": 1129505,
+      "p99": 1330327,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 34666,
+        "observation_rows_received": 4437248,
+        "observation_not_final": 4175104,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "63009879C82D1705F813C4F18CF844670FB7886B61BFADC60F6DDFDE3E248A41"
+    },
+    {
+      "run": "candidate-integer-2",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\6304-1792404708632181800",
+      "tps": 3974.492317675563,
+      "seconds": 16.48915,
+      "p95": 2092344,
+      "p99": 2499900,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 72968,
+        "observation_rows_received": 9339904,
+        "observation_not_final": 9077760,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "41BBAC4E994D4A52235C7E91A30BCA9D70BF1B0DDC71D7EC811DD82091376240"
+    },
+    {
+      "run": "baseline-integer-2",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\11516-1792404735726657800",
+      "tps": 3583.6492503296245,
+      "seconds": 18.287504,
+      "p95": 2321015,
+      "p99": 2397207,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 72025,
+        "observation_rows_received": 9219200,
+        "observation_not_final": 8957056,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "E8E1359578D7AFE8A72A245A4F05E3D2E3254353A706CB558806D0E0B753F924"
+    },
+    {
+      "run": "baseline-cpu-2",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\17672-1792404764265626300",
+      "tps": 7672.362402989149,
+      "seconds": 8.541828,
+      "p95": 1172720,
+      "p99": 1327881,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 35587,
+        "observation_rows_received": 4555136,
+        "observation_not_final": 4292992,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "14B04F80E117F33A2EDB775F162E550F4B478DE5ECE9317018F7D0FC73024F6B"
+    },
+    {
+      "run": "candidate-cpu-2",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\13716-1792404781726972900",
+      "tps": 7642.972782405489,
+      "seconds": 8.574674,
+      "p95": 1080890,
+      "p99": 1286692,
+      "counts": {
+        "application_batches_sent": 64,
+        "application_batches_transport_delivered": 64,
+        "transport_failures": 0,
+        "observation_requests": 36346,
+        "observation_rows_received": 4652288,
+        "observation_not_final": 4390144,
+        "observation_service_busy": 0,
+        "successful_transactions": 65536,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 8192
+      },
+      "passed": true,
+      "cold": true,
+      "fees": "2949120",
+      "conservation": true,
+      "sha": "9685C54ECA7B18496F46E65932212A9719B5C550249151FAE29E1500ED2B62C1"
+    }
+  ],
+  "diagnostic_stages": [
+    {
+      "directory": "23744-1792404860053589100",
+      "node": 0,
+      "phases": {
+        "admission": {
+          "calls": 62,
+          "wall_ns": 283980400,
+          "max_wall_ns": 6739800
+        },
+        "authentication": {
+          "calls": 54,
+          "wall_ns": 254728900,
+          "max_wall_ns": 10365300
+        },
+        "bind": {
+          "calls": 14,
+          "wall_ns": 15053700,
+          "max_wall_ns": 1162000
+        },
+        "capture": {
+          "calls": 22353,
+          "wall_ns": 565197400,
+          "max_wall_ns": 929800
+        },
+        "finalize_capture": {
+          "calls": 54,
+          "wall_ns": 231784800,
+          "max_wall_ns": 5159800
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 54,
+          "wall_ns": 4400649800,
+          "max_wall_ns": 92081000
+        },
+        "integer_wire": {
+          "calls": 54,
+          "wall_ns": 2904572800,
+          "max_wall_ns": 64006300
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 54,
+          "wall_ns": 337159400,
+          "max_wall_ns": 6810100
+        },
+        "packet": {
+          "calls": 54,
+          "wall_ns": 489573700,
+          "max_wall_ns": 11738400
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 2915000,
+          "max_wall_ns": 187000
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 48900,
+          "max_wall_ns": 35000
+        },
+        "io_metadata_write": {
+          "calls": 230,
+          "wall_ns": 358451500,
+          "max_wall_ns": 7719900
+        },
+        "io_persist": {
+          "calls": 7182,
+          "wall_ns": 910628600,
+          "max_wall_ns": 28141300
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1175019,
+          "wall_ns": 7676315700,
+          "max_wall_ns": 22540900
+        },
+        "consensus": {
+          "calls": 1175019,
+          "wall_ns": 198845600,
+          "max_wall_ns": 4572200
+        },
+        "projection": {
+          "calls": 1175019,
+          "wall_ns": 146129000,
+          "max_wall_ns": 5113000
+        },
+        "gossip": {
+          "calls": 1175019,
+          "wall_ns": 134673400,
+          "max_wall_ns": 17011600
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 62,
+          "wall_ns": 1109200,
+          "max_wall_ns": 38100
+        },
+        "queue_candidate": {
+          "calls": 122,
+          "wall_ns": 8061300,
+          "max_wall_ns": 4154100
+        },
+        "integer_compile": {
+          "calls": 54,
+          "wall_ns": 945776800,
+          "max_wall_ns": 19198200
+        },
+        "integer_projection": {
+          "calls": 54,
+          "wall_ns": 90101800,
+          "max_wall_ns": 2076600
+        },
+        "candidate_registration": {
+          "calls": 237562,
+          "wall_ns": 82613100,
+          "max_wall_ns": 89300
+        },
+        "native_io": {
+          "calls": 1175019,
+          "wall_ns": 4863976400,
+          "max_wall_ns": 14096100
+        },
+        "native_assembly": {
+          "calls": 1175019,
+          "wall_ns": 956427700,
+          "max_wall_ns": 9938200
+        },
+        "native_query": {
+          "calls": 1175019,
+          "wall_ns": 958390800,
+          "max_wall_ns": 9854300
+        },
+        "native_selection": {
+          "calls": 1160423,
+          "wall_ns": 102530800,
+          "max_wall_ns": 5715200
+        }
+      }
+    },
+    {
+      "directory": "23744-1792404860053589100",
+      "node": 1,
+      "phases": {
+        "admission": {
+          "calls": 62,
+          "wall_ns": 401424800,
+          "max_wall_ns": 15616400
+        },
+        "authentication": {
+          "calls": 54,
+          "wall_ns": 273912700,
+          "max_wall_ns": 9719900
+        },
+        "bind": {
+          "calls": 13,
+          "wall_ns": 14603900,
+          "max_wall_ns": 1450700
+        },
+        "capture": {
+          "calls": 22353,
+          "wall_ns": 564530000,
+          "max_wall_ns": 275900
+        },
+        "finalize_capture": {
+          "calls": 54,
+          "wall_ns": 228956700,
+          "max_wall_ns": 4886800
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 54,
+          "wall_ns": 4471565200,
+          "max_wall_ns": 97685300
+        },
+        "integer_wire": {
+          "calls": 54,
+          "wall_ns": 2970322600,
+          "max_wall_ns": 70425800
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 54,
+          "wall_ns": 340082600,
+          "max_wall_ns": 7003000
+        },
+        "packet": {
+          "calls": 54,
+          "wall_ns": 494563200,
+          "max_wall_ns": 11185400
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 3106600,
+          "max_wall_ns": 165500
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 115200,
+          "max_wall_ns": 60200
+        },
+        "io_metadata_write": {
+          "calls": 224,
+          "wall_ns": 345519900,
+          "max_wall_ns": 7469000
+        },
+        "io_persist": {
+          "calls": 7182,
+          "wall_ns": 902254600,
+          "max_wall_ns": 12481800
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1183477,
+          "wall_ns": 7427871400,
+          "max_wall_ns": 15274300
+        },
+        "consensus": {
+          "calls": 1183477,
+          "wall_ns": 218747100,
+          "max_wall_ns": 9046600
+        },
+        "projection": {
+          "calls": 1183477,
+          "wall_ns": 147135200,
+          "max_wall_ns": 5270800
+        },
+        "gossip": {
+          "calls": 1183477,
+          "wall_ns": 28813500,
+          "max_wall_ns": 130900
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 62,
+          "wall_ns": 6973600,
+          "max_wall_ns": 4849200
+        },
+        "queue_candidate": {
+          "calls": 121,
+          "wall_ns": 3389500,
+          "max_wall_ns": 1404000
+        },
+        "integer_compile": {
+          "calls": 54,
+          "wall_ns": 943073800,
+          "max_wall_ns": 19827800
+        },
+        "integer_projection": {
+          "calls": 54,
+          "wall_ns": 90446300,
+          "max_wall_ns": 1915800
+        },
+        "candidate_registration": {
+          "calls": 228069,
+          "wall_ns": 84815800,
+          "max_wall_ns": 4481500
+        },
+        "native_io": {
+          "calls": 1183477,
+          "wall_ns": 4558389200,
+          "max_wall_ns": 10074100
+        },
+        "native_assembly": {
+          "calls": 1183477,
+          "wall_ns": 990153200,
+          "max_wall_ns": 9049300
+        },
+        "native_query": {
+          "calls": 1183477,
+          "wall_ns": 966469900,
+          "max_wall_ns": 14069700
+        },
+        "native_selection": {
+          "calls": 1173021,
+          "wall_ns": 106487000,
+          "max_wall_ns": 9643800
+        }
+      }
+    },
+    {
+      "directory": "23744-1792404860053589100",
+      "node": 2,
+      "phases": {
+        "admission": {
+          "calls": 62,
+          "wall_ns": 424642200,
+          "max_wall_ns": 15491900
+        },
+        "authentication": {
+          "calls": 54,
+          "wall_ns": 275323700,
+          "max_wall_ns": 10371100
+        },
+        "bind": {
+          "calls": 13,
+          "wall_ns": 14189400,
+          "max_wall_ns": 1144100
+        },
+        "capture": {
+          "calls": 22353,
+          "wall_ns": 564230900,
+          "max_wall_ns": 267900
+        },
+        "finalize_capture": {
+          "calls": 54,
+          "wall_ns": 226929500,
+          "max_wall_ns": 5729100
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 54,
+          "wall_ns": 4460636900,
+          "max_wall_ns": 98951900
+        },
+        "integer_wire": {
+          "calls": 54,
+          "wall_ns": 2963556600,
+          "max_wall_ns": 71214800
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 54,
+          "wall_ns": 338441700,
+          "max_wall_ns": 7203900
+        },
+        "packet": {
+          "calls": 54,
+          "wall_ns": 496890300,
+          "max_wall_ns": 11057500
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 3222400,
+          "max_wall_ns": 153200
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 84100,
+          "max_wall_ns": 56800
+        },
+        "io_metadata_write": {
+          "calls": 228,
+          "wall_ns": 358032500,
+          "max_wall_ns": 7163300
+        },
+        "io_persist": {
+          "calls": 7182,
+          "wall_ns": 916836000,
+          "max_wall_ns": 28201100
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1195374,
+          "wall_ns": 7391306000,
+          "max_wall_ns": 15565100
+        },
+        "consensus": {
+          "calls": 1195374,
+          "wall_ns": 211719600,
+          "max_wall_ns": 10060800
+        },
+        "projection": {
+          "calls": 1195374,
+          "wall_ns": 142048700,
+          "max_wall_ns": 3493100
+        },
+        "gossip": {
+          "calls": 1195374,
+          "wall_ns": 28740500,
+          "max_wall_ns": 45200
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 62,
+          "wall_ns": 1326100,
+          "max_wall_ns": 473100
+        },
+        "queue_candidate": {
+          "calls": 121,
+          "wall_ns": 6614200,
+          "max_wall_ns": 2664900
+        },
+        "integer_compile": {
+          "calls": 54,
+          "wall_ns": 942959700,
+          "max_wall_ns": 25151300
+        },
+        "integer_projection": {
+          "calls": 54,
+          "wall_ns": 90716000,
+          "max_wall_ns": 2233600
+        },
+        "candidate_registration": {
+          "calls": 219779,
+          "wall_ns": 76251900,
+          "max_wall_ns": 48300
+        },
+        "native_io": {
+          "calls": 1195374,
+          "wall_ns": 4595443400,
+          "max_wall_ns": 10017700
+        },
+        "native_assembly": {
+          "calls": 1195374,
+          "wall_ns": 1031790300,
+          "max_wall_ns": 10063900
+        },
+        "native_query": {
+          "calls": 1195374,
+          "wall_ns": 907719200,
+          "max_wall_ns": 15481500
+        },
+        "native_selection": {
+          "calls": 1185772,
+          "wall_ns": 92741500,
+          "max_wall_ns": 2417400
+        }
+      }
+    },
+    {
+      "directory": "23744-1792404860053589100",
+      "node": 3,
+      "phases": {
+        "admission": {
+          "calls": 62,
+          "wall_ns": 381902600,
+          "max_wall_ns": 15548400
+        },
+        "authentication": {
+          "calls": 55,
+          "wall_ns": 257690800,
+          "max_wall_ns": 8609400
+        },
+        "bind": {
+          "calls": 14,
+          "wall_ns": 15333100,
+          "max_wall_ns": 1156800
+        },
+        "capture": {
+          "calls": 22761,
+          "wall_ns": 572074100,
+          "max_wall_ns": 367600
+        },
+        "finalize_capture": {
+          "calls": 55,
+          "wall_ns": 232271800,
+          "max_wall_ns": 4850100
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 54,
+          "wall_ns": 4438288300,
+          "max_wall_ns": 99741800
+        },
+        "integer_wire": {
+          "calls": 54,
+          "wall_ns": 2966752800,
+          "max_wall_ns": 72114500
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 54,
+          "wall_ns": 335836300,
+          "max_wall_ns": 6955000
+        },
+        "packet": {
+          "calls": 54,
+          "wall_ns": 487765000,
+          "max_wall_ns": 10255700
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 3031600,
+          "max_wall_ns": 128000
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 45500,
+          "max_wall_ns": 28900
+        },
+        "io_metadata_write": {
+          "calls": 223,
+          "wall_ns": 387901000,
+          "max_wall_ns": 21213300
+        },
+        "io_persist": {
+          "calls": 7182,
+          "wall_ns": 883662000,
+          "max_wall_ns": 11016900
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1189956,
+          "wall_ns": 7359725200,
+          "max_wall_ns": 15432100
+        },
+        "consensus": {
+          "calls": 1189956,
+          "wall_ns": 201219200,
+          "max_wall_ns": 4507300
+        },
+        "projection": {
+          "calls": 1189956,
+          "wall_ns": 155338900,
+          "max_wall_ns": 9128100
+        },
+        "gossip": {
+          "calls": 1189956,
+          "wall_ns": 33323600,
+          "max_wall_ns": 4591400
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 62,
+          "wall_ns": 17538800,
+          "max_wall_ns": 8794500
+        },
+        "queue_candidate": {
+          "calls": 124,
+          "wall_ns": 3047800,
+          "max_wall_ns": 449100
+        },
+        "integer_compile": {
+          "calls": 55,
+          "wall_ns": 937899200,
+          "max_wall_ns": 19694000
+        },
+        "integer_projection": {
+          "calls": 54,
+          "wall_ns": 90193400,
+          "max_wall_ns": 2008300
+        },
+        "candidate_registration": {
+          "calls": 215045,
+          "wall_ns": 79784500,
+          "max_wall_ns": 4546100
+        },
+        "native_io": {
+          "calls": 1189956,
+          "wall_ns": 4482716000,
+          "max_wall_ns": 15418900
+        },
+        "native_assembly": {
+          "calls": 1189956,
+          "wall_ns": 1003145200,
+          "max_wall_ns": 14164700
+        },
+        "native_query": {
+          "calls": 1189956,
+          "wall_ns": 966555700,
+          "max_wall_ns": 9555900
+        },
+        "native_selection": {
+          "calls": 1180785,
+          "wall_ns": 100598400,
+          "max_wall_ns": 4441000
+        }
+      }
+    },
+    {
+      "directory": "20328-1792404887572981600",
+      "node": 0,
+      "phases": {
+        "admission": {
+          "calls": 64,
+          "wall_ns": 253104800,
+          "max_wall_ns": 6262700
+        },
+        "authentication": {
+          "calls": 58,
+          "wall_ns": 261531600,
+          "max_wall_ns": 10065500
+        },
+        "bind": {
+          "calls": 15,
+          "wall_ns": 16111000,
+          "max_wall_ns": 1117900
+        },
+        "capture": {
+          "calls": 23985,
+          "wall_ns": 607097500,
+          "max_wall_ns": 533900
+        },
+        "finalize_capture": {
+          "calls": 58,
+          "wall_ns": 248166000,
+          "max_wall_ns": 5569800
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 58,
+          "wall_ns": 4484976000,
+          "max_wall_ns": 414793300
+        },
+        "integer_wire": {
+          "calls": 58,
+          "wall_ns": 2886330800,
+          "max_wall_ns": 389372500
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 58,
+          "wall_ns": 362498300,
+          "max_wall_ns": 7063400
+        },
+        "packet": {
+          "calls": 58,
+          "wall_ns": 521718600,
+          "max_wall_ns": 11309100
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 3047100,
+          "max_wall_ns": 128800
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 78100,
+          "max_wall_ns": 59000
+        },
+        "io_metadata_write": {
+          "calls": 244,
+          "wall_ns": 369757700,
+          "max_wall_ns": 4621200
+        },
+        "io_persist": {
+          "calls": 7714,
+          "wall_ns": 934840600,
+          "max_wall_ns": 10102700
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1147082,
+          "wall_ns": 7375121000,
+          "max_wall_ns": 15848900
+        },
+        "consensus": {
+          "calls": 1147082,
+          "wall_ns": 198110500,
+          "max_wall_ns": 2737300
+        },
+        "projection": {
+          "calls": 1147082,
+          "wall_ns": 155995200,
+          "max_wall_ns": 4948000
+        },
+        "gossip": {
+          "calls": 1147082,
+          "wall_ns": 112586100,
+          "max_wall_ns": 6315500
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 64,
+          "wall_ns": 1140700,
+          "max_wall_ns": 33600
+        },
+        "queue_candidate": {
+          "calls": 131,
+          "wall_ns": 3907600,
+          "max_wall_ns": 620300
+        },
+        "integer_compile": {
+          "calls": 58,
+          "wall_ns": 1013816900,
+          "max_wall_ns": 19742200
+        },
+        "integer_projection": {
+          "calls": 58,
+          "wall_ns": 93728200,
+          "max_wall_ns": 2055300
+        },
+        "candidate_registration": {
+          "calls": 241124,
+          "wall_ns": 86660500,
+          "max_wall_ns": 2845900
+        },
+        "native_io": {
+          "calls": 1147082,
+          "wall_ns": 4676863300,
+          "max_wall_ns": 15766300
+        },
+        "native_assembly": {
+          "calls": 1147082,
+          "wall_ns": 936505000,
+          "max_wall_ns": 3995500
+        },
+        "native_query": {
+          "calls": 1147082,
+          "wall_ns": 907958200,
+          "max_wall_ns": 6936800
+        },
+        "native_selection": {
+          "calls": 1133180,
+          "wall_ns": 98320400,
+          "max_wall_ns": 4760100
+        }
+      }
+    },
+    {
+      "directory": "20328-1792404887572981600",
+      "node": 1,
+      "phases": {
+        "admission": {
+          "calls": 64,
+          "wall_ns": 366381600,
+          "max_wall_ns": 16103100
+        },
+        "authentication": {
+          "calls": 59,
+          "wall_ns": 272182600,
+          "max_wall_ns": 9614200
+        },
+        "bind": {
+          "calls": 14,
+          "wall_ns": 15563800,
+          "max_wall_ns": 1348500
+        },
+        "capture": {
+          "calls": 24393,
+          "wall_ns": 616753400,
+          "max_wall_ns": 279200
+        },
+        "finalize_capture": {
+          "calls": 59,
+          "wall_ns": 253635500,
+          "max_wall_ns": 6175700
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 58,
+          "wall_ns": 4533368200,
+          "max_wall_ns": 136368400
+        },
+        "integer_wire": {
+          "calls": 58,
+          "wall_ns": 2916476300,
+          "max_wall_ns": 90192100
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 58,
+          "wall_ns": 380714900,
+          "max_wall_ns": 21096200
+        },
+        "packet": {
+          "calls": 58,
+          "wall_ns": 532090900,
+          "max_wall_ns": 11624100
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 2864500,
+          "max_wall_ns": 126000
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 70500,
+          "max_wall_ns": 54500
+        },
+        "io_metadata_write": {
+          "calls": 232,
+          "wall_ns": 362328700,
+          "max_wall_ns": 6412300
+        },
+        "io_persist": {
+          "calls": 7714,
+          "wall_ns": 952647900,
+          "max_wall_ns": 17743300
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1220680,
+          "wall_ns": 7398226900,
+          "max_wall_ns": 15209700
+        },
+        "consensus": {
+          "calls": 1220680,
+          "wall_ns": 200781500,
+          "max_wall_ns": 3184200
+        },
+        "projection": {
+          "calls": 1220680,
+          "wall_ns": 157660700,
+          "max_wall_ns": 4825800
+        },
+        "gossip": {
+          "calls": 1220680,
+          "wall_ns": 29590300,
+          "max_wall_ns": 169800
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 64,
+          "wall_ns": 10919500,
+          "max_wall_ns": 4581900
+        },
+        "queue_candidate": {
+          "calls": 132,
+          "wall_ns": 3144700,
+          "max_wall_ns": 178600
+        },
+        "integer_compile": {
+          "calls": 59,
+          "wall_ns": 1026161000,
+          "max_wall_ns": 19684300
+        },
+        "integer_projection": {
+          "calls": 58,
+          "wall_ns": 101347600,
+          "max_wall_ns": 6096500
+        },
+        "candidate_registration": {
+          "calls": 267989,
+          "wall_ns": 93906400,
+          "max_wall_ns": 796100
+        },
+        "native_io": {
+          "calls": 1220680,
+          "wall_ns": 4665085300,
+          "max_wall_ns": 15204900
+        },
+        "native_assembly": {
+          "calls": 1220680,
+          "wall_ns": 987657600,
+          "max_wall_ns": 9698000
+        },
+        "native_query": {
+          "calls": 1220680,
+          "wall_ns": 937862000,
+          "max_wall_ns": 5797900
+        },
+        "native_selection": {
+          "calls": 1208499,
+          "wall_ns": 95209800,
+          "max_wall_ns": 1795200
+        }
+      }
+    },
+    {
+      "directory": "20328-1792404887572981600",
+      "node": 2,
+      "phases": {
+        "admission": {
+          "calls": 64,
+          "wall_ns": 366480900,
+          "max_wall_ns": 15982400
+        },
+        "authentication": {
+          "calls": 59,
+          "wall_ns": 261391300,
+          "max_wall_ns": 10162300
+        },
+        "bind": {
+          "calls": 14,
+          "wall_ns": 15401400,
+          "max_wall_ns": 1309000
+        },
+        "capture": {
+          "calls": 24393,
+          "wall_ns": 616889200,
+          "max_wall_ns": 635500
+        },
+        "finalize_capture": {
+          "calls": 59,
+          "wall_ns": 252967500,
+          "max_wall_ns": 5085900
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 58,
+          "wall_ns": 4608193700,
+          "max_wall_ns": 271658500
+        },
+        "integer_wire": {
+          "calls": 58,
+          "wall_ns": 2991084000,
+          "max_wall_ns": 244839600
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 58,
+          "wall_ns": 364174800,
+          "max_wall_ns": 6719500
+        },
+        "packet": {
+          "calls": 58,
+          "wall_ns": 527272500,
+          "max_wall_ns": 11455800
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 3326900,
+          "max_wall_ns": 174500
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 43000,
+          "max_wall_ns": 26600
+        },
+        "io_metadata_write": {
+          "calls": 240,
+          "wall_ns": 385561700,
+          "max_wall_ns": 5907100
+        },
+        "io_persist": {
+          "calls": 7714,
+          "wall_ns": 958343900,
+          "max_wall_ns": 11015000
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1193864,
+          "wall_ns": 7289706600,
+          "max_wall_ns": 11989300
+        },
+        "consensus": {
+          "calls": 1193864,
+          "wall_ns": 206102700,
+          "max_wall_ns": 4934800
+        },
+        "projection": {
+          "calls": 1193864,
+          "wall_ns": 154319900,
+          "max_wall_ns": 4644900
+        },
+        "gossip": {
+          "calls": 1193864,
+          "wall_ns": 31624600,
+          "max_wall_ns": 2968400
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 64,
+          "wall_ns": 3442000,
+          "max_wall_ns": 2188300
+        },
+        "queue_candidate": {
+          "calls": 132,
+          "wall_ns": 2919700,
+          "max_wall_ns": 163500
+        },
+        "integer_compile": {
+          "calls": 59,
+          "wall_ns": 1040681700,
+          "max_wall_ns": 21147200
+        },
+        "integer_projection": {
+          "calls": 58,
+          "wall_ns": 96469100,
+          "max_wall_ns": 3471800
+        },
+        "candidate_registration": {
+          "calls": 223890,
+          "wall_ns": 77244700,
+          "max_wall_ns": 31100
+        },
+        "native_io": {
+          "calls": 1193864,
+          "wall_ns": 4527587600,
+          "max_wall_ns": 11869400
+        },
+        "native_assembly": {
+          "calls": 1193864,
+          "wall_ns": 1003721700,
+          "max_wall_ns": 9160300
+        },
+        "native_query": {
+          "calls": 1193864,
+          "wall_ns": 932626200,
+          "max_wall_ns": 5038900
+        },
+        "native_selection": {
+          "calls": 1180148,
+          "wall_ns": 98584200,
+          "max_wall_ns": 2550200
+        }
+      }
+    },
+    {
+      "directory": "20328-1792404887572981600",
+      "node": 3,
+      "phases": {
+        "admission": {
+          "calls": 64,
+          "wall_ns": 354156300,
+          "max_wall_ns": 15946400
+        },
+        "authentication": {
+          "calls": 59,
+          "wall_ns": 254048900,
+          "max_wall_ns": 6850100
+        },
+        "bind": {
+          "calls": 15,
+          "wall_ns": 16431600,
+          "max_wall_ns": 1151700
+        },
+        "capture": {
+          "calls": 24393,
+          "wall_ns": 624144700,
+          "max_wall_ns": 306900
+        },
+        "finalize_capture": {
+          "calls": 59,
+          "wall_ns": 249400500,
+          "max_wall_ns": 4950900
+        },
+        "execute_cpu": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "execute_integer": {
+          "calls": 59,
+          "wall_ns": 4457871600,
+          "max_wall_ns": 311128100
+        },
+        "integer_wire": {
+          "calls": 59,
+          "wall_ns": 2847406300,
+          "max_wall_ns": 285331900
+        },
+        "reduction": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "state_tree": {
+          "calls": 59,
+          "wall_ns": 370690700,
+          "max_wall_ns": 7155600
+        },
+        "packet": {
+          "calls": 59,
+          "wall_ns": 532926200,
+          "max_wall_ns": 10845800
+        },
+        "io_nodes": {
+          "calls": 39,
+          "wall_ns": 3246200,
+          "max_wall_ns": 154500
+        },
+        "io_metadata_read": {
+          "calls": 2,
+          "wall_ns": 56100,
+          "max_wall_ns": 38400
+        },
+        "io_metadata_write": {
+          "calls": 248,
+          "wall_ns": 400671300,
+          "max_wall_ns": 6846800
+        },
+        "io_persist": {
+          "calls": 7847,
+          "wall_ns": 973761400,
+          "max_wall_ns": 9420500
+        },
+        "io_recover": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "lifecycle": {
+          "calls": 1203110,
+          "wall_ns": 7275348000,
+          "max_wall_ns": 15678900
+        },
+        "consensus": {
+          "calls": 1203110,
+          "wall_ns": 221413800,
+          "max_wall_ns": 4624100
+        },
+        "projection": {
+          "calls": 1203110,
+          "wall_ns": 153878700,
+          "max_wall_ns": 3090100
+        },
+        "gossip": {
+          "calls": 1203110,
+          "wall_ns": 28808700,
+          "max_wall_ns": 25500
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "yield": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "queue_admission": {
+          "calls": 64,
+          "wall_ns": 12617400,
+          "max_wall_ns": 5090900
+        },
+        "queue_candidate": {
+          "calls": 133,
+          "wall_ns": 3409800,
+          "max_wall_ns": 176800
+        },
+        "integer_compile": {
+          "calls": 59,
+          "wall_ns": 1008617000,
+          "max_wall_ns": 19126500
+        },
+        "integer_projection": {
+          "calls": 59,
+          "wall_ns": 96889000,
+          "max_wall_ns": 1952200
+        },
+        "candidate_registration": {
+          "calls": 223372,
+          "wall_ns": 81196100,
+          "max_wall_ns": 3227200
+        },
+        "native_io": {
+          "calls": 1203110,
+          "wall_ns": 4493823600,
+          "max_wall_ns": 11775200
+        },
+        "native_assembly": {
+          "calls": 1203110,
+          "wall_ns": 1040828600,
+          "max_wall_ns": 15673000
+        },
+        "native_query": {
+          "calls": 1203110,
+          "wall_ns": 941757600,
+          "max_wall_ns": 5511200
+        },
+        "native_selection": {
+          "calls": 1190030,
+          "wall_ns": 91177200,
+          "max_wall_ns": 1523100
+        }
+      }
+    }
+  ],
+  "parts_summary": [
+    {
+      "kind": "parts",
+      "count": 256,
+      "mean_us": [
+        7263.58984375,
+        445.3359375,
+        36988.0625
+      ]
+    },
+    {
+      "kind": "total",
+      "count": 256,
+      "mean_us": [
+        4683.0390625,
+        44936.875,
+        229.25
+      ]
+    }
+  ],
+  "parts_path": "target/native-product-load/15056-1792405035676874400",
+  "device_summary": [
+    {
+      "node": 0,
+      "count": 64,
+      "prepare_us": 2343.21875,
+      "read_us": 1375.875,
+      "total": 27726.375,
+      "record": 70.84375,
+      "submit": 45.3125,
+      "wait": 27541.9375,
+      "gpu_timestamp": 21148.3125,
+      "dispatch_tag_total_us": 17902.796875,
+      "timestamp_query_ok": 1,
+      "dispatch_ops": 28.984375,
+      "copy_region_ops": 2
+    },
+    {
+      "node": 1,
+      "count": 64,
+      "prepare_us": 2377.09375,
+      "read_us": 1355.140625,
+      "total": 24192.78125,
+      "record": 67.953125,
+      "submit": 45.46875,
+      "wait": 24011.421875,
+      "gpu_timestamp": 22360.796875,
+      "dispatch_tag_total_us": 18905.65625,
+      "timestamp_query_ok": 1,
+      "dispatch_ops": 28.984375,
+      "copy_region_ops": 2
+    },
+    {
+      "node": 2,
+      "count": 64,
+      "prepare_us": 2290.828125,
+      "read_us": 1294.390625,
+      "total": 26971,
+      "record": 71.359375,
+      "submit": 47.375,
+      "wait": 26783.9375,
+      "gpu_timestamp": 20546.984375,
+      "dispatch_tag_total_us": 17542.53125,
+      "timestamp_query_ok": 1,
+      "dispatch_ops": 28.984375,
+      "copy_region_ops": 2
+    },
+    {
+      "node": 3,
+      "count": 64,
+      "prepare_us": 2328.734375,
+      "read_us": 1340.640625,
+      "total": 24739.828125,
+      "record": 69.3125,
+      "submit": 45.015625,
+      "wait": 24559.96875,
+      "gpu_timestamp": 22060.296875,
+      "dispatch_tag_total_us": 18405.578125,
+      "timestamp_query_ok": 1,
+      "dispatch_ops": 28.984375,
+      "copy_region_ops": 2
+    }
+  ],
+  "device_path": "target/native-product-load/11176-1792405144876059100",
+  "limits": "Independent diagnostic builds, not formal TPS. Nested walls and device timestamps not additive or exclusive hardware occupancy. Full fee-state audit and business proof remain false."
+}

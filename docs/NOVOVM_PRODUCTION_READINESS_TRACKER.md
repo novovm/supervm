@@ -35,6 +35,31 @@ v78-offline-store-after.json, v78-offline-fetch.json, v78-reopen-receipt.json.
 Full phone/build boundaries and next minimal reuse seam are in NOVOCHAT
 docs/implementation/MEDIA_REUSE.md. Usable v77 APK retained; no new protocol.
 
+## 2026-10-19 整数55ms实查：复用设备驻留有收益，未过晋级门
+
+沿冻结原tick/NovoRUDP/APFL→完整计划→exec/bindings/AOEM v10，精确复用
+da80f306的12个运行文件，不新造执行器。相同Rust1.94.0 FULLMAX库对照，
+四原节点/单原生入口/65536真签名/批1024/窗口8192/查询128/四最终回执。
+整数两轮合并3589.63→4050.23 TPS（+12.83%），CPU7657.50→7651.24（-0.08%）。
+整数P95改善但P99两组变差；CPU微小差异不是稳定回退证明，但预定门未过。
+不追加有利轮次、不更新SDK，撤回活动候选与临时诊断，保留CPU默认和唯一主线。
+
+stage诊断门面54.65→49.96ms/批，证明层间往返不是全部55ms。另列256调用
+诊断：解析4.68ms/layout7.26ms/run36.99ms/编码0.23ms；再复用原Vulkan
+时间戳，约29dispatch、2copy，设备区间21.53ms、host wait25.72ms，
+录制+提交0.12ms。不同诊断轮不相加，时间戳非独占GPU时间；不凭此认定spill
+或某算子为根因。后续针对实际完整i1024计划的设备工作及解析/layout复用能力，
+不继续将主成本称为结果拷贝，也不为速度缩窄语义。
+
+八正式轮及四诊断轮经济/冷恢复通过，真实node费用失败依赖对照与AOEM19资源
+测试通过。未新验Linux/多机/AAB/完整证明/全费用状态/百万TPS/生产；正式节点
+冻结于e7e41e50，不冒充已测0b47ba7e的carrier更新。完整边界与身份见
+[本轮证据](../artifacts/audit/native-resident-plan-20261019/README.md)。
+
+恢复源码后的FULLMAX重建及多层/未导出故障回归1项通过，AOEM工作区干净。
+三个冻结测试DLL及一个生成shader清理被环境策略拒绝，确切路径见本轮证据；
+它们不是活动产品接线，不声称已删除，不绕过策略。正式SDK未更新。
+
 ## 2026-10-19 reliable native object feedback and capacity wake (local validation)
 
 Starting source: `4e17d3b6`. Reuse `NativeObjectLink -> NativeUdpSession ->
