@@ -25,6 +25,7 @@ pub mod iroh_transport;
 pub mod mailbox_receipt;
 pub mod mailbox_replicas;
 #[cfg(feature = "iroh-transport")]
+pub mod endpoint_delivery;
 pub mod mailbox_rpc;
 #[cfg(feature = "mailbox-seal")]
 pub mod mailbox_seal;

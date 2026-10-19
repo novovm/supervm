@@ -46,6 +46,15 @@ const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxRequestV1 {
+    /// Only after contact-private live-device capability negotiation. No custody.
+    #[serde(skip)]
+    EndpointDeliverV1 {
+        mailbox: [u8; 32],
+        write: [u8; 32],
+        object: [u8; 32],
+        ciphertext: Vec<u8>,
+        expires: i64,
+    },
     #[serde(skip)]
     ProbeBulkV1,
     #[serde(skip)]
@@ -135,7 +144,9 @@ impl Drop for MailboxRequestV1 {
                 write.zeroize();
                 read.zeroize();
             }
-            Self::Put { write, .. } | Self::PutBulkV1 { write, .. } => write.zeroize(),
+            Self::Put { write, .. }
+            | Self::PutBulkV1 { write, .. }
+            | Self::EndpointDeliverV1 { write, .. } => write.zeroize(),
             Self::Fetch { read, .. }
             | Self::FetchBulkV1 { read, .. }
             | Self::Consume { read, .. }
@@ -176,6 +187,13 @@ pub struct MailboxPrefetchV6 {
 #[serde(deny_unknown_fields)]
 pub enum MailboxReplyV1 {
     #[serde(skip)]
+    EndpointDeliveredV1 {
+        object: [u8; 32],
+        receipt_object: [u8; 32],
+        receipt_expires: i64,
+        receipt: Vec<u8>,
+    },
+    #[serde(skip)]
     BulkReady {
         max_ciphertext: u32,
     },
@@ -215,6 +233,7 @@ pub enum MailboxRejectionV1 {
     Conflict,
     Consumed,
     Storage,
+    Unavailable,
 }
 
 /// One bounded store owner, shared across L3/L4 runtimes. Blocking durable work
@@ -228,6 +247,7 @@ pub struct MailboxServiceV1 {
     request_budget: Mutex<RequestBudgetV4>,
     timings: metrics::Timings,
     native_record_v7: Mutex<Option<PeerSignedRelayRecordV1>>,
+    endpoint_delivery: crate::endpoint_delivery::EndpointDeliveryRegistryV1,
 }
 
 struct RequestBudgetV4 {
@@ -266,6 +286,7 @@ impl MailboxServiceV1 {
             changed: tokio::sync::watch::channel(0).0,
             timings: metrics::Timings::default(),
             native_record_v7: Mutex::new(None),
+            endpoint_delivery: Default::default(),
             request_budget: Mutex::new(RequestBudgetV4 {
                 tokens: 64,
                 updated: std::time::Instant::now(),
@@ -273,6 +294,17 @@ impl MailboxServiceV1 {
                 interval: std::time::Duration::from_millis(500),
             }),
         }
+    }
+
+    /// The registration guard belongs to the original application owner.
+    /// SDK checks write capabilities in constant time; APP verifies E2EE/TTL.
+    pub fn register_endpoint_delivery_v1(
+        &self,
+        mailbox: [u8; 32],
+        write: [u8; 32],
+        handler: crate::endpoint_delivery::EndpointDeliveryHandlerV1,
+    ) -> Result<crate::endpoint_delivery::EndpointDeliveryRegistrationV1> {
+        self.endpoint_delivery.register(mailbox, write, handler)
     }
 
     /// Local owner publication only. The directory journal remains authoritative;
@@ -463,6 +495,46 @@ impl MailboxServiceV1 {
     }
 
     async fn execute_inner(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        if let MailboxRequestV1::EndpointDeliverV1 {
+            mailbox,
+            write,
+            object,
+            ciphertext,
+            expires,
+        } = &request
+        {
+            use crate::endpoint_delivery::{EndpointDeliveryRequestV1, EndpointDeliveryResultV1};
+            let result = self
+                .endpoint_delivery
+                .deliver(
+                    write,
+                    EndpointDeliveryRequestV1 {
+                        mailbox: *mailbox,
+                        object: *object,
+                        ciphertext: ciphertext.clone(),
+                        expires: *expires,
+                    },
+                )
+                .await?;
+            return Ok(match result {
+                EndpointDeliveryResultV1::Delivered {
+                    receipt_object,
+                    receipt_expires,
+                    receipt,
+                } => MailboxReplyV1::EndpointDeliveredV1 {
+                    object: *object,
+                    receipt_object,
+                    receipt_expires,
+                    receipt,
+                },
+                EndpointDeliveryResultV1::Unavailable => {
+                    MailboxReplyV1::Rejected(MailboxRejectionV1::Unavailable)
+                }
+                EndpointDeliveryResultV1::Rejected => {
+                    MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+                }
+            });
+        }
         if matches!(&request, MailboxRequestV1::ProbeBulkV1) {
             return Ok(MailboxReplyV1::BulkReady {
                 max_ciphertext: crate::mailbox_store::MAX_BULK_CIPHERTEXT as u32,
@@ -504,7 +576,8 @@ impl MailboxServiceV1 {
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
-                    MailboxRequestV1::ProbeBulkV1
+                    MailboxRequestV1::EndpointDeliverV1 { .. }
+                    | MailboxRequestV1::ProbeBulkV1
                     | MailboxRequestV1::ServiceRecordV7
                     | MailboxRequestV1::BeginSession
                     | MailboxRequestV1::BeginContinuousV4

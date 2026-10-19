@@ -448,6 +448,25 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
         return Ok(());
     }
     match (request, reply) {
+        (
+            Request::EndpointDeliverV1 { object, .. },
+            Reply::EndpointDeliveredV1 {
+                object: echoed,
+                receipt_object,
+                receipt_expires,
+                receipt,
+            },
+        ) => {
+            ensure!(
+                echoed == object
+                    && *receipt_object != [0; 32]
+                    && *receipt_expires > 0
+                    && !receipt.is_empty()
+                    && receipt.len() <= crate::endpoint_delivery::MAX_ENDPOINT_DELIVERY_BYTES,
+                "endpoint device receipt binding/bounds"
+            );
+            Ok(())
+        }
         (Request::ProbeBulkV1, Reply::BulkReady { max_ciphertext }) => {
             ensure!(
                 *max_ciphertext as usize == crate::mailbox_store::MAX_BULK_CIPHERTEXT,
@@ -851,3 +870,45 @@ impl MailboxResponse {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::*;
+    #[test]
+    fn endpoint_reply_requires_original_object_and_bounded_receipt() {
+        let request = Request::EndpointDeliverV1 {
+            mailbox: [1; 32],
+            write: [2; 32],
+            object: [3; 32],
+            ciphertext: vec![4],
+            expires: 100,
+        };
+        let good = || Reply::EndpointDeliveredV1 {
+            object: [3; 32],
+            receipt_object: [5; 32],
+            receipt_expires: 101,
+            receipt: vec![6],
+        };
+        assert!(verify_reply([9; 32], &request, &good()).is_ok());
+        let mut wrong = good();
+        if let Reply::EndpointDeliveredV1 { object, .. } = &mut wrong {
+            *object = [7; 32];
+        }
+        assert!(verify_reply([9; 32], &request, &wrong).is_err());
+        let mut large = good();
+        if let Reply::EndpointDeliveredV1 { receipt, .. } = &mut large {
+            *receipt = vec![0; 65_537];
+        }
+        assert!(verify_reply([9; 32], &request, &large).is_err());
+        assert!(verify_reply([9; 32], &request, &Reply::Consumed).is_err());
+        assert!(verify_reply(
+            [9; 32],
+            &Request::Fetch {
+                mailbox: [1; 32],
+                read: [2; 32]
+            },
+            &good()
+        )
+        .is_err());
+    }
+}

@@ -163,6 +163,7 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
     let mut tags = Vec::with_capacity(requests.len());
     for req in requests {
         let (tag, number) = match req {
+            Request::EndpointDeliverV1 { expires, .. } => (14, *expires),
             Request::ServiceRecordV7 => (9, 0),
             Request::ProbeBulkV1 => (10, 0),
             Request::PutBulkV1 { expires, .. } => (11, *expires),
@@ -205,6 +206,13 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
                 f[5] = &scalars[i];
             }
             Request::Put {
+                mailbox,
+                write,
+                object,
+                ciphertext,
+                ..
+            }
+            | Request::EndpointDeliverV1 {
                 mailbox,
                 write,
                 object,
@@ -258,7 +266,7 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
         rows.push(f);
     }
     build(
-        if tags.iter().any(|t| t[0] >= 10) {
+        if tags.iter().any(|t| matches!(t[0], 10..=13)) {
             BULK_REQUEST_SCHEMA
         } else {
             REQUEST_SCHEMA
@@ -272,7 +280,7 @@ fn validate_request(f: &Fields<'_>) -> Result<()> {
     let s = Some;
     match f[0][0] {
         1 => shape(f, [s(1), s(32), s(32), s(32), s(0), s(8), s(0), s(0)])?,
-        2 | 11 => {
+        2 | 11 | 14 => {
             shape(f, [s(1), s(32), s(32), s(0), s(32), s(8), None, s(0)])?;
             ensure!(
                 !f[6].is_empty()
@@ -284,6 +292,9 @@ fn validate_request(f: &Fields<'_>) -> Result<()> {
                         },
                 "mailbox ciphertext bound"
             );
+            if f[0][0] == 14 {
+                ensure!(i64_value(f[5])? > 0, "endpoint delivery expiry");
+            }
         }
         3 | 6 | 12 => shape(f, [s(1), s(32), s(32), s(0), s(0), s(0), s(0), s(0)])?,
         4 => shape(f, [s(1), s(32), s(32), s(0), s(32), s(0), s(0), s(32)])?,
@@ -314,7 +325,7 @@ impl<'a> RequestBatch<'a> {
             let f = fields(&v, row)?;
             validate_request(&f)?;
             ensure!(
-                (f[0][0] >= 10) == (schema == BULK_REQUEST_SCHEMA),
+                matches!(f[0][0], 10..=13) == (schema == BULK_REQUEST_SCHEMA),
                 "mailbox operation schema"
             );
         }
@@ -339,6 +350,13 @@ impl<'a> RequestBatch<'a> {
     pub fn request(&self, index: usize) -> Result<Request> {
         let f = fields(&self.0, index)?;
         Ok(match f[0][0] {
+            14 => Request::EndpointDeliverV1 {
+                mailbox: fixed(f[1])?,
+                write: fixed(f[2])?,
+                object: fixed(f[4])?,
+                expires: i64_value(f[5])?,
+                ciphertext: f[6].to_vec(),
+            },
             9 => Request::ServiceRecordV7,
             10 => Request::ProbeBulkV1,
             11 => Request::PutBulkV1 {
@@ -444,11 +462,21 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
         } => o.ciphertext.len() > 65_536,
         _ => false,
     });
+    ensure!(
+        !bulk
+            || !replies
+                .iter()
+                .any(|r| matches!(r, Reply::EndpointDeliveredV1 { .. })),
+        "endpoint delivery is a small-operation schema"
+    );
     let mut tags = Vec::new();
     let mut numbers = Vec::new();
     let mut aux = Vec::new();
     for reply in replies {
         let (tag, num, extra) = match reply {
+            Reply::EndpointDeliveredV1 {
+                receipt_expires, ..
+            } => (13, receipt_expires.to_le_bytes().to_vec(), Vec::new()),
             Reply::BulkReady { max_ciphertext } => {
                 (12, max_ciphertext.to_le_bytes().to_vec(), Vec::new())
             }
@@ -474,6 +502,7 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
                     MailboxRejectionV1::Conflict => 4,
                     MailboxRejectionV1::Consumed => 5,
                     MailboxRejectionV1::Storage => 6,
+                    MailboxRejectionV1::Unavailable => 7,
                 }],
                 Vec::new(),
             ),
@@ -497,6 +526,17 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
         let mut f: Fields<'_> = [&[]; 8];
         f[0] = &tags[i];
         match reply {
+            Reply::EndpointDeliveredV1 {
+                object,
+                receipt_object,
+                receipt,
+                ..
+            } => {
+                f[1] = object;
+                f[2] = receipt_object;
+                f[3] = &numbers[i];
+                f[4] = receipt;
+            }
             Reply::Stored(r) => {
                 f[1] = &r.node;
                 f[2] = &r.mailbox;
@@ -558,6 +598,16 @@ fn validate_reply_bound(f: &Fields<'_>, object_limit: usize) -> Result<()> {
             shape(f, [s(1), s(32), s(32), s(32), s(32), s(17), s(64), s(0)])?;
             ensure!(f[5][0] == 1, "storage receipt version");
         }
+        13 => {
+            shape(f, [s(1), s(32), s(32), s(8), None, s(0), s(0), s(0)])?;
+            ensure!(
+                fixed::<32>(f[2])? != [0; 32]
+                    && i64_value(f[3])? > 0
+                    && !f[4].is_empty()
+                    && f[4].len() <= crate::endpoint_delivery::MAX_ENDPOINT_DELIVERY_BYTES,
+                "endpoint receipt bounds"
+            );
+        }
         3 => {
             shape(f, [s(1), s(32), s(32), s(8), None, s(0), s(0), s(0)])?;
             ensure!(
@@ -567,7 +617,7 @@ fn validate_reply_bound(f: &Fields<'_>, object_limit: usize) -> Result<()> {
         }
         8 => {
             shape(f, [s(1), s(1), s(0), s(0), s(0), s(0), s(0), s(0)])?;
-            ensure!((1..=6).contains(&f[1][0]), "mailbox rejection tag");
+            ensure!((1..=7).contains(&f[1][0]), "mailbox rejection tag");
         }
         9 => {
             shape(f, [s(1), None, s(0), s(0), s(0), s(0), s(0), s(0)])?;
@@ -622,7 +672,17 @@ pub fn decode_replies(bytes: &[u8], context: [u8; 32], expected: usize) -> Resul
             f[0][0] != 12 || schema == BULK_REPLY_SCHEMA,
             "bulk capability schema"
         );
+        ensure!(
+            f[0][0] != 13 || schema == REPLY_SCHEMA,
+            "endpoint receipt schema"
+        );
         out.push(match f[0][0] {
+            13 => Reply::EndpointDeliveredV1 {
+                object: fixed(f[1])?,
+                receipt_object: fixed(f[2])?,
+                receipt_expires: i64_value(f[3])?,
+                receipt: f[4].to_vec(),
+            },
             12 => Reply::BulkReady {
                 max_ciphertext: u32::from_le_bytes(fixed(f[1])?),
             },
@@ -657,6 +717,7 @@ pub fn decode_replies(bytes: &[u8], context: [u8; 32], expected: usize) -> Resul
                 4 => MailboxRejectionV1::Conflict,
                 5 => MailboxRejectionV1::Consumed,
                 6 => MailboxRejectionV1::Storage,
+                7 => MailboxRejectionV1::Unavailable,
                 _ => unreachable!(),
             }),
             9 => Reply::Notice(notices(f[1])?),
@@ -712,3 +773,6 @@ mod locator_tests;
 
 #[cfg(test)]
 mod bulk_tests;
+
+#[cfg(test)]
+mod endpoint_tests;
