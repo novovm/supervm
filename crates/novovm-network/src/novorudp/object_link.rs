@@ -44,6 +44,34 @@ pub struct NativeSendPolicy {
     pub ttl: Duration,
 }
 
+impl NativeSendPolicy {
+    /// Only for NativeCarrierPump over an already reliable QUIC/TLS channel.
+    /// Keep native framing, completion ACKs, deadlines and bounded queues; the
+    /// carrier supplies congestion/backpressure, so do not duplicate every frame
+    /// or insert a second fixed-rate pacing delay above it. Raw UDP is unchanged.
+    pub fn reliable_carrier_v1(ttl: Duration) -> Self {
+        Self {
+            window: NovoRudpWindowConfig {
+                packet_copies: 1,
+                tail_packet_copies: 1,
+                batch_size: 64,
+                batch_pause_ms: 0,
+                no_progress_backoff: false,
+                ..Default::default()
+            },
+            pacing: NovoRudpPacingProfile {
+                packet_copies: 1,
+                tail_packet_copies: 1,
+                batch_size: 64,
+                batch_pause_ms: 0,
+                no_progress_backoff: false,
+                ..Default::default()
+            },
+            ttl,
+        }
+    }
+}
+
 #[derive(Default, Clone, Copy)]
 struct Usage {
     messages: usize,

@@ -3,6 +3,25 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-19 Native mailbox object transfer: host verification only
+
+The existing NativeObjectLink/NVMBOX07 session now carries explicitly versioned
+NVMBRQ01/NVMBRS01 object operations, at most 2 MiB ciphertext per Put/Fetch.
+Legacy operations retain 64 KiB bounds. The signed `/novonet-mailbox/v8/bulk-v1`
+capability is required before activation; old clients reject that new suffix,
+so deployment and rollback must coordinate client/node versions.
+HPKE NVHPKE02 has a separate domain. Original SQLite custody, quotas, TTL,
+revocation, StoreReceipt and Consume apply. No new socket/account/server.
+Reliable QUIC/TLS uses one frame copy and no fixed batch pause; UDP is unchanged.
+
+Three component tests passed (bounds/version/tamper, restart/quota/revoke/delete,
+signed capability renewal). Actual loopback Iroh + NativeCarrierPump + node SQLite:
+1,600,067 bytes Put-to-StoreReceipt 3076 ms; Fetch 1749 ms; a subsequent ordinary
+9 KiB request passed on the same session. These are debug host business timings,
+not raw throughput, Android or WAN performance. Existing ~768-byte framing and
+single queued carrier writes remain a possible throughput limit. Android wiring
+and deployment are pending; the currently verified phones remain on v74.
+
 ## 2026-10-19 v68 Android通话：客户端SDP候选复用（非共享协议变更）
 
 NOVOCHAT源码`feaa07a`沿现有flutter_webrtc读取已set成功的当前本地SDP，

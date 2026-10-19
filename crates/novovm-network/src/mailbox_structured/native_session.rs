@@ -36,8 +36,8 @@ pub fn recipient_role(body: &CompletedMessage) -> Result<NativeApplicationRole> 
     let prefix: Vec<u8> = body.chunks.iter().flatten().take(24).copied().collect();
     ensure!(prefix.len() == 24, "short mailbox routing header");
     match u64::from_le_bytes(fixed(&prefix[16..24])?) {
-        REQUEST_SCHEMA => Ok(NativeApplicationRole::Service),
-        REPLY_SCHEMA => Ok(NativeApplicationRole::Client),
+        REQUEST_SCHEMA | BULK_REQUEST_SCHEMA => Ok(NativeApplicationRole::Service),
+        REPLY_SCHEMA | BULK_REPLY_SCHEMA => Ok(NativeApplicationRole::Client),
         _ => anyhow::bail!("unknown mailbox routing schema"),
     }
 }
@@ -97,11 +97,22 @@ impl Binding {
     }
 }
 fn flatten(body: &CompletedMessage) -> Result<Zeroizing<Vec<u8>>> {
+    // Inspect the fixed header before coalescing a potentially large object.
+    let prefix: Vec<u8> = body.chunks.iter().flatten().take(24).copied().collect();
+    let schema = u64::from_le_bytes(fixed(prefix.get(16..24).context("mailbox schema header")?)?);
+    ensure!(
+        matches!(
+            schema,
+            REQUEST_SCHEMA | REPLY_SCHEMA | BULK_REQUEST_SCHEMA | BULK_REPLY_SCHEMA
+        ),
+        "mailbox schema/version"
+    );
+    let budget = wire_limits(schema).wire_bytes;
     let mut length = 0usize;
     for chunk in &body.chunks {
         length = length
             .checked_add(chunk.len())
-            .filter(|n| *n <= LIMITS.wire_bytes)
+            .filter(|n| *n <= budget)
             .context("native mailbox wire bound")?;
     }
     let mut out = Zeroizing::new(Vec::with_capacity(length));
@@ -116,7 +127,7 @@ fn outgoing(bytes: Zeroizing<Vec<u8>>) -> Result<Arc<OutgoingMessage>> {
     Ok(Arc::new(OutgoingMessage::with_profile(
         domain(),
         bytes.to_vec(),
-        LIMITS.wire_bytes,
+        BULK_LIMITS.wire_bytes,
         FragmentProfile::NativeUdpV2,
     )?))
 }
@@ -176,8 +187,13 @@ pub struct NativeMailboxClient {
     binding: Binding,
     node: [u8; 32],
     slots: [ClientSlot; SLOTS],
+    bulk_ready: bool,
 }
 impl NativeMailboxClient {
+    pub fn enable_verified_bulk_v1(&mut self) {
+        self.bulk_ready = true;
+    }
+
     pub fn invalidate(&mut self) {
         for slot in &mut self.slots {
             slot.fail_pending();
@@ -236,6 +252,7 @@ impl NativeMailboxClient {
         Ok(Self {
             binding: Binding::claim(link, peer, NativeApplicationRole::Client)?,
             node,
+            bulk_ready: false,
             slots: std::array::from_fn(|_| ClientSlot {
                 retired: None,
                 sequence: 1,
@@ -280,6 +297,16 @@ impl NativeMailboxClient {
         deadline: Instant,
         cancellation: &NativeSendCancellation,
     ) -> Result<RequestId> {
+        ensure!(
+            self.bulk_ready
+                || !requests.iter().any(|r| matches!(
+                    r,
+                    Request::PutBulkV1 { .. }
+                        | Request::FetchBulkV1 { .. }
+                        | Request::WatchFetchBulkV1 { .. }
+                )),
+            "bulk capability not negotiated"
+        );
         let deadline = deadline.min(now + REQUEST_DEADLINE);
         ensure!(now < deadline, "mailbox deadline before preparation");
         let s = self.slots.get_mut(slot).context("mailbox slot")?;
@@ -366,6 +393,13 @@ impl NativeMailboxClient {
             verify_reply(self.node, request, reply)?;
         }
         authority()?;
+        if p.requests
+            .iter()
+            .zip(&replies)
+            .any(|(r, reply)| matches!((r, reply), (Request::ProbeBulkV1, Reply::BulkReady { .. })))
+        {
+            self.bulk_ready = true;
+        }
         s.sequence = s
             .sequence
             .checked_add(1)
@@ -414,6 +448,13 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
         return Ok(());
     }
     match (request, reply) {
+        (Request::ProbeBulkV1, Reply::BulkReady { max_ciphertext }) => {
+            ensure!(
+                *max_ciphertext as usize == crate::mailbox_store::MAX_BULK_CIPHERTEXT,
+                "bulk capability"
+            );
+            Ok(())
+        }
         (Request::ServiceRecordV7, Reply::ServiceRecordV7 { record }) => {
             ensure!(
                 record.relay_public_key == node,
@@ -441,9 +482,17 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
         | (Request::Consume { .. }, Reply::Consumed)
         | (Request::Renew { .. }, Reply::Renewed)
         | (Request::Revoke { .. }, Reply::Revoked)
-        | (Request::Fetch { .. }, Reply::Empty) => Ok(()),
+        | (Request::Fetch { .. }, Reply::Empty)
+        | (Request::FetchBulkV1 { .. }, Reply::Empty) => Ok(()),
         (
             Request::Put {
+                mailbox,
+                object,
+                ciphertext,
+                expires,
+                ..
+            }
+            | Request::PutBulkV1 {
                 mailbox,
                 object,
                 ciphertext,
@@ -453,11 +502,20 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
             Reply::Stored(r),
         ) => r.verify(node, *mailbox, *object, ciphertext, *expires),
         (
-            Request::Fetch { .. },
+            Request::Fetch { .. } | Request::FetchBulkV1 { .. },
             Reply::Object {
                 ciphertext, digest, ..
             },
         ) => {
+            ensure!(
+                ciphertext.len()
+                    <= if matches!(request, Request::FetchBulkV1 { .. }) {
+                        crate::mailbox_store::MAX_BULK_CIPHERTEXT
+                    } else {
+                        65_536
+                    },
+                "mailbox fetch capability size"
+            );
             ensure!(
                 <[u8; 32]>::from(Sha256::digest(ciphertext)) == *digest,
                 "mailbox object digest"
@@ -468,9 +526,21 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
             ensure!(boxes.len() == notices.len(), "mailbox notice shape");
             Ok(())
         }
-        (Request::WatchFetchV6 { boxes, .. }, Reply::NoticeObjectV6 { notices, object }) => {
+        (
+            Request::WatchFetchV6 { boxes, .. } | Request::WatchFetchBulkV1 { boxes, .. },
+            Reply::NoticeObjectV6 { notices, object },
+        ) => {
             ensure!(boxes.len() == notices.len(), "mailbox notice shape");
             if let Some(o) = object {
+                ensure!(
+                    o.ciphertext.len()
+                        <= if matches!(request, Request::WatchFetchBulkV1 { .. }) {
+                            crate::mailbox_store::MAX_BULK_CIPHERTEXT
+                        } else {
+                            65_536
+                        },
+                    "mailbox watch capability size"
+                );
                 ensure!(
                     o.box_index < boxes.len()
                         && <[u8; 32]>::from(Sha256::digest(&o.ciphertext)) == o.digest,

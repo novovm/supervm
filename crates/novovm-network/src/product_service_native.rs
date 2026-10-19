@@ -5,6 +5,7 @@ use crate::novorudp::wire_budget::{MAX_BYTES_PER_MINUTE, MIN_BYTES_PER_MINUTE};
 use std::net::SocketAddr;
 
 pub(super) const SUFFIX: &str = "/novonet-mailbox/v7";
+pub(super) const SUFFIX_BULK_V1: &str = "/novonet-mailbox/v8/bulk-v1";
 pub(super) const SUFFIX_V8: &str = "/novonet-mailbox/v8";
 
 /// Explicit NVMBOX07 capability on the existing Iroh carrier. The marker is
@@ -40,6 +41,23 @@ pub struct NativeCarrierMailboxEndpointV8 {
 }
 
 impl NativeCarrierMailboxEndpointV8 {
+    pub fn endpoint_bulk_v1(&self) -> Result<RelayEndpointV1> {
+        let mut endpoint = self.iroh.endpoint()?;
+        endpoint.uri.push_str(SUFFIX_BULK_V1);
+        ensure!(endpoint.uri.len() <= 4096, "native bulk URI budget");
+        Ok(endpoint)
+    }
+    /// Call only after original signed-record validation; old V8 is not bulk.
+    pub fn from_record_supports_bulk_v1(record: &PeerSignedRelayRecordV1) -> Result<bool> {
+        Self::supports_bulk_v1(record)
+    }
+    pub fn supports_bulk_v1(record: &PeerSignedRelayRecordV1) -> Result<bool> {
+        Ok(Self::from_record(record)?.is_some()
+            && record.endpoints.iter().any(|e| {
+                e.transport == RelayTransportV1::IrohRendezvousV1 && e.uri.ends_with(SUFFIX_BULK_V1)
+            }))
+    }
+
     pub fn endpoint(&self) -> Result<RelayEndpointV1> {
         let mut endpoint = self.iroh.endpoint()?;
         endpoint.uri.push_str(SUFFIX_V8);
@@ -164,7 +182,9 @@ impl ServiceEndpoints {
             _ => None,
         };
         let native_carrier_v8 = match (&iroh, carrier) {
-            (Some(iroh), Some(endpoint)) if endpoint.uri.ends_with(SUFFIX_V8) => {
+            (Some(iroh), Some(endpoint))
+                if endpoint.uri.ends_with(SUFFIX_V8) || endpoint.uri.ends_with(SUFFIX_BULK_V1) =>
+            {
                 Some(NativeCarrierMailboxEndpointV8 { iroh: iroh.clone() })
             }
             _ => None,

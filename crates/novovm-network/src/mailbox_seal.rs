@@ -13,6 +13,9 @@ use zeroize::Zeroizing;
 type K = X25519HkdfSha256;
 const HEADER: &[u8; 8] = b"NVHPKE01";
 const INFO: &[u8] = b"novonet.mailbox.hpke.X25519.HKDF-SHA256.ChaCha20Poly1305.v1\0";
+const OBJECT_HEADER: &[u8; 8] = b"NVHPKE02";
+const OBJECT_INFO: &[u8] = b"novonet.mailbox.hpke.X25519.HKDF-SHA256.ChaCha20Poly1305.object.v2\0";
+pub const MAX_OBJECT_PLAINTEXT: usize = crate::mailbox_store::MAX_BULK_CIPHERTEXT - 56;
 pub const MAX_PLAINTEXT: usize = 48 * 1024;
 
 /// Independent mailbox-only IKM, supplied by platform protected storage. Do not
@@ -36,10 +39,29 @@ impl MailboxSecretV1 {
         K::derive_keypair(self.0.as_ref()).1.to_bytes().into()
     }
     pub fn open(&self, sealed: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        self.open_bounded(sealed, aad, HEADER, INFO, MAX_PLAINTEXT)
+    }
+    pub fn open_object_v2(&self, sealed: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        self.open_bounded(
+            sealed,
+            aad,
+            OBJECT_HEADER,
+            OBJECT_INFO,
+            MAX_OBJECT_PLAINTEXT,
+        )
+    }
+    fn open_bounded(
+        &self,
+        sealed: &[u8],
+        aad: &[u8],
+        header: &[u8],
+        info: &[u8],
+        limit: usize,
+    ) -> Result<Zeroizing<Vec<u8>>> {
         ensure!(
             sealed.len() > 56
-                && sealed.len() <= MAX_PLAINTEXT + 56
-                && sealed.starts_with(HEADER)
+                && sealed.len() <= limit + 56
+                && sealed.starts_with(header)
                 && aad.len() <= 1024,
             "mailbox sealed bounds/version"
         );
@@ -53,15 +75,35 @@ impl MailboxSecretV1 {
             &hpke::OpModeR::Base,
             &secret,
             &enc,
-            INFO,
+            info,
             &sealed[40..],
             aad,
         )?))
     }
 }
 pub fn seal_mailbox_v1(public: [u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+    seal_bounded(public, plaintext, aad, HEADER, INFO, MAX_PLAINTEXT)
+}
+pub fn seal_mailbox_object_v2(public: [u8; 32], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>> {
+    seal_bounded(
+        public,
+        plaintext,
+        aad,
+        OBJECT_HEADER,
+        OBJECT_INFO,
+        MAX_OBJECT_PLAINTEXT,
+    )
+}
+fn seal_bounded(
+    public: [u8; 32],
+    plaintext: &[u8],
+    aad: &[u8],
+    header: &[u8],
+    info: &[u8],
+    limit: usize,
+) -> Result<Vec<u8>> {
     ensure!(
-        !plaintext.is_empty() && plaintext.len() <= MAX_PLAINTEXT && aad.len() <= 1024,
+        !plaintext.is_empty() && plaintext.len() <= limit && aad.len() <= 1024,
         "mailbox plain budget"
     );
     let key = <K as Kem>::PublicKey::from_bytes(&public)?;
@@ -71,12 +113,12 @@ pub fn seal_mailbox_v1(public: [u8; 32], plaintext: &[u8], aad: &[u8]) -> Result
     let (enc, ciphertext) = hpke::single_shot_seal::<ChaCha20Poly1305, HkdfSha256, K, _>(
         &hpke::OpModeS::Base,
         &key,
-        INFO,
+        info,
         plaintext,
         aad,
         &mut rng,
     )?;
-    let mut bytes = HEADER.to_vec();
+    let mut bytes = header.to_vec();
     bytes.extend_from_slice(&enc.to_bytes());
     bytes.extend_from_slice(&ciphertext);
     Ok(bytes)

@@ -12,7 +12,7 @@ use crate::{
     mailbox_rpc::MailboxServiceV1,
     mailbox_structured::{
         native_session::{domain, MailboxResponse, NativeMailboxServer, REQUEST_DEADLINE, SLOTS},
-        LIMITS, STREAM,
+        BULK_LIMITS as LIMITS, STREAM,
     },
     network_time::ClockAnchorV1,
     novorudp::{
@@ -109,7 +109,7 @@ impl Admission {
     }
 }
 
-fn mailbox_link(endpoint: NativeEndpoint) -> Result<NativeObjectLink> {
+fn mailbox_link(endpoint: NativeEndpoint, reliable_carrier: bool) -> Result<NativeObjectLink> {
     NativeObjectLink::new(
         endpoint,
         vec![NativeLaneConfig {
@@ -130,10 +130,14 @@ fn mailbox_link(endpoint: NativeEndpoint) -> Result<NativeObjectLink> {
                 peer_bytes: SLOTS * LIMITS.wire_bytes,
             },
         }],
-        NativeSendPolicy {
-            window: NovoRudpWindowConfig::default(),
-            pacing: NovoRudpPacingProfile::default(),
-            ttl: REQUEST_DEADLINE,
+        if reliable_carrier {
+            NativeSendPolicy::reliable_carrier_v1(REQUEST_DEADLINE)
+        } else {
+            NativeSendPolicy {
+                window: NovoRudpWindowConfig::default(),
+                pacing: NovoRudpPacingProfile::default(),
+                ttl: REQUEST_DEADLINE,
+            }
         },
     )
 }
@@ -202,7 +206,7 @@ pub(super) async fn serve_carrier(
     // second UDP handshake or substitute another peer's authentication result.
     let (endpoint, pump) = NativeCarrierPump::attach_continuous_v7(stream, channel, vec![STREAM])?;
     serve_link(
-        mailbox_link(endpoint)?,
+        mailbox_link(endpoint, true)?,
         Readiness::Carrier(pump),
         service,
         &stop,
@@ -279,7 +283,7 @@ impl NativeMailboxListenerV7 {
         )?;
         endpoint.set_wire_budget_v1(max_bytes_per_minute, Instant::now())?;
         endpoint.enable_client_reconnect_v1()?;
-        let link = mailbox_link(endpoint)?;
+        let link = mailbox_link(endpoint, false)?;
         Ok(Self {
             link,
             readiness,

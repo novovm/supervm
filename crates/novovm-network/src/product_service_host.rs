@@ -108,6 +108,24 @@ impl ServiceLeaseHostV1 {
         now: u64,
         expires: u64,
     ) -> Result<PeerSignedRelayRecordV1> {
+        self.rotate_native_carrier_mailbox_v8_mode(enabled, None, now, expires)
+    }
+    /// Explicit bulk publication, same signer/service and unchanged resource policy.
+    pub fn rotate_native_carrier_mailbox_bulk_v1(
+        &self,
+        enabled: bool,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        self.rotate_native_carrier_mailbox_v8_mode(true, Some(enabled), now, expires)
+    }
+    fn rotate_native_carrier_mailbox_v8_mode(
+        &self,
+        enabled: bool,
+        bulk: Option<bool>,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
         let mut book = self
             .book
             .lock()
@@ -118,6 +136,9 @@ impl ServiceLeaseHostV1 {
             .get(&self.key.verifying_key().to_bytes())
             .context("service revoked")?;
         let route = IrohServiceEndpointV1::from_record(&entry.current)?;
+        let bulk = bulk.unwrap_or(NativeCarrierMailboxEndpointV8::supports_bulk_v1(
+            &entry.current,
+        )?);
         if !enabled {
             ensure!(
                 NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_none(),
@@ -131,9 +152,12 @@ impl ServiceLeaseHostV1 {
             .context("Iroh service endpoint required")?;
         // Resource policy belongs to the node; toggling a codec cannot reset it.
         endpoint.uri = if enabled {
-            NativeCarrierMailboxEndpointV8 { iroh: route }
-                .endpoint()?
-                .uri
+            let value = NativeCarrierMailboxEndpointV8 { iroh: route };
+            if bulk {
+                value.endpoint_bulk_v1()?.uri
+            } else {
+                value.endpoint()?.uri
+            }
         } else {
             route.endpoint()?.uri
         };
@@ -393,10 +417,14 @@ impl ServiceLeaseHostV1 {
         );
         let mut carrier = if NativeCarrierMailboxEndpointV8::from_record(&entry.current)?.is_some()
         {
-            NativeCarrierMailboxEndpointV8 {
+            let value = NativeCarrierMailboxEndpointV8 {
                 iroh: endpoint.clone(),
+            };
+            if NativeCarrierMailboxEndpointV8::supports_bulk_v1(&entry.current)? {
+                value.endpoint_bulk_v1()?
+            } else {
+                value.endpoint()?
             }
-            .endpoint()?
         } else if NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_some() {
             NativeCarrierMailboxEndpointV7 {
                 iroh: endpoint.clone(),

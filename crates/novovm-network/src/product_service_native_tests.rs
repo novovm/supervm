@@ -1055,3 +1055,29 @@ fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<(
         .is_err());
     Ok(())
 }
+
+#[test]
+fn bulk_capability_signed_explicit_and_preserved_across_renewal() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("bulk.enc");
+    let endpoint = carrier_v8();
+    let initial = record(vec![endpoint.endpoint()?], 1, 1000)?;
+    assert!(!NativeCarrierMailboxEndpointV8::supports_bulk_v1(&initial)?);
+    let b = ServiceLeaseBookV1::new_self_owned(trust(), vec![initial], 2000)?;
+    let host = durable_host(b, &path)?;
+    let enabled = host.rotate_native_carrier_mailbox_bulk_v1(true, 3000, 93_000)?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&enabled)?);
+    assert!(enabled.endpoints[0].uri.ends_with("/v8/bulk-v1"));
+    let mut next_endpoint = endpoint.iroh.clone();
+    next_endpoint.instance = [8; 32];
+    let next = host.rotate_self_owned(&next_endpoint, 3001, 93_001)?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&next)?);
+    let next = host.rotate_native_carrier_mailbox_v8(true, 3002, 93_002)?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&next)?);
+    let disabled = host.rotate_native_carrier_mailbox_bulk_v1(false, 3003, 93_003)?;
+    assert!(!NativeCarrierMailboxEndpointV8::supports_bulk_v1(
+        &disabled
+    )?);
+    assert!(NativeCarrierMailboxEndpointV8::from_record(&disabled)?.is_some());
+    Ok(())
+}

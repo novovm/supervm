@@ -16,7 +16,10 @@ use std::{
     fmt,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     task::{Context, Poll},
     time::Instant,
 };
@@ -91,6 +94,7 @@ struct State {
     closed: Option<NativeRequestErrorKind>,
 }
 struct Shared {
+    bulk: AtomicBool,
     state: Mutex<State>,
     wake: Arc<Notify>,
 }
@@ -200,6 +204,14 @@ pub struct NativeMailboxHandle {
     shared: Arc<Shared>,
 }
 impl NativeMailboxHandle {
+    /// Only after validating the node-signed bulk-v1 locator for this session.
+    pub fn enable_verified_bulk_v1(&self) {
+        self.shared.bulk.store(true, Ordering::Release);
+    }
+    pub fn supports_bulk_v1(&self) -> bool {
+        self.shared.bulk.load(Ordering::Acquire)
+    }
+
     pub fn is_stopped(&self) -> bool {
         self.shared
             .state
@@ -335,6 +347,7 @@ impl NativeMailboxDriver {
         let client = NativeMailboxClient::attach(link, peer, node)
             .map_err(|error| NativeRequestError::caused(NativeRequestErrorKind::Session, error))?;
         let shared = Arc::new(Shared {
+            bulk: AtomicBool::new(false),
             state: Mutex::new(State {
                 slots: std::array::from_fn(|_| Slot::default()),
                 next: 0,
@@ -505,6 +518,9 @@ impl NativeMailboxDriver {
                     }
                     let _ = queued.reply.send(Err(NativeRequestError::new(kind)));
                     continue;
+                }
+                if self.shared.bulk.load(Ordering::Acquire) {
+                    self.client.enable_verified_bulk_v1();
                 }
                 match self.client.begin_until_cancellable(
                     index,

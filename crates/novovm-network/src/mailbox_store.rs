@@ -13,6 +13,7 @@ use std::path::Path;
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 
+pub const MAX_BULK_CIPHERTEXT: usize = 2 * 1024 * 1024;
 pub const MAX_TTL: i64 = 7 * 24 * 3600;
 const REPLAY_WINDOW: i64 = 300;
 pub type Id = [u8; 32];
@@ -457,11 +458,51 @@ impl MailboxStore {
         expires: i64,
         now: i64,
     ) -> Result<PutResult, StoreError> {
+        self.put_bounded(
+            mailbox,
+            write,
+            object,
+            ciphertext,
+            expires,
+            now,
+            self.limits.object_bytes,
+        )
+    }
+    /// Explicit native object operation; existing per-box/node quotas still apply.
+    pub fn put_bulk_v1(
+        &mut self,
+        mailbox: &Id,
+        write: &Capability,
+        object: &Id,
+        ciphertext: &[u8],
+        expires: i64,
+        now: i64,
+    ) -> Result<PutResult, StoreError> {
+        self.put_bounded(
+            mailbox,
+            write,
+            object,
+            ciphertext,
+            expires,
+            now,
+            MAX_BULK_CIPHERTEXT,
+        )
+    }
+    fn put_bounded(
+        &mut self,
+        mailbox: &Id,
+        write: &Capability,
+        object: &Id,
+        ciphertext: &[u8],
+        expires: i64,
+        now: i64,
+        object_limit: usize,
+    ) -> Result<PutResult, StoreError> {
         let limits = self.limits;
         let resources_available = self.resources_available;
         if *object == [0; 32]
             || ciphertext.is_empty()
-            || ciphertext.len() > limits.object_bytes
+            || ciphertext.len() > object_limit
             || expires <= now
             || expires.checked_sub(now).is_none_or(|ttl| ttl > MAX_TTL)
         {
@@ -558,7 +599,7 @@ impl MailboxStore {
         read: &Capability,
         now: i64,
     ) -> Result<Vec<StoredEnvelope>, StoreError> {
-        self.fetch_bounded(id, read, now, 32)
+        self.fetch_bounded(id, read, now, 32, 65_536)
     }
     /// One retained object for a wire response; avoid allocating 32 payloads.
     pub fn fetch_one(
@@ -567,7 +608,21 @@ impl MailboxStore {
         read: &Capability,
         now: i64,
     ) -> Result<Option<StoredEnvelope>, StoreError> {
-        Ok(self.fetch_bounded(id, read, now, 1)?.into_iter().next())
+        Ok(self
+            .fetch_bounded(id, read, now, 1, 65_536)?
+            .into_iter()
+            .next())
+    }
+    pub fn fetch_bulk_v1(
+        &mut self,
+        id: &Id,
+        read: &Capability,
+        now: i64,
+    ) -> Result<Option<StoredEnvelope>, StoreError> {
+        Ok(self
+            .fetch_bounded(id, read, now, 1, MAX_BULK_CIPHERTEXT)?
+            .into_iter()
+            .next())
     }
     fn fetch_bounded(
         &mut self,
@@ -575,6 +630,7 @@ impl MailboxStore {
         read: &Capability,
         now: i64,
         limit: u8,
+        object_limit: usize,
     ) -> Result<Vec<StoredEnvelope>, StoreError> {
         let tx = self.begin(now)?;
         authorize(&tx, id, read, false, now)?;
@@ -584,9 +640,9 @@ impl MailboxStore {
             // only a local arrival tie-break, never identity, replay protection
             // or a persistent/wire cursor (maintenance may renumber it).
             // Recipients still handle out-of-order delivery across replicas.
-            let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 ORDER BY expires,rowid LIMIT ?3")?;
+            let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 AND length(payload)<=?4 ORDER BY expires,rowid LIMIT ?3")?;
             let result = statement
-                .query_map(params![id, now, limit], |r| {
+                .query_map(params![id, now, limit, object_limit as i64], |r| {
                     Ok(StoredEnvelope {
                         id: r.get(0)?,
                         ciphertext: r.get(1)?,

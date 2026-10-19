@@ -766,7 +766,7 @@ impl Owner {
         // Publish the selected capability before Node::serve sees this host.
         // Identity, journal and term are unchanged; TLS keeps its own codec.
         if self.native_carrier_mailbox_v8() {
-            host.rotate_native_carrier_mailbox_v8(true, now_ms()?, expires)?;
+            host.rotate_native_carrier_mailbox_bulk_v1(true, now_ms()?, expires)?;
         } else if self.native_carrier_mailbox_v7() {
             host.rotate_native_carrier_mailbox_v7(true, now_ms()?, expires)?;
         }

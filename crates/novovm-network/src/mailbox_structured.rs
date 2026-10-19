@@ -29,18 +29,43 @@ pub const LIMITS: Limits = Limits {
     wire_bytes: 1_100_000,
     expanded_bytes: 1_100_000,
 };
+pub const BULK_REQUEST_SCHEMA: u64 = u64::from_be_bytes(*b"NVMBRQ01");
+pub const BULK_REPLY_SCHEMA: u64 = u64::from_be_bytes(*b"NVMBRS01");
+pub const BULK_LIMITS: Limits = Limits {
+    rows: 1,
+    columns: 8,
+    field_bytes: crate::mailbox_store::MAX_BULK_CIPHERTEXT,
+    wire_bytes: crate::mailbox_store::MAX_BULK_CIPHERTEXT + 4096,
+    expanded_bytes: crate::mailbox_store::MAX_BULK_CIPHERTEXT + 4096,
+};
+fn wire_limits(schema: u64) -> Limits {
+    if matches!(schema, BULK_REQUEST_SCHEMA | BULK_REPLY_SCHEMA) {
+        BULK_LIMITS
+    } else {
+        LIMITS
+    }
+}
+fn wire_schema(bytes: &[u8], ordinary: u64, bulk: u64) -> Result<u64> {
+    let schema = u64::from_le_bytes(fixed(bytes.get(16..24).context("mailbox schema header")?)?);
+    ensure!(
+        schema == ordinary || schema == bulk,
+        "mailbox schema/version"
+    );
+    Ok(schema)
+}
 type Fields<'a> = [&'a [u8]; 8];
 
 fn build(schema: u64, context: [u8; 32], rows: &[Fields<'_>]) -> Result<Zeroizing<Vec<u8>>> {
+    let limits = wire_limits(schema);
     ensure!(
-        context != [0; 32] && !rows.is_empty() && rows.len() <= LIMITS.rows,
+        context != [0; 32] && !rows.is_empty() && rows.len() <= limits.rows,
         "mailbox structured count/context"
     );
     let columns: Vec<_> = (0..8)
         .map(|i| Column::collect(rows.iter().map(|r| r[i])))
         .collect();
     Ok(Zeroizing::new(
-        apfl_batch::encode(schema, context, rows.len(), &columns, LIMITS)
+        apfl_batch::encode(schema, context, rows.len(), &columns, limits)
             .map_err(anyhow::Error::msg)?,
     ))
 }
@@ -139,6 +164,10 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
     for req in requests {
         let (tag, number) = match req {
             Request::ServiceRecordV7 => (9, 0),
+            Request::ProbeBulkV1 => (10, 0),
+            Request::PutBulkV1 { expires, .. } => (11, *expires),
+            Request::FetchBulkV1 { .. } => (12, 0),
+            Request::WatchFetchBulkV1 { wait_ms, .. } => (13, i64::from(*wait_ms)),
             Request::Register { expires, .. } => (1, *expires),
             Request::Put { expires, .. } => (2, *expires),
             Request::Fetch { .. } => (3, 0),
@@ -152,9 +181,9 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
         tags.push([tag]);
         scalars.push(number.to_le_bytes());
         aux.push(match req {
-            Request::Watch { boxes, .. } | Request::WatchFetchV6 { boxes, .. } => {
-                watch_bytes(boxes)?
-            }
+            Request::Watch { boxes, .. }
+            | Request::WatchFetchV6 { boxes, .. }
+            | Request::WatchFetchBulkV1 { boxes, .. } => watch_bytes(boxes)?,
             _ => Zeroizing::new(Vec::new()),
         });
     }
@@ -163,7 +192,7 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
         let mut f: Fields<'_> = [&[]; 8];
         f[0] = &tags[i];
         match req {
-            Request::ServiceRecordV7 => {}
+            Request::ServiceRecordV7 | Request::ProbeBulkV1 => {}
             Request::Register {
                 mailbox,
                 write,
@@ -181,6 +210,13 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
                 object,
                 ciphertext,
                 ..
+            }
+            | Request::PutBulkV1 {
+                mailbox,
+                write,
+                object,
+                ciphertext,
+                ..
             } => {
                 f[1] = mailbox;
                 f[2] = write;
@@ -188,7 +224,9 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
                 f[5] = &scalars[i];
                 f[6] = ciphertext;
             }
-            Request::Fetch { mailbox, read } | Request::Revoke { mailbox, read } => {
+            Request::Fetch { mailbox, read }
+            | Request::FetchBulkV1 { mailbox, read }
+            | Request::Revoke { mailbox, read } => {
                 f[1] = mailbox;
                 f[2] = read;
             }
@@ -208,7 +246,9 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
                 f[2] = read;
                 f[5] = &scalars[i];
             }
-            Request::Watch { .. } | Request::WatchFetchV6 { .. } => {
+            Request::Watch { .. }
+            | Request::WatchFetchV6 { .. }
+            | Request::WatchFetchBulkV1 { .. } => {
                 f[5] = &scalars[i];
                 f[6] = &aux[i];
             }
@@ -217,29 +257,43 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
         validate_request(&f)?;
         rows.push(f);
     }
-    build(REQUEST_SCHEMA, context, &rows)
+    build(
+        if tags.iter().any(|t| t[0] >= 10) {
+            BULK_REQUEST_SCHEMA
+        } else {
+            REQUEST_SCHEMA
+        },
+        context,
+        &rows,
+    )
 }
 fn validate_request(f: &Fields<'_>) -> Result<()> {
     ensure!(f[0].len() == 1, "mailbox operation tag");
     let s = Some;
     match f[0][0] {
         1 => shape(f, [s(1), s(32), s(32), s(32), s(0), s(8), s(0), s(0)])?,
-        2 => {
+        2 | 11 => {
             shape(f, [s(1), s(32), s(32), s(0), s(32), s(8), None, s(0)])?;
             ensure!(
-                !f[6].is_empty() && f[6].len() <= 65_536,
+                !f[6].is_empty()
+                    && f[6].len()
+                        <= if f[0][0] == 11 {
+                            BULK_LIMITS.field_bytes
+                        } else {
+                            65_536
+                        },
                 "mailbox ciphertext bound"
             );
         }
-        3 | 6 => shape(f, [s(1), s(32), s(32), s(0), s(0), s(0), s(0), s(0)])?,
+        3 | 6 | 12 => shape(f, [s(1), s(32), s(32), s(0), s(0), s(0), s(0), s(0)])?,
         4 => shape(f, [s(1), s(32), s(32), s(0), s(32), s(0), s(0), s(32)])?,
         5 => shape(f, [s(1), s(32), s(32), s(0), s(0), s(8), s(0), s(0)])?,
-        7 | 8 => {
+        7 | 8 | 13 => {
             shape(f, [s(1), s(0), s(0), s(0), s(0), s(8), None, s(0)])?;
             ensure!(u64_value(f[5])? <= 10_000, "mailbox wait bound");
             watches(f[6])?;
         }
-        9 => shape(f, [s(1), s(0), s(0), s(0), s(0), s(0), s(0), s(0)])?,
+        9 | 10 => shape(f, [s(1), s(0), s(0), s(0), s(0), s(0), s(0), s(0)])?,
         _ => anyhow::bail!("unknown mailbox operation"),
     }
     Ok(())
@@ -249,13 +303,20 @@ fn validate_request(f: &Fields<'_>) -> Result<()> {
 pub struct RequestBatch<'a>(BatchView<'a>);
 impl<'a> RequestBatch<'a> {
     pub fn decode(bytes: &'a [u8], context: [u8; 32]) -> Result<Self> {
-        let v = apfl_batch::decode(bytes, REQUEST_SCHEMA, LIMITS).map_err(anyhow::Error::msg)?;
+        let schema = wire_schema(bytes, REQUEST_SCHEMA, BULK_REQUEST_SCHEMA)?;
+        let v =
+            apfl_batch::decode(bytes, schema, wire_limits(schema)).map_err(anyhow::Error::msg)?;
         ensure!(
             context != [0; 32] && v.context == context && v.columns() == 8,
             "mailbox context/columns"
         );
         for row in 0..v.rows() {
-            validate_request(&fields(&v, row)?)?;
+            let f = fields(&v, row)?;
+            validate_request(&f)?;
+            ensure!(
+                (f[0][0] >= 10) == (schema == BULK_REQUEST_SCHEMA),
+                "mailbox operation schema"
+            );
         }
         Ok(Self(v))
     }
@@ -269,7 +330,7 @@ impl<'a> RequestBatch<'a> {
     pub fn has_waiting_watch(&self) -> Result<bool> {
         for row in 0..self.len() {
             let f = fields(&self.0, row)?;
-            if matches!(f[0][0], 7 | 8) && u64_value(f[5])? != 0 {
+            if matches!(f[0][0], 7 | 8 | 13) && u64_value(f[5])? != 0 {
                 return Ok(true);
             }
         }
@@ -279,6 +340,22 @@ impl<'a> RequestBatch<'a> {
         let f = fields(&self.0, index)?;
         Ok(match f[0][0] {
             9 => Request::ServiceRecordV7,
+            10 => Request::ProbeBulkV1,
+            11 => Request::PutBulkV1 {
+                mailbox: fixed(f[1])?,
+                write: fixed(f[2])?,
+                object: fixed(f[4])?,
+                expires: i64_value(f[5])?,
+                ciphertext: f[6].to_vec(),
+            },
+            12 => Request::FetchBulkV1 {
+                mailbox: fixed(f[1])?,
+                read: fixed(f[2])?,
+            },
+            13 => Request::WatchFetchBulkV1 {
+                boxes: watches(f[6])?,
+                wait_ms: u64_value(f[5])? as u32,
+            },
             1 => Request::Register {
                 mailbox: fixed(f[1])?,
                 write: fixed(f[2])?,
@@ -359,11 +436,22 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
         !replies.is_empty() && replies.len() <= LIMITS.rows,
         "mailbox reply count"
     );
+    let bulk = replies.iter().any(|r| match r {
+        Reply::BulkReady { .. } => true,
+        Reply::Object { ciphertext, .. } => ciphertext.len() > 65_536,
+        Reply::NoticeObjectV6 {
+            object: Some(o), ..
+        } => o.ciphertext.len() > 65_536,
+        _ => false,
+    });
     let mut tags = Vec::new();
     let mut numbers = Vec::new();
     let mut aux = Vec::new();
     for reply in replies {
         let (tag, num, extra) = match reply {
+            Reply::BulkReady { max_ciphertext } => {
+                (12, max_ciphertext.to_le_bytes().to_vec(), Vec::new())
+            }
             Reply::ServiceRecordV7 { record } => (11, Vec::new(), locator::encode(record)?),
             Reply::Registered => (1, Vec::new(), Vec::new()),
             Reply::Stored(r) => {
@@ -428,7 +516,7 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
                 f[3] = &numbers[i];
                 f[4] = ciphertext;
             }
-            Reply::Rejected(_) => f[1] = &numbers[i],
+            Reply::Rejected(_) | Reply::BulkReady { .. } => f[1] = &numbers[i],
             Reply::Notice(_) | Reply::ServiceRecordV7 { .. } => f[1] = &aux[i],
             Reply::NoticeObjectV6 { object, .. } => {
                 f[1] = &aux[i];
@@ -441,12 +529,27 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
             }
             _ => {}
         }
-        validate_reply(&f)?;
+        validate_reply_bound(
+            &f,
+            if bulk {
+                BULK_LIMITS.field_bytes
+            } else {
+                LIMITS.field_bytes
+            },
+        )?;
         rows.push(f);
     }
-    build(REPLY_SCHEMA, context, &rows)
+    build(
+        if bulk {
+            BULK_REPLY_SCHEMA
+        } else {
+            REPLY_SCHEMA
+        },
+        context,
+        &rows,
+    )
 }
-fn validate_reply(f: &Fields<'_>) -> Result<()> {
+fn validate_reply_bound(f: &Fields<'_>, object_limit: usize) -> Result<()> {
     ensure!(f[0].len() == 1, "mailbox reply tag");
     let s = Some;
     match f[0][0] {
@@ -458,7 +561,7 @@ fn validate_reply(f: &Fields<'_>) -> Result<()> {
         3 => {
             shape(f, [s(1), s(32), s(32), s(8), None, s(0), s(0), s(0)])?;
             ensure!(
-                !f[4].is_empty() && f[4].len() <= 65_536,
+                !f[4].is_empty() && f[4].len() <= object_limit,
                 "mailbox object size"
             );
         }
@@ -478,11 +581,19 @@ fn validate_reply(f: &Fields<'_>) -> Result<()> {
                 shape(f, [s(1), None, s(32), s(32), None, s(12), s(0), s(0)])?;
                 ensure!(
                     !f[4].is_empty()
-                        && f[4].len() <= 65_536
+                        && f[4].len() <= object_limit
                         && (u32::from_le_bytes(fixed(&f[5][..4])?) as usize) < n.len(),
                     "mailbox prefetch bounds"
                 );
             }
+        }
+        12 => {
+            shape(f, [s(1), s(4), s(0), s(0), s(0), s(0), s(0), s(0)])?;
+            ensure!(
+                u32::from_le_bytes(fixed(f[1])?) as usize
+                    == crate::mailbox_store::MAX_BULK_CIPHERTEXT,
+                "bulk capability bound"
+            );
         }
         11 => {
             shape(f, [s(1), None, s(0), s(0), s(0), s(0), s(0), s(0)])?;
@@ -493,7 +604,9 @@ fn validate_reply(f: &Fields<'_>) -> Result<()> {
     Ok(())
 }
 pub fn decode_replies(bytes: &[u8], context: [u8; 32], expected: usize) -> Result<Vec<Reply>> {
-    let batch = apfl_batch::decode(bytes, REPLY_SCHEMA, LIMITS).map_err(anyhow::Error::msg)?;
+    let schema = wire_schema(bytes, REPLY_SCHEMA, BULK_REPLY_SCHEMA)?;
+    let batch =
+        apfl_batch::decode(bytes, schema, wire_limits(schema)).map_err(anyhow::Error::msg)?;
     ensure!(
         context != [0; 32]
             && batch.context == context
@@ -504,8 +617,15 @@ pub fn decode_replies(bytes: &[u8], context: [u8; 32], expected: usize) -> Resul
     let mut out = Vec::with_capacity(expected);
     for row in 0..expected {
         let f = fields(&batch, row)?;
-        validate_reply(&f)?;
+        validate_reply_bound(&f, wire_limits(schema).field_bytes)?;
+        ensure!(
+            f[0][0] != 12 || schema == BULK_REPLY_SCHEMA,
+            "bulk capability schema"
+        );
         out.push(match f[0][0] {
+            12 => Reply::BulkReady {
+                max_ciphertext: u32::from_le_bytes(fixed(f[1])?),
+            },
             11 => Reply::ServiceRecordV7 {
                 record: locator::decode(f[1])?,
             },
@@ -589,3 +709,6 @@ mod tests;
 
 #[cfg(test)]
 mod locator_tests;
+
+#[cfg(test)]
+mod bulk_tests;

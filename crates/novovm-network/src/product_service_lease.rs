@@ -100,6 +100,7 @@ impl IrohServiceEndpointV1 {
         let encoded = encoded
             .strip_suffix(native_endpoint::SUFFIX)
             .or_else(|| encoded.strip_suffix(native_endpoint::SUFFIX_V8))
+            .or_else(|| encoded.strip_suffix(native_endpoint::SUFFIX_BULK_V1))
             .unwrap_or(encoded);
         let bytes = URL_SAFE_NO_PAD.decode(encoded)?;
         let value: Self = serde_json::from_slice(&bytes)?;

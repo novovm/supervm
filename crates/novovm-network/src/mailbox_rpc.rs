@@ -43,6 +43,26 @@ const MAX_WIRE: usize = 300_000; // 64 KiB ciphertext in bounded JSON byte-array
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxRequestV1 {
+    #[serde(skip)]
+    ProbeBulkV1,
+    #[serde(skip)]
+    PutBulkV1 {
+        mailbox: [u8; 32],
+        write: [u8; 32],
+        object: [u8; 32],
+        ciphertext: Vec<u8>,
+        expires: i64,
+    },
+    #[serde(skip)]
+    FetchBulkV1 {
+        mailbox: [u8; 32],
+        read: [u8; 32],
+    },
+    #[serde(skip)]
+    WatchFetchBulkV1 {
+        boxes: Vec<MailboxWatchV1>,
+        wait_ms: u32,
+    },
     /// NVMBOX07 APFL only; has no legacy JSON wire representation.
     #[serde(skip)]
     ServiceRecordV7,
@@ -99,19 +119,22 @@ pub enum MailboxRequestV1 {
 impl Drop for MailboxRequestV1 {
     fn drop(&mut self) {
         match self {
-            Self::ServiceRecordV7
+            Self::ProbeBulkV1
+            | Self::ServiceRecordV7
             | Self::BeginSession
             | Self::BeginContinuousV4
             | Self::BeginContinuousV6
             | Self::EndSession
             | Self::Watch { .. }
-            | Self::WatchFetchV6 { .. } => {} // each item zeroizes its own read capability
+            | Self::WatchFetchV6 { .. }
+            | Self::WatchFetchBulkV1 { .. } => {} // each item zeroizes its own read capability
             Self::Register { write, read, .. } => {
                 write.zeroize();
                 read.zeroize();
             }
-            Self::Put { write, .. } => write.zeroize(),
+            Self::Put { write, .. } | Self::PutBulkV1 { write, .. } => write.zeroize(),
             Self::Fetch { read, .. }
+            | Self::FetchBulkV1 { read, .. }
             | Self::Consume { read, .. }
             | Self::Renew { read, .. }
             | Self::Revoke { read, .. } => read.zeroize(),
@@ -149,6 +172,10 @@ pub struct MailboxPrefetchV6 {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum MailboxReplyV1 {
+    #[serde(skip)]
+    BulkReady {
+        max_ciphertext: u32,
+    },
     /// Original signed directory value, never re-signed by the RPC adapter.
     #[serde(skip)]
     ServiceRecordV7 {
@@ -433,6 +460,14 @@ impl MailboxServiceV1 {
     }
 
     async fn execute_inner(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        if matches!(&request, MailboxRequestV1::ProbeBulkV1) {
+            return Ok(MailboxReplyV1::BulkReady {
+                max_ciphertext: crate::mailbox_store::MAX_BULK_CIPHERTEXT as u32,
+            });
+        }
+        if let MailboxRequestV1::WatchFetchBulkV1 { boxes, wait_ms } = &request {
+            return self.watch_inner_bounded(boxes, *wait_ms, true, true).await;
+        }
         if matches!(&request, MailboxRequestV1::ServiceRecordV7) {
             let current = self
                 .native_record_v7
@@ -466,12 +501,15 @@ impl MailboxServiceV1 {
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
-                    MailboxRequestV1::ServiceRecordV7
+                    MailboxRequestV1::ProbeBulkV1
+                    | MailboxRequestV1::ServiceRecordV7
                     | MailboxRequestV1::BeginSession
                     | MailboxRequestV1::BeginContinuousV4
                     | MailboxRequestV1::BeginContinuousV6
                     | MailboxRequestV1::EndSession => Err(StoreError::Invalid),
-                    MailboxRequestV1::Watch { .. } | MailboxRequestV1::WatchFetchV6 { .. } => {
+                    MailboxRequestV1::Watch { .. }
+                    | MailboxRequestV1::WatchFetchV6 { .. }
+                    | MailboxRequestV1::WatchFetchBulkV1 { .. } => {
                         unreachable!("watch dispatched before store worker")
                     }
                     MailboxRequestV1::Register {
@@ -494,23 +532,42 @@ impl MailboxServiceV1 {
                         object,
                         ciphertext,
                         expires,
+                    }
+                    | MailboxRequestV1::PutBulkV1 {
+                        mailbox,
+                        write,
+                        object,
+                        ciphertext,
+                        expires,
                     } => {
                         let capability = Capability::from_bytes(*write)?;
                         // A retried Put after deletion is new real custody,
                         // subject to the same resource bounds and original TTL.
                         // Never sign an unverifiable historical storage claim.
-                        store.put(mailbox, &capability, object, ciphertext, *expires, now)?;
+                        if matches!(&request, MailboxRequestV1::PutBulkV1 { .. }) {
+                            store.put_bulk_v1(
+                                mailbox,
+                                &capability,
+                                object,
+                                ciphertext,
+                                *expires,
+                                now,
+                            )?;
+                        } else {
+                            store.put(mailbox, &capability, object, ciphertext, *expires, now)?;
+                        }
                         Ok(MailboxReplyV1::Stored(StoreReceiptV1::committed(
                             &signer, *mailbox, *object, ciphertext, *expires,
                         )))
                     }
-                    MailboxRequestV1::Fetch { mailbox, read } => {
+                    MailboxRequestV1::Fetch { mailbox, read }
+                    | MailboxRequestV1::FetchBulkV1 { mailbox, read } => {
                         // Non-destructive; consumer only removes after its own durable commit.
-                        match store
-                            .fetch(mailbox, &Capability::from_bytes(*read)?, now)?
-                            .into_iter()
-                            .next()
-                        {
+                        match if matches!(&request, MailboxRequestV1::FetchBulkV1 { .. }) {
+                            store.fetch_bulk_v1(mailbox, &Capability::from_bytes(*read)?, now)?
+                        } else {
+                            store.fetch_one(mailbox, &Capability::from_bytes(*read)?, now)?
+                        } {
                             Some(row) => Ok(MailboxReplyV1::Object {
                                 object: row.id,
                                 ciphertext: row.ciphertext,
@@ -551,6 +608,7 @@ impl MailboxServiceV1 {
                 && matches!(
                     &request,
                     MailboxRequestV1::Put { .. }
+                        | MailboxRequestV1::PutBulkV1 { .. }
                         | MailboxRequestV1::Revoke { .. }
                         | MailboxRequestV1::Register { .. }
                 )
@@ -581,6 +639,16 @@ impl MailboxServiceV1 {
         boxes: &[MailboxWatchV1],
         wait_ms: u32,
         prefetch: bool,
+    ) -> Result<MailboxReplyV1> {
+        self.watch_inner_bounded(boxes, wait_ms, prefetch, false)
+            .await
+    }
+    async fn watch_inner_bounded(
+        &self,
+        boxes: &[MailboxWatchV1],
+        wait_ms: u32,
+        prefetch: bool,
+        bulk: bool,
     ) -> Result<MailboxReplyV1> {
         if boxes.is_empty()
             || boxes.len() > 4
@@ -626,9 +694,15 @@ impl MailboxServiceV1 {
                 if prefetch {
                     if let Some(index) = notices.iter().position(|n| n.pending) {
                         let q = &queries[index];
-                        if let Some(row) =
+                        if let Some(row) = if bulk {
+                            store.fetch_bulk_v1(
+                                &q.mailbox,
+                                &Capability::from_bytes(q.read)?,
+                                now,
+                            )?
+                        } else {
                             store.fetch_one(&q.mailbox, &Capability::from_bytes(q.read)?, now)?
-                        {
+                        } {
                             object = Some(MailboxPrefetchV6 {
                                 box_index: index,
                                 object: row.id,
