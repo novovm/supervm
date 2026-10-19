@@ -1,0 +1,286 @@
+[
+  {
+    "node": 0,
+    "round_zero_leader": false,
+    "verified_decision": true,
+    "round": 1,
+    "qc_signatures": 3,
+    "transactions": 1024,
+    "scope": "offline copy; bounded envelope and message verification, not full replay validation or timing attribution",
+    "outbox": [
+      {
+        "sequence": 1,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Prevote",
+        "value": null,
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 2,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Precommit",
+        "value": null,
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 3,
+        "kind": "state_only",
+        "round": null,
+        "phase": null,
+        "value": null,
+        "signature_verified": false,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 4,
+        "kind": "proposal",
+        "round": 1,
+        "phase": null,
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 5,
+        "kind": "vote",
+        "round": 1,
+        "phase": "Prevote",
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 6,
+        "kind": "vote",
+        "round": 1,
+        "phase": "Precommit",
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 7,
+        "kind": "decision",
+        "round": 1,
+        "phase": null,
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      }
+    ]
+  },
+  {
+    "node": 1,
+    "round_zero_leader": true,
+    "verified_decision": true,
+    "round": 1,
+    "qc_signatures": 3,
+    "transactions": 1024,
+    "scope": "offline copy; bounded envelope and message verification, not full replay validation or timing attribution",
+    "outbox": [
+      {
+        "sequence": 1,
+        "kind": "proposal",
+        "round": 0,
+        "phase": null,
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 2,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Prevote",
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 3,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Precommit",
+        "value": null,
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 4,
+        "kind": "state_only",
+        "round": null,
+        "phase": null,
+        "value": null,
+        "signature_verified": false,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 5,
+        "kind": "decision",
+        "round": 1,
+        "phase": null,
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      }
+    ]
+  },
+  {
+    "node": 2,
+    "round_zero_leader": false,
+    "verified_decision": true,
+    "round": 1,
+    "qc_signatures": 3,
+    "transactions": 1024,
+    "scope": "offline copy; bounded envelope and message verification, not full replay validation or timing attribution",
+    "outbox": [
+      {
+        "sequence": 1,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Prevote",
+        "value": null,
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 2,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Precommit",
+        "value": null,
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 3,
+        "kind": "state_only",
+        "round": null,
+        "phase": null,
+        "value": null,
+        "signature_verified": false,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 4,
+        "kind": "vote",
+        "round": 1,
+        "phase": "Prevote",
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 5,
+        "kind": "vote",
+        "round": 1,
+        "phase": "Precommit",
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 6,
+        "kind": "decision",
+        "round": 1,
+        "phase": null,
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      }
+    ]
+  },
+  {
+    "node": 3,
+    "round_zero_leader": false,
+    "verified_decision": true,
+    "round": 1,
+    "qc_signatures": 3,
+    "transactions": 1024,
+    "scope": "offline copy; bounded envelope and message verification, not full replay validation or timing attribution",
+    "outbox": [
+      {
+        "sequence": 1,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Prevote",
+        "value": null,
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 2,
+        "kind": "vote",
+        "round": 0,
+        "phase": "Precommit",
+        "value": null,
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 3,
+        "kind": "state_only",
+        "round": null,
+        "phase": null,
+        "value": null,
+        "signature_verified": false,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 4,
+        "kind": "vote",
+        "round": 1,
+        "phase": "Prevote",
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 5,
+        "kind": "vote",
+        "round": 1,
+        "phase": "Precommit",
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      },
+      {
+        "sequence": 6,
+        "kind": "decision",
+        "round": 1,
+        "phase": null,
+        "value": "5B3832056740CFE4EF21630DE0CFA10F585699F887F6B3A51A3F39CEB01C2D3A",
+        "signature_verified": true,
+        "envelope_verified": true,
+        "full_replay_evidence_revalidated": false
+      }
+    ]
+  }
+]

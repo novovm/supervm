@@ -10,6 +10,16 @@ use crate::native_pipeline::consensus::{
 #[test]
 #[ignore = "real AOEM; native ready proposal must precede same-poll timeout"]
 fn native_lifecycle_ready_proposal_wins_deadline_without_disabling_timeout() -> Result<()> {
+    deadline_ready_proposal(false)
+}
+
+#[test]
+#[ignore = "real AOEM; queued socket proposal behind rejected control must precede timeout"]
+fn native_lifecycle_second_ready_control_wins_deadline_without_disabling_timeout() -> Result<()> {
+    deadline_ready_proposal(true)
+}
+
+fn deadline_ready_proposal(backlog: bool) -> Result<()> {
     let Fixture {
         ids,
         set,
@@ -23,6 +33,8 @@ fn native_lifecycle_ready_proposal_wins_deadline_without_disabling_timeout() -> 
         .iter()
         .position(|id| *id == set.leader(1, 0).unwrap())
         .context("fixture leader missing")?;
+    let ready = (leader + 1) % 4;
+    let absent = (leader + 2) % 4;
     let context = batch_context(anchor.state_root);
     let body_id = transport::body_id(&context, &raw()?, codec())?;
     for (i, driver) in drivers.iter_mut().enumerate() {
@@ -62,6 +74,50 @@ fn native_lifecycle_ready_proposal_wins_deadline_without_disabling_timeout() -> 
         Message::Proposal { proposal, .. } => proposal.value,
         _ => unreachable!(),
     };
+    for i in [ready, absent] {
+        drivers[i].poll(&services.0[i], start)?;
+        ensure!(
+            drivers[i].step() == TimeoutStep::Propose,
+            "premature timeout"
+        );
+    }
+    if backlog {
+        // The SECOND message uses the original socket/reassembly owner, not
+        // another fixture queue. Leave it unconsumed until the deadline poll.
+        let prepared = mesh.channels[leader].prepare(&proposal)?;
+        ensure!(
+            prepared.byte_len() <= 1024,
+            "fixture proposal must be one fragment"
+        );
+        let peer = (0..ids.len())
+            .filter(|i| *i != leader)
+            .position(|i| i == ready)
+            .context("fixture receiver missing")?;
+        ensure!(
+            mesh.channels[leader].try_send(peer, &prepared, Instant::now())?,
+            "fixture socket send backpressure"
+        );
+        let deadline = Instant::now() + DEADLINE;
+        let mut received = false;
+        while !received {
+            ensure!(Instant::now() < deadline, "socket proposal arrival timeout");
+            for (i, channel) in mesh.channels.iter_mut().enumerate() {
+                let report = channel.poll_io(
+                    2000 + start.elapsed().as_millis() as u64,
+                    Instant::now(),
+                    64,
+                )?;
+                ensure!(
+                    report.rejected == 0 && report.backpressured == 0,
+                    "fixture socket rejection"
+                );
+                if i == ready && report.accepted_fragments > 0 {
+                    received = true;
+                }
+            }
+            std::thread::yield_now();
+        }
+    }
     let mut nodes = Vec::new();
     for (i, (driver, channel)) in drivers
         .into_iter()
@@ -92,21 +148,25 @@ fn native_lifecycle_ready_proposal_wins_deadline_without_disabling_timeout() -> 
             codec(),
         )?);
     }
-    let ready = (leader + 1) % 4;
-    let absent = (leader + 2) % 4;
-    for i in [ready, absent] {
-        nodes[i].poll(&services.0[i], start)?;
-        ensure!(
-            nodes[i].progress.step() == TimeoutStep::Propose,
-            "premature timeout"
-        );
-    }
     // This is the existing bounded retained-control slot, after transport
     // custody but before consensus admission. Production still verifies it.
-    nodes[ready].retain_control_for_deadline_test(ids[leader], proposal)?;
+    let mut first = proposal;
+    if backlog {
+        let Message::Proposal { proposal, .. } = &mut first else {
+            unreachable!()
+        };
+        proposal.signature[0] ^= 1;
+    }
+    nodes[ready].retain_control_for_deadline_test(ids[leader], first)?;
     let expired = start + Duration::from_secs(5);
     for (i, expected) in [(ready, Some(value)), (absent, None)] {
         nodes[i].poll(&services.0[i], expired)?;
+        if i == ready && backlog {
+            ensure!(
+                nodes[i].rejected_messages == 1,
+                "bad first signature was not rejected"
+            );
+        }
         // Poll the same journal to obtain its real ACK without letting the
         // lifecycle fan out/take the message before this assertion sees it.
         let deadline = Instant::now() + DEADLINE;

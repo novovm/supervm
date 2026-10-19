@@ -1,5 +1,74 @@
 # First-height deadline ordering investigation
 
+## Follow-up on b9d06282: queued control, not a new consensus protocol
+
+Offline-copy inspection now also reads bounded first-height immutable outboxes.
+The NVOUT002 envelope checksum/revision and the original proposal/vote signatures
+are checked; complete historical replay evidence is NOT revalidated by this
+diagnostic. Node 1 was the round-zero leader: it persisted a proposal and a
+non-nil prevote. Nodes 0, 2 and 3 persisted nil prevotes. All four persisted nil
+precommits; the round-one decision has exactly the SAME value as the first
+proposal. Thus the failure was not an absence of any executed leader candidate.
+The saved records contain no phase timestamps: follower execution readiness,
+arrival and scheduling cannot retrospectively be separated.
+
+A second concrete scheduling defect was reproduced on b9d06282. NativeLifecycle
+handled just one complete control object before evaluating the deadline; the
+underlying quantum of 64 is completion work, not 64 decoded messages. A rejected
+first control could conceal a ready valid proposal. The new regression sends
+the real persisted proposal over the existing NativeChannel UDP socket, places
+a bad-signature message in the retained first slot, and checks the real durable
+prevote. Before the correction it failed with `actual=None` (node 2), while
+the expected value was the already executed candidate.
+
+The correction reuses the preserved controller's bounded 32-event service rule
+inside the original NativeLifecycle. No replacement controller is activated.
+The same single retained slot is reused, backpressure stops that lane, data
+lanes still get one turn each, and all existing verification and timeout rules
+remain. This increases the bounded amount of control work per turn, not queue
+capacity; it does not promise to process unlimited backlog or bypass a retained
+backpressured request. CPU/GPU algorithms, library and SDK are unchanged.
+
+The rejected GPU candidate also lazily created its resident composition on the
+first execution, after readiness. That creation includes buffer initialization
+and compute-pipeline creation in the background integer owner, not the control
+thread. Warm component timings exclude it. This is a source-confirmed cost
+boundary, NOT a measurement that it consumed the original 9.91 seconds. That
+candidate remains rejected; no speculative network or timer change is justified.
+
+Follow-up verification: old second-control regression FAILED (nil instead of
+the candidate); corrected single/second-control regressions and CPU/algebraic
+three-height cases all passed (4 tests, 2.01 s). Existing A/A/B recovery passed
+(10.36 s, same-process four-store fixture, NOT four independent-process fault
+acceptance). Ordinary consensus tests: 45 passed, 26 ignored. Release node built.
+
+Same frozen driver and AOEM library, AC checked before each run, no competing
+builds/benchmarks, diagnostics off. All eight formal runs preserved the initial
+wait and completed 65,536 successful transactions, zero business failures,
+2,949,120 receipt fees, amount/receipt-fee conservation, nonce and cold recovery.
+First-height observation ranged 0.298–0.476 s; the historical outlier did not
+recur. Full fee-state audit and complete business proof remain outside this gate.
+
+| Backend | Old combined TPS | New combined TPS | Change | Old P95 / P99 range (ms) | New P95 / P99 range (ms) |
+| --- | ---: | ---: | ---: | --- | --- |
+| CPU | 7736.88 | 7671.68 | -0.84% | 1059.49–1066.04 / 1220.87–1254.16 | 1080.19–1102.95 / 1242.91–1258.65 |
+| Integer | 3591.53 | 3587.90 | -0.10% | 2299.33–2328.58 / 2372.32–2427.96 | 2305.20–2317.74 / 2359.23–2395.50 |
+
+Combined TPS is total successful count divided by summed measured time. Tail
+ranges are the two individual rounds, not averaged percentiles. CPU both pairs
+declined; no speedup or stable tail-latency improvement is signed off. Retain the
+bounded deadline fix for its reproduced correctness case, not as a throughput
+win. The exact historical first-round trigger remains unproven, not closed by
+these successful normal runs.
+
+[All follow-up measurements and binary identities](control-batch-measurements.json)
+and [original four-store outbox audit](first-height-outboxes.json). Local old/new
+failure and regression logs: `target/native-control-batch-20261019/`; original
+stores and all unsuccessful earlier experiments remain protected. The active
+production change is one bounded loop; no new mode, controller, SDK or DLL.
+
+## Earlier round (3e445fce → b9d06282)
+
 Base: `3e445fce`. One original NovoRUDP/APFL node/exec/AOEM path; no
 network, signer, consensus rule, timeout value, execution backend or SDK change.
 

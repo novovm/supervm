@@ -85,7 +85,11 @@ fn inspect_copied_first_height_decision() -> Result<()> {
     };
     let record = ChainRecord::decode(&read(MetaKey::ChainBlock { height: 1 })?)?;
     let outbox = record.outbox_key();
-    let MetaKey::ConsensusOutbox { sequence, .. } = outbox else {
+    let MetaKey::ConsensusOutbox {
+        sequence,
+        validator,
+    } = outbox
+    else {
         bail!("wrong outbox key")
     };
     let (proposal, certificate) = decode_archived_decision(&read(outbox)?, sequence)?;
@@ -105,11 +109,99 @@ fn inspect_copied_first_height_decision() -> Result<()> {
         statement.hash() == point.block_hash && stored.state_root() == point.state_root,
         "archive does not bind executed result"
     );
+    ensure!(
+        (1..=1024).contains(&sequence),
+        "first-height audit revision bound"
+    );
+    // No public generic historical-outbox decoder exists: decode_replay is
+    // private to the journal and requires its snapshot replay-reference pin.
+    // Inspect only the bounded NVOUT002 envelope + first signed message here,
+    // then reuse the product wire decoders/signature verifiers. This does NOT
+    // validate historical replay evidence, snapshot lineage or timing.
+    let inspect = |bytes: &[u8], revision: u64| -> Result<Value> {
+        ensure!(
+            (81..=512 * 1024).contains(&bytes.len()),
+            "audit outbox size"
+        );
+        let (body, checksum) = bytes.split_at(bytes.len() - 32);
+        let mut hash = Sha256::new();
+        hash.update(b"novovm/replacement/signing-journal/v1\0");
+        hash.update(body);
+        ensure!(
+            body.starts_with(b"NVOUT002") && hash.finalize().as_slice() == checksum,
+            "audit outbox version/checksum"
+        );
+        ensure!(
+            u64::from_be_bytes(body[8..16].try_into()?) == revision,
+            "audit outbox sequence mismatch"
+        );
+        let kind = body[48];
+        let mut summary = json!({"sequence":revision,"kind":kind,
+            "envelope_verified":true,"message_signature_verified":false,
+            "full_replay_evidence_revalidated":false});
+        if kind == 0 {
+            summary["kind"] = json!("state_only");
+            return Ok(summary);
+        }
+        ensure!(body.len() >= 53, "audit truncated message frame");
+        let size = u32::from_be_bytes(body[49..53].try_into()?) as usize;
+        ensure!(
+            size <= wire::MAX_WIRE_BYTES && size <= body.len() - 53,
+            "audit message frame bound"
+        );
+        let frame = &body[53..53 + size];
+        match kind {
+            1 => {
+                let p = wire::decode_proposal(frame)?;
+                p.verify(&set)?;
+                ensure!(
+                    p.context == record.context() && p.proposer_id == validator,
+                    "audit proposal owner/context"
+                );
+                summary["kind"] = json!("proposal");
+                summary["round"] = json!(p.round);
+                summary["value"] = json!(p.value);
+            }
+            2 => {
+                let vote = wire::decode_vote(frame)?;
+                vote.verify(&set)?;
+                ensure!(
+                    vote.context == record.context() && vote.validator_id == validator,
+                    "audit vote owner/context"
+                );
+                summary["kind"] = json!("vote");
+                summary["round"] = json!(vote.round);
+                summary["phase"] = json!(vote.phase);
+                summary["value"] = json!(vote.value);
+            }
+            3 => {
+                let (p, qc) = decode_archived_decision(bytes, revision)?;
+                VerifiedDecision::verify(&p, &qc, &set, record.context(), point.block_hash)?;
+                summary["kind"] = json!("decision");
+                summary["round"] = json!(p.round);
+                summary["value"] = json!(p.value);
+                summary["qc_signatures"] = json!(qc.votes.len());
+            }
+            _ => bail!("unknown audit outbox kind"),
+        }
+        summary["message_signature_verified"] = json!(true);
+        Ok(summary)
+    };
+    let mut history = Vec::new();
+    for revision in 1..=sequence {
+        let bytes = read(MetaKey::ConsensusOutbox {
+            validator,
+            sequence: revision,
+        })?;
+        history.push(inspect(&bytes, revision)?);
+    }
     println!(
         "{}",
         json!({"height":1,"round":proposal.round,
         "qc_signatures":certificate.votes.len(),"transactions":stored.raw_transactions().len(),
-        "verified_decision":true,"scope":"offline copy; no timing attribution"})
+        "verified_decision":true,"validator":validator,
+        "round_zero_leader":set.leader(1,0)?,"outbox_history":history,
+        "scope":"offline copy; bounded envelope and message verification, not full replay validation or timing attribution"})
     );
     Ok(())
 }
