@@ -3,6 +3,38 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-19 v78 Android and existing L3 deployment
+
+NOVOCHAT `16f741e` profile v78 was installed over both existing Android apps,
+preserving five protected identity/key files per handset. The original Windows
+L3 was then upgraded through its existing user-session installer to `0b47ba7e`
+(network implementation `ab362f2c`), preserving its state directory and three
+protected identity/policy files. Installed executable SHA256:
+`4738694e4aeed909be5c98f0e017277b1ccfa95ec86a0eb9e0d73f29733fb0ac`.
+Both phone processes remained running during node upgrade and recovered L3;
+final state has L3/L4 ready and diagnosticCode=0. No ADB business tunnel.
+
+Bidirectional 1,600,067-byte images, complete previews and subsequent new text
+obtained durable device receipts. With B app stopped, A obtained storage receipts
+only. After A also stopped and B reopened, B independently fetched the original
+image; reopening A recovered its device receipt. This is offline handoff, not
+an Android background-survival or five-network-change gate.
+
+Same-sender-clock outbound_woken to first durable device receipt:
+new phones/old L3 = 3.294/3.326s; all upgraded = 2.961/2.478s;
+historical v77 = 2.548/2.499s. There is no demonstrated material end-to-end
+phone improvement. Both phones used Wi-Fi, external Iroh dependency remains,
+path availability differs between samples, and these are not P95 results.
+Raw host-selection/device-receipt intervals also contain clock offsets and must
+not be substituted for same-clock measurements. The local 46–50ms integrity
+benchmark below remains a component result, not phone delivery performance.
+
+Evidence: NOVOCHAT local artifacts/v78-node-upgrade.json,
+v78-node-image-forward.json, v78-node-image-reverse.json, v78-node-final.json,
+v78-offline-store-after.json, v78-offline-fetch.json, v78-reopen-receipt.json.
+Full phone/build boundaries and next minimal reuse seam are in NOVOCHAT
+docs/implementation/MEDIA_REUSE.md. Usable v77 APK retained; no new protocol.
+
 ## 2026-10-19 reliable native object feedback and capacity wake (local validation)
 
 Starting source: `4e17d3b6`. Reuse `NativeObjectLink -> NativeUdpSession ->
