@@ -70,6 +70,7 @@ pub struct NativeObjectSender {
     last_missing: Option<u64>,
     retry_pending: bool,
     next_send: Instant,
+    deferred_batch_sent: usize,
     feedback_deadline: Instant,
     deadline: Instant,
     attempts: u64,
@@ -120,6 +121,7 @@ impl NativeObjectSender {
             last_missing: None,
             retry_pending: false,
             next_send: now,
+            deferred_batch_sent: 0,
             feedback_deadline: now,
             deadline: now.checked_add(ttl).context("object TTL overflow")?,
             attempts: 0,
@@ -407,10 +409,28 @@ impl NativeObjectSender {
             }
         }
         if sent > 0 {
-            self.next_send = now
-                .checked_add(Duration::from_millis(pause))
-                .unwrap_or(self.deadline)
-                .min(self.deadline);
+            // A deferred carrier yields its one write slot after each real
+            // completion for ACK/data fairness. Count those completions across
+            // polls: slot handoff is not an entire pacing batch. WouldBlock
+            // contributes nothing; byte budgets and poll quanta remain intact.
+            let batch_finished = if io.deferred_writes() {
+                self.deferred_batch_sent += sent;
+                if self.deferred_batch_sent >= batch {
+                    self.deferred_batch_sent = 0;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                true
+            };
+            self.next_send = if batch_finished {
+                now.checked_add(Duration::from_millis(pause))
+                    .unwrap_or(self.deadline)
+                    .min(self.deadline)
+            } else {
+                now
+            };
             self.feedback_deadline = self.feedback_due(now);
         }
         Ok(sent)

@@ -381,7 +381,11 @@ async fn serve_link(
             }
             pending.retain(|item| item.peer != changed.peer);
         }
-        let mut progress = false;
+        // Consuming a completed deferred write frees the carrier's sole slot.
+        // Give the existing loop another turn to enqueue data/ACKs; otherwise
+        // an inbound-only service sleeps its idle 200 ms after each frame.
+        // No-progress/pacing/blocked writes still use the bounded wait below.
+        let mut progress = report.data_sent > 0 || report.feedback_sent > 0;
         let mut index = 0;
         while index < pending.len() {
             match pending[index].response.try_send(&mut link, now, authority) {

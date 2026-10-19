@@ -2425,3 +2425,17 @@ validated.100 native tests,45 bound tests (3 existing ignored), strict Clippy
 and no-default lib check pass. Existing finite split-IO deadlines remain;
 continuous native idle/frame lifecycle and actual mailbox activation are next,
 not a new scheduler or permission system. No phone/deployment latency claim.
+
+
+**2026-10-19 NOVOCHAT image-latency claim (released for Android validation):** Root owns only
+`crates/novovm-network/src/novorudp/object_sender.rs` and its tests, `product_rendezvous_native.rs`, plus
+this claim/readiness evidence. Existing native mailbox -> NativeObjectLink ->
+NativeObjectSender -> deferred CarrierIo is the affected path. Investigate
+batch pacing being charged after each single deferred write. Keep the same
+owner, frame/ACK validation, byte budget and actual-write completion contract;
+no execution/consensus/AOEM or protocol changes. One local build/test slot.
+
+Validation: pacing regression failed on the previous implementation; 100 native
+UDP/object/budget tests PASS after correction, plus real QUIC duplex two-wave
+object exchange PASS. Service/client completion handoff now schedules another
+existing-owner turn only on actual frame progress. Phone throughput still pending.

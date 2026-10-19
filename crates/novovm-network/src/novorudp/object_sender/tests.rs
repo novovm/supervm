@@ -419,3 +419,86 @@ fn blocked_repair_completion_does_not_skip_replacement_cursor() -> Result<()> {
     assert!(sender.repair.is_none());
     Ok(())
 }
+
+#[test]
+fn deferred_writer_paces_a_batch_not_each_completed_frame() -> Result<()> {
+    let (left, right, mut a, mut b) = link()?;
+    let io = BlockedWriter {
+        socket: left,
+        blocked: false.into(),
+    };
+    let now = Instant::now();
+    let body = Arc::new(OutgoingMessage::with_profile(
+        [1; 32],
+        vec![5; 20_000],
+        30_000,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let (mut config, mut pacing) = settings();
+    config.batch_pause_ms = 10;
+    pacing.batch_pause_ms = 10;
+    let mut sender = NativeObjectSender::new(
+        body,
+        a.session_id(),
+        11,
+        config,
+        pacing,
+        now,
+        Duration::from_secs(5),
+    )?;
+    // A reliable carrier returns its sole write slot after EVERY completion.
+    // Fair handoff is not the end of the configured eight-frame batch.
+    for index in 0..8 {
+        assert_eq!(
+            sender.poll_send_limited(&io, &mut a, now, 8, None)?,
+            1,
+            "deferred frame {index} must not wait for a batch pause"
+        );
+        receive(&right, &mut b)?;
+    }
+    assert_eq!(sender.poll_send_limited(&io, &mut a, now, 8, None)?, 0);
+    let resumed = now + Duration::from_millis(10);
+    io.blocked.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(sender.poll_send_limited(&io, &mut a, resumed, 8, None)?, 0);
+    io.blocked
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    for _ in 0..8 {
+        assert_eq!(sender.poll_send_limited(&io, &mut a, resumed, 8, None)?, 1);
+        receive(&right, &mut b)?;
+    }
+    assert_eq!(sender.poll_send_limited(&io, &mut a, resumed, 8, None)?, 0);
+    Ok(())
+}
+
+#[test]
+fn udp_small_poll_keeps_existing_pause_policy() -> Result<()> {
+    let (left, right, mut a, mut b) = link()?;
+    let now = Instant::now();
+    let body = Arc::new(OutgoingMessage::with_profile(
+        [1; 32],
+        vec![5; 2000],
+        3000,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let (mut config, mut pacing) = settings();
+    config.batch_pause_ms = 10;
+    pacing.batch_pause_ms = 10;
+    let mut sender = NativeObjectSender::new(
+        body,
+        a.session_id(),
+        11,
+        config,
+        pacing,
+        now,
+        Duration::from_secs(5),
+    )?;
+    assert_eq!(sender.poll_send(&left, &mut a, now, 1)?, 1);
+    receive(&right, &mut b)?;
+    assert_eq!(sender.poll_send(&left, &mut a, now, 1)?, 0);
+    assert_eq!(
+        sender.poll_send(&left, &mut a, now + Duration::from_millis(10), 1)?,
+        1
+    );
+    receive(&right, &mut b)?;
+    Ok(())
+}
