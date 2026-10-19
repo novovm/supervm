@@ -43,7 +43,18 @@ impl BindingSymbols {
     fn key(&mut self, value: &V) -> BindingKey {
         match value {
             V::Literal(value) => {
+                // Zero and one dominate guards, padding and prefix identities.
+                // Their exact 1024-bit identities need no table lookup/hash.
+                // Reserve symbols outside the bounded candidate's intern IDs;
+                // neither value nor any emitted AOEM operation is evaluated here.
+                if value == &AoemInteger1024V1::from_u128(0) {
+                    return BindingKey::Literal(u32::MAX);
+                }
+                if value == &AoemInteger1024V1::from_u128(1) {
+                    return BindingKey::Literal(u32::MAX - 1);
+                }
                 let next = u32::try_from(self.literals.len()).expect("bounded candidate literals");
+                assert!(next < u32::MAX - 1, "candidate literal symbol limit");
                 BindingKey::Literal(*self.literals.entry(value.0).or_insert(next))
             }
             V::Output { row, column } => BindingKey::Output(*row, *column),

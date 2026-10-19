@@ -1,5 +1,57 @@
 use super::*;
 
+#[test]
+fn expression_sharing_matches_reference_keys_for_all_program_shapes() {
+    // Reference the old key algorithm, including hits and prefix-shaped inputs.
+    // Emitted guards/inputs/fallbacks must stay exact.
+    let mut old_symbols = BindingSymbols::default();
+    let mut old = HashMap::new();
+    let mut builder = Builder::default();
+    let mut expected = Vec::<AoemIntegerPlanNodeV1>::new();
+    let shapes = std::iter::once((10, 5)).chain(super::super::effect_assets::SHAPES);
+    for (program, (arity, outputs)) in shapes.enumerate() {
+        for seed in [0u128, 1, u128::MAX, 0, 1, u128::MAX] {
+            let guard = lit(seed % 2);
+            let inputs: Vec<_> = (0..arity)
+                .map(|i| lit(seed.wrapping_add(i as u128)))
+                .collect();
+            let key = (
+                program,
+                old_symbols.key(&guard),
+                inputs
+                    .iter()
+                    .map(|v| old_symbols.key(v))
+                    .collect::<Vec<_>>(),
+                outputs,
+            );
+            let row = *old.entry(key).or_insert_with(|| {
+                let row = expected.len() as u32;
+                expected.push(AoemIntegerPlanNodeV1 {
+                    program,
+                    guard,
+                    inputs: inputs.clone(),
+                    otherwise: vec![lit(0); outputs],
+                });
+                row
+            });
+            assert_eq!(
+                builder.call(program, &guard, inputs, outputs),
+                (0..outputs)
+                    .map(|column| V::Output {
+                        row,
+                        column: column as u32
+                    })
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+    assert_eq!(format!("{:?}", builder.nodes), format!("{:?}", expected));
+    // Different input arities must never alias.
+    let a = builder.call(1, &lit(1), vec![V::Output { row: 0, column: 0 }], 1);
+    let b = builder.call(1, &lit(1), vec![V::Output { row: 0, column: 0 }; 2], 1);
+    assert_ne!(a, b);
+}
+
 // Same complete graph/exports, only the existing resource's dispatch tile changes.
 // This is an isolated scheduling experiment, NOT finalized transaction TPS.
 #[test]
@@ -49,6 +101,24 @@ fn resident_complete_plan_tile_cost_and_output_equivalence() -> Result<()> {
 #[test]
 fn compiler_symbols_are_compact_exact_full_width_and_candidate_local() {
     let mut symbols = BindingSymbols::default();
+    let zero_key = symbols.key(&lit(0));
+    let one_key = symbols.key(&lit(1));
+    assert!(zero_key != one_key);
+    assert!(
+        symbols.literals.is_empty(),
+        "identities bypass literal hashing"
+    );
+    assert!(zero_key == symbols.key(&lit(0)));
+    assert!(one_key == symbols.key(&lit(1)));
+    let mut wide_symbols = BindingSymbols::default();
+    for low in [0, 1] {
+        for limb in 1..32 {
+            let mut wide = AoemInteger1024V1::from_u128(low);
+            wide.0[limb] = 1;
+            let key = wide_symbols.key(&V::Literal(wide));
+            assert!(key != zero_key && key != one_key);
+        }
+    }
     let low = lit(7);
     let first = symbols.key(&low);
     assert!(matches!(first, BindingKey::Literal(0)));

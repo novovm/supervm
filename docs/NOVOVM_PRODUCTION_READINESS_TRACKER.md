@@ -51,6 +51,24 @@ Android application-local
 import overhead remains separately under review; small-message Watch transactions
 and capacity expansion have not been mixed into this change.
 
+## 2026-10-19 原生完整计划常量符号复用：工作减少，TPS基本持平
+
+基于b3d335fc原tick→UdpTransport→NativeLifecycle→CandidatePipeline→exec→AOEM，
+不增加产品路径。完整1024位精确0/1使用候选编译器保留符号，跳过重复哈希；
+原条件、费用、失败输出、依赖图、二进制及CPU快路径不变。先前试验的内联键
+未改善编译/吞吐，已撤回，不保留备用实现。
+
+插电Windows、四原节点、单原生入口、65536真实签名、批1024、共享收款方、
+窗口8192、查询128，终点四节点全部最终回执。最终八轮全成功及费用守恒/冷恢复
+通过。完整代数合并3601.05→3611.56 TPS（+0.29%），CPU7648.40→7683.94
+（+0.46%）；尾延迟方向不一致，不签收稳定提速。另列诊断编译约18.50→17.39ms/批，
+门面仍约55ms/批；不将嵌套墙钟相加。编译器5项与真实AOEM完整失败依赖/输出
+等价2项通过。源码、两种冻结候选、全部失败/正式/诊断记录保留，49份草稿不动。
+
+这不是主要吞吐瓶颈修复或七月能力恢复签收；完整证明、全费用状态审计、新故障/
+Linux/多机/百万TPS/生产仍未验收。停止继续优化编译键，以实际门面/层间成本
+选择下一项既有能力复用。见[逐轮数字、身份和边界](../artifacts/audit/native-constant-symbols-20261019/README.md)。
+
 ## 2026-10-19 reuse audit and Android v77 bounded local reads
 
 No SDK production code or deployed L3 changed in this round. Both repositories
