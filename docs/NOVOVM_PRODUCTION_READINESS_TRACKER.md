@@ -3,7 +3,40 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
-## 2026-10-19 bounded Watch snapshot: local regression passed, deployment pending
+## 2026-10-19 Watch snapshot deployed to L3; unchanged v79 phone regression passed
+
+Implementation `68848356` was installed through the existing Windows user-session
+installer on the original laptop L3. Three protected identity/policy files stayed
+identical. Executable SHA256:
+`acfa628c202573f477be2dc73c513b390d172f3b9f7ab8f9a51bbefec48bc0dd`.
+The prior executable and working v79 APK are retained locally. No VPN/firewall
+changes; phones remained on v79, whose L4 SDK is still `ab362f2c`.
+
+Without restarting the phone apps for node deployment, L3/L4 recovered. New
+bidirectional text and two consecutive messages received while B was on the home
+screen obtained persistent device receipts; opening the chat displayed each once.
+With B's networks disabled, A obtained storage confirmation. A was then also
+disconnected; B independently fetched the original text, and restoring A obtained
+its device receipt. Original network settings were restored. Further new text in
+both directions and reopening both apps preserved original identity/history,
+exactly one visible copy and automatic L3/L4 readiness, diagnosticCode=0.
+
+This is a dual-Wi-Fi functional regression with external Iroh, not a cellular,
+long-term background, anonymity or independent-failure-domain gate. Healthy L4
+often supplies the first device receipt, so these phone results do not establish
+an end-to-end latency improvement attributable to L3 batching. The local one-clock-
+update transaction assertion and 12 + 40 passing tests remain the measured benefit.
+Some offline observer traces failed schema parsing; retained evidence separately
+confirms custody, independent fetch, device receipt, UI and final app state.
+
+Evidence lives in NOVOCHAT artifacts/v79-watch-*.json, especially node-upgrade,
+background-visible, offline-independent-fetch, offline-final-receipt, after,
+reopen and final. Build log: artifacts/watch-batch-node-build.log. Image-specific
+tuning and this small-message transaction round close; next product work is
+three-participant encrypted chat using existing components. Authorized direct
+business delivery remains a separate acceptance item, not inferred from carrier P2P.
+
+## 2026-10-19 bounded Watch snapshot: local stage (deployment superseded above)
 
 `MailboxStore::observe_many_with_prefetch` reuses the existing observe/fetch SQL
 helpers in one protected transaction. Watch/WatchFetch/WatchFetchBulk validate all
