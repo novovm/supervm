@@ -87,6 +87,9 @@ async fn bulk_one_object_restart_receipt_quota_revoke_and_consume() -> Result<()
     ));
     drop(service);
     let mut store = MailboxStore::open(&path, Default::default())?;
+    // The asynchronous service has advanced the durable clock. Reopening the
+    // sole owner samples processing time again, without changing object expiry.
+    let now = crate::product_rendezvous_daemon::now_ms()? as i64 / 1000;
     let row = store.fetch_bulk_v1(&grant.id, &grant.read, now)?.unwrap();
     assert_eq!(row.ciphertext, payload);
     assert_eq!(row.expires, expires);

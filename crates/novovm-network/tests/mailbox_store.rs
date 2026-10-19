@@ -564,3 +564,149 @@ fn consume_delete_failure_preserves_custody_and_retry_removes_all_object_columns
     );
     assert!(s.fetch(&a.id, &a.read, 102).unwrap().is_empty());
 }
+
+#[test]
+fn multi_observation_uses_one_commit_and_rejects_all_before_prefetch() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("watch.db");
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    let a = store.create(1000, 600).unwrap();
+    let b = store.create(1000, 600).unwrap();
+    store
+        .put(&a.id, &a.write, &[7; 32], &[1; 8], 1200, 1000)
+        .unwrap();
+    let cursor = store.observe(&b.id, &b.read, 1000).unwrap().0;
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(
+        "CREATE TABLE watch_test_commits(n INTEGER NOT NULL);
+        INSERT INTO watch_test_commits VALUES(0);
+        CREATE TRIGGER watch_test_clock AFTER UPDATE ON clock_guard BEGIN
+          UPDATE watch_test_commits SET n=n+1;
+        END;",
+    )
+    .unwrap();
+    let count = || {
+        db.query_row("SELECT n FROM watch_test_commits", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap()
+    };
+    let query = |read, after| {
+        [
+            MailboxObservationQuery {
+                mailbox: &a.id,
+                read: &a.read,
+                after: None,
+            },
+            MailboxObservationQuery {
+                mailbox: &b.id,
+                read,
+                after,
+            },
+        ]
+    };
+    let wrong = Capability::from_bytes([99; 32]).unwrap();
+    assert!(matches!(
+        store.observe_many_with_prefetch(&query(&wrong, None), MailboxPrefetchMode::Small, 1001),
+        Err(StoreError::Unauthorized)
+    ));
+    assert_eq!(count(), 0); // clock update/maintenance rolled back with rejected snapshot
+    let ahead = MailboxCursorV1 {
+        sequence: cursor.sequence + 1,
+        ..cursor
+    };
+    assert!(matches!(
+        store.observe_many_with_prefetch(
+            &query(&b.read, Some(ahead)),
+            MailboxPrefetchMode::Small,
+            1001
+        ),
+        Err(StoreError::Conflict)
+    ));
+    assert_eq!(count(), 0);
+    let result = store
+        .observe_many_with_prefetch(
+            &query(&b.read, Some(cursor)),
+            MailboxPrefetchMode::Small,
+            1001,
+        )
+        .unwrap();
+    assert_eq!(count(), 1); // two boxes plus prefetch, one begin/commit
+    assert_eq!(result.notices.len(), 2);
+    assert!(result.notices[0].1);
+    assert!(!result.notices[1].1);
+    let (index, row) = result.object.unwrap();
+    assert_eq!(index, 0);
+    assert_eq!(row.id, [7; 32]);
+    assert_eq!(row.expires, 1200);
+    drop(store);
+    let mut store = MailboxStore::open(&path, Limits::default()).unwrap();
+    assert_eq!(
+        store.fetch_one(&a.id, &a.read, 1001).unwrap().unwrap().id,
+        row.id
+    );
+    assert!(matches!(
+        store.observe_many_with_prefetch(&query(&b.read, None), MailboxPrefetchMode::None, 1000),
+        Err(StoreError::ClockRollback)
+    ));
+    store.revoke(&b.id, &b.read, 1002).unwrap();
+    assert!(matches!(
+        store.observe_many_with_prefetch(&query(&b.read, None), MailboxPrefetchMode::Bulk, 1002),
+        Err(StoreError::Unauthorized)
+    ));
+    assert!(store.fetch_one(&a.id, &a.read, 1002).unwrap().is_some());
+}
+
+#[test]
+fn multi_observation_keeps_small_bulk_ttl_and_query_bounds() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = MailboxStore::open(dir.path().join("bounds.db"), Limits::default()).unwrap();
+    let a = store.create(1000, 600).unwrap();
+    store
+        .put_bulk_v1(&a.id, &a.write, &[8; 32], &vec![3; 65_537], 1200, 1000)
+        .unwrap();
+    let q = || MailboxObservationQuery {
+        mailbox: &a.id,
+        read: &a.read,
+        after: None,
+    };
+    let small = store
+        .observe_many_with_prefetch(&[q()], MailboxPrefetchMode::Small, 1000)
+        .unwrap();
+    assert!(small.notices[0].1);
+    assert!(small.object.is_none());
+    let bulk = store
+        .observe_many_with_prefetch(&[q()], MailboxPrefetchMode::Bulk, 1000)
+        .unwrap();
+    assert_eq!(bulk.object.unwrap().1.ciphertext.len(), 65_537);
+    assert!(store
+        .observe_many_with_prefetch(&[q()], MailboxPrefetchMode::None, 1000)
+        .unwrap()
+        .object
+        .is_none());
+    assert!(matches!(
+        store.observe_many_with_prefetch(&[], MailboxPrefetchMode::Small, 1000),
+        Err(StoreError::Invalid)
+    ));
+    assert!(matches!(
+        store.observe_many_with_prefetch(&[q(), q()], MailboxPrefetchMode::Small, 1000),
+        Err(StoreError::Invalid)
+    ));
+    assert!(matches!(
+        store.observe_many_with_prefetch(
+            &[q(), q(), q(), q(), q()],
+            MailboxPrefetchMode::None,
+            1000
+        ),
+        Err(StoreError::Invalid)
+    ));
+    let expired = store
+        .observe_many_with_prefetch(&[q()], MailboxPrefetchMode::Bulk, 1200)
+        .unwrap();
+    assert!(!expired.notices[0].1);
+    assert!(expired.object.is_none());
+    assert!(matches!(
+        store.observe_many_with_prefetch(&[q()], MailboxPrefetchMode::Bulk, 1600),
+        Err(StoreError::Unauthorized)
+    ));
+}

@@ -12,7 +12,8 @@ use crate::{
     iroh_transport::{decode_iroh_envelope_v1, encode_iroh_envelope_v1},
     mailbox_receipt::StoreReceiptV1,
     mailbox_store::{
-        Capability, ContributionStatusV1, MailboxCursorV1, MailboxGrant, MailboxStore, StoreError,
+        Capability, ContributionStatusV1, MailboxCursorV1, MailboxGrant, MailboxObservationQuery,
+        MailboxPrefetchMode, MailboxStore, StoreError,
     },
     product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
     product_service_lease::{NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7},
@@ -674,47 +675,39 @@ impl MailboxServiceV1 {
                 let _permit = permit;
                 let mut store = store.lock().map_err(|_| StoreError::Invalid)?;
                 let now = now().map_err(|_| StoreError::Invalid)?;
-                let notices = queries
+                let capabilities = queries
                     .iter()
-                    .map(|query| {
-                        let (cursor, pending) = store.observe(
-                            &query.mailbox,
-                            &Capability::from_bytes(query.read)?,
-                            now,
-                        )?;
-                        if query.after.is_some_and(|old| {
-                            old.generation == cursor.generation && old.sequence > cursor.sequence
-                        }) {
-                            return Err(StoreError::Conflict);
-                        }
-                        Ok(MailboxNoticeV1 { cursor, pending })
-                    })
+                    .map(|q| Capability::from_bytes(q.read))
                     .collect::<std::result::Result<Vec<_>, StoreError>>()?;
-                // Validate ALL requested capabilities/cursors before fetching anything.
-                // Same exclusive owner; no writer can slip between observation and fetch.
-                let mut object = None;
-                if prefetch {
-                    if let Some(index) = notices.iter().position(|n| n.pending) {
-                        let q = &queries[index];
-                        if let Some(row) = if bulk {
-                            store.fetch_bulk_v1(
-                                &q.mailbox,
-                                &Capability::from_bytes(q.read)?,
-                                now,
-                            )?
-                        } else {
-                            store.fetch_one(&q.mailbox, &Capability::from_bytes(q.read)?, now)?
-                        } {
-                            object = Some(MailboxPrefetchV6 {
-                                box_index: index,
-                                object: row.id,
-                                ciphertext: row.ciphertext,
-                                digest: row.digest,
-                                expires: row.expires,
-                            });
-                        }
-                    }
-                }
+                let observations = queries
+                    .iter()
+                    .zip(&capabilities)
+                    .map(|(q, read)| MailboxObservationQuery {
+                        mailbox: &q.mailbox,
+                        read,
+                        after: q.after,
+                    })
+                    .collect::<Vec<_>>();
+                let mode = if !prefetch {
+                    MailboxPrefetchMode::None
+                } else if bulk {
+                    MailboxPrefetchMode::Bulk
+                } else {
+                    MailboxPrefetchMode::Small
+                };
+                let snapshot = store.observe_many_with_prefetch(&observations, mode, now)?;
+                let notices: Vec<MailboxNoticeV1> = snapshot
+                    .notices
+                    .into_iter()
+                    .map(|(cursor, pending)| MailboxNoticeV1 { cursor, pending })
+                    .collect();
+                let object = snapshot.object.map(|(box_index, row)| MailboxPrefetchV6 {
+                    box_index,
+                    object: row.id,
+                    ciphertext: row.ciphertext,
+                    digest: row.digest,
+                    expires: row.expires,
+                });
                 Ok::<_, StoreError>((notices, object))
             })
             .await?;

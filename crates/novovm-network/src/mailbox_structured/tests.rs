@@ -347,15 +347,29 @@ async fn original_owner_receipts_retries_capabilities_and_restart_custody() -> R
     ));
     service.set_resources_available(true).await?;
     service.set_contribution_enabled(true).await?;
-    let historical = run(&service, &[put(4, expires), fetch(3)]).await?;
-    let [Reply::Stored(recovered), Reply::Empty] = historical.as_slice() else {
-        anyhow::bail!("consumed evidence must not restore payload")
+    // Schema 3 deletes consumed metadata as well as ciphertext. A new valid
+    // Put must establish real custody again, never return a phantom receipt.
+    // End-device journals, not node tombstones, deduplicate the original message.
+    let restored = run(&service, &[put(4, expires), fetch(3)]).await?;
+    let [Reply::Stored(recovered), Reply::Object {
+        object,
+        ciphertext,
+        expires: retained_until,
+        ..
+    }] = restored.as_slice()
+    else {
+        anyhow::bail!("new storage receipt requires actual retained custody")
     };
     recovered.verify(pin, [1; 32], [4; 32], &[4; 128], expires)?;
-    let Reply::Stored(original) = &replies[1] else {
-        anyhow::bail!("original receipt missing")
-    };
-    assert_eq!(recovered.signature, original.signature);
+    assert_eq!(*object, [4; 32]);
+    assert_eq!(ciphertext, &vec![4; 128]);
+    assert_eq!(*retained_until, expires);
+    assert_eq!(service.contribution_status().await?.retained_objects, 1);
+    assert_eq!(service.contribution_status().await?.retained_bytes, 128);
+    assert!(matches!(
+        run(&service, &[consume(), fetch(3)]).await?.as_slice(),
+        [Reply::Consumed, Reply::Empty]
+    ));
     assert_eq!(service.contribution_status().await?.retained_objects, 0);
     assert_eq!(service.contribution_status().await?.retained_bytes, 0);
     assert!(matches!(

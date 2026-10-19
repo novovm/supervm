@@ -110,6 +110,23 @@ pub struct MailboxCursorV1 {
     pub sequence: u64,
 }
 
+/// Borrowed read authority and last observed durable position; never serialized.
+pub struct MailboxObservationQuery<'a> {
+    pub mailbox: &'a Id,
+    pub read: &'a Capability,
+    pub after: Option<MailboxCursorV1>,
+}
+#[derive(Clone, Copy)]
+pub enum MailboxPrefetchMode {
+    None,
+    Small,
+    Bulk,
+}
+pub struct MailboxObservationBatch {
+    pub notices: Vec<(MailboxCursorV1, bool)>,
+    pub object: Option<(usize, StoredEnvelope)>,
+}
+
 /// Local owner status only, never a peer-declared durability/reward proof.
 /// Turning off new obligations does not delete committed objects. Serving
 /// existing objects still requires the platform's live execution/path authority.
@@ -571,26 +588,57 @@ impl MailboxStore {
         now: i64,
     ) -> Result<(MailboxCursorV1, bool), StoreError> {
         let tx = self.begin(now)?;
-        authorize(&tx, id, read, false, now)?;
-        let (generation, sequence): (Id, i64) = tx.query_row(
-            "SELECT generation,revision FROM mailbox_revisions WHERE mailbox=?1",
-            [id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        let pending: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM envelopes
-            WHERE mailbox=?1 AND consumed=0 AND expires>?2)",
-            params![id, now],
-            |r| r.get(0),
-        )?;
+        let result = observe_in_transaction(&tx, id, read, now)?;
         tx.commit()?;
-        Ok((
-            MailboxCursorV1 {
-                generation,
-                sequence: sequence.try_into().map_err(|_| StoreError::Invalid)?,
-            },
-            pending,
-        ))
+        Ok(result)
+    }
+    /// One protected snapshot for a bounded Watch. Validate every capability and
+    /// cursor before fetching ciphertext, with one clock/expiry maintenance commit.
+    pub fn observe_many_with_prefetch(
+        &mut self,
+        queries: &[MailboxObservationQuery<'_>],
+        mode: MailboxPrefetchMode,
+        now: i64,
+    ) -> Result<MailboxObservationBatch, StoreError> {
+        if queries.is_empty()
+            || queries.len() > 4
+            || queries
+                .iter()
+                .enumerate()
+                .any(|(i, q)| queries[..i].iter().any(|old| old.mailbox == q.mailbox))
+        {
+            return Err(StoreError::Invalid);
+        }
+        let tx = self.begin(now)?;
+        let mut notices = Vec::with_capacity(queries.len());
+        for q in queries {
+            let notice = observe_in_transaction(&tx, q.mailbox, q.read, now)?;
+            if q.after.is_some_and(|old| {
+                old.generation == notice.0.generation && old.sequence > notice.0.sequence
+            }) {
+                return Err(StoreError::Conflict);
+            }
+            notices.push(notice);
+        }
+        let limit = match mode {
+            MailboxPrefetchMode::None => None,
+            MailboxPrefetchMode::Small => Some(65_536),
+            MailboxPrefetchMode::Bulk => Some(MAX_BULK_CIPHERTEXT),
+        };
+        let mut object = None;
+        if let Some(limit) = limit {
+            if let Some(index) = notices.iter().position(|(_, pending)| *pending) {
+                let q = &queries[index];
+                if let Some(row) = fetch_in_transaction(&tx, q.mailbox, now, 1, limit)?
+                    .into_iter()
+                    .next()
+                {
+                    object = Some((index, row));
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(MailboxObservationBatch { notices, object })
     }
     /// Non-destructive fetch. The device acknowledges only after authenticated local commit.
     pub fn fetch(
@@ -634,25 +682,7 @@ impl MailboxStore {
     ) -> Result<Vec<StoredEnvelope>, StoreError> {
         let tx = self.begin(now)?;
         authorize(&tx, id, read, false, now)?;
-        let rows = {
-            // Seconds-resolution expiries often tie for a burst of controls.
-            // Do not let their random object IDs reorder that burst. rowid is
-            // only a local arrival tie-break, never identity, replay protection
-            // or a persistent/wire cursor (maintenance may renumber it).
-            // Recipients still handle out-of-order delivery across replicas.
-            let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 AND length(payload)<=?4 ORDER BY expires,rowid LIMIT ?3")?;
-            let result = statement
-                .query_map(params![id, now, limit, object_limit as i64], |r| {
-                    Ok(StoredEnvelope {
-                        id: r.get(0)?,
-                        ciphertext: r.get(1)?,
-                        digest: r.get(2)?,
-                        expires: r.get(3)?,
-                    })
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            result
-        };
+        let rows = fetch_in_transaction(&tx, id, now, limit, object_limit)?;
         tx.commit()?;
         Ok(rows)
     }
@@ -705,6 +735,57 @@ impl MailboxStore {
         tx.commit()?;
         Ok(())
     }
+}
+fn observe_in_transaction(
+    tx: &Transaction<'_>,
+    id: &Id,
+    read: &Capability,
+    now: i64,
+) -> Result<(MailboxCursorV1, bool), StoreError> {
+    authorize(tx, id, read, false, now)?;
+    let (generation, sequence): (Id, i64) = tx.query_row(
+        "SELECT generation,revision FROM mailbox_revisions WHERE mailbox=?1",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let pending: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2)",
+        params![id, now],
+        |r| r.get(0),
+    )?;
+    Ok((
+        MailboxCursorV1 {
+            generation,
+            sequence: sequence.try_into().map_err(|_| StoreError::Invalid)?,
+        },
+        pending,
+    ))
+}
+// Caller has validated read authority within this same transaction.
+fn fetch_in_transaction(
+    tx: &Transaction<'_>,
+    id: &Id,
+    now: i64,
+    limit: u8,
+    object_limit: usize,
+) -> Result<Vec<StoredEnvelope>, StoreError> {
+    // Seconds-resolution expiries often tie for a burst of controls.
+    // Do not let their random object IDs reorder that burst. rowid is
+    // only a local arrival tie-break, never identity, replay protection
+    // or a persistent/wire cursor (maintenance may renumber it).
+    // Recipients still handle out-of-order delivery across replicas.
+    let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 AND length(payload)<=?4 ORDER BY expires,rowid LIMIT ?3")?;
+    let result = statement
+        .query_map(params![id, now, limit, object_limit as i64], |r| {
+            Ok(StoredEnvelope {
+                id: r.get(0)?,
+                ciphertext: r.get(1)?,
+                digest: r.get(2)?,
+                expires: r.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(result)
 }
 fn contribution_enabled(tx: &Transaction<'_>) -> Result<bool, StoreError> {
     let enabled: i64 = tx.query_row(

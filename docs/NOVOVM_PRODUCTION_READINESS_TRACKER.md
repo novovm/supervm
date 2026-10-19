@@ -3,6 +3,68 @@
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 
+## 2026-10-19 bounded Watch snapshot: local regression passed, deployment pending
+
+`MailboxStore::observe_many_with_prefetch` reuses the existing observe/fetch SQL
+helpers in one protected transaction. Watch/WatchFetch/WatchFetchBulk validate all
+1–4 capabilities/cursors before returning at most one bounded object. Notification
+subscription remains before the snapshot; no new wire format, storage schema,
+owner, scheduler, capacity or timeout policy. Clock high-water, expiry cleanup,
+revocation, durable Put and consume semantics remain enforced. Single-box public
+APIs share the same helpers; duplicate SQL paths were removed.
+
+12 store integration tests passed, including a test-only SQLite trigger proving
+two-box observation plus prefetch commits one clock update, with complete rollback
+on a bad later capability/cursor. All 40 mailbox/structured tests passed serially,
+including notification gap, idle revocation, cancellation, independent Put during
+Watch, bulk restart, original custody and retained TTL. These are correctness and
+transaction-count results, not a demonstrated Android latency gain.
+
+Initial broad run had 38 passes and two failures: the bulk fixture reused a
+pre-request wall-time sample after the asynchronous owner advanced its clock;
+the structured fixture still expected consumed tombstones despite schema 3's
+earlier `89768258` deletion contract. Resample fixture processing time after
+exclusive reopen, retaining original expiry; replace the obsolete tombstone
+assertion with real new custody/payload/TTL/quota/consume checks. Production clock
+and deletion rules are unchanged. Initial type-inference build failure and disk
+exhaustion are retained separately; five old ignored incremental-cache directories
+were removed, preserving source, evidence, APKs and node state.
+
+Evidence: artifacts/watch-batch-store-verified.log (12),
+watch-batch-mailbox-fixed.log (40); original failures in watch-batch-mailbox.log,
+watch-batch-store.log and watch-batch-store-fixed.log. Reproduce with explicit
+`CARGO_TARGET_DIR=target/runtime-rebuild`, `cargo test --locked -p novovm-network
+--features iroh-transport,tls-transport,mailbox-seal --test mailbox_store` and
+`--lib mailbox_ -- --test-threads=1`. Existing L3 release build succeeded; deployment
+and unchanged-v79 phone regression are separate following steps.
+
+## 2026-10-19 v79 receiver acceptance; next change is bounded Watch batching
+
+NOVOCHAT receiver implementation `5e82fda` was installed as profile v79 on the
+two original Android apps without deleting data. Five protected identity/key
+files per handset stayed identical. Bidirectional 1,600,067-byte image previews,
+recorded voice delivery, durable device receipts and subsequent text passed.
+With B's networks disabled, A received storage confirmation only. With A then
+offline, B recovered its network and independently committed the original image;
+restoring A recovered its device receipt. Both apps were reopened with original
+identity, exactly one visible copy of each new text, and automatic L3/L4 readiness.
+Final diagnosticCode=0 on both; ADB business forwarding was empty.
+
+Same-sender outbound_woken to first durable device receipt: images 3.187/2.216s,
+voice 1.458s, post-recovery text 0.989/0.709s. Both phones used Wi-Fi and external
+Iroh remains involved. These are individual samples, not P95, tap-to-screen,
+cellular or anonymity acceptance; v78 image samples were 2.961/2.478s, so overall
+image improvement is not established. L3 remains the previously deployed binary.
+The initial app-stop offline attempt found the receiver running again and is
+classified as online only; a later explicit network-off run proved the handoff.
+Detailed local evidence and retained APK identity are in NOVOCHAT MEDIA_REUSE.md.
+
+Image-specific tuning closes here. Next: reuse mailbox_store's existing protected
+transaction for all boxes and one optional prefetch within Watch; preserve every
+capability/cursor check, time high-water, expiry, subscription ordering and wire
+version. This candidate is not yet deployed to the node or phones. After local
+and phone small-message regression, move to three-participant encrypted chat.
+
 ## 2026-10-19 v78 Android and existing L3 deployment
 
 NOVOCHAT `16f741e` profile v78 was installed over both existing Android apps,
