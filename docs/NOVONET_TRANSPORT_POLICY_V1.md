@@ -1,6 +1,22 @@
 # NOVONET 多路径自主通讯架构与传输策略 v1
 
-## 2026-10-19 v79后复核：原生载体优先不等于已完成自动切换
+## 2026-10-19 应用接线进展：解除原生 UDP / 载体互斥
+
+NOVOCHAT `e185171` 的 `ContinuousMailboxWork::run` 已在原 owner 内同时推进原生候选与
+已批准的结构化载体，原生尝试的可恢复网络失败不再阻塞其他载体及 L4 收发。
+同一服务 pin 共享业务/回执通道；L4 来源不再因进入 UDP 分支被清除。
+重新尝试读取原 pin 的最新可信地址，混合候选禁止静默退回 JSON 信箱。
+冷启动对端描述的晚发布已接入原 Watch 游标，复用现有协议，不另设发现定时器。
+
+这是 NOVOCHAT 的源码与本机真实 I/O 接线进展；手机仍为已验收 v79，尚未切换
+候选配置。当前先可用者持续服务，不等于完成评分选路、同 pin 无缝迁移、原生
+公网打洞或手机无外部 Relay 验收。宿主 native/carrier 配置互斥仍是独立待办。
+不经信箱的设备交付仍需在唯一入站分发器接 handler，不能将 L4 信箱误报为业务
+直达；聊天身份与服务身份仍须分别绑定。具体测试记录见 NOVOCHAT
+`docs/implementation/P0_CHECKPOINT.md`，实现见 `app_delivery_adaptive.rs`、
+`app_mailbox_routes.rs`、`app_native_io.rs` 与 `app_mailbox_descriptor.rs`。
+
+## 2026-10-19 v79后复核（实现前记录，互斥及L4来源缺口以上节更新为准）
 
 源码基线SUPERVM `f6de5b0e`、NOVOCHAT `0367480`。本节为源码审查，未切换
 手机或节点配置，未新增吞吐/公网直连验收；现用v79与L3保持可用。
