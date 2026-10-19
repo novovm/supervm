@@ -1,5 +1,46 @@
 # NOVONET 多路径自主通讯架构与传输策略 v1
 
+## 2026-10-19 v79后复核：原生载体优先不等于已完成自动切换
+
+源码基线SUPERVM `f6de5b0e`、NOVOCHAT `0367480`。本节为源码审查，未切换
+手机或节点配置，未新增吞吐/公网直连验收；现用v79与L3保持可用。
+
+必须分别判断：业务是否经过临时信箱、数据载体是否为原生UDP、实际数据是否
+经过外部Relay、发现是否依赖外部入口。这四项不能由“native”名称相互推出。
+
+| 已有入口 | 实际能力与缺口 |
+| --- | --- |
+| NOVOCHAT `app_delivery_adaptive.rs::ContinuousMailboxWork::run` | 已存在原生UDP候选分支；候选非空则直接return `native_mailboxes`，不是原生失败后自动换Iroh的健康路径选择器。不能再写成手机完全没有原生接线。 |
+| NOVOCHAT `app_native_io.rs::ApplicationIoOwner::native_mailboxes` | 在同一运行时按地址族绑定UDP，调用 `NativeEndpoint::connect_clients`、`NativeObjectLink`和既有Mailbox driver；当前从候选读取具体地址，不等于已完成移动公网打洞/地址更新。 |
+| NOVOCHAT `app_mailbox.rs::run_native_continuous_v7` | 当前清除本轮peer/local source，不驱动原Iroh L4业务workers；持久记录不删。直接开启此分支会失去这轮并行L4服务，须先修复接线，不能以原生优先为由发布功能回退。 |
+| NOVOCHAT `app_l4_task.rs::ContributionRequest` | 当前L4宿主仍接IrohConfig及已有Endpoint。原生L3拨号可用不代表手机原生UDP入站已完成。 |
+| `novovm-relay/rendezvous_self_owned_owner.rs::set_native_listener` | 当前native-only监听与V7/V8 carrier模式互斥；不是同时监听全部载体并自动迁移的部署配置。 |
+| `product_nat.rs`、NOVOCHAT `udp_path.rs::UdpAttempt` | 已有签名观察/探测、显式Direct策略及同socket探测基础。打洞成功不等于加密会话，fallback枚举不等于已建立中继；不能另绑定socket后假定继承原NAT映射。 |
+| NOVOCHAT `protected_delivery.rs` / `message_delivery/automatic_session.rs` | 已有不经Mailbox的端设备交付、journal和DeviceReceipt，可复用。仍依赖CarrierStream；当前该类型承载Iroh/TLS，不可把它直接当作NativeEndpoint UDP流。持续手机Mailbox主链尚未调度该业务捷径。 |
+
+最小集成顺序：先保留原Application owner下L4 workers和回执队列，解开当前
+native/载体整段互斥；然后复用现有目录、UDP握手/换源与路径策略接原生候选，
+独立验证失败后的合格后备。业务直达单独接现有protected delivery，不为此新造
+消息协议或第二owner。源码审查不替代实现，亦不将本节当作新功能已验收。
+
+选路先过滤Privacy、身份与用途范围，再在真实可达候选中优先自主原生路径。
+“优先”不意味着每条消息先等不可达UDP超时，也不打断仍健康的会话去反复重选。
+可用后备继续服务，原生恢复通过核验后按稳定性策略切换，避免抖动。真实安全拒绝
+不能伪装为网络超时绕行。原Message ID、E2EE、持久回执、原TTL和未完成队列不变。
+在线直达取得DeviceReceipt即可完成，不必另存一份；尚无设备回执且需要离线保障，
+才按既有策略取得持久寄存。切路时仍可能重复到达，由原端侧去重处理。
+
+验收分别记录：原生UDP实际收发、控制/发现依赖、数据直连或Relay、是否Mailbox
+寄存。禁用外部Relay时不能只测原健康连接，要覆盖冷连接、换网与原消息恢复；
+同时验证L4仍服务、原生不可达时不永久停止、授权撤销不绕过。只有两端在线不足
+以证明NAT可穿透；没有可达物理路径时不承诺任何协议都能连接。无本轮实测不能
+断言原生UDP必然快于QUIC，或P2P必然是最低时延路径。
+
+官方背景：[Iroh路径切换](https://www.iroh.computer/blog/iroh-on-QUIC-multipath)、
+[Iroh直连地址暴露](https://docs.iroh.computer/deployment/security-privacy)。
+使用Iroh库、借Relay协助建连、实际经Relay转发分别标记；自主运行Relay也不同于
+完全不使用Iroh软件。这些参考不证明本产品当前已实现自动切换。
+
 日期：2026-10-12。状态：本轮采纳的架构原则与分阶段实施方案，**不是全能力已交付声明**。
 本文定义 SUPERVM 的通用网络方向；NOVOCHAT 是首个手机产品验证场景。
 不改变原 `novovm-node` 产品总控、AOEM 执行语义、金融账本或共识。
