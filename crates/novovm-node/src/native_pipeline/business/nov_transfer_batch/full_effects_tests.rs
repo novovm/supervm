@@ -1,5 +1,45 @@
 use super::*;
 
+// One complete candidate, not a throughput/finality substitute. Run this same
+// test in one or four independent processes to isolate shared-device pressure.
+#[test]
+#[ignore = "explicit AOEM library and Vulkan; isolated complete-plan contention diagnosis"]
+fn resident_complete_plan_contention_cost() -> Result<()> {
+    let library = std::path::PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY").context("AOEM library required")?,
+    );
+    let plan = compile(&prepared(1024, false), 172_800_123)?;
+    let projection = ExportProjection::new(&plan.exports);
+    let mut resources = super::super::integer::ResidentTransferResources::new(&library, 4, 1024)?;
+    let expected = resources.run_effects(&plan.nodes, &projection.unique)?;
+    if let Some(directory) = std::env::var_os("NOVOVM_PLAN_DIAGNOSTIC_BARRIER") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::write(
+            directory.join(format!("ready-{}", std::process::id())),
+            b"ready",
+        )?;
+        let started = std::time::Instant::now();
+        while !directory.join("start").exists() {
+            ensure!(
+                started.elapsed().as_secs() < 60,
+                "diagnostic barrier timeout"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+    for iteration in 0..16 {
+        let start = std::time::Instant::now();
+        let output = resources.run_effects(&plan.nodes, &projection.unique)?;
+        let elapsed_us = start.elapsed().as_micros();
+        assert_eq!(output, expected, "complete effective state/receipt exports");
+        println!(
+            "complete_plan_cost pid={} iteration={iteration} elapsed_us={elapsed_us}",
+            std::process::id()
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn expression_sharing_matches_reference_keys_for_all_program_shapes() {
     // Reference the old key algorithm, including hits and prefix-shaped inputs.

@@ -1,0 +1,1368 @@
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs
+index e88c28fd..f445ff0d 100644
+--- a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs
+@@ -3204,9 +3204,10 @@ impl AshVulkanRuntime {
+             return Ok(());
+         }
+         // Hold exclusive ownership through every copy fence, including between uploads.
+-        let mut cached = self.upload_staging.lock().map_err(|_| {
+-            VulkanError::ExecutionError("upload staging lock poisoned".into())
+-        })?;
++        let mut cached = self
++            .upload_staging
++            .lock()
++            .map_err(|_| VulkanError::ExecutionError("upload staging lock poisoned".into()))?;
+         self.ensure_runtime_integrity("upload_bytes")?;
+         let size = bytes.len().min(STAGING_LIMIT) as u64;
+         if cached.as_ref().map_or(true, |buffer| buffer.size < size) {
+@@ -5046,8 +5047,12 @@ impl AshVulkanRuntime {
+                     } else if curr_is_dispatch && next_is_update {
+                         // Preserve shader write visibility for later compute dispatches even when
+                         // a host-side uniform update is inserted between two dispatches.
+-                        barrier_ops = barrier_ops.saturating_add(1);
++                        barrier_ops = barrier_ops.saturating_add(2);
+                         self.cmd_compute_to_compute_barrier(cmd);
++                        // The update may target a header the preceding shader
++                        // READ. Order that read before the transfer write too;
++                        // a compute-only destination does not cover UpdateBuffer.
++                        self.cmd_compute_to_transfer_barrier(cmd);
+                     } else if curr_is_dispatch && !next_is_dispatch {
+                         barrier_ops = barrier_ops.saturating_add(1);
+                         self.cmd_compute_to_transfer_barrier(cmd);
+@@ -5702,7 +5707,11 @@ impl Drop for AshVulkanRuntime {
+             Ok(owned) => std::mem::take(owned),
+             Err(poisoned) => std::mem::take(poisoned.into_inner()),
+         };
+-        let staging = self.upload_staging.get_mut().unwrap_or_else(|p| p.into_inner()).take();
++        let staging = self
++            .upload_staging
++            .get_mut()
++            .unwrap_or_else(|p| p.into_inner())
++            .take();
+         if let Some(staging) = staging {
+             owned_children.defer_buffer(staging);
+         }
+@@ -5728,7 +5737,9 @@ fn select_buffer_memory_type(
+ ) -> Option<u32> {
+     let compatible = |i: &u32| {
+         type_filter & (1 << i) != 0
+-            && memory.memory_types[*i as usize].property_flags.contains(required)
++            && memory.memory_types[*i as usize]
++                .property_flags
++                .contains(required)
+     };
+     let first = (0..memory.memory_type_count).find(compatible)?;
+     if device_type == vk::PhysicalDeviceType::INTEGRATED_GPU
+@@ -5988,62 +5999,141 @@ mod dispatch_batch_guard_tests {
+         let coherent = AshVulkanRuntime::host_visible_coherent_props();
+         let mut memory = vk::PhysicalDeviceMemoryProperties::default();
+         memory.memory_type_count = 4;
+-        for (index, (flags, heap)) in [(local, 0), (local | coherent, 1), (local | coherent, 0), (coherent, 0)].into_iter().enumerate() {
+-            memory.memory_types[index] = vk::MemoryType { property_flags: flags, heap_index: heap };
++        for (index, (flags, heap)) in [
++            (local, 0),
++            (local | coherent, 1),
++            (local | coherent, 0),
++            (coherent, 0),
++        ]
++        .into_iter()
++        .enumerate()
++        {
++            memory.memory_types[index] = vk::MemoryType {
++                property_flags: flags,
++                heap_index: heap,
++            };
+         }
+-        let select = |device, mask, flags| super::select_buffer_memory_type(&memory, device, mask, flags);
+-        assert_eq!(select(vk::PhysicalDeviceType::INTEGRATED_GPU, 15, local), Some(2));
+-        assert_eq!(select(vk::PhysicalDeviceType::DISCRETE_GPU, 15, local), Some(0));
++        let select =
++            |device, mask, flags| super::select_buffer_memory_type(&memory, device, mask, flags);
++        assert_eq!(
++            select(vk::PhysicalDeviceType::INTEGRATED_GPU, 15, local),
++            Some(2)
++        );
++        assert_eq!(
++            select(vk::PhysicalDeviceType::DISCRETE_GPU, 15, local),
++            Some(0)
++        );
+         assert_eq!(select(vk::PhysicalDeviceType::CPU, 15, local), Some(0));
+-        assert_eq!(select(vk::PhysicalDeviceType::INTEGRATED_GPU, 3, local), Some(0));
+-        assert_eq!(select(vk::PhysicalDeviceType::INTEGRATED_GPU, 8, local), None);
+-        assert_eq!(select(vk::PhysicalDeviceType::INTEGRATED_GPU, 0, local), None);
+-        assert_eq!(select(vk::PhysicalDeviceType::INTEGRATED_GPU, 15, coherent), Some(1));
+-        assert_eq!(select(vk::PhysicalDeviceType::INTEGRATED_GPU, 15, coherent | vk::MemoryPropertyFlags::HOST_CACHED), None);
++        assert_eq!(
++            select(vk::PhysicalDeviceType::INTEGRATED_GPU, 3, local),
++            Some(0)
++        );
++        assert_eq!(
++            select(vk::PhysicalDeviceType::INTEGRATED_GPU, 8, local),
++            None
++        );
++        assert_eq!(
++            select(vk::PhysicalDeviceType::INTEGRATED_GPU, 0, local),
++            None
++        );
++        assert_eq!(
++            select(vk::PhysicalDeviceType::INTEGRATED_GPU, 15, coherent),
++            Some(1)
++        );
++        assert_eq!(
++            select(
++                vk::PhysicalDeviceType::INTEGRATED_GPU,
++                15,
++                coherent | vk::MemoryPropertyFlags::HOST_CACHED
++            ),
++            None
++        );
+     }
+ 
+     #[test]
+     fn bounded_upload_reuses_grows_and_serializes_staging() {
+         let runtime = Arc::new(AshVulkanRuntime::new().unwrap());
+-        let target = runtime.create_buffer(256, vk::BufferUsageFlags::TRANSFER_DST,
+-            AshVulkanRuntime::host_visible_coherent_props()).unwrap();
++        let target = runtime
++            .create_buffer(
++                256,
++                vk::BufferUsageFlags::TRANSFER_DST,
++                AshVulkanRuntime::host_visible_coherent_props(),
++            )
++            .unwrap();
+         runtime.upload_bytes_and_wait(&target, &[1; 4]).unwrap();
+         assert_eq!(runtime.upload_staging.lock().unwrap().unwrap().size, 4);
+         runtime.upload_bytes_and_wait(&target, &[2; 256]).unwrap();
+         let grown = runtime.upload_staging.lock().unwrap().unwrap();
+         assert_eq!(grown.size, 256);
+         runtime.upload_bytes_and_wait(&target, &[3; 4]).unwrap();
+-        assert_eq!(runtime.upload_staging.lock().unwrap().unwrap().memory, grown.memory);
++        assert_eq!(
++            runtime.upload_staging.lock().unwrap().unwrap().memory,
++            grown.memory
++        );
+         runtime.destroy_buffer(target);
+-        let workers: Vec<_> = (0..4u32).map(|worker| {
+-            let runtime = Arc::clone(&runtime);
+-            std::thread::spawn(move || {
+-                let target = runtime.create_buffer(256, vk::BufferUsageFlags::TRANSFER_DST,
+-                    AshVulkanRuntime::host_visible_coherent_props()).unwrap();
+-                for iteration in 0..8 {
+-                    let words = [worker * 100 + iteration; 64];
+-                    runtime.upload_bytes_and_wait(&target, bytemuck::cast_slice(&words)).unwrap();
+-                    assert_eq!(runtime.read_u32_slice(&target, 64).unwrap(), words);
+-                }
+-                runtime.destroy_buffer(target);
++        let workers: Vec<_> = (0..4u32)
++            .map(|worker| {
++                let runtime = Arc::clone(&runtime);
++                std::thread::spawn(move || {
++                    let target = runtime
++                        .create_buffer(
++                            256,
++                            vk::BufferUsageFlags::TRANSFER_DST,
++                            AshVulkanRuntime::host_visible_coherent_props(),
++                        )
++                        .unwrap();
++                    for iteration in 0..8 {
++                        let words = [worker * 100 + iteration; 64];
++                        runtime
++                            .upload_bytes_and_wait(&target, bytemuck::cast_slice(&words))
++                            .unwrap();
++                        assert_eq!(runtime.read_u32_slice(&target, 64).unwrap(), words);
++                    }
++                    runtime.destroy_buffer(target);
++                })
+             })
+-        }).collect();
+-        for worker in workers { worker.join().unwrap(); }
+-        assert_eq!(runtime.upload_staging.lock().unwrap().unwrap().memory, grown.memory);
++            .collect();
++        for worker in workers {
++            worker.join().unwrap();
++        }
++        assert_eq!(
++            runtime.upload_staging.lock().unwrap().unwrap().memory,
++            grown.memory
++        );
+     }
+ 
+     #[test]
+     fn bounded_upload_rejects_reuse_after_fail_stop() {
+         let runtime = AshVulkanRuntime::new().unwrap();
+-        let target = runtime.create_buffer(4, vk::BufferUsageFlags::TRANSFER_DST,
+-            AshVulkanRuntime::host_visible_coherent_props()).unwrap();
++        let target = runtime
++            .create_buffer(
++                4,
++                vk::BufferUsageFlags::TRANSFER_DST,
++                AshVulkanRuntime::host_visible_coherent_props(),
++            )
++            .unwrap();
+         runtime.upload_bytes_and_wait(&target, &[1; 4]).unwrap();
+         let staging = runtime.upload_staging.lock().unwrap().unwrap();
+         runtime.submission_gate.fail_stop();
+-        assert!(runtime.upload_bytes_and_wait(&target, &[2; 4]).unwrap_err().to_string().contains("fail-stop"));
+-        assert_eq!(runtime.upload_staging.lock().unwrap().unwrap().memory, staging.memory);
++        assert!(runtime
++            .upload_bytes_and_wait(&target, &[2; 4])
++            .unwrap_err()
++            .to_string()
++            .contains("fail-stop"));
++        assert_eq!(
++            runtime.upload_staging.lock().unwrap().unwrap().memory,
++            staging.memory
++        );
+         runtime.destroy_buffer(target);
+-        assert_eq!(runtime.runtime_owned_children.lock().unwrap().deferred_buffers.len(), 1);
++        assert_eq!(
++            runtime
++                .runtime_owned_children
++                .lock()
++                .unwrap()
++                .deferred_buffers
++                .len(),
++            1
++        );
+     }
+ 
+     struct EnvGuard {
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs
+index 5eec2a3d..de10647d 100644
+--- a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_checked_integer_program.rs
+@@ -432,6 +432,37 @@ impl ResidentIntegerDispatch {
+         if inputs.len() != self.rows * self.input_count * 2 {
+             return Err(invalid("exchange input shape differs"));
+         }
++        self.ensure_exchange_buffers()?;
++        let source = self.inputs.as_ref().unwrap();
++        let result = self.outputs.as_ref().unwrap();
++        let upload = self.exchange_upload.as_ref().unwrap();
++        let readback = self.exchange_readback.as_ref().unwrap();
++        let bytes: Vec<_> = inputs.iter().flat_map(|v| v.to_le_bytes()).collect();
++        self.runtime.write_bytes(upload, &bytes)?;
++        let mut ops = Vec::with_capacity(3);
++        if !bytes.is_empty() {
++            ops.push(AshBatchOp::CopyRegion {
++                src: upload.buffer,
++                dst: source.buffer,
++                src_offset: 0,
++                dst_offset: 0,
++                size: bytes.len() as u64,
++            });
++        }
++        ops.push(self.operation());
++        ops.push(AshBatchOp::CopyRegion {
++            src: result.buffer,
++            dst: readback.buffer,
++            src_offset: 0,
++            dst_offset: 0,
++            size: result.size,
++        });
++        self.runtime.dispatch_compute_ops(&ops)?;
++        self.runtime
++            .read_u32_slice(readback, (result.size / 4) as usize)
++    }
++
++    fn ensure_exchange_buffers(&mut self) -> Result<(), VulkanError> {
+         let source = self.inputs.as_ref().unwrap();
+         let result = self.outputs.as_ref().unwrap();
+         if self.exchange_upload.is_none() {
+@@ -448,33 +479,79 @@ impl ResidentIntegerDispatch {
+                 AshVulkanRuntime::host_visible_coherent_props(),
+             )?);
+         }
++        Ok(())
++    }
++
++    /// Submit a complete validated outcome composition through the same runtime.
++    /// UpdateBuffer changes only the 16-word dispatch header, never program code.
++    /// Level barriers are recorded by dispatch_compute_ops. No CPU value binding,
++    /// intermediate download/upload, or per-level completion wait.
++    pub(super) fn exchange_composition(
++        &mut self,
++        inputs: &[u32],
++        levels: &[(usize, usize)],
++        exports: usize,
++        read_words: usize,
++    ) -> Result<Vec<u32>, VulkanError> {
++        if inputs.is_empty()
++            || inputs.len() > self.input_count * 2
++            || levels.is_empty()
++            || read_words * 4 > self.outputs.as_ref().unwrap().size as usize
++        {
++            return Err(invalid("composition exchange bounds"));
++        }
++        self.ensure_exchange_buffers()?;
++        let input = self.inputs.as_ref().unwrap();
++        let output = self.outputs.as_ref().unwrap();
+         let upload = self.exchange_upload.as_ref().unwrap();
+         let readback = self.exchange_readback.as_ref().unwrap();
+         let bytes: Vec<_> = inputs.iter().flat_map(|v| v.to_le_bytes()).collect();
+         self.runtime.write_bytes(upload, &bytes)?;
+-        let mut ops = Vec::with_capacity(3);
+-        if !bytes.is_empty() {
+-            ops.push(AshBatchOp::CopyRegion {
+-                src: upload.buffer,
+-                dst: source.buffer,
+-                src_offset: 0,
+-                dst_offset: 0,
+-                size: bytes.len() as u64,
++        let mut ops = Vec::with_capacity(levels.len() * 2 + 5);
++        ops.push(AshBatchOp::CopyRegion {
++            src: upload.buffer,
++            dst: input.buffer,
++            src_offset: 0,
++            dst_offset: 0,
++            size: bytes.len() as u64,
++        });
++        // Each node writes its own complete slot before a dependent level. Only
++        // the candidate-wide failure flag needs resetting between executions.
++        ops.push(AshBatchOp::Fill {
++            buffer: output.buffer,
++            size: 4,
++            value: 0,
++        });
++        let export_at: usize = levels.iter().map(|(_, n)| n).sum();
++        for (start, count, phase) in levels
++            .iter()
++            .map(|&(s, n)| (s, n, 0u32))
++            .chain(std::iter::once((export_at, exports, 1)))
++        {
++            let mut header = [0u8; 64];
++            for (i, value) in [count as u32, start as u32, phase].into_iter().enumerate() {
++                header[4 * i..4 * i + 4].copy_from_slice(&value.to_le_bytes());
++            }
++            ops.push(AshBatchOp::UpdateBuffer {
++                buffer: self.program.as_ref().unwrap().buffer,
++                bytes: header,
+             });
++            let AshBatchOp::Dispatch(mut item) = self.operation() else {
++                unreachable!()
++            };
++            item.groups_x = (count as u32).div_ceil(32);
++            ops.push(AshBatchOp::Dispatch(item));
+         }
+-        ops.push(self.operation());
+         ops.push(AshBatchOp::CopyRegion {
+-            src: result.buffer,
++            src: output.buffer,
+             dst: readback.buffer,
+             src_offset: 0,
+             dst_offset: 0,
+-            size: result.size,
++            size: (read_words * 4) as u64,
+         });
+-        // No read after a failed submit/wait: previous buffer contents are not
+-        // a result for this execution. FFI retains its existing failure latch.
++        // A failed submit/wait cannot expose old mapped memory as a new result.
+         self.runtime.dispatch_compute_ops(&ops)?;
+-        self.runtime
+-            .read_u32_slice(readback, (result.size / 4) as usize)
++        self.runtime.read_u32_slice(readback, read_words)
+     }
+ 
+     pub(super) fn execute_profiled(
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_outcome.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_outcome.rs
+index 1eefcf58..3acafcff 100644
+--- a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_outcome.rs
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_outcome.rs
+@@ -98,6 +98,12 @@ impl ApflIntegerOutcomeProgram {
+     pub fn output_count(&self) -> usize {
+         self.outputs
+     }
++    pub(super) fn device_words(&self) -> &[u32] {
++        &self.words
++    }
++    pub fn device_word_count(&self) -> usize {
++        self.words.len()
++    }
+ 
+     /// Logical resident byte budget, including the lazy exchange transfer
+     /// buffers, excluding Vulkan driver/allocation overhead.
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/mod.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/mod.rs
+index ec9b62e3..995f6f00 100644
+--- a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/mod.rs
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/mod.rs
+@@ -22,12 +22,7 @@ pub mod apfl_causal_vocabulary_memory;
+ pub mod apfl_checked_integer_program;
+ pub mod apfl_checked_wide_integer_calls;
+ pub mod apfl_checked_wide_integer_program;
+-pub mod apfl_integer_search;
+ pub mod apfl_component_search;
+-pub mod apfl_policy_call_search;
+-pub mod apfl_verified_policy_search;
+-pub mod apfl_integer_outcome;
+-pub mod apfl_sparse_categorical_train;
+ pub mod apfl_equivariant_entity_trainer;
+ pub mod apfl_f32_gemm;
+ pub(crate) mod apfl_f32_indexed_rows;
+@@ -36,12 +31,16 @@ pub mod apfl_global_gradient_norm;
+ pub mod apfl_headwise_rmsnorm_rope;
+ pub mod apfl_hierarchical_state;
+ pub mod apfl_hierarchical_trainer;
++pub mod apfl_integer_composition;
++pub mod apfl_integer_outcome;
++pub mod apfl_integer_search;
+ pub mod apfl_lifted_predicate_trainer;
+ pub mod apfl_mamba2;
+ pub mod apfl_masked_causal_attention_trainer;
+ pub mod apfl_masked_shared_recurrent_causal_trainer;
+ pub mod apfl_model_executor;
+ pub mod apfl_moe;
++pub mod apfl_policy_call_search;
+ pub mod apfl_predicate_program_causal_control_trainer;
+ pub mod apfl_predicate_program_entity_control_trainer;
+ pub mod apfl_predicate_program_lifted_control_trainer;
+@@ -56,6 +55,7 @@ pub mod apfl_row_valid_mask;
+ pub mod apfl_semantic_world_binder;
+ pub mod apfl_sequence_head_layout;
+ pub mod apfl_shared_recurrent_causal_trainer;
++pub mod apfl_sparse_categorical_train;
+ pub mod apfl_state_trainer;
+ pub mod apfl_swiglu;
+ pub mod apfl_token_entity_pointer;
+@@ -65,6 +65,7 @@ pub mod apfl_typed_relation;
+ pub mod apfl_typed_relation_candidate_trainer;
+ pub mod apfl_typed_relation_causal_trainer;
+ pub mod apfl_typed_relation_set_trainer;
++pub mod apfl_verified_policy_search;
+ pub mod apfl_vocabulary_trainer;
+ pub mod batched_vector_quantizer;
+ pub mod persistent_control;
+@@ -83,15 +84,6 @@ pub mod vulkan_timeline;
+ pub const APFL_CAUSAL_TRAINING_MAX_TOKEN_ROWS: usize = 8192;
+ 
+ pub use apfl_bf16_f32_matvec::*;
+-pub use apfl_checked_integer_program::*;
+-pub use apfl_checked_wide_integer_calls::*;
+-pub use apfl_checked_wide_integer_program::*;
+-pub use apfl_integer_search::*;
+-pub use apfl_component_search::*;
+-pub use apfl_policy_call_search::*;
+-pub use apfl_verified_policy_search::*;
+-pub use apfl_integer_outcome::*;
+-pub use apfl_sparse_categorical_train::*;
+ pub use apfl_bias_corrected_adamw::*;
+ pub use apfl_binary_router::*;
+ pub use apfl_bound_predicate_program::*;
+@@ -112,6 +104,10 @@ pub use apfl_causal_structural_tape_compiler::*;
+ pub use apfl_causal_tuple_control_trainer::*;
+ pub use apfl_causal_typed_program_compiler::*;
+ pub use apfl_causal_vocabulary_memory::*;
++pub use apfl_checked_integer_program::*;
++pub use apfl_checked_wide_integer_calls::*;
++pub use apfl_checked_wide_integer_program::*;
++pub use apfl_component_search::*;
+ pub use apfl_equivariant_entity_trainer::*;
+ pub use apfl_f32_gemm::*;
+ pub use apfl_fp8_e4m3fn_matvec::*;
+@@ -119,12 +115,16 @@ pub use apfl_global_gradient_norm::*;
+ pub use apfl_headwise_rmsnorm_rope::*;
+ pub use apfl_hierarchical_state::*;
+ pub use apfl_hierarchical_trainer::*;
++pub use apfl_integer_composition::*;
++pub use apfl_integer_outcome::*;
++pub use apfl_integer_search::*;
+ pub use apfl_lifted_predicate_trainer::*;
+ pub use apfl_mamba2::*;
+ pub use apfl_masked_causal_attention_trainer::*;
+ pub use apfl_masked_shared_recurrent_causal_trainer::*;
+ pub use apfl_model_executor::*;
+ pub use apfl_moe::*;
++pub use apfl_policy_call_search::*;
+ pub use apfl_predicate_program_causal_control_trainer::*;
+ pub use apfl_predicate_program_entity_control_trainer::*;
+ pub use apfl_predicate_program_lifted_control_trainer::*;
+@@ -139,6 +139,7 @@ pub use apfl_row_valid_mask::*;
+ pub use apfl_semantic_world_binder::*;
+ pub use apfl_sequence_head_layout::*;
+ pub use apfl_shared_recurrent_causal_trainer::*;
++pub use apfl_sparse_categorical_train::*;
+ pub use apfl_state_trainer::*;
+ pub use apfl_swiglu::*;
+ pub use apfl_token_entity_pointer::*;
+@@ -148,6 +149,7 @@ pub use apfl_typed_relation::*;
+ pub use apfl_typed_relation_candidate_trainer::*;
+ pub use apfl_typed_relation_causal_trainer::*;
+ pub use apfl_typed_relation_set_trainer::*;
++pub use apfl_verified_policy_search::*;
+ pub use apfl_vocabulary_trainer::*;
+ pub use batched_vector_quantizer::*;
+ pub use persistent_control::*;
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/build.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/build.rs
+index cc70bec7..484326db 100644
+--- a/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/build.rs
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/build.rs
+@@ -2510,18 +2510,59 @@ fn main() {
+     println!("cargo:rerun-if-changed=../shaders/apfl_verified_inputs_v1.comp");
+     println!("cargo:rerun-if-changed=../shaders/apfl_policy_call_search.glsl");
+     println!("cargo:rerun-if-changed=../shaders/apfl_policy_multilimb_search.glsl");
+-    for shader in ["apfl_verified_inputs_v2", "apfl_policy_call_search_v2", "apfl_policy_properties_v1"] {
++    for shader in [
++        "apfl_verified_inputs_v2",
++        "apfl_policy_call_search_v2",
++        "apfl_policy_properties_v1",
++    ] {
+         println!("cargo:rerun-if-changed=../shaders/{shader}.comp");
+-        assert!(compile_shader(&glslc_bin, &shader_dir.join(format!("{shader}.comp")),
+-            &out_dir.join(format!("{shader}.spv"))), "multi-limb search shader failed");
++        assert!(
++            compile_shader(
++                &glslc_bin,
++                &shader_dir.join(format!("{shader}.comp")),
++                &out_dir.join(format!("{shader}.spv"))
++            ),
++            "multi-limb search shader failed"
++        );
+     }
+     println!("cargo:rerun-if-changed=../shaders/apfl_policy_property_context.glsl");
+     println!("cargo:rerun-if-changed=../shaders/apfl_integer_outcome_v1.comp");
+-    assert!(compile_shader(&glslc_bin, &shader_dir.join("apfl_integer_outcome_v1.comp"), &out_dir.join("apfl_integer_outcome_v1.spv")), "integer outcome failed to compile");
++    assert!(
++        compile_shader(
++            &glslc_bin,
++            &shader_dir.join("apfl_integer_outcome_v1.comp"),
++            &out_dir.join("apfl_integer_outcome_v1.spv")
++        ),
++        "integer outcome failed to compile"
++    );
+     println!("cargo:rerun-if-changed=../shaders/apfl_integer_outcome_v2.comp");
++    println!("cargo:rerun-if-changed=../shaders/apfl_integer_outcome_eval.glsl");
++    println!("cargo:rerun-if-changed=../shaders/apfl_integer_composition.comp");
++    assert!(
++        compile_shader(
++            &glslc_bin,
++            &shader_dir.join("apfl_integer_composition.comp"),
++            &out_dir.join("apfl_integer_composition.spv")
++        ),
++        "resident integer composition failed to compile"
++    );
+     println!("cargo:rerun-if-changed=../shaders/apfl_checked_multilimb_integer_ops.glsl");
+-    assert!(compile_shader(&glslc_bin, &shader_dir.join("apfl_integer_outcome_v2.comp"), &out_dir.join("apfl_integer_outcome_v2.spv")), "multi-limb integer outcome failed to compile");
+-    assert!(compile_shader(&glslc_bin,&shader_dir.join("apfl_verified_inputs_v1.comp"),&out_dir.join("apfl_verified_inputs_v1.spv")),"verified input producer failed to compile");
++    assert!(
++        compile_shader(
++            &glslc_bin,
++            &shader_dir.join("apfl_integer_outcome_v2.comp"),
++            &out_dir.join("apfl_integer_outcome_v2.spv")
++        ),
++        "multi-limb integer outcome failed to compile"
++    );
++    assert!(
++        compile_shader(
++            &glslc_bin,
++            &shader_dir.join("apfl_verified_inputs_v1.comp"),
++            &out_dir.join("apfl_verified_inputs_v1.spv")
++        ),
++        "verified input producer failed to compile"
++    );
+     let apfl_sparse_categorical_train_v1_ok = compile_shader(
+         &glslc_bin,
+         &shader_dir.join(APFL_SPARSE_CATEGORICAL_TRAIN_V1_SHADER_SRC),
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/integer_outcome.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/integer_outcome.rs
+index e9f46efe..feadcb28 100644
+--- a/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/integer_outcome.rs
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/integer_outcome.rs
+@@ -1,11 +1,23 @@
+ pub use aoem_gpu_device::pipeline::{
+-    ApflIntegerOutcomeProgram, ApflIntegerOutcomeRow, ApflResidentIntegerOutcome,
++    ApflIntegerCompositionNode, ApflIntegerCompositionPlan, ApflIntegerOutcomeProgram,
++    ApflIntegerOutcomeRow, ApflIntegerValueBinding, ApflResidentIntegerComposition,
++    ApflResidentIntegerOutcome,
+ };
+ use aoem_gpu_device::{pipeline::ApflResidentModelDevice, spirv_backend::VulkanError};
+ 
+ const SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/apfl_integer_outcome_v1.spv"));
+ const MULTILIMB_SPV: &[u8] =
+     include_bytes!(concat!(env!("OUT_DIR"), "/apfl_integer_outcome_v2.spv"));
++const COMPOSITION_SPV: &[u8] =
++    include_bytes!(concat!(env!("OUT_DIR"), "/apfl_integer_composition.spv"));
++pub fn create_integer_composition(
++    device: &ApflResidentModelDevice,
++    programs: &[ApflIntegerOutcomeProgram],
++    inputs: usize,
++    results: usize,
++) -> Result<ApflResidentIntegerComposition, VulkanError> {
++    device.create_integer_composition(COMPOSITION_SPV, programs, inputs, results)
++}
+ pub fn create_integer_outcome(
+     device: &ApflResidentModelDevice,
+     program: &ApflIntegerOutcomeProgram,
+diff --git a/crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_v2.comp b/crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_v2.comp
+index 4131f2b2..07107190 100644
+--- a/crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_v2.comp
++++ b/crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_v2.comp
+@@ -9,41 +9,11 @@ layout(set=0,binding=2,std430) writeonly buffer Results {uint y[];};
+ 
+ void main(){
+     uint row=gl_GlobalInvocationID.x;if(row>=p[0])return;
+-    uint width=p[1],outputs=p[2],nd=p[3],np=p[4],nc=p[5],body=nd+np;
+-    uint base=row*(4u+ML*outputs),tag=0u,component=0xffffffffu,fault=0u,instruction=0xffffffffu;
+-    MultiInteger args[16],answer[16],values[80],registers[80];
++    uint width=p[1],outputs=p[2],base=row*(4u+ML*outputs);
++    MultiInteger args[16],answer[16];uvec4 status;
+     for(uint i=0u;i<width;++i)for(uint j=0u;j<ML;++j)args[i].v[j]=x[ML*(row*width+i)+j];
+-    // Invocation-scoped interpreter, preserving v1 component and fault ordering.
+-    for(uint g=0u;g<body+1u+nc;++g){
+-        uint offset=p[8u+g],failed=0xffffffffu;
+-        for(uint i=0u;i<p[offset+1u];++i)values[i]=args[i];
+-        wide_fault=0u;
+-        for(uint k=0u;k<p[offset+3u];++k){
+-            uint c=offset+p[offset+p[offset+4u]+k],f=offset+p[c];
+-            uint n=p[f+1u],constants=p[f+2u],steps=p[f+3u];
+-            uint ca=f+8u+n,sa=ca+4u*constants;
+-            for(uint i=0u;i<n;++i)registers[i]=values[p[c+4u+p[f+8u+i]]];
+-            for(uint i=0u;i<constants;++i){
+-                uint at=ca+4u*i,sign=(p[at+3u]&0x80000000u)!=0u?0xffffffffu:0u;
+-                for(uint j=0u;j<ML;++j)registers[n+i].v[j]=j<4u?p[at+j]:sign;
+-            }
+-            for(uint i=0u;i<steps;++i){
+-                uint at=sa+4u*i;
+-                registers[n+constants+i]=wcompute(p[at],registers[p[at+1u]],registers[p[at+2u]]);
+-                if(wide_fault!=0u){failed=p[c+2u]+i;break;}
+-            }
+-            if(wide_fault!=0u)break;
+-            for(uint i=0u;i<p[f+4u];++i)values[p[c+1u]+i]=registers[p[sa+4u*steps+i]];
+-        }
+-        if(g>=nd&&g<body){
+-            if(wide_fault==0u&&weq(values[p[offset+p[offset+5u]]],scalar(1u))){tag=2u;component=g;break;}
+-            continue;
+-        }
+-        if(wide_fault!=0u){tag=3u;component=g;fault=wide_fault;instruction=failed;break;}
+-        if(g==body){
+-            for(uint i=0u;i<outputs;++i){answer[i]=values[p[offset+p[offset+5u]+i]];args[width+i]=answer[i];}
+-        }else if(!weq(values[p[offset+p[offset+5u]]],scalar(1u))){tag=g<nd?1u:3u;component=g;break;}
+-    }
+-    y[base]=tag;y[base+1u]=fault;y[base+2u]=component;y[base+3u]=instruction;
+-    for(uint i=0u;i<outputs;++i)for(uint j=0u;j<ML;++j)y[base+4u+ML*i+j]=tag==0u?answer[i].v[j]:0u;
++    uint origin=0u;
++    #include "apfl_integer_outcome_eval.glsl"
++    for(uint j=0u;j<4u;++j)y[base+j]=status[j];
++    for(uint i=0u;i<outputs;++i)for(uint j=0u;j<ML;++j)y[base+4u+ML*i+j]=status.x==0u?answer[i].v[j]:0u;
+ }
+diff --git a/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs b/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs
+index 174286bb..ebc04cd5 100644
+--- a/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs
++++ b/crates/ffi/aoem-ffi/src/ai_checked_integer_composition.rs
+@@ -1,9 +1,16 @@
+ //! AOIP0 v10: bounded, guarded composition of existing pure resident programs.
+-//! No business callbacks, database effects, widened local signatures or shaders.
++//! No business callbacks, database effects or widened local signatures.
++//! The device adapter shares the established checked outcome evaluator.
+ use super::{invalid, unavailable, Failure, IntegerResources, Program};
+-use std::collections::BTreeMap;
++use aoem_gpu_kernels::integer_outcome::ApflResidentIntegerComposition;
+ use std::sync::{Arc, Mutex};
+ 
++pub(super) struct ResidentComposition {
++    raw: Vec<Vec<u8>>,
++    operator: ApflResidentIntegerComposition,
++    _permit: super::MemoryPermit,
++}
++
+ pub(super) const MAX_NODES: usize = 65_536;
+ pub(super) const MAX_BYTES: usize = 32 * 1024 * 1024;
+ const MAX_VALUES: usize = 131_072;
+@@ -67,22 +74,9 @@ impl Reader<'_> {
+         })
+     }
+ }
+-impl Binding {
+-    fn value(&self, results: &[Vec<Value>]) -> Result<Value, Failure> {
+-        match self {
+-            Self::Literal(value) => Ok(*value),
+-            Self::Output(row, column) => results
+-                .get(*row)
+-                .and_then(|r| r.get(*column))
+-                .copied()
+-                .ok_or_else(|| unavailable("composition predecessor unavailable")),
+-        }
+-    }
+-}
+ 
+ struct Plan {
+     nodes: Vec<Node>,
+-    levels: Vec<Vec<usize>>,
+     exports: Vec<Binding>,
+ }
+ impl Plan {
+@@ -97,13 +91,12 @@ impl Plan {
+         }
+         let mut plan = Self {
+             nodes: Vec::with_capacity(count),
+-            levels: Vec::new(),
+             exports: Vec::with_capacity(exports),
+         };
+         let mut arities = Vec::with_capacity(count);
+         let mut depths = Vec::with_capacity(count);
+         let mut values = 0;
+-        for index in 0..count {
++        for _ in 0..count {
+             let program = reader.word()? as usize;
+             let &(inputs, outputs) = shapes
+                 .get(program)
+@@ -120,10 +113,6 @@ impl Plan {
+             let otherwise = (0..outputs)
+                 .map(|_| reader.binding(&arities, &depths, &mut depth))
+                 .collect::<Result<_, _>>()?;
+-            if plan.levels.len() <= depth {
+-                plan.levels.resize_with(depth + 1, Vec::new);
+-            }
+-            plan.levels[depth].push(index);
+             plan.nodes.push(Node {
+                 program,
+                 guard,
+@@ -143,72 +132,89 @@ impl Plan {
+         Ok(plan)
+     }
+ 
+-    fn execute(self, programs: &[Arc<Mutex<Program>>]) -> Result<Vec<Value>, Failure> {
+-        let mut results: Vec<Vec<Value>> = vec![Vec::new(); self.nodes.len()];
+-        for level in self.levels {
+-            let mut groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+-            for index in level {
+-                let node = &self.nodes[index];
+-                let guard = node.guard.value(&results)?;
+-                if guard[0] > 1 || guard[1..].iter().any(|n| *n != 0) {
+-                    return Err(unavailable("composition guard is not Boolean"));
+-                }
+-                if guard[0] == 0 {
+-                    // No domain checks, numerical dispatch or effects from the
+-                    // skipped program. Its explicitly supplied values continue.
+-                    results[index] = node
+-                        .otherwise
+-                        .iter()
+-                        .map(|b| b.value(&results))
+-                        .collect::<Result<_, _>>()?;
+-                } else {
+-                    groups.entry(node.program).or_default().push(index);
+-                }
+-            }
+-            for (program_index, indices) in groups {
+-                let mut program = programs[program_index]
+-                    .lock()
+-                    .map_err(|_| unavailable("composition program poisoned"))?;
+-                for chunk in indices.chunks(program.rows) {
+-                    let mut limbs = Vec::with_capacity(program.rows * program.inputs * 32);
+-                    for &index in chunk {
+-                        for binding in &self.nodes[index].inputs {
+-                            limbs.extend(binding.value(&results)?);
+-                        }
+-                    }
+-                    // Existing programs are pure. Padding has no published effect.
+-                    while limbs.len() < program.rows * program.inputs * 32 {
+-                        limbs.extend_from_within(..program.inputs * 32);
+-                    }
+-                    let rows = program
+-                        .operator
+-                        .exchange_limbs(&limbs)
+-                        .map_err(|e| unavailable(e.to_string()))?;
+-                    if rows.len() != program.rows {
+-                        return Err(unavailable("composition result count"));
+-                    }
+-                    for (&index, row) in chunk.iter().zip(rows) {
+-                        if row.outcome != 0
+-                            || row.fault != 0
+-                            || row.component.is_some()
+-                            || row.failed_instruction.is_some()
+-                            || row.values.len() != program.outputs
+-                        {
+-                            return Err(unavailable("composition active program rejected"));
+-                        }
+-                        results[index] = row
+-                            .values
+-                            .into_iter()
+-                            .map(|v| {
+-                                v.try_into()
+-                                    .map_err(|_| unavailable("composition limb width"))
+-                            })
+-                            .collect::<Result<_, _>>()?;
+-                    }
+-                }
+-            }
++    fn execute(
++        self,
++        programs: &[Arc<Mutex<Program>>],
++        owner: &IntegerResources,
++    ) -> Result<Vec<Value>, Failure> {
++        use aoem_gpu_kernels::integer_outcome::{
++            create_integer_composition, ApflIntegerCompositionNode, ApflIntegerCompositionPlan,
++            ApflIntegerValueBinding,
++        };
++        let binding = |b: Binding| match b {
++            Binding::Literal(v) => ApflIntegerValueBinding::Literal(v),
++            Binding::Output(r, c) => ApflIntegerValueBinding::Output(r, c),
++        };
++        let mut raw = Vec::with_capacity(programs.len());
++        let mut shapes = Vec::with_capacity(programs.len());
++        for program in programs {
++            let p = program
++                .lock()
++                .map_err(|_| unavailable("composition program poisoned"))?;
++            raw.push(p.raw.clone());
++            shapes.push((p.inputs, p.outputs));
++        }
++        let nodes = self
++            .nodes
++            .into_iter()
++            .map(|n| ApflIntegerCompositionNode {
++                program: n.program,
++                guard: binding(n.guard),
++                inputs: n.inputs.into_iter().map(&binding).collect(),
++                otherwise: n.otherwise.into_iter().map(&binding).collect(),
++            })
++            .collect();
++        let plan = ApflIntegerCompositionPlan::new(
++            nodes,
++            self.exports.into_iter().map(binding).collect(),
++            &shapes,
++        )
++        .map_err(|e| unavailable(e.to_string()))?;
++        let mut cache = owner
++            .cache
++            .lock()
++            .map_err(|_| unavailable("composition cache poisoned"))?;
++        if cache
++            .composition
++            .as_ref()
++            .is_none_or(|c| c.raw != raw || !c.operator.fits(&plan))
++        {
++            // No alternate runtime: capacity/program replacement releases the
++            // previous arena and its budget before constructing the new one.
++            cache.composition = None;
++            let decoded = raw
++                .iter()
++                .map(|bytes| super::ApflIntegerOutcomeProgram::decode(bytes))
++                .collect::<Result<Vec<_>, _>>()
++                .map_err(|e| unavailable(e.to_string()))?;
++            let (inputs, outputs) = plan.capacities();
++            let bytes = (inputs + outputs) * 8
++                + (32 + decoded.iter().map(|p| p.device_word_count()).sum::<usize>()) * 4
++                + raw.iter().map(Vec::len).sum::<usize>();
++            let permit = owner.budget.reserve_memory(bytes)?;
++            let operator = create_integer_composition(
++                cache
++                    .device
++                    .as_ref()
++                    .ok_or_else(|| unavailable("composition device"))?,
++                &decoded,
++                inputs,
++                outputs,
++            )
++            .map_err(|e| unavailable(e.to_string()))?;
++            cache.composition = Some(ResidentComposition {
++                raw,
++                operator,
++                _permit: permit,
++            });
+         }
+-        self.exports.iter().map(|v| v.value(&results)).collect()
++        cache
++            .composition
++            .as_mut()
++            .unwrap()
++            .operator
++            .run(&plan)
++            .map_err(|e| unavailable(e.to_string()))
+     }
+ }
+ 
+@@ -260,7 +266,7 @@ impl IntegerResources {
+         }
+         // Any partial execution/invalid guard/domain rejection leaves all
+         // participating resources latched. No result from an earlier request.
+-        let values = plan.execute(&programs)?;
++        let values = plan.execute(&programs, self)?;
+         let mut wire = Vec::with_capacity(32 + values.len() * 128);
+         wire.extend_from_slice(b"AOIR0002");
+         wire.extend(anchor.to_le_bytes());
+diff --git a/crates/ffi/aoem-ffi/src/ai_checked_integer_resources.rs b/crates/ffi/aoem-ffi/src/ai_checked_integer_resources.rs
+index 1ba98dfd..b9e14ae8 100644
+--- a/crates/ffi/aoem-ffi/src/ai_checked_integer_resources.rs
++++ b/crates/ffi/aoem-ffi/src/ai_checked_integer_resources.rs
+@@ -13,7 +13,7 @@ const MAX_ROWS: usize = 4096;
+ const MAX_PROGRAM_BYTES: usize = 4 * 1024 * 1024;
+ const MAX_INPUT_BYTES: usize = MAX_ROWS * 16 * 128;
+ const MAX_HANDLES: usize = 64;
+-const MAX_PROGRAMS: usize = 8;
++pub(crate) const MAX_PROGRAMS: usize = 16;
+ const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+ // Process-wide generations are never reused, including across AOEM contexts.
+ static NEXT_RESOURCE: AtomicU64 = AtomicU64::new(1);
+@@ -117,7 +117,36 @@ struct Permit {
+     program_bytes: Option<usize>,
+ }
+ 
++// Arena bytes share the existing context budget, not the program slot budget.
++struct MemoryPermit {
++    budget: Arc<Budget>,
++    bytes: usize,
++}
++impl Drop for MemoryPermit {
++    fn drop(&mut self) {
++        self.budget
++            .0
++            .lock()
++            .unwrap_or_else(std::sync::PoisonError::into_inner)
++            .bytes -= self.bytes;
++    }
++}
++
+ impl Budget {
++    fn reserve_memory(self: &Arc<Self>, bytes: usize) -> Result<MemoryPermit, Failure> {
++        let mut usage = self
++            .0
++            .lock()
++            .map_err(|_| unavailable("integer resource budget poisoned"))?;
++        if bytes > MAX_RESIDENT_BYTES || usage.bytes > MAX_RESIDENT_BYTES - bytes {
++            return Err(unavailable("integer composition byte budget exhausted"));
++        }
++        usage.bytes += bytes;
++        Ok(MemoryPermit {
++            budget: Arc::clone(self),
++            bytes,
++        })
++    }
+     fn reserve(self: &Arc<Self>, program_bytes: Option<usize>) -> Result<Permit, Failure> {
+         let mut usage = self
+             .0
+@@ -185,6 +214,7 @@ struct Cache {
+     device: Option<ApflResidentModelDevice>,
+     // Weak entries retain neither an asset nor GPU buffers after the last close.
+     programs: Vec<Weak<Mutex<Program>>>,
++    composition: Option<composition::ResidentComposition>,
+ }
+ 
+ #[derive(Default)]
+@@ -359,6 +389,10 @@ impl IntegerResources {
+                 self.sessions
+                     .close(request.id)
+                     .map_err(|e| unavailable(format!("integer resource close: {e:?}")))?;
++                self.cache
++                    .lock()
++                    .map_err(|_| unavailable("integer resource cache poisoned"))?
++                    .composition = None;
+                 Ok(control_result("close", request.id))
+             }
+             _ => unreachable!("validated integer resource command"),
+diff --git a/crates/ffi/aoem-ffi/src/ai_checked_integer_resources_tests.rs b/crates/ffi/aoem-ffi/src/ai_checked_integer_resources_tests.rs
+index c67a901b..27db8b84 100644
+--- a/crates/ffi/aoem-ffi/src/ai_checked_integer_resources_tests.rs
++++ b/crates/ffi/aoem-ffi/src/ai_checked_integer_resources_tests.rs
+@@ -1,6 +1,47 @@
+ use super::*;
+ use serde_json::json;
+ 
++#[test]
++#[ignore = "requires Vulkan; bounded sixteen-program composition table"]
++fn composition_sixteen_resources_preserve_dependencies() {
++    fn lit(bytes: &mut Vec<u8>, n: u32) {
++        words(bytes, [0, n].into_iter().chain([0; 31]));
++    }
++    let resources = IntegerResources::default();
++    let ids: Vec<_> = (0..MAX_PROGRAMS)
++        .map(|_| open(&resources, 5, 1, 0))
++        .collect();
++    let mut body = Vec::new();
++    words(&mut body, [MAX_PROGRAMS as u32, 1]);
++    for id in &ids {
++        body.extend(id.to_le_bytes());
++    }
++    for index in 0..MAX_PROGRAMS as u32 {
++        words(&mut body, [index]);
++        lit(&mut body, 1);
++        if index == 0 {
++            lit(&mut body, 7);
++        } else {
++            words(&mut body, [1, index - 1, 0]);
++        }
++        lit(&mut body, 1);
++        lit(&mut body, 0);
++    }
++    words(&mut body, [1, MAX_PROGRAMS as u32 - 1, 0]);
++    let mut payload = request(2, ids[0], 5, MAX_PROGRAMS as u32, &body);
++    payload[8..12].copy_from_slice(&10u32.to_le_bytes());
++    payload.splice(40..40, 1u64.to_le_bytes());
++    resources.execute_binary(&payload).unwrap();
++    let result = resources.take_binary(ids[0], 1).unwrap();
++    assert_eq!(u32::from_le_bytes(result[32..36].try_into().unwrap()), 23);
++    assert!(result[36..].iter().all(|b| *b == 0));
++    let mut oversized = payload;
++    oversized[40..48].copy_from_slice(&2u64.to_le_bytes());
++    oversized[48..52].copy_from_slice(&17u32.to_le_bytes());
++    assert!(resources.execute_binary(&oversized).is_err());
++    assert!(resources.take_binary(ids[0], 2).is_err());
++}
++
+ #[test]
+ fn binary_result_is_bounded_versioned_and_context_owned() {
+     let resources = IntegerResources::default();
+diff --git a/crates/ffi/aoem-ffi/src/lib.rs b/crates/ffi/aoem-ffi/src/lib.rs
+index cf2c1edf..e4dfdb1a 100644
+--- a/crates/ffi/aoem-ffi/src/lib.rs
++++ b/crates/ffi/aoem-ffi/src/lib.rs
+@@ -3912,6 +3912,7 @@ struct AoemCapabilitiesJson {
+     compute_checked_integer_binary_result_v1: bool,
+     compute_checked_integer_dataflow_v1: bool,
+     compute_checked_integer_composition_v1: bool,
++    compute_checked_integer_composition_max_programs: usize,
+     compute_ai_sgm_infer_v1_uses_internal_tensor_graph: bool,
+     compute_ai_sgm_infer_v1_uses_internal_tensor_build: bool,
+     compute_ai_sgm_infer_v1_uses_internal_graph_runtime: bool,
+@@ -13405,6 +13406,7 @@ pub extern "C" fn aoem_capabilities_json() -> *const c_char {
+                 compute_checked_integer_binary_result_v1: cfg!(feature = "apfl-model-session"),
+                 compute_checked_integer_dataflow_v1: cfg!(feature = "apfl-model-session"),
+                 compute_checked_integer_composition_v1: cfg!(feature = "apfl-model-session"),
++                compute_checked_integer_composition_max_programs: if cfg!(feature = "apfl-model-session") { 16 } else { 0 },
+                 compute_ai_sgm_infer_v1_uses_internal_tensor_graph: true,
+                 compute_ai_sgm_infer_v1_uses_internal_tensor_build: true,
+                 compute_ai_sgm_infer_v1_uses_internal_graph_runtime: true,
+
+diff --git a/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_composition.rs b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_composition.rs
+new file mode 100644
+index 00000000..fd8902da
+--- /dev/null
++++ b/crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/apfl_integer_composition.rs
+@@ -0,0 +1,232 @@
++//! Physical adapter for a bounded composition of existing outcome programs.
++//! No host arithmetic interpreter, business callbacks or numeric narrowing.
++use super::apfl_checked_integer_program::ResidentIntegerDispatch;
++use super::{ApflIntegerOutcomeProgram, ApflResidentModelDevice};
++use crate::spirv_backend::VulkanError;
++
++fn invalid(message: &str) -> VulkanError {
++    VulkanError::InvalidInput(format!("AOEM resident integer composition: {message}"))
++}
++
++#[derive(Clone)]
++pub enum ApflIntegerValueBinding {
++    Literal([u32; 32]),
++    Output(usize, usize),
++}
++pub struct ApflIntegerCompositionNode {
++    pub program: usize,
++    pub guard: ApflIntegerValueBinding,
++    pub inputs: Vec<ApflIntegerValueBinding>,
++    pub otherwise: Vec<ApflIntegerValueBinding>,
++}
++pub struct ApflIntegerCompositionPlan {
++    words: Vec<u32>,
++    levels: Vec<(usize, usize)>,
++    exports: usize,
++    arena_words: usize,
++    shapes: Vec<(usize, usize)>,
++}
++impl ApflIntegerCompositionPlan {
++    pub fn new(
++        nodes: Vec<ApflIntegerCompositionNode>,
++        exports: Vec<ApflIntegerValueBinding>,
++        shapes: &[(usize, usize)],
++    ) -> Result<Self, VulkanError> {
++        if !(1..=65_536).contains(&nodes.len())
++            || !(1..=65_536).contains(&exports.len())
++            || !(1..=16).contains(&shapes.len())
++            || shapes
++                .iter()
++                .any(|&(i, o)| i == 0 || o == 0 || i > 16 || o > 16 || i + o > 16)
++        {
++            return Err(invalid("counts"));
++        }
++        let mut offsets = Vec::with_capacity(nodes.len());
++        let mut depths = Vec::with_capacity(nodes.len());
++        let mut levels: Vec<Vec<usize>> = Vec::new();
++        let mut arena_words = 1 + exports.len() * 32;
++        let mut values = 0;
++        for (index, node) in nodes.iter().enumerate() {
++            let &(inputs, outputs) = shapes.get(node.program).ok_or_else(|| invalid("program"))?;
++            if node.inputs.len() != inputs || node.otherwise.len() != outputs {
++                return Err(invalid("signature"));
++            }
++            values += outputs;
++            if values > 131_072 {
++                return Err(invalid("value budget"));
++            }
++            let mut depth = 0;
++            for b in std::iter::once(&node.guard)
++                .chain(&node.inputs)
++                .chain(&node.otherwise)
++            {
++                if let ApflIntegerValueBinding::Output(row, col) = b {
++                    if *row >= index || *col >= shapes[nodes[*row].program].1 {
++                        return Err(invalid("forward or absent reference"));
++                    }
++                    depth = depth.max(depths[*row] + 1);
++                }
++            }
++            offsets.push(arena_words);
++            arena_words += 4 + 32 * outputs;
++            depths.push(depth);
++            if levels.len() <= depth {
++                levels.resize_with(depth + 1, Vec::new);
++            }
++            levels[depth].push(index);
++        }
++        // The first node-count words are a level-sorted indirection table.
++        let mut words = vec![0; nodes.len()];
++        let export_at = words.len();
++        words.resize(export_at + 2 * exports.len(), 0);
++        let mut positions = vec![0; nodes.len()];
++        let encode =
++            |b: &ApflIntegerValueBinding, words: &mut Vec<u32>| -> Result<[u32; 2], VulkanError> {
++                Ok(match b {
++                    ApflIntegerValueBinding::Literal(value) => {
++                        let at = words.len();
++                        words.extend(value);
++                        [0x80000000 | at as u32, 0]
++                    }
++                    ApflIntegerValueBinding::Output(row, col) => {
++                        let node = nodes.get(*row).ok_or_else(|| invalid("export row"))?;
++                        if *col >= shapes[node.program].1 {
++                            return Err(invalid("export column"));
++                        }
++                        [(offsets[*row] + 4 + 32 * col) as u32, offsets[*row] as u32]
++                    }
++                })
++            };
++        for (index, node) in nodes.iter().enumerate() {
++            let at = words.len();
++            positions[index] = at as u32;
++            let size = 4 + 2 * (node.inputs.len() + node.otherwise.len());
++            words.resize(at + size, 0);
++            words[at] = node.program as u32;
++            words[at + 1] = offsets[index] as u32;
++            for (i, b) in std::iter::once(&node.guard)
++                .chain(&node.inputs)
++                .chain(&node.otherwise)
++                .enumerate()
++            {
++                let pair = encode(b, &mut words)?;
++                words[at + 2 + 2 * i..at + 4 + 2 * i].copy_from_slice(&pair);
++            }
++            if words.len() > 8 * 1024 * 1024 {
++                return Err(invalid("plan byte budget"));
++            }
++        }
++        for (i, b) in exports.iter().enumerate() {
++            let pair = encode(b, &mut words)?;
++            words[export_at + 2 * i..export_at + 2 * i + 2].copy_from_slice(&pair);
++        }
++        if words.len() > 8 * 1024 * 1024 {
++            return Err(invalid("plan byte budget"));
++        }
++        let mut at = 0;
++        let levels = levels
++            .into_iter()
++            .map(|mut level| {
++                // Keep neighboring invocations on the same small program.
++                level.sort_by_key(|&n| nodes[n].program);
++                let start = at;
++                for node in level {
++                    words[at] = positions[node];
++                    at += 1;
++                }
++                (start, at - start)
++            })
++            .collect();
++        Ok(Self {
++            words,
++            levels,
++            exports: exports.len(),
++            arena_words,
++            shapes: shapes.to_vec(),
++        })
++    }
++    pub fn capacities(&self) -> (usize, usize) {
++        (
++            self.words.len().next_power_of_two().max(2),
++            self.arena_words.next_power_of_two(),
++        )
++    }
++}
++
++pub struct ApflResidentIntegerComposition {
++    dispatch: ResidentIntegerDispatch,
++    shapes: Vec<(usize, usize)>,
++    input_words: usize,
++    result_words: usize,
++}
++impl ApflResidentIntegerComposition {
++    pub fn fits(&self, plan: &ApflIntegerCompositionPlan) -> bool {
++        self.shapes == plan.shapes
++            && self.input_words >= plan.words.len()
++            && self.result_words >= plan.arena_words
++    }
++    pub fn run(
++        &mut self,
++        plan: &ApflIntegerCompositionPlan,
++    ) -> Result<Vec<[u32; 32]>, VulkanError> {
++        if !self.fits(plan) {
++            return Err(invalid("resource shape"));
++        }
++        let words = self.dispatch.exchange_composition(
++            &plan.words,
++            &plan.levels,
++            plan.exports,
++            1 + plan.exports * 32,
++        )?;
++        if words[0] != 0 {
++            return Err(invalid("guard, predecessor or active program rejected"));
++        }
++        Ok(words[1..]
++            .chunks_exact(32)
++            .map(|v| v.try_into().unwrap())
++            .collect())
++    }
++}
++
++impl ApflResidentModelDevice {
++    pub fn create_integer_composition(
++        &self,
++        shader: &[u8],
++        programs: &[ApflIntegerOutcomeProgram],
++        input_words: usize,
++        result_words: usize,
++    ) -> Result<ApflResidentIntegerComposition, VulkanError> {
++        if !(1..=16).contains(&programs.len())
++            || input_words < 2
++            || input_words % 2 != 0
++            || input_words > 8 * 1024 * 1024
++            || result_words == 0
++            || result_words > 8 * 1024 * 1024
++            || programs.iter().any(|p| p.numeric_bits() != 1024)
++        {
++            return Err(invalid("resource bounds"));
++        }
++        let mut words = vec![0; 32]; // 16 update words followed by sixteen program offsets
++        for (i, p) in programs.iter().enumerate() {
++            words[16 + i] = words.len() as u32;
++            words.extend_from_slice(p.device_words());
++        }
++        let shapes = programs
++            .iter()
++            .map(|p| (p.input_count(), p.output_count()))
++            .collect();
++        Ok(ApflResidentIntegerComposition {
++            dispatch: ResidentIntegerDispatch::new(
++                self,
++                shader,
++                words,
++                1,
++                input_words / 2,
++                result_words,
++            )?,
++            shapes,
++            input_words,
++            result_words,
++        })
++    }
++}
+
+diff --git a/crates/backend/aoem-backend-gpu/shaders/apfl_integer_composition.comp b/crates/backend/aoem-backend-gpu/shaders/apfl_integer_composition.comp
+new file mode 100644
+index 00000000..22cc1448
+--- /dev/null
++++ b/crates/backend/aoem-backend-gpu/shaders/apfl_integer_composition.comp
+@@ -0,0 +1,52 @@
++#version 450
++#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
++#extension GL_GOOGLE_include_directive : require
++layout(local_size_x=32) in;
++layout(set=0,binding=0,std430) readonly buffer Program {uint p[];};
++layout(set=0,binding=1,std430) readonly buffer Inputs {uint x[];};
++layout(set=0,binding=2,std430) buffer Results {uint y[];};
++#include "apfl_checked_multilimb_integer_ops.glsl"
++
++// Validated references address either immutable literals or an earlier level's
++// successful output. Every level is separated by the existing compute barrier.
++MultiInteger bound_value(uint at,inout bool valid){
++    uint address=x[at],producer=x[at+1u];
++    MultiInteger value;
++    if((address&0x80000000u)!=0u){
++        for(uint j=0u;j<ML;++j)value.v[j]=x[(address&0x7fffffffu)+j];
++    }else{
++        if(y[producer]!=0u)valid=false;
++        for(uint j=0u;j<ML;++j)value.v[j]=y[address+j];
++    }
++    return value;
++}
++void main(){
++    uint row=gl_GlobalInvocationID.x;if(row>=p[0])return;
++    bool valid=true;
++    if(p[2]==1u){
++        MultiInteger value=bound_value(p[1]+2u*row,valid);
++        if(!valid)atomicOr(y[0],1u);
++        for(uint j=0u;j<ML;++j)y[1u+ML*row+j]=value.v[j];
++        return;
++    }
++    uint at=x[p[1]+row],origin=p[16u+x[at]],base=x[at+1u];
++    uint width=p[origin+1u],outputs=p[origin+2u];
++    MultiInteger guard=bound_value(at+2u,valid),args[16],answer[16];
++    uvec4 status=uvec4(0u,0u,0xffffffffu,0xffffffffu);
++    bool enabled=weq(guard,scalar(1u)),disabled=weq(guard,scalar(0u));
++    if(!valid||(!enabled&&!disabled)){
++        status.x=3u;
++    }else if(disabled){
++        // Do not evaluate the skipped program's inputs or arithmetic domain.
++        for(uint i=0u;i<outputs;++i)answer[i]=bound_value(at+4u+2u*width+2u*i,valid);
++        if(!valid)status.x=3u;
++    }else{
++        for(uint i=0u;i<width;++i)args[i]=bound_value(at+4u+2u*i,valid);
++        if(valid){
++            #include "apfl_integer_outcome_eval.glsl"
++        }else status.x=3u;
++    }
++    if(status.x!=0u||status.y!=0u||status.z!=0xffffffffu||status.w!=0xffffffffu)atomicOr(y[0],1u);
++    for(uint j=0u;j<4u;++j)y[base+j]=status[j];
++    for(uint i=0u;i<outputs;++i)for(uint j=0u;j<ML;++j)y[base+4u+ML*i+j]=status.x==0u?answer[i].v[j]:0u;
++}
+
+diff --git a/crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_eval.glsl b/crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_eval.glsl
+new file mode 100644
+index 00000000..e5c4c0fc
+--- /dev/null
++++ b/crates/backend/aoem-backend-gpu/shaders/apfl_integer_outcome_eval.glsl
+@@ -0,0 +1,41 @@
++// Shared checked-i1024 outcome evaluator. Both row and composition adapters
++// use the same arithmetic, domain/refutation ordering and postconditions.
++// Lexical include: do not pass large private arrays through GLSL function
++// parameters (some drivers cannot compile that expanded call frame).
++{
++    uint nd=p[origin+3u],np=p[origin+4u],nc=p[origin+5u],body=nd+np;
++    uint tag=0u,component=0xffffffffu,fault=0u,instruction=0xffffffffu;
++    MultiInteger values[80],registers[80];
++    // Invocation-scoped interpreter, preserving v1 component and fault ordering.
++    for(uint g=0u;g<body+1u+nc;++g){
++        uint offset=origin+p[origin+8u+g],failed=0xffffffffu;
++        for(uint i=0u;i<p[offset+1u];++i)values[i]=args[i];
++        wide_fault=0u;
++        for(uint k=0u;k<p[offset+3u];++k){
++            uint c=offset+p[offset+p[offset+4u]+k],f=offset+p[c];
++            uint n=p[f+1u],constants=p[f+2u],steps=p[f+3u];
++            uint ca=f+8u+n,sa=ca+4u*constants;
++            for(uint i=0u;i<n;++i)registers[i]=values[p[c+4u+p[f+8u+i]]];
++            for(uint i=0u;i<constants;++i){
++                uint at=ca+4u*i,sign=(p[at+3u]&0x80000000u)!=0u?0xffffffffu:0u;
++                for(uint j=0u;j<ML;++j)registers[n+i].v[j]=j<4u?p[at+j]:sign;
++            }
++            for(uint i=0u;i<steps;++i){
++                uint at=sa+4u*i;
++                registers[n+constants+i]=wcompute(p[at],registers[p[at+1u]],registers[p[at+2u]]);
++                if(wide_fault!=0u){failed=p[c+2u]+i;break;}
++            }
++            if(wide_fault!=0u)break;
++            for(uint i=0u;i<p[f+4u];++i)values[p[c+1u]+i]=registers[p[sa+4u*steps+i]];
++        }
++        if(g>=nd&&g<body){
++            if(wide_fault==0u&&weq(values[p[offset+p[offset+5u]]],scalar(1u))){tag=2u;component=g;break;}
++            continue;
++        }
++        if(wide_fault!=0u){tag=3u;component=g;fault=wide_fault;instruction=failed;break;}
++        if(g==body){
++            for(uint i=0u;i<outputs;++i){answer[i]=values[p[offset+p[offset+5u]+i]];args[width+i]=answer[i];}
++        }else if(!weq(values[p[offset+p[offset+5u]]],scalar(1u))){tag=g<nd?1u:3u;component=g;break;}
++    }
++    status=uvec4(tag,fault,component,instruction);
++}

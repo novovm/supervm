@@ -1,0 +1,519 @@
+diff --git a/crates/novovm-exec/src/semantic_integer.rs b/crates/novovm-exec/src/semantic_integer.rs
+index 6f37a51e..d9c08314 100644
+--- a/crates/novovm-exec/src/semantic_integer.rs
++++ b/crates/novovm-exec/src/semantic_integer.rs
+@@ -494,6 +494,7 @@ pub struct AoemIntegerResourceSessionV7 {
+     binary_supported: bool,
+     dataflow_supported: bool,
+     composition_supported: bool,
++    composition_resource_limit: usize,
+ }
+ 
+ /// Local measurements only. Never include these in business or consensus commitments.
+@@ -534,6 +535,18 @@ fn resource_supported(raw: &serde_json::Value, wire: bool, read: bool) -> bool {
+             == Some(true)
+ }
+ 
++fn composition_limit(raw: &serde_json::Value) -> usize {
++    if raw["compute_checked_integer_composition_v1"] != true {
++        return 0;
++    }
++    // Older v10 libraries have the documented eight-program budget. A larger
++    // table requires an explicit loaded-library capability, never inference.
++    match raw.get("compute_checked_integer_composition_max_programs") {
++        None => 8,
++        Some(value) => value.as_u64().filter(|n| (1..=16).contains(n)).unwrap_or(0) as usize,
++    }
++}
++
+ impl AoemExecFacade {
+     /// Explicit loaded-library contract only, not proof that a GPU is present.
+     /// The stable C ABI/wire symbol alone does not imply AOIP0 v7 support.
+@@ -564,6 +577,7 @@ impl AoemExecFacade {
+             })
+             .map_err(|_| anyhow::anyhow!("integer resource owner sequence exhausted"))?;
+         Ok(AoemIntegerResourceSessionV7 {
++            composition_resource_limit: composition_limit(&self.capabilities_json()?),
+             composition_supported: self.capabilities_json()?
+                 ["compute_checked_integer_composition_v1"]
+                 == true,
+@@ -588,6 +602,13 @@ impl AoemExecFacade {
+ }
+ 
+ impl AoemIntegerResourceSessionV7 {
++    pub fn composition_resource_limit(&self) -> usize {
++        if self.supports_composition_v1() {
++            self.composition_resource_limit
++        } else {
++            0
++        }
++    }
+     pub fn supports_composition_v1(&self) -> bool {
+         self.binary_supported && self.composition_supported
+     }
+@@ -603,6 +624,9 @@ impl AoemIntegerResourceSessionV7 {
+         if !self.supports_composition_v1() {
+             bail!("AOEM integer composition unsupported; no fallback");
+         }
++        if resources.len() > self.composition_resource_limit() {
++            bail!("AOEM composition resource budget unsupported by loaded library; no fallback");
++        }
+         self.inner.run_composition(resources, nodes, outputs)
+     }
+     pub fn supports_dataflow_v1(&self) -> bool {
+diff --git a/crates/novovm-exec/src/semantic_integer_composition.rs b/crates/novovm-exec/src/semantic_integer_composition.rs
+index 9060fa16..d7bdffb9 100644
+--- a/crates/novovm-exec/src/semantic_integer_composition.rs
++++ b/crates/novovm-exec/src/semantic_integer_composition.rs
+@@ -74,7 +74,7 @@ impl<T: ResourceTransport> ResourceOwner<T> {
+         outputs: &[AoemIntegerInputV1],
+     ) -> Result<Vec<AoemInteger1024V1>> {
+         self.healthy()?;
+-        if !(1..=8).contains(&resources.len())
++        if !(1..=16).contains(&resources.len())
+             || !(1..=MAX_NODES).contains(&nodes.len())
+             || !(1..=MAX_NODES).contains(&outputs.len())
+         {
+diff --git a/crates/novovm-exec/src/semantic_integer_tests.rs b/crates/novovm-exec/src/semantic_integer_tests.rs
+index e03ba9b2..577153cb 100644
+--- a/crates/novovm-exec/src/semantic_integer_tests.rs
++++ b/crates/novovm-exec/src/semantic_integer_tests.rs
+@@ -1,6 +1,29 @@
+ use super::*;
+ use serde_json::{json, Value};
+ 
++#[test]
++fn composition_program_budget_is_explicit_and_fail_closed() {
++    assert_eq!(composition_limit(&json!({})), 0);
++    assert_eq!(
++        composition_limit(&json!({"compute_checked_integer_composition_v1": true})),
++        8
++    );
++    for limit in [1, 8, 14, 16] {
++        assert_eq!(
++            composition_limit(&json!({"compute_checked_integer_composition_v1": true,
++            "compute_checked_integer_composition_max_programs": limit})),
++            limit
++        );
++    }
++    for invalid in [json!(0), json!(17), json!(-1), json!("16"), json!(null)] {
++        assert_eq!(
++            composition_limit(&json!({"compute_checked_integer_composition_v1": true,
++            "compute_checked_integer_composition_max_programs": invalid})),
++            0
++        );
++    }
++}
++
+ fn binary_fixture(
+     tag: u32,
+     fault: u32,
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/effect_assets.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/effect_assets.rs
+index 889bc398..001bd745 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/effect_assets.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/effect_assets.rs
+@@ -1,8 +1,30 @@
+ //! Explicit pure arithmetic for the full candidate compiler; no business callback.
+ use super::checked_integer_asset::{pure_asset, Bank, Graph};
+ 
+-pub(super) const SHAPES: [(usize, usize); 7] =
+-    [(4, 1), (8, 2), (6, 4), (3, 1), (3, 3), (8, 4), (8, 1)];
++pub(super) const PROGRAMS: usize = 14;
++pub(super) const SHAPES: [(usize, usize); PROGRAMS - 1] = [
++    (2, 1),
++    (8, 2),
++    (6, 4),
++    (3, 1),
++    (3, 3),
++    (8, 4),
++    (8, 1),
++    (2, 1),
++    (2, 1),
++    (2, 1),
++    (2, 1),
++    (3, 1),
++    (2, 1),
++];
++
++pub(super) fn scalar_program(mode: u128) -> usize {
++    match mode {
++        0 => 1,
++        1..=6 => mode as usize + 7,
++        _ => panic!("invalid compiled scalar mode"),
++    }
++}
+ 
+ fn single(inputs: usize, make: impl FnOnce(&mut Bank) -> Vec<u32>) -> Vec<u8> {
+     let mut bank = Bank::new(inputs);
+@@ -14,28 +36,9 @@ fn single(inputs: usize, make: impl FnOnce(&mut Bank) -> Vec<u32>) -> Vec<u8> {
+ }
+ 
+ pub(super) fn assets() -> Vec<Vec<u8>> {
+-    // Scalar instructions: add/sub/mul/le/eq/select/min. All are pure total
+-    // i1024 expressions for this bounded u128 workload; no effect is performed
+-    // before a guard selects a value. Division appears only by constant 10000.
+-    let mut graph = Graph::new(4);
+-    let mut raw = Bank::new(4);
+-    let add = raw.op(0, 0, 1);
+-    let sub = raw.op(1, 0, 1);
+-    let mul = raw.op(2, 0, 1);
+-    let le = raw.op(10, 0, 1);
+-    let eq = raw.op(8, 0, 1);
+-    let select = raw.select(2, 0, 1);
+-    let min = raw.select(le, 0, 1);
+-    let values = graph.call(raw, vec![0, 1, 2, 3], &[add, sub, mul, le, eq, select, min]);
+-    let mut pick = Bank::new(8);
+-    let mut result = pick.constant(0);
+-    for mode in 0..7 {
+-        let flag = pick.op(8, 7, pick.constant(mode));
+-        let term = pick.op(2, flag, mode as u32);
+-        result = pick.op(0, result, term);
+-    }
+-    let out = graph.call(pick, [values, vec![3]].concat(), &[result]);
+-    let scalar = pure_asset(4, 1, graph.encode(&out));
++    // The compiler knows the operator. Submit that existing checked Bank directly,
++    // rather than evaluate seven results and discard six through arithmetic.
++    let scalar = single(2, |b| vec![b.op(0, 0, 1)]);
+ 
+     let capacity = single(8, |b| {
+         // Treasury, settled total/asset, three buckets, two checked counters.
+@@ -103,5 +106,40 @@ pub(super) fn assets() -> Vec<Vec<u8>> {
+         let constrained = b.select(near, b.constant(1), constrained);
+         vec![b.select(blocked, b.constant(2), constrained)]
+     });
+-    vec![scalar, capacity, decision, pre, split, sum, threshold]
++    let sub = single(2, |b| vec![b.op(1, 0, 1)]);
++    let mul = single(2, |b| vec![b.op(2, 0, 1)]);
++    let le = single(2, |b| vec![b.op(10, 0, 1)]);
++    let eq = single(2, |b| vec![b.op(8, 0, 1)]);
++    let select = single(3, |b| vec![b.select(2, 0, 1)]);
++    let min = single(2, |b| {
++        let le = b.op(10, 0, 1);
++        vec![b.select(le, 0, 1)]
++    });
++    vec![
++        scalar, capacity, decision, pre, split, sum, threshold, sub, mul, le, eq, select, min,
++    ]
++}
++
++/// Historical eager selector, retained only as a differential regression oracle.
++#[cfg(test)]
++pub(super) fn scalar_oracle() -> Vec<u8> {
++    let mut graph = Graph::new(4);
++    let mut raw = Bank::new(4);
++    let add = raw.op(0, 0, 1);
++    let sub = raw.op(1, 0, 1);
++    let mul = raw.op(2, 0, 1);
++    let le = raw.op(10, 0, 1);
++    let eq = raw.op(8, 0, 1);
++    let select = raw.select(2, 0, 1);
++    let min = raw.select(le, 0, 1);
++    let values = graph.call(raw, vec![0, 1, 2, 3], &[add, sub, mul, le, eq, select, min]);
++    let mut pick = Bank::new(8);
++    let mut result = pick.constant(0);
++    for mode in 0..7 {
++        let flag = pick.op(8, 7, pick.constant(mode));
++        let term = pick.op(2, flag, mode as u32);
++        result = pick.op(0, result, term);
++    }
++    let out = graph.call(pick, [values, vec![3]].concat(), &[result]);
++    pure_asset(4, 1, graph.encode(&out))
+ }
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs
+index 3e515bde..6425505b 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs
+@@ -180,8 +180,13 @@ impl Builder {
+                 _ => {}
+             }
+         }
+-        self.call(1, &lit(1), vec![*a, *b, lit(0), lit(mode)], 1)
+-            .remove(0)
++        self.call(
++            super::effect_assets::scalar_program(mode),
++            &lit(1),
++            vec![*a, *b],
++            1,
++        )
++        .remove(0)
+     }
+     fn pick(&mut self, guard: &V, yes: &V, no: &V) -> V {
+         if guard == &lit(1) || yes == no {
+@@ -190,8 +195,13 @@ impl Builder {
+         if guard == &lit(0) {
+             return *no;
+         }
+-        self.call(1, &lit(1), vec![*yes, *no, *guard, lit(5)], 1)
+-            .remove(0)
++        self.call(
++            super::effect_assets::scalar_program(5),
++            &lit(1),
++            vec![*yes, *no, *guard],
++            1,
++        )
++        .remove(0)
+     }
+     fn add(&mut self, a: &V, b: &V) -> V {
+         self.op(0, a, b)
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs
+index 063b4a86..285607cf 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs
+@@ -1,5 +1,111 @@
+ use super::*;
+ 
++#[test]
++#[ignore = "trusted AOEM and Vulkan; direct checked operators versus historical eager selector"]
++fn resident_direct_scalar_assets_match_eager_oracle() -> Result<()> {
++    use novovm_exec::resident::{AoemExecOpenOptions, AoemLibrarySelection};
++    let library = std::path::PathBuf::from(
++        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY").context("AOEM library required")?,
++    );
++    let facade =
++        AoemLibrarySelection::new(&library, AoemExecOpenOptions::default())?.open_wire_facade()?;
++    let mut session = facade.create_integer_resource_session_v7("novovm/scalar-oracle")?;
++    let negative = |mut n: AoemInteger1024V1| {
++        let mut carry = 1u64;
++        for limb in &mut n.0 {
++            let next = u64::from(!*limb) + carry;
++            *limb = next as u32;
++            carry = next >> 32;
++        }
++        n
++    };
++    let mut above_u128 = AoemInteger1024V1::from_u128(0);
++    above_u128.0[8] = 1; // 2^256 scratch; products still fit checked i1024.
++    let edges = [
++        AoemInteger1024V1::from_u128(0),
++        AoemInteger1024V1::from_u128(1),
++        AoemInteger1024V1::from_u128(u64::MAX as u128),
++        AoemInteger1024V1::from_u128(u128::MAX),
++        negative(AoemInteger1024V1::from_u128(1)),
++        negative(AoemInteger1024V1::from_u128(u128::MAX)),
++        above_u128,
++        negative(above_u128),
++    ];
++    let assets = super::super::effect_assets::assets();
++    let oracle = session.open(&super::super::effect_assets::scalar_oracle(), 4, 1, 128)?;
++    for mode in 0..7 {
++        let program = super::super::effect_assets::scalar_program(mode);
++        let inputs = if mode == 5 { 3 } else { 2 };
++        let resource = session.open(&assets[program - 1], inputs, 1, 128)?;
++        let mut old_rows = Vec::new();
++        let mut new_rows = Vec::new();
++        for a in edges {
++            for b in edges {
++                for flag in 0..2 {
++                    let flag = AoemInteger1024V1::from_u128(flag);
++                    old_rows.push(vec![a, b, flag, AoemInteger1024V1::from_u128(mode)]);
++                    new_rows.push(if mode == 5 {
++                        vec![a, b, flag]
++                    } else {
++                        vec![a, b]
++                    });
++                }
++            }
++        }
++        let old = session.run_binary_v1(&oracle, &old_rows)?;
++        let new = session.run_binary_v1(&resource, &new_rows)?;
++        assert_eq!(old.rows.len(), new.rows.len());
++        for (before, after) in old.rows.iter().zip(&new.rows) {
++            assert_eq!(before.outcome, after.outcome, "mode={mode}");
++            assert_eq!(before.fault, after.fault, "mode={mode}");
++            assert_eq!(before.values, after.values, "mode={mode}");
++        }
++        session.close(&resource)?;
++    }
++    session.close(&oracle)?;
++    Ok(())
++}
++
++// One complete candidate, not a throughput/finality substitute. Run this same
++// test in one or four independent processes to isolate shared-device pressure.
++#[test]
++#[ignore = "explicit AOEM library and Vulkan; isolated complete-plan contention diagnosis"]
++fn resident_complete_plan_contention_cost() -> Result<()> {
++    let library = std::path::PathBuf::from(
++        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY").context("AOEM library required")?,
++    );
++    let plan = compile(&prepared(1024, false), 172_800_123)?;
++    let projection = ExportProjection::new(&plan.exports);
++    let mut resources = super::super::integer::ResidentTransferResources::new(&library, 4, 1024)?;
++    let expected = resources.run_effects(&plan.nodes, &projection.unique)?;
++    if let Some(directory) = std::env::var_os("NOVOVM_PLAN_DIAGNOSTIC_BARRIER") {
++        let directory = std::path::PathBuf::from(directory);
++        std::fs::write(
++            directory.join(format!("ready-{}", std::process::id())),
++            b"ready",
++        )?;
++        let started = std::time::Instant::now();
++        while !directory.join("start").exists() {
++            ensure!(
++                started.elapsed().as_secs() < 60,
++                "diagnostic barrier timeout"
++            );
++            std::thread::sleep(std::time::Duration::from_millis(5));
++        }
++    }
++    for iteration in 0..16 {
++        let start = std::time::Instant::now();
++        let output = resources.run_effects(&plan.nodes, &projection.unique)?;
++        let elapsed_us = start.elapsed().as_micros();
++        assert_eq!(output, expected, "complete effective state/receipt exports");
++        println!(
++            "complete_plan_cost pid={} iteration={iteration} elapsed_us={elapsed_us}",
++            std::process::id()
++        );
++    }
++    Ok(())
++}
++
+ #[test]
+ fn expression_sharing_matches_reference_keys_for_all_program_shapes() {
+     // Reference the old key algorithm, including hits and prefix-shaped inputs.
+@@ -90,7 +196,7 @@ fn resident_complete_plan_tile_cost_and_output_equivalence() -> Result<()> {
+                     "tile_cost={}",
+                     serde_json::json!({"diverse":diverse,"sweep":sweep,"tile":tile,
+                     "elapsed_us":elapsed_us,"unique_exports":projection.unique.len(),
+-                    "static_upper_bound":work(&plan,[tile,tile,1,1,tile,1,tile,tile])})
++                    "static_upper_bound":work(&plan,[tile,tile,1,1,tile,1,tile,tile,tile,tile,tile,tile,tile,tile])})
+                 );
+             }
+         }
+@@ -296,10 +402,13 @@ fn unshared(p: &Prepared) -> Compiled {
+ 
+ // Mirrors only the static level/group shape in AOEM's existing scheduler.
+ // This is an upper bound: false guards can remove active rows at execution.
+-fn work(plan: &Compiled, capacity: [usize; 8]) -> serde_json::Value {
++fn work(
++    plan: &Compiled,
++    capacity: [usize; super::super::effect_assets::PROGRAMS],
++) -> serde_json::Value {
+     let mut levels = Vec::<usize>::new();
+     let mut groups = BTreeMap::<(usize, usize), usize>::new();
+-    let mut programs = [0usize; 8];
++    let mut programs = [0usize; super::super::effect_assets::PROGRAMS];
+     for node in &plan.nodes {
+         let level = std::iter::once(&node.guard)
+             .chain(&node.inputs)
+@@ -335,7 +444,9 @@ fn complete_plan_work_shares_values_not_transaction_effects() {
+         let new = compile(&p, 172_800_123).unwrap();
+         assert_eq!(old.exports.len(), new.exports.len());
+         assert!(new.nodes.len() < old.nodes.len());
+-        let old_shapes = [1024, 1024, 1024, 1024, 1024, 1, 1024, 1024];
++        let old_shapes = [
++            1024, 1024, 1024, 1024, 1024, 1, 1024, 1024, 1024, 1024, 1024, 1024, 1024, 1024,
++        ];
+         let shapes = super::super::integer::composition_resource_rows(1024);
+         println!(
+             "plan_work={}",
+@@ -365,6 +476,11 @@ fn resident_shared_and_unshared_complete_plans_match_every_export() -> Result<()
+         let new = compile(&p, 172_800_123)?;
+         let before = resources.run_effects(&old.nodes, &old.exports)?;
+         let after = resources.run_effects(&new.nodes, &new.exports)?;
++        let eager = resources.run_effects_with_scalar_oracle(&new.nodes, &new.exports)?;
++        assert_eq!(
++            after, eager,
++            "same complete candidate against historical eager scalar; diverse={diverse}"
++        );
+         assert_eq!(
+             before, after,
+             "all effective state/receipt/diagnostic outputs; diverse={diverse}"
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs
+index 3e6a3e6b..f172a1f4 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/integer.rs
+@@ -1,4 +1,4 @@
+-//! One owner-thread session, eight bounded pure programs, no per-batch setup.
++//! One owner-thread session, bounded pure programs, no per-batch setup.
+ 
+ use super::checked_integer_asset::{transfer_asset, INPUTS, OUTPUTS};
+ #[cfg(test)]
+@@ -21,9 +21,17 @@ use std::path::Path;
+ // Sparse levels must not read back a whole candidate's worth of padding.
+ // Capacity has one invocation; the actual-fee decision is a serial prefix;
+ // quotation splits are already invariant-shared. Keep these three at one row.
+-pub(super) fn composition_resource_rows(capacity: usize) -> [usize; 8] {
++pub(super) fn composition_resource_rows(
++    capacity: usize,
++) -> [usize; super::effect_assets::PROGRAMS] {
+     let tile = capacity.min(128);
+-    [tile, tile, 1, 1, tile, 1, tile, tile]
++    resource_rows(tile)
++}
++
++fn resource_rows(tile: usize) -> [usize; super::effect_assets::PROGRAMS] {
++    [
++        tile, tile, 1, 1, tile, 1, tile, tile, tile, tile, tile, tile, tile, tile,
++    ]
+ }
+ 
+ /// Lives and is destroyed on the integer lane of the original compute owner. Its native context
+@@ -50,7 +58,7 @@ impl ResidentTransferResources {
+         library: &Path,
+         workers: u32,
+         max_rows: usize,
+-        shapes: [usize; 8],
++        shapes: [usize; super::effect_assets::PROGRAMS],
+     ) -> Result<Self> {
+         ensure!(
+             (1..=4096).contains(&max_rows),
+@@ -68,6 +76,8 @@ impl ResidentTransferResources {
+             session.supports_composition_v1(),
+             "NOV integer execution requires AOEM composition v1; update SDK, no fallback"
+         );
++        ensure!(session.composition_resource_limit() >= super::effect_assets::PROGRAMS,
++            "NOV integer execution requires at least 14 resident composition programs; update SDK, no fallback");
+         let resource = session.open(&transfer_asset(), INPUTS, OUTPUTS, shapes[0])?;
+         let effects = super::effect_assets::assets()
+             .into_iter()
+@@ -89,13 +99,48 @@ impl ResidentTransferResources {
+     #[cfg(test)]
+     pub(super) fn with_test_tile(library: &Path, tile: usize) -> Result<Self> {
+         ensure!((1..=1024).contains(&tile), "invalid diagnostic tile");
+-        Self::with_shapes(library, 4, 1024, [tile, tile, 1, 1, tile, 1, tile, tile])
++        Self::with_shapes(library, 4, 1024, resource_rows(tile))
+     }
+ 
+     pub(super) fn capacity(&self) -> usize {
+         self.capacity
+     }
+ 
++    #[cfg(test)]
++    pub(super) fn run_effects_with_scalar_oracle(
++        &mut self,
++        nodes: &[AoemIntegerPlanNodeV1],
++        exports: &[AoemIntegerInputV1],
++    ) -> Result<Vec<u128>> {
++        let oracle = self
++            .session
++            .open(&super::effect_assets::scalar_oracle(), 4, 1, 128)?;
++        let mut old = nodes.to_vec();
++        for node in &mut old {
++            let mode = match node.program {
++                1 => 0,
++                8..=13 => node.program - 7,
++                _ => continue,
++            };
++            if mode != 5 {
++                node.inputs
++                    .push(AoemIntegerInputV1::Literal(AoemInteger1024V1::from_u128(0)));
++            }
++            node.inputs
++                .push(AoemIntegerInputV1::Literal(AoemInteger1024V1::from_u128(
++                    mode as u128,
++                )));
++            node.program = super::effect_assets::PROGRAMS;
++        }
++        let programs: Vec<_> = std::iter::once(&self.resource)
++            .chain(&self.effects)
++            .chain(std::iter::once(&oracle))
++            .collect();
++        let result = self.session.run_composition_v1(&programs, &old, exports);
++        self.session.close(&oracle)?;
++        result?.iter().map(|v| v.try_to_u128()).collect()
++    }
++
+     pub(super) fn poison(&mut self) {
+         self.poisoned = true;
+     }
