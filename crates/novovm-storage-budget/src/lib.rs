@@ -384,6 +384,8 @@ fn load_policy(root: &Path) -> Result<(Option<u64>, u64)> {
         f.write_all(&slot(None, 0))?;
         f.write_all(&slot(None, 0))?;
         f.sync_all()?;
+        #[cfg(unix)]
+        File::open(root)?.sync_all()?;
         return Ok((None, 0));
     }
     let mut b = [0; SLOT_BYTES * 2];
