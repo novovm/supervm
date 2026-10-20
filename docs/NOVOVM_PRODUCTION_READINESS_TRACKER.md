@@ -10,8 +10,16 @@ sequence. Only its two new IPv4 host-firewall rules were added.
 
 Existing Nginx hashes and KINGCLUB/CCSOP container identities/start times are
 unchanged; public and local health/readiness remain 200. No KINGCLUB restart,
-database migration or web-port change. An external TCP connect succeeded, but
-native remote business validation and both original phones remain pending.
+database migration or web-port change. External native UDP custody passed from
+both WSL and Windows: authenticated Register/Put, verified StoreReceipt,
+idempotent duplicate Put, rejected wrong read capability, Fetch with unchanged
+TTL/ciphertext, Consume and empty Fetch. Windows authentication took 44 ms and
+Put-to-StoreReceipt 27 ms in this single small-payload probe; these are not phone
+delivery latency or throughput. The probe uses the existing SDK and random
+temporary encrypted data, not phone identities or synthetic production messages.
+TLS reached the bound handshake but rejected the unlisted temporary probe
+identity under the existing pinned-client policy; do not bypass that policy or
+count this as TLS business PASS. Both original phones remain pending.
 No cloud security-group change was made through the blocked browser tool.
 This is an owned service on one host, not a complete L2 consensus node, global
 independence, anonymity or anti-censorship acceptance.

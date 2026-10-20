@@ -135,6 +135,33 @@ Deployment must:
 
 ## Independent acceptance gates
 
+### Public custody probe (2026-10-20)
+
+`mailbox_native_peer_probe` is a bounded diagnostic using the existing
+NativeMailboxClient, NativeObjectLink and NativeCarrierPump. Supply a fresh
+signed record and an independently verified node public key; it creates only
+temporary random encrypted probe data and capabilities with a five-minute TTL.
+It does not read phone keys or change server admission.
+
+```text
+cargo run --release -p novovm-network --example mailbox_native_peer_probe --features iroh-transport,tls-transport -- RECORD EXPECTED_PIN_HEX udp
+```
+
+External UDP passed from WSL and Windows against the deployed Ubuntu owner,
+including StoreReceipt verification, duplicate idempotence, wrong-read rejection,
+original-TTL Fetch, Consume and empty Fetch. Windows authentication was 44 ms;
+Put-to-StoreReceipt was 27 ms for one small probe, not an Android or throughput
+measurement. No Iroh relay/discovery driver is created by this diagnostic.
+TLS reached the bound handshake but the random identity was rejected by the
+owner's existing two-phone pinned admission policy. Preserve that rejection;
+TLS business acceptance must use the authorized phones. Public UDP reachability
+is established even though browser control remains unavailable and no cloud
+security-group change has been performed.
+
+The new service remains one failure domain and does not constitute an L2
+consensus node. Phone cold-start, text/image, offline delivery and fallback
+acceptance are still outstanding.
+
 - Operator-owned public service: real external reachability and durable delivery.
 - External-service independence: both phones cold-start with external Iroh and
   Publisher unavailable; native UDP or native V8/TLS completes the full loop.
