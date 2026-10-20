@@ -142,14 +142,19 @@ pub(super) fn address_for(node: &Node, label: &str) -> Option<String> {
 
 // No retry: uncertain admission is an observed failure, never hidden by a helper.
 pub(super) fn rpc_once(address: &str, method: &str, params: Value) -> Result<Value> {
-    let response = ureq::post(&format!("http://{address}/"))
-        .timeout(Duration::from_secs(10))
-        .set("Content-Type", "application/json")
-        .send_string(
-            &serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params})
-                .to_string(),
+    let mut response = ureq::post(&format!("http://{address}/"))
+        .config()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
+        .header("Content-Type", "application/json")
+        .send(
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string(),
         )?;
-    let result: Value = serde_json::from_str(&response.into_string()?)?;
+    let bytes = response.body_mut().read_to_vec()?;
+    let result: Value = serde_json::from_str(&String::from_utf8_lossy(&bytes))?;
     if result.get("error").is_some() {
         bail!("RPC {method}: {result}");
     }

@@ -14,11 +14,20 @@ pub(super) fn rpc(node: &Node, label: &str, method: &str, params: Value) -> Valu
                 .find_map(|line| line.strip_prefix("native_fresh_rpc_listening: "))
             {
                 let result = ureq::post(&format!("http://{address}/"))
-                    .timeout(Duration::from_secs(5))
-                    .set("Content-Type", "application/json")
-                    .send_string(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string());
-                if let Ok(response) = result {
-                    return serde_json::from_str(&response.into_string().unwrap()).unwrap();
+                    .config()
+                    .proxy(None)
+                    .max_redirects(5)
+                    .timeout_connect(Some(Duration::from_secs(30)))
+                    .timeout_global(Some(Duration::from_secs(5)))
+                    .build()
+                    .header("Content-Type", "application/json")
+                    .send(
+                        serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params})
+                            .to_string(),
+                    );
+                if let Ok(mut response) = result {
+                    let bytes = response.body_mut().read_to_vec().unwrap();
+                    return serde_json::from_str(&String::from_utf8_lossy(&bytes)).unwrap();
                 }
             }
         }

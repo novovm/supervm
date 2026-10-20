@@ -83,13 +83,27 @@ fn normalize_delivery_type(raw: &str) -> String {
 
 fn send_webhook(endpoint: &str, payload_json: &str, _timeout_seconds: u64) -> Result<()> {
     match ureq::post(endpoint)
-        .set("Content-Type", "application/json")
-        .send_string(payload_json)
+        .config()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(std::time::Duration::from_secs(30)))
+        // Preserve the status and error body for the existing refusal report.
+        .http_status_as_error(false)
+        .build()
+        .header("Content-Type", "application/json")
+        .send(payload_json)
     {
-        Ok(_) => Ok(()),
-        Err(ureq::Error::Status(code, resp)) => {
-            let body = resp.into_string().unwrap_or_default();
-            bail!("http status {} {}", code, body.trim());
+        Ok(mut resp) => {
+            let code = resp.status().as_u16();
+            if code >= 400 {
+                let body = resp
+                    .body_mut()
+                    .read_to_vec()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                    .unwrap_or_default();
+                bail!("http status {} {}", code, body.trim());
+            }
+            Ok(())
         }
         Err(e) => bail!("http request failed: {}", e),
     }
@@ -203,4 +217,78 @@ pub fn run_with_args(raw_args: &[String]) -> Result<()> {
 pub fn run_cli() -> Result<()> {
     let raw_args: Vec<String> = env::args().skip(1).collect();
     run_with_args(&raw_args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn webhook_http_status_preserves_refusal_body() {
+        for (status, body, expected) in [
+            (200, b"ok".as_slice(), None),
+            (
+                400,
+                b" rejected ".as_slice(),
+                Some("http status 400 rejected"),
+            ),
+            (
+                503,
+                b"bad\xff".as_slice(),
+                Some("http status 503 bad\u{fffd}"),
+            ),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let endpoint = format!("http://{}/notify", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "webhook client did not connect");
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(error) => panic!("webhook test accept failed: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                let mut payload = [0; 2];
+                stream.read_exact(&mut payload).unwrap();
+                assert_eq!(&payload, b"{}");
+                let headers = String::from_utf8(request).unwrap().to_ascii_lowercase();
+                assert!(headers.starts_with("post /notify http/1.1\r\n"));
+                assert!(headers.contains("content-type: application/json\r\n"));
+                write!(
+                    stream,
+                    "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(body).unwrap();
+            });
+            let result = send_webhook(&endpoint, "{}", 5);
+            server.join().unwrap();
+            match expected {
+                Some(message) => assert_eq!(result.unwrap_err().to_string(), message),
+                None => result.unwrap(),
+            }
+        }
+    }
 }

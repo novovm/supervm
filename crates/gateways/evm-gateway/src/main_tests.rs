@@ -14004,7 +14004,12 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
     });
 
     let send_response: serde_json::Value = ureq::post(&url)
-        .set("Content-Type", "application/json")
+        .config()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .build()
+        .header("Content-Type", "application/json")
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -14012,7 +14017,9 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
             "params": [raw_tx_hex],
         }))
         .expect("send raw tx json-rpc should succeed")
-        .into_json()
+        .body_mut()
+        .with_config()
+        .read_json()
         .expect("decode send raw tx response");
     assert_eq!(send_response["jsonrpc"].as_str(), Some("2.0"));
     assert!(send_response.get("error").is_none(), "{send_response}");
@@ -14023,7 +14030,12 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
     assert_eq!(tx_hash_hex.len(), 66);
 
     let receipt_response: serde_json::Value = ureq::post(&url)
-        .set("Content-Type", "application/json")
+        .config()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .build()
+        .header("Content-Type", "application/json")
         .send_json(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -14031,7 +14043,9 @@ fn json_rpc_eth_send_raw_then_receipt_product_smoke() {
             "params": [tx_hash_hex],
         }))
         .expect("receipt json-rpc should succeed")
-        .into_json()
+        .body_mut()
+        .with_config()
+        .read_json()
         .expect("decode receipt response");
     assert_eq!(receipt_response["jsonrpc"].as_str(), Some("2.0"));
     assert!(

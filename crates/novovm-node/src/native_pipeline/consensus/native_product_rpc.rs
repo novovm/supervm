@@ -119,9 +119,11 @@ impl ProductNodes {
         let response = self
             .agent
             .post(&self.endpoints[index])
-            .set("Content-Type", "application/json")
-            .send_string(&serde_json::to_string(&request)?)?
-            .into_string()?;
+            .header("Content-Type", "application/json")
+            .send(serde_json::to_string(&request)?)?
+            .body_mut()
+            .read_to_vec()?;
+        let response = String::from_utf8_lossy(&response);
         Ok(serde_json::from_str(&response)?)
     }
 
@@ -430,11 +432,16 @@ fn setup_with_genesis(
             configs,
             endpoints,
             processes: (0..4).map(|_| None).collect(),
-            agent: ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_millis(100))
-                .timeout_read(Duration::from_secs(2))
-                .timeout_write(Duration::from_secs(2))
-                .build(),
+            agent: ureq::Agent::config_builder()
+                .proxy(None)
+                .max_redirects(5)
+                .timeout_connect(Some(Duration::from_millis(100)))
+                .timeout_recv_response(Some(Duration::from_secs(2)))
+                .timeout_recv_body(Some(Duration::from_secs(2)))
+                .timeout_send_request(Some(Duration::from_secs(2)))
+                .timeout_send_body(Some(Duration::from_secs(2)))
+                .build()
+                .into(),
         },
         set,
     ))

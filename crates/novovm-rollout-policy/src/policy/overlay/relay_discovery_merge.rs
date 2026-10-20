@@ -640,11 +640,16 @@ where
     }
     candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_millis(args.http_timeout_ms))
-        .timeout_read(Duration::from_millis(args.http_timeout_ms))
-        .timeout_write(Duration::from_millis(args.http_timeout_ms))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_millis(args.http_timeout_ms)))
+        .timeout_recv_response(Some(Duration::from_millis(args.http_timeout_ms)))
+        .timeout_recv_body(Some(Duration::from_millis(args.http_timeout_ms)))
+        .timeout_send_request(Some(Duration::from_millis(args.http_timeout_ms)))
+        .timeout_send_body(Some(Duration::from_millis(args.http_timeout_ms)))
+        .build()
+        .into();
 
     for (url, _) in candidates {
         if seed_selected.is_empty() {
@@ -656,8 +661,12 @@ where
         rec.last_selected_unix_ms = now;
 
         match agent.get(&url).call() {
-            Ok(resp) => {
-                let txt = resp.into_string().unwrap_or_default();
+            Ok(mut resp) => {
+                let txt = resp
+                    .body_mut()
+                    .read_to_vec()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                    .unwrap_or_default();
                 if let Ok(root) = serde_json::from_str::<Value>(&txt) {
                     for item in parse_relays(&root) {
                         let mut o = if let Some(v) = obs_from_value(

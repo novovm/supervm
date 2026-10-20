@@ -42,7 +42,8 @@ serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tiny_http = "0.12"
 rocksdb = { version = "0.22", default-features = false }
-ureq = "2"
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "gzip"] }
+url = "2"
 lettre = "0.11.22"
 
 [dev-dependencies]

@@ -169,22 +169,27 @@ fn test_tcp_probe(host: &str, port: u16, timeout_ms: u64) -> ProbeResult {
 
 fn test_http_probe(url: &str, timeout_ms: u64) -> ProbeResult {
     let start = Instant::now();
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_millis(timeout_ms))
-        .timeout_read(Duration::from_millis(timeout_ms))
-        .timeout_write(Duration::from_millis(timeout_ms))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_millis(timeout_ms)))
+        .timeout_recv_response(Some(Duration::from_millis(timeout_ms)))
+        .timeout_recv_body(Some(Duration::from_millis(timeout_ms)))
+        .timeout_send_request(Some(Duration::from_millis(timeout_ms)))
+        .timeout_send_body(Some(Duration::from_millis(timeout_ms)))
+        .build()
+        .into();
     let result = agent.head(url).call();
     match result {
         Ok(resp) => {
-            let code = resp.status();
+            let code = resp.status().as_u16();
             ProbeResult {
                 ok: (200..500).contains(&code),
                 latency_ms: Some(start.elapsed().as_millis() as u64),
                 status: format!("http_{}", code),
             }
         }
-        Err(ureq::Error::Status(code, _)) => ProbeResult {
+        Err(ureq::Error::StatusCode(code)) => ProbeResult {
             ok: (200..500).contains(&code),
             latency_ms: Some(start.elapsed().as_millis() as u64),
             status: format!("http_{}", code),

@@ -258,13 +258,30 @@ jobs:
 
       - name: Verify restored product and preserved component boundaries
         shell: pwsh
-        run: ./runtime/check-isolation.ps1
+        run: |
+          ./scripts/tests/workspace-isolation.tests.ps1
+          ./runtime/check-isolation.ps1
 
       - name: Format check
         run: cargo fmt --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all -- --check
 
       - name: Clippy
         run: cargo clippy --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --all-targets -- -D warnings
+
+      - name: HTTP client certificate and refusal regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p novovm-node --bin novovm-node --locked eth_dns_doh_ -- --list > "$RUNNER_TEMP/http-client-node-tests.txt"
+          grep -Fxq 'mainline_evm_cli_tests::eth_dns_doh_http_preserves_query_encoding_and_rejects_error_status_v1: test' "$RUNNER_TEMP/http-client-node-tests.txt"
+          grep -Fxq 'mainline_evm_cli_tests::eth_dns_doh_rejects_untrusted_tls_certificate_v1: test' "$RUNNER_TEMP/http-client-node-tests.txt"
+          cargo test -p novovm-node --bin novovm-node --locked eth_dns_doh_ -- --test-threads=1
+          cargo test -p novovm-evm-gateway --bin novovm-evm-gateway --locked upstream_http_status_and_json_errors_remain_refused -- --list > "$RUNNER_TEMP/http-client-gateway-tests.txt"
+          grep -Fxq 'rpc_eth_upstream::tests::upstream_http_status_and_json_errors_remain_refused: test' "$RUNNER_TEMP/http-client-gateway-tests.txt"
+          cargo test -p novovm-evm-gateway --bin novovm-evm-gateway --locked upstream_http_status_and_json_errors_remain_refused -- --test-threads=1
+          cargo test -p novovm-rollout-policy --lib --locked webhook_http_status_preserves_refusal_body -- --list > "$RUNNER_TEMP/http-client-rollout-tests.txt"
+          grep -Fxq 'policy::rollout::decision_delivery::tests::webhook_http_status_preserves_refusal_body: test' "$RUNNER_TEMP/http-client-rollout-tests.txt"
+          cargo test -p novovm-rollout-policy --lib --locked webhook_http_status_preserves_refusal_body -- --test-threads=1
 
       - name: NOVOVM control-plane portability tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovmctl
@@ -646,12 +663,14 @@ jobs:
         run: |
           set -euo pipefail
           cargo audit
+          cargo audit --file runtime/Cargo.lock
 
       - name: Cargo deny
         shell: bash
         run: |
           set -euo pipefail
           cargo deny check advisories bans licenses sources
+          cargo deny --manifest-path runtime/Cargo.toml check advisories bans licenses sources
 
   python:
     name: Python syntax check
@@ -721,7 +740,9 @@ jobs:
         run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
       - name: Verify restored product and preserved component boundaries
         shell: pwsh
-        run: ./runtime/check-isolation.ps1
+        run: |
+          ./scripts/tests/workspace-isolation.tests.ps1
+          ./runtime/check-isolation.ps1
       - run: cargo fmt --manifest-path runtime/Cargo.toml --all -- --check
       - run: cargo clippy --manifest-path runtime/Cargo.toml --workspace --all-targets --locked -- -D warnings
       - name: Shared proof relation without native dependencies (not zkVM proof)
