@@ -1,5 +1,37 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-21 下拉增量、声明安全门禁与存储政策失败恢复
+
+本轮从`7a1d70f3`快进保留7笔至`1093cf11`，不重复已修格式/旧runtime测试；
+执行中另保留`f9a9d924`的owner存储政策及可配置流预算，不覆盖另一设备成果。
+主链仍是原tick/NovoRUDP/APFL→exec/bindings/AOEM→原共识/journal，未新增模式或链头。
+
+已有声明时间反例原来未被CI选中，现接入原workflow：目录签名/时间边界、信任账本
+不安装无效时段声明、真实UDP健康槽继续及伪造声明终止，共4项；先枚举精确测试名，
+防止0项假通过。整个原资源政策模块也接入CI，保留原3项及本轮5项新增反例。
+本机按workflow实际bash命令重放4+8项通过，缺失测试名的负向枚举检查确实拒绝。
+
+审查新setter发现：时钟回退或政策SQL拒绝后，内存/持久政策仍unlimited，SQLite
+max_page_count却由4294967294变为256256。两项修前实跑均失败，未清除该记录。
+修复在原owner先验证事务/政策SQL，提交失败显式恢复精确旧页限并核对持久政策；
+纯SQLite反例确认事务rollback本身不会恢复该PRAGMA。真实deferred-FK COMMIT失败
+也覆盖恢复。只有恢复自身失败/政策不确定才锁存新custody，旧读取/Consume/幂等重投
+保留；平台资源就绪不能清锁存，重新打开原库重新核验政策。该锁存用例是状态级测试，
+不是物理I/O故障或断电注入。正常500MiB下限、unlimited、TTL与贡献选择不改。
+
+修后资源8项通过；较宽信箱51项（已包含这8项）串行通过，0失败/0忽略，
+为下面测试lint清理之前、同一生产逻辑的检查点，不冒称最终所有目标完整重跑。
+额外全特性严格Clippy初次暴露5处既有测试lint，已有限清理：两fixture使用owned
+Box::pin使原drop真正销毁future，不以删断言/加allow遮蔽；其余为Result断言与测试模块归位。
+最终根/嵌套fmt、actionlint 1.7.7、network全特性all-targets严格Clippy均通过；
+清理后另复验3项库用例与完整6项mailbox_native_node，均0失败/0忽略。
+最终代码再按新增workflow原样重放4+8项通过；远端CI另按推送SHA验收，不提前全绿。
+
+未测新TPS、GPU或真实四机，未部署云节点/手机，不以组件测试替主链或手机签收。
+本机WSL Linux工具链可用但无pwsh，现有Linux ELF为旧制品，不能拿来签当前版本；
+继续复用既有打包脚本及安装后native_only_五项进程套件，待Linux工具/空间及各机
+清点、公钥与可达性报告齐备后做同版本/同测试创世多机验收，不复制私钥或数据库。
+
 ## 2026-10-21 node storage policy and configurable Iroh streams — local candidate
 
 The common mailbox store now accepts owner-configured aggregate budgets beyond

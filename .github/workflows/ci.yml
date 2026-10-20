@@ -531,6 +531,32 @@ jobs:
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_application_transport -- --test-threads=1
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_mailbox_session -- --test-threads=1
 
+      - name: Native locator authenticity and temporal metadata regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          network_tests=(cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal)
+          # Enumeration must prove that the filters execute the original tests.
+          "${network_tests[@]}" --lib -- --list > "$RUNNER_TEMP/native-locator-unit-tests.txt"
+          grep -Fxq 'product_directory::tests::relay_time_boundaries_follow_authenticity_checks: test' "$RUNNER_TEMP/native-locator-unit-tests.txt"
+          grep -Fxq 'product_service_lease::native_endpoint::tests::native_metadata_time_does_not_install_or_override_security: test' "$RUNNER_TEMP/native-locator-unit-tests.txt"
+          "${network_tests[@]}" --lib product_directory::tests::relay_time_boundaries_follow_authenticity_checks -- --exact --test-threads=1
+          "${network_tests[@]}" --lib product_service_lease::native_endpoint::tests::native_metadata_time_does_not_install_or_override_security -- --exact --test-threads=1
+          "${network_tests[@]}" --test mailbox_native_node native_locator_time -- --list > "$RUNNER_TEMP/native-locator-udp-tests.txt"
+          grep -Fxq 'native_locator_time::authenticated_temporal_metadata_keeps_next_sequence_and_other_slot_usable: test' "$RUNNER_TEMP/native-locator-udp-tests.txt"
+          grep -Fxq 'native_locator_time::forged_future_metadata_remains_terminal_for_request_driver: test' "$RUNNER_TEMP/native-locator-udp-tests.txt"
+          "${network_tests[@]}" --test mailbox_native_node native_locator_time -- --test-threads=1
+
+      - name: Local mailbox storage policy and failed-update regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --lib mailbox_store::resource_budget_tests -- --list > "$RUNNER_TEMP/mailbox-storage-policy-tests.txt"
+          grep -Fxq 'mailbox_store::resource_budget_tests::rejected_storage_budget_clock_rollback_keeps_all_policy_layers: test' "$RUNNER_TEMP/mailbox-storage-policy-tests.txt"
+          grep -Fxq 'mailbox_store::resource_budget_tests::rejected_storage_budget_sql_update_keeps_all_policy_layers: test' "$RUNNER_TEMP/mailbox-storage-policy-tests.txt"
+          grep -Fxq 'mailbox_store::resource_budget_tests::rejected_storage_budget_commit_keeps_all_policy_layers: test' "$RUNNER_TEMP/mailbox-storage-policy-tests.txt"
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --lib mailbox_store::resource_budget_tests -- --test-threads=1
+
       - name: Product relay client daemon and overlay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_relay_
 
