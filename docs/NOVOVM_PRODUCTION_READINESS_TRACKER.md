@@ -1,5 +1,25 @@
 # NOVOVM 生产部署目标与验收台账
 
+
+## 2026-10-20 手机 L4 同 owner UDP/V8 接缝（源码组件通过，真机待验收）
+
+`5c807c92` 在 `product_rendezvous_owned.rs` 增加
+`run_self_owned_mailbox_on_endpoint_with_native_v7`，复用原 Application 托管的
+Iroh Endpoint，并挂载既有 `NativeMailboxListenerV7`。原 v1 是无 UDP 的薄适配，
+不复制身份、SQLite、签名历史或服务调度。真实 UDP 与连续 carrier 跨载体
+寄存/领取、原回执去重及 signer/stop 绑定的两个组件用例通过。
+
+`2ef8e2a3` 处理运行中 UDP IO 失效：只在 UDP IO 边界标记实际网络不可达等
+错误，撤回该候选，保留健康的同一 Iroh 会话和原保管状态。没有扩大身份、
+签名、撤销或存储错误的可重试范围，也没有增加新的重试 owner。
+两个定向用例通过，其中一项在真实 Iroh + SQLite 上注入 UDP NetworkUnreachable，
+随后在原会话再次 Put/Fetch，核对签名存储回执不变。后续 UDP 重新绑定仍由
+原平台网络 owner 负责；这不是对任意故障都承诺无中断。
+
+证据：`artifacts/l4-native-endpoint-owner-tests-r3.log`（2/2）、
+`artifacts/l4-native-runtime-failure-tests-r2.log`（2/2）。本条不代表手机已升级、
+公网原生 UDP 打洞或跨运营商路径已经通过；手机部署与实际载体另记。
+
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
 ## 2026-10-20 v82 deployed: Windows dual entry and two-phone fallback/retake
