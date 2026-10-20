@@ -4,6 +4,8 @@
 
 Fast-forwarded the shared main from `2c70f669` to `873e9b72`, preserving the
 App-wide quota implementation and both upstream policy/recovery records.
+Before pushing, merged the concurrent documentation-only `7c0976ac` public-test
+and fresh-genesis clarification without changing either implementation tree.
 The failed run did not reach the early-body tests: root Rust and both component
 jobs rejected the newly added `novovm-storage-budget` path at the common assembly
 checker. Windows also logged that same failed step despite its overall matrix
@@ -60,6 +62,20 @@ execution or remote acceptance result.
 Remote CI for this repair, Linux execution, physical multi-machine deployment,
 production throughput and mobile acceptance remain separate and pending. This
 round does not modify AOEM, quota behavior, peer discovery policy or sibling repos.
+
+## 2026-10-21 用户确认：生产级公测部署，正式发布全新创世
+
+当前节点均未正式生产发布。下一阶段按公测运行，同时采用正式配置要求和服务
+部署方式；不能将“尚未上线”解释成只运行临时进程、不做服务部署或降低安全/耐久
+条件。仍复用唯一原生NovoRUDP/APFL→node/exec/bindings/AOEM→共识/journal路径。
+生产级配置、实际部署、功能验收、性能验收与正式上线分别记账，不凭包名或CI认定发布。
+
+正式切换时以经确认的全新创世和独立链域/数据目录启动，公测区块、余额、nonce及
+共识状态不自动继承。公测期间仍完整验证晚启动、离线不停链、认证重连、历史追赶、
+原库重启和追赶中崩溃恢复；未来重创世不能替代这些长期运行所需能力。
+本次未清空任何数据库、签票日志或测试证据，未部署云服务、未重创世；非链身份、
+NOVOCHAT历史和托管数据不纳入主链重置。正式创世参数与切换操作待明确发布授权。
+这是一项用户口径/执行约束更新，不是新增运行测试或生产资格结论。
 
 ## 2026-10-21 shared App quota — NOVOCHAT v90 two-phone gate PASS
 
