@@ -581,7 +581,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             NativeMailboxDriver::attach(&mut rejected_link, 0, pin)?;
         let rejected_pending = rejected_handle.request(
             0,
-            vec![fetch(3)],
+            vec![Request::ProbeBulkV1],
             Instant::now() + Duration::from_secs(5),
             Arc::new(|| Ok(())),
         );
@@ -610,6 +610,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             NativeRequestErrorKind::Protocol
         );
         drop(rejected_link);
+        assert!(!rejected_handle.supports_bulk_v1());
         let mut cancel_link = Client::connect_link(&route, 89).await?;
         let (mut cancel_driver, cancel_handle) =
             NativeMailboxDriver::attach(&mut cancel_link, 0, pin)?;
@@ -696,6 +697,16 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
         );
         let operations = async {
             assert!(matches!(first.await?.as_slice(), [Reply::Registered]));
+            assert!(!handle.supports_bulk_v1());
+            let other_lane = handle.clone();
+            let probe = handle
+                .request(3, vec![Request::ProbeBulkV1], until(), check.clone())
+                .await?;
+            assert!(
+                matches!(probe.as_slice(), [Reply::BulkReady { max_ciphertext }]
+                if *max_ciphertext as usize == novovm_network::mailbox_store::MAX_BULK_CIPHERTEXT)
+            );
+            assert!(other_lane.supports_bulk_v1());
             let initial = handle
                 .request(
                     0,

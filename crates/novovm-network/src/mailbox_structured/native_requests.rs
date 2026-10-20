@@ -682,6 +682,16 @@ impl NativeMailboxDriver {
         match result {
             Ok((received, replies)) => {
                 debug_assert_eq!(received, id);
+                // receive has checked the original request, authenticated session,
+                // current authority, deadline and exact supported bulk bound.
+                // Publish before waking callers so every cloned lane sees the
+                // negotiated capability, including UDP without a carrier locator.
+                if replies
+                    .iter()
+                    .any(|reply| matches!(reply, Reply::BulkReady { .. }))
+                {
+                    self.shared.bulk.store(true, Ordering::Release);
+                }
                 self.complete(id.slot, Ok(replies), None);
                 Ok(())
             }

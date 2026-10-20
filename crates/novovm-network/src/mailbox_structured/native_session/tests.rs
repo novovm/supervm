@@ -1,5 +1,20 @@
 use super::*;
 
+#[test]
+fn bulk_probe_reply_requires_exact_capability_and_original_request() {
+    let ready = Reply::BulkReady {
+        max_ciphertext: crate::mailbox_store::MAX_BULK_CIPHERTEXT as u32,
+    };
+    assert!(verify_reply([1; 32], &Request::ProbeBulkV1, &ready).is_ok());
+    assert!(verify_reply([1; 32], &Request::ServiceRecordV7, &ready).is_err());
+    assert!(verify_reply(
+        [1; 32],
+        &Request::ProbeBulkV1,
+        &Reply::BulkReady { max_ciphertext: 1 }
+    )
+    .is_err());
+}
+
 fn binding() -> Binding {
     Binding {
         peer: 0,

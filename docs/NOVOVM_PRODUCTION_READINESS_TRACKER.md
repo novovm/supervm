@@ -2,6 +2,23 @@
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
+## 2026-10-20 native UDP bulk probe: shared capability repair
+
+`NativeMailboxClient` already verified `ProbeBulkV1` / `BulkReady`, but its
+async `NativeMailboxHandle` clones did not learn the negotiated capability.
+This could strand an existing immutable attachment plan after a carrier-to-UDP
+handoff. `native_requests::receive_inner` now publishes bulk support only after
+the original request/session/authority/deadline/exact-size validation succeeds,
+before waking the request waiter. No wire version or new object protocol.
+
+The real UDP `native_async_handles_share_one_session_without_watch_serialization`
+test passes: a fresh handle is not bulk-ready, a verified probe updates its
+clone, and a protocol-stopped probe does not enable support.
+The targeted reply-binding test also passes: an unrelated request or wrong
+bulk size is rejected. The mobile App's
+same-pin preference integration and Android deployment are separate gates;
+this SDK repair does not establish phone UDP priority or Relay independence.
+
 ## 2026-10-20 v81 Android follow-up: two cellular switches delivered
 
 SDK cca78183 / NOVOCHAT 1dc2a13 installed in place on both original phones;
