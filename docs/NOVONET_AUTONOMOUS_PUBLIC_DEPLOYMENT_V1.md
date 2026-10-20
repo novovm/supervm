@@ -1,5 +1,58 @@
 # NOVONET autonomous public deployment v1
 
+## 2026-10-20 Android v85 owned TLS fallback: PARTIAL, cellular bulk gate open
+
+Using the same installed v85 and original phone identities, each isolated gate
+stopped the laptop L3 and disabled external Iroh relay/address lookup. Only cloud
+UDP 43171 was temporarily dropped; TCP 43172 stayed available. A 15-minute
+systemd cleanup and finally removal bounded the firewall fault. KINGCLUB ports,
+Nginx hashes, container IDs/start times and health/readiness remained unchanged.
+
+- Dual Wi-Fi: both phones selected TLS, authenticated the native business session,
+  delivered new texts with device receipts, then automatically yielded to restored
+  UDP. Block-to-TLS-business readiness: about 25.9/25.6 seconds; UDP-restoration to
+  takeover: about 5.4/5.0 seconds. Single samples, not P95/UI latency. Parallel L4
+  remained possible, so online receipts alone do not prove cloud-only body transit.
+- TLS-only offline custody and real cloud restart: receiver offline; sender stored
+  a text and 1,600,067-byte image; cloud restarted with unchanged key/credential;
+  sender then offline; receiver independently fetched and previewed the image;
+  sender later obtained DeviceReceipt while cloud UDP was still blocked.
+- Wi-Fi/cellular: TLS authentication and bidirectional new text receipts passed.
+- Cellular image did NOT pass sustained UDP blocking. The first image completed
+  after Wi-Fi/UDP restoration. A second image was sent once and observed for six
+  20-second windows without DeviceReceipt; cleanup restored paths and retained the
+  original pending message. Do not count generic StoreReceipt events as proof of
+  this image's complete storage, or restoration as TLS-only acceptance.
+
+Two cellular notification RPCs expired with 216, followed by application-step-7
+session exit and TLS reauthentication. The notification deadline includes 10s
+server waiting plus 5s, including a converted bulk-prefetch response. This explains
+an exit chain, not the underlying network/backpressure cause. Expired native slots
+remain failed; swallowing the error/reusing their sequence is not a valid fix.
+The existing real-TCP fixture now passes a 256KiB/s upload control and a deliberate
+reply stall: the original 1,600,067-byte object recovers after TLS reauthentication,
+without restarting the Application owner or using a UDP bypass. This does not
+reproduce or resolve the physical cellular failure. Test proxy cleanup and renewal
+were corrected to prevent leaked sessions and a self-referential upstream; a
+12-connection regression also passes. Next isolate asymmetric rate limits and
+WatchFetchBulk large-response deadlines before changing production behavior.
+No new protocol, retry budget or production logging was introduced.
+
+SDK negative component tests passed for wrong pin/client identity/ALPN, revocation,
+frame bounds/trailing bytes/TLS corruption and bulk restart/quota/revoke/Consume.
+An initial Windows compiler access violation was retried with incremental off;
+safety rules were not changed. These are not physical-phone revocation/resource
+acceptance. Full owned UDP+TLS failover remains OPEN. Phone evidence is recorded
+in NOVOCHAT P0_CHECKPOINT.md and ignored tls-cloud-* artifacts.
+
+After cleanup both phones restored their original optional relay/DNS choices and
+the two pins; the laptop restored automatic carrier mode/startup. The original
+failed image then received device confirmation without resending. Both original
+process IDs survived restoration, all five identity hashes per phone match, and
+both show two L3 paths plus ready L4/return paths. Two additional normal texts
+delivered with device receipts. This does not turn the TLS-only failure into PASS.
+
+
 Status: isolated Ubuntu service deployed; bounded Android owned-public UDP gate passed.
 V8/TLS automatic takeover and independent multi-public-node acceptance remain open.
 
