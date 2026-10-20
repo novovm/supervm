@@ -2,6 +2,24 @@
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
+## 2026-10-20 Windows owner UDP / V8 / TLS composition
+
+Existing V8 policy can now coexist with the existing native listener; the
+platform calls the original Node dispatcher with one signer, journal, mailbox
+and bounded shared in-flight admission. Configured TLS remains active. V7/native
+conflict checks, legacy native-only behavior, DPAPI and exclusive owner locking
+are retained. No new wire codec, publisher, store or service scheduler.
+
+Twenty Windows owner tests pass, including actual UDP Put -> V8 Fetch, reverse
+custody visibility, same stored receipt after restart, increasing signed record
+sequence, unchanged protected keys, actual TLS Fetch/Put after restart, occupied
+UDP fail-closed and prior-policy/revocation checks. First run had 18 passes and
+two shutdown assertions: the new fixture now precisely validates the existing
+owned-Iroh terminal stop result, preserving any earlier business failure; no
+runtime error whitelist changed. Logs: artifacts/dual-owner-tests{,-r2}.log.
+TLS-enabled check and release service build pass. Phone/managed-node deployment
+and native-preference/fallback evidence are separate, still pending here.
+
 ## 2026-10-20 native UDP bulk probe: shared capability repair
 
 `NativeMailboxClient` already verified `ProbeBulkV1` / `BulkReady`, but its

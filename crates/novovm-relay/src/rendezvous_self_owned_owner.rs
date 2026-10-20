@@ -437,9 +437,8 @@ impl Owner {
             "native carrier mailbox versions are mutually exclusive"
         );
         ensure!(
-            !(policy.native_carrier_mailbox_v7 || policy.native_carrier_mailbox_v8)
-                || policy.native_listener.is_none(),
-            "native carrier mailbox conflicts with native-only listener"
+            !policy.native_carrier_mailbox_v7 || policy.native_listener.is_none(),
+            "V7 carrier mailbox conflicts with native listener; select V8 for coexistence"
         );
         if let Some(tls) = &policy.tls_listener {
             ensure!(
@@ -560,16 +559,16 @@ impl Owner {
         if let Some(value) = &listener {
             value.validate()?;
             ensure!(
-                !(self.native_carrier_mailbox_v7() || self.native_carrier_mailbox_v8()),
-                "disable native carrier mailbox before enabling native-only listener"
+                !self.native_carrier_mailbox_v7(),
+                "select V8 before combining carrier and native listener"
             );
             ensure!(
                 !relay_only(&self.policy),
                 "native listener conflicts with relay-only policy"
             );
         }
-        // TLS/carrier preferences are retained for explicit return to that mode.
-        // They never cause a hidden fallback while native is selected.
+        // V8 explicitly composes the listeners on the existing node; otherwise
+        // the original native-only mode retains inactive carrier preferences.
         self.policy.native_listener = listener;
         self.save_policy()
     }
@@ -597,10 +596,6 @@ impl Owner {
     /// Explicit codec selection, atomically replacing V7 in the same custody.
     /// Disabling either selector disables the carrier codec, including V8.
     pub fn set_native_carrier_mailbox_v8(mut self, enabled: bool) -> Result<()> {
-        ensure!(
-            !enabled || self.policy.native_listener.is_none(),
-            "disable native-only listener before enabling native carrier mailbox"
-        );
         ensure!(
             enabled
                 || !self
@@ -779,6 +774,7 @@ impl Owner {
         let relay_only = relay_only(&self.policy);
         let native_settings = self.policy.native_listener.clone();
         let native_selected = native_settings.is_some();
+        let dual_selected = native_selected && self.native_carrier_mailbox_v8();
         let key = self.key.clone();
         let publish_root = config.root.clone();
         let mailbox_path = config.root.join("mailbox.sqlite");
@@ -819,16 +815,21 @@ impl Owner {
             atomic(
                 &publish_root.join("status.json"),
                 &serde_json::to_vec(
-                    &serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if native_selected {"native"} else if relay_only {"relay-only"} else {"automatic"},"mailboxTimings":mailbox_status.timing_snapshot_v1()}),
+                    &serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if dual_selected {"native+carrier"} else if native_selected {"native"} else if relay_only {"relay-only"} else {"automatic"},"mailboxTimings":mailbox_status.timing_snapshot_v1()}),
                 )?,
             )
             })().context(FailureStage::Publish)
         };
-        if let Some(settings) = native_settings {
-            let listener = novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_with_wire_budget(
+        let native = if let Some(settings) = native_settings {
+            Some(novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_with_wire_budget(
                 settings.listen, settings.advertised, key.clone(), stop.clone(),
                 settings.max_connections, settings.max_bytes_per_minute,
-            ).context(FailureStage::NativeBind)?;
+            ).context(FailureStage::NativeBind)?)
+        } else {
+            None
+        };
+        if native_selected && !dual_selected {
+            let listener = native.context("native listener missing")?;
             let result =
                 novovm_network::product_rendezvous_owned::run_self_owned_native_mailbox_v7(
                     listener,
@@ -897,7 +898,20 @@ impl Owner {
                     .context(FailureStage::Activate)
             };
         #[cfg(feature = "tls-transport")]
-        let result = if let Some(tls) = tls {
+        let result = if let Some(native) = native {
+            novovm_network::product_rendezvous_owned::run_self_owned_node_with_native_tls_v8(
+                carrier,
+                key,
+                config.allowed_clients.clone(),
+                stop,
+                mailbox,
+                native,
+                tls,
+                activate,
+                publish,
+            )
+            .await
+        } else if let Some(tls) = tls {
             novovm_network::product_rendezvous_owned::run_self_owned_node_with_tls_v1(
                 carrier,
                 key,
@@ -922,16 +936,30 @@ impl Owner {
             .await
         };
         #[cfg(not(feature = "tls-transport"))]
-        let result = run_self_owned_node_v1(
-            carrier,
-            key,
-            config.allowed_clients.clone(),
-            stop,
-            Some(mailbox),
-            activate,
-            publish,
-        )
-        .await;
+        let result = if let Some(native) = native {
+            novovm_network::product_rendezvous_owned::run_self_owned_node_with_native_v7(
+                carrier,
+                key,
+                config.allowed_clients.clone(),
+                stop,
+                mailbox,
+                native,
+                activate,
+                publish,
+            )
+            .await
+        } else {
+            run_self_owned_node_v1(
+                carrier,
+                key,
+                config.allowed_clients.clone(),
+                stop,
+                Some(mailbox),
+                activate,
+                publish,
+            )
+            .await
+        };
         stage_result(result, FailureStage::TransportRun)
     }
 }
@@ -1305,8 +1333,7 @@ mod tests {
     }
 
     #[test]
-    fn native_carrier_policy_roundtrip_preserves_identity_and_rejects_udp_conflicts() -> Result<()>
-    {
+    fn native_carrier_policy_roundtrip_preserves_identity_and_allows_v8_udp() -> Result<()> {
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
         assert!(!owner.native_carrier_mailbox_v7());
@@ -1332,9 +1359,11 @@ mod tests {
         let owner = fixture.open()?;
         assert!(!owner.native_carrier_mailbox_v7());
         assert!(owner.native_carrier_mailbox_v8());
-        let enabled = std::fs::read(&path)?;
-        assert!(owner.set_native_listener(Some(settings())).is_err());
-        assert_eq!(std::fs::read(&path)?, enabled);
+        owner.set_native_listener(Some(settings()))?;
+        let owner = fixture.open()?;
+        assert_eq!(owner.policy.native_listener, Some(settings()));
+        assert!(owner.native_carrier_mailbox_v8());
+        owner.set_native_listener(None)?;
 
         // The existing CLI's off action must also disable a selected V8.
         fixture.open()?.set_native_carrier_mailbox_v7(false)?;
@@ -1345,11 +1374,11 @@ mod tests {
         let native = std::fs::read(&path)?;
         assert!(fixture.open()?.set_native_carrier_mailbox_v7(true).is_err());
         assert_eq!(std::fs::read(&path)?, native);
-        assert!(fixture.open()?.set_native_carrier_mailbox_v8(true).is_err());
-        assert_eq!(std::fs::read(&path)?, native);
+        fixture.open()?.set_native_carrier_mailbox_v8(true)?;
         let owner = fixture.open()?;
         assert_eq!(owner.policy.native_listener, Some(settings()));
         assert!(!owner.native_carrier_mailbox_v7());
+        assert!(owner.native_carrier_mailbox_v8());
         owner.set_native_listener(None)?;
 
         fixture.open()?.set_native_carrier_mailbox_v8(true)?;
@@ -1371,11 +1400,7 @@ mod tests {
 
     #[test]
     fn native_carrier_policy_rejects_authenticated_conflicting_state_before_start() -> Result<()> {
-        for (v7, v8, native) in [
-            (true, false, true),
-            (false, true, true),
-            (true, true, false),
-        ] {
+        for (v7, v8, native) in [(true, false, true), (true, true, false)] {
             let fixture = Fixture::new()?;
             let mut owner = fixture.provision()?;
             // A correctly sealed but contradictory policy must fail at open,
@@ -1989,4 +2014,6 @@ mod tests {
         assert_eq!(std::fs::read(fixture.0.root.join("keys.dpapi"))?, keys);
         Ok(())
     }
+
+    include!("rendezvous_dual_owner_tests.rs");
 }

@@ -172,6 +172,62 @@ pub async fn run_self_owned_node_with_native_v7(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
+    let node = native_node(key, clients, stop, mailbox, native)?;
+    let revoked = node.stop.clone();
+    with_iroh_owned_listener_v1(
+        carrier,
+        move || {
+            ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
+            Ok(())
+        },
+        move |scope| Box::pin(node.serve(scope, activate, publish)),
+    )
+    .await
+}
+
+/// Platform composition of the existing listeners, sharing one Node, signing
+/// book, mailbox and admission budget. TLS is retained during native takeover.
+#[cfg(feature = "tls-transport")]
+#[allow(clippy::too_many_arguments)]
+pub async fn run_self_owned_node_with_native_tls_v8(
+    carrier: IrohConfigV1,
+    key: SigningKey,
+    clients: BTreeSet<[u8; 32]>,
+    stop: Arc<AtomicBool>,
+    mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
+    native: NativeMailboxListenerV7,
+    tls: Option<TlsMailboxListenerV1>,
+    activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<()> {
+    let mut node = native_node(key, clients, stop, mailbox, native)?;
+    if let Some(tls) = tls {
+        // Neither configured resource ceiling is silently raised by composing
+        // listeners. Active connections share the same semaphore in Node::serve.
+        node.max_connections = node
+            .max_connections
+            .min(usize::from(tls.route().max_connections));
+        node.tls = Some(tls);
+    }
+    let revoked = node.stop.clone();
+    with_iroh_owned_listener_v1(
+        carrier,
+        move || {
+            ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
+            Ok(())
+        },
+        move |scope| Box::pin(node.serve(scope, activate, publish)),
+    )
+    .await
+}
+
+fn native_node(
+    key: SigningKey,
+    clients: BTreeSet<[u8; 32]>,
+    stop: Arc<AtomicBool>,
+    mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
+    native: NativeMailboxListenerV7,
+) -> Result<Node> {
     ensure!(
         native.uses_stop(&stop),
         "native listener requires original owner stop"
@@ -188,16 +244,7 @@ pub async fn run_self_owned_node_with_native_v7(
         usize::from(native.route().max_connections),
     )?;
     node.native = Some(native);
-    let revoked = node.stop.clone();
-    with_iroh_owned_listener_v1(
-        carrier,
-        move || {
-            ensure!(!revoked.load(Ordering::Acquire), "service stopped by owner");
-            Ok(())
-        },
-        move |scope| Box::pin(node.serve(scope, activate, publish)),
-    )
-    .await
+    Ok(node)
 }
 
 /// Native-only activation of the SAME self-owned node: no dummy Iroh endpoint,
