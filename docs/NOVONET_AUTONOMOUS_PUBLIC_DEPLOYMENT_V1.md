@@ -152,8 +152,10 @@ including StoreReceipt verification, duplicate idempotence, wrong-read rejection
 original-TTL Fetch, Consume and empty Fetch. Windows authentication was 44 ms;
 Put-to-StoreReceipt was 27 ms for one small probe, not an Android or throughput
 measurement. No Iroh relay/discovery driver is created by this diagnostic.
-TLS reached the bound handshake but the random identity was rejected by the
-owner's existing two-phone pinned admission policy. Preserve that rejection;
+TLS reached the bound handshake and closed with EOF; the random identity is
+absent from the owner's configured two-phone pinned admission policy. This
+matches the verifier's unlisted-Offer rejection, without a typed server error
+being captured. Preserve the admission policy;
 TLS business acceptance must use the authorized phones. Public UDP reachability
 is established even though browser control remains unavailable and no cloud
 security-group change has been performed.

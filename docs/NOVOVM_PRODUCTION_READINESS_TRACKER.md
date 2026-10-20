@@ -17,9 +17,11 @@ TTL/ciphertext, Consume and empty Fetch. Windows authentication took 44 ms and
 Put-to-StoreReceipt 27 ms in this single small-payload probe; these are not phone
 delivery latency or throughput. The probe uses the existing SDK and random
 temporary encrypted data, not phone identities or synthetic production messages.
-TLS reached the bound handshake but rejected the unlisted temporary probe
-identity under the existing pinned-client policy; do not bypass that policy or
-count this as TLS business PASS. Both original phones remain pending.
+TLS reached the bound handshake and closed with EOF. The temporary probe
+identity is absent from the configured two-phone pinned-client policy, whose
+verifier rejects an unlisted Offer without a Response; this matches the symptom
+but no typed server rejection was captured. Do not bypass that policy or count
+this as TLS business PASS. Both original phones remain pending.
 No cloud security-group change was made through the blocked browser tool.
 This is an owned service on one host, not a complete L2 consensus node, global
 independence, anonymity or anti-censorship acceptance.
