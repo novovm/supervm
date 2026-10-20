@@ -1,4 +1,4 @@
-// Included inside the original Windows owner tests to reuse its protected
+// Included inside the shared platform owner tests to reuse its protected
 // Fixture and actual UDP Client. These are loopback owner tests, not Android or
 // public NAT/relay independence evidence.
 mod dual_owner_tests {
@@ -316,14 +316,14 @@ mod dual_owner_tests {
         let fixture = Fixture::new()?;
         fixture.provision()?.set_native_carrier_mailbox_v8(true)?;
         fixture.open()?.set_native_listener(Some(settings()))?;
-        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let keys = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let pin = fixture.open()?.policy.node_pin;
         let expires = (now_ms()? / 1000) as i64 + 600;
         let (first, sequence) = dual_exchange(&fixture, None, expires).await?;
         let (second, next) = dual_exchange(&fixture, Some(&first), expires).await?;
         ensure!(next > sequence && second.signature == first.signature);
         ensure!(fixture.open()?.policy.node_pin == pin);
-        ensure!(std::fs::read(fixture.0.root.join("keys.dpapi"))? == keys);
+        ensure!(std::fs::read(fixture.0.root.join(KEYS_FILE))? == keys);
         Ok(())
     }
 
@@ -337,7 +337,7 @@ mod dual_owner_tests {
         listener.listen = occupied.local_addr()?;
         listener.advertised = listener.listen;
         fixture.open()?.set_native_listener(Some(listener))?;
-        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let keys = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let journal = std::fs::read(fixture.0.root.join("service.journal"))?;
         let result = fixture.open()?.run(Arc::new(AtomicBool::new(false))).await;
         let error = result.expect_err("occupied UDP must not pretend to serve both carriers");
@@ -353,7 +353,7 @@ mod dual_owner_tests {
             serde_json::from_slice(&std::fs::read(fixture.0.root.join("status.json"))?)?;
         ensure!(status["phase"] == "failed_closed");
         ensure!(!fixture.0.root.join("self-owned-record.json").exists());
-        ensure!(std::fs::read(fixture.0.root.join("keys.dpapi"))? == keys);
+        ensure!(std::fs::read(fixture.0.root.join(KEYS_FILE))? == keys);
         ensure!(std::fs::read(fixture.0.root.join("service.journal"))? == journal);
         drop(occupied);
         drop(fixture.open()?); // Failure released the existing exclusive owner lock.
@@ -368,7 +368,7 @@ mod dual_owner_tests {
         fixture.provision()?.set_native_carrier_mailbox_v8(true)?;
         fixture.open()?.set_tls_listener(Some(tls_settings(true)))?;
         fixture.open()?.set_native_listener(Some(settings()))?;
-        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let keys = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let expires = (now_ms()? / 1000) as i64 + 600;
         let (first, sequence) = dual_exchange(&fixture, None, expires).await?;
         let first_record: PeerSignedRelayRecordV1 = serde_json::from_slice(&std::fs::read(
@@ -388,7 +388,7 @@ mod dual_owner_tests {
                 == tls_key
         );
         ensure!(next > sequence && second.signature == first.signature);
-        ensure!(std::fs::read(fixture.0.root.join("keys.dpapi"))? == keys);
+        ensure!(std::fs::read(fixture.0.root.join(KEYS_FILE))? == keys);
         Ok(())
     }
 
@@ -405,12 +405,12 @@ mod dual_owner_tests {
         fixture.open()?.set_native_carrier_mailbox_v8(true)?;
         fixture.open()?.set_tls_listener(Some(tls_settings(true)))?;
         fixture.open()?.set_native_listener(Some(settings()))?;
-        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let keys = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let expires = (now_ms()? / 1000) as i64 + 600;
         let (receipt, sequence) = dual_exchange(&fixture, None, expires).await?;
         let (recovered, next) = dual_exchange(&fixture, Some(&receipt), expires).await?;
         ensure!(next > sequence && receipt.signature == recovered.signature);
-        ensure!(std::fs::read(fixture.0.root.join("keys.dpapi"))? == keys);
+        ensure!(std::fs::read(fixture.0.root.join(KEYS_FILE))? == keys);
         let owner = fixture.open()?;
         ensure!(owner.policy.config.relays == fixture.0.relays);
         ensure!(effective_relays(&owner.policy).is_empty());

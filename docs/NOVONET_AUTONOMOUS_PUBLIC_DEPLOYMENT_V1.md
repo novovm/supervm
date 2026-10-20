@@ -2,6 +2,32 @@
 
 Status: implementation and deployment preparation, not public-network acceptance.
 
+## Linux adapter validation — 2026-10-20
+
+The Linux entry now runs the same protected owner and UDP/V8/TLS listeners.
+`linux_custody.rs` wraps the existing `ServiceLeaseFileV1` format with a
+systemd-supplied host-protected credential; `linux_owner_files.rs` supplies
+private Unix files and directory durability. No new mailbox, protocol or
+cryptographic format was introduced. Windows DPAPI custody is unchanged.
+
+Ubuntu 24.04 / Rust 1.94 release build passed. All 24 Linux owner tests passed,
+including actual UDP/TLS/QUIC custody across restart, exclusive writers,
+private-file checks and missing/wrong credential rejection. The Windows owner
+suite passed all 25 tests. The SDK additive self-owned policy update test passed
+with `iroh-transport,tls-transport` enabled (the earlier tls-only filtered command
+selected zero tests and is not counted as validation).
+
+The phone policy adapter prepares an additive trust update and atomically commits
+the existing encrypted profile/checkpoint. It preserves previous pins, sequence
+floors and revocations; it requires an explicitly stopped/drained application
+owner. Phone installation and real public tests remain pending.
+
+The isolated first-install helper and systemd unit are in
+[`config/rendezvous-linux`](../config/rendezvous-linux/README.md). UDP 43171 and
+TCP 43172 are deployment choices to avoid existing applications, not protocol
+constants or anti-censorship measures. Arbitrary-port TLS is not HTTPS camouflage;
+using 443 alone would not prove resistance to identification or traffic analysis.
+
 ## Reuse and immediate scope — 2026-10-20
 
 The current phone baseline is NOVOCHAT v84. Preserve its identities, history,
@@ -70,8 +96,8 @@ No service, firewall, security group or live application was changed.
 Deployment must:
 
 1. Build on the development machine, not on the shared production host.
-2. Reuse the owner above with Linux protected key storage; the current
-   non-Windows binary entry explicitly rejects startup.
+2. Reuse the owner above with the verified Linux custody/startup adapter;
+   other unsupported platforms continue to reject startup.
 3. Use a dedicated service user, state directory and unoccupied UDP/TCP ports.
    Preserve existing KINGCLUB, web, TURN, database and SSH services.
 4. Check host firewall and Alibaba security-group ingress for only the chosen

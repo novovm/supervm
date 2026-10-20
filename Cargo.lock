@@ -3037,6 +3037,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "futures-util",
  "hkdf",
+ "libc",
  "mio",
  "novovm-network",
  "rand 0.8.5",

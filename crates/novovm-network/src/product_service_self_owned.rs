@@ -253,6 +253,71 @@ impl ServiceLeaseBookV1 {
     }
 
     /// Explicit local policy migration, not online fallback. Produces an unattached
+    /// candidate for an already self-owned book. Existing trust and history are
+    /// never removed; transport preferences live in the platform's same atomic
+    /// policy/checkpoint commit. Only an explicit local owner action may call it.
+    pub fn prepare_self_owned_policy_update(
+        &self,
+        trust: SelfOwnedTrustV1,
+        records: Vec<PeerSignedRelayRecordV1>,
+        now: u64,
+    ) -> Result<Self> {
+        ensure!(!self.failed && now >= self.clock, "invalid policy update");
+        let ServiceTrustV1::SelfOwned(previous) = &self.policy else {
+            anyhow::bail!("self-owned policy required")
+        };
+        trust.validate()?;
+        ensure!(
+            previous.node_pins.is_subset(&trust.node_pins),
+            "policy update cannot discard trusted history"
+        );
+        let mut entries = self.entries.clone();
+        let mut seen = BTreeSet::new();
+        for record in records {
+            let pin = record.relay_public_key;
+            ensure!(
+                trust.node_pins.contains(&pin)
+                    && !self.tombstones.contains(&pin)
+                    && seen.insert(pin),
+                "untrusted, revoked or duplicate policy record"
+            );
+            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+            if let Some(previous) = entries.get(&pin) {
+                newer(&previous.current, &record)?;
+            }
+            entries.insert(
+                pin,
+                Entry {
+                    grant: record.clone(),
+                    current: record,
+                    expires: u64::MAX,
+                    decoded: None,
+                },
+            );
+        }
+        ensure!(
+            trust
+                .node_pins
+                .iter()
+                .all(|pin| entries.contains_key(pin) || self.tombstones.contains(pin)),
+            "new node requires a signed record"
+        );
+        let next = Self {
+            policy: ServiceTrustV1::SelfOwned(trust),
+            sources: Vec::new(),
+            entries,
+            tombstones: self.tombstones.clone(),
+            clock: now,
+            persistence: None,
+            persisted: Vec::new(),
+            failed: false,
+            prior_endorsement: self.prior_endorsement.clone(),
+        };
+        next.checkpoint()?;
+        Ok(next)
+    }
+
+    /// Explicit local policy migration, not online fallback. Produces an unattached
     /// candidate; the platform atomically commits BOTH profile and checkpoint.
     /// Existing pins, sequence floors and tombstones are preserved. No chat data.
     pub fn prepare_self_owned_migration(

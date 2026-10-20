@@ -12,6 +12,48 @@ fn own_book() -> Result<ServiceLeaseBookV1> {
 }
 
 #[test]
+fn self_owned_policy_update_keeps_floors_revocations_and_prior_history() -> Result<()> {
+    let mut old = own_book()?;
+    old.replace_self_owned_records(vec![record(2, 9, 3000, 40_000)], 3000)?;
+    let original = old.checkpoint()?;
+    let mut trust = own_trust();
+    trust.node_pins.insert(key(5).verifying_key().to_bytes());
+    let next = old.prepare_self_owned_policy_update(
+        trust.clone(),
+        vec![record(5, 1, 3000, 40_000)],
+        3000,
+    )?;
+    assert_eq!(old.checkpoint()?, original);
+    assert_eq!(
+        next.entries[&key(2).verifying_key().to_bytes()]
+            .current
+            .sequence,
+        9
+    );
+    assert!(next
+        .prepare_self_owned_policy_update(own_trust(), vec![], 3001)
+        .is_err());
+    assert!(next
+        .prepare_self_owned_policy_update(trust.clone(), vec![record(2, 8, 3001, 40_000)], 3001,)
+        .is_err());
+    let mut revoked =
+        ServiceLeaseBookV1::restore_self_owned(trust.clone(), &next.checkpoint()?, 3001)?;
+    revoked.revoke_self_owned(key(2).verifying_key().to_bytes(), 3002)?;
+    let updated = revoked.prepare_self_owned_policy_update(trust.clone(), vec![], 3003)?;
+    assert_eq!(updated.tombstones, revoked.tombstones);
+    assert!(updated
+        .prepare_self_owned_policy_update(trust.clone(), vec![record(2, 20, 3003, 40_000)], 3003,)
+        .is_err());
+    ServiceLeaseBookV1::restore_self_owned(trust, &updated.checkpoint()?, 3003)?;
+    let old = book();
+    let migrated =
+        old.prepare_self_owned_migration(own_trust(), vec![record(2, 10, 3000, 40_000)], 3000)?;
+    let updated = migrated.prepare_self_owned_policy_update(own_trust(), vec![], 3001)?;
+    assert_eq!(updated.prior_endorsement, migrated.prior_endorsement);
+    Ok(())
+}
+
+#[test]
 fn continuous_peer_keeps_local_trust_not_expired_locator_authority() -> Result<()> {
     let pin = key(2).verifying_key().to_bytes();
     let endpoint = address(3).address.endpoint_key;

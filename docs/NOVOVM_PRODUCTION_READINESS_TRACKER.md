@@ -1,5 +1,24 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-20 Linux owned mailbox adapter — local validation
+
+Linux now reuses the existing self-owned UDP/V8/TLS runtime, encrypted journal
+and mailbox. A systemd credential protects the existing sealed-file format;
+dedicated Unix custody checks reject missing/wrong credentials, unsafe files
+and a second writer. Windows DPAPI paths remain unchanged.
+
+Ubuntu 24.04 / Rust 1.94 release build passed; 24 Linux and 25 Windows owner
+tests passed, including real local transport/custody/restart checks. The SDK
+additive policy-migration regression passed with the correct transport features.
+An initial tls-only filtered test selected zero tests and is not acceptance.
+The migration retains existing trusted-node history and revocations, with an
+atomic platform profile/checkpoint commit; it does not reset phone identities.
+
+Isolated deployment scripts are prepared. This entry records source and local
+validation only: cloud ingress, deployment health and two-phone external-Iroh
+independence still require actual evidence. Both phones retain v84 at this point.
+See [deployment details](NOVONET_AUTONOMOUS_PUBLIC_DEPLOYMENT_V1.md).
+
 ## 2026-10-20 autonomous public entry: relay isolation and Ubuntu audit
 
 The existing protected self-owned owner now accepts `direct-only` carrier

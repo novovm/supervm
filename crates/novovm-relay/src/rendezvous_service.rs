@@ -3,9 +3,15 @@
 // Direct Windows task/service execution must not open an interactive console.
 // Redirected CLI handles continue to carry process-test diagnostics.
 #![cfg_attr(windows, windows_subsystem = "windows")]
+#[cfg(target_os = "linux")]
+mod linux_custody;
+#[cfg(target_os = "linux")]
+mod linux_owner_files;
+#[cfg(target_os = "linux")]
+mod linux_rendezvous;
 #[cfg(windows)]
 mod rendezvous_owner;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod rendezvous_self_owned_owner;
 #[cfg(windows)]
 mod windows_custody;
@@ -322,8 +328,12 @@ fn main() -> anyhow::Result<()> {
     {
         windows::main()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        anyhow::bail!("Windows platform custody required")
+        linux_rendezvous::main()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        anyhow::bail!("Unsupported service platform")
     }
 }

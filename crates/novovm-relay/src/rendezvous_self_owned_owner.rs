@@ -1,9 +1,24 @@
-//! Windows ownership for the shared self-owned rendezvous runtime. Reuses the
-//! existing DPAPI node/storage keys and encrypted lease journal on migration.
+//! Platform ownership for the shared self-owned rendezvous runtime. Windows
+//! retains DPAPI migration; Linux uses the existing encrypted checkpoint format.
+#[cfg(target_os = "linux")]
+use crate::linux_owner_files::{atomic, check_path, create, read_bounded};
+#[cfg(windows)]
 use crate::{
     windows_custody,
     windows_owner_files::{atomic, check_path, create, read_bounded},
 };
+#[cfg(windows)]
+type LegacyConfig = crate::rendezvous_owner::Config;
+#[cfg(target_os = "linux")]
+type LegacyConfig = serde_json::Value;
+#[cfg(windows)]
+const KEYS_FILE: &str = "keys.dpapi";
+#[cfg(windows)]
+const POLICY_FILE: &str = "self-owned-policy.dpapi";
+#[cfg(target_os = "linux")]
+const KEYS_FILE: &str = "keys.sealed";
+#[cfg(target_os = "linux")]
+const POLICY_FILE: &str = "self-owned-policy.sealed";
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_network::{
@@ -223,7 +238,7 @@ struct Policy {
     native_carrier_mailbox_v8: bool,
     node_pin: [u8; 32],
     sequence_floor: u64,
-    legacy: Option<crate::rendezvous_owner::Config>,
+    legacy: Option<LegacyConfig>,
     // Retain reserved sequence/enrollment provenance, including allocations
     // whose proposal never reached the old service journal.
     legacy_owner_checkpoint: Option<String>,
@@ -332,14 +347,25 @@ pub struct Owner {
 impl Owner {
     /// Creation or migration are explicit local owner actions. Ordinary start
     /// never creates replacement keys, resets a journal, or infers new trust.
-    pub fn open(
-        config: Config,
-        create_policy: bool,
-        legacy: Option<crate::rendezvous_owner::Config>,
-    ) -> Result<Self> {
+    pub fn open(config: Config, create_policy: bool, legacy: Option<LegacyConfig>) -> Result<Self> {
         let root = &config.root;
+        #[cfg(target_os = "linux")]
+        {
+            crate::linux_owner_files::check_private_root(root)?;
+            ensure!(
+                legacy.is_none(),
+                "Windows legacy migration is unavailable on Linux"
+            );
+            crate::linux_custody::validate_credential()?;
+        }
         check_path(&root.join("owner.lock"))?;
-        let lock = OpenOptions::new()
+        let mut lock_options = OpenOptions::new();
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            lock_options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let lock = lock_options
             .read(true)
             .write(true)
             .create(true)
@@ -347,44 +373,52 @@ impl Owner {
             .open(root.join("owner.lock"))?;
         lock.try_lock()
             .map_err(|_| anyhow::anyhow!("owner already running"))?;
-        let custody = root.join("self-owned-policy.dpapi");
+        let custody = root.join(POLICY_FILE);
         if create_policy && !custody.try_exists()? {
             let (sequence_floor, legacy_owner_checkpoint) = if let Some(old) = &legacy {
-                ensure!(
-                    old.epoch.journal_path == root.join("service.journal")
-                        && old
-                            .epoch
-                            .allowed_clients
-                            .iter()
-                            .copied()
-                            .collect::<BTreeSet<_>>()
-                            == config.allowed_clients
-                        && old.epoch.relays == config.relays
-                        && old.epoch.nameserver == config.nameserver
-                        && old.epoch.relay_only == config.relay_only
-                        && old.epoch.record_id == config.record_id,
-                    "migration changes identity/transport/resource policy"
-                );
-                let (_, storage) = read_keys(root)?;
-                let (_journal, bytes) =
-                    ServiceLeaseFileV1::open(&root.join("owner.journal"), storage.clone())?;
-                let state: serde_json::Value = serde_json::from_slice(&bytes)?;
-                ensure!(
-                    state["version"] == 1 && state["enrollment_started"] == true,
-                    "legacy enrollment required"
-                );
-                let floor = state["next_sequence"]
-                    .as_u64()
-                    .filter(|n| *n > 0)
-                    .context("legacy sequence floor")?;
-                let (_journal, checkpoint) =
-                    ServiceLeaseFileV1::open(&root.join("service.journal"), storage)?;
-                ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &checkpoint, now_ms()?)?;
-                (floor, Some(String::from_utf8(bytes)?))
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = old;
+                    anyhow::bail!("Windows legacy migration is unavailable on Linux");
+                }
+                #[cfg(windows)]
+                {
+                    ensure!(
+                        old.epoch.journal_path == root.join("service.journal")
+                            && old
+                                .epoch
+                                .allowed_clients
+                                .iter()
+                                .copied()
+                                .collect::<BTreeSet<_>>()
+                                == config.allowed_clients
+                            && old.epoch.relays == config.relays
+                            && old.epoch.nameserver == config.nameserver
+                            && old.epoch.relay_only == config.relay_only
+                            && old.epoch.record_id == config.record_id,
+                        "migration changes identity/transport/resource policy"
+                    );
+                    let (_, storage) = read_keys(root)?;
+                    let (_journal, bytes) =
+                        ServiceLeaseFileV1::open(&root.join("owner.journal"), storage.clone())?;
+                    let state: serde_json::Value = serde_json::from_slice(&bytes)?;
+                    ensure!(
+                        state["version"] == 1 && state["enrollment_started"] == true,
+                        "legacy enrollment required"
+                    );
+                    let floor = state["next_sequence"]
+                        .as_u64()
+                        .filter(|n| *n > 0)
+                        .context("legacy sequence floor")?;
+                    let (_journal, checkpoint) =
+                        ServiceLeaseFileV1::open(&root.join("service.journal"), storage)?;
+                    ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &checkpoint, now_ms()?)?;
+                    (floor, Some(String::from_utf8(bytes)?))
+                }
             } else {
                 ensure!(
                     !root.join("enrollment.started").try_exists()?
-                        && !root.join("keys.dpapi").try_exists()?
+                        && !root.join(KEYS_FILE).try_exists()?
                         && !root.join("service.journal").try_exists()?
                         && !root.join("owner.journal").try_exists()?,
                     "fresh enrollment only"
@@ -396,10 +430,7 @@ impl Owner {
                 let mut keys = Zeroizing::new([0u8; 72]);
                 keys[..8].copy_from_slice(b"NVKEYS03");
                 OsRng.try_fill_bytes(&mut keys[8..])?;
-                create(
-                    &root.join("keys.dpapi"),
-                    &windows_custody::protect(keys.as_ref())?,
-                )?;
+                create_custody(&root.join(KEYS_FILE), keys.as_ref())?;
                 (1, None)
             };
             let (key, _) = read_keys(root)?;
@@ -421,13 +452,13 @@ impl Owner {
             protected[..8].copy_from_slice(b"NVOWN002");
             OsRng.try_fill_bytes(&mut protected[8..40])?;
             protected.extend_from_slice(&serde_json::to_vec(&policy)?);
-            create(&custody, &windows_custody::protect(&protected)?)?;
+            create_custody(&custody, &protected)?;
         }
         ensure!(
             custody.is_file(),
             "explicit self-owned provisioning required"
         );
-        let protected = windows_custody::unprotect(&read_bounded(&custody, 65536)?)?;
+        let protected = read_custody(&custody)?;
         ensure!(
             protected.len() > 40 && &protected[..8] == b"NVOWN002",
             "self-owned custody version"
@@ -435,6 +466,11 @@ impl Owner {
         let transport = Zeroizing::new(<[u8; 32]>::try_from(&protected[8..40])?);
         let policy: Policy = serde_json::from_slice(&protected[40..])?;
         ensure!(policy.config == config, "protected local policy differs");
+        #[cfg(target_os = "linux")]
+        ensure!(
+            policy.legacy.is_none() && policy.legacy_owner_checkpoint.is_none(),
+            "Linux does not accept legacy migration policy"
+        );
         ensure!(
             !(policy.native_carrier_mailbox_v7 && policy.native_carrier_mailbox_v8),
             "native carrier mailbox versions are mutually exclusive"
@@ -485,6 +521,7 @@ impl Owner {
                         now_ms()?,
                     )?;
                 }
+                #[cfg(windows)]
                 Some(1) if create_policy => {
                     let old = policy
                         .legacy
@@ -626,15 +663,7 @@ impl Owner {
         bytes.extend_from_slice(b"NVOWN002");
         bytes.extend_from_slice(self.transport.as_ref());
         bytes.extend_from_slice(&serde_json::to_vec(&self.policy)?);
-        let sealed = windows_custody::protect(&bytes)?;
-        ensure!(
-            *windows_custody::unprotect(&sealed)? == *bytes,
-            "custody roundtrip differs"
-        );
-        replace_protected(
-            &self.policy.config.root.join("self-owned-policy.dpapi"),
-            &sealed,
-        )
+        save_custody(&self.policy.config.root.join(POLICY_FILE), &bytes)
     }
 
     pub async fn run(self, stop: Arc<AtomicBool>) -> Result<()> {
@@ -675,12 +704,17 @@ impl Owner {
                 ServiceLeaseBookV1::restore_self_owned(trust(self.policy.node_pin), &bytes, now)?
             } else {
                 ensure!(self.transition, "explicit migration required");
-                let old = self
-                    .policy
-                    .legacy
-                    .as_ref()
-                    .context("legacy policy missing")?;
-                ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &bytes, now)?
+                #[cfg(target_os = "linux")]
+                anyhow::bail!("Linux does not accept legacy service history");
+                #[cfg(windows)]
+                {
+                    let old = self
+                        .policy
+                        .legacy
+                        .as_ref()
+                        .context("legacy policy missing")?;
+                    ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &bytes, now)?
+                }
             };
             let state: serde_json::Value = serde_json::from_slice(&bytes)?;
             let floor = state["current"]
@@ -990,7 +1024,7 @@ fn trust(pin: [u8; 32]) -> SelfOwnedTrustV1 {
     }
 }
 fn read_keys(root: &Path) -> Result<(SigningKey, Zeroizing<[u8; 32]>)> {
-    let material = windows_custody::unprotect(&read_bounded(&root.join("keys.dpapi"), 16384)?)?;
+    let material = read_custody(&root.join(KEYS_FILE))?;
     ensure!(
         material.len() == 72 && &material[..8] == b"NVKEYS03",
         "custody version"
@@ -1004,9 +1038,30 @@ fn read_keys(root: &Path) -> Result<(SigningKey, Zeroizing<[u8; 32]>)> {
     Ok((SigningKey::from_bytes(&seed), storage))
 }
 
+#[cfg(windows)]
+fn create_custody(path: &Path, data: &[u8]) -> Result<()> {
+    create(path, &windows_custody::protect(data)?)
+}
+#[cfg(windows)]
+fn read_custody(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
+    windows_custody::unprotect(&read_bounded(path, 65536)?)
+}
+#[cfg(windows)]
+fn save_custody(path: &Path, data: &[u8]) -> Result<()> {
+    let sealed = windows_custody::protect(data)?;
+    ensure!(
+        windows_custody::unprotect(&sealed)?.as_slice() == data,
+        "custody roundtrip differs"
+    );
+    replace_protected(path, &sealed)
+}
+#[cfg(target_os = "linux")]
+use crate::linux_custody::{create_custody, read_custody, save_custody};
+
 /// Replace an already validated DPAPI blob under the exclusive owner lock.
 /// Both old and new contents are sealed; no raw key is written to disk. A
 /// same-directory rename is the sole commit point, with Windows write-through.
+#[cfg(windows)]
 fn replace_protected(path: &Path, sealed: &[u8]) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -1065,6 +1120,12 @@ mod tests {
                 rand::random::<u64>()
             ));
             std::fs::create_dir(&root)?;
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
+                crate::linux_custody::prepare_test_credential()?;
+            }
             let config = Config {
                 version: 2,
                 root,
@@ -1178,7 +1239,7 @@ mod tests {
         listener.advertised = socket.local_addr()?;
         fixture.provision()?.set_native_listener(Some(listener))?;
         let root = &fixture.0.root;
-        let baseline = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"]
+        let baseline = [KEYS_FILE, POLICY_FILE, "service.journal"]
             .map(|name| std::fs::read(root.join(name)).unwrap());
         let error = fixture
             .open()?
@@ -1197,7 +1258,7 @@ mod tests {
         let failure: serde_json::Value = serde_json::from_slice(&bytes)?;
         assert_eq!(failure["failure"]["kind"], "io");
         assert_eq!(failure["failure"]["ioKind"], "address_in_use");
-        for (name, expected) in ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"]
+        for (name, expected) in [KEYS_FILE, POLICY_FILE, "service.journal"]
             .iter()
             .zip(baseline)
         {
@@ -1263,7 +1324,7 @@ mod tests {
         let owner = fixture.provision()?;
         let pin = owner.policy.node_pin;
         let transport = owner.transport.clone();
-        let baseline = ["keys.dpapi", "service.journal"]
+        let baseline = [KEYS_FILE, "service.journal"]
             .map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
         let mut old_policy = serde_json::to_value(&owner.policy)?;
         old_policy
@@ -1278,8 +1339,8 @@ mod tests {
         material.extend_from_slice(b"NVOWN002");
         material.extend_from_slice(owner.transport.as_ref());
         material.extend_from_slice(&serde_json::to_vec(&old_policy)?);
-        let path = fixture.0.root.join("self-owned-policy.dpapi");
-        replace_protected(&path, &windows_custody::protect(&material)?)?;
+        let path = fixture.0.root.join(POLICY_FILE);
+        save_custody(&path, &material)?;
         drop(owner);
         let old_custody = std::fs::read(&path)?;
 
@@ -1307,7 +1368,7 @@ mod tests {
             .context("policy object")?
             .remove("native_carrier_mailbox_v8");
         assert_eq!(new_policy, old_policy);
-        for (name, expected) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+        for (name, expected) in [KEYS_FILE, "service.journal"].iter().zip(baseline) {
             assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
         }
         Ok(())
@@ -1327,12 +1388,12 @@ mod tests {
         material.extend_from_slice(b"NVOWN002");
         material.extend_from_slice(owner.transport.as_ref());
         material.extend_from_slice(&serde_json::to_vec(&old_policy)?);
-        let path = fixture.0.root.join("self-owned-policy.dpapi");
-        replace_protected(&path, &windows_custody::protect(&material)?)?;
+        let path = fixture.0.root.join(POLICY_FILE);
+        save_custody(&path, &material)?;
         let pin = owner.policy.node_pin;
         let transport = owner.transport.clone();
         drop(owner);
-        let names = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"];
+        let names = [KEYS_FILE, POLICY_FILE, "service.journal"];
         let baseline = names.map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
         let owner = fixture.open()?;
         assert!(owner.native_carrier_mailbox_v7());
@@ -1353,9 +1414,9 @@ mod tests {
         let policy = serde_json::to_value(&owner.policy)?;
         let pin = owner.policy.node_pin;
         let transport = owner.transport.clone();
-        let baseline = ["keys.dpapi", "service.journal"]
+        let baseline = [KEYS_FILE, "service.journal"]
             .map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
-        let path = fixture.0.root.join("self-owned-policy.dpapi");
+        let path = fixture.0.root.join(POLICY_FILE);
 
         owner.set_native_carrier_mailbox_v7(true)?;
         let owner = fixture.open()?;
@@ -1405,7 +1466,7 @@ mod tests {
         assert_eq!(serde_json::to_value(&owner.policy)?, policy);
         assert_eq!(owner.policy.node_pin, pin);
         assert!(*owner.transport == *transport);
-        for (name, expected) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+        for (name, expected) in [KEYS_FILE, "service.journal"].iter().zip(baseline) {
             assert_eq!(std::fs::read(fixture.0.root.join(name))?, expected);
         }
         Ok(())
@@ -1423,7 +1484,7 @@ mod tests {
             owner.policy.native_listener = native.then(settings);
             owner.save_policy()?;
             drop(owner);
-            let names = ["keys.dpapi", "self-owned-policy.dpapi", "service.journal"];
+            let names = [KEYS_FILE, POLICY_FILE, "service.journal"];
             let baseline = names.map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
             assert!(fixture.open().is_err());
             for (name, expected) in names.iter().zip(baseline) {
@@ -1449,7 +1510,7 @@ mod tests {
         let owner = fixture.provision()?;
         let pin = owner.policy.node_pin;
         let transport = owner.transport.clone();
-        let key_custody = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let key_custody = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let endpoint = IrohServiceEndpointV1 {
             instance: [7; 32],
             address: IrohAddressV1 {
@@ -1498,10 +1559,7 @@ mod tests {
             assert_eq!(actual.instance, endpoint.instance);
             assert_eq!(actual.address.endpoint_key, endpoint.address.endpoint_key);
             assert_eq!(actual.address.direct, endpoint.address.direct);
-            assert_eq!(
-                std::fs::read(fixture.0.root.join("keys.dpapi"))?,
-                key_custody
-            );
+            assert_eq!(std::fs::read(fixture.0.root.join(KEYS_FILE))?, key_custody);
             sequence = record.sequence;
         }
         Ok(())
@@ -1562,9 +1620,9 @@ mod tests {
         let owner = fixture.provision()?;
         let pin = owner.policy.node_pin;
         let transport = owner.transport.clone();
-        let baseline = ["keys.dpapi", "service.journal"]
-            .map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
-        let policy_path = fixture.0.root.join("self-owned-policy.dpapi");
+        let baseline =
+            [KEYS_FILE, "service.journal"].map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
+        let policy_path = fixture.0.root.join(POLICY_FILE);
         let original = std::fs::read(&policy_path)?;
         assert!(owner.set_tls_listener(Some(tls_settings(true))).is_err());
         assert_eq!(std::fs::read(&policy_path)?, original);
@@ -1595,7 +1653,7 @@ mod tests {
         assert!(fixture.open().is_err());
         owner.set_tls_listener(Some(tls_settings(false)))?;
         fixture.open()?.set_native_carrier_mailbox_v7(true)?;
-        for (name, bytes) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+        for (name, bytes) in [KEYS_FILE, "service.journal"].iter().zip(baseline) {
             assert_eq!(std::fs::read(fixture.0.root.join(name))?, bytes);
         }
         // Even an internally sealed contradictory policy fails before binding.
@@ -1621,7 +1679,7 @@ mod tests {
         let fixture = Fixture::new()?;
         fixture.provision()?.set_native_carrier_mailbox_v8(true)?;
         fixture.open()?.set_tls_listener(Some(tls_settings(true)))?;
-        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let keys = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let mut sequence = 0;
         let mut tls_key = None;
         for _ in 0..2 {
@@ -1695,7 +1753,7 @@ mod tests {
             assert!(next > sequence);
             sequence = next;
             tls_key = Some(key);
-            assert_eq!(std::fs::read(fixture.0.root.join("keys.dpapi"))?, keys);
+            assert_eq!(std::fs::read(fixture.0.root.join(KEYS_FILE))?, keys);
         }
         Ok(())
     }
@@ -1705,8 +1763,8 @@ mod tests {
         let mut fixture = Fixture::new()?;
         fixture.0.relays = vec!["https://unused.example.invalid/".into()];
         let owner = fixture.provision()?;
-        let baseline = ["keys.dpapi", "service.journal"]
-            .map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
+        let baseline =
+            [KEYS_FILE, "service.journal"].map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
         let pin = owner.policy.node_pin;
         owner.set_carrier_mode(CarrierMode::DirectOnly)?;
         let owner = fixture.open()?;
@@ -1714,11 +1772,14 @@ mod tests {
         assert_eq!(owner.policy.config.relays, fixture.0.relays);
         assert!(effective_relays(&owner.policy).is_empty());
         assert!(!relay_only(&owner.policy));
-        assert!(fixture.open().is_err(), "exclusive policy owner was bypassed");
+        assert!(
+            fixture.open().is_err(),
+            "exclusive policy owner was bypassed"
+        );
         owner.set_carrier_mode(CarrierMode::Automatic)?;
         let owner = fixture.open()?;
         assert_eq!(effective_relays(&owner.policy), fixture.0.relays);
-        for (name, bytes) in ["keys.dpapi", "service.journal"].into_iter().zip(baseline) {
+        for (name, bytes) in [KEYS_FILE, "service.journal"].into_iter().zip(baseline) {
             assert_eq!(std::fs::read(fixture.0.root.join(name))?, bytes);
         }
         Ok(())
@@ -1730,8 +1791,8 @@ mod tests {
         let owner = fixture.provision()?;
         let pin = owner.policy.node_pin;
         let transport = owner.transport.clone();
-        let baseline = ["keys.dpapi", "service.journal"]
-            .map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
+        let baseline =
+            [KEYS_FILE, "service.journal"].map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
         owner.set_carrier_mode(CarrierMode::Automatic)?;
         #[cfg(feature = "tls-transport")]
         fixture.open()?.set_tls_listener(Some(TlsListenerConfig {
@@ -1756,25 +1817,19 @@ mod tests {
             fixture.open().is_err(),
             "configuration cannot bypass running owner lock"
         );
-        let sealed = std::fs::read(fixture.0.root.join("self-owned-policy.dpapi"))?;
+        let sealed = std::fs::read(fixture.0.root.join(POLICY_FILE))?;
         assert!(owner.set_carrier_mode(CarrierMode::RelayOnly).is_err());
-        assert_eq!(
-            std::fs::read(fixture.0.root.join("self-owned-policy.dpapi"))?,
-            sealed
-        );
+        assert_eq!(std::fs::read(fixture.0.root.join(POLICY_FILE))?, sealed);
         let mut bad = settings();
         bad.max_connections = 0;
         assert!(fixture.open()?.set_native_listener(Some(bad)).is_err());
-        assert_eq!(
-            std::fs::read(fixture.0.root.join("self-owned-policy.dpapi"))?,
-            sealed
-        );
+        assert_eq!(std::fs::read(fixture.0.root.join(POLICY_FILE))?, sealed);
         fixture.open()?.set_native_listener(None)?;
         let restored = fixture.open()?;
         assert!(restored.policy.native_listener.is_none());
         assert_eq!(restored.policy.node_pin, pin);
         assert_eq!(*restored.transport, *transport);
-        for (name, bytes) in ["keys.dpapi", "service.journal"].iter().zip(baseline) {
+        for (name, bytes) in [KEYS_FILE, "service.journal"].iter().zip(baseline) {
             assert_eq!(std::fs::read(fixture.0.root.join(name))?, bytes);
         }
         Ok(())
@@ -2042,15 +2097,19 @@ mod tests {
     async fn native_listener_real_owner_udp_custody_survives_restart() -> Result<()> {
         let fixture = Fixture::new()?;
         fixture.provision()?.set_native_listener(Some(settings()))?;
-        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let keys = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let expires = (now_ms()? / 1000) as i64 + 600;
         let (first, sequence) = exchange(&fixture, None, expires).await?;
         let (second, next) = exchange(&fixture, Some(&first), expires).await?;
         assert!(next > sequence);
         assert_eq!(first.signature, second.signature);
-        assert_eq!(std::fs::read(fixture.0.root.join("keys.dpapi"))?, keys);
+        assert_eq!(std::fs::read(fixture.0.root.join(KEYS_FILE))?, keys);
         Ok(())
     }
 
     include!("rendezvous_dual_owner_tests.rs");
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "rendezvous_linux_owner_tests.rs"]
+mod linux_tests;

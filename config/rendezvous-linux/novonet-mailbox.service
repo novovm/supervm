@@ -1,0 +1,42 @@
+[Unit]
+Description=NOVONET owned native mailbox
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=novonet-mailbox
+Group=novonet-mailbox
+ExecStart=/opt/novonet-mailbox/current/novovm-rendezvous-service --foreground /etc/novonet-mailbox/node.json
+StateDirectory=novonet-mailbox
+StateDirectoryMode=0700
+LoadCredentialEncrypted=owner-key:/etc/novonet-mailbox/owner-key.cred
+UMask=0077
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CPUQuota=50%
+MemoryHigh=256M
+MemoryMax=384M
+TasksMax=128
+LimitNOFILE=4096
+StandardOutput=null
+StandardError=journal
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=10
+
+[Install]
+WantedBy=multi-user.target
