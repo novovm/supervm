@@ -146,7 +146,8 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
                         authority.clone(),
                     )
                     .await
-                    .err().expect("forged metadata must fail");
+                    .err()
+                    .expect("forged metadata must fail");
                 assert_eq!(error.kind, NativeRequestErrorKind::Protocol);
                 let metadata_again = handle
                     .request(
@@ -156,7 +157,8 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
                         authority.clone(),
                     )
                     .await
-                    .err().expect("forged metadata must fail");
+                    .err()
+                    .expect("forged metadata must fail");
                 assert_eq!(metadata_again.kind, NativeRequestErrorKind::Protocol);
                 let other_slot = handle
                     .request(
@@ -166,7 +168,8 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
                         authority.clone(),
                     )
                     .await
-                    .err().expect("forged metadata must fail");
+                    .err()
+                    .expect("forged metadata must fail");
                 assert_eq!(other_slot.kind, NativeRequestErrorKind::Protocol);
                 return Ok::<(), anyhow::Error>(());
             }
