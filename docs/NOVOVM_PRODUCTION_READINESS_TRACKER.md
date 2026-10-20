@@ -1,5 +1,54 @@
 # NOVOVM 生产部署目标与验收台账
 
+
+## 2026-10-20 v84 Android local return admission resumes without reopening
+
+NOVOCHAT `eab9712` fixes the local return worker; SDK remains pinned to
+`2ef8e2a371453d529fc8ed040bb3b166db9a4d59`, with no SDK/runtime/protocol change.
+A temporary local Register/ Renew Quota previously entered permanent pending,
+like Unauthorized. The client now distinguishes capacity from denial, resumes
+capacity on the original contribution publication watch, and retains capability,
+TTL and revocation checks. No new owner, timer, retry whitelist or logging plane.
+
+Real SQLite/network deterministic fixture reproduced the old failure, then both
+resource-resume and denied-capability cases passed. Existing actual UDP -> Iroh
+-> UDP business regression passed. Profile v84 is installed on both original
+phones; five protected identity/key hashes per phone remained equal and v83 APK
+is retained. Original contacts/history, Message IDs and receipts were preserved.
+
+First L3-off run (~400s): two full Wi-Fi/cellular/Wi-Fi rounds passed. Third
+cellular texts were delivered, but Wi-Fi retake stopped at localDepositReady=false.
+Android reported Severe thermal status3; L4 correctly paused new obligations.
+This failed gate is retained and is NOT continuous 3/3 acceptance.
+
+Natural cooling then restored local return readiness in the SAME PCL PID14772,
+task10: earlier local Quota seq817, renewed Register/Renew seq950-953, first true
+snapshot UTC1792465227980. No app restart, manual Connect, credential replacement
+or thermal override. `mailbox_l4_return_inbox_ready` alone is a remote descriptor
+publication, not evidence of local recovery; acceptance uses the local status
+transition and later new business receipts.
+
+After cooling, a separate L3-off run (~151s) completed another full round with
+six new texts and both-device durable receipts. Native L4 UDP is selected in the
+Wi-Fi windows; cellular PCL uses authenticated Iroh carrier (observed direct,
+not evidence of relayed body traffic), then both peers retake native UDP. L3
+was disabled/stopped for each window and its original task restored afterwards.
+Both app PIDs stay unchanged throughout all tests: A10438/B14772. Network changes
+may replace scoped tasks inside the original Application owner, not the process.
+
+Both 1,600,067-byte images received, previewed and durably acknowledged. Offline
+regression: B disconnected, A gets storage evidence only; A then also disconnects,
+B independently fetches the original message, A reconnects and gets DeviceReceipt.
+Fresh bilateral messages still work afterwards. Thermal pause did not terminate
+personal chat or L3 offline delivery. Evidence details: NOVOCHAT P0_CHECKPOINT.md
+v84 section and ignored v84 captures. No message-count/latency claim is derived
+from duplicate anonymous receipt events; no P95 or universal-network acceptance.
+
+External Iroh infrastructure dependency, independent failure-domain redundancy,
+fully native cross-carrier coverage and anonymity remain unaccepted. This round
+closes the proven local return capacity wait and validates automatic resource
+recovery; it does not disable resource protection or make every L4 always online.
+
 ## 2026-10-20 v83 Android L4 native UDP / carrier fallback and retake
 
 NOVOCHAT `2c9b2e6`, reviewed SDK `2ef8e2a3`, is installed as profile v83 on both
