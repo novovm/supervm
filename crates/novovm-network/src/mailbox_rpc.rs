@@ -705,6 +705,11 @@ impl MailboxServiceV1 {
                     StoreError::Quota => MailboxRejectionV1::Quota,
                     StoreError::Conflict => MailboxRejectionV1::Conflict,
                     StoreError::Consumed => MailboxRejectionV1::Consumed,
+                    StoreError::Database(rusqlite::Error::SqliteFailure(code, _))
+                        if code.code == rusqlite::ErrorCode::DiskFull =>
+                    {
+                        MailboxRejectionV1::Quota
+                    }
                     StoreError::Database(_) | StoreError::ClockRollback => {
                         MailboxRejectionV1::Storage
                     }
@@ -800,6 +805,14 @@ impl MailboxServiceV1 {
                 }
                 Err(StoreError::Invalid | StoreError::Random) => {
                     return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Invalid))
+                }
+                Err(StoreError::Quota) => {
+                    return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Quota))
+                }
+                Err(StoreError::Database(rusqlite::Error::SqliteFailure(code, _)))
+                    if code.code == rusqlite::ErrorCode::DiskFull =>
+                {
+                    return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Quota))
                 }
                 Err(_) => return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Storage)),
             };
@@ -1687,6 +1700,47 @@ mod notification_tests {
             assert!(budget.take().is_none());
         }
         assert!(budget.take().is_some());
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn app_disk_full_rejects_put_without_receipt_and_recovers_after_limit_change(
+    ) -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let budget = novovm_storage_budget::DiskBudget::configure(dir.path())?;
+        let mut store = MailboxStore::open(dir.path().join("custody.db"), Default::default())?;
+        let grant = store.create(now()?, 900)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let expires = now()? + 600;
+        let put = || MailboxRequestV1::Put {
+            mailbox: grant.id,
+            write: *grant.write.as_bytes(),
+            object: [7; 32],
+            ciphertext: vec![8; 60 * 1024],
+            expires,
+        };
+        let cap = novovm_storage_budget::MIN_LIMIT_BYTES;
+        budget.set_limit(Some(cap))?;
+        let usage = budget.snapshot()?;
+        let pressure = std::fs::File::create(dir.path().join("test-pressure"))?;
+        pressure.set_len(cap - usage.maintenance_bytes - usage.used_bytes - 8192)?;
+        budget.snapshot()?;
+        assert!(matches!(
+            service.execute(put()).await?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Quota)
+        ));
+        // The same object can commit once capacity is available; a refused
+        // transaction must neither produce a receipt nor corrupt custody.
+        budget.set_limit(None)?;
+        let MailboxReplyV1::Stored(receipt) = service.execute(put()).await? else {
+            anyhow::bail!("original object did not resume");
+        };
+        receipt.verify(
+            SigningKey::from_bytes(&[1; 32]).verifying_key().to_bytes(),
+            grant.id,
+            [7; 32],
+            &vec![8; 60 * 1024],
+            expires,
+        )?;
+        Ok(())
     }
     #[tokio::test(flavor = "current_thread")]
     async fn contribution_stop_orders_with_real_commits_and_preserves_lost_ack_recovery(

@@ -12,6 +12,49 @@ fn own_book() -> Result<ServiceLeaseBookV1> {
 }
 
 #[test]
+fn app_quota_refusal_preserves_renewal_but_failed_revocation_stays_closed() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let budget = novovm_storage_budget::DiskBudget::configure(dir.path())?;
+    let path = dir.path().join("service.checkpoint");
+    let mut book = own_book()?;
+    let saved = book.checkpoint()?;
+    let file = ServiceLeaseFileV1::create(&path, zeroize::Zeroizing::new([91; 32]), &saved)?;
+    book.attach_persistence(file, &saved)?;
+    budget.set_limit(Some(novovm_storage_budget::MIN_LIMIT_BYTES))?;
+    // Sparse test pressure, never production custody or fabricated receipts.
+    let pressure = std::fs::File::create(dir.path().join("pressure"))?;
+    pressure.set_len(novovm_storage_budget::MIN_LIMIT_BYTES)?;
+    budget.snapshot()?;
+    let before = std::fs::metadata(&path)?.len();
+    let error = accept(&mut book, record(2, 2, 3000, 40_000), 3000).unwrap_err();
+    assert!(error.chain().any(|cause| matches!(
+        cause.downcast_ref::<novovm_storage_budget::Error>(),
+        Some(novovm_storage_budget::Error::Io(io))
+            if io.kind() == std::io::ErrorKind::StorageFull
+    )));
+    assert!(!book.failed);
+    assert_eq!(std::fs::metadata(&path)?.len(), before);
+    assert_eq!(book.persisted, saved);
+    budget.set_limit(None)?;
+    accept(&mut book, record(2, 2, 3000, 40_000), 3000)?;
+    assert_eq!(
+        book.entries[&key(2).verifying_key().to_bytes()]
+            .current
+            .sequence,
+        2
+    );
+
+    budget.set_limit(Some(novovm_storage_budget::MIN_LIMIT_BYTES))?;
+    assert!(book
+        .revoke_self_owned(key(2).verifying_key().to_bytes(), 3001)
+        .is_err());
+    assert!(book.failed);
+    budget.set_limit(None)?;
+    assert!(book.routes(3002).is_err());
+    Ok(())
+}
+
+#[test]
 fn self_owned_policy_update_keeps_floors_revocations_and_prior_history() -> Result<()> {
     let mut old = own_book()?;
     old.replace_self_owned_records(vec![record(2, 9, 3000, 40_000)], 3000)?;

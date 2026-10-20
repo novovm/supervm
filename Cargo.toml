@@ -12,6 +12,7 @@ members = [
     "crates/novovm-exec",
     "crates/novovm-governance-observability",
     "crates/novovm-network",
+    "crates/novovm-storage-budget",
     "crates/novovm-relay",
     "crates/novovm-node",
     "crates/novovm-rollout-policy",

@@ -73,12 +73,17 @@ impl ServiceLeaseFileV1 {
         );
         let path = absolute_path(path)?;
         let owner = lock_owner(&path)?;
+        let header = header(0, [0; 32]);
+        let reservation = novovm_storage_budget::reserve_for_paths(
+            std::slice::from_ref(&path),
+            header.len() as u64,
+        )?;
         let mut file = private_options().create_new(true).open(&path)?;
         lock_file(&file)?;
-        let header = header(0, [0; 32]);
         file.write_all(&header)?;
         file.sync_all()?;
         sync_parent(&path)?;
+        reservation.finish()?;
         let store = Arc::new(Self {
             cipher: cipher(material),
             state: Mutex::new(Journal {
@@ -342,6 +347,27 @@ impl ServiceLeasePersistenceV1 for ServiceLeaseFileV1 {
             .lock()
             .map_err(|_| anyhow::anyhow!("journal unavailable"))?;
         ensure!(!state.failed, "journal stopped after uncertain write");
+        ensure!(
+            !next.is_empty() && next.len() <= MAX_SERVICE_CHECKPOINT_BYTES,
+            "journal state size"
+        );
+        // Admission happens before touching the journal. A known quota refusal
+        // is not an uncertain signing-state write and must not poison the owner.
+        // Include the simultaneous compact copy and the next encrypted frame.
+        let compact_bytes = if state.length >= COMPACT_AT {
+            48 + 4 + 24 + 16 + state.last.len() as u64
+        } else {
+            0
+        };
+        let append_bytes = if expected == next {
+            0
+        } else {
+            4 + 24 + 16 + next.len() as u64
+        };
+        let reservation = novovm_storage_budget::reserve_for_paths(
+            &[self.path.clone(), sibling(&self.path, ".compact")],
+            compact_bytes + append_bytes,
+        )?;
         let result = (|| {
             ensure!(
                 !next.is_empty() && next.len() <= MAX_SERVICE_CHECKPOINT_BYTES,
@@ -382,7 +408,11 @@ impl ServiceLeasePersistenceV1 for ServiceLeaseFileV1 {
         if result.is_err() {
             state.failed = true;
         }
-        result
+        // Reconcile even a failed/partial write; never return a successful
+        // checkpoint before its existing fsync and state checks have completed.
+        let accounted = reservation.finish();
+        result?;
+        Ok(accounted?)
     }
 }
 

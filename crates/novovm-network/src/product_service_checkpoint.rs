@@ -164,7 +164,26 @@ impl ServiceLeaseBookV1 {
                 )?,
             };
             if let Err(error) = owner.commit(&self.persisted, &next) {
-                self.failed = true;
+                // The App budget refuses this reservation before touching the
+                // encrypted checkpoint. A routine locator renewal can retry
+                // after space is available, retaining the old durable state.
+                // Revocation/trust changes and uncertain physical writes still
+                // fail closed: never continue with stale security authority.
+                let quota_refused = error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<novovm_storage_budget::Error>(),
+                        Some(novovm_storage_budget::Error::Io(io))
+                            if io.kind() == std::io::ErrorKind::StorageFull
+                    )
+                });
+                let unchanged_authority = matches!(self.policy, ServiceTrustV1::SelfOwned(_))
+                    && tombstones == self.tombstones
+                    && entries.keys().eq(self.entries.keys())
+                    && sources.is_empty()
+                    && self.sources.is_empty();
+                if !quota_refused || !unchanged_authority {
+                    self.failed = true;
+                }
                 return Err(error);
             }
             self.persisted = next;
