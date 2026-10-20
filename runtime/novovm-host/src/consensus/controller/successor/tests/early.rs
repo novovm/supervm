@@ -11,11 +11,40 @@ fn announcement(scope: EarlyBodyScope, extra: u128) -> Result<Arc<Message>> {
 }
 
 fn start_early(controller: &mut Controller, message: &Arc<Message>) -> Result<u64> {
-    flush(controller)?;
-    ensure!(
-        controller.try_submit_early_body(message, 1, 172_800_502)?,
-        "early input not admitted"
-    );
+    let scope = controller
+        .early_body_scope()?
+        .context("early input is not eligible")?;
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "early input admission timed out: {:?}",
+            controller.stats()
+        );
+        ensure!(
+            controller.early_body_scope()? == Some(scope),
+            "early input eligibility changed during admission"
+        );
+        controller.flush_retired()?;
+        if controller.try_submit_early_body(message, 1, 172_800_502)? {
+            break;
+        }
+        // Preserve replies intentionally held by generation-order tests. Only
+        // untracked fixture replies may be drained to release capacity here.
+        controller.flush_preparations()?;
+        if controller.preparing.is_empty() {
+            match controller.channel.try_recv()? {
+                Some(ChannelEvent::Prepared { token, result }) => {
+                    controller.prepared(token, result)?
+                }
+                Some(ChannelEvent::Received(received)) => {
+                    controller.receive(received.peer, received.ready)?
+                }
+                None => (),
+            }
+        }
+        std::thread::yield_now();
+    }
     controller
         .preparing
         .values()
@@ -169,6 +198,70 @@ fn current_proposal_gate(
         "proposal has wrong context or changed finalized head"
     );
     Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit real AOEM; bounded assembly backpressure and unchanged early-input authority"]
+fn real_early_admission_drains_owner_backpressure_without_changing_scope() -> Result<()> {
+    Fixture::run("early-owner-backpressure", |controller, pipeline| {
+        let scope = controller
+            .early_body_scope()?
+            .context("early scope absent")?;
+        let message = announcement(scope, 0)?;
+        let deadline = Instant::now() + DEADLINE;
+        // All eight fixture body slots retain their charge until replies are read.
+        // The actual owner runs; only consumption of its replies is delayed.
+        for _ in 0..8 {
+            let mut request = PrepareRequest {
+                token: controller.allocate_token()?,
+                input: PrepareInput::New(message.clone()),
+            };
+            loop {
+                ensure!(Instant::now() < deadline, "body-lane admission timed out");
+                match controller.channel.try_prepare(request)? {
+                    PrepareAdmission::Accepted => break,
+                    PrepareAdmission::Backpressure(returned) => request = returned,
+                    PrepareAdmission::Rejected { reason, .. } => bail!(reason),
+                }
+                std::thread::yield_now();
+            }
+        }
+        ensure!(
+            controller.channel.status()?.pending_prepare == 8,
+            "body lane not full"
+        );
+        ensure!(
+            !controller.try_submit_early_body(&message, 1, 172_800_502)?
+                && controller.early_body_scope()? == Some(scope)
+                && controller.early.is_none()
+                && controller.preparing.is_empty()
+                && controller.stats.early_authentication_started == 0,
+            "backpressure consumed the scope or created early work"
+        );
+        let id = prepare_early(controller, &message)?;
+        until_early(controller, pipeline, |c| {
+            c.stats.early_authentication_completed == 1
+        })?;
+        controller.drive_consensus()?;
+        ensure!(
+            controller.has_early_target(scope.target_height)
+                && controller
+                    .fixed
+                    .iter()
+                    .any(|f| f.prepared.early_id() == Some(id))
+                && controller.stats.early_authentication_started == 1
+                && controller
+                    .stats
+                    .early_authentication_completed_before_parent
+                    == 1
+                && controller.stats.executed_batches == 0
+                && controller.head().is_none()
+                && !controller.is_pending()
+                && controller.journal.last_durable_message().is_none(),
+            "admission duplicated authentication or granted parent/signing authority"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -445,6 +538,10 @@ fn real_round_retirement_drains_auth_and_late_generation_does_not_revive() -> Re
         ensure!(
             new_generation != old_generation,
             "local owner generation reused"
+        );
+        ensure!(
+            controller.preparing.contains_key(&old_generation),
+            "admission consumed the intentionally held old generation reply"
         );
         let stale = controller.stats.stale_results;
         pump_owner(controller, |c| {

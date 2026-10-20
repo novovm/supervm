@@ -1,5 +1,25 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-21 CI early admission 时序修复（认领已释放，远端另验）：** 输入 main
+`377f1c24`，推送前快进保留另一设备仅文档提交 `62323112`；未改其手机工作。
+范围仅 preserved runtime successor 测试驱动及真实 owner 背压反例，不改生产准入、
+安全/启动守卫、AOEM 内核、队列容量、测试超时常量、workflow 或兄弟仓。
+原失败用例 Windows 连跑40次通过，不能冒称原场景已复现。随后实际占满8个 body
+槽位，保持 scope 可用且没有 early work；旧 helper 稳定报 `early input not admitted`。
+确定的缺口是把非阻塞 API 的合法背压当硬失败；原 CI 未区分锁竞争/容量原因。
+helper 使用既有 DEADLINE 有界重试，每次复核 scope；不提前消费认证/执行/父 ACK。
+保留已跟踪旧 generation 的回包时序，并新增其未被准入 helper 消费的断言；
+错来源、黏性绑定、父 ACK、签票、经济与冷恢复原断言均保留。新增真库反例实际执行，
+CI 沿用 `--include-ignored`，没有跳过旧用例或修改验收条件。
+Windows 同款 runtime release 全套通过：AOEM32、host414、network211，附带集成/文档
+用例均通过且0失败/0忽略；early组20轮共100项通过，合入远端文档后5项再通过。
+当前主节点实际 NativeLifecycle successor 4项及缺配置新库/原库启动守卫1项通过。
+原 node 旧 controller 不参与当前编译，0项过滤不是通过；对该历史副本的试改已撤掉，
+不将它重新启用为产品链路。根/嵌套 fmt、runtime workspace/all-targets严格Clippy、
+no-default-features检查通过；本机原始重复/全套日志在
+`artifacts/audit/early-admission-repeat-20261020-235920-39868/`，未把运行库/密钥入Git。
+这是本机测试驱动修复，不是Linux/多机/生产性能签收；本轮推送对应CI须独立确认。
+
 **2026-10-20 CI 39416529674 修复（认领已释放，远端另验）：** 输入 main `466c8a7e`。
 范围仅历史进程测试/诊断 gate 的显式夹具参数与对应 artifact 上传条件；
 复用原进程、随包 AOEM 和原持久化断言，不修改生产启动守卫、执行链或兄弟仓。
