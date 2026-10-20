@@ -2,6 +2,46 @@
 
 本文件记录可核验的交付边界，不是发布授权或完成比例。
 当前结论以最上方验收记录为准；后续章节保留历轮结果及当时的待完成项。
+## 2026-10-20 v82 deployed: Windows dual entry and two-phone fallback/retake
+
+SDK `1b4e3146` was installed in place through the official Windows installer.
+The original DPAPI/identity hashes remained equal, signed sequence advanced,
+SQLite custody remained in place, and the original TLS 443 listener stayed up.
+The same process also bound native UDP 43170 with a signed LAN-only candidate.
+The retained v81 phones first exchanged new text/Endpoint DeviceReceipts against
+the upgraded node; then both received profile v82 without uninstall/data reset.
+Five protected identity/key hashes per phone remained equal. Old APK/exe retained.
+
+Both phones on Wi-Fi selected actual native UDP L3 sessions and committed mailbox
+business, not merely bind/ready. Two PCLM50 Wi-Fi -> cellular -> Wi-Fi rounds used
+approved Iroh carrier fallback on cellular and native takeover upon Wi-Fi return.
+Each cellular round delivered new text both directions before Wi-Fi restoration;
+post-return new messages also completed. No App restart or Connect was used during
+switches. Both L4 service/send paths recovered, with the original process owners.
+L4 endpoint/return receipts coexist; generic duplicate receipt events must not be
+counted as separate messages or all attributed to UDP.
+
+Same-device timing: cellular available to L3 carrier ready ~6.86/4.75 s in two rounds;
+Wi-Fi first available to UDP ready ~2.65 s (~1.82 s from last property change).
+The unreachable LAN UDP attempt timed out at ~32.75 s in parallel with usable
+carrier delivery; it did not block the already active fallback. Cellular link
+properties still caused task replacement, and L4 timeout/close/refused events
+recovered locally. This is not a zero-interruption or P95 claim.
+
+A 1,600,067-byte picture completed device receipt and full receiver preview.
+With B completely offline, A obtained custody without a device receipt; with A
+then completely offline, B independently fetched/committed from L3. A later got
+the device receipt. Prior network settings restored. Detailed evidence and APK
+hash: NOVOCHAT docs/implementation/P0_CHECKPOINT.md (v82); raw captures ignored.
+Both Apps then reopened with the same identity and exactly one copy of each final
+text visible; new processes automatically selected UDP and recovered L3/L4 ready.
+
+Open boundaries: the native endpoint is private-LAN reachable, not a proven
+cross-operator public UDP path. Phone L4 inbound remains Iroh. No claim of physical
+phone-native direct, external-Relay-free cold start, anonymity, independent L3
+redundancy or whole-product production completion. The observed RPC code4 is a
+Conflict response; its operation origin is not established by compact traces.
+
 ## 2026-10-20 Windows owner UDP / V8 / TLS composition
 
 Existing V8 policy can now coexist with the existing native listener; the
@@ -18,7 +58,7 @@ two shutdown assertions: the new fixture now precisely validates the existing
 owned-Iroh terminal stop result, preserving any earlier business failure; no
 runtime error whitelist changed. Logs: artifacts/dual-owner-tests{,-r2}.log.
 TLS-enabled check and release service build pass. Phone/managed-node deployment
-and native-preference/fallback evidence are separate, still pending here.
+and native-preference/fallback evidence are recorded separately above.
 
 ## 2026-10-20 native UDP bulk probe: shared capability repair
 
