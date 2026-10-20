@@ -101,6 +101,12 @@ pub struct StoredEnvelope {
     pub expires: i64,
 }
 
+struct EnvelopeInput<'a> {
+    object: &'a Id,
+    ciphertext: &'a [u8],
+    expires: i64,
+}
+
 /// Private per-mailbox commit position. Generation prevents deletion/recreation
 /// from making an old position current. Neither value is a delivery receipt.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -478,9 +484,11 @@ impl MailboxStore {
         self.put_bounded(
             mailbox,
             write,
-            object,
-            ciphertext,
-            expires,
+            EnvelopeInput {
+                object,
+                ciphertext,
+                expires,
+            },
             now,
             self.limits.object_bytes,
         )
@@ -498,9 +506,11 @@ impl MailboxStore {
         self.put_bounded(
             mailbox,
             write,
-            object,
-            ciphertext,
-            expires,
+            EnvelopeInput {
+                object,
+                ciphertext,
+                expires,
+            },
             now,
             MAX_BULK_CIPHERTEXT,
         )
@@ -509,12 +519,15 @@ impl MailboxStore {
         &mut self,
         mailbox: &Id,
         write: &Capability,
-        object: &Id,
-        ciphertext: &[u8],
-        expires: i64,
+        envelope: EnvelopeInput<'_>,
         now: i64,
         object_limit: usize,
     ) -> Result<PutResult, StoreError> {
+        let EnvelopeInput {
+            object,
+            ciphertext,
+            expires,
+        } = envelope;
         let limits = self.limits;
         let resources_available = self.resources_available;
         if *object == [0; 32]
