@@ -297,6 +297,14 @@ impl CandidateBodies {
                 continue;
             }
             if let Work::Ready(candidate) = &body.work {
+                // Optional follower preparation stays on this bounded body
+                // owner until a verified proposal demands it. It must not fill
+                // the consensus candidate budget with unrelated local results.
+                if !progress.is_local_proposer()?
+                    && !progress.missing_bodies().any(|(_, needed)| needed == *id)
+                {
+                    continue;
+                }
                 if progress.register_candidate(
                     *id,
                     candidate,
@@ -331,12 +339,19 @@ impl CandidateBodies {
             .missing_bodies()
             .map(|(_, id)| id)
             .collect::<Vec<_>>();
-        let leader = progress.is_local_proposer()?;
-        for (id, body) in &mut self.bodies {
+        // A local selection can execute before the leader's proposal arrives.
+        // Only exact matching durable results qualify for that proposal in
+        // RoundProgress; an unrelated local body cannot authorize a vote.
+        // Serve verified demand first so optional work cannot win merely by
+        // lexicographic body ID. All work retains the original owner/budgets.
+        let mut order = self.bodies.keys().copied().collect::<Vec<_>>();
+        order.sort_by_key(|id| !demanded.contains(id));
+        for id in &order {
+            let body = self.bodies.get_mut(id).expect("retained body");
             if running >= self.limits.inflight {
                 break;
             }
-            if !(demanded.contains(id) || leader && body.local_round == Some(progress.round())) {
+            if !(demanded.contains(id) || body.local_round == Some(progress.round())) {
                 continue;
             }
             if let Work::Authenticated(request) = &mut body.work {

@@ -1,0 +1,77 @@
+
+running 73 tests
+test native_pipeline::consensus::bodies::successor::tests::only_exact_ack_promotes_all_parent_fields_and_context ... ok
+test native_pipeline::consensus::bodies::successor::tests::optional_auth_and_execution_leave_one_current_slot ... ok
+test native_pipeline::consensus::bodies::successor::tests::source_round_recovery_and_overflow_do_not_reuse_successor_hint ... ok
+test native_pipeline::consensus::bodies::successor::tests::successor_body_must_bind_exact_business_and_parent_but_keeps_explicit_time ... ok
+test native_pipeline::consensus::chain::replay_tests::head_check_rejects_rollback_and_replacement_but_allows_forward_progress ... ok
+test native_pipeline::consensus::chain::replay_tests::head_record_must_bind_full_ceiling_and_exact_archive_digest ... ok
+test native_pipeline::consensus::chain::replay_tests::historical_read_is_pinned_to_requested_height_and_fixed_domain ... ok
+test native_pipeline::consensus::chain::replay_tests::rehashed_outbox_cannot_authorize_bad_signature_wrong_value_or_prevote ... ok
+test native_pipeline::consensus::chain::replay_tests::replay_outbox_preserves_exact_verified_proposal_and_quorum ... ok
+test native_pipeline::consensus::chain::replay_tests::request_rejects_zero_future_height_missing_head_and_wrong_set ... ok
+test native_pipeline::consensus::chain::tests::archive_encoding_is_bounded_canonical_and_all_bytes_bound ... ok
+test native_pipeline::consensus::chain::tests::decision_identity_binds_value_and_all_context_but_not_local_proof_locator ... ok
+test native_pipeline::consensus::chain::tests::malformed_parent_height_version_and_decision_are_not_repaired ... ok
+test native_pipeline::consensus::native::query::tests::busy_peer_request_is_retained_while_another_peer_can_advance ... ok
+test native_pipeline::consensus::native::query::tests::query_custody_has_fixed_capacity_deadline_and_transport_generation ... ok
+test native_pipeline::consensus::native::query::tests::real_query_request_survives_delayed_previous_reply_done_handoff ... ok
+test native_pipeline::consensus::native::tests::hostile_signed_domain_wrong_lane_and_bad_signature_cannot_become_evidence ... ok
+test native_pipeline::consensus::native::tests::io_hint_ignores_duplicate_rejected_and_stalled_io ... ok
+test native_pipeline::consensus::native::tests::io_hint_tracks_new_fragments_sends_and_query_completion ... ok
+test native_pipeline::consensus::native::tests::io_hint_wrap_is_a_change_token_not_a_permit_counter ... ok
+test native_pipeline::consensus::native::tests::original_signed_vote_crosses_native_channel_without_relabeling ... ok
+test native_pipeline::consensus::native::tests::unconsumed_native_input_lane_does_not_block_control_completion ... ok
+test native_pipeline::consensus::statement::tests::hash_binds_every_batch_context_field ... ok
+test native_pipeline::consensus::statement::tests::hash_binds_extra_consensus_domain_and_every_execution_output_field ... ok
+test native_pipeline::consensus::statement::tests::hash_does_not_recursively_commit_its_cached_output ... ok
+test native_pipeline::consensus::statement::tests::parent_validation_rejects_each_of_the_six_independent_mismatches ... ok
+test native_pipeline::consensus::tests::chain_integration::native_udp_apfl_full_algebraic_plan_three_heights_and_recovery ... ignored, requires real AOEM integer backend; four native sockets/stores in one process, not TPS
+test native_pipeline::consensus::tests::chain_integration::native_udp_apfl_three_heights_durable_votes_publication_and_cold_recovery ... ignored, requires real AOEM; four native UDP sockets and stores in ONE process, not node processes or TPS
+test native_pipeline::consensus::tests::chain_integration::real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_rejection ... ignored, requires real AOEM; four local stores, not network or production finality
+test native_pipeline::consensus::tests::journal_recovery_integration::real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_candidate ... ignored, requires real AOEM; exact undecided journal replay and corruption, not network finality
+test native_pipeline::consensus::tests::native_product_rpc::application::native_application_apfl_fees_failure_and_cold_restart_without_http_submission ... ignored, real AOEM/original node binary; native nonvalidator client; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_genesis_transactions_queries_and_cold_recovery ... ignored, four actual original nodes, real AOEM; native-only; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_minority_and_pending_signature_conflict_recover ... ignored, two then four actual nodes, real AOEM, no HTTP; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::inspect_copied_first_height_decision ... ignored, requires explicit offline database copy and its original config
+test native_pipeline::consensus::tests::native_product_rpc::native_load::native_load_batch_observer_requires_every_node_and_does_not_count_retries ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::native_load_wallet_identity_and_percentile_contract ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::original_native_sdk_65536_final_receipts_and_cold_economics ... ignored, four actual original-tick nodes, AOEM, native-only 65536 signed transactions and cold restart; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_product_minority_cannot_publish_and_pending_signature_is_not_cached_by_hash ... ignored, real AOEM and original node binary; 2/4 must not finalize; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_product_single_rpc_fees_nonce_finality_and_cold_restart ... ignored, real AOEM plus NOVOVM_RESIDENT_NODE_BINARY; four original node processes; run alone
+test native_pipeline::consensus::tests::pacemaker_integration::real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery ... ignored, requires explicit real AOEM library; local durable timer/catch-up integration, not network finality
+test native_pipeline::consensus::tests::progress_integration::deadline::native_lifecycle_ready_proposal_wins_deadline_without_disabling_timeout ... ignored, real AOEM; native ready proposal must precede same-poll timeout
+test native_pipeline::consensus::tests::progress_integration::deadline::native_lifecycle_second_ready_control_wins_deadline_without_disabling_timeout ... ignored, real AOEM; queued socket proposal behind rejected control must precede timeout
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_algebraic ... ignored, real AOEM algebraic execution; no synthetic proposal or QC
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_cpu ... ignored, real AOEM; follower preparation before a real native leader proposal
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_single_body_three_heights_algebraic ... ignored, real AOEM full algebraic backend; not a performance measurement
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_single_body_three_heights_cpu ... ignored, real AOEM; four native sockets, exact-body retrieval and autonomous execution
+test native_pipeline::consensus::tests::progress_integration::native_progress_algebraic_three_heights_with_unresolved_restart ... ignored, real AOEM integer backend; autonomous native rounds, not performance acceptance
+test native_pipeline::consensus::tests::progress_integration::native_progress_three_heights_with_unresolved_restart ... ignored, real AOEM; autonomous rounds over four UDP sockets/stores, not independent processes/TPS
+test native_pipeline::consensus::tests::progress_integration::published_projection::published_projection_requires_local_ack_exact_head_and_matches_cold_receipts ... ignored, real AOEM; ACK-bound warm projection, bounded fallback and cold recovery, not TPS
+test native_pipeline::consensus::tests::progress_integration::split::native_progress_aab_split_recovers_without_external_qc ... ignored, real AOEM; three autonomous honest drivers and one equivocating native peer, not process acceptance
+test native_pipeline::consensus::tests::progress_integration::successor::drain::native_successor_auth_ticket_drains_after_source_round_changes ... ignored, real AOEM; accepted auth ticket retired after verified durable round change
+test native_pipeline::consensus::tests::progress_integration::successor::drain::native_successor_execution_ticket_drains_after_source_round_changes ... ignored, real AOEM; accepted execution ticket retired after verified durable round change
+test native_pipeline::consensus::tests::progress_integration::successor::native_successor_early_completion_waits_for_parent_ack_and_recovers ... ignored, real AOEM; native two-node hold, exact parent ACK, four-store publication and cold failure nonce
+test native_pipeline::consensus::tests::progress_integration::successor::native_successor_single_inflight_keeps_current_height_progress ... ignored, real AOEM; one body inflight disables optional work without blocking current native publication
+test native_pipeline::consensus::tests::real_four_validator_journals_persist_before_emit_recover_and_reject_stale ... ignored, requires explicit real AOEM library; same-process durable consensus integration, not network/canonical finality
+test native_pipeline::consensus::tests::real_lost_signing_ack_recovers_exact_vote_without_second_prevote ... ignored, requires explicit real AOEM library; deterministic lost durable-ACK recovery, not crash/power-loss evidence
+test native_pipeline::consensus::transport::apfl::tests::structured_tags_versions_truncation_trailing_and_canonical_budgets_are_strict ... ok
+test native_pipeline::consensus::transport::apfl::tests::structured_wire_preserves_raw_body_and_early_commitments_with_distinct_fragment_ids ... ok
+test native_pipeline::consensus::transport::early_tests::announcement_identity_binds_complete_scope_order_framing_and_bytes_not_limits ... ok
+test native_pipeline::consensus::transport::early_tests::binding_checks_announced_domain_and_height_but_does_not_approve_roots_or_program ... ok
+test native_pipeline::consensus::transport::early_tests::both_new_payloads_reject_every_truncation_trailing_data_and_unknown_versions ... ok
+test native_pipeline::consensus::transport::early_tests::original_six_tags_and_full_body_hash_keep_their_exact_original_bytes ... ok
+test native_pipeline::consensus::transport::early_tests::raw_count_lengths_aggregate_and_actual_envelope_are_bounded_before_retention ... ok
+test native_pipeline::consensus::transport::early_tests::scopes_reject_zero_domains_bad_parent_shapes_nonadjacent_and_exhausted_heights ... ok
+test native_pipeline::consensus::transport::early_tests::versioned_early_and_binding_bytes_roundtrip_with_exact_lane_and_header_sizes ... ok
+test native_pipeline::consensus::transport::tests::all_development_message_variants_roundtrip_without_execution_authority ... ok
+test native_pipeline::consensus::transport::tests::body_identity_binds_every_context_field_original_bytes_and_order_not_budgets ... ok
+test native_pipeline::consensus::transport::tests::bounded_preflight_rejects_huge_count_lengths_empty_total_and_trailing_input ... ok
+test native_pipeline::consensus::transport::tests::decision_request_binds_exact_parent_and_rejects_unbounded_or_ambiguous_input ... ok
+test native_pipeline::consensus::transport::tests::prepared_large_body_fragments_reassemble_exact_bytes_under_local_domain ... ok
+test native_pipeline::consensus::transport::tests::rejects_unknown_version_kind_optional_tag_and_oversized_signed_blob ... ok
+test native_pipeline::consensus::transport::transactions::tests::raw_and_taken_roundtrip_are_versioned_distinct_and_exact ... ok
+test native_pipeline::consensus::transport::transactions::tests::raw_count_lengths_and_empty_identity_fail_closed ... ok
+
+test result: ok. 45 passed; 0 failed; 28 ignored; 0 measured; 1478 filtered out; finished in 0.02s

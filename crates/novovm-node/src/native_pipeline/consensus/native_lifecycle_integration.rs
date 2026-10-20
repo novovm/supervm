@@ -1,5 +1,6 @@
-//! The fixture supplies ONE local body per height. It does not forward protocol
-//! messages, submit remote executions, construct votes/QCs or register results.
+//! Fixtures supply local business bodies only: one leader input in the original
+//! lifecycle test, or independently prepared follower inputs in the overlap test.
+//! They do not forward protocol messages, construct votes/QCs or register results.
 //! All remote body requests, native delivery and AOEM execution are node code.
 use super::*;
 use crate::native_pipeline::consensus::{
@@ -16,6 +17,177 @@ fn native_lifecycle_single_body_three_heights_cpu() -> Result<()> {
 #[ignore = "real AOEM full algebraic backend; not a performance measurement"]
 fn native_lifecycle_single_body_three_heights_algebraic() -> Result<()> {
     run_lifecycle(ExecutionBackend::AoemIntegerV7)
+}
+
+#[test]
+#[ignore = "real AOEM; follower preparation before a real native leader proposal"]
+fn native_lifecycle_follower_preparation_cpu() -> Result<()> {
+    follower_preparation(ExecutionBackend::CpuCallbacks)
+}
+
+#[test]
+#[ignore = "real AOEM algebraic execution; no synthetic proposal or QC"]
+fn native_lifecycle_follower_preparation_algebraic() -> Result<()> {
+    follower_preparation(ExecutionBackend::AoemIntegerV7)
+}
+
+fn follower_preparation(backend: ExecutionBackend) -> Result<()> {
+    let Fixture {
+        ids,
+        set,
+        mut mesh,
+        mut services,
+        anchor,
+        drivers,
+        ..
+    } = fixture(backend)?;
+    let context = batch_context(anchor.state_root);
+    let raw = super::super::chain_integration::raw_at(1)?;
+    let body = Arc::new(Message::ApflBody {
+        context,
+        batch: Arc::new(ApflTransferBatch::from_raw(
+            &raw,
+            ApflLimits {
+                transactions: 8,
+                transaction_bytes: 1024,
+                body_bytes: 8192,
+            },
+        )?),
+    });
+    let mut reversed = raw;
+    reversed.reverse();
+    let alternative = Arc::new(Message::ApflBody {
+        context,
+        batch: Arc::new(ApflTransferBatch::from_raw(
+            &reversed,
+            ApflLimits {
+                transactions: 8,
+                transaction_bytes: 1024,
+                body_bytes: 8192,
+            },
+        )?),
+    });
+    let leader = ids
+        .iter()
+        .position(|id| *id == set.leader(1, 0).unwrap())
+        .unwrap();
+    let different = (leader + 1) % ids.len();
+    let mut nodes = Vec::new();
+    for (i, (driver, channel)) in drivers
+        .into_iter()
+        .zip(std::mem::take(&mut mesh.channels))
+        .enumerate()
+    {
+        nodes.push(NativeLifecycle::new(
+            driver,
+            CandidateBodies::new(
+                &services.0[i],
+                context,
+                policy(),
+                codec(),
+                BodyLimits {
+                    bodies: 8,
+                    bytes: 256 * 1024,
+                    inflight: 2,
+                },
+            )?,
+            channel,
+            &set,
+            DeliveryLimits {
+                messages_per_peer: 32,
+                bytes_per_peer: 512 * 1024,
+            },
+            policy(),
+            codec(),
+        )?);
+    }
+    // Only followers receive local input here. Actual AOEM verification and
+    // execution must finish without any leader proposal or fixture registration.
+    for (i, node) in nodes.iter_mut().enumerate() {
+        if i != leader {
+            ensure!(node.offer(if i == different { &alternative } else { &body })?);
+        }
+    }
+    let now = Instant::now();
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "followers did not prepare without leader"
+        );
+        for (i, node) in nodes.iter_mut().enumerate() {
+            // Freeze protocol time only in this functional setup: slow GPU
+            // initialization must not turn the no-proposal assertion into a
+            // timer test. The finite wall-clock deadline still bounds execution.
+            node.poll(&services.0[i], now)?;
+            ensure!(!node.is_frozen());
+            ensure!(
+                node.progress.head().is_none(),
+                "preparation published state"
+            );
+            ensure!(
+                node.progress.step() == TimeoutStep::Propose,
+                "preparation alone advanced signing phase"
+            );
+            ensure!(
+                node.pending_deliveries() == 0,
+                "preparation emitted protocol output"
+            );
+        }
+        if nodes
+            .iter()
+            .enumerate()
+            .all(|(i, node)| i == leader || node.executed() == 1)
+        {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    ensure!(nodes[leader].executed() == 0);
+    ensure!(nodes[leader].offer(&body)?);
+    let deadline = Instant::now() + DEADLINE;
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "prepared followers failed native consensus"
+        );
+        for (i, node) in nodes.iter_mut().enumerate() {
+            node.poll_io(1000 + now.elapsed().as_millis() as u64, Instant::now())?;
+            node.poll(&services.0[i], now)?;
+            ensure!(!node.is_frozen());
+        }
+        if nodes
+            .iter()
+            .all(|node| node.progress.head().is_some_and(|head| head.height == 1))
+        {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    let head = nodes[leader].progress.head().unwrap();
+    for (i, node) in nodes.iter().enumerate() {
+        ensure!(
+            node.progress.head() == Some(head),
+            "local alternative replaced leader value"
+        );
+        ensure!(
+            node.executed() == if i == different { 2 } else { 1 },
+            "matching candidate reran or different body bypassed independent execution"
+        );
+        if i == different {
+            ensure!(
+                node.requested_bodies > 0,
+                "different candidate bypassed exact-body request"
+            );
+        } else {
+            ensure!(
+                node.requested_bodies == 0,
+                "matching preparation was not reused"
+            );
+        }
+    }
+    drop(nodes);
+    services.shutdown()
 }
 
 fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
