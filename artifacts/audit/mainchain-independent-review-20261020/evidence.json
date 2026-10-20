@@ -1,0 +1,225 @@
+{
+  "schema": "novovm-mainchain-independent-review-v1",
+  "date": "2026-10-20",
+  "code_commit": "9bcf9c582c1592d1916e9368c7a99cffa53acc45",
+  "reference_audit_commit": "25bd54937deb40a63ec3941dc9053a13d6a557a8",
+  "latest_synced_commit": "c480ddad2768e385a24d154db57ebfec04855007",
+  "latest_synced_changes_since_code_commit": [
+    "docs/NOVONET_AUTONOMOUS_PUBLIC_DEPLOYMENT_V1.md",
+    "docs/NOVOVM_PRODUCTION_READINESS_TRACKER.md"
+  ],
+  "history": {
+    "ancestor": "fc7e6615",
+    "reference_commit_count": 687,
+    "all_687_commits_individually_reviewed": false,
+    "specific_recovery_boundary": "f5c2fcd6c624e8d43691cf8fbc8d97f6b3c75815",
+    "boundary_author_time": "2026-10-16T04:48:21+08:00"
+  },
+  "scope": {
+    "pasted_reference_read": true,
+    "other_machine_full_report_available_locally": false,
+    "source_cross_review": true,
+    "read_only_agents": 3,
+    "implementation_modified": false,
+    "remote_deployment": false,
+    "new_tps_run": false,
+    "new_fault_experiment": false,
+    "no_reset_or_log_deletion": true
+  },
+  "findings": [
+    {
+      "id": "P1-1",
+      "topic": "offline-validator broadcast barrier",
+      "status": "confirmed_by_source_control_flow",
+      "new_fault_reproduction": false,
+      "sources": [
+        "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs:235",
+        "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs:422",
+        "crates/novovm-node/src/native_pipeline/service.rs:410",
+        "crates/novovm-node/src/native_pipeline/consensus/progress.rs:422"
+      ],
+      "limit": "32 messages / 4 MiB per destination; retry expiry does not retire delivery"
+    },
+    {
+      "id": "P1-2",
+      "topic": "long-lived validator authenticated reconnect",
+      "status": "confirmed_missing_lifecycle",
+      "new_fault_reproduction": false,
+      "sources": [
+        "crates/novovm-node/src/native_pipeline/consensus/native.rs:178",
+        "crates/novovm-network/src/novorudp/endpoint.rs:247",
+        "crates/novovm-network/src/novorudp/endpoint.rs:688",
+        "crates/novovm-network/src/novorudp/endpoint/reconnect.rs:77",
+        "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs:244"
+      ],
+      "limit": "healthy established sessions do not expire every 30 seconds"
+    },
+    {
+      "id": "P1-3",
+      "topic": "network archive catch-up",
+      "status": "request_and_archive_primitives_exist_but_active_orchestration_missing",
+      "new_fault_reproduction": false,
+      "sources": [
+        "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs:404",
+        "crates/novovm-node/src/native_pipeline/consensus/transport.rs:51",
+        "crates/novovm-node/src/native_pipeline/consensus/chain.rs:384",
+        "crates/novovm-node/src/native_pipeline/consensus/controller.rs:1743"
+      ],
+      "limit": "local archive/query and same-height cold restart are not independent lagging-node recovery"
+    },
+    {
+      "id": "UCA",
+      "topic": "unified account spend authorization",
+      "status": "strict_direct_ed25519_auth_present_uca_spend_integration_missing",
+      "sources": [
+        "crates/novovm-node/src/native_pipeline/ingress/authentication.rs:112",
+        "crates/novovm-adapter-novovm/src/uca_delegation.rs:160"
+      ],
+      "limit": "management delegation must not be reinterpreted as spend permission"
+    },
+    {
+      "id": "PROOF-PQ",
+      "topic": "business validity proof and post-quantum transaction/consensus",
+      "status": "not_qualified_on_current_native_transaction_path",
+      "sources": [
+        "crates/novovm-protocol/src/native_query.rs:146",
+        "crates/novovm-consensus/src/round_bft/wire.rs:263",
+        "crates/novovm-node/src/native_pipeline/consensus/progress.rs:529"
+      ],
+      "limit": "durable BFT finality is real; existing unified ZK and ML-DSA capabilities are not product-path signoff"
+    },
+    {
+      "id": "DISCOVERY",
+      "topic": "validator automatic network selection",
+      "status": "static_udp_peer_config_in_current_owner",
+      "sources": [
+        "crates/novovm-node/src/native_pipeline/service/config.rs:167",
+        "crates/novovm-node/src/native_pipeline/service.rs:349"
+      ],
+      "limit": "mailbox/mobile overlay success is not validator NAT/relay integration"
+    },
+    {
+      "id": "PACKAGE",
+      "topic": "Linux packaging output/start contract",
+      "status": "source_mismatch_confirmed_package_not_run",
+      "sources": [
+        ".cargo/config.toml:6",
+        "scripts/novovm-package-product-linux.ps1:45",
+        "scripts/novovm-package-product-linux.ps1:60",
+        "scripts/novovm-package-product-linux.ps1:219"
+      ]
+    },
+    {
+      "id": "PERF-IDENTITY",
+      "topic": "measured versus bundled AOEM",
+      "status": "sha256_mismatch_verified_same_library_ab_retained",
+      "sources": [
+        "artifacts/audit/native-local-overlap-20261020/measurements.json",
+        "aoem/aoem-sdk-manifest.json",
+        "aoem/RUNTIME-BASELINE.md"
+      ]
+    },
+    {
+      "id": "EXTRA-TESTS",
+      "topic": "active product fault regression coverage",
+      "status": "historical_real_process_suites_excluded_no_equivalent_full_recovery_gate",
+      "sources": [
+        "crates/novovm-node/src/native_pipeline/consensus/tests.rs:8",
+        "crates/novovm-node/src/native_pipeline/consensus/native_product_load.rs:879"
+      ],
+      "limit": "86 component tests do not close these gaps"
+    },
+    {
+      "id": "EXTRA-DELETE",
+      "topic": "packager Force destination safety",
+      "status": "unbounded_recursive_delete_target_confirmed_read_only",
+      "sources": [
+        "scripts/novovm-package-product-linux.ps1:27"
+      ],
+      "limit": "path resolution only; no delete/package executed"
+    },
+    {
+      "id": "EXTRA-SDK-DOC",
+      "topic": "SDK consumer-scope drift",
+      "status": "stale_integer_prediction_description",
+      "sources": [
+        "aoem/aoem-sdk-manifest.json:37",
+        "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs:401"
+      ],
+      "limit": "do not deny current complete conditional plan based on old manifest prose"
+    }
+  ],
+  "tests": [
+    {
+      "command": "cargo test --release --locked -p novovm-consensus --lib round_bft -- --test-threads=2",
+      "environment": {
+        "os": "Windows",
+        "shell": "PowerShell",
+        "CARGO_TARGET_DIR": "target/runtime-rebuild"
+      },
+      "code_commit": "9bcf9c582c1592d1916e9368c7a99cffa53acc45",
+      "exit_code": 0,
+      "passed": 86,
+      "failed": 0,
+      "ignored": 0,
+      "filtered_out": 91,
+      "test_seconds": 0.49,
+      "build_seconds": 13.59,
+      "scope": "component regression only; not actual-node offline/restart/archive recovery"
+    }
+  ],
+  "artifact_identity": {
+    "hash_algorithm": "SHA256",
+    "verified_from_disk_this_audit": true,
+    "measured_aoem": {
+      "path": "target/native-resident-reuse-20261019/aoem-baseline.dll",
+      "sha256": "95b7133d5f04a10b2d782d06d57f208f8ef387e3131668418f7096f58d399307"
+    },
+    "bundled_windows": {
+      "path": "aoem/windows/core/bin/aoem_ffi.dll",
+      "sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947"
+    },
+    "bundled_linux": {
+      "path": "aoem/linux/core/bin/libaoem_ffi.so",
+      "sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309"
+    },
+    "historical_formal_runs": 8,
+    "successes_per_run": 65536,
+    "business_failures_per_run": 0,
+    "cold_economics_passed_per_run": true,
+    "historical_node_baseline_sha256": "196c90d4c4f100fa2c4d323e635bae1857a21c758dd6f2f438c7856899d8b60b",
+    "historical_node_candidate_sha256": "293130c457a201639139a145e9b2da31a10f6268224cd3f96f3311da4da2db86",
+    "same_library_ab_valid": true,
+    "qualifies_bundled_release": false,
+    "qualifies_multi_host_tps": false
+  },
+  "ci_snapshots": [
+    {
+      "run": 39382347662,
+      "commit": "25bd54937deb40a63ec3941dc9053a13d6a557a8",
+      "status": "completed",
+      "conclusion": "cancelled"
+    },
+    {
+      "run": 39382770104,
+      "commit": "9bcf9c582c1592d1916e9368c7a99cffa53acc45",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "updated_at_utc": "2026-10-20T07:27:18Z",
+      "note": "Rust checks cancelled; artifact upload reported failure; not full CI pass"
+    },
+    {
+      "run": 39386580513,
+      "commit": "c480ddad2768e385a24d154db57ebfec04855007",
+      "status": "in_progress",
+      "conclusion": null,
+      "observed_at_utc": "2026-10-20T07:32:19Z",
+      "note": "point-in-time observation only"
+    }
+  ],
+  "preservation": {
+    "historical_drafts_stash": "1a8955b29ec6dc83e82274a3812d48eb469819a7",
+    "drafts_restored_or_dropped": false,
+    "data_keys_signing_logs_or_sibling_repositories_modified": false
+  }
+}

@@ -7,6 +7,14 @@ novovm-node 的 native_execution_tick，经 NovoRUDP/APFL -> exec/bindings/AOEM
 -> 原共识/journal/发布/查询。不恢复旧 V3、HTTP 或 replacement bootstrap。
 此次只准备测试设备，不批准主网发行、不继承测试余额、不启动生产链。
 
+2026-10-20 独立复核追加限制（程序基线9bcf9c58；c480ddad仅文档更新）：
+当前发现离线目的端可能挡住健康广播、固定validator认证重连不闭合、网络归档
+追赶未接入；旧Linux包的产物路径/启动模板及-Force删除边界也需修复。
+同步、清点和release构建可继续，先停在下方第一步；这些缺口关闭并经真实节点
+验证前，不开始正式多机长跑/发布包TPS签收，不执行旧打包脚本的-Force。
+四库同高度一起冷重启不是单节点独立恢复；公网信箱/手机通过不是validator通过。
+见artifacts/audit/mainchain-independent-review-20261020/README.md及最新台账。
+
 一台机器四进程继续用于受控回归和共享资源压力诊断；真实多机另列报告。
 本轮设备角色按用户指定：host-1为本机，host-2为阿里云公网验证节点部署目标，
 host-3/4为另外两台电脑；两台手机是L4，不计BFT。host-2不是仅做Relay，

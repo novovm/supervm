@@ -1,5 +1,34 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-20 主链独立复核：正常快路径不等于独立故障恢复
+
+固定程序源码`9bcf9c58`，审阅中同步`c480ddad`的另一设备网络/台账更新；
+二者程序相同。参考审计的八项集成缺口经本机源码、旧实现和制品身份交叉核对，
+未运行新的离线/追赶故障实验，也未改程序、SDK或节点数据。
+
+前三项是正常运行所需P1：所有目的端同时有额度才取走outbox；固定validator的
+单次握手到期/SessionReplaced缺少持续恢复编排；已有RequestDecision/ArchiveRead
+未接入原生网络追赶。定位到`f5c2fcd6`切回原tick时的迁接遗漏，不是本轮执行重叠
+优化引入。旧controller的逐peer发送/退役、认证会话替换、精确归档请求可复用，
+应接回当前NativeLifecycle，不启用第二controller、不降低3/4、不复制数据库。
+
+额外核实：旧真实进程A/A/B/离线套件不再编译，现有同高度一起冷重启不能替代；
+Linux打包既有target目录/启动模板漂移，`-Force`还缺专用输出目录删除边界；
+SDK中“整数预测/CPU修复”的消费说明已落后于当前完整条件计划。
+UCA花费授权、业务ZK/PQ和自动联网仍分别登记；不否认现有严格验签、AOEM统一
+执行与耐久BFT，也不把AOEM能力存在等同于当前产品已接通。
+
+本机独立复跑86项round_bft组件测试通过；不是上述实际节点故障验收。
+12,324/6,546 TPS同库A/B记录保留，但测量库`95b713…`不同于随包Windows库
+`313060…`，不能用作新包或真实多机资格。本轮未测TPS。
+`39382347662`和`39382770104`均已cancelled，不计远端全绿。
+
+下一项建议为成套恢复“离线不拖停→认证重连→精确归档独立执行追平”，
+并修包/核对实际制品。各机可同步、清点和release构建；这些缺口关闭前不签收
+正式多机长跑、发布包性能或生产主网。原CPU快路径和百万级目标不变。
+完整来源、因果、反例覆盖与验收边界见
+[独立复核报告](../artifacts/audit/mainchain-independent-review-20261020/README.md)。
+
 ## 2026-10-20 Android v85 owned TLS fallback: PARTIAL, cellular bulk gate open
 
 Using the same installed v85 and original phone identities, each isolated gate
