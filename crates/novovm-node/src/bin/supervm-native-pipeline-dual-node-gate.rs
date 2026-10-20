@@ -864,6 +864,8 @@ fn main() -> Result<()> {
                 "10000".into(),
             ),
             ("NOVOVM_NODE_MODE", "native_execution_pipeline".to_string()),
+            // This diagnostic uses funded historical fixtures, not product startup.
+            ("NOVOVM_JULY_HISTORICAL_FIXTURE", "1".to_string()),
             (
                 "NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID",
                 chain_id.to_string(),

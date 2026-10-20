@@ -553,6 +553,7 @@ jobs:
           cargo run -p novovm-node --bin supervm-mainline-gate
 
       - name: Native pipeline dual-node lifecycle gate (historical comparison only)
+        id: native_pipeline_gate
         env:
           NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '1'
         shell: bash
@@ -582,7 +583,8 @@ jobs:
           if-no-files-found: error
 
       - name: Upload native pipeline artifact
-        if: always()
+        # Earlier failures can skip the producer; an executed gate still owes evidence.
+        if: ${{ !cancelled() && (steps.native_pipeline_gate.outcome == 'success' || steps.native_pipeline_gate.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: supervm-native-pipeline-dual-node-gate

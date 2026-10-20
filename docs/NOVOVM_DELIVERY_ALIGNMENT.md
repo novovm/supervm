@@ -1,5 +1,20 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-20 CI 39416529674 修复（认领已释放，远端另验）：** 输入 main `466c8a7e`。
+范围仅历史进程测试/诊断 gate 的显式夹具参数与对应 artifact 上传条件；
+复用原进程、随包 AOEM 和原持久化断言，不修改生产启动守卫、执行链或兄弟仓。
+旧 CI 两失败共享的 source fixture 已本机复现；历史输入生产者、坏 pin 比较与
+后续 CI 历史进程入口显式设置 JULY fixture，不在公共 helper 或 workflow 全局放行。
+坏 pin 原断言全部保留并正名 historical；新增 Host=0、无 fixture 的普通启动反例，
+tick/pipeline 缺配置均拒绝且新库/原库文件指纹不变。生产 node 源码未改。
+artifact 仅对应 producer 实际成功/失败后上传；跳过或取消不误报缺文件，
+执行后仍保留 `if-no-files-found: error`。Windows 本机完整 CLI 13通过/16忽略；
+另显式跑连续三高度与 Host=0 Transfer 混合对照，各1通过；诊断单测8通过，
+8笔/3接收端/2发送轮 gate accepted，三接收端各8笔耐久，明确 unsealed/noncanonical。
+fmt、全 workspace/all-targets 严格Clippy、actionlint 1.7.7通过；原始进程证据保留在
+本机 `artifacts/audit/candidate-node-processes` 与 `artifacts/audit/ci-fix-39416529674`。
+这不是生产性能/真实多机签收；本轮提交推送后须以对应 SHA 的远端 CI 独立确认。
+
 **2026-10-20 原生独立恢复修复（认领已释放）：** 输入main`2affdf04`，主控集成/唯一
 构建与性能槽；三个有界分工分别处理端点重连、当前实际进程反例、Linux打包边界。
 最终实现仍为原tick→NovoRUDP/APFL→NativeLifecycle→原AOEM/round_bft/journal，

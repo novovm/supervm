@@ -285,13 +285,14 @@ fn source_candidate() -> (
     NovNativeDurableBlockV1,
     NovNativeCandidateExecutionPlanV1,
 ) {
-    // Produce an authentic source candidate through the unchanged normal node
-    // pipeline, then extract INPUTS ONLY; never copy its DB/output into peers.
+    // Historical funded-fixture input producer, not a configured product node.
+    // Extract INPUTS ONLY; never copy its DB/output into peers.
     let source = Node::funded("source");
     let result = source.run(
         source
             .command()
             .env("NOVOVM_NODE_MODE", "native_execution_pipeline")
+            .env("NOVOVM_JULY_HISTORICAL_FIXTURE", "1")
             .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", "2")
             .env("NOVOVM_NATIVE_EXECUTION_TICK_HARD_BUDGET", "2")
             .env("NOVOVM_NATIVE_EXECUTION_PIPELINE_QUIET_TICKS", "true")
@@ -365,7 +366,7 @@ fn persistence_files(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
 }
 
 #[test]
-fn production_startup_bad_pin_refuses_before_new_or_existing_persistence() {
+fn historical_fixture_startup_bad_pin_refuses_before_new_or_existing_persistence() {
     let fresh = Node::new("startup-pin-empty");
     let (existing, _, _) = source_candidate();
     for node in [&fresh, &existing] {
@@ -385,6 +386,7 @@ fn production_startup_bad_pin_refuses_before_new_or_existing_persistence() {
                 let mut command = node.command();
                 command
                     .env("NOVOVM_NODE_MODE", mode)
+                    .env("NOVOVM_JULY_HISTORICAL_FIXTURE", "1")
                     .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", "1");
                 if drift {
                     command.env("NOVOVM_NATIVE_FEE_RATE_PPM", "1234567");
@@ -396,7 +398,7 @@ fn production_startup_bad_pin_refuses_before_new_or_existing_persistence() {
                 let result = node.run(&mut command, &format!("{mode}-{label}"));
                 assert!(
                     !result.0,
-                    "invalid production configuration must refuse startup"
+                    "invalid historical fixture pin must refuse startup"
                 );
                 assert!(
                     result.2.contains(
@@ -415,6 +417,38 @@ fn production_startup_bad_pin_refuses_before_new_or_existing_persistence() {
     }
     assert!(persistence_files(&fresh.0).is_empty());
     existing.assert_funded_result();
+}
+
+#[test]
+fn production_startup_missing_config_refuses_before_new_or_existing_persistence() {
+    let fresh = Node::new("startup-config-empty").without_legacy_host_execution();
+    let existing = Node::funded("startup-config-existing").without_legacy_host_execution();
+    for node in [&fresh, &existing] {
+        let before = persistence_files(&node.0);
+        for mode in ["native_execution_tick", "native_execution_pipeline"] {
+            let mut command = node.command();
+            command.env("NOVOVM_NODE_MODE", mode);
+            for key in [
+                "NOVOVM_NATIVE_EXECUTION_CONFIG",
+                "NOVOVM_JULY_HISTORICAL_FIXTURE",
+            ] {
+                assert!(command.get_envs().all(|(name, value)| {
+                    !name.to_string_lossy().eq_ignore_ascii_case(key) || value.is_none()
+                }));
+            }
+            let result = node.run(&mut command, mode);
+            assert!(!result.0, "unconfigured production startup must fail");
+            assert!(
+                result
+                    .2
+                    .contains("native tick requires NOVOVM_NATIVE_EXECUTION_CONFIG"),
+                "{}",
+                result.2
+            );
+            assert_eq!(persistence_files(&node.0), before);
+        }
+    }
+    assert!(persistence_files(&fresh.0).is_empty());
 }
 
 #[test]
