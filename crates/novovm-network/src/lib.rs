@@ -14,6 +14,8 @@ pub mod control_plane;
 #[cfg(feature = "iroh-transport")]
 pub mod discovery_control;
 pub mod duplex;
+#[cfg(feature = "iroh-transport")]
+pub mod endpoint_delivery;
 pub mod eth_chain_config;
 pub mod eth_fullnode;
 pub mod eth_rlpx;
@@ -24,8 +26,6 @@ pub mod gossip;
 pub mod iroh_transport;
 pub mod mailbox_receipt;
 pub mod mailbox_replicas;
-#[cfg(feature = "iroh-transport")]
-pub mod endpoint_delivery;
 #[cfg(feature = "iroh-transport")]
 pub mod mailbox_rpc;
 #[cfg(feature = "mailbox-seal")]

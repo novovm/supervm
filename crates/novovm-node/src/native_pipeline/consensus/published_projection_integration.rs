@@ -165,29 +165,29 @@ fn published_projection_requires_local_ack_exact_head_and_matches_cold_receipts(
         loop {
             ensure!(Instant::now() < deadline, "projection consensus deadline");
             let mut messages = Vec::new();
-            for i in 0..4 {
+            for (i, driver) in drivers.iter_mut().enumerate() {
                 if i == held && !released {
                     continue;
                 }
-                drivers[i].poll(&services.0[i], Instant::now())?;
-                if drivers[i].head() != Some(expected) {
-                    assert!(drivers[i].published_packet(expected).is_none());
+                driver.poll(&services.0[i], Instant::now())?;
+                if driver.head() != Some(expected) {
+                    assert!(driver.published_packet(expected).is_none());
                 }
-                if let Some(message) = drivers[i].take_message() {
+                if let Some(message) = driver.take_message() {
                     messages.push((i, message));
                 }
             }
             for (sender, message) in messages {
-                for i in 0..4 {
-                    if i == sender || drivers[i].context().height != height {
+                for (i, driver) in drivers.iter_mut().enumerate() {
+                    if i == sender || driver.context().height != height {
                         continue;
                     }
-                    let before = drivers[i].head();
-                    drivers[i].receive(ids[sender], &message)?;
-                    assert_eq!(drivers[i].head(), before);
+                    let before = driver.head();
+                    driver.receive(ids[sender], &message)?;
+                    assert_eq!(driver.head(), before);
                     if before != Some(expected) {
                         // Includes a genuine remote Decision: receipt alone cannot populate the slot.
-                        assert!(drivers[i].published_packet(expected).is_none());
+                        assert!(driver.published_packet(expected).is_none());
                     }
                     if i == held && !released && matches!(message, Message::Decision { .. }) {
                         assert_eq!(before, previous);

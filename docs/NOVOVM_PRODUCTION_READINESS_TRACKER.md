@@ -50,6 +50,32 @@ Iroh remains an optional everyday fallback. Full application evidence is in
 NOVOCHAT `docs/implementation/P0_CHECKPOINT.md`; private gate artifacts stay
 outside Git. Reuse the existing SDK/owner for the remaining carrier integration.
 
+## 2026-10-20 GPU 门面同步成本归因；CI 门禁独立修复
+
+保留原提前执行成果、CPU 默认快路径及 NovoRUDP/APFL 唯一主线；本片只测现有
+GPU 门面，不改网络轮询/共识或执行算法。复用 AOEM 原 Vulkan profile/设备身份，
+临时计数源码已撤回，AOEM 工作区干净且非诊断 FULLMAX 输出已重建；正式 SDK 未换。
+
+四原节点/四库、原生单入口、65,536 真实签名、批1024的诊断样本中，每节点64计划、
+7040次同步 exchange（110次/计划）。每批 node integer_wire 均值60.55–61.40ms，
+其中 Host fence wait 累计31.42–32.12ms、device命令区间6.25–6.32ms、
+Host读回/组装9.87–10.40ms。设备为实绑RTX5090 Laptop GPU。区间嵌套/重叠，
+不能相加成整链占比，device不是shader独占，wait也不等于纯锁或纯空闲。
+同一完整组件四进程对照中，后续16次计划平均wall由单进程31.36ms变为每进程
+62.22–64.73ms，device区间基本相同，支持优先查同步提交/竞争，不证明某把锁根因。
+
+额外计数/时间戳OFF和ON的两个诊断样本均65536成功/0失败、费用2949120、
+扣费守恒/nonce/四库冷恢复及同状态根通过；6,584.65/6,435.33 TPS只作测量扰动
+记录，不是新优化或正式跑分。首次提交至四节点最终回执边界未变，首批等待仍计入；
+上片关闭诊断的CPU12,324.09/整数6,546.13 TPS仍是正式阶段参照。
+
+CI `put_bounded` 私有参数分组（b40ffb5a）及发布投影fixture等价迭代修正
+（922e012a）分开提交；mailbox12项、带正确feature的bulk专项1项、真实AOEM
+发布/ACK/冷回执专项1项通过，本地全工作区release all-targets严格Clippy及fmt通过。
+远端完整CI尚需按最新提交独立验收，不能以本机结果签收。
+原始身份、计数和下一项已有resident graph接合核查见
+[GPU门面归因证据](../artifacts/audit/native-gpu-facade-attribution-20261020/README.md)。
+
 ## 2026-10-20 Ubuntu owned native service deployed; phone gate pending
 
 The isolated Linux owner is serving native UDP and V8/TLS with external relay
