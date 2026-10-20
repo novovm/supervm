@@ -36,6 +36,7 @@ fn queued_crash(node: &Node, raw: &[u8]) -> u32 {
     let mut command = node.command();
     command
         .env("NOVOVM_NODE_MODE", "native_execution_tick")
+        .env("NOVOVM_JULY_HISTORICAL_FIXTURE", "1")
         .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", "0")
         .env("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", "100")
         .env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED", "true")

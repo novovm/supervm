@@ -131,6 +131,7 @@ fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> V
             cmd.env("NOVOVM_NATIVE_FRESH_TIMING", "1");
         }
         cmd.env("NOVOVM_NODE_MODE", "native_execution_tick")
+            .env("NOVOVM_JULY_HISTORICAL_FIXTURE", "1")
             .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", ticks.to_string())
             .env("NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS", "250")
             .env("NOVOVM_NATIVE_EXECUTION_PIPELINE_QUIET_TICKS", "true")
