@@ -983,36 +983,6 @@ async fn dispatch_self_owned_node<T>(
     }
 }
 
-#[cfg(test)]
-mod v8_selector_tests {
-    use super::*;
-
-    #[test]
-    fn selector_v8_is_explicit_and_legacy_entrypoints_reject_it() -> Result<()> {
-        assert!(self_owned_node_service(MAILBOX_REQUEST_V8, false).is_err());
-        assert!(legacy_node_service(MAILBOX_REQUEST_V8).is_err());
-        assert!(matches!(
-            self_owned_node_service(MAILBOX_REQUEST_V8, true)?,
-            NodeServiceV1::MailboxNativeV8
-        ));
-        for allow_v8 in [false, true] {
-            assert!(matches!(
-                self_owned_node_service(MAILBOX_REQUEST_V7, allow_v8)?,
-                NodeServiceV1::MailboxNative
-            ));
-            for invalid in [
-                b"NVMBOX09".as_slice(),
-                b"NVMBOX08x",
-                b"NVMBOX0",
-                b"nvmBOX08",
-            ] {
-                assert!(self_owned_node_service(invalid, allow_v8).is_err());
-            }
-        }
-        Ok(())
-    }
-}
-
 /// The bounded service selector only chooses a protocol, never trust or privacy.
 /// Both paths still require the unchanged offer verification and Finished binding.
 pub async fn serve_node_offer_selected_v1<T>(
@@ -1068,5 +1038,35 @@ pub(crate) async fn accept_mailbox_multiplex_lane(
         accept_mailbox_multiplex_lane_v6(stream).await
     } else {
         accept_mailbox_multiplex_lane_v5(stream).await
+    }
+}
+
+#[cfg(test)]
+mod v8_selector_tests {
+    use super::*;
+
+    #[test]
+    fn selector_v8_is_explicit_and_legacy_entrypoints_reject_it() -> Result<()> {
+        assert!(self_owned_node_service(MAILBOX_REQUEST_V8, false).is_err());
+        assert!(legacy_node_service(MAILBOX_REQUEST_V8).is_err());
+        assert!(matches!(
+            self_owned_node_service(MAILBOX_REQUEST_V8, true)?,
+            NodeServiceV1::MailboxNativeV8
+        ));
+        for allow_v8 in [false, true] {
+            assert!(matches!(
+                self_owned_node_service(MAILBOX_REQUEST_V7, allow_v8)?,
+                NodeServiceV1::MailboxNative
+            ));
+            for invalid in [
+                b"NVMBOX09".as_slice(),
+                b"NVMBOX08x",
+                b"NVMBOX0",
+                b"nvmBOX08",
+            ] {
+                assert!(self_owned_node_service(invalid, allow_v8).is_err());
+            }
+        }
+        Ok(())
     }
 }

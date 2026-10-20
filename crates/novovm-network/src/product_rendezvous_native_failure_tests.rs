@@ -114,7 +114,7 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
     service.set_resources_available(true).await?;
     let journal = dir.path().join("authority.bin");
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let server = run_self_owned_mailbox_on_endpoint_with_native_v7(
+    let mut server = Box::pin(run_self_owned_mailbox_on_endpoint_with_native_v7(
         &owner,
         key(17),
         stop.clone(),
@@ -146,7 +146,7 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
             tx.send(record.clone())?;
             Ok(())
         },
-    );
+    ));
     let client = async {
         let first = rx.recv().await.context("initial advertisement")?;
         ensure!(NativeMailboxEndpointV7::from_record(&first)?.is_some());
@@ -184,7 +184,6 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
             session.finish().await
         })).await
     };
-    tokio::pin!(server);
     let result = tokio::select! {
         result = tokio::time::timeout(Duration::from_secs(15), client) => result?,
         result = &mut server => { result?; anyhow::bail!("shared owner stopped") }

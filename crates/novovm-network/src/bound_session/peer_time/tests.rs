@@ -219,8 +219,7 @@ async fn run(case: Case) -> Result<()> {
                     anyhow::bail!("fixture owner revoked")
                 })
                 .await
-                .err()
-                .expect("revoked owner sent time");
+                .expect_err("revoked owner sent time");
                 ensure!(matches!(error, BoundSessionError::Local(_)));
                 drop(stream);
                 done_rx.await?;

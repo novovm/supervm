@@ -21,7 +21,7 @@ These are implementation pointers, not blanket production acceptance.
 | Cryptography / execution | [AOEM signatures](../../AOEM/crates/adapter/aoem-adapter-crypto/src/signature.rs), [batch verification](../../AOEM/crates/adapter/aoem-adapter-crypto/src/batch_verify.rs), [privacy FFI](../../AOEM/crates/ffi/aoem-ffi/src/classic_privacy_wire.rs) | Existing cryptographic/execution components; not an Android file-grant or encrypted SQLite journal API. No transaction/consensus detour for attachments. |
 | Media experience | [KINGCLUB media cache/transfer](../../KINGCLUB-APP-V2/lib/src/features/messaging/data/chat_media_transfer.dart), [audio constraints](../../KINGCLUB-APP-V2/lib/src/features/messaging/data/call_audio_constraints.dart) | Read-only reference. Reuse applicable lifecycle/cache/audio experience; do not import central account, HTTP service credentials or assume media E2EE. |
 
-## 2026-10-20 Native declaration time handling (candidate)
+## 2026-10-20 Native declaration time handling (implemented in `5961c5ea`)
 
 Existing [directory signature validation](../crates/novovm-network/src/product_directory.rs),
 [ServiceLeaseBook](../crates/novovm-network/src/product_service_native.rs) and
@@ -38,8 +38,14 @@ for self-owned ServiceRecordV7 metadata without changing those contracts. Native
 callers reuse the same book checks and original request deadline, sleep outside
 the lock, recheck on wake, and refresh an authentic expired lookup at most once.
 No clock authority, signature exception, TTL extension or failed-slot reset is added.
-Phone TLS-only acceptance is still pending; the prior failure is not retrospectively
-attributed to clock skew without the rejected record's actual timestamps.
+The [device acceptance records](NOVOVM_PRODUCTION_READINESS_TRACKER.md) supersede
+the earlier pending status: v87 passed one strict TLS-only image/receipt closure;
+v88 retained three successful attempts and one fixture abort, not consecutive 3/3.
+Later v89 records retain the 59.490-second recovery tail as unresolved; normal
+samples do not sign off that tail, P95 or production stability. These are the
+NOVOCHAT machine's device records, not a new SUPERVM mainchain or multi-host test.
+The prior locator failure is not retrospectively attributed to clock skew without
+the rejected record's actual timestamps.
 
 ## Current attachment call chain and smallest remaining seam
 

@@ -42,7 +42,7 @@ async fn borrowed_l4_endpoint_shares_udp_custody_and_preserves_carrier() -> Resu
     let journal = dir.path().join("authority.bin");
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = Mutex::new(Some(tx));
-    let server = run_self_owned_mailbox_on_endpoint_with_native_v7(
+    let mut server = Box::pin(run_self_owned_mailbox_on_endpoint_with_native_v7(
         &owner,
         key(17),
         stop.clone(),
@@ -72,7 +72,7 @@ async fn borrowed_l4_endpoint_shares_udp_custody_and_preserves_carrier() -> Resu
             }
             Ok(())
         },
-    );
+    ));
     let client = async {
         let record = rx.await?;
         ensure!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&record)?);
@@ -135,7 +135,6 @@ async fn borrowed_l4_endpoint_shares_udp_custody_and_preserves_carrier() -> Resu
         ));
         Ok::<(), anyhow::Error>(())
     };
-    tokio::pin!(server);
     let result = tokio::select! {
         result = tokio::time::timeout(Duration::from_secs(20), client) => result?,
         result = &mut server => { result?; bail!("borrowed owner ended early") }

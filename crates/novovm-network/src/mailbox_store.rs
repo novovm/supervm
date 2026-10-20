@@ -204,6 +204,9 @@ pub struct MailboxStore {
     db: Connection,
     limits: Limits,
     resources_available: bool,
+    // Failed policy recovery denies new custody until this owner reopens the
+    // database. Existing reads, consumes and exact retries keep their authority.
+    storage_policy_failed: bool,
 }
 impl MailboxStore {
     pub fn open(path: impl AsRef<Path>, limits: Limits) -> Result<Self, StoreError> {
@@ -275,13 +278,7 @@ impl MailboxStore {
              id INTEGER PRIMARY KEY CHECK(id=1), limit_bytes INTEGER
              CHECK(limit_bytes IS NULL OR limit_bytes>=524288000));",
         )?;
-        let configured: Option<Option<i64>> = db
-            .query_row(
-                "SELECT limit_bytes FROM mailbox_storage_policy WHERE id=1",
-                [],
-                |r| r.get(0),
-            )
-            .optional()?;
+        let configured = read_storage_policy(&db)?;
         if let Some(value) = configured {
             limits = storage_policy_limits(
                 value
@@ -365,6 +362,7 @@ impl MailboxStore {
             db,
             limits,
             resources_available,
+            storage_policy_failed: false,
         })
     }
     fn begin(&mut self, now: i64) -> Result<Transaction<'_>, StoreError> {
@@ -417,6 +415,10 @@ impl MailboxStore {
         self.resources_available = available;
     }
 
+    fn custody_resources_available(&self) -> bool {
+        self.resources_available && !self.storage_policy_failed
+    }
+
     pub fn storage_budget(&self) -> Option<usize> {
         (self.limits.total_bytes != usize::MAX).then_some(self.limits.total_bytes)
     }
@@ -424,24 +426,57 @@ impl MailboxStore {
     /// Local owner only. Shrinking affects new custody, never existing TTL,
     /// reads, idempotent retries or contribution choice. No service restart.
     pub fn set_storage_budget(&mut self, bytes: Option<usize>, now: i64) -> Result<(), StoreError> {
+        if self.storage_policy_failed {
+            return Err(StoreError::Invalid);
+        }
         let limits = storage_policy_limits(bytes)?;
-        apply_database_budget(&self.db, limits)?;
-        let tx = self.begin(now)?;
-        tx.execute(
-            "INSERT INTO mailbox_storage_policy(id,limit_bytes) VALUES(1,?1)
-             ON CONFLICT(id) DO UPDATE SET limit_bytes=excluded.limit_bytes",
-            [bytes
-                .map(i64::try_from)
-                .transpose()
-                .map_err(|_| StoreError::Invalid)?],
-        )?;
-        tx.commit()?;
+        let encoded = bytes
+            .map(i64::try_from)
+            .transpose()
+            .map_err(|_| StoreError::Invalid)?;
+        let previous_policy = read_storage_policy(&self.db)?;
+        let previous_pages = self
+            .db
+            .query_row("PRAGMA max_page_count", [], |r| r.get(0))?;
+        let update = (|| -> Result<(), StoreError> {
+            let tx = self.begin(now)?;
+            tx.execute(
+                "INSERT INTO mailbox_storage_policy(id,limit_bytes) VALUES(1,?1)
+                 ON CONFLICT(id) DO UPDATE SET limit_bytes=excluded.limit_bytes",
+                [encoded],
+            )?;
+            // max_page_count is connection state, not transactionally undone.
+            // Check the clock and policy SQL first, but still restore explicitly
+            // if setting the ceiling or the subsequent COMMIT fails.
+            apply_database_budget(&tx, limits)?;
+            tx.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = update {
+            let restored = (|| -> Result<(), StoreError> {
+                if !self.db.is_autocommit() {
+                    self.db.execute_batch("ROLLBACK")?;
+                }
+                if read_storage_policy(&self.db)? != previous_policy {
+                    return Err(StoreError::Invalid);
+                }
+                set_database_page_limit(&self.db, previous_pages)
+            })();
+            if let Err(recovery_error) = restored {
+                // Do not let an uncertain physical/durable policy accept new
+                // obligations under the old in-memory quota. Reopen reconciles
+                // the durable policy; power/network readiness cannot clear this.
+                self.storage_policy_failed = true;
+                return Err(recovery_error);
+            }
+            return Err(error);
+        }
         self.limits = limits;
         Ok(())
     }
 
     pub fn contribution_status(&mut self, now: i64) -> Result<ContributionStatusV1, StoreError> {
-        let resources_available = self.resources_available;
+        let resources_available = self.custody_resources_available();
         let storage_limit_bytes = self.storage_budget().map(|n| n as u64);
         let tx = self.begin(now)?;
         let enabled = contribution_enabled(&tx)?;
@@ -493,7 +528,7 @@ impl MailboxStore {
             return Err(StoreError::Invalid);
         }
         let limit = self.limits.mailboxes;
-        let resources_available = self.resources_available;
+        let resources_available = self.custody_resources_available();
         let tx = self.begin(now)?;
         let existing: Option<(Vec<u8>, Vec<u8>, i64)> = tx
             .query_row(
@@ -545,7 +580,7 @@ impl MailboxStore {
         if !(60..=MAX_TTL).contains(&ttl) {
             return Err(StoreError::Invalid);
         }
-        let resources_available = self.resources_available;
+        let resources_available = self.custody_resources_available();
         let tx = self.begin(now)?;
         let previous = authorize(&tx, id, read, false, now)?;
         if now + ttl > previous {
@@ -615,7 +650,7 @@ impl MailboxStore {
             expires,
         } = envelope;
         let limits = self.limits;
-        let resources_available = self.resources_available;
+        let resources_available = self.custody_resources_available();
         if *object == [0; 32]
             || ciphertext.is_empty()
             || ciphertext.len() > object_limit
@@ -955,6 +990,16 @@ fn storage_policy_limits(bytes: Option<usize>) -> Result<Limits, StoreError> {
     }
 }
 
+fn read_storage_policy(db: &Connection) -> Result<Option<Option<i64>>, StoreError> {
+    Ok(db
+        .query_row(
+            "SELECT limit_bytes FROM mailbox_storage_policy WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?)
+}
+
 fn apply_database_budget(db: &Connection, limits: Limits) -> Result<(), StoreError> {
     let bytes = limits.database_bytes()?;
     let page_size: i64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
@@ -968,6 +1013,10 @@ fn apply_database_budget(db: &Connection, limits: Limits) -> Result<(), StoreErr
             .max(current.saturating_add(16))
             .min(SQLITE_MAX_PAGES)
     };
+    set_database_page_limit(db, pages)
+}
+
+fn set_database_page_limit(db: &Connection, pages: i64) -> Result<(), StoreError> {
     let actual: i64 = db.query_row(&format!("PRAGMA max_page_count={pages}"), [], |r| r.get(0))?;
     if actual != pages {
         return Err(StoreError::Invalid);
@@ -978,6 +1027,184 @@ fn apply_database_budget(db: &Connection, limits: Limits) -> Result<(), StoreErr
 #[cfg(test)]
 mod resource_budget_tests {
     use super::*;
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct BudgetSnapshot {
+        memory: Option<usize>,
+        durable: Option<Option<i64>>,
+        max_pages: i64,
+        high_water: i64,
+    }
+
+    fn budget_snapshot(store: &MailboxStore) -> Result<BudgetSnapshot, StoreError> {
+        Ok(BudgetSnapshot {
+            memory: store.storage_budget(),
+            durable: store
+                .db
+                .query_row(
+                    "SELECT limit_bytes FROM mailbox_storage_policy WHERE id=1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?,
+            max_pages: store
+                .db
+                .query_row("PRAGMA max_page_count", [], |r| r.get(0))?,
+            high_water: store.db.query_row(
+                "SELECT high_water FROM clock_guard WHERE id=1",
+                [],
+                |r| r.get(0),
+            )?,
+        })
+    }
+
+    #[test]
+    fn rejected_storage_budget_clock_rollback_keeps_all_policy_layers() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store =
+            MailboxStore::open(dir.path().join("store.db"), Limits::unlimited_storage())?;
+        store.set_storage_budget(None, 100)?;
+        store.sweep(101)?;
+        let before = budget_snapshot(&store)?;
+        assert!(matches!(
+            store.set_storage_budget(Some(500 * 1024 * 1024), 100),
+            Err(StoreError::ClockRollback)
+        ));
+        assert_eq!(budget_snapshot(&store)?, before);
+        assert!(!store.storage_policy_failed);
+        store.set_storage_budget(Some(500 * 1024 * 1024), 101)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_storage_budget_sql_update_keeps_all_policy_layers() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store =
+            MailboxStore::open(dir.path().join("store.db"), Limits::unlimited_storage())?;
+        store.set_storage_budget(None, 100)?;
+        store.db.execute_batch(
+            "CREATE TRIGGER reject_storage_policy_update
+             BEFORE UPDATE ON mailbox_storage_policy
+             BEGIN SELECT RAISE(ABORT, 'storage policy fixture failure'); END;",
+        )?;
+        let before = budget_snapshot(&store)?;
+        match store.set_storage_budget(Some(500 * 1024 * 1024), 101) {
+            Err(StoreError::Database(error)) => {
+                assert!(error.to_string().contains("storage policy fixture failure"));
+            }
+            _ => panic!("the policy fixture must reject the update"),
+        }
+        assert_eq!(budget_snapshot(&store)?, before);
+        assert!(!store.storage_policy_failed);
+        store
+            .db
+            .execute_batch("DROP TRIGGER reject_storage_policy_update;")?;
+        store.set_storage_budget(Some(500 * 1024 * 1024), 101)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_storage_budget_commit_keeps_all_policy_layers() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store =
+            MailboxStore::open(dir.path().join("store.db"), Limits::unlimited_storage())?;
+        store.set_storage_budget(None, 100)?;
+        // The UPDATE succeeds. Its trigger creates a deferred FK violation,
+        // so COMMIT fails only after the new physical ceiling has been applied.
+        store.db.execute_batch(
+            "CREATE TABLE budget_commit_parent(id INTEGER PRIMARY KEY);
+             CREATE TABLE budget_commit_child(
+                 parent INTEGER NOT NULL REFERENCES budget_commit_parent(id)
+                 DEFERRABLE INITIALLY DEFERRED);
+             CREATE TRIGGER reject_storage_policy_commit
+             AFTER UPDATE ON mailbox_storage_policy
+             BEGIN INSERT INTO budget_commit_child(parent) VALUES(1); END;",
+        )?;
+        let before = budget_snapshot(&store)?;
+        match store.set_storage_budget(Some(500 * 1024 * 1024), 101) {
+            Err(StoreError::Database(error)) => {
+                assert!(error.to_string().contains("FOREIGN KEY constraint failed"));
+            }
+            _ => panic!("the deferred foreign key must reject COMMIT"),
+        }
+        assert_eq!(budget_snapshot(&store)?, before);
+        assert!(!store.storage_policy_failed);
+        let children: i64 =
+            store
+                .db
+                .query_row("SELECT count(*) FROM budget_commit_child", [], |r| r.get(0))?;
+        assert_eq!(children, 0);
+        store
+            .db
+            .execute_batch("DROP TRIGGER reject_storage_policy_commit;")?;
+        store.set_storage_budget(Some(500 * 1024 * 1024), 101)?;
+        Ok(())
+    }
+
+    #[test]
+    fn sqlite_budget_pragma_requires_explicit_restore_after_rollback() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store =
+            MailboxStore::open(dir.path().join("store.db"), Limits::unlimited_storage())?;
+        store.set_storage_budget(None, 100)?;
+        let before = budget_snapshot(&store)?;
+        let tx = store
+            .db
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        apply_database_budget(&tx, storage_policy_limits(Some(500 * 1024 * 1024))?)?;
+        tx.rollback()?;
+        assert_ne!(budget_snapshot(&store)?.max_pages, before.max_pages);
+        set_database_page_limit(&store.db, before.max_pages)?;
+        assert_eq!(budget_snapshot(&store)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_policy_recovery_latch_denies_new_custody_but_preserves_reads_and_retries(
+    ) -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.db");
+        let mut store = MailboxStore::open(&path, Limits::unlimited_storage())?;
+        store.set_storage_budget(None, 100)?;
+        let grant = store.create(100, 600)?;
+        let payload = b"retained ciphertext";
+        store.put(&grant.id, &grant.write, &[1; 32], payload, 600, 100)?;
+        // State-level latch test only, not a simulated physical I/O failure.
+        store.storage_policy_failed = true;
+        store.set_resources_available(true);
+        let status = store.contribution_status(101)?;
+        assert!(status.enabled && !status.resources_available);
+        let object = store.fetch_bulk_v1(&grant.id, &grant.read, 101)?.unwrap();
+        assert_eq!(object.ciphertext, payload);
+        assert_eq!(object.expires, 600);
+        assert_eq!(
+            store.put(&grant.id, &grant.write, &[1; 32], payload, 600, 101)?,
+            PutResult::Duplicate
+        );
+        store.renew(&grant.id, &grant.read, 101, 500)?;
+        assert!(matches!(
+            store.renew(&grant.id, &grant.read, 101, 600),
+            Err(StoreError::Quota)
+        ));
+        assert!(matches!(
+            store.put(&grant.id, &grant.write, &[2; 32], payload, 600, 101),
+            Err(StoreError::Quota)
+        ));
+        assert!(matches!(store.create(101, 600), Err(StoreError::Quota)));
+        assert!(matches!(
+            store.set_storage_budget(Some(500 * 1024 * 1024), 101),
+            Err(StoreError::Invalid)
+        ));
+        store.consume(&grant.id, &grant.read, &object.id, &object.digest, 101)?;
+        drop(store);
+        let mut reopened = MailboxStore::open(&path, Limits::default())?;
+        assert!(reopened.contribution_status(102)?.resources_available);
+        assert!(reopened
+            .fetch_bulk_v1(&grant.id, &grant.read, 102)?
+            .is_none());
+        reopened.set_storage_budget(Some(500 * 1024 * 1024), 102)?;
+        Ok(())
+    }
 
     #[test]
     fn gigabyte_budget_is_valid_without_allocating_a_gigabyte() -> Result<(), StoreError> {

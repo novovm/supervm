@@ -245,7 +245,7 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
                     result?;
                     bail!("temporal metadata terminated healthy driver");
                 }
-                let error = result.err().expect("forged metadata must fail");
+                let error = result.expect_err("forged metadata must fail");
                 assert_eq!(
                     error.downcast_ref::<novovm_network::mailbox_structured::native_requests::NativeRequestError>()
                         .context("expected typed protocol failure")?.kind,
