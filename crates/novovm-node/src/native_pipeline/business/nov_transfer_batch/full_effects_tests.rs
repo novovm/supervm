@@ -10,8 +10,15 @@ fn resident_complete_plan_contention_cost() -> Result<()> {
     );
     let plan = compile(&prepared(1024, false), 172_800_123)?;
     let projection = ExportProjection::new(&plan.exports);
+    let initialization = std::time::Instant::now();
     let mut resources = super::super::integer::ResidentTransferResources::new(&library, 4, 1024)?;
+    let initialization_us = initialization.elapsed().as_micros();
+    let first = std::time::Instant::now();
     let expected = resources.run_effects(&plan.nodes, &projection.unique)?;
+    println!(
+        "complete_plan_first_use pid={} resource_initialization_us={initialization_us} first_execution_us={}",
+        std::process::id(), first.elapsed().as_micros()
+    );
     if let Some(directory) = std::env::var_os("NOVOVM_PLAN_DIAGNOSTIC_BARRIER") {
         let directory = std::path::PathBuf::from(directory);
         std::fs::write(

@@ -1,0 +1,22 @@
+
+running 1 test
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::resident_complete_plan_contention_cost ... complete_plan_first_use pid=19680 resource_initialization_us=983284 first_execution_us=43363
+complete_plan_cost pid=19680 iteration=0 elapsed_us=32053
+complete_plan_cost pid=19680 iteration=1 elapsed_us=29794
+complete_plan_cost pid=19680 iteration=2 elapsed_us=31889
+complete_plan_cost pid=19680 iteration=3 elapsed_us=30541
+complete_plan_cost pid=19680 iteration=4 elapsed_us=29395
+complete_plan_cost pid=19680 iteration=5 elapsed_us=30104
+complete_plan_cost pid=19680 iteration=6 elapsed_us=31581
+complete_plan_cost pid=19680 iteration=7 elapsed_us=30509
+complete_plan_cost pid=19680 iteration=8 elapsed_us=30021
+complete_plan_cost pid=19680 iteration=9 elapsed_us=31433
+complete_plan_cost pid=19680 iteration=10 elapsed_us=31168
+complete_plan_cost pid=19680 iteration=11 elapsed_us=29467
+complete_plan_cost pid=19680 iteration=12 elapsed_us=29387
+complete_plan_cost pid=19680 iteration=13 elapsed_us=29508
+complete_plan_cost pid=19680 iteration=14 elapsed_us=30092
+complete_plan_cost pid=19680 iteration=15 elapsed_us=28993
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1550 filtered out; finished in 1.57s

@@ -296,7 +296,17 @@ impl RpcLifecycle {
             crate::native_pipeline::profile::Phase::NativeSelection,
         );
         let current_height = self.node.controller.context().height;
-        let successor = if self.node.controller.is_local_leader()?
+        // Independently authenticated local input may be executed while the
+        // leader prepares its proposal. This is the SAME exact-parent body
+        // owner, not permission to propose/vote or publish. Select at most one
+        // local body per position; then leave the existing successor opportunity
+        // available to the next leader. A promoted successor is never duplicated.
+        let current_unselected = self.offered.is_none_or(|position| {
+            position.height < current_height
+                || position.height == current_height
+                    && position.round != self.node.controller.round()
+        });
+        let successor = if (self.node.controller.is_local_leader()? || current_unselected)
             && !self.node.controller.has_successor_target(current_height)
         {
             None
