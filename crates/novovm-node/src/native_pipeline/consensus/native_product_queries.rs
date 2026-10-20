@@ -1,5 +1,9 @@
 //! Original native_execution_tick processes, without any HTTP listener or observation.
 //! All reads and signed APFL submissions reuse authenticated native sessions.
+#[path = "native_product_aab.rs"]
+mod aab;
+#[path = "native_product_recovery.rs"]
+mod recovery;
 use super::*;
 use novovm_protocol::native_query::{AccountId, Answer, Balance, Query, ReceiptState, Status};
 

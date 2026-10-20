@@ -1,0 +1,13 @@
+
+running 1 test
+native recovery artifacts=\\?\D:\WorksArea\SUPERVM\target\native-product-rpc\native-recovery-lowest-13120-1792491045547031200
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::recovery::native_only_recovery_late_lowest_validator_original_database_and_minority ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::application::queries::recovery::native_only_recovery_late_lowest_validator_original_database_and_minority
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1553 filtered out; finished in 103.36s
+
+Error: AOEM storage provider rejected operation: status=-4: open failed: Failed to open RocksDB at \\?\D:\WorksArea\SUPERVM\target\native-product-rpc\native-recovery-lowest-13120-1792491045547031200\validator-2.rocksdb: IO error: Unexpected error for: \\?\D:\WorksArea\SUPERVM\target\native-product-rpc\native-recovery-lowest-13120-1792491045547031200\validator-2.rocksdb/LOG: �ļ�����Ŀ¼��������﷨����ȷ��

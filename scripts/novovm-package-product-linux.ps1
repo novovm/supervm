@@ -5,15 +5,128 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repo = Resolve-Path (Join-Path $PSScriptRoot "..")
+
+function Assert-PlainPackagePath([string]$Path, [switch]$Tree) {
+  # Reject redirects before traversing them, including the output directory's
+  # ancestors. Do not use recursive enumeration, which can follow links.
+  $cursor = [IO.Path]::GetFullPath($Path)
+  $ancestors = [Collections.Generic.Stack[string]]::new()
+  while ($cursor) {
+    $ancestors.Push($cursor)
+    $parent = [IO.Path]::GetDirectoryName($cursor)
+    if ($parent -eq $cursor) { break }
+    $cursor = $parent
+  }
+  while ($ancestors.Count) {
+    $cursor = $ancestors.Pop()
+    $item = $null
+    try { $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop }
+    catch [System.Management.Automation.ItemNotFoundException] { }
+    if ($item) {
+      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.LinkType) {
+        throw "Package paths cannot traverse links/reparse points: $cursor"
+      }
+    }
+  }
+  if ($Tree -and (Test-Path -LiteralPath $Path)) {
+    $pending = [Collections.Generic.Queue[string]]::new()
+    $pending.Enqueue($Path)
+    while ($pending.Count) {
+      foreach ($item in Get-ChildItem -LiteralPath $pending.Dequeue() -Force) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.LinkType) {
+          throw "Package trees cannot contain links/reparse points: $($item.FullName)"
+        }
+        if ($item.PSIsContainer) { $pending.Enqueue($item.FullName) }
+      }
+    }
+  }
+}
+
+function Resolve-PackageDestination([string]$Repository, [string]$Directory) {
+  if ([string]::IsNullOrWhiteSpace($Directory)) { throw "PackageDir cannot be empty." }
+  $outputRoot = [IO.Path]::GetFullPath((Join-Path $Repository "artifacts/product-overlay"))
+  $candidate = if ([IO.Path]::IsPathRooted($Directory)) { $Directory } else { Join-Path $Repository $Directory }
+  $candidate = [IO.Path]::GetFullPath($candidate).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+  $comparison = if ([IO.Path]::DirectorySeparatorChar -eq '\') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+  # A single named package below the dedicated root, never the root or an
+  # arbitrary subtree such as source, a database, or a sibling repository.
+  if (![string]::Equals([IO.Path]::GetDirectoryName($candidate), $outputRoot, $comparison) -or
+      [IO.Path]::GetFileName($candidate) -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+    throw "PackageDir must name one package directly below $outputRoot"
+  }
+  Assert-PlainPackagePath $candidate -Tree
+  if ((Test-Path -LiteralPath $candidate) -and !(Test-Path -LiteralPath $candidate -PathType Container)) {
+    throw "Package destination is not a directory: $candidate"
+  }
+  return $candidate
+}
+
+function Get-CargoExecutable([object[]]$Messages, [string]$Binary) {
+  $artifacts = @($Messages | ForEach-Object {
+    $message = $_ | ConvertFrom-Json
+    if ($message.reason -eq 'compiler-artifact' -and $message.target.name -eq $Binary -and
+        $message.target.kind -contains 'bin' -and $message.executable) { $message.executable }
+  } | Select-Object -Unique)
+  if ($artifacts.Count -ne 1) { throw "Cargo did not identify exactly one executable for '$Binary'." }
+  $executable = [IO.Path]::GetFullPath($artifacts[0])
+  if (!(Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Cargo executable missing: $executable" }
+  Assert-PlainPackagePath $executable
+  $stream = [IO.File]::OpenRead($executable)
+  try {
+    $magic = [byte[]]::new(4)
+    if ($stream.Read($magic, 0, 4) -ne 4 -or [BitConverter]::ToString($magic) -ne '7F-45-4C-46') {
+      throw "Cargo executable is not an ELF Linux artifact: $executable"
+    }
+  } finally { $stream.Dispose() }
+  return $executable
+}
+
+function Publish-LinuxPackage([string]$Repository, [string]$Staged, [string]$Destination, [switch]$Replace) {
+  # Publication uses same-directory renames. Never recursively delete an old
+  # package; retain it for rollback, even after a successful replacement.
+  $Destination = Resolve-PackageDestination $Repository $Destination
+  $Staged = Resolve-PackageDestination $Repository $Staged
+  if ($Staged -eq $Destination -or !(Test-Path -LiteralPath $Staged -PathType Container)) {
+    throw "A distinct completed staging directory is required."
+  }
+  $previous = $null
+  if (Test-Path -LiteralPath $Destination) {
+    if (!$Replace) { throw "Package directory already exists: $Destination. Use -Force for intentional replacement." }
+    $previous = Resolve-PackageDestination $Repository ($Destination + '.previous.' + [Guid]::NewGuid().ToString('N'))
+    [IO.Directory]::Move($Destination, $previous)
+  }
+  try {
+    [IO.Directory]::Move($Staged, $Destination)
+  } catch {
+    if ($previous -and !(Test-Path -LiteralPath $Destination)) {
+      Assert-PlainPackagePath $previous -Tree
+      [IO.Directory]::Move($previous, $Destination)
+    }
+    throw
+  }
+  if ($previous) { Write-Host "Previous package retained for rollback: $previous" }
+}
+
+$repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repo
 try {
+  $destination = Resolve-PackageDestination $repo $PackageDir
+  if ((Test-Path -LiteralPath $destination) -and !$Force) {
+    throw "Package directory already exists: $destination. Use -Force only for an intentional replacement."
+  }
+  if ($Target -ne 'x86_64-unknown-linux-gnu') {
+    throw "The bundled AOEM Linux runtime supports x86_64-unknown-linux-gnu only; no compatible runtime is packaged for '$Target'."
+  }
   $dirty = @(git status --porcelain=v1 --untracked-files=all)
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to verify the Git worktree before packaging."
   }
   if ($dirty.Count -ne 0) {
     throw "Linux release packaging requires a clean Git worktree so binaries and git_commit describe the same source. Commit or remove local changes first."
+  }
+  $commit = (git rev-parse HEAD).Trim()
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
+    throw "Unable to identify the package source commit."
   }
 
   $installedTargets = @(rustup target list --installed)
@@ -22,14 +135,6 @@ try {
   }
   if ($installedTargets -notcontains $Target) {
     throw "Rust target '$Target' is not installed. Install it with: rustup target add $Target. A Linux package was not generated."
-  }
-
-  $packagePath = Join-Path $repo $PackageDir
-  if (Test-Path $packagePath) {
-    if (!$Force) {
-      throw "Package directory already exists: $packagePath. Use -Force only for an intentional replacement."
-    }
-    Remove-Item -LiteralPath $packagePath -Recurse -Force
   }
 
   $bins = @(
@@ -41,25 +146,15 @@ try {
     "novovm-product-topology",
     "novovm-product-evidence"
   )
+  $executables = @{}
   foreach ($bin in $bins) {
-    cargo build -q -p novovm-node --release --target $Target --bin $bin
+    $buildMessages = @(cargo build --locked -p novovm-node --release --target $Target --bin $bin --message-format=json-render-diagnostics)
     if ($LASTEXITCODE -ne 0) {
       throw "Linux build failed for '$bin'; refusing to package possibly stale binaries."
     }
-  }
-
-  New-Item -ItemType Directory -Force -Path (Join-Path $packagePath "bin") | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $packagePath "config") | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $packagePath "reports") | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $packagePath "systemd") | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $packagePath "docs") | Out-Null
-  New-Item -ItemType Directory -Force -Path (Join-Path $packagePath "aoem") | Out-Null
-  $packageRoot = (Resolve-Path $packagePath).Path
-
-  foreach ($bin in $bins) {
-    $source = Join-Path $repo "target\$Target\release\$bin"
-    if (!(Test-Path $source)) { throw "Expected Linux binary was not built: $source" }
-    Copy-Item -Force $source (Join-Path $packagePath "bin\$bin")
+    # Cargo reports the actual artifact, including .cargo/config.toml and any
+    # CARGO_TARGET_DIR override. Never guess a path or accept an old namesake.
+    $executables[$bin] = Get-CargoExecutable $buildMessages $bin
   }
 
   $aoemRoot = Join-Path $repo "aoem"
@@ -84,16 +179,41 @@ try {
   if ([string]::IsNullOrWhiteSpace($expectedAoemSha) -or $actualAoemSha -ne $expectedAoemSha.ToLowerInvariant()) {
     throw "Bundled AOEM FULLMAX Linux core checksum does not match the SDK manifest."
   }
+  $metadataFiles = @(
+    "aoem-sdk-manifest.json", "INSTALL-INFO.txt", "README.md",
+    "RELEASE-NOTES.md", "RUNTIME-BASELINE.md"
+  )
+  $packageDocs = @(
+    "NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
+    "NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
+    "NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md",
+    "NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md",
+    "novovm-product-topology-preflight-v1.md", "novovm-product-relay-daemon-v1.md",
+    "novovm-product-node-overlay-v1.md", "novovm-product-nat-runtime-v1.md",
+    "novovm-product-peer-runtime-v1.md", "novovm-product-evidence-v1.md",
+    "novovm-product-relay-client-v1.md", "NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md",
+    "NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md"
+  )
+  foreach ($inputPath in @($metadataFiles | ForEach-Object { Join-Path $aoemRoot $_ }) +
+      @($packageDocs | ForEach-Object { Join-Path $repo "docs/$_" })) {
+    if (!(Test-Path -LiteralPath $inputPath -PathType Leaf)) { throw "Package input missing: $inputPath" }
+  }
+
+  # All builds and runtime inputs validated. Generate a separate complete bundle
+  # before any existing package is moved. Failed stages are retained, not erased.
+  $packagePath = Resolve-PackageDestination $repo ($destination + '.staging.' + [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $packagePath | Out-Null
+  foreach ($directory in @('bin', 'config', 'reports', 'systemd', 'docs', 'aoem')) {
+    New-Item -ItemType Directory -Path (Join-Path $packagePath $directory) | Out-Null
+  }
+  $packageRoot = $packagePath
+  foreach ($bin in $bins) {
+    Copy-Item -LiteralPath $executables[$bin] -Destination (Join-Path $packagePath "bin/$bin")
+  }
   Copy-Item -LiteralPath $aoemLinux -Destination (Join-Path $packagePath "aoem") -Recurse
   Copy-Item -LiteralPath (Join-Path $aoemRoot "manifest") -Destination (Join-Path $packagePath "aoem") -Recurse
   Copy-Item -LiteralPath (Join-Path $aoemRoot "config") -Destination (Join-Path $packagePath "aoem") -Recurse
-  foreach ($metadata in @(
-    "aoem-sdk-manifest.json",
-    "INSTALL-INFO.txt",
-    "README.md",
-    "RELEASE-NOTES.md",
-    "RUNTIME-BASELINE.md"
-  )) {
+  foreach ($metadata in $metadataFiles) {
     Copy-Item -LiteralPath (Join-Path $aoemRoot $metadata) -Destination (Join-Path $packagePath "aoem\$metadata")
   }
 
@@ -215,36 +335,35 @@ try {
 }
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\node-mainline-overlay.json.example")
 
+  # Deployment JSON is not a transaction carrier. No fixture genesis, validator
+  # identity, allocation or HTTP listener is invented by the packaging script.
   @'
-NOVOVM_NODE_MODE=native_execution_pipeline
-NOVOVM_NATIVE_CHAIN_ID=1
-NOVOVM_NATIVE_EXECUTION_TICK_CHAIN_ID=1
+{
+  "profile": "native_execution_tick",
+  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
+  "database": "/var/lib/novovm/state/validator.rocksdb",
+  "signing_key_file": "/etc/novovm/validator-ed25519.hex",
+  "udp_addr": "0.0.0.0:41000",
+  "peers": [],
+  "native_client_limit": 16,
+  "genesis": null,
+  "workers": 4,
+  "execution_backend": "cpu_callbacks",
+  "batch_size": 1024
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\native-node.json.example")
+
+  @'
+NOVOVM_NODE_MODE=native_execution_tick
+NOVOVM_NATIVE_EXECUTION_CONFIG=/etc/novovm/native-node.json
+# Normal service/restart must open the original database, never recreate it.
+NOVOVM_NATIVE_EXECUTION_START=existing
 NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS=0
-NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS=250
-NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY=true
-NOVOVM_NATIVE_EXECUTION_STORE=/var/lib/novovm/state/native-execution-store.json
-NOVOVM_MAINLINE_NATIVE_EXECUTION_STORE_PATH=/var/lib/novovm/state/native-execution-store.json
-NOVOVM_NATIVE_EXECUTION_STORE_BACKEND=rocksdb
-NOVOVM_NATIVE_EXECUTION_STORE_ROCKSDB_PATH=/var/lib/novovm/state/native-execution-store.rocksdb
-NOVOVM_AOEM_OWNED_STATE_DB_PATH=/var/lib/novovm/state/aoem-owned.rocksdb
-NOVOVM_AOEM_STATE_NAMESPACE=novovm-mainnet-chain-1
-NOVOVM_AOEM_PERSIST_BACKEND=rocksdb
-AOEM_PERSISTENCE_PATH=/var/lib/novovm/state/aoem-runtime.rocksdb
-# Run NOVOVM_NODE_MODE=native_protocol_config_commitment once with the signed
-# release and final protocol env, then pin the identical reported value on all nodes.
-NOVOVM_NATIVE_PROTOCOL_CONFIG_EXPECTED_COMMITMENT=REPLACE_WITH_SIGNED_64_HEX_COMMITMENT
-NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_ENABLED=true
-NOVOVM_NATIVE_AOEM_SEMANTIC_INGRESS_REQUIRED=true
-NOVOVM_AOEM_NATIVE_TX_BATCH_PRODUCTION_CANDIDATE=true
-NOVOVM_AOEM_NATIVE_TX_BATCH_SHADOW=true
-NOVOVM_AOEM_NATIVE_TX_BATCH_COMPARE=true
+NOVOVM_NATIVE_EXECUTION_TICK_INTERVAL_MS=1
 NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH=/var/lib/novovm/reports/node-progress.json
 NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH=/var/lib/novovm/reports/node-summary.json
-NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true
-NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=/etc/novovm/node-mainline-overlay.json
-NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PER_TICK=1024
-NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PROPAGATIONS=3
-NOVOVM_PRODUCT_MAINLINE_OVERLAY_EVENT_BUDGET=4096
+# The authenticated native owner supplies transport, signer, genesis and store.
+# Do not enable PRODUCT_MAINLINE_OVERLAY, historical-http or a second owner.
 NOVOVM_AOEM_VARIANT=core
 NOVOVM_AOEM_ROOT=/opt/novovm/aoem
 NOVOVM_AOEM_DLL=/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so
@@ -311,7 +430,7 @@ WantedBy=multi-user.target
 
   @'
 [Unit]
-Description=NOVOVM Main Node with Product Overlay
+Description=NOVOVM Native NovoRUDP/APFL Validator
 After=network-online.target
 Wants=network-online.target
 
@@ -336,20 +455,12 @@ ReadWritePaths=/var/lib/novovm
 WantedBy=multi-user.target
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "systemd\novovm-node.service")
 
-  Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\novovm-product-topology-preflight-v1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\novovm-product-relay-daemon-v1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\novovm-product-node-overlay-v1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\novovm-product-nat-runtime-v1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\novovm-product-peer-runtime-v1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\novovm-product-evidence-v1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\novovm-product-relay-client-v1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md") (Join-Path $packagePath "docs\")
-  Copy-Item -Force (Join-Path $repo "docs\NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md") (Join-Path $packagePath "docs\")
+  foreach ($document in $packageDocs) {
+    Copy-Item -LiteralPath (Join-Path $repo "docs/$document") -Destination (Join-Path $packagePath "docs")
+  }
 
   @'
-# NOVOVM Product Overlay Linux Package
+# NOVOVM Native Validator and Compatible Network Tools Linux Package
 
 This package is a headless runtime bundle. It contains no Rust toolchain, IDE,
 Codex installation, or source workspace.
@@ -358,32 +469,54 @@ Codex installation, or source workspace.
 2. Install the binaries under `/opt/novovm/bin` and configure `/etc/novovm`.
 3. Keep relay/node Ed25519 secret files readable only by the service account.
 4. For a relay, use the included relay systemd unit after reviewing paths and user.
-5. For a main node, install `node-mainline-overlay.json` and `novovm-node.env`,
-   then review the included main-node systemd unit. The example pins an
-   infinite native-execution loop (`MAX_TICKS=0`) and durable state under
-   `/var/lib/novovm`, including the recipient-ACK delivery journal; replace
-   chain ID `1` with the deployment chain ID and retain the journal across restarts.
+5. Read `docs/NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt` before signing or genesis.
+   Install a reviewed `native-node.json` and `novovm-node.env`. The config example
+   is deliberately incomplete: replace `genesis: null` with the common verified
+   GenesisConfig, pin its protocol/genesis commitments, populate every remote
+   validator public key/address, and provide only this validator's secret file.
+   Do not use fixture keys, invent allocation values, or copy another node's DB.
+   There is no HTTP/JSON-RPC listener. JSON here is deployment configuration only;
+   native transaction/query traffic uses NovoRUDP/APFL.
 6. Keep the bundled generic AOEM FULLMAX runtime under `/opt/novovm/aoem`;
    `novovm-node.env` pins its core, manifest, profile, and sidecar paths.
-7. Before starting the service, load the final protocol environment and run
-   `NOVOVM_NODE_MODE=native_protocol_config_commitment /opt/novovm/bin/novovm-node`.
-   Replace the example pin with its 64-hex commitment and use that exact value
-   on every node; the placeholder intentionally fails closed.
-8. Run `novovm-product-topology` before deployment and preserve its offline
-   preflight report. It never claims that an external topology was executed.
+7. Normal service startup uses `NOVOVM_NATIVE_EXECUTION_START=existing`. Only
+   after an operator approves a new empty test chain, load the reviewed env and
+   run the node once in the foreground with START=create. Stop it normally
+   before enabling the existing-mode service. Retain the original database and
+   signing journal across every restart; create is not a recovery command.
+8. Relay/peer/topology tools and `node-mainline-overlay.json.example` are retained
+   for their explicit communication/compatibility callers. They are NOT the
+   native validator owner and must not be enabled beside native CONFIG. Their
+   preflight/evidence does not qualify native finality or automatic NAT routing.
 9. Generate a signed post-run evidence manifest with `novovm-product-evidence`.
-10. Deploy the identical package checksum and release manifest to every node.
-    Relay daemon report version 2 and its bounded wire contract are a homogeneous-release
-    boundary; rolling mixed-version operation is not claimed by this package.
+10. Record source commit, executable and actual loaded AOEM hashes on each host.
+    This package's checksums are not production, multi-host TPS, GPU or ZK signoff.
+    Do not reuse a different DLL/SO's benchmark as this bundle's qualification.
+    Rolling mixed-version operation is not claimed by this package.
 
-TLS protects the WSS transport. NOVOVM node challenge-response remains the
-protocol identity check; a CA is not the NOVOVM trust root.
+The packager accepts only named directories under artifacts/product-overlay.
+It stages validated artifacts first; -Force renames the old package to a unique
+.previous directory instead of deleting it. Failed staging directories and old
+packages remain recoverable and require separate intentional housekeeping.
+
+The native validator uses its authenticated NovoRUDP owner. TLS/WSS belongs
+only to the separately configured compatible communication tools; a CA is not
+the NOVOVM trust root.
 
 AOEM is a bundled third-party, domain-neutral execution engine. NOVOVM
 authentication, transaction semantics, overlay routing, and product policy
 remain in the host; no NOVOVM-specific business logic is added to AOEM.
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "README.md")
 
+  # Windows source checkouts may have CRLF. Linux env/unit files must not carry
+  # a trailing CR into configuration values or a manually sourced START mode.
+  foreach ($template in @(
+      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'config') -File) +
+      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'systemd') -File) +
+      @(Get-Item -LiteralPath (Join-Path $packagePath 'README.md')))) {
+    $content = [IO.File]::ReadAllText($template.FullName).Replace("`r`n", "`n")
+    [IO.File]::WriteAllText($template.FullName, $content, [Text.UTF8Encoding]::new($false))
+  }
   $entries = Get-ChildItem -LiteralPath $packagePath -File -Recurse |
     Where-Object { $_.Name -ne "CHECKSUMS.sha256" -and $_.Name -ne "release-manifest.json" } |
     ForEach-Object {
@@ -391,10 +524,20 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
       $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
       [PSCustomObject]@{ path = $relative; sha256 = $hash; bytes = $_.Length }
     } | Sort-Object path
-  $entries | ForEach-Object { "$($_.sha256)  $($_.path)" } | Set-Content -Encoding ascii (Join-Path $packagePath "CHECKSUMS.sha256")
-  $commit = (git rev-parse HEAD).Trim()
-  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
-    throw "Unable to identify the package source commit."
+  $checksumLines = @($entries | ForEach-Object { "$($_.sha256)  $($_.path)" })
+  [IO.File]::WriteAllText((Join-Path $packagePath "CHECKSUMS.sha256"),
+    [string]::Join("`n", $checksumLines) + "`n", [Text.UTF8Encoding]::new($false))
+  $endCommit = (git rev-parse HEAD).Trim()
+  if ($LASTEXITCODE -ne 0 -or $endCommit -ne $commit) {
+    throw "Source commit changed while packaging; existing package remains untouched."
+  }
+  $dirty = @(git status --porcelain=v1 --untracked-files=all)
+  if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) {
+    throw "Source worktree changed while packaging; existing package remains untouched."
+  }
+  $copiedAoem = Join-Path $packagePath "aoem/linux/core/bin/libaoem_ffi.so"
+  if ((Get-FileHash -LiteralPath $copiedAoem -Algorithm SHA256).Hash.ToLowerInvariant() -ne $actualAoemSha) {
+    throw "Copied AOEM runtime differs from its validated source; existing package remains untouched."
   }
   $ackWireVersion = "novovm-product-mainline-recipient-ack/v1"
   $journalSchema = "novovm-product-delivery-journal/v1"
@@ -407,18 +550,30 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
     throw "Release manifest journal schema does not match the delivery-journal source."
   }
   [PSCustomObject]@{
-    scope = "novovm_product_overlay_linux_release_v1"
+    scope = "novovm_native_linux_release_v2"
     target = $Target
     git_commit = $commit
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
-    product_overlay_ack_wire = $ackWireVersion
-    delivery_journal_schema = $journalSchema
+    node_entry = "native_execution_tick/NOVOVM_NATIVE_EXECUTION_CONFIG"
+    native_release_http_listener = $false
+    aoem_runtime = [PSCustomObject]@{
+      path = "aoem/linux/core/bin/libaoem_ffi.so"
+      sha256 = $actualAoemSha
+      platform = "linux-x86_64"
+      performance_qualified = $false
+    }
+    compatibility_tools = [PSCustomObject]@{
+      active_validator_owner = $false
+      product_overlay_ack_wire = $ackWireVersion
+      delivery_journal_schema = $journalSchema
+    }
     mixed_version_rolling_upgrade_supported = $false
     signed_evidence_included = $false
     note = "Generate signed runtime evidence after deployment; this build manifest is checksum-only."
     artifacts = $entries
   } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $packagePath "release-manifest.json")
-  Write-Host "Linux product overlay package created: $packagePath"
+  Publish-LinuxPackage $repo $packagePath $destination -Replace:$Force
+  Write-Host "Linux native validator and compatible network tools package created: $destination"
 }
 finally {
   Pop-Location

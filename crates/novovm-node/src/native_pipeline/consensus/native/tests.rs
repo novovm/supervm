@@ -165,16 +165,54 @@ impl Mesh {
             )?);
         }
         let mut mesh = Self { channels, start };
-        while mesh
+        // Configured responders retain a provisional transcript until ordinary
+        // AEAD traffic proves the fresh secret. Production uses RequestDecision;
+        // this transport-only fixture exchanges/drains an existing exact request.
+        let mut probe_id = rand::random::<[u8; 32]>();
+        probe_id[0] = 0xf5;
+        let probe = transport::Message::RequestBody { body_id: probe_id };
+        let probes = mesh
             .channels
             .iter()
-            .any(|c| (0..c.peer_count()).any(|p| c.session_id(p).is_none()))
+            .map(|c| c.prepare(&probe))
+            .collect::<Result<Vec<_>>>()?;
+        let mut sent = mesh
+            .channels
+            .iter()
+            .map(|c| vec![false; c.peer_count()])
+            .collect::<Vec<_>>();
+        let expected = sent.iter().map(Vec::len).sum::<usize>();
+        let mut completed = 0;
+        while completed < expected
+            || mesh
+                .channels
+                .iter()
+                .any(|c| (0..c.peer_count()).any(|p| c.session_id(p).is_none()))
         {
             ensure!(
                 start.elapsed() < Duration::from_secs(10),
                 "native mesh handshake deadline"
             );
-            mesh.pump()?;
+            for (index, channel) in mesh.channels.iter_mut().enumerate() {
+                for (peer, admitted) in sent[index].iter_mut().enumerate() {
+                    if !*admitted {
+                        *admitted = channel.try_send(peer, &probes[index], Instant::now())?;
+                    }
+                }
+            }
+            completed += mesh.pump()?;
+            for channel in &mut mesh.channels {
+                while let Some(event) = channel.poll_receive_lane(0, Instant::now(), 64)? {
+                    match event {
+                        ReceiveEvent::Message(value) => {
+                            ensure!(value.message == probe, "unexpected handshake probe")
+                        }
+                        ReceiveEvent::Rejected { error, .. } => {
+                            anyhow::bail!("handshake probe rejected: {error}")
+                        }
+                    }
+                }
+            }
         }
         Ok(mesh)
     }

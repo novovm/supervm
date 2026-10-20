@@ -43,6 +43,7 @@ impl From<NativePeer> for NativeRoutePeer {
     }
 }
 
+#[derive(Clone)]
 pub struct NativeHandshakeBudget {
     pub lifetime: Duration,
     pub retry: Duration,
@@ -50,10 +51,19 @@ pub struct NativeHandshakeBudget {
 
 struct Peer {
     id: Arc<str>,
+    // Only bind[_shared] installs this pinned identity. An open client never
+    // becomes a configured peer merely by using its key or source address.
+    configured_key: Option<[u8; 32]>,
     handshake: Option<NativeHandshake>,
     session: Option<NativeUdpSession>,
     streams: Option<BTreeSet<u64>>,
     reconnect: Option<reconnect::PendingReconnect>,
+}
+
+struct ConfiguredAdmission {
+    identity: SigningKey,
+    budget: NativeHandshakeBudget,
+    reconnect_v1: bool,
 }
 
 struct OpenAdmission {
@@ -115,6 +125,7 @@ pub struct NativeEndpoint {
     replay: HandshakeReplayCacheV1,
     turn: usize,
     open: Option<OpenAdmission>,
+    configured: Option<ConfiguredAdmission>,
     wire_budget: Option<NativeWireBudget>,
     traffic_started: bool,
 }
@@ -153,6 +164,7 @@ impl NativeEndpoint {
             local_key,
             peers: vec![Peer {
                 id,
+                configured_key: None,
                 handshake: None,
                 session: Some(session),
                 streams: Some(streams.into_iter().collect()),
@@ -162,6 +174,7 @@ impl NativeEndpoint {
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
+            configured: None,
             wire_budget: None,
             traffic_started: false,
         })
@@ -211,6 +224,7 @@ impl NativeEndpoint {
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
+            configured: None,
             wire_budget: None,
             traffic_started: false,
         };
@@ -231,6 +245,9 @@ impl NativeEndpoint {
 
     /// Bind the existing native state machine to the transport's shared socket.
     /// This does not install a receiver; the enclosing owner serializes reads.
+    /// Keeps the original deterministic initial role/readiness contract. Owners
+    /// capable of bidirectional application traffic may explicitly opt into
+    /// `enable_configured_reconnect_v1` before polling.
     pub fn bind_shared(
         socket: Arc<UdpSocket>,
         identity: SigningKey,
@@ -267,6 +284,7 @@ impl NativeEndpoint {
             )?;
             owned.push(Peer {
                 id: id.into(),
+                configured_key: Some(peer.key),
                 handshake: Some(handshake),
                 session: None,
                 streams: None,
@@ -282,6 +300,11 @@ impl NativeEndpoint {
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
+            configured: Some(ConfiguredAdmission {
+                identity,
+                budget,
+                reconnect_v1: false,
+            }),
             wire_budget: None,
             traffic_started: false,
         })
@@ -398,6 +421,7 @@ impl NativeEndpoint {
             )?;
             peers.push(Peer {
                 id: id.into(),
+                configured_key: None,
                 handshake: Some(handshake),
                 session: None,
                 streams: None,
@@ -413,6 +437,7 @@ impl NativeEndpoint {
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
             open: None,
+            configured: None,
             wire_budget: None,
             traffic_started: false,
         })
@@ -460,6 +485,7 @@ impl NativeEndpoint {
         self.sources.insert(source, self.peers.len());
         self.peers.push(Peer {
             id: id.into(),
+            configured_key: None,
             handshake: Some(handshake),
             session: Some(session),
             streams: Some(open.streams.clone()),
@@ -583,6 +609,7 @@ impl NativeEndpoint {
         self.traffic_started = true;
         let mut result = NativePoll::default();
         self.expire_reconnects(now);
+        self.renew_configured_handshakes(wall_ms, now)?;
         // Full UDP payload buffer ensures even oversized rejected datagrams
         // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).
         // An adopted reliable carrier has no unrelated UDP ICMP notifications.
@@ -638,7 +665,7 @@ impl NativeEndpoint {
             }
             if let Some((frame, change)) = self.confirm_reconnect(source, &wire[..length]) {
                 result.frames.push(frame);
-                result.session_changes.push(change);
+                result.session_changes.extend(change);
                 continue;
             }
             let Some(&index) = self.sources.get(&source) else {
@@ -830,3 +857,5 @@ mod client_set_tests;
 mod io_tests;
 #[cfg(test)]
 mod scratch_tests;
+#[cfg(test)]
+mod validator_reconnect_tests;

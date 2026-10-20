@@ -1,0 +1,118 @@
+{
+  "schema": "novovm-native-validator-recovery-v1",
+  "date": "2026-10-20",
+  "input_main": "2affdf046a932808c8c844b1b6c592ba0309205e",
+  "implementation_version": "pre-sync correction checkpoint before concurrent shared transport commit 876d655a; not input_main",
+  "validation_stage": "pre-sync results retained; final synchronized binary and results are recorded separately in post-sync-evidence.json",
+  "scope": {
+    "implementation_modified": true,
+    "actual_current_node_fault_tests": true,
+    "operating_system": "Windows",
+    "profile": "release",
+    "real_machines": 1,
+    "remote_deployment": false,
+    "linux_package_built_or_installed": false,
+    "new_gpu_performance_claim": false,
+    "production_or_million_tps_claim": false,
+    "quorum_changed": false,
+    "database_copied": false,
+    "keys_or_signing_history_reset": false,
+    "aoem_implementation_or_library_modified": false,
+    "sdk_consumer_description_corrected": true
+  },
+  "identities_sha256": {
+    "actual_node": "a5811782f3e18df08cd9da4a4a5fa8e4a3957c0b04413c2dd655e165e9bf597d",
+    "node_libtest": "a07963cfb89b014953eeacf5d8f9458b4a87f801f8b20aa186e7187c0f45e704",
+    "network_libtest": "cd07f9c2f9dbc911b9ab2a750c0171b348198305c466f09b1dcf24b17157f195",
+    "actual_windows_aoem": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+    "frozen_overlap_reference_node": "293130c457a201639139a145e9b2da31a10f6268224cd3f96f3311da4da2db86",
+    "frozen_original_native_load_driver": "a9a54cc984a1bbe5105273d2857c1013fe1105ee72557c7844056a96be19a092",
+    "unchanged_linux_aoem_manifest_not_executed_here": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309"
+  },
+  "recovery_contract": {
+    "entry": "original native_execution_tick / NovoRUDP APFL / NativeLifecycle / CandidatePipeline / exec / bindings / AOEM / original RoundProgress and ValidatorJournal",
+    "fixed_validators": 4,
+    "required_qc": 3,
+    "production_delivery_messages_per_peer": 32,
+    "production_delivery_bytes_per_peer": 4194304,
+    "control_reserve_inside_existing_limits": 4,
+    "archive_cache_bound_per_peer": "two codec-bounded messages plus one existing staged ArchiveRead",
+    "new_wire_protocol": false,
+    "configured_reconnect_policy": "explicit pre-traffic enable_configured_reconnect_v1; same pinned identity/source; new transcript and ordinary AEAD fresh-secret proof",
+    "old_receive_only_readiness_preserved": true,
+    "superseded_active_branches_removed": ["all-destinations atomic fanout admission", "fatal validator SessionReplaced", "reject all historical RequestDecision"],
+    "historical_controller_reactivated": false
+  },
+  "final_tests": {
+    "native_components": {"passed": 364, "failed": 0, "ignored_not_executed": 57, "log": "native-components-v3.log"},
+    "network_full_serial": {"passed": 817, "failed": 0, "ignored_not_executed": 11, "seconds": 48.96, "log": "network-serial-final.log"},
+    "novorudp_subset": {"passed": 119, "failed": 0, "log": "novorudp-final.log"},
+    "original_native_ingress_subset": {"passed": 3, "failed": 0, "log": "native-ingress-final.log"},
+    "actual_original_process_suites": {"passed": 5, "failed": 0, "ignored": 0, "seconds": 307.69, "log": "native-process-final.log"},
+    "release_strict_all_targets_clippy": {"passed": true, "log": "clippy-final.log"},
+    "node_release_build": {"passed": true, "log": "build-final.log"},
+    "node_libtest_release_build": {"passed": true, "log": "node-test-build-final.log"},
+    "package_safety_assertions": {"passed": 25, "recursive_deletes": 0, "log": "package-safety-final.log"},
+    "package_failed_build_missing_and_actual_artifact_contract": {"passed": true, "log": "package-build-failure-final.log"},
+    "remote_ci": "new containing commit must be validated separately; local tests are not remote green"
+  },
+  "actual_recovery_cases": [
+    {"direction": "late_highest_native_peer_id", "withheld_node": 0, "healthy_nodes": [1,2,3], "offline_heights": 40, "transactions_per_batch": 2, "offline_healthy_confirmation_ms": 102904, "late_start_ms": 103010, "observed_durable_height_at_interrupt": 1, "target_40_archive_absent_after_kill": true, "qc_signatures": 3, "interrupted_catchup_window_ms": 11756, "subsequent_healthy_batches_with_established_peer_killed": 4, "two_of_four_no_publication_ms": 12004, "final_all_four_height": 46, "state_version": 92, "receipts": 92, "success": 91, "business_failed": 1, "receipt_fees": 4141, "payer_nonces": [46,46], "account_balances": [993429,6800,995630], "same_key_config_old_outbox": true, "wallet_replay_for_laggard": 0, "elapsed_ms": 152286, "passed": true, "report": "recovery-highest-final.json"},
+    {"direction": "late_lowest_native_peer_id", "withheld_node": 2, "healthy_nodes": [0,1,3], "offline_heights": 40, "transactions_per_batch": 2, "offline_healthy_confirmation_ms": 102881, "late_start_ms": 102992, "observed_durable_height_at_interrupt": 1, "target_40_archive_absent_after_kill": true, "qc_signatures": 3, "interrupted_catchup_window_ms": 11628, "subsequent_healthy_batches_with_established_peer_killed": 4, "two_of_four_no_publication_ms": 12017, "final_all_four_height": 46, "state_version": 92, "receipts": 92, "success": 91, "business_failed": 1, "receipt_fees": 4141, "payer_nonces": [46,46], "account_balances": [993429,6800,995630], "same_key_config_old_outbox": true, "wallet_replay_for_laggard": 0, "elapsed_ms": 142094, "passed": true, "report": "recovery-lowest-final.json"}
+  ],
+  "aab": {"honest_actual_processes": 3, "test_only_fault_peer": 1, "real_signed_a_a_b_prevotes": 3, "real_nil_precommits": 3, "first_decision_round": 1, "honest_qc_signatures": 3, "fault_votes_signed": 0, "external_qcs_constructed": 0, "original_honest_databases_restarted": true, "subsequent_height": 2, "passed": true, "report": "aab-final.json"},
+  "cpu_measurement": {
+    "label": "single-host 4-process native finalized-success comparison, not multi-host capacity",
+    "same_library": true,
+    "ac_battery_status_each_run": [2,2,2,2],
+    "competing_builds_or_benchmarks": false,
+    "diagnostics_enabled": false,
+    "config_workers": 4,
+    "semantic_graph_worker_override": null,
+    "real_signed_transactions_per_run": 65536,
+    "batch": 1024,
+    "senders": 1024,
+    "consecutive_nonces_per_sender": 64,
+    "shared_recipient": true,
+    "inflight": 8192,
+    "query_batch": 128,
+    "timing": "first native SDK attempt to four-node final receipt replies, includes first-height wait; excludes signing/startup/APFL preparation/postchecks/cold restart",
+    "per_run_receipt_fees": 2949120,
+    "all_runs_nonce_account_receipt_conservation_and_cold_recovery": true,
+    "full_fee_state_independently_audited": false,
+    "business_proof_verified": false,
+    "final_state_root_all_runs": "a930b512b6613b97ba188be514d8ecb5c259efe19f623575df5244359ab1de65",
+    "runs": [
+      {"kind": "baseline", "round": 1, "success": 65536, "business_failed": 0, "seconds": 5.293713, "tps": 12379.968464478523, "p95_us": 674451, "p99_us": 752933, "first_height_all_receipts_us": 187401, "report": "baseline-1-report.json"},
+      {"kind": "candidate", "round": 1, "success": 65536, "business_failed": 0, "seconds": 5.452228, "tps": 12020.040247766601, "p95_us": 763200, "p99_us": 911197, "first_height_all_receipts_us": 234003, "report": "candidate-1-report.json"},
+      {"kind": "candidate", "round": 2, "success": 65536, "business_failed": 0, "seconds": 5.406817, "tps": 12120.99466284877, "p95_us": 726192, "p99_us": 764015, "first_height_all_receipts_us": 192451, "report": "candidate-2-report.json"},
+      {"kind": "baseline", "round": 2, "success": 65536, "business_failed": 0, "seconds": 5.307170, "tps": 12348.577490451597, "p95_us": 667886, "p99_us": 777797, "first_height_all_receipts_us": 212436, "report": "baseline-2-report.json"}
+    ],
+    "aggregate": {
+      "method": "total successful count / total seconds; merge and sort each side's 131072 raw latency observations, nearest-rank",
+      "baseline": {"success": 131072, "seconds": 10.600883, "tps": 12364.253053259808, "p95_us": 670495, "p99_us": 766097},
+      "candidate": {"success": 131072, "seconds": 10.859045, "tps": 12070.306366720093, "p95_us": 741718, "p99_us": 831436},
+      "tps_change_percent": -2.3773913820230086,
+      "p95_change_percent": 10.622450577558373,
+      "p99_change_percent": 8.52881554163507,
+      "claim": "recovery delivered with a finite negative performance observation; not a speedup or stable no-regression signoff"
+    }
+  },
+  "retained_failures": [
+    {"log": "baseline-offline-lowest.log", "result": "frozen node: eight batches completed then ninth not finalized, failed 110.81 seconds; no exact queue high-water sampled"},
+    {"log": "candidate-recovery-lowest.log", "result": "first candidate: 40 heights and replay began, stopped-store audit failed Windows extended-path LOG handling; fixture reuses existing native_path"},
+    {"log": "native-components.log", "result": "receive-only socket readiness compatibility failure, fixed by explicit reconnect policy"},
+    {"log": "native-components-final.log", "result": "zero-fixed-peer query listener incorrectly enabled configured policy; fixed without weakening endpoint validation"},
+    {"log": "network-final.log", "result": "two-thread network suite: 816 pass / one EVM observation failure / 11 ignored; same binary isolated and full serial runs passed; cause not established"}
+  ],
+  "raw_report_sha256": {
+    "recovery-highest-final.json": "217581c356d98e05138bbaba992cbb4e18e2ffcc47ca3c1edbc49b2b2f12ab12",
+    "recovery-lowest-final.json": "9333600050c0e0f3d9d4d225a2e269a7c010fce8d019d2befeae20ba14fadb53",
+    "aab-final.json": "33747807b06e583fbd370fc4b0b4a02f68083a8ecee59cb3e87226586d9f9efd",
+    "baseline-1-report.json": "c5e97d5b5d423b4250c262fef6a68bec8adf0e25b0a07395eed8db5114c71f22",
+    "candidate-1-report.json": "d0b21145bd54f701407c76a52e63d04e84766c97ccd17821ed3317d181081e1f",
+    "candidate-2-report.json": "30ae3c7150aad3f737a8668d116baf6c0ad9f4894639dce0d8108bedc6e0419b",
+    "baseline-2-report.json": "902afb0fb18bebd281072ebf7689ae64e30d2716d0010756e27d89558627c05d"
+  },
+  "remaining": ["actual independent validator machines and public network", "actual Linux build/package/install/start", "long-duration stability and capacity", "precise interrupted-lock/storage-write fault injection", "single-ingress data-loss plus A/A/B combination", "UCA spend authorization", "business-validity proof and post-quantum path", "automatic discovery/NAT/relay validator integration"]
+}

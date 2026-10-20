@@ -20,7 +20,7 @@ use novovm_network::{
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Copy)]
@@ -31,6 +31,13 @@ pub struct DeliveryLimits {
 struct Delivery {
     prepared: PreparedMessage,
     admitted: bool,
+    retiring: bool,
+    archive: bool,
+    height: u64,
+}
+struct Fanout {
+    prepared: PreparedMessage,
+    pending: Vec<bool>,
 }
 struct Incoming {
     peer: usize,
@@ -39,9 +46,9 @@ struct Incoming {
 
 /// Owns prepared messages until delivery or explicit expiry/retry. Per-peer
 /// queues and native lane budgets both apply. Queue pressure retains the durable
-/// outbox instead of dropping a signature. A permanently offline full queue
-/// currently backpressures further broadcast: archive-based retirement and
-/// catch-up must be integrated before claiming unbounded online availability.
+/// outbox instead of dropping a signature. Superseded realtime obligations are
+/// retired only after durable context/round advancement; decided history stays
+/// available through the same owner's checked archive, not an unbounded queue.
 pub struct NativeLifecycle {
     pub progress: RoundProgress,
     bodies: CandidateBodies,
@@ -58,9 +65,13 @@ pub struct NativeLifecycle {
     transaction_turn: usize,
     transaction_session: Hash,
     transaction_sequence: u64,
-    outbox: Option<PreparedMessage>,
+    outbox: Option<Fanout>,
     requested: BTreeSet<(Hash, Hash)>,
     height: u64,
+    round: u64,
+    archives: Vec<recovery::ArchivePeer>,
+    archive_turn: usize,
+    decision_due: Option<Instant>,
     policy: DirectNovFeePolicy,
     validators: ValidatorSet,
     codec: DecodeLimits,
@@ -69,6 +80,8 @@ pub struct NativeLifecycle {
     pub requested_bodies: u64,
     pub served_bodies: u64,
     pub expired_sends: u64,
+    pub retired_sends: u64,
+    pub archive_decisions: u64,
 }
 impl NativeLifecycle {
     #[cfg(test)]
@@ -107,8 +120,8 @@ impl NativeLifecycle {
         codec: DecodeLimits,
     ) -> Result<Self> {
         ensure!(
-            (1..=4096).contains(&limits.messages_per_peer)
-                && limits.bytes_per_peer >= codec.message_bytes,
+            (8..=4096).contains(&limits.messages_per_peer)
+                && limits.bytes_per_peer >= codec.message_bytes.saturating_mul(5),
             "invalid native delivery budget"
         );
         progress.context().validate(validators)?;
@@ -138,6 +151,7 @@ impl NativeLifecycle {
         );
         let count = peers.len();
         let height = progress.context().height;
+        let round = progress.round();
         Ok(Self {
             progress,
             bodies,
@@ -157,6 +171,12 @@ impl NativeLifecycle {
             outbox: None,
             requested: BTreeSet::new(),
             height,
+            round,
+            archives: (0..count)
+                .map(|_| recovery::ArchivePeer::default())
+                .collect(),
+            archive_turn: 0,
+            decision_due: None,
             policy,
             validators: validators.clone(),
             codec,
@@ -165,6 +185,8 @@ impl NativeLifecycle {
             requested_bodies: 0,
             served_bodies: 0,
             expired_sends: 0,
+            retired_sends: 0,
+            archive_decisions: 0,
         })
     }
 
@@ -227,6 +249,11 @@ impl NativeLifecycle {
                 .position(|d| d.prepared.fragment_id() == completed.body.id())
                 .context("native completion lost its retained input")?;
             ensure!(queue[index].admitted, "completion without native admission");
+            if queue[index].retiring {
+                let done = queue.remove(index).expect("retired delivery");
+                self.bytes[completed.peer] -= done.prepared.byte_len();
+                continue;
+            }
             match completed.state {
                 ObjectSendState::Delivered => {
                     let done = queue.remove(index).expect("completed delivery");
@@ -239,13 +266,14 @@ impl NativeLifecycle {
                     self.expired_sends += 1;
                 }
                 ObjectSendState::Sending => anyhow::bail!("nonterminal native completion"),
-                // Validator sessions are pinned, not mobile client sessions.
-                // Never silently replay a consensus delivery across replacement.
                 ObjectSendState::SessionReplaced => {
-                    anyhow::bail!("validator session unexpectedly replaced")
+                    // The endpoint has authenticated the SAME configured key
+                    // and confirmed the fresh secret. Retry immutable original
+                    // bytes; transport replacement grants no new signing right.
+                    queue[index].admitted = false;
                 }
-                // This retained comparison consumer never issues cancellation.
-                // Preserve unknown delivery; do not turn it into an ACK/retry.
+                // Explicit retirement was handled above. An unrequested
+                // cancellation is not an ACK or a safe retry authorization.
                 ObjectSendState::Cancelled => {
                     anyhow::bail!("validator delivery unexpectedly cancelled")
                 }
@@ -260,7 +288,10 @@ impl NativeLifecycle {
             // One pending attempt per native lane. A full BODY lane must not
             // block a control message queued behind it for this same peer.
             let mut attempted = [false; 3];
-            for delivery in self.deliveries[peer].iter_mut().filter(|d| !d.admitted) {
+            for delivery in self.deliveries[peer]
+                .iter_mut()
+                .filter(|d| !d.admitted && !d.retiring)
+            {
                 let lane = delivery.prepared.lane();
                 if attempted[lane] {
                     continue;
@@ -277,16 +308,53 @@ impl NativeLifecycle {
         Ok(())
     }
 
-    fn fits(&self, peer: usize, prepared: &PreparedMessage) -> bool {
-        self.deliveries[peer]
+    fn fits(&self, peer: usize, prepared: &PreparedMessage, archive: bool) -> bool {
+        if self.deliveries[peer]
+            .iter()
+            .any(|d| d.retiring && d.prepared.fragment_id() == prepared.fragment_id())
+        {
+            return false;
+        }
+        if self.deliveries[peer]
             .iter()
             .any(|d| d.prepared.fragment_id() == prepared.fragment_id())
-            || (self.deliveries[peer].len() < self.limits.messages_per_peer
-                && prepared.byte_len()
-                    <= self.limits.bytes_per_peer.saturating_sub(self.bytes[peer]))
+        {
+            return true;
+        }
+        if self.deliveries[peer].len() >= self.limits.messages_per_peer
+            || prepared.byte_len() > self.limits.bytes_per_peer.saturating_sub(self.bytes[peer])
+        {
+            return false;
+        }
+        if !archive && prepared.is_durable_control() {
+            return true;
+        }
+        // Preserve four durable control slots (current proposal/prevote/
+        // precommit plus an immediately preceding decision) inside the existing
+        // peer budget. Requests, input,
+        // body/archive replies cannot saturate the journal's publication path.
+        // Superseded controls are locally cancelled/drained on durable advance.
+        let mut auxiliary_count = 0;
+        let mut auxiliary_bytes = 0usize;
+        for delivery in &self.deliveries[peer] {
+            if delivery.archive || !delivery.prepared.is_durable_control() {
+                auxiliary_count += 1;
+                auxiliary_bytes += delivery.prepared.byte_len();
+            }
+        }
+        auxiliary_count < self.limits.messages_per_peer - 4
+            && prepared.byte_len()
+                <= self
+                    .limits
+                    .bytes_per_peer
+                    .saturating_sub(self.codec.message_bytes.saturating_mul(4))
+                    .saturating_sub(auxiliary_bytes)
     }
     fn enqueue(&mut self, peer: usize, prepared: PreparedMessage) -> bool {
-        if !self.fits(peer, &prepared) {
+        self.enqueue_kind(peer, prepared, false)
+    }
+    fn enqueue_kind(&mut self, peer: usize, prepared: PreparedMessage, archive: bool) -> bool {
+        if !self.fits(peer, &prepared, archive) {
             return false;
         }
         if !self.deliveries[peer]
@@ -297,6 +365,9 @@ impl NativeLifecycle {
             self.deliveries[peer].push_back(Delivery {
                 prepared,
                 admitted: false,
+                retiring: false,
+                archive,
+                height: self.progress.context().height,
             });
         }
         true
@@ -318,9 +389,18 @@ impl NativeLifecycle {
             .poll_recovery(pipeline, &self.policy, self.codec)?;
         self.bodies.poll(pipeline, &mut self.progress)?;
         self.progress.poll_acknowledgements(pipeline)?;
-        if self.height != self.progress.context().height {
+        if self.height != self.progress.context().height || self.round != self.progress.round() {
             self.height = self.progress.context().height;
+            self.round = self.progress.round();
             self.requested.clear();
+            // Genuine local advance postpones archive discovery. Do not read
+            // old candidates on every healthy fast-path height just because
+            // peers' latest context announcements are still in flight.
+            self.decision_due = Some(
+                now.checked_add(Duration::from_millis(250))
+                    .context("request deadline overflow")?,
+            );
+            self.retire_realtime()?;
         }
         // Reserve the application handoff before taking transport custody. It
         // neither enters RoundProgress nor participates in validator fanout.
@@ -374,14 +454,14 @@ impl NativeLifecycle {
                             }
                         }
                         Message::RequestBody { body_id } => {
-                            if let Some(body) = self.bodies.response(*body_id, &self.progress) {
-                                let prepared = self.channel.prepare(&body)?;
-                                if self.enqueue(peer, prepared) {
-                                    self.served_bodies += 1;
-                                } else {
-                                    self.pending[lane] = Some(received);
-                                }
-                            }
+                            // A slow requester's reply cannot occupy the shared
+                            // evidence slot and hide healthy proposals/votes.
+                            // Coalesce its idempotent exact hint per peer; the
+                            // original body remains owned by live/archive state.
+                            self.remember_body_request(peer, *body_id);
+                        }
+                        Message::RequestDecision { context } => {
+                            self.request_archive(peer, *context)?;
                         }
                         Message::Proposal { .. } | Message::Vote(_) | Message::Decision { .. } => {
                             if self
@@ -401,7 +481,8 @@ impl NativeLifecycle {
                                 self.pending[lane] = Some(received);
                             }
                         }
-                        // Historical archive requests are not yet activated here.
+                        // Unsupported optional announcement/credit extensions
+                        // are not another consensus or execution entrance.
                         _ => self.rejected_messages += 1,
                     }
                 }
@@ -416,17 +497,25 @@ impl NativeLifecycle {
         self.progress.poll_after_receive(now)?;
         if let Some(message) = self.progress.pending_message() {
             if self.outbox.is_none() {
-                self.outbox = Some(self.channel.prepare(message)?);
+                self.outbox = Some(Fanout {
+                    prepared: self.channel.prepare(message)?,
+                    pending: vec![true; self.peers.len()],
+                });
             }
-            let prepared = self.outbox.as_ref().expect("prepared outbox");
-            if (0..self.peers.len()).all(|peer| self.fits(peer, prepared)) {
-                let prepared = self.outbox.take().expect("outbox");
-                for peer in 0..self.peers.len() {
-                    ensure!(self.enqueue(peer, prepared.clone()), "reserved outbox lost");
+            let mut fanout = self.outbox.take().expect("prepared outbox");
+            for peer in 0..self.peers.len() {
+                if fanout.pending[peer] && self.enqueue(peer, fanout.prepared.clone()) {
+                    fanout.pending[peer] = false;
                 }
+            }
+            if fanout.pending.iter().any(|pending| *pending) {
+                self.outbox = Some(fanout);
+            } else {
                 self.progress.take_message();
             }
         }
+        self.poll_archives(pipeline)?;
+        self.request_decisions(now)?;
         let missing = self.bodies.requests(&self.progress);
         self.requested.retain(|key| missing.contains(key));
         for (source, id) in missing {
@@ -444,10 +533,26 @@ impl NativeLifecycle {
                 self.requested_bodies += 1;
             }
         }
+        #[cfg(test)]
+        for peer in 0..self.peers.len() {
+            ensure!(
+                self.deliveries[peer].len() <= self.limits.messages_per_peer,
+                "delivery count overflow"
+            );
+            ensure!(
+                self.bytes[peer] <= self.limits.bytes_per_peer,
+                "delivery byte overflow"
+            );
+            ensure!(
+                self.archives[peer].charge() <= self.codec.message_bytes.saturating_mul(2),
+                "archive cache overflow"
+            );
+        }
         Ok(())
     }
 }
 
 mod ingress;
+mod recovery;
 mod successor;
 pub use successor::SuccessorSelection;

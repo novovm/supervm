@@ -154,6 +154,11 @@ impl AuthenticatedUdpIngressV1 {
     pub fn peer_count(&self) -> usize {
         self.link.peer_count()
     }
+    /// Explicit pinned-peer lifecycle, selected before the first I/O poll.
+    /// Generic receive-only consumers retain their original readiness contract.
+    pub fn enable_configured_reconnect_v1(&mut self) -> Result<()> {
+        self.link.enable_configured_reconnect_v1()
+    }
     pub fn send_protocol(&self, peer: NodeId, message: &ProtocolMessage) -> Result<()> {
         // Compatibility sends retain main's original transaction stamping and
         // signing contract; the adapter does not introduce an unsigned bypass.
@@ -183,6 +188,11 @@ impl AuthenticatedUdpIngressV1 {
         deadline: Instant,
     ) -> Result<bool> {
         self.link.try_send_until(peer, stream, body, now, deadline)
+    }
+    /// Retire only the original owner's retained object; completion is returned
+    /// by the existing poll before quota can be reclaimed.
+    pub fn cancel_send(&mut self, peer: usize, stream: u64, body: &Arc<OutgoingMessage>) -> bool {
+        self.link.cancel_send(peer, stream, body)
     }
     /// Consume at most `quantum` queued datagrams. Invalid packets consume one
     /// turn, never drain until valid and never terminate healthy peers' progress.

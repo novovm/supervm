@@ -1,5 +1,27 @@
 # 七月原 tick 接合回共享 main 的有界迁入表
 
+## 2026-10-20 遗漏恢复机制接回当前唯一主线
+
+本节同提交以审计`2affdf04`为输入。原NativeLifecycle内已替换全端同时准入屏障、
+SessionReplaced即失败和拒绝历史RequestDecision分支；旧活动逻辑不保留开关。
+复用原对象发送器cancel/完成出口和原握手新秘密确认，不重写传输。归档只通过
+原ArchiveRead、精确正文和当前CandidatePipeline/AOEM/journal执行发布。
+4个控制槽预留位于原32消息/4MiB内部；辅助投递/历史响应仍有界，预算不足不丢原输入。
+
+当前5个原节点进程门禁已覆盖两个身份排序方向的晚启动/追赶中强杀/原库重启、
+健康三节点40高度推进、2/4不确认和真实A/A/B→后继恢复。它们运行当前原tick，
+不是把历史测试挂名回CI；历史旧controller/channel不重新编译，也不继承旧成绩。
+现有receive-only调用者保留原就绪合同；有固定validator路由的NativeChannel明确
+采用v1重连合同，零固定peer查询listener及open-client准入不混同。
+
+原controller仍有尚未完成替代核对的历史反例/复用资产，继续保护、不直接链接。
+清理条件是剩余能力与测试逐项映射、feature/platform/兼容caller验证完成；
+不能只因其未编译或按开发月份删除。本轮已经清除上述被证明替代的活动分支，
+没有第二产品路径。具体来源/兼容caller/删除条件及负向TPS观测见
+[实施证据](../artifacts/audit/native-validator-recovery-20261020/README.md)。
+下方10月16日“实际native组合故障仍待完成”为当时状态，现由本节有限实测范围更新；
+真实四机、精确未决锁写入崩溃及单入口缺批+A/A/B组合并未因此签收。
+
 ## 实施更新（2026-10-16）
 
 下表的依赖组已接入共享 main（输入cb4b3dd1、协调更新至5c95c084，恢复来源

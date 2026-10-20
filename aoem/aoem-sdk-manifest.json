@@ -34,7 +34,7 @@
     "mainchain_cpu_route_changed": false,
     "nov_business_execution_integrated": true,
     "business_validity_proof": false,
-    "nov_business_execution_scope": "optional original-node integer prediction; CPU fees/ordered repair remain; not full GPU or proof",
+    "nov_business_execution_scope": "optional original-node full conditional-effect integer plan with binary results; no separate Host fee/ordered-repair decision; CPU callbacks remain the default comparison backend; not full device residency or business-validity proof",
     "profile_v1": {
       "capability_flag": "compute_checked_integer_resource_profile_v1",
       "command": 4,

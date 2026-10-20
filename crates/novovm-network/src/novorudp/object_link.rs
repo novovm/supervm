@@ -275,6 +275,11 @@ impl NativeObjectLink {
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.endpoint.local_addr()
     }
+    /// Adopt pinned-peer recovery before polling; no client admission changes.
+    /// The enclosing protocol supplies its existing bidirectional AEAD traffic.
+    pub fn enable_configured_reconnect_v1(&mut self) -> Result<()> {
+        self.endpoint.enable_configured_reconnect_v1()
+    }
     pub fn local_identity(&self) -> [u8; 32] {
         self.endpoint.local_identity()
     }

@@ -207,7 +207,7 @@ fn resolve_relative(base: &Path, path: &mut PathBuf) {
 // The packaged RocksDB provider joins an ordinary '/LOG' suffix, which must
 // not be mixed with Windows canonicalization's verbatim prefix. Preserve the
 // exact disk/UNC target with ordinary Win32 syntax; never choose another DB.
-fn native_path(path: &Path) -> PathBuf {
+pub(crate) fn native_path(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
         use std::path::{Component, Prefix};

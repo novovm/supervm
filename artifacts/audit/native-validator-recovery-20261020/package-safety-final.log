@@ -1,0 +1,2 @@
+Previous package retained for rollback: D:\WorksArea\SUPERVM\artifacts\audit\linux-package-safety-1426c41e3ee64317838ca55e93fbf697\artifacts\product-overlay\linux-x86_64.previous.b6e52dd4f6464a7f9602cc719bdd1c96
+PASS: 25 package safety/artifact/template assertions; no builds or deletes. Fixtures retained: D:\WorksArea\SUPERVM\artifacts\audit\linux-package-safety-1426c41e3ee64317838ca55e93fbf697

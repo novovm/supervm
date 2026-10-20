@@ -1,5 +1,18 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-20 原生独立恢复修复（认领已释放）：** 输入main`2affdf04`，主控集成/唯一
+构建与性能槽；三个有界分工分别处理端点重连、当前实际进程反例、Linux打包边界。
+最终实现仍为原tick→NovoRUDP/APFL→NativeLifecycle→原AOEM/round_bft/journal，
+不恢复旧controller、不改BFT/费用语义、不碰AOEM兄弟仓或NOVOCHAT设备工作。
+两个排序方向健康3节点40高度、原库追赶强杀/恢复、独立重启、2/4不得确认、真实A/A/B
+及后继共5个当前进程用例通过；组件364、网络串行817通过，保留兼容/并发初始失败。
+推送前保留远端共享`876d655a`并重新构建/复验：五个实际进程仍通过，网络增至820项。
+最终同随包313库CPU交错12365.62→12223.39 TPS（−1.15%），P95/P99分别+13.32%/+2.97%，
+不是提速签收；同步前a581/12070检查点保留但不混算。包安全25断言通过，不代表
+Linux安装/真实多机通过；新提交CI另验。
+SDK仅修过时消费说明，未换库。源码/制品/原始报告/遗留范围见
+[本轮证据](../artifacts/audit/native-validator-recovery-20261020/README.md)。
+
 **2026-10-17 Android v27 follow-up; no SUPERVM runtime change:** baseline b6cc81f9,
 NOVOCHAT d5e547b.
 The original Android network owner now compares Parcel snapshots before advancing

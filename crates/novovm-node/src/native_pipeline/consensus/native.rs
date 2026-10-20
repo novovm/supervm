@@ -51,8 +51,20 @@ pub struct PreparedMessage {
     owner: Arc<()>,
     stream: u64,
     object: Arc<OutgoingMessage>,
+    // Realtime retirement only; archived replies override it at their caller.
+    window: Option<(u64, Option<u64>)>,
+    body_request: bool,
+    durable_control: bool,
 }
 impl PreparedMessage {
+    pub(super) fn is_durable_control(&self) -> bool {
+        self.durable_control
+    }
+    pub(super) fn superseded(&self, height: u64, round: u64, enqueued_height: u64) -> bool {
+        self.window
+            .is_some_and(|(h, r)| h < height || (h == height && r.is_some_and(|r| r < round)))
+            || (self.body_request && enqueued_height < height)
+    }
     pub fn byte_len(&self) -> usize {
         self.object.byte_len()
     }
@@ -164,7 +176,7 @@ impl NativeChannel {
             .duration_since(UNIX_EPOCH)?
             .as_millis()
             .try_into()?;
-        let link = transport.into_authenticated_objects_v1(
+        let mut link = transport.into_authenticated_objects_v1(
             NativeUdpIngressConfigV1 {
                 identity,
                 peers,
@@ -186,6 +198,11 @@ impl NativeChannel {
             wall_ms,
             Instant::now(),
         )?;
+        // A query-only listener has no configured validator peers. Keep its
+        // open-client contract separate; every pinned-validator owner opts in.
+        if link.peer_count() != 0 {
+            link.enable_configured_reconnect_v1()?;
+        }
         #[cfg(test)]
         let link = ChannelLink::Original(link);
         Ok(Self::with_link(link, domain, codec, applications))
@@ -193,12 +210,13 @@ impl NativeChannel {
 
     #[cfg(test)]
     pub fn new(
-        endpoint: NativeEndpoint,
+        mut endpoint: NativeEndpoint,
         domain: MessageDomain,
         codec: transport::DecodeLimits,
         lanes: [LaneLimits; 3],
         policy: NativeSendPolicy,
     ) -> Result<Self> {
+        endpoint.enable_configured_reconnect_v1()?;
         let applications = endpoint.accepts_clients();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         let known = Self::validator_peers(&domain);
@@ -324,6 +342,26 @@ impl NativeChannel {
             owner: self.owner.clone(),
             stream,
             object,
+            window: match message {
+                transport::Message::Proposal { proposal, .. } => {
+                    Some((proposal.context.height, Some(proposal.round)))
+                }
+                transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
+                transport::Message::Decision { proposal, .. } => {
+                    Some((proposal.context.height, None))
+                }
+                transport::Message::Body { context, .. }
+                | transport::Message::ApflBody { context, .. } => Some((context.height, None)),
+                transport::Message::RequestDecision { context } => Some((context.height, None)),
+                _ => None,
+            },
+            body_request: matches!(message, transport::Message::RequestBody { .. }),
+            durable_control: matches!(
+                message,
+                transport::Message::Proposal { .. }
+                    | transport::Message::Vote(_)
+                    | transport::Message::Decision { .. }
+            ),
         })
     }
     /// False is backpressure/handshake pending, not acceptance or loss.
@@ -339,6 +377,13 @@ impl NativeChannel {
         );
         self.link
             .try_send(peer, message.stream, &message.object, now)
+    }
+    pub(super) fn cancel_send(&mut self, peer: usize, message: &PreparedMessage) -> Result<bool> {
+        ensure!(
+            Arc::ptr_eq(&message.owner, &self.owner),
+            "foreign cancellation owner"
+        );
+        Ok(self.link.cancel_send(peer, message.stream, &message.object))
     }
     pub fn poll_io(
         &mut self,
@@ -462,6 +507,12 @@ enum ChannelLink {
 }
 #[cfg(test)]
 impl ChannelLink {
+    fn cancel_send(&mut self, peer: usize, stream: u64, body: &Arc<OutgoingMessage>) -> bool {
+        match self {
+            Self::Original(link) => link.cancel_send(peer, stream, body),
+            Self::HistoricalFixture(link) => link.cancel_send(peer, stream, body),
+        }
+    }
     fn peer_count(&self) -> usize {
         match self {
             Self::Original(link) => link.peer_count(),

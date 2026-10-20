@@ -6,6 +6,19 @@ use crate::native_pipeline::consensus::{
 };
 use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
 
+/// The cheap availability hint retains its existing conservative bounds. Only
+/// this exact, prepared-message check grants the final local reservation; the
+/// auxiliary/control split can be tighter than the half-budget hint.
+fn fitting_recipients(
+    mut reserved: Vec<bool>,
+    mut fits: impl FnMut(usize) -> bool,
+) -> Option<Vec<bool>> {
+    for (peer, reserve) in reserved.iter_mut().enumerate() {
+        *reserve = *reserve && fits(peer);
+    }
+    reserved.iter().any(|reserve| *reserve).then_some(reserved)
+}
+
 impl NativeLifecycle {
     pub fn take_client_query(
         &mut self,
@@ -123,6 +136,14 @@ impl NativeLifecycle {
             prepared.lane() == 2,
             "native input routed outside ingress lane"
         );
+        // A valid 5*M byte budget reserves 4*M for durable control, leaving
+        // less auxiliary room than the historical half-budget availability
+        // hint. Backpressure retains the caller's original Arc, not a fatal
+        // reservation mismatch. Other independently available peers continue.
+        let Some(reserved) = fitting_recipients(reserved, |peer| self.fits(peer, &prepared, false))
+        else {
+            return Ok(None);
+        };
         for (peer, reserve) in reserved.iter().enumerate() {
             if *reserve {
                 ensure!(
@@ -144,5 +165,60 @@ impl NativeLifecycle {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fitting_recipients;
+
+    #[test]
+    fn five_message_budget_auxiliary_full_is_backpressure_not_a_reservation() {
+        let maximum_message = 1024usize;
+        let budget = 5 * maximum_message;
+        let auxiliary_used = maximum_message;
+        let prepared_bytes = maximum_message / 4;
+        // This is the old cheap preflight: it can legitimately report true
+        // while fits()'s reserved-control auxiliary ceiling is already full.
+        let available = auxiliary_used + maximum_message <= budget / 2;
+        assert!(available);
+        let auxiliary_budget = budget - 4 * maximum_message;
+        let requested = [true];
+        let reserved = requested.iter().map(|r| *r && available).collect();
+        let mut checked = 0;
+        let result = fitting_recipients(reserved, |_| {
+            checked += 1;
+            prepared_bytes <= auxiliary_budget.saturating_sub(auxiliary_used)
+        });
+        assert_eq!(
+            result, None,
+            "full auxiliary budget must retain caller input"
+        );
+        assert_eq!(checked, 1);
+        assert_eq!(
+            requested,
+            [true],
+            "caller request was not consumed or changed"
+        );
+    }
+
+    #[test]
+    fn exact_auxiliary_backpressure_isolated_to_that_recipient() {
+        let maximum_message = 1024usize;
+        let budget = 5 * maximum_message;
+        let used = [maximum_message, 0];
+        let available: Vec<_> = used
+            .iter()
+            .map(|bytes| bytes + maximum_message <= budget / 2)
+            .collect();
+        assert_eq!(available, [true, true]);
+        let reserved = fitting_recipients(available, |peer| {
+            maximum_message / 4 <= (budget - 4 * maximum_message).saturating_sub(used[peer])
+        });
+        assert_eq!(reserved, Some(vec![false, true]));
+        assert_eq!(
+            fitting_recipients(vec![false], |_| panic!("unrequested peer checked")),
+            None
+        );
     }
 }
