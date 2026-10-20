@@ -1,5 +1,25 @@
 # NOVOVM 生产部署目标与验收台账
 
+## NOVOCHAT v89 SOCKETNET1/2：同socket网络标记对照，长尾仍未复现
+
+应用提交`9694c92`沿用原Android网络owner/JNI和TLS IO观察，诊断构建仅在内存
+关联已接纳默认Network与同socket的只读SO_MARK；不改共享SDK、节点程序、
+网络绑定、超时或选路。输出仅未知/相同/不同，不输出handle、mark或地址。
+AOSP内部编码匹配不能证明物理出口，VPN/UID策略也可导致合法差异；不用于授权。
+
+同一对App进程28096/6443完成两轮严格TLS-only完整图片、发送方离线后独立
+补收/预览及发送方DeviceReceipt；UDP阻断、外部Relay/发现禁用、笔记本停止。
+蜂窝available至TLS完成0.866/1.565秒，认证业务选中1.220/1.876秒，
+图片入库5.005/4.872秒。两轮首buffer/首读取网络匹配均为相同；没有异常握手。
+云端对应flow首payload在自身SYN后87/424ms到达，不跨设备时间相减。
+
+两轮发送方Wi-Fi恢复曾出现系统路径未就绪，夹具如实记录后无人干预取得回执。
+**本轮只证明诊断可用及功能保持，不解释或覆盖59.490秒CAPACITY1失败，
+不签收长尾修复或P95。** 不据正常样本调整TCP/超时。容量修正版APK已核验并
+保留为数据兼容的回退包，旧64MiB APK不能直接回装超限journal；详见NOVOCHAT
+P0台账。云DROP清除，云服务active、KINGCLUB健康，捕获正常结束。
+
+
 ## NOVOCHAT v89 LINK1/LINK2：正常蜂窝TLS对照，两轮完整闭环通过
 
 应用诊断`444c293`只补既有Android网络回调字段类别，不改共享SDK、云程序、
