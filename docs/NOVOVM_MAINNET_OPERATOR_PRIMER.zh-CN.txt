@@ -1,5 +1,116 @@
 NOVOVM 正式上线前：运营者入门与逐项确认
 
+2026-10-20 当前操作：真实多设备隔离测试链
+
+本节优先于下方历史说明。核对基线 main@0d77cd0e；当前入口是原
+novovm-node 的 native_execution_tick，经 NovoRUDP/APFL -> exec/bindings/AOEM
+-> 原共识/journal/发布/查询。不恢复旧 V3、HTTP 或 replacement bootstrap。
+此次只准备测试设备，不批准主网发行、不继承测试余额、不启动生产链。
+
+一台机器四进程继续用于受控回归和共享资源压力诊断；真实多机另列报告。
+本轮设备角色按用户指定：host-1为本机，host-2为阿里云公网验证节点部署目标，
+host-3/4为另外两台电脑；两台手机是L4，不计BFT。host-2不是仅做Relay，
+但现有owned mailbox进程还不是完整validator；加载/执行/签票/发布验收后才计入。
+共机部署须使用独立端口、数据目录、验证者密钥和服务，先核查CPU/RAM/磁盘及占用。
+不覆盖、重启或挪用现有Web/Relay/信箱身份和数据；资源不足时先回报，不硬挤运行。
+CPU 跨机闭环先做，不要求先采购四张 GPU；GPU 能力和后端身份另行验证，
+不得静默退回 CPU 后称为 GPU 多机成绩。
+
+Git同步边界（2026-10-20本机实查）
+
+本轮活动产品代码、CI修复、证据及操作说明均按独立提交推送main。
+原49份未提交项是10月3日已保全的历史草稿：legacy38、runtime11。
+2026-10-20按用户要求保持Git干净，已将这49份原样收存到本地命名stash：
+1a8955b29ec6dc83e82274a3812d48eb469819a7
+收存前原件/副本49份SHA256一致，收存后49个Git blob与副本字节完全一致；
+原artifacts/audit/isolation-undo-20261003-dc3e497-v1/draft-files副本仍保留。
+原node的Cargo依赖无这两棵树，活动产品源码未改；这不是把草稿提交为产品。
+stash只在本机，不推送main，不自动apply/pop回活动工程，不删除已保全成果。
+每轮交付提交推送完成的授权改动后核对工作区干净；不能用git add .混入历史草稿。
+其他机器同步main的已提交源码及本平台LFS库，不需要这些草稿和本机编译缓存。
+密钥、签票日志、账本、机器配置及含地址的清点报告留在各机，不自动推送Git。
+另见NOVOVM_ISOLATION_UNDO_CHECKLIST.md的保全边界；这不是允许删除或永久丢弃草稿。
+
+第一步：在其他机器的 Codex 中粘贴以下任务
+
+“你是 NOVOVM 多设备验收的部署端，不开发新网络或接管 NOVOCHAT。
+只在本机 SUPERVM 仓库工作。先读根 AGENTS.md、架构恢复路线、本文件的
+2026-10-20 节和最新生产台账，再核对真实源码。
+
+1. 核对 Git 根、分支、HEAD 和 dirty。已有改动原样保留；不要 reset、清理、
+   自动 stash、覆盖或建分支。若 main 干净，git pull --ff-only，并报告提交号；
+   没有仓库时克隆 novovm/supervm。权限/工具缺失报告具体错误，不索要私钥。
+2. 复用 scripts/novovm-production-machine-inventory.ps1，MachineLabel 取
+   一项唯一标签，如 validator-host-2。报告主机/OS/架构、当前LAN与公网候选地址、
+   CPU/RAM/磁盘、Git、随仓AOEM文件哈希和manifest匹配；另补GPU/驱动、供电、
+   时钟同步及现有服务的端口占用。只采集必要信息，不扫描其他主机。
+   Windows可执行：
+   powershell -NoProfile -File scripts/novovm-production-machine-inventory.ps1 -MachineLabel validator-host-2
+   Linux若已有PowerShell可执行：
+   pwsh -NoProfile -File scripts/novovm-production-machine-inventory.ps1 -MachineLabel validator-host-2
+   Linux没有pwsh时以等价只读命令报告，不为一次清点新造部署系统。
+3. 检查平台AOEM不是Git LFS指针且匹配对应manifest；必要时只拉该平台库：
+   Windows: git lfs pull --include=aoem/windows/core/bin/aoem_ffi.dll --exclude=
+   Linux:   git lfs pull --include=aoem/linux/core/bin/libaoem_ffi.so --exclude=
+   上面exclude为空参数，应由所在shell正确传入；不要覆盖其他SDK或放宽哈希检查。
+   Windows/Linux二进制哈希本就不同，分别核对各平台固定版本/能力，不要求跨平台哈希相同。
+   文件匹配不等于成功加载、GPU执行或生产就绪；清点报告的production_ready=false是预设值。
+4. 使用仓库rust-toolchain.toml的1.94.0，复用现有构建目录，执行：
+   cargo build --release --locked -p novovm-node --bin novovm-node
+   回报成功/具体错误和产物SHA256；不删模块、不换简化程序、不盲目重装系统依赖。
+5. 先停在构建与清点完成。不要自行创世、启动签票或使用公开测试种子；
+   不修改源代码/提交main，不开HTTP/JSON-RPC，不碰已有Web/手机/信箱服务、
+   防火墙、密钥、签票日志或数据库。把清点摘要和构建结果交回主控，不输出私钥。”
+
+第二步：主控收齐报告后统一配置，不能各机各造一条链
+
+- 固定同一源码/协议版本和一份新测试创世；复用 GenesisConfig 的
+  derive_commitment/validate，不手工重写哈希或改变现有费用规则。
+- 每机使用独立本地验证者秘密与数据库；只交换公钥。同一现有节点key由
+  ValidatorJournal和NativeChannel使用，不为此再造第二套网络身份。
+  不把fixture固定种子或同一签者复制到不同机器，不上传密钥或热数据库。
+- 当前配置要求4..64个验证者。四个等权验证者仍须3/4；两机各一进程仅能
+  先验连通/独立执行，不能签收完整最终性。两机各两进程如采用，标为
+  2-host/4-process，不冒充四个独立设备。
+- 本轮按三台电脑加阿里云准备跨公网功能验收；如另有四台同LAN设备，另留LAN对照。
+  两组均有具体硬件/带宽/确认条件限制，不把LAN成绩称为已知硬件极限，
+  也不把单组公网成绩称为所有主网部署的固定容量。使用本轮地址，不复用历史IP快照。
+  当前validator适配是静态UDP peers，来源地址/端口精确绑定。公网与LAN加入
+  前先验证双向可达及NAT映射；只开放VPS的UDP不等于已具备反向可达性。
+  不因不可达重写NovoRUDP或静默插入新Relay/VPN/HTTP路径。
+- 真实配置复用 service/config.rs::ResidentConfig：profile=native_execution_tick，
+  各机library/database/signing_key_file/udp_addr和远端peers，统一genesis，
+  明确workers/execution_backend/batch_size/native_client_limit，rpc_addr不填。
+  这是启动配置，不是把交易热路径转成JSON。
+- 主控核对后才提供各机启动指令；已有入口使用NOVOVM_NATIVE_EXECUTION_CONFIG、
+  NOVOVM_NATIVE_EXECUTION_START=create|existing，不把create当重启/清日志手段。
+  不直接套用旧Linux打包脚本的启动模板；其旧store/tick配置不是本次完整节点配置。
+
+第三步：逐层验收，不把“进程开了”当作主链成功
+
+先核对各机加载/身份/同创世/UDP会话，再用同一原生SDK做少量真实签名转账，
+核对独立执行、3/4决定、费用/nonce、最终回执/状态根及各机原库重启恢复。
+之后才做同条件65,536笔、批1024的正式负载；保留首次提交等待，分开成功/业务失败，
+统计P50/P95/P99及各节点执行/决定/本地发布观察。不相加重叠阶段为全链耗时。
+
+现有 native_product_load / ProductNodes 会创建本机回环四进程、读取本地库并控制
+子进程；它还不是现成跨机负载器。真正缺口是外部节点manifest、独立安全密钥/
+创世装配、原NativeApplicationClient的远端负载和各机冷审计回传。只做薄工具适配，
+复用原执行/网络/共识，不复制控制器或新造SDK。旧network-only/overlay跨机脚本
+可按其范围验传输，不能代替当前主链最终确认。未完成前不宣称跨机TPS已测。
+
+其他机器回传：标签 | OS/架构 | HEAD/dirty | LAN/公网候选及可达性 | CPU/RAM/GPU |
+磁盘余量 | AOEM路径/哈希/manifest匹配 | 构建结果/二进制哈希 | 必须避开的现有服务。
+不需要密码、SSH私钥、助记词或云访问密钥。详细报告留在本机，不自动提交到Git。
+
+代码依据：crates/novovm-node/src/bin/novovm-node.rs；
+crates/novovm-node/src/native_pipeline/service/config.rs、service.rs、service/client.rs；
+crates/novovm-node/src/native_pipeline/consensus/native_product_rpc.rs、native_product_load.rs；
+scripts/novovm-production-machine-inventory.ps1。
+
+以下为此前阶段的历史运营说明，保留概念/决策来源，不作为当前启动命令或验收状态。
+其中旧V3、HTTP/WSS、单独网络身份、安装包及“本轮”测试结果须按上节与最新源码核对。
+
 适用范围
 这是理解技术与确认配置的说明，不是一份已经批准的发行方案。
 依据当前 SUPERVM 代码中的 FreshGenesisConfigV1、原生签名协议、BFT V3
