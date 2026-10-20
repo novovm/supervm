@@ -261,6 +261,40 @@ fn windows_ascii_case_variants_use_the_same_quota() {
     guard.finish().unwrap();
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_extended_canonical_database_cannot_bypass_full_quota() {
+    let dir = tempfile::tempdir().unwrap();
+    let budget = DiskBudget::configure(dir.path()).unwrap();
+    budget.set_limit(Some(MIN_LIMIT_BYTES)).unwrap();
+    let path = dir.path().join("identity.db");
+    drop(db(&path));
+    let canonical = fs::canonicalize(&path).unwrap();
+    assert!(canonical.to_string_lossy().starts_with(r"\\?\"));
+    let c = Connection::open(&canonical).unwrap();
+    // Both spellings must identify one existing file, without double charging.
+    assert_eq!(budget.snapshot().unwrap().used_bytes, size_tree(dir.path()));
+    let status = budget.snapshot().unwrap();
+    let available = MIN_LIMIT_BYTES - status.maintenance_bytes - status.used_bytes;
+    let held = reserve_for_paths(&[dir.path().join("other-writer.new")], available).unwrap();
+    let error = c
+        .execute("INSERT INTO items(value) VALUES (zeroblob(65536))", [])
+        .unwrap_err();
+    assert_eq!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DiskFull)
+    );
+    assert_eq!(
+        c.query_row("SELECT count(*) FROM items", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    held.finish().unwrap();
+    c.execute("INSERT INTO items(value) VALUES (zeroblob(65536))", [])
+        .unwrap();
+    assert_eq!(budget.snapshot().unwrap().used_bytes, size_tree(dir.path()));
+}
+
 #[cfg(any(unix, windows))]
 fn directory_alias(target: &Path, alias: &Path) {
     #[cfg(unix)]

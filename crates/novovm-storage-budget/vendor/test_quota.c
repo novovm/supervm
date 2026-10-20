@@ -339,8 +339,19 @@ static int quotaStrglob(const char *zGlob, const char *z){
 **
 ** Return a pointer to the quotaGroup object. Return NULL if not found.
 */
+/* Rust canonicalize on Windows yields the extended DOS prefix, whereas
+** SQLite callers may use the same file without it. Quota identity must use
+** the same spelling as the canonical root inventory, never a second group. */
+static const char *novoQuotaPath(const char *path){
+#ifdef _WIN32
+  if(path && path[0]=='\\' && path[1]=='\\' && path[2]=='?' && path[3]=='\\'
+      && path[4] && path[5]==':') return path+4;
+#endif
+  return path;
+}
 static quotaGroup *quotaGroupFind(const char *zFilename){
   quotaGroup *p;
+  zFilename=novoQuotaPath(zFilename);
   for(p=gQuota.pGroup; p && quotaStrglob(p->zPattern, zFilename)==0;
       p=p->pNext){}
   return p;
@@ -363,6 +374,7 @@ static quotaFile *quotaFindFile(
   int createFlag          /* Try to create the file if not found */
 ){
   quotaFile *pFile = pGroup->pFiles;
+  zName=novoQuotaPath(zName);
   while( pFile &&
 #ifdef _WIN32
       sqlite3_stricmp(pFile->zFilename,zName)!=0
