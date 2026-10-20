@@ -215,6 +215,34 @@ impl NativeUdpSession {
         try_send_datagram(io, &wire, self.remote, now, budget)
     }
 
+    /// A verified complete object can still have one repair frame in flight.
+    /// Finish that exact retained write instead of aborting a partial stream.
+    /// WouldBlock keeps its reservation and bytes; no new frame is admitted.
+    pub(crate) fn drain_object_send(
+        &mut self,
+        io: &dyn NativeDatagramIo,
+        stream: u64,
+        id: [u8; 32],
+        budget: Option<&mut NativeWireBudget>,
+        now: Instant,
+    ) -> Result<bool> {
+        let Some(pending) = self.pending.as_ref() else {
+            return Ok(true);
+        };
+        let frame = &pending.frame;
+        if frame.stream_id != stream
+            || !matches!(
+                frame.kind,
+                NovoRudpTransportFrameKindV0::Data | NovoRudpTransportFrameKindV0::Repair
+            )
+            || frame.payload.get(40..72) != Some(id.as_slice())
+        {
+            return Ok(true);
+        }
+        let frame = frame.clone();
+        self.try_send_limited(io, &frame, now, budget)
+    }
+
     pub(crate) fn cancel_send(
         &mut self,
         io: &dyn NativeDatagramIo,

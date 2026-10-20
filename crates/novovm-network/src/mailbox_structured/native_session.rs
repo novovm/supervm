@@ -142,6 +142,7 @@ pub struct RequestId {
 }
 struct Pending {
     cancellation: NativeSendCancellation,
+    cancel_on_drop: bool,
     id: RequestId,
     context: [u8; 32],
     requests: Vec<Request>,
@@ -151,7 +152,9 @@ struct Pending {
 }
 impl Drop for Pending {
     fn drop(&mut self) {
-        self.cancellation.cancel();
+        if self.cancel_on_drop {
+            self.cancellation.cancel();
+        }
     }
 }
 struct RetiredRequest {
@@ -322,6 +325,7 @@ impl NativeMailboxClient {
         let body = outgoing(encode_requests(context, &requests)?)?;
         s.pending = Some(Pending {
             cancellation: cancellation.clone(),
+            cancel_on_drop: true,
             id,
             context,
             requests,
@@ -386,7 +390,7 @@ impl NativeMailboxClient {
             .position(|s| s.pending.as_ref().is_some_and(|p| p.context == context))
             .context("unsolicited/old mailbox reply")?;
         let s = &mut self.slots[index];
-        let p = s.fail_pending().unwrap(); // all decode, semantic, expiry and authority errors latch
+        let mut p = s.fail_pending().unwrap(); // all decode, semantic, expiry and authority errors latch
         ensure!(p.sent && now < p.deadline, "mailbox late/unsent reply");
         let replies = decode_replies(&bytes, p.context, p.requests.len())?;
         for (request, reply) in p.requests.iter().zip(&replies) {
@@ -406,6 +410,10 @@ impl NativeMailboxClient {
             .context("mailbox sequence exhausted")?;
         s.failed = false;
         s.retired = None;
+        // A verified business reply is success, not cancellation. Its request
+        // may still be draining a redundant transport repair or awaiting DONE.
+        // Let the original bounded link send finish; errors above still cancel.
+        p.cancel_on_drop = false;
         Ok((p.id, replies))
     }
     /// Feed the existing link's completion events. Returns an unknown-outcome

@@ -735,6 +735,23 @@ impl NativeEndpoint {
             .is_some_and(NativeUdpSession::is_bound_reliable_carrier)
     }
 
+    pub(crate) fn drain_object_send(
+        &mut self,
+        peer: usize,
+        stream: u64,
+        id: [u8; 32],
+        now: Instant,
+    ) -> Result<bool> {
+        let session = self
+            .peers
+            .get_mut(peer)
+            .context("unknown native peer")?
+            .session
+            .as_mut()
+            .context("native peer not authenticated")?;
+        session.drain_object_send(self.io.as_ref(), stream, id, self.wire_budget.as_mut(), now)
+    }
+
     pub(crate) fn cancel_object_send(
         &mut self,
         peer: usize,

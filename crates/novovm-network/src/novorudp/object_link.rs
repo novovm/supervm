@@ -593,11 +593,11 @@ impl NativeObjectLink {
         for _ in 0..quantum.min(self.order.len()) {
             let key = self.order.pop_front().expect("bounded job count");
             let sender = self.jobs.get_mut(&key).expect("retained send job");
-            if self
+            let cancelled = self
                 .cancellations
                 .get(&key)
-                .is_some_and(NativeSendCancellation::is_cancelled)
-            {
+                .is_some_and(NativeSendCancellation::is_cancelled);
+            if cancelled {
                 sender.cancel();
             }
             if sender.status() == ObjectSendState::Sending {
@@ -624,11 +624,27 @@ impl NativeObjectLink {
                 }
                 continue;
             }
-            // A terminal object may still own a deferred encrypted write.
-            // Retire it before releasing quota; a partial stream abort is fatal,
-            // not a recoverable UDP send error or a successful transmission.
+            // A complete ACK can arrive while a redundant repair frame is
+            // partially written. Drain that frame under the original deadline
+            // before releasing quota. Cancelling/expiring a partial stream is
+            // still fatal; successful completion must not trigger cancellation.
             if self.endpoint.session_id(key.0) == Some(sender.session_id()) {
-                if let Err(error) = self.endpoint.cancel_object_send(key.0, key.1, key.2) {
+                if sender.status() == ObjectSendState::Delivered
+                    && !cancelled
+                    && now < sender.deadline()
+                {
+                    match self.endpoint.drain_object_send(key.0, key.1, key.2, now) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            self.order.push_back(key);
+                            continue;
+                        }
+                        Err(error) => {
+                            self.order.push_front(key);
+                            return Err(error);
+                        }
+                    }
+                } else if let Err(error) = self.endpoint.cancel_object_send(key.0, key.1, key.2) {
                     self.order.push_front(key);
                     return Err(error);
                 }

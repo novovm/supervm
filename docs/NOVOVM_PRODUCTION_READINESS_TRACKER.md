@@ -29,6 +29,28 @@ UCA花费授权、业务ZK/PQ和自动联网仍分别登记；不否认现有严
 完整来源、因果、反例覆盖与验收边界见
 [独立复核报告](../artifacts/audit/mainchain-independent-review-20261020/README.md)。
 
+## 2026-10-20 TLS slow-object candidate: completion is not cancellation
+
+The real application/TCP fixture at 128 KiB/s downstream reproduced notification
+216 while bytes continued arriving. NOVOCHAT now keeps small WatchFetchV6
+prefetch and uses the existing independent FetchBulkV1 for larger objects.
+No notification, request, identity, TTL or resource limit was increased.
+
+An additional deterministic native-link regression reproduced a verified DONE
+ACK arriving while a repair frame was partly written: normal completion called
+cancel, aborting the carrier. Delivered sends now drain only that exact retained
+frame under the original deadline and cancellation token, retaining quota until
+completion. Cancellation/expiry still abort a partial frame. A fully validated
+mailbox business reply also no longer cancels its bounded transport send on
+destruction; failed validation still cancels and latches the request slot.
+
+Component evidence: 108 native transport tests, 22 structured mailbox tests and
+8 authenticated mailbox integration tests
+pass, including the original red regression and negative cases for cancellation
+and the original deadline during drain. This is a candidate source fix, **not**
+cellular Android acceptance. Installed v85 and the cloud baseline are retained;
+the sustained TLS-only cellular image gate remains open.
+
 ## 2026-10-20 Android v85 owned TLS fallback: PARTIAL, cellular bulk gate open
 
 Using the same installed v85 and original phone identities, each isolated gate

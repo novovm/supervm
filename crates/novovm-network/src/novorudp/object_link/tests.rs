@@ -457,6 +457,8 @@ struct BlockedFeedbackIo {
     blocked: AtomicBool,
     cancellations: std::sync::atomic::AtomicUsize,
     stepped: AtomicBool,
+    partial_writes: AtomicBool,
+    failed: AtomicBool,
     write: std::sync::Mutex<Option<(Vec<u8>, crate::novorudp::carrier::NativeRoute, bool)>>,
 }
 impl crate::novorudp::carrier::NativeDatagramIo for BlockedFeedbackIo {
@@ -469,12 +471,28 @@ impl crate::novorudp::carrier::NativeDatagramIo for BlockedFeedbackIo {
         _: crate::novorudp::carrier::NativeRoute,
     ) -> std::io::Result<usize> {
         self.cancellations.fetch_add(1, Ordering::Relaxed);
+        if self.partial_writes.load(Ordering::Relaxed)
+            && self
+                .write
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|(_, _, complete)| !complete)
+        {
+            // Match CarrierIo: cancelling an in-progress framed write would
+            // leave an incomplete frame on a reliable stream.
+            self.failed.store(true, Ordering::Relaxed);
+            return Err(std::io::ErrorKind::ConnectionAborted.into());
+        }
         Ok(0)
     }
     fn try_receive(
         &self,
         bytes: &mut [u8],
     ) -> std::io::Result<Option<(usize, crate::novorudp::carrier::NativeRoute)>> {
+        if self.failed.load(Ordering::Relaxed) {
+            return Err(std::io::ErrorKind::ConnectionAborted.into());
+        }
         self.socket
             .recv_from(bytes)
             .map(|(n, address)| Some((n, address.into())))
@@ -484,14 +502,23 @@ impl crate::novorudp::carrier::NativeDatagramIo for BlockedFeedbackIo {
         bytes: &[u8],
         route: crate::novorudp::carrier::NativeRoute,
     ) -> std::io::Result<usize> {
+        if self.failed.load(Ordering::Relaxed) {
+            return Err(std::io::ErrorKind::ConnectionAborted.into());
+        }
         if self.blocked.load(Ordering::Relaxed) {
             return Err(std::io::ErrorKind::WouldBlock.into());
         }
-        if self.stepped.load(Ordering::Relaxed) {
+        // This fixture establishes a real UDP handshake before modelling the
+        // bound carrier's data writer. UDP Finished retransmissions are not
+        // writes on that reliable-data slot.
+        if self.stepped.load(Ordering::Relaxed) && !bytes.starts_with(b"NVHSHK01") {
             let mut slot = self.write.lock().unwrap();
             if let Some((old, old_route, complete)) = slot.as_ref() {
                 if old != bytes || *old_route != route {
-                    return Err(std::io::ErrorKind::InvalidInput.into());
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "fixture deferred slot changed before completion",
+                    ));
                 }
                 if !complete {
                     return Err(std::io::ErrorKind::WouldBlock.into());
@@ -514,6 +541,8 @@ fn blocked_feedback_pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<Bl
         blocked: false.into(),
         cancellations: 0.into(),
         stepped: false.into(),
+        partial_writes: false.into(),
+        failed: false.into(),
         write: std::sync::Mutex::new(None),
     });
     let server_key = SigningKey::from_bytes(&[81; 32]);
@@ -680,4 +709,145 @@ fn deferred_slot_alternates_sustained_feedback_and_outbound_data() -> Result<()>
     assert!(data >= 5, "outbound data starved: {data}");
     assert!(data < outbound.frame_count());
     Ok(())
+}
+
+enum PartialRepairEnd {
+    Drain,
+    Cancel,
+    Deadline,
+}
+
+fn verified_partial_repair_completion(end: PartialRepairEnd) -> Result<()> {
+    let (mut receiver, mut sender, io) =
+        blocked_feedback_pair().context("partial repair fixture handshake")?;
+    let now = Instant::now();
+    let deadline = now + Duration::from_secs(1);
+    let cancellation = NativeSendCancellation::default();
+    let session = sender.session_id(0);
+    let body = message(BODY, 21, 1000)?;
+    io.blocked.store(false, Ordering::Relaxed);
+    assert!(sender
+        .try_send_cancellable_until(0, BODY, &body, now, deadline, &cancellation)
+        .context("queue initial object")?);
+    // Send all initial fragments, retaining the real receiver's ACK until a
+    // repair is in progress. The fixture uses authenticated native datagrams;
+    // no fabricated completion is injected into the sender.
+    let mut sent = 0;
+    for _ in 0..body.frame_count() + 1 {
+        sent += sender
+            .poll(1000, now, 8)
+            .context("transmit initial object before any receiver ACK")?
+            .data_sent;
+    }
+    assert_eq!(sent, body.frame_count());
+    io.stepped.store(true, Ordering::Relaxed);
+    io.partial_writes.store(true, Ordering::Relaxed);
+    let later = now + Duration::from_millis(11);
+    assert_eq!(
+        sender
+            .poll(1011, later, 8)
+            .context("queue repair in Writing state")?
+            .data_sent,
+        0
+    );
+    assert!(io
+        .write
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|(_, _, complete)| !complete));
+
+    let _ = receiver
+        .poll(1011, later, 8)
+        .context("receive initial fragments before complete ACK")?;
+    let assembled = receiver
+        .poll_complete(BODY, later, 8)
+        .context("verify receiver object")?
+        .context("receiver did not verify the initial object")?;
+    assert_eq!(assembled.id, body.id());
+    // poll_complete performs full-object verification before this real ACK.
+    assert!(
+        receiver
+            .poll(1011, later, 8)
+            .context("send verified receiver completion ACK")?
+            .feedback_sent
+            > 0
+    );
+    let report = sender
+        .poll(1011, later, 8)
+        .context("verified completion aborted a partial repair frame")?;
+    assert!(
+        report.completed.is_empty(),
+        "release quota only after drain"
+    );
+    assert!(!io.failed.load(Ordering::Relaxed));
+    assert_eq!(io.cancellations.load(Ordering::Relaxed), 0);
+    assert_eq!(sender.outbound_usage(BODY)?, (1, 1000));
+
+    if !matches!(end, PartialRepairEnd::Drain) {
+        let boundary = match end {
+            PartialRepairEnd::Cancel => {
+                cancellation.cancel();
+                later
+            }
+            // Exact caller deadline, shorter than the two-second send policy.
+            PartialRepairEnd::Deadline => deadline,
+            PartialRepairEnd::Drain => unreachable!(),
+        };
+        let error = sender
+            .poll(2000, boundary, 8)
+            .err()
+            .context("revoked/expired partial frame continued after completion ACK")?;
+        assert!(error.is::<crate::novorudp::carrier::NativeCarrierIoFailure>());
+        assert!(io.failed.load(Ordering::Relaxed));
+        assert_eq!(io.cancellations.load(Ordering::Relaxed), 1);
+        assert_eq!(sender.outbound_usage(BODY)?, (1, 1000));
+        assert!(io
+            .write
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|(_, _, complete)| !complete));
+        return Ok(());
+    }
+
+    // Existing carrier progress completes the same frame, without replacing
+    // the owner, session, object or its original deadline.
+    {
+        use crate::novorudp::carrier::NativeDatagramIo;
+        let mut write = io.write.lock().unwrap();
+        let (bytes, route, complete) = write.as_mut().context("repair lost before drain")?;
+        assert_eq!(
+            io.socket
+                .try_send(bytes, *route)
+                .context("finish original partial repair frame")?,
+            bytes.len()
+        );
+        *complete = true;
+    }
+    let report = sender
+        .poll(1011, later, 8)
+        .context("observe drained repair and release Delivered object")?;
+    assert_eq!(report.completed.len(), 1);
+    assert_eq!(report.completed[0].state, ObjectSendState::Delivered);
+    assert!(Arc::ptr_eq(&report.completed[0].body, &body));
+    assert_eq!(sender.outbound_usage(BODY)?, (0, 0));
+    assert_eq!(sender.session_id(0), session);
+    assert!(!io.failed.load(Ordering::Relaxed));
+    Ok(())
+}
+
+#[test]
+fn verified_completion_drains_partial_repair_without_aborting_carrier() -> Result<()> {
+    verified_partial_repair_completion(PartialRepairEnd::Drain)
+}
+
+#[test]
+fn verified_completion_partial_repair_stops_at_original_deadline() -> Result<()> {
+    verified_partial_repair_completion(PartialRepairEnd::Deadline)
+}
+
+#[test]
+fn verified_completion_partial_repair_stops_after_owner_cancellation() -> Result<()> {
+    verified_partial_repair_completion(PartialRepairEnd::Cancel)
 }

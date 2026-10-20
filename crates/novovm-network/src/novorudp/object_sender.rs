@@ -133,6 +133,9 @@ impl NativeObjectSender {
     pub(crate) fn session_id(&self) -> [u8; 16] {
         self.session
     }
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
     pub(crate) fn retire_session(&mut self) {
         if self.terminal == ObjectSendState::Sending {
             self.terminal = ObjectSendState::SessionReplaced;

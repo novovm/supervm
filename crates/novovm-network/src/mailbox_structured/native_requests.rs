@@ -398,7 +398,7 @@ impl NativeMailboxDriver {
                     if let Some(kind) = failed {
                         slot.failed = Some(kind);
                     }
-                    // Pending::Drop also cancels a successfully completed transport.
+                    // Successful replies leave bounded transport cleanup alive.
                     // Only a dropped receiver permits early reservation release.
                     if active.reply.is_closed() {
                         slot.entry = None;
