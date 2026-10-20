@@ -16,6 +16,7 @@ use crate::{
     },
     network_time::ClockAnchorV1,
     novorudp::{
+        carrier::NativeCarrierIoFailure,
         carrier_io::NativeCarrierPump,
         endpoint::{NativeEndpoint, NativeHandshakeBudget},
         fragments::ReassemblyLimits,
@@ -63,7 +64,48 @@ enum Readiness<'a> {
     Udp(tokio::net::UdpSocket),
     Carrier(NativeCarrierPump<'a>),
 }
+
+/// Applied only at the UDP IO boundary, never to authority or storage errors.
+#[derive(Debug, thiserror::Error)]
+#[error("native UDP listener unavailable: {0:?}")]
+struct ListenerIoUnavailable(std::io::ErrorKind);
+
+fn mark_udp_io_failure(error: anyhow::Error) -> anyhow::Error {
+    let kind = error
+        .downcast_ref::<std::io::Error>()
+        .map(std::io::Error::kind)
+        .or_else(|| {
+            error
+                .downcast_ref::<NativeCarrierIoFailure>()
+                .map(|e| e.0.kind())
+        });
+    match kind {
+        Some(
+            kind @ (std::io::ErrorKind::NetworkUnreachable
+            | std::io::ErrorKind::HostUnreachable
+            | std::io::ErrorKind::NetworkDown
+            | std::io::ErrorKind::AddrNotAvailable
+            | std::io::ErrorKind::NotConnected
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::TimedOut),
+        ) => error.context(ListenerIoUnavailable(kind)),
+        _ => error,
+    }
+}
+
+pub(super) fn listener_io_unavailable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<ListenerIoUnavailable>().is_some()
+}
+
 impl Readiness<'_> {
+    fn link_error(&self, error: anyhow::Error) -> anyhow::Error {
+        match self {
+            Self::Udp(_) => mark_udp_io_failure(error),
+            Self::Carrier(_) => error,
+        }
+    }
+
     fn poll_carrier(&mut self) -> Result<()> {
         if let Self::Carrier(pump) = self {
             // Also poll during the bounded fast path: queued replies and busy
@@ -85,7 +127,7 @@ impl Readiness<'_> {
                         std::io::ErrorKind::ConnectionReset
                         | std::io::ErrorKind::ConnectionRefused
                         | std::io::ErrorKind::Interrupted => {}
-                        _ => return Err(error.into()),
+                        _ => return Err(mark_udp_io_failure(error.into())),
                     }
                 }
                 Ok(())
@@ -373,7 +415,9 @@ async fn serve_link(
         authority()?;
         readiness.poll_carrier()?;
         let now = Instant::now();
-        let report = link.poll(now_ms()?, now, QUANTUM)?;
+        let report = link
+            .poll(now_ms()?, now, QUANTUM)
+            .map_err(|error| readiness.link_error(error))?;
         outbound = outbound.saturating_sub(report.completed.len());
         // Retire application bindings BEFORE accepting completed new-session
         // objects. An old committed operation has an unknown remote outcome;
@@ -507,3 +551,7 @@ async fn serve_link(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "product_rendezvous_native_failure_tests.rs"]
+mod failure_tests;

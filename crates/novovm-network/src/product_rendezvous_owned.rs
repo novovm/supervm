@@ -512,6 +512,7 @@ impl Node {
             std::future::pending::<Result<()>>().await
         };
         tokio::pin!(native_serving);
+        let mut native_running = true;
         let generation = Arc::new(Mutex::new(Generation {
             store: Arc::new(Mutex::new(RendezvousStoreV1::new(
                 endpoint.instance,
@@ -583,7 +584,29 @@ impl Node {
                     host.check_route(endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
                 }
                 result = &mut sweeping => { result?; unreachable!("mailbox maintenance is continuous"); }
-                result = &mut native_serving => { result?; break; }
+                result = &mut native_serving, if native_running => {
+                    match result {
+                        Err(error) if native::listener_io_unavailable(&error) => {
+                            // A failed local UDP path must not terminate healthy
+                            // carrier sessions or custody. Withdraw it durably
+                            // before publishing the surviving service. The
+                            // original platform owner may bind a fresh listener
+                            // on its next network generation; no retry owner here.
+                            native_running = false;
+                            let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
+                            let record = host.rotate_native_mailbox_v7(None, now_ms()?, current.expires_ms)?;
+                            if let Some(service) = &mailbox {
+                                if NativeCarrierMailboxEndpointV8::from_record(&record)?.is_some() {
+                                    service.update_native_record_v8(record.clone())?;
+                                } else if NativeCarrierMailboxEndpointV7::from_record(&record)?.is_some() {
+                                    service.update_native_record_v7(record.clone())?;
+                                }
+                            }
+                            publish(&record)?;
+                        }
+                        result => { result?; break; }
+                    }
+                }
                 result = &mut extra_serving => { result?; anyhow::bail!("TLS mailbox listener ended"); }
                 Some(_) = active.next(), if !active.is_empty() => {}
                 accepted = &mut incoming, if active.len() < max_connections => {
