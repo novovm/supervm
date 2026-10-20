@@ -127,6 +127,7 @@ mod dual_owner_tests {
     ) -> Result<(StoreReceiptV1, u64)> {
         let owner = fixture.open()?;
         let pin = owner.policy.node_pin;
+        let direct_only = matches!(owner.policy.carrier_mode, Some(CarrierMode::DirectOnly));
         #[cfg(feature = "tls-transport")]
         let tls_enabled = owner.policy.tls_listener.is_some();
         let root = fixture.0.root.clone();
@@ -154,6 +155,15 @@ mod dual_owner_tests {
                 .context("dual owner lost V8 entry")?;
             ensure!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&record)?);
             let route = IrohServiceEndpointV1::from_record(&record)?;
+            if direct_only {
+                ensure!(
+                    route.address.relays.is_empty(),
+                    "direct-only advertised a relay"
+                );
+                let status: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(root.join("status.json"))?)?;
+                ensure!(status["relayServicesEnabled"] == false);
+            }
             let mut book =
                 ServiceLeaseBookV1::new_self_owned(trust(pin), vec![record.clone()], now_ms()?)?;
             book.check_native_carrier_route_v8(pin, &carrier, now_ms()?)?;
@@ -379,6 +389,31 @@ mod dual_owner_tests {
         );
         ensure!(next > sequence && second.signature == first.signature);
         ensure!(std::fs::read(fixture.0.root.join("keys.dpapi"))? == keys);
+        Ok(())
+    }
+
+    #[cfg(feature = "tls-transport")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn direct_only_owner_keeps_udp_tls_custody_after_restart() -> Result<()> {
+        let mut fixture = Fixture::new()?;
+        // An unusable saved preference must not become an effective route.
+        // This checks publication and real local I/O, not external packet capture.
+        fixture.0.relays = vec!["https://unused.example.invalid/".into()];
+        fixture
+            .provision()?
+            .set_carrier_mode(CarrierMode::DirectOnly)?;
+        fixture.open()?.set_native_carrier_mailbox_v8(true)?;
+        fixture.open()?.set_tls_listener(Some(tls_settings(true)))?;
+        fixture.open()?.set_native_listener(Some(settings()))?;
+        let keys = std::fs::read(fixture.0.root.join("keys.dpapi"))?;
+        let expires = (now_ms()? / 1000) as i64 + 600;
+        let (receipt, sequence) = dual_exchange(&fixture, None, expires).await?;
+        let (recovered, next) = dual_exchange(&fixture, Some(&receipt), expires).await?;
+        ensure!(next > sequence && receipt.signature == recovered.signature);
+        ensure!(std::fs::read(fixture.0.root.join("keys.dpapi"))? == keys);
+        let owner = fixture.open()?;
+        ensure!(owner.policy.config.relays == fixture.0.relays);
+        ensure!(effective_relays(&owner.policy).is_empty());
         Ok(())
     }
 }

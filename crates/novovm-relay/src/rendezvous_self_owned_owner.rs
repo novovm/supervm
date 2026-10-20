@@ -234,6 +234,9 @@ struct Policy {
 pub enum CarrierMode {
     Automatic,
     RelayOnly,
+    /// Disable relay services without rewriting the protected operator config.
+    /// Direct QUIC remains a library carrier; this is not an anonymity policy.
+    DirectOnly,
 }
 
 /// Local listener settings only; transport secrets never enter this JSON.
@@ -772,9 +775,12 @@ impl Owner {
         let _running_lock = self._lock.clone();
         let config = self.policy.config.clone();
         let relay_only = relay_only(&self.policy);
+        let direct_only = matches!(self.policy.carrier_mode, Some(CarrierMode::DirectOnly));
         let native_settings = self.policy.native_listener.clone();
         let native_selected = native_settings.is_some();
         let dual_selected = native_selected && self.native_carrier_mailbox_v8();
+        let relay_services_enabled =
+            (!native_selected || dual_selected) && !effective_relays(&self.policy).is_empty();
         let key = self.key.clone();
         let publish_root = config.root.clone();
         let mailbox_path = config.root.join("mailbox.sqlite");
@@ -815,7 +821,7 @@ impl Owner {
             atomic(
                 &publish_root.join("status.json"),
                 &serde_json::to_vec(
-                    &serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if dual_selected {"native+carrier"} else if native_selected {"native"} else if relay_only {"relay-only"} else {"automatic"},"mailboxTimings":mailbox_status.timing_snapshot_v1()}),
+                    &serde_json::json!({"version":2,"phase":"serving","publisherRequired":false,"anonymous":false,"carrierMode":if dual_selected {"native+carrier"} else if native_selected {"native"} else if relay_only {"relay-only"} else if direct_only {"direct-only"} else {"automatic"},"relayServicesEnabled":relay_services_enabled,"mailboxTimings":mailbox_status.timing_snapshot_v1()}),
                 )?,
             )
             })().context(FailureStage::Publish)
@@ -855,7 +861,7 @@ impl Owner {
             return stage_result(result, FailureStage::TransportRun);
         }
         let carrier = (|| -> Result<_> {
-            let mut carrier = IrohConfigV1::new(&config.relays, config.nameserver)?
+            let mut carrier = IrohConfigV1::new(effective_relays(&self.policy), config.nameserver)?
                 .with_owned_service_identity(self.transport.clone())?;
             if let Some(bind) = config.bind_address {
                 carrier = carrier.with_bind_address(bind)?;
@@ -965,9 +971,16 @@ impl Owner {
 }
 fn relay_only(policy: &Policy) -> bool {
     match policy.carrier_mode {
-        Some(CarrierMode::Automatic) => false,
+        Some(CarrierMode::Automatic | CarrierMode::DirectOnly) => false,
         Some(CarrierMode::RelayOnly) => true,
         None => policy.config.relay_only,
+    }
+}
+fn effective_relays(policy: &Policy) -> &[String] {
+    if matches!(policy.carrier_mode, Some(CarrierMode::DirectOnly)) {
+        &[]
+    } else {
+        &policy.config.relays
     }
 }
 fn trust(pin: [u8; 32]) -> SelfOwnedTrustV1 {
@@ -1683,6 +1696,30 @@ mod tests {
             sequence = next;
             tls_key = Some(key);
             assert_eq!(std::fs::read(fixture.0.root.join("keys.dpapi"))?, keys);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn direct_only_policy_keeps_relay_preferences_keys_and_history() -> Result<()> {
+        let mut fixture = Fixture::new()?;
+        fixture.0.relays = vec!["https://unused.example.invalid/".into()];
+        let owner = fixture.provision()?;
+        let baseline = ["keys.dpapi", "service.journal"]
+            .map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
+        let pin = owner.policy.node_pin;
+        owner.set_carrier_mode(CarrierMode::DirectOnly)?;
+        let owner = fixture.open()?;
+        assert_eq!(owner.policy.node_pin, pin);
+        assert_eq!(owner.policy.config.relays, fixture.0.relays);
+        assert!(effective_relays(&owner.policy).is_empty());
+        assert!(!relay_only(&owner.policy));
+        assert!(fixture.open().is_err(), "exclusive policy owner was bypassed");
+        owner.set_carrier_mode(CarrierMode::Automatic)?;
+        let owner = fixture.open()?;
+        assert_eq!(effective_relays(&owner.policy), fixture.0.relays);
+        for (name, bytes) in ["keys.dpapi", "service.journal"].into_iter().zip(baseline) {
+            assert_eq!(std::fs::read(fixture.0.root.join(name))?, bytes);
         }
         Ok(())
     }

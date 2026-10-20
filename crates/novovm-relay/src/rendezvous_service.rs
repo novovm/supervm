@@ -230,11 +230,12 @@ mod windows {
             use super::rendezvous_self_owned_owner::{CarrierMode, Config, Owner};
             ensure!(
                 args.len() == 3,
-                "usage: --set-self-owned-carrier CONFIG automatic|relay-only"
+                "usage: --set-self-owned-carrier CONFIG automatic|relay-only|direct-only"
             );
             let mode = match args[2].to_str() {
                 Some("automatic") => CarrierMode::Automatic,
                 Some("relay-only") => CarrierMode::RelayOnly,
+                Some("direct-only") => CarrierMode::DirectOnly,
                 _ => anyhow::bail!("unknown carrier mode"),
             };
             return Owner::open(Config::load(&path)?, false, None)?.set_carrier_mode(mode);

@@ -1,5 +1,23 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-20 autonomous public entry: relay isolation and Ubuntu audit
+
+The existing protected self-owned owner now accepts `direct-only` carrier
+policy. Its effective Iroh relay set is empty while saved preferences, keys,
+history and existing UDP/V8/TLS runtime remain intact. Two targeted tests pass,
+including real UDP/TLS custody across restart; the compiled owner test binary
+also passes its full 25-test suite. This is local implementation
+evidence, not Android/public independence acceptance. Direct QUIC still uses
+the Iroh library; phone relay policies are independent and unchanged.
+
+Read-only inspection of the user's existing Ubuntu host confirmed a possible
+public deployment location. No remote services or firewall rules were changed.
+Current protected service startup is Windows-only, so Linux custody/startup
+adaptation remains necessary before installation. Existing phones remain v84.
+Priority is autonomous public cold start, then cross-carrier/native recovery
+and independent privacy routes; group chat does not replace this network work.
+See [source reuse, deployment boundaries and acceptance](NOVONET_AUTONOMOUS_PUBLIC_DEPLOYMENT_V1.md).
+
 
 ## 2026-10-20 v84 Android local return admission resumes without reopening
 
