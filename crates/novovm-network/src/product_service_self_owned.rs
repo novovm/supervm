@@ -117,6 +117,16 @@ impl ServiceLeaseBookV1 {
         self.failed = true;
     }
 
+    /// The local policy owner is live. This does not require a fresh remote
+    /// service declaration or extend any service/capability lifetime.
+    pub fn check_self_owned_owner(&self) -> Result<()> {
+        ensure!(
+            !self.failed && self.is_self_owned(),
+            "self-owned policy owner retired or unavailable"
+        );
+        Ok(())
+    }
+
     pub fn is_self_owned(&self) -> bool {
         matches!(self.policy, ServiceTrustV1::SelfOwned(_))
     }

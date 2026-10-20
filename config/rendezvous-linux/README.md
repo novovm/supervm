@@ -31,7 +31,11 @@ systemd, runs the existing owner configuration commands under the dedicated
 service user, then starts the unit. Node signing/storage/transport keys remain
 inside the existing encrypted file format; Linux uses `.sealed`, Windows
 retains `.dpapi`. The Linux process accepts only a private 32-byte `owner-key`
-file supplied via `CREDENTIALS_DIRECTORY`. A missing or wrong credential,
+file supplied via `CREDENTIALS_DIRECTORY`. systemd may retain root ownership
+and grant the service read access via an ACL: only its root-owned, read-only
+memory-mounted `/run/credentials/<unit>/owner-key` copy qualifies for that
+exception. Ordinary state files remain private and service-owned.
+A missing or wrong credential,
 corrupt state or deleted activated journal is an error, never a fresh identity.
 
 The service has explicit resource bounds for a shared host. They are deployment

@@ -1,5 +1,26 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-20 Ubuntu owned native service deployed; phone gate pending
+
+The isolated Linux owner is serving native UDP and V8/TLS with external relay
+services disabled. The actual systemd credential ACL shape required a narrowly
+scoped Linux custody correction; all 25 Linux owner tests passed afterwards.
+The deployed service restarts with the same node key/sealed custody and advancing
+sequence. Only its two new IPv4 host-firewall rules were added.
+
+Existing Nginx hashes and KINGCLUB/CCSOP container identities/start times are
+unchanged; public and local health/readiness remain 200. No KINGCLUB restart,
+database migration or web-port change. An external TCP connect succeeded, but
+native remote business validation and both original phones remain pending.
+No cloud security-group change was made through the blocked browser tool.
+This is an owned service on one host, not a complete L2 consensus node, global
+independence, anonymity or anti-censorship acceptance.
+
+The additive phone policy migration also needs to retire old L4 transport on
+an ambiguous/CAS commit failure; merely disabling chat is not proof that old
+L4 custody listeners have stopped. The existing reaper and encrypted checkpoint
+remain authoritative. See [deployment evidence and boundaries](NOVONET_AUTONOMOUS_PUBLIC_DEPLOYMENT_V1.md).
+
 ## 2026-10-20 Linux owned mailbox adapter — local validation
 
 Linux now reuses the existing self-owned UDP/V8/TLS runtime, encrypted journal

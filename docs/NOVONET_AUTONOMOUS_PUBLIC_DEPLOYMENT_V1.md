@@ -1,6 +1,31 @@
 # NOVONET autonomous public deployment v1
 
-Status: implementation and deployment preparation, not public-network acceptance.
+Status: isolated Ubuntu service deployed; Android public-network acceptance pending.
+
+## Actual Ubuntu installation — 2026-10-20
+
+The dedicated `novonet-mailbox` service is now installed, enabled and serving.
+The host firewall has only the new IPv4 UDP 43171 / TCP 43172 allowances.
+No cloud security-group modification was performed by the agent: browser
+control remained disabled even after the user signed in. An external TCP
+connect succeeded in one 47 ms sample; this is not authentication or delivery.
+
+The first installation attempt stopped before creating node custody because
+systemd v255 exposes a root-owned ACL-protected credential as 0440/0550.
+The corrected adapter accepts only the manager's private, read-only memory
+mount under `/run/credentials/<unit>` for this case; ordinary state-file
+checks remain unchanged. All 25 Linux owner tests then passed and the release
+binary was rebuilt. The installed binary SHA-256 is
+`0eb41b9bdcb13fd27754943f52a7474205f476aa5ed4f9be3b64c1d6f2b92605`.
+
+An actual systemd restart preserved the node public key and sealed-key hash,
+advanced the existing sequence, and returned to `serving` with
+`relayServicesEnabled=false`. This did not yet exercise a stored phone message.
+Before/after Nginx configuration hashes and KINGCLUB/CCSOP container identities
+and start times were equal; public health, local health and readiness returned
+200. No existing application was restarted. Private evidence remains outside
+Git. This is one public failure domain, not an independently redundant network
+or a full NOVOVM consensus/L2 installation.
 
 ## Linux adapter validation — 2026-10-20
 
@@ -88,10 +113,11 @@ existing custody, invalid configuration, occupied listeners and restart paths.
 
 ## Existing Ubuntu host
 
-Read-only SSH inspection found Ubuntu 24.04 x86_64 with systemd credentials
+Initial read-only SSH inspection found Ubuntu 24.04 x86_64 with systemd credentials
 support, existing production services, occupied TCP 80/443 and limited spare
 memory. Keep host identifiers and SSH credentials outside this repository.
-No service, firewall, security group or live application was changed.
+At that initial audit no service or firewall was changed; the isolated
+installation above records the subsequent changes.
 
 Deployment must:
 

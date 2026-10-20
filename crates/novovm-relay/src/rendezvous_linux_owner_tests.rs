@@ -85,6 +85,11 @@ async fn linux_owner_child() -> Result<()> {
     std::fs::rename(&credential_path, &missing)?;
     assert!(Owner::open(config.clone(), true, None).is_err());
     std::fs::rename(missing, &credential_path)?;
+    for length in [31, 33] {
+        std::fs::write(&credential_path, vec![67; length])?;
+        assert!(Owner::open(config.clone(), true, None).is_err());
+        assert_eq!(std::fs::read(root.join(KEYS_FILE))?, sealed_keys);
+    }
     std::fs::write(&credential_path, [68; 32])?;
     assert!(Owner::open(config.clone(), true, None).is_err());
     assert_eq!(std::fs::read(root.join(KEYS_FILE))?, sealed_keys);

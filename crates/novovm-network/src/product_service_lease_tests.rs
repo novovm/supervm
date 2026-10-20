@@ -60,6 +60,7 @@ fn continuous_peer_keeps_local_trust_not_expired_locator_authority() -> Result<(
     let mut b = own_book()?;
     // A historical locator remains only a way to find the pinned transport.
     b.check_continuous_peer_v4(pin, endpoint, 500_000)?;
+    b.check_self_owned_owner()?;
     assert!(b.routes(500_000)?.is_empty());
     assert!(accept(&mut b, record(2, 2, 3000, 40_000), 500_000).is_err());
     assert!(b.check_continuous_peer_v4(pin, [99; 32], 500_000).is_err());
@@ -81,6 +82,7 @@ fn continuous_peer_keeps_local_trust_not_expired_locator_authority() -> Result<(
         .is_err());
     let mut retired = own_book()?;
     retired.retire_for_policy_change();
+    assert!(retired.check_self_owned_owner().is_err());
     assert!(retired
         .check_continuous_peer_v4(pin, endpoint, 3000)
         .is_err());

@@ -3,7 +3,15 @@
 use crate::linux_owner_files::{check_path, check_private_file, check_private_root, read_bounded};
 use anyhow::{ensure, Context, Result};
 use novovm_network::product_service_lease::{ServiceLeaseFileV1, ServiceLeasePersistenceV1};
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{File, OpenOptions},
+    mem::MaybeUninit,
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
+    path::{Path, PathBuf},
+};
 use zeroize::Zeroizing;
 
 fn credential() -> Result<Zeroizing<[u8; 32]>> {
@@ -18,7 +26,7 @@ fn credential() -> Result<Zeroizing<[u8; 32]>> {
         None => anyhow::bail!("systemd owner credential missing"),
     };
     let path = directory.join("owner-key");
-    check_private_file(&path)?;
+    check_credential_source(&directory, &path)?;
     let bytes = Zeroizing::new(read_bounded(&path, 32)?);
     let key = Zeroizing::new(
         <[u8; 32]>::try_from(bytes.as_slice())
@@ -27,6 +35,76 @@ fn credential() -> Result<Zeroizing<[u8; 32]>> {
     ensure!(*key != [0; 32], "empty owner credential");
     Ok(key)
 }
+// systemd v255 keeps root ownership and grants the service UID read access
+// through a named-user ACL. Its ACL mask appears as 0440/0550 in stat(), so the
+// ordinary state-file owner check is deliberately not used for this case.
+fn systemd_copy_shape(directory: &Path, uid: u32, gid: u32, mode: u32, is_directory: bool) -> bool {
+    let expected_modes = if is_directory {
+        [0o500, 0o550]
+    } else {
+        [0o400, 0o440]
+    };
+    directory.parent() == Some(Path::new("/run/credentials"))
+        && directory.file_name().is_some()
+        && uid == 0
+        && gid == 0
+        && expected_modes.contains(&(mode & 0o7777))
+}
+// linux/magic.h; libc does not expose RAMFS_MAGIC on all Linux targets.
+const RAMFS_MAGIC: libc::c_long = 0x858458f6_u32 as libc::c_long;
+fn readonly_memory_mount(flags: libc::c_ulong, kind: libc::c_long) -> bool {
+    flags & libc::ST_RDONLY != 0
+        && (kind == libc::TMPFS_MAGIC as libc::c_long || kind == RAMFS_MAGIC)
+}
+fn check_systemd_mount(directory: &Path) -> Result<()> {
+    let descriptor: File = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(directory)?;
+    let mut mount = MaybeUninit::<libc::statvfs>::uninit();
+    let mut filesystem = MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: live directory descriptor and correctly sized writable outputs;
+    // values are only read after both syscalls succeed.
+    let (mount, filesystem) = unsafe {
+        if libc::fstatvfs(descriptor.as_raw_fd(), mount.as_mut_ptr()) != 0
+            || libc::fstatfs(descriptor.as_raw_fd(), filesystem.as_mut_ptr()) != 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        (mount.assume_init(), filesystem.assume_init())
+    };
+    ensure!(
+        readonly_memory_mount(mount.f_flag, filesystem.f_type),
+        "systemd credential directory must be a read-only memory mount"
+    );
+    Ok(())
+}
+fn check_credential_source(directory: &Path, path: &Path) -> Result<()> {
+    check_path(path)?;
+    let parent = std::fs::symlink_metadata(directory)?;
+    let file = std::fs::symlink_metadata(path)?;
+    ensure!(
+        parent.is_dir() && file.is_file(),
+        "regular credential file and directory required"
+    );
+    // A directly supplied per-user credential remains supported, with no group
+    // or public access. Other users' files never qualify through this branch.
+    let uid = unsafe { libc::geteuid() };
+    if file.uid() == uid
+        && parent.uid() == uid
+        && file.mode() & 0o077 == 0
+        && parent.mode() & 0o077 == 0
+    {
+        return check_private_file(path);
+    }
+    ensure!(
+        systemd_copy_shape(directory, parent.uid(), parent.gid(), parent.mode(), true)
+            && systemd_copy_shape(directory, file.uid(), file.gid(), file.mode(), false),
+        "credential must be private per-user custody or a systemd read-only credential copy"
+    );
+    check_systemd_mount(directory)
+}
+
 pub fn validate_credential() -> Result<()> {
     credential().map(|_| ())
 }
@@ -90,4 +168,57 @@ pub(super) fn prepare_test_credential() -> Result<PathBuf> {
     crate::linux_owner_files::create(&path.join("owner-key"), material.as_ref())?;
     let _ = TEST_DIRECTORY.set(path.clone());
     Ok(path)
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    #[test]
+    fn systemd_acl_copy_exception_is_confined_to_readonly_manager_credentials() {
+        let directory = Path::new("/run/credentials/novonet-mailbox.service");
+        assert!(systemd_copy_shape(
+            directory,
+            0,
+            0,
+            libc::S_IFDIR | 0o550,
+            true
+        ));
+        assert!(systemd_copy_shape(
+            directory,
+            0,
+            0,
+            libc::S_IFREG | 0o440,
+            false
+        ));
+        for path in [
+            "/etc/novonet-mailbox",
+            "/tmp/credentials/unit",
+            "/run/credentials/unit/child",
+            "/run/credentials",
+        ] {
+            assert!(!systemd_copy_shape(Path::new(path), 0, 0, 0o440, false));
+        }
+        for (uid, gid, mode) in [
+            (1, 0, 0o440),
+            (0, 1, 0o440),
+            (0, 0, 0o444),
+            (0, 0, 0o640),
+            (0, 0, 0o460),
+            (0, 0, 0o2440),
+        ] {
+            assert!(!systemd_copy_shape(directory, uid, gid, mode, false));
+        }
+        assert!(!systemd_copy_shape(directory, 0, 0, 0o750, true));
+        assert!(!systemd_copy_shape(directory, 0, 0, 0o555, true));
+        assert!(readonly_memory_mount(
+            libc::ST_RDONLY,
+            libc::TMPFS_MAGIC as _
+        ));
+        assert!(readonly_memory_mount(libc::ST_RDONLY, RAMFS_MAGIC));
+        assert!(!readonly_memory_mount(0, libc::TMPFS_MAGIC as _));
+        assert!(!readonly_memory_mount(
+            libc::ST_RDONLY,
+            libc::EXT4_SUPER_MAGIC as _
+        ));
+    }
 }
