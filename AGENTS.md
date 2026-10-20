@@ -9,7 +9,12 @@ per mailbox or database. Generic node limits are local resource policy, not
 protocol capacity ceilings. Lowering a limit preserves existing custody and TTL;
 reads/receipts must not be confused with admission of new obligations. Capacity
 only creates opportunities for funded verified work, never automatic NOV rewards.
-The App-wide finite-budget writer integration is not yet delivered.
+The App-wide finite-budget writer integration shipped in NOVOCHAT v90 using
+`novovm-storage-budget`; both original Android installations passed quota pause,
+limit-increase recovery, independent offline image fetch and L4 regression.
+New product-controlled file writers must use the same budget reservation; SQLite
+writers must retain the configured shared VFS. Engine/OS-owned writes can be
+inventoried, not universally intercepted by this App-level implementation.
 
 
 ## 2026-10-19 keep the active source unambiguous

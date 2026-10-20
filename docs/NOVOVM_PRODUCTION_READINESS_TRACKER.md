@@ -1,6 +1,42 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-21 shared App quota — NOVOCHAT v90 two-phone gate PASS
+
+SDK source `480b07afcc4a452c2640bda20d9c5714245f065c`, App source `c06b75c`.
+`crates/novovm-storage-budget` adapts SQLite's public-domain quota VFS and ordinary
+file growth reservations to one local owner budget. NOVOCHAT installs it before
+opening history, media, native endpoint and L4 databases. The same durable policy
+backs the settings page: unlimited default, finite minimum 500 MiB. No additional
+message protocol, database or task scheduler. See the crate README for upstream
+provenance, logical-byte accounting, maintenance reserve and platform limits.
+
+Typed SQLite FULL is capacity refusal, not a StoreReceipt or generic fatal
+storage corruption. Existing App/L4 owners pause new growth and resume on budget
+change; authentication, security mutations and corruption remain fail-closed.
+Windows canonical SQLite filename handling was corrected after a real regression
+test exposed a prefix-matching bypass.
+
+Real PKL110/PCLM50 installations were upgraded without clearing data. Both
+defaulted to unlimited and accepted 500 MiB; the minimum/persistence checks,
+bidirectional text receipts, 1.6 MB online image and L4 return paths passed.
+A sparse test cache file deliberately took one App above its total quota:
+receipt-side growth paused without setting the account off. Raising 500 → 768
+MiB resumed the original owner and fetched the original image with the sender
+fully offline. The sender later obtained its device receipt without resend.
+Both settings returned to unlimited; identity hashes/history were retained and
+the exact pressure file removed. This is not a flash-full test or GB-scale
+custody throughput result.
+
+Local SDK validation: quota 11/11, service-lease 52/52, mailbox notification 7/7.
+App local regressions, official APK hash and real-phone evidence are recorded in
+NOVOCHAT `docs/implementation/P0_CHECKPOINT.md` v90. Engine/OS writes are counted
+on inventory but are not universally intercepted. No cloud service deployment,
+firewall or KINGCLUB change; existing historical TLS long-tail status remains
+open. The resource-policy entry below describes the earlier intermediate state.
+
 ## 2026-10-21 node storage policy and configurable Iroh streams — local candidate
+
+Historical intermediate state; App-wide integration is superseded by v90 above.
 
 The common mailbox store now accepts owner-configured aggregate budgets beyond
 64 MiB / 8192 objects / 256 mailboxes and derives SQLite page policy instead of
