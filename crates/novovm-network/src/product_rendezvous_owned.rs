@@ -144,13 +144,51 @@ pub async fn run_self_owned_mailbox_on_endpoint_v1(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
+    run_self_owned_mailbox_on_endpoint_with_native_v7(
+        endpoint, key, stop, mailbox, None, activate, publish,
+    )
+    .await
+}
+
+/// The same permissionless L4 dispatcher with an optional already-bound native
+/// UDP listener. Both carriers use the original signer, signed locator and
+/// custody service; the platform still owns endpoint lifetime and shutdown.
+/// Native admission shares the two inbound-work slots rather than reserving
+/// another independent budget. This does not publish an Iroh NAT mapping as a
+/// native UDP route: the caller must supply the native socket's actual address.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
+    endpoint: &IrohEndpointOwnerV1,
+    key: SigningKey,
+    stop: Arc<AtomicBool>,
+    mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
+    native: Option<NativeMailboxListenerV7>,
+    activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
+    publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
+) -> Result<()> {
+    ensure!(
+        mailbox.identity_public_key() == key.verifying_key().to_bytes(),
+        "mailbox node signer mismatch"
+    );
+    let mut max_connections = 2;
+    if let Some(listener) = &native {
+        ensure!(
+            listener.uses_stop(&stop),
+            "native listener requires original owner stop"
+        );
+        ensure!(
+            listener.identity() == key.verifying_key().to_bytes(),
+            "native node signer mismatch"
+        );
+        max_connections = max_connections.min(usize::from(listener.route().max_connections));
+    }
     Node {
         key,
         clients: None,
         stop,
         mailbox: Some(mailbox),
-        max_connections: 2,
-        native: None,
+        max_connections,
+        native,
         #[cfg(feature = "tls-transport")]
         tls: None,
     }

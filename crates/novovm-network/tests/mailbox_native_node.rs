@@ -36,6 +36,9 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+#[path = "support/native_endpoint_owner.rs"]
+mod native_endpoint_owner;
+
 fn key(value: u8) -> SigningKey {
     SigningKey::from_bytes(&[value; 32])
 }
