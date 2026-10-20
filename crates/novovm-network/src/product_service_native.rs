@@ -442,64 +442,93 @@ impl ServiceLeaseBookV1 {
         Ok(())
     }
 
-    /// Update exactly one existing local pin; other offline nodes need not have
-    /// fresh records. Explicit native UDP and carrier capabilities share this
-    /// record path. Original durable publish, high-water and tombstones apply.
+    /// Inspect authentic metadata without installing it or granting a route.
+    /// Replay, equivocation, revocation and version failures are checked BEFORE
+    /// exposing a temporal state; callers cannot turn them into a delayed retry.
+    pub fn inspect_native_record_v7(
+        &mut self,
+        expected_pin: [u8; 32],
+        record: &PeerSignedRelayRecordV1,
+        now: u64,
+    ) -> Result<directory::RelayRecordTimeV1> {
+        self.inspect_native_record(expected_pin, record, now, false)
+    }
+    pub fn inspect_native_record_v8(
+        &mut self,
+        expected_pin: [u8; 32],
+        record: &PeerSignedRelayRecordV1,
+        now: u64,
+    ) -> Result<directory::RelayRecordTimeV1> {
+        self.inspect_native_record(expected_pin, record, now, true)
+    }
+    fn inspect_native_record(
+        &mut self,
+        expected_pin: [u8; 32],
+        record: &PeerSignedRelayRecordV1,
+        now: u64,
+        v8: bool,
+    ) -> Result<directory::RelayRecordTimeV1> {
+        self.observe(now)?;
+        ensure!(self.is_self_owned(), "native refresh requires local trust");
+        ensure!(
+            record.relay_public_key == expected_pin,
+            "native refresh wrong node"
+        );
+        let decoded = verify_service_record_authenticity(record, MAX_BOOTSTRAP_LEASE_MS)?;
+        ensure!(
+            if v8 {
+                decoded.native_carrier_v8.is_some()
+            } else {
+                decoded.native.is_some() || decoded.native_carrier.is_some()
+            },
+            "native service missing"
+        );
+        let entry = self
+            .entries
+            .get(&expected_pin)
+            .context("untrusted or revoked self-owned node")?;
+        newer(&entry.current, record)?;
+        Ok(directory::relay_record_time_v1(record, now))
+    }
+
+    /// Commit only a currently valid update to the original pin. Metadata
+    /// inspection/waiting never changes stored routes, grants or message TTLs.
     pub fn accept_native_record_v7(
         &mut self,
         expected_pin: [u8; 32],
         record: PeerSignedRelayRecordV1,
         now: u64,
     ) -> Result<()> {
-        self.observe(now)?;
-        ensure!(self.is_self_owned(), "native refresh requires local trust");
-        ensure!(
-            record.relay_public_key == expected_pin,
-            "native refresh wrong node"
-        );
-        let decoded = verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
-        ensure!(
-            decoded.native.is_some() || decoded.native_carrier.is_some(),
-            "native service missing"
-        );
-        let mut entries = self.entries.clone();
-        let entry = entries
-            .get_mut(&expected_pin)
-            .context("untrusted or revoked self-owned node")?;
-        newer(&entry.current, &record)?;
-        if entry.current == record {
-            return Ok(());
-        }
-        entry.grant = record.clone();
-        entry.current = record;
-        self.publish(Vec::new(), entries, self.tombstones.clone())
+        self.accept_native_record(expected_pin, record, now, false)
     }
-
-    /// Update exactly one existing local pin; other offline nodes need not have
-    /// fresh records. The explicit V8 carrier capability uses this
-    /// record path. Original durable publish, high-water and tombstones apply.
     pub fn accept_native_record_v8(
         &mut self,
         expected_pin: [u8; 32],
         record: PeerSignedRelayRecordV1,
         now: u64,
     ) -> Result<()> {
-        self.observe(now)?;
-        ensure!(self.is_self_owned(), "native refresh requires local trust");
-        ensure!(
-            record.relay_public_key == expected_pin,
-            "native refresh wrong node"
-        );
-        let decoded = verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
-        ensure!(
-            decoded.native_carrier_v8.is_some(),
-            "native service missing"
-        );
+        self.accept_native_record(expected_pin, record, now, true)
+    }
+    fn accept_native_record(
+        &mut self,
+        expected_pin: [u8; 32],
+        record: PeerSignedRelayRecordV1,
+        now: u64,
+        v8: bool,
+    ) -> Result<()> {
+        match self.inspect_native_record(expected_pin, &record, now, v8)? {
+            directory::RelayRecordTimeV1::NotYetValid => {
+                return Err(directory::ProductDirectoryErrorV1::NotYetValid.into())
+            }
+            directory::RelayRecordTimeV1::Expired => {
+                return Err(directory::ProductDirectoryErrorV1::Expired.into())
+            }
+            directory::RelayRecordTimeV1::Valid => {}
+        }
         let mut entries = self.entries.clone();
         let entry = entries
             .get_mut(&expected_pin)
             .context("untrusted or revoked self-owned node")?;
-        newer(&entry.current, &record)?;
         if entry.current == record {
             return Ok(());
         }

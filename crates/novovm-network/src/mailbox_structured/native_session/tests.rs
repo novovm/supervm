@@ -237,6 +237,29 @@ fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_rec
         }
     )
     .is_err());
+    // Authenticated metadata may be inspected even when it is not a valid
+    // route yet/anymore. No application authority is granted by this reply.
+    for record in [
+        sign(vec![carrier.endpoint()?], now - 100, now - 1)?,
+        sign(vec![carrier.endpoint()?], now + 60_000, now + 120_000)?,
+    ] {
+        verify_reply(
+            node,
+            &Request::ServiceRecordV7,
+            &Reply::ServiceRecordV7 {
+                record: record.clone(),
+            },
+        )?;
+        assert!(crate::product_directory::validate_relay_record_v1(&record, now).is_err());
+        let mut forged = record;
+        forged.signature[0] ^= 1;
+        assert!(verify_reply(
+            node,
+            &Request::ServiceRecordV7,
+            &Reply::ServiceRecordV7 { record: forged }
+        )
+        .is_err());
+    }
     let mut forged = signed;
     forged.signature[0] ^= 1;
     let mut malformed = carrier.endpoint()?;
@@ -244,8 +267,6 @@ fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_rec
     for rejected in [
         forged,
         sign(vec![carrier.iroh.endpoint()?], now, now + 60_000)?,
-        sign(vec![carrier.endpoint()?], now - 100, now - 1)?,
-        sign(vec![carrier.endpoint()?], now + 60_000, now + 120_000)?,
         sign(vec![udp, malformed], now, now + 60_000)?,
     ] {
         assert!(verify_reply(

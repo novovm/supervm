@@ -13,6 +13,8 @@ pub enum ProductDirectoryErrorV1 {
     UnsupportedVersion(u16),
     #[error("record or manifest has expired")]
     Expired,
+    #[error("relay record is not yet valid")]
+    NotYetValid,
     #[error("relay peer id does not match its public key")]
     RelayIdentityMismatch,
     #[error("signature is invalid")]
@@ -255,10 +257,44 @@ pub fn validate_relay_record_v1(
     record: &PeerSignedRelayRecordV1,
     now_ms: u64,
 ) -> Result<ValidatedRelayRecordV1, ProductDirectoryErrorV1> {
-    validate_relay_record_shape_v1(record)?;
-    if record.expires_at_ms <= now_ms || record.issued_at_ms > now_ms {
-        return Err(ProductDirectoryErrorV1::Expired);
+    verify_relay_record_authenticity_v1(record)?;
+    match relay_record_time_v1(record, now_ms) {
+        RelayRecordTimeV1::NotYetValid => return Err(ProductDirectoryErrorV1::NotYetValid),
+        RelayRecordTimeV1::Expired => return Err(ProductDirectoryErrorV1::Expired),
+        RelayRecordTimeV1::Valid => {}
     }
+    Ok(ValidatedRelayRecordV1 {
+        record: record.clone(),
+    })
+}
+
+/// Time classification is NOT proof of authenticity or authority. Consumers
+/// must verify the record and their own trust/replay policy before acting on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelayRecordTimeV1 {
+    NotYetValid,
+    Valid,
+    Expired,
+}
+
+pub(crate) fn relay_record_time_v1(
+    record: &PeerSignedRelayRecordV1,
+    now: u64,
+) -> RelayRecordTimeV1 {
+    if record.expires_at_ms <= now {
+        RelayRecordTimeV1::Expired
+    } else if record.issued_at_ms > now {
+        RelayRecordTimeV1::NotYetValid
+    } else {
+        RelayRecordTimeV1::Valid
+    }
+}
+
+/// Authentic signed metadata only, never a currently usable directory entry.
+pub(crate) fn verify_relay_record_authenticity_v1(
+    record: &PeerSignedRelayRecordV1,
+) -> Result<(), ProductDirectoryErrorV1> {
+    validate_relay_record_shape_v1(record)?;
     if record.relay_peer_id != peer_id_from_ed25519_public_key_v1(&record.relay_public_key) {
         return Err(ProductDirectoryErrorV1::RelayIdentityMismatch);
     }
@@ -266,10 +302,7 @@ pub fn validate_relay_record_v1(
         &record.relay_public_key,
         &relay_record_signing_bytes_v1(record),
         &record.signature,
-    )?;
-    Ok(ValidatedRelayRecordV1 {
-        record: record.clone(),
-    })
+    )
 }
 
 impl RelayCandidatePoolV1 {
@@ -889,6 +922,45 @@ mod tests {
             validate_relay_record_v1(&valid, 10_000),
             Err(ProductDirectoryErrorV1::Expired)
         );
+    }
+
+    #[test]
+    fn relay_time_boundaries_follow_authenticity_checks() {
+        let key = SigningKey::from_bytes(&[81; 32]);
+        let signed = record(&key, "relay-time", RelayTransportV1::Wss443, 1);
+        assert_eq!(
+            validate_relay_record_v1(&signed, 999),
+            Err(ProductDirectoryErrorV1::NotYetValid)
+        );
+        for now in [1000, 1001, 9999] {
+            assert!(validate_relay_record_v1(&signed, now).is_ok());
+        }
+        for now in [10000, 10001] {
+            assert_eq!(
+                validate_relay_record_v1(&signed, now),
+                Err(ProductDirectoryErrorV1::Expired)
+            );
+        }
+        let mut forged = signed.clone();
+        forged.signature[0] ^= 1;
+        let mut wrong = signed.clone();
+        wrong.relay_peer_id = "wrong".into();
+        let mut version = signed.clone();
+        version.version = 99;
+        for now in [999, 1000, 10000] {
+            assert_eq!(
+                validate_relay_record_v1(&forged, now),
+                Err(ProductDirectoryErrorV1::InvalidSignature)
+            );
+            assert_eq!(
+                validate_relay_record_v1(&wrong, now),
+                Err(ProductDirectoryErrorV1::RelayIdentityMismatch)
+            );
+            assert_eq!(
+                validate_relay_record_v1(&version, now),
+                Err(ProductDirectoryErrorV1::UnsupportedVersion(99))
+            );
+        }
     }
 
     #[test]

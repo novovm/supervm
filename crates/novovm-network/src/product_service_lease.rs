@@ -136,6 +136,21 @@ fn verify_service_record(
     now: u64,
     max_ttl: u64,
 ) -> Result<ServiceEndpoints> {
+    let decoded = verify_service_record_authenticity(record, max_ttl)?;
+    match directory::relay_record_time_v1(record, now) {
+        directory::RelayRecordTimeV1::Valid => Ok(decoded),
+        directory::RelayRecordTimeV1::NotYetValid => {
+            Err(directory::ProductDirectoryErrorV1::NotYetValid.into())
+        }
+        directory::RelayRecordTimeV1::Expired => {
+            Err(directory::ProductDirectoryErrorV1::Expired.into())
+        }
+    }
+}
+fn verify_service_record_authenticity(
+    record: &PeerSignedRelayRecordV1,
+    max_ttl: u64,
+) -> Result<ServiceEndpoints> {
     ensure!(
         serde_json::to_vec(record)?.len() <= MAX_SERVICE_LEASE_BYTES
             && !record.record_id.is_empty()
@@ -151,7 +166,7 @@ fn verify_service_record(
         "service record lifetime"
     );
     strict_key(&record.relay_public_key)?;
-    directory::validate_relay_record_v1(record, now)?;
+    directory::verify_relay_record_authenticity_v1(record)?;
     // The existing signing bytes are shared; enforce canonical, strong-key
     // verification here without changing historical directory consumers.
     VerifyingKey::from_bytes(&record.relay_public_key)?.verify_strict(
@@ -160,6 +175,20 @@ fn verify_service_record(
     )?;
     ServiceEndpoints::from_record(record)
 }
+
+/// A signed metadata reply is not a usable route. The receiving trust book must
+/// still check local pin, revocation, sequence, time and exact version at use.
+pub(crate) fn verify_native_record_metadata_v1(record: &PeerSignedRelayRecordV1) -> Result<()> {
+    let decoded = verify_service_record_authenticity(record, MAX_BOOTSTRAP_LEASE_MS)?;
+    ensure!(
+        decoded.native.is_some()
+            || decoded.native_carrier.is_some()
+            || decoded.native_carrier_v8.is_some(),
+        "mailbox native locator missing"
+    );
+    Ok(())
+}
+
 fn newer(previous: &PeerSignedRelayRecordV1, next: &PeerSignedRelayRecordV1) -> Result<()> {
     ensure!(
         next.sequence >= previous.sequence && next.issued_at_ms >= previous.issued_at_ms,

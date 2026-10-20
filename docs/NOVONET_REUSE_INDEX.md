@@ -21,6 +21,26 @@ These are implementation pointers, not blanket production acceptance.
 | Cryptography / execution | [AOEM signatures](../../AOEM/crates/adapter/aoem-adapter-crypto/src/signature.rs), [batch verification](../../AOEM/crates/adapter/aoem-adapter-crypto/src/batch_verify.rs), [privacy FFI](../../AOEM/crates/ffi/aoem-ffi/src/classic_privacy_wire.rs) | Existing cryptographic/execution components; not an Android file-grant or encrypted SQLite journal API. No transaction/consensus detour for attachments. |
 | Media experience | [KINGCLUB media cache/transfer](../../KINGCLUB-APP-V2/lib/src/features/messaging/data/chat_media_transfer.dart), [audio constraints](../../KINGCLUB-APP-V2/lib/src/features/messaging/data/call_audio_constraints.dart) | Read-only reference. Reuse applicable lifecycle/cache/audio experience; do not import central account, HTTP service credentials or assume media E2EE. |
 
+## 2026-10-20 Native declaration time handling (candidate)
+
+Existing [directory signature validation](../crates/novovm-network/src/product_directory.rs),
+[ServiceLeaseBook](../crates/novovm-network/src/product_service_native.rs) and
+[metadata reply adapter](../crates/novovm-network/src/mailbox_structured/native_session.rs)
+remain authoritative. An authenticated ServiceRecord lookup is metadata, not a
+fresh route grant. Native inspection checks pin, strong signature, exact capability,
+sequence/equivocation and revocation before exposing valid/future/expired state.
+Only the existing accept operation installs a currently valid record.
+
+The earlier [V2 offer activation helper](../crates/novovm-network/src/product_service_host.rs)
+already separates verified waiting from authorization, but requires Publisher offer
+sources, an online renewal grant and its own two-second bound. It cannot be called
+for self-owned ServiceRecordV7 metadata without changing those contracts. Native
+callers reuse the same book checks and original request deadline, sleep outside
+the lock, recheck on wake, and refresh an authentic expired lookup at most once.
+No clock authority, signature exception, TTL extension or failed-slot reset is added.
+Phone TLS-only acceptance is still pending; the prior failure is not retrospectively
+attributed to clock skew without the rejected record's actual timestamps.
+
 ## Current attachment call chain and smallest remaining seam
 
 NOVOCHAT object envelope -> mailbox structured bulk request -> NativeObjectLink

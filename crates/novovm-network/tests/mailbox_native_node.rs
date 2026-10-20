@@ -38,6 +38,8 @@ use zeroize::Zeroizing;
 
 #[path = "support/native_endpoint_owner.rs"]
 mod native_endpoint_owner;
+#[path = "support/native_locator_time.rs"]
+mod native_locator_time;
 
 fn key(value: u8) -> SigningKey {
     SigningKey::from_bytes(&[value; 32])

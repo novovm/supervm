@@ -1081,3 +1081,48 @@ fn bulk_capability_signed_explicit_and_preserved_across_renewal() -> Result<()> 
     assert!(NativeCarrierMailboxEndpointV8::from_record(&disabled)?.is_some());
     Ok(())
 }
+
+#[test]
+fn native_metadata_time_does_not_install_or_override_security() -> Result<()> {
+    use directory::RelayRecordTimeV1::*;
+    let future = record(vec![route().endpoint()?], 2, 3000)?;
+    let mut b = book()?;
+    let retained = b.self_owned_records()?;
+    assert_eq!(
+        b.inspect_native_record_v7(pin(), &future, 2999)?,
+        NotYetValid
+    );
+    assert!(b
+        .accept_native_record_v7(pin(), future.clone(), 2999)
+        .is_err());
+    assert_eq!(b.self_owned_records()?, retained);
+    b.check_continuous_native_peer_v7(pin(), 2999)?;
+    assert_eq!(b.inspect_native_record_v7(pin(), &future, 3000)?, Valid);
+    b.accept_native_record_v7(pin(), future.clone(), 3000)?;
+    assert_eq!(b.inspect_native_record_v7(pin(), &future, 92999)?, Valid);
+    assert_eq!(b.inspect_native_record_v7(pin(), &future, 93000)?, Expired);
+    assert!(b
+        .accept_native_record_v7(pin(), future.clone(), 93000)
+        .is_err());
+    b.check_continuous_native_peer_v7(pin(), 93000)?;
+
+    for now in [2999, 93000] {
+        let mut b = book()?;
+        let mut forged = future.clone();
+        forged.signature[0] ^= 1;
+        assert!(b.inspect_native_record_v7(pin(), &forged, now).is_err());
+        assert!(b.inspect_native_record_v7([9; 32], &future, now).is_err());
+        let equivocation = record(vec![route().endpoint()?], 1, 3000)?;
+        assert!(b
+            .inspect_native_record_v7(pin(), &equivocation, now)
+            .is_err());
+        assert!(b.inspect_native_record_v8(pin(), &future, now).is_err());
+        b.revoke_self_owned(pin(), now)?;
+        assert!(b.inspect_native_record_v7(pin(), &future, now).is_err());
+    }
+    let mut b = book()?;
+    let advanced = record(vec![route().endpoint()?], 3, 4000)?;
+    b.accept_native_record_v7(pin(), advanced, 4000)?;
+    assert!(b.inspect_native_record_v7(pin(), &future, 4000).is_err());
+    Ok(())
+}

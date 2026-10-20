@@ -487,22 +487,12 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
                 record.relay_public_key == node,
                 "mailbox locator node binding"
             );
-            crate::product_directory::validate_relay_record_v1(
-                record,
-                crate::product_rendezvous_daemon::now_ms()?,
-            )?;
-            let carrier =
-                crate::product_service_lease::NativeCarrierMailboxEndpointV7::from_record(record)?;
-            ensure!(
-                carrier.is_some()
-                    || crate::product_service_lease::NativeCarrierMailboxEndpointV8::from_record(
-                        record
-                    )?
-                    .is_some()
-                    || crate::product_service_lease::NativeMailboxEndpointV7::from_record(record)?
-                        .is_some(),
-                "mailbox native locator missing"
-            );
+            // This completes a metadata lookup, NOT permission to use its
+            // route. Signature/shape/version remain mandatory here. The original
+            // trust book checks pin, revocation, sequence and time before use,
+            // allowing an authentic future declaration to wait without latching
+            // every business slot on this otherwise healthy session.
+            crate::product_service_lease::verify_native_record_metadata_v1(record)?;
             Ok(())
         }
         (Request::Register { .. }, Reply::Registered)
