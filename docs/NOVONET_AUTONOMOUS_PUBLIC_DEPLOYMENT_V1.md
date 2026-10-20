@@ -1,6 +1,57 @@
 # NOVONET autonomous public deployment v1
 
-Status: isolated Ubuntu service deployed; Android public-network acceptance pending.
+Status: isolated Ubuntu service deployed; bounded Android owned-public UDP gate passed.
+V8/TLS automatic takeover and independent multi-public-node acceptance remain open.
+
+## 2026-10-20 Android v85 owned-public UDP gate PASS (bounded topology)
+
+Both original Android installations were updated without uninstall/reset; five
+protected identity/key hashes per phone are unchanged and v84 is retained.
+The existing encrypted profile/checkpoint migration adds the cloud pin while
+retaining the laptop pin, floors and revocations. Both profiles used `relays=[]`
+and genuinely signed DirectOnly records. Explicit process exits and cold starts
+removed old sessions; the existing Iroh builder disables relays and address
+lookup. This is not an OS background-relaunch claim.
+
+The laptop owner was stopped and its startup task disabled during each gate;
+only the isolated Ubuntu service supplied L3 custody. Both phones recorded
+native UDP selection and authenticated native mailbox readiness. Results:
+
+- Cold-start pair: two new texts, both displayed with device durable receipts.
+  Task-to-native-session readiness was 717/415 ms (two samples, not UI latency/P95).
+- Offline text: B fully offline, A obtained StoreReceipt; A then went offline,
+  B independently fetched the original message; A later obtained DeviceReceipt.
+- Same-process Wi-Fi -> cellular -> Wi-Fi: six additional texts delivered in
+  both directions across all three phases, native public UDP on cellular and
+  L4/local return service ready after Wi-Fi recovery. No manual reconnect/reopen.
+- Two 1,600,067-byte images: bidirectional device receipts during the laptop-off
+  interval and complete received previews. The preview script initially expected
+  an obsolete Close control; actual Back/Save/View-image controls and screenshots
+  verified completion without resending.
+- Offline image across actual cloud restart: StoreReceipt first, restart cloud,
+  sender offline, receiver independently fetched and previewed the full image,
+  sender later received DeviceReceipt. Cloud sealed-key/credential hashes stayed
+  identical. Images are explicit test fixtures, not production-user data.
+
+Nine new texts and three images were checked. The laptop task was restored
+between gates; do not combine these into one uninterrupted long outage run.
+KINGCLUB Nginx hashes, container IDs/start times and health/readiness stayed
+unchanged. No web port, KINGCLUB process or database change was made.
+
+After isolation, both phones retain laptop+cloud pins and restore their original
+optional Relay/DNS settings; the laptop returns to automatic carrier mode with
+its startup task enabled. The cloud remains DirectOnly. Without another App
+restart, both show two L3 paths and ready L4/local return service; two additional
+texts have device receipts and all identity hashes remain unchanged. These
+post-gate messages are not part of the external-Iroh-disabled sample.
+
+This proves one owned public service can support the tested phones without
+external Iroh services. It does not prove Android V8/TLS automatic takeover when
+UDP is blocked, arbitrary cross-carrier phone P2P, independent public redundancy,
+L2 consensus, anonymity/DPI resistance, long-term reliability or NOV settlement.
+Iroh remains an optional everyday fallback. Full application evidence is in
+NOVOCHAT `docs/implementation/P0_CHECKPOINT.md`; private gate artifacts stay
+outside Git. Reuse the existing SDK/owner for the remaining carrier integration.
 
 ## Actual Ubuntu installation — 2026-10-20
 
@@ -20,7 +71,8 @@ binary was rebuilt. The installed binary SHA-256 is
 
 An actual systemd restart preserved the node public key and sealed-key hash,
 advanced the existing sequence, and returned to `serving` with
-`relayServicesEnabled=false`. This did not yet exercise a stored phone message.
+`relayServicesEnabled=false`. This initial restart did not yet exercise a stored phone
+message; the later gate above does.
 Before/after Nginx configuration hashes and KINGCLUB/CCSOP container identities
 and start times were equal; public health, local health and readiness returned
 200. No existing application was restarted. Private evidence remains outside
@@ -35,17 +87,19 @@ systemd-supplied host-protected credential; `linux_owner_files.rs` supplies
 private Unix files and directory durability. No new mailbox, protocol or
 cryptographic format was introduced. Windows DPAPI custody is unchanged.
 
-Ubuntu 24.04 / Rust 1.94 release build passed. All 24 Linux owner tests passed,
+Ubuntu 24.04 / Rust 1.94 release build passed. Initially 24 Linux owner tests passed,
 including actual UDP/TLS/QUIC custody across restart, exclusive writers,
 private-file checks and missing/wrong credential rejection. The Windows owner
 suite passed all 25 tests. The SDK additive self-owned policy update test passed
 with `iroh-transport,tls-transport` enabled (the earlier tls-only filtered command
-selected zero tests and is not counted as validation).
+selected zero tests and is not counted as validation). The deployed credential
+ACL correction added a regression and the complete 25-test Linux suite passed.
 
 The phone policy adapter prepares an additive trust update and atomically commits
 the existing encrypted profile/checkpoint. It preserves previous pins, sequence
 floors and revocations; it requires an explicitly stopped/drained application
-owner. Phone installation and real public tests remain pending.
+owner. At this adapter checkpoint, phone installation/public tests were pending;
+see the actual gate above.
 
 The isolated first-install helper and systemd unit are in
 [`config/rendezvous-linux`](../config/rendezvous-linux/README.md). UDP 43171 and
@@ -63,13 +117,13 @@ computers on the same router do not establish independent public reachability.
 
 Reuse these actual entrypoints:
 
-| Concern | Existing source | Remaining seam |
+| Concern | Existing source | Current status / remaining seam |
 | --- | --- | --- |
-| Protected persistent owner | [Owner](../crates/novovm-relay/src/rendezvous_self_owned_owner.rs), `Owner::open`, `run_inner` | Windows platform custody and CLI need a Linux adapter; retain the same runtime |
-| UDP service | [NativeMailboxListenerV7](../crates/novovm-network/src/product_rendezvous_native.rs), `bind_with_wire_budget` | Public address advertisement and cloud ingress must be verified |
-| Native V8 over TLS | [TlsMailboxListenerV1](../crates/novovm-network/src/product_rendezvous_tls.rs), `with_native_mailbox_v8` | Dedicated TCP listener, same mailbox and service identity |
-| Encrypted durable state | [ServiceLeaseFileV1](../crates/novovm-network/src/product_service_file.rs), [MailboxStore](../crates/novovm-network/src/mailbox_store.rs) | Reuse Linux locking, durability and encryption; do not add another store |
-| Phone automatic selection | [mailbox lanes](../../NOVOCHAT/crates/chat-core/src/app_mailbox_lanes.rs), `connect_native`, `connect_tls` | Real public tests must retain L4 and original pending messages |
+| Protected persistent owner | [Owner](../crates/novovm-relay/src/rendezvous_self_owned_owner.rs), `Owner::open`, `run_inner` | Linux custody/CLI adapter deployed; same runtime and stable identity across actual restart |
+| UDP service | [NativeMailboxListenerV7](../crates/novovm-network/src/product_rendezvous_native.rs), `bind_with_wire_budget` | External custody and both original Android native UDP gates passed |
+| Native V8 over TLS | [TlsMailboxListenerV1](../crates/novovm-network/src/product_rendezvous_tls.rs), `with_native_mailbox_v8` | Dedicated listener deployed; authorized-phone business exchange pending |
+| Encrypted durable state | [ServiceLeaseFileV1](../crates/novovm-network/src/product_service_file.rs), [MailboxStore](../crates/novovm-network/src/mailbox_store.rs) | Same format/store; actual phone offline image survived cloud restart and independent fetch |
+| Phone automatic selection | [mailbox lanes](../../NOVOCHAT/crates/chat-core/src/app_mailbox_lanes.rs), `connect_native`, `connect_tls` | Public UDP, L4 coexistence and Wi-Fi/cellular recovery passed; UDP-blocked TLS takeover still pending |
 | NAT | [product_nat](../crates/novovm-network/src/product_nat.rs), [NativeEndpoint](../crates/novovm-network/src/novorudp/endpoint.rs) | Signed probe helpers alone are not coordinated mobile hole punching; do not add a competing UDP socket reader |
 
 Native TLS is authenticated structured mailbox traffic, not HTTP/JSON-RPC and
@@ -161,8 +215,9 @@ is established even though browser control remains unavailable and no cloud
 security-group change has been performed.
 
 The new service remains one failure domain and does not constitute an L2
-consensus node. Phone cold-start, text/image, offline delivery and fallback
-acceptance are still outstanding.
+consensus node. Phone cold-start, text/image and offline delivery subsequently
+passed as recorded above;
+UDP-blocked automatic V8/TLS fallback acceptance remains outstanding.
 
 - Operator-owned public service: real external reachability and durable delivery.
 - External-service independence: both phones cold-start with external Iroh and

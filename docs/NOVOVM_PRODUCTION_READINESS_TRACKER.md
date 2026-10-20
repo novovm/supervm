@@ -1,5 +1,55 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-20 Android v85 owned-public UDP gate PASS (bounded topology)
+
+Both original Android installations were updated without uninstall/reset; five
+protected identity/key hashes per phone are unchanged and v84 is retained.
+The existing encrypted profile/checkpoint migration adds the cloud pin while
+retaining the laptop pin, floors and revocations. Both profiles used `relays=[]`
+and genuinely signed DirectOnly records. Explicit process exits and cold starts
+removed old sessions; the existing Iroh builder disables relays and address
+lookup. This is not an OS background-relaunch claim.
+
+The laptop owner was stopped and its startup task disabled during each gate;
+only the isolated Ubuntu service supplied L3 custody. Both phones recorded
+native UDP selection and authenticated native mailbox readiness. Results:
+
+- Cold-start pair: two new texts, both displayed with device durable receipts.
+  Task-to-native-session readiness was 717/415 ms (two samples, not UI latency/P95).
+- Offline text: B fully offline, A obtained StoreReceipt; A then went offline,
+  B independently fetched the original message; A later obtained DeviceReceipt.
+- Same-process Wi-Fi -> cellular -> Wi-Fi: six additional texts delivered in
+  both directions across all three phases, native public UDP on cellular and
+  L4/local return service ready after Wi-Fi recovery. No manual reconnect/reopen.
+- Two 1,600,067-byte images: bidirectional device receipts during the laptop-off
+  interval and complete received previews. The preview script initially expected
+  an obsolete Close control; actual Back/Save/View-image controls and screenshots
+  verified completion without resending.
+- Offline image across actual cloud restart: StoreReceipt first, restart cloud,
+  sender offline, receiver independently fetched and previewed the full image,
+  sender later received DeviceReceipt. Cloud sealed-key/credential hashes stayed
+  identical. Images are explicit test fixtures, not production-user data.
+
+Nine new texts and three images were checked. The laptop task was restored
+between gates; do not combine these into one uninterrupted long outage run.
+KINGCLUB Nginx hashes, container IDs/start times and health/readiness stayed
+unchanged. No web port, KINGCLUB process or database change was made.
+
+After isolation, both phones retain laptop+cloud pins and restore their original
+optional Relay/DNS settings; the laptop returns to automatic carrier mode with
+its startup task enabled. The cloud remains DirectOnly. Without another App
+restart, both show two L3 paths and ready L4/local return service; two additional
+texts have device receipts and all identity hashes remain unchanged. These
+post-gate messages are not part of the external-Iroh-disabled sample.
+
+This proves one owned public service can support the tested phones without
+external Iroh services. It does not prove Android V8/TLS automatic takeover when
+UDP is blocked, arbitrary cross-carrier phone P2P, independent public redundancy,
+L2 consensus, anonymity/DPI resistance, long-term reliability or NOV settlement.
+Iroh remains an optional everyday fallback. Full application evidence is in
+NOVOCHAT `docs/implementation/P0_CHECKPOINT.md`; private gate artifacts stay
+outside Git. Reuse the existing SDK/owner for the remaining carrier integration.
+
 ## 2026-10-20 Ubuntu owned native service deployed; phone gate pending
 
 The isolated Linux owner is serving native UDP and V8/TLS with external relay
@@ -21,7 +71,7 @@ TLS reached the bound handshake and closed with EOF. The temporary probe
 identity is absent from the configured two-phone pinned-client policy, whose
 verifier rejects an unlisted Offer without a Response; this matches the symptom
 but no typed server rejection was captured. Do not bypass that policy or count
-this as TLS business PASS. Both original phones remain pending.
+this as TLS business PASS. Both phones were still pending at this deployment checkpoint; the later gate above records actual results.
 No cloud security-group change was made through the blocked browser tool.
 This is an owned service on one host, not a complete L2 consensus node, global
 independence, anonymity or anti-censorship acceptance.
