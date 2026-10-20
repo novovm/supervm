@@ -1,5 +1,22 @@
 # NOVONET 多路径自主通讯架构与传输策略 v1
 
+## 2026-10-20 v83 手机 L4 原生入口与自动接管
+
+下方各节保留当时状态；“手机L4仅Iroh/原生入站未接通”的缺口由本节更新。
+SDK `2ef8e2a3`、NOVOCHAT `2c9b2e6` 复用同 Application owner、节点身份、
+SQLite和保管状态，在原 Iroh Endpoint 旁挂既有 NativeMailboxListenerV7。
+Android按真实活动网络及代次发布已绑定UDP候选；不借用Iroh socket的NAT映射。
+同服务的原生与兼容连接并行准备，原生认证/能力核验后取得业务优先权；
+原生网络失效释放优先权，兼容载体继续工作，恢复后重新接管。UDP地址变化
+不因此废弃独立的健康兼容会话；安全拒绝不能按网络错误绕行。
+
+v83双机已原位安装。停止唯一Windows L3期间，双Wi-Fi的双向文字使用L4 UDP，
+切蜂窝后一个方向UDP、反向Iroh（本轮观察direct），回Wi-Fi后双向UDP接管，
+均取得设备持久回执且没有手动重连。图片、离线L3补收、重开及新消息回归通过。
+详见生产台账；保留localDepositReady阶段性false的未定位观察，不宣称全程
+每项服务均就绪。原生单候选不是完整多地址竞速或任意公网NAT穿透，Iroh托底
+及发现依赖仍存在，本轮不等于自主冷启动、匿名性或全球抗封锁签收。
+
 ## 2026-10-20 Windows 同 owner UDP / V8 / TLS 共存接线
 
 现有 `rendezvous_self_owned_owner` 的 V8 策略允许同时配置 native listener，

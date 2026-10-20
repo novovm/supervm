@@ -1,5 +1,49 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-20 v83 Android L4 native UDP / carrier fallback and retake
+
+NOVOCHAT `2c9b2e6`, reviewed SDK `2ef8e2a3`, is installed as profile v83 on both
+original Android devices. Five protected identity/key hashes per device remained
+equal; existing contacts/history and the v82 rollback APK were retained. No data
+reset, fresh invitation or ADB business forwarding was used.
+
+The original Windows L3 was stopped for about 220 seconds (zero service processes
+at both boundaries). Six new texts completed Endpoint DeviceReceipts:
+
+| Network window | PKL110 -> PCLM50 | PCLM50 -> PKL110 |
+| --- | --- | --- |
+| Both Wi-Fi | Native L4 UDP | Native L4 UDP |
+| PCLM50 cellular | Native L4 UDP reselected | Iroh carrier; observed direct |
+| PCLM50 back on Wi-Fi | Native L4 UDP | Native L4 UDP |
+
+Selection events are correlated with the actual endpoint replies, not generic
+ready flags or L3 UDP events. Both app PIDs stayed unchanged during the switches;
+the existing Android owner replaced the cellular phone's task on network changes.
+This is not a claim of universal in-place socket migration. Cellular availability
+to L4 authentication was about 3.43 s; Wi-Fi return to L4 UDP readiness about
+2.67 s, from same-device monotonic anchors. Not click-to-screen latency or P95.
+Expected unreachable/retired-scope failures remained in evidence without a
+permanent stop; one direction using UDP does not prove symmetric public reachability.
+
+After L3 restoration, a 1,600,067-byte image completed native L4 object reassembly,
+device receipt and full receiver preview, with later L3 duplicate custody/receipt.
+Offline regression: B offline, A stored; then A offline for all 11 samples while
+B independently fetched from native L3; A later obtained the device receipt.
+Original message displayed once. Both apps reopened with identity/history intact,
+then exchanged two more new messages automatically. Final L3/L4/send/localDeposit
+were ready. PCL localDepositReady had been false during the preceding offline/final
+window despite working L3/L4 sends; its exact cause remains unlocated, so continuous
+local return-custody readiness throughout the round is not signed off.
+
+Original network switch values were read back (PKL Wi-Fi1/data0, PCL Wi-Fi1/data1).
+Windows L3 was restored, with its original v82 executable, not redeployed this round.
+Detailed APK hash, tests and ignored artifact names: NOVOCHAT
+`docs/implementation/P0_CHECKPOINT.md`, v83. One real interface candidate is
+advertised; arbitrary NAT traversal, all-external-services-disabled cold start,
+independent failure-domain redundancy and anonymity remain unverified. Existing
+Privacy/identity/revocation checks remain enforced; Iroh is still a fallback and
+discovery dependency.
+
 
 ## 2026-10-20 手机 L4 同 owner UDP/V8 接缝（源码组件通过，真机待验收）
 
