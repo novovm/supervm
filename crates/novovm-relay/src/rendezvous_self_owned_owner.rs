@@ -216,10 +216,26 @@ impl Config {
     }
 }
 
+fn storage_limits(limit_mib: Option<u64>) -> Result<novovm_network::mailbox_store::Limits> {
+    use novovm_network::mailbox_store::Limits;
+    match limit_mib {
+        None => Ok(Limits::unlimited_storage()),
+        Some(mib) => {
+            ensure!(mib >= 500, "shared storage limit must be at least 500 MiB");
+            let bytes = mib
+                .checked_mul(1024 * 1024)
+                .context("storage limit overflow")?;
+            Ok(Limits::for_storage_budget(usize::try_from(bytes)?)?)
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Policy {
     config: Config,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shared_storage_limit_mib: Option<u64>,
     // Config remains the immutable enrollment/trust baseline. Only an explicit
     // local owner command can change this persisted transport preference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -436,6 +452,7 @@ impl Owner {
             let (key, _) = read_keys(root)?;
             let policy = Policy {
                 config: config.clone(),
+                shared_storage_limit_mib: None,
                 carrier_mode: None,
                 tls_listener: None,
                 native_listener: None,
@@ -569,6 +586,14 @@ impl Owner {
                 .with_relay_only()?;
         }
         self.policy.carrier_mode = Some(mode);
+        self.save_policy()
+    }
+
+    /// Local node owner choice. No explicit limit by default; finite values
+    /// use MiB and must be at least 500. Existing custody is never deleted.
+    pub fn set_storage_limit_mib(mut self, limit: Option<u64>) -> Result<()> {
+        storage_limits(limit)?;
+        self.policy.shared_storage_limit_mib = limit;
         self.save_policy()
     }
 
@@ -827,20 +852,25 @@ impl Owner {
                 ensure!(!mailbox_path.try_exists()?, "unrecognized mailbox storage");
                 create(&mailbox_started, b"NOVONET shared mailbox v1")?;
             }
+            let limits = storage_limits(self.policy.shared_storage_limit_mib)?;
+            let mut store =
+                novovm_network::mailbox_store::MailboxStore::open(&mailbox_path, limits)?;
+            // The protected node-owner policy is authoritative at startup;
+            // reconcile a prior local store preference without deleting data.
+            store.set_storage_budget(
+                self.policy
+                    .shared_storage_limit_mib
+                    .map(|_| limits.total_bytes),
+                i64::try_from(now_ms()? / 1000)?,
+            )?;
             let mailbox = Arc::new(
-                novovm_network::mailbox_rpc::MailboxServiceV1::new(
-                    novovm_network::mailbox_store::MailboxStore::open(
-                        &mailbox_path,
-                        Default::default(),
-                    )?,
-                    key.clone(),
-                )
-                // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
-                // conservative mobile default (2 requests/s for the entire node) makes
-                // those lanes queue behind one another even on healthy connections.
-                // This remains one shared budget; reconnecting cannot replenish it.
-                // Keep storage, byte quotas and connection bounds unchanged.
-                .with_continuous_request_rate_v4(64, 32)?,
+                novovm_network::mailbox_rpc::MailboxServiceV1::new(store, key.clone())
+                    // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
+                    // conservative mobile default (2 requests/s for the entire node) makes
+                    // those lanes queue behind one another even on healthy connections.
+                    // This remains one shared budget; reconnecting cannot replenish it.
+                    // Connection bounds remain independent of storage policy.
+                    .with_continuous_request_rate_v4(64, 32)?,
             );
             Ok(mailbox)
         })()
@@ -1113,6 +1143,23 @@ mod tests {
     };
 
     struct Fixture(Config);
+    #[test]
+    fn shared_storage_owner_choice_survives_policy_reopen() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        ensure!(owner.policy.shared_storage_limit_mib.is_none());
+        owner.set_storage_limit_mib(Some(500))?;
+        let owner = fixture.open()?;
+        ensure!(owner.policy.shared_storage_limit_mib == Some(500));
+        owner.set_storage_limit_mib(None)?;
+        let owner = fixture.open()?;
+        ensure!(owner.policy.shared_storage_limit_mib.is_none());
+        ensure!(owner.set_storage_limit_mib(Some(499)).is_err());
+        ensure!(fixture.open()?.policy.shared_storage_limit_mib.is_none());
+        ensure!(storage_limits(Some(u64::MAX)).is_err());
+        Ok(())
+    }
+
     impl Fixture {
         fn new() -> Result<Self> {
             let root = std::env::temp_dir().join(format!(

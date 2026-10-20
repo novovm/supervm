@@ -450,6 +450,12 @@ impl MailboxServiceV1 {
             .await
     }
 
+    /// Local storage-owner preference, never a peer-provided resource grant.
+    pub async fn set_storage_budget(&self, bytes: Option<usize>) -> Result<()> {
+        self.owner_update(move |store| Ok(store.set_storage_budget(bytes, now()?)?))
+            .await
+    }
+
     async fn owner_update<T: Send + 'static>(
         &self,
         update: impl FnOnce(&mut MailboxStore) -> Result<T> + Send + 'static,
@@ -1411,7 +1417,7 @@ async fn serve_multiplex(
                 if active.is_empty() { return Ok(()); }
             }
             result = &mut incoming,
-                if active.len() < crate::iroh_transport::IROH_MAX_MULTIPLEX_STREAMS_V1 => {
+                if active.len() < connection.stream_capacity() => {
                 let stream = result?;
                 incoming = Box::pin(connection.accept());
                 active.push(lane(stream, false));

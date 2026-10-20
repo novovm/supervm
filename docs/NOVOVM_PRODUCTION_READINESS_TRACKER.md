@@ -1,5 +1,34 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-21 node storage policy and configurable Iroh streams — local candidate
+
+The common mailbox store now accepts owner-configured aggregate budgets beyond
+64 MiB / 8192 objects / 256 mailboxes and derives SQLite page policy instead of
+forcing a 128 MiB file cap. Explicit product unlimited mode allocates nothing in
+advance. Counters use SQLite 64-bit values, avoiding a hidden 4 GiB summation
+boundary. Local finite budget setter requires at least 500 MiB; shrink preserves
+existing custody, idempotence and TTL and blocks new obligations when over budget.
+
+Windows/Linux node owner defaults to no configured custody limit, with existing
+owner CLI `--set-self-owned-storage CONFIG unlimited|MIB` for a persisted finite
+choice (requires the service owner lock; no live cloud invocation in this round).
+This is a node custody policy, NOT implementation of NOVOCHAT's user-confirmed
+single App-wide total including history/media/cache. That cross-writer integration
+is pending; the misleading mobile L4-only settings candidate was withdrawn.
+
+IrohConfigV1 exposes a multiplex stream budget used by both semaphore and QUIC
+stream limits and by the mailbox accept loop. Compatibility default 4 remains;
+this does not change native-session slots, mobile listener budgets, wire formats,
+privacy, identity or request deadlines. No service deployment/phone installation
+or new performance claim. Existing v89 and KINGCLUB services remain untouched.
+
+Local validation: 46 mailbox tests (including the three resource-policy tests),
+3 multiplex tests and 1 Windows owner-policy persistence test passed. The
+mailbox suite required serial execution because its existing endpoint fixtures
+share a global admission budget; an initial parallel run hit that fixture limit.
+Linux deployment and Android App-wide finite-budget enforcement are not signed off.
+
+
 ## NOVOCHAT v89 SOCKETNET1/2：同socket网络标记对照，长尾仍未复现
 
 应用提交`9694c92`沿用原Android网络owner/JNI和TLS IO观察，诊断构建仅在内存

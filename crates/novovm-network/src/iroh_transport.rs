@@ -455,6 +455,7 @@ pub struct IrohConfigV1 {
     relay_only: bool,
     service_identity: Option<iroh::SecretKey>,
     inbound_observer: Option<InboundObserver>,
+    multiplex_stream_budget: usize,
 }
 
 impl IrohConfigV1 {
@@ -488,7 +489,22 @@ impl IrohConfigV1 {
             relay_only: false,
             service_identity: None,
             inbound_observer: None,
+            multiplex_stream_budget: IROH_MAX_MULTIPLEX_STREAMS_V1,
         })
+    }
+
+    /// Local resource budget for explicitly selected service streams. This does
+    /// not authorize peers or change finite legacy streams. The default remains
+    /// four; platforms may select a larger budget from their resource policy.
+    pub fn with_multiplex_stream_budget(mut self, streams: usize) -> Result<Self> {
+        ensure!(
+            streams > 0
+                && u32::try_from(streams).is_ok()
+                && streams <= tokio::sync::Semaphore::MAX_PERMITS,
+            "invalid multiplex stream budget"
+        );
+        self.multiplex_stream_budget = streams;
+        Ok(self)
     }
 
     /// Optional local diagnostics on the original endpoint/owner. The callback
@@ -564,6 +580,7 @@ pub struct IrohScopeV1 {
     continuous_service: bool,
     reuse: Option<(Arc<reuse::Pool>, u8)>,
     inbound_observer: Option<InboundObserver>,
+    multiplex_stream_budget: usize,
 }
 
 /// Process-local diagnostics, not identifiers, receipts or permission to retry.
@@ -643,6 +660,7 @@ pub struct IrohEndpointOwnerV1 {
     close_started: AtomicBool,
     permit: std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     inbound_observer: Option<InboundObserver>,
+    multiplex_stream_budget: usize,
 }
 
 impl IrohEndpointOwnerV1 {
@@ -708,6 +726,7 @@ impl IrohEndpointOwnerV1 {
             close_started: AtomicBool::new(false),
             permit: std::sync::Mutex::new(Some(permit)),
             inbound_observer: config.inbound_observer,
+            multiplex_stream_budget: config.multiplex_stream_budget,
         })
     }
 
@@ -729,6 +748,7 @@ impl IrohEndpointOwnerV1 {
         self.nameserver == config.nameserver
             && self.bind_address == config.bind_address
             && self.relay_only == config.relay_only
+            && self.multiplex_stream_budget == config.multiplex_stream_budget
             && self.service_identity
                 == config
                     .service_identity
@@ -896,6 +916,7 @@ impl IrohEndpointOwnerV1 {
             continuous_service,
             reuse: lane.map(|lane| (self.reuse.clone(), lane)),
             inbound_observer: self.inbound_observer.clone(),
+            multiplex_stream_budget: self.multiplex_stream_budget,
         };
         let mut reuse_guard =
             reuse::OperationGuard::new(scope.reuse.as_ref().map(|(pool, _)| pool.clone()));
@@ -1149,6 +1170,7 @@ where
         continuous_service: false,
         reuse: None,
         inbound_observer: config.inbound_observer,
+        multiplex_stream_budget: config.multiplex_stream_budget,
     };
     let result = tokio::select! {
         biased;

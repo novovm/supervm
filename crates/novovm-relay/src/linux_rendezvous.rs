@@ -60,6 +60,16 @@ pub fn main() -> Result<()> {
     }
     ensure!(args.len() == 3, "configuration value required");
     match args[0].to_str().context("command encoding")? {
+        "--set-self-owned-storage" => owner.set_storage_limit_mib(if args[2] == "unlimited" {
+            None
+        } else {
+            Some(
+                args[2]
+                    .to_str()
+                    .context("storage limit encoding")?
+                    .parse()?,
+            )
+        }),
         "--set-self-owned-carrier" => owner.set_carrier_mode(match args[2].to_str() {
             Some("automatic") => CarrierMode::Automatic,
             Some("relay-only") => CarrierMode::RelayOnly,

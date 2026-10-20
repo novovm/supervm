@@ -2,6 +2,7 @@
 //! channel, credential, replay state or trust decision is shared between lanes.
 use super::*;
 
+/// Compatibility default, not a maximum for configured service owners.
 pub const IROH_MAX_MULTIPLEX_STREAMS_V1: usize = 4;
 
 pub(super) struct SharedConnection {
@@ -54,7 +55,9 @@ impl<'scope> IrohStreamV1<'scope> {
                 && u64::from(self.send.id()) == 0,
             "multiplex requires fresh owned service connection"
         );
-        let streams = Arc::new(tokio::sync::Semaphore::new(IROH_MAX_MULTIPLEX_STREAMS_V1));
+        let streams = Arc::new(tokio::sync::Semaphore::new(
+            self.scope.multiplex_stream_budget,
+        ));
         let stream_admission = streams.clone().try_acquire_owned()?;
         let admission = self
             ._admission
@@ -69,7 +72,7 @@ impl<'scope> IrohStreamV1<'scope> {
         // selected responder accepts extra client streams, up to this budget.
         if !self.initiator {
             self.connection
-                .set_max_concurrent_bi_streams((IROH_MAX_MULTIPLEX_STREAMS_V1 as u32).into());
+                .set_max_concurrent_bi_streams((self.scope.multiplex_stream_budget as u32).into());
         }
         self.shared = Some(shared.clone());
         self._stream_admission = Some(stream_admission);
@@ -87,6 +90,11 @@ impl<'scope> IrohStreamV1<'scope> {
 }
 
 impl<'scope> IrohMultiplexV1<'scope> {
+    /// The local owner's bound, shared by root and all service lanes.
+    pub fn stream_capacity(&self) -> usize {
+        self.scope.multiplex_stream_budget
+    }
+
     fn check(&self) -> Result<()> {
         self.scope.control.check()?;
         if let Some(error) = self.shared.connection.close_reason() {
@@ -182,14 +190,39 @@ mod tests {
             .unwrap()
     }
 
+    #[test]
+    fn configured_budget_preserves_default_and_rejects_invalid_bounds() {
+        assert_eq!(config().multiplex_stream_budget, 4);
+        assert_eq!(
+            config()
+                .with_multiplex_stream_budget(16)
+                .unwrap()
+                .multiplex_stream_budget,
+            16
+        );
+        assert!(config().with_multiplex_stream_budget(0).is_err());
+        assert!(config().with_multiplex_stream_budget(usize::MAX).is_err());
+    }
+
     #[tokio::test]
     async fn stream_binding_budget_owner_drop_and_normal_sibling_completion() -> Result<()> {
+        exercise_stream_budget(4).await
+    }
+
+    #[tokio::test]
+    async fn configured_eight_stream_budget_preserves_binding_and_owner_admission() -> Result<()> {
+        exercise_stream_budget(8).await
+    }
+
+    async fn exercise_stream_budget(budget: usize) -> Result<()> {
         let _serial = super::super::tests::SERIAL.acquire().await?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         let (binding_tx, binding_rx) = tokio::sync::oneshot::channel();
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
         let listener = with_iroh_owned_listener_v1(
-            config().with_owned_service_identity(zeroize::Zeroizing::new([90; 32]))?,
+            config()
+                .with_multiplex_stream_budget(budget)?
+                .with_owned_service_identity(zeroize::Zeroizing::new([90; 32]))?,
             || Ok(()),
             move |scope| {
                 Box::pin(async move {
@@ -197,6 +230,7 @@ mod tests {
                     let mut root = scope.accept_inbound().await?;
                     ensure!(root.read_frame().await? == b"select");
                     let group = root.multiplex_v1()?;
+                    ensure!(group.stream_capacity() == budget);
                     root.write_frame(b"selected").await?;
                     let root_binding = root.binding_material()?;
                     let mut child = group.accept().await?;
@@ -229,7 +263,13 @@ mod tests {
             },
         );
         let client = async {
-            let owner = IrohEndpointOwnerV1::bind(config(), || Ok(())).await?;
+            let owner = IrohEndpointOwnerV1::bind(
+                config().with_multiplex_stream_budget(budget)?,
+                || Ok(()),
+            )
+            .await?;
+            ensure!(owner.matches_config(&config().with_multiplex_stream_budget(budget)?));
+            ensure!(!owner.matches_config(&config().with_multiplex_stream_budget(budget + 1)?));
             let result = owner
                 .with_continuous_service_v4(
                     || Ok(()),
@@ -252,14 +292,17 @@ mod tests {
                                 server_root == root.binding_material()?
                                     && server_child == child.binding_material()?
                             );
-                            let unused_a = group.open().await?;
-                            let unused_b = group.open().await?;
-                            ensure!(group.open().await.is_err(), "fifth stream admitted");
+                            ensure!(group.stream_capacity() == budget);
+                            let mut unused = Vec::new();
+                            for _ in 2..budget {
+                                unused.push(group.open().await?);
+                            }
+                            ensure!(group.open().await.is_err(), "over-budget stream admitted");
                             ensure!(
                                 scope.connections.available_permits()
                                     == IROH_MAX_CONNECTIONS_V1 - 1
                             );
-                            drop((unused_a, unused_b));
+                            drop(unused);
                             root.finish().await?;
                             drop(root);
                             ensure!(child.read_frame().await? == b"root ended");

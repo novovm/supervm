@@ -1,5 +1,17 @@
 # Agent Highest Law
 
+## 2026-10-21 local storage owner policy
+
+User storage policy defaults to no configured aggregate ceiling. Explicit finite
+owner budgets start at 500 MiB. On NOVOCHAT the budget is ONE App-wide total
+(history, media, contributed custody and cache), never an independent full budget
+per mailbox or database. Generic node limits are local resource policy, not
+protocol capacity ceilings. Lowering a limit preserves existing custody and TTL;
+reads/receipts must not be confused with admission of new obligations. Capacity
+only creates opportunities for funded verified work, never automatic NOV rewards.
+The App-wide finite-budget writer integration is not yet delivered.
+
+
 ## 2026-10-19 keep the active source unambiguous
 
 At each coherent round, remove proven-unused superseded code and its obsolete

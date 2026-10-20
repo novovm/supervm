@@ -17,6 +17,9 @@ pub struct CarrierMultiplexV1<'scope>(crate::iroh_transport::IrohMultiplexV1<'sc
 
 #[cfg(feature = "iroh-transport")]
 impl<'scope> CarrierMultiplexV1<'scope> {
+    pub fn stream_capacity(&self) -> usize {
+        self.0.stream_capacity()
+    }
     pub async fn open(&self) -> anyhow::Result<CarrierStreamV1<'scope>> {
         Ok(self.0.open().await?.into())
     }

@@ -58,6 +58,8 @@ pub struct Limits {
 }
 impl Default for Limits {
     fn default() -> Self {
+        // Legacy explicit bounded-store callers and fixtures. Product owners
+        // use unlimited_storage() or their persisted local resource policy.
         Self {
             object_bytes: 64 * 1024,
             mailbox_bytes: 2 * 1024 * 1024,
@@ -66,6 +68,58 @@ impl Default for Limits {
             total_objects: 8192,
             mailboxes: 256,
         }
+    }
+}
+
+impl Limits {
+    /// No owner-configured aggregate ceiling. Physical storage and SQLite's
+    /// format limits still apply; this does not allocate memory or disk space.
+    pub fn unlimited_storage() -> Self {
+        Self {
+            mailbox_bytes: usize::MAX,
+            mailbox_objects: usize::MAX,
+            total_bytes: usize::MAX,
+            total_objects: usize::MAX,
+            mailboxes: usize::MAX,
+            ..Self::default()
+        }
+    }
+    /// Node-owner storage policy, not a wire limit or a reservation/allocation.
+    /// Small-message and bulk frame limits remain part of their existing
+    /// protocols; aggregate object/mailbox counts are not product ceilings.
+    pub fn for_storage_budget(total_bytes: usize) -> Result<Self, StoreError> {
+        let limits = Self {
+            total_bytes,
+            mailbox_bytes: total_bytes,
+            ..Self::unlimited_storage()
+        };
+        limits.database_bytes()?;
+        Ok(limits)
+    }
+
+    fn database_bytes(&self) -> Result<i64, StoreError> {
+        if self.object_bytes == 0
+            || self.object_bytes > 65536
+            || self.total_bytes == 0
+            || self.mailbox_bytes == 0
+            || self.mailbox_bytes > self.total_bytes
+            || self.mailbox_objects == 0
+            || self.mailbox_objects > self.total_objects
+            || self.mailboxes == 0
+        {
+            return Err(StoreError::Invalid);
+        }
+        // Payload plus page/index slack and metadata. Checked arithmetic keeps
+        // configuration from overflowing SQLite's signed counters.
+        if self.total_bytes == usize::MAX {
+            return Ok(i64::MAX);
+        }
+        let bytes = self
+            .total_bytes
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(1024 * 1024))
+            .ok_or(StoreError::Invalid)?;
+        i64::try_from(bytes).map_err(|_| StoreError::Invalid)
     }
 }
 
@@ -143,6 +197,7 @@ pub struct ContributionStatusV1 {
     pub retained_objects: u64,
     pub retained_bytes: u64,
     pub retain_until: Option<i64>,
+    pub storage_limit_bytes: Option<u64>,
 }
 
 pub struct MailboxStore {
@@ -168,23 +223,11 @@ impl MailboxStore {
 
     fn open_inner(
         path: &Path,
-        limits: Limits,
+        mut limits: Limits,
         initially_enabled: bool,
         resources_available: bool,
     ) -> Result<Self, StoreError> {
-        if limits.object_bytes == 0
-            || limits.object_bytes > 65536
-            || limits.mailbox_bytes == 0
-            || limits.mailbox_bytes > limits.total_bytes
-            || limits.total_bytes > 64 * 1024 * 1024
-            || limits.mailbox_objects == 0
-            || limits.mailbox_objects > limits.total_objects
-            || limits.total_objects > 8192
-            || limits.mailboxes == 0
-            || limits.mailboxes > 256
-        {
-            return Err(StoreError::Invalid);
-        }
+        limits.database_bytes()?;
         let exists = path.try_exists().map_err(|_| StoreError::Invalid)?;
         if exists {
             let metadata = std::fs::symlink_metadata(path).map_err(|_| StoreError::Invalid)?;
@@ -225,14 +268,32 @@ impl MailboxStore {
               id BLOB NOT NULL CHECK(length(id)=32), payload BLOB NOT NULL,
               digest BLOB NOT NULL, expires INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0,
               PRIMARY KEY(mailbox,id));")?;
+        // Local-only persistent policy. A missing row keeps the caller's
+        // existing policy; NULL explicitly means no configured storage limit.
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS mailbox_storage_policy (
+             id INTEGER PRIMARY KEY CHECK(id=1), limit_bytes INTEGER
+             CHECK(limit_bytes IS NULL OR limit_bytes>=524288000));",
+        )?;
+        let configured: Option<Option<i64>> = db
+            .query_row(
+                "SELECT limit_bytes FROM mailbox_storage_policy WHERE id=1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(value) = configured {
+            limits = storage_policy_limits(
+                value
+                    .map(|n| usize::try_from(n).map_err(|_| StoreError::Invalid))
+                    .transpose()?,
+            )?;
+        }
         // Enforce bytes, not an assumed page size. The rollback journal can use
         // another bounded copy; neither is a promise of physical flash erasure.
-        let page_size: i64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
-        let pages = 128 * 1024 * 1024 / page_size;
-        let actual: i64 =
-            db.query_row(&format!("PRAGMA max_page_count={pages}"), [], |r| r.get(0))?;
+        apply_database_budget(&db, limits)?;
         let synchronous: i64 = db.query_row("PRAGMA synchronous", [], |r| r.get(0))?;
-        if actual > pages || synchronous != 3 {
+        if synchronous != 3 {
             return Err(StoreError::Invalid);
         }
         let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -356,8 +417,32 @@ impl MailboxStore {
         self.resources_available = available;
     }
 
+    pub fn storage_budget(&self) -> Option<usize> {
+        (self.limits.total_bytes != usize::MAX).then_some(self.limits.total_bytes)
+    }
+
+    /// Local owner only. Shrinking affects new custody, never existing TTL,
+    /// reads, idempotent retries or contribution choice. No service restart.
+    pub fn set_storage_budget(&mut self, bytes: Option<usize>, now: i64) -> Result<(), StoreError> {
+        let limits = storage_policy_limits(bytes)?;
+        apply_database_budget(&self.db, limits)?;
+        let tx = self.begin(now)?;
+        tx.execute(
+            "INSERT INTO mailbox_storage_policy(id,limit_bytes) VALUES(1,?1)
+             ON CONFLICT(id) DO UPDATE SET limit_bytes=excluded.limit_bytes",
+            [bytes
+                .map(i64::try_from)
+                .transpose()
+                .map_err(|_| StoreError::Invalid)?],
+        )?;
+        tx.commit()?;
+        self.limits = limits;
+        Ok(())
+    }
+
     pub fn contribution_status(&mut self, now: i64) -> Result<ContributionStatusV1, StoreError> {
         let resources_available = self.resources_available;
+        let storage_limit_bytes = self.storage_budget().map(|n| n as u64);
         let tx = self.begin(now)?;
         let enabled = contribution_enabled(&tx)?;
         let (retained_objects, retained_bytes, retain_until): (i64, i64, Option<i64>) = tx
@@ -376,6 +461,7 @@ impl MailboxStore {
                 .map_err(|_| StoreError::Invalid)?,
             retained_bytes: retained_bytes.try_into().map_err(|_| StoreError::Invalid)?,
             retain_until,
+            storage_limit_bytes,
         })
     }
 
@@ -428,8 +514,8 @@ impl MailboxStore {
         }
         admit_new_obligation(&tx, resources_available)?;
         let count =
-            tx.query_row("SELECT count(*) FROM mailboxes", [], |r| r.get::<_, u32>(0))? as usize;
-        if count >= limit {
+            tx.query_row("SELECT count(*) FROM mailboxes", [], |r| r.get::<_, i64>(0))? as u64;
+        if count >= limit as u64 {
             return Err(StoreError::Quota);
         }
         tx.execute(
@@ -559,20 +645,20 @@ impl MailboxStore {
             return Ok(PutResult::Duplicate);
         }
         admit_new_obligation(&tx, resources_available)?;
-        let (box_count, box_bytes): (usize, usize) = tx.query_row(
+        let (box_count, box_bytes): (u64, u64) = tx.query_row(
             "SELECT count(*),coalesce(sum(length(payload)),0) FROM envelopes WHERE mailbox=?1",
             [mailbox],
-            |r| Ok((r.get::<_, u32>(0)? as usize, r.get::<_, u32>(1)? as usize)),
+            |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)),
         )?;
-        let (total_count, total_bytes): (usize, usize) = tx.query_row(
+        let (total_count, total_bytes): (u64, u64) = tx.query_row(
             "SELECT count(*),coalesce(sum(length(payload)),0) FROM envelopes",
             [],
-            |r| Ok((r.get::<_, u32>(0)? as usize, r.get::<_, u32>(1)? as usize)),
+            |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)),
         )?;
-        if box_count >= limits.mailbox_objects
-            || total_count >= limits.total_objects
-            || ciphertext.len() > limits.mailbox_bytes.saturating_sub(box_bytes)
-            || ciphertext.len() > limits.total_bytes.saturating_sub(total_bytes)
+        if box_count >= limits.mailbox_objects as u64
+            || total_count >= limits.total_objects as u64
+            || ciphertext.len() as u64 > (limits.mailbox_bytes as u64).saturating_sub(box_bytes)
+            || ciphertext.len() as u64 > (limits.total_bytes as u64).saturating_sub(total_bytes)
         {
             return Err(StoreError::Quota);
         }
@@ -857,4 +943,120 @@ fn random() -> Result<Id, StoreError> {
         .try_fill_bytes(&mut id)
         .map_err(|_| StoreError::Random)?;
     Ok(id)
+}
+
+fn storage_policy_limits(bytes: Option<usize>) -> Result<Limits, StoreError> {
+    match bytes {
+        Some(bytes) if bytes >= 500 * 1024 * 1024 && bytes != usize::MAX => {
+            Limits::for_storage_budget(bytes)
+        }
+        Some(_) => Err(StoreError::Invalid),
+        None => Ok(Limits::unlimited_storage()),
+    }
+}
+
+fn apply_database_budget(db: &Connection, limits: Limits) -> Result<(), StoreError> {
+    let bytes = limits.database_bytes()?;
+    let page_size: i64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+    let current: i64 = db.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+    // SQLite file-format boundary, not an application resource policy.
+    const SQLITE_MAX_PAGES: i64 = 4_294_967_294;
+    let pages = if limits.total_bytes == usize::MAX {
+        SQLITE_MAX_PAGES
+    } else {
+        (bytes / page_size + i64::from(bytes % page_size != 0))
+            .max(current.saturating_add(16))
+            .min(SQLITE_MAX_PAGES)
+    };
+    let actual: i64 = db.query_row(&format!("PRAGMA max_page_count={pages}"), [], |r| r.get(0))?;
+    if actual != pages {
+        return Err(StoreError::Invalid);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod resource_budget_tests {
+    use super::*;
+
+    #[test]
+    fn gigabyte_budget_is_valid_without_allocating_a_gigabyte() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let limits = Limits::for_storage_budget(4 * 1024 * 1024 * 1024)?;
+        assert!(limits.total_objects > 8192 && limits.mailboxes > 256);
+        let store = MailboxStore::open(dir.path().join("store.db"), limits)?;
+        let pages: i64 = store
+            .db
+            .query_row("PRAGMA max_page_count", [], |r| r.get(0))?;
+        let size: i64 = store.db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+        assert!(pages * size > 4 * 1024 * 1024 * 1024);
+        assert!(
+            std::fs::metadata(dir.path().join("store.db"))
+                .unwrap()
+                .len()
+                < 1024 * 1024
+        );
+        assert!(Limits::for_storage_budget(0).is_err());
+        assert!(Limits::for_storage_budget(usize::MAX - 1).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn expanded_store_reopens_with_lower_quota_without_losing_custody() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.db");
+        let mut limits = Limits::for_storage_budget(1024 * 1024 * 1024)?;
+        limits.mailbox_bytes = limits.total_bytes;
+        let mut store = MailboxStore::open(&path, limits)?;
+        let grant = store.create(100, 600)?;
+        let payload = vec![7; MAX_BULK_CIPHERTEXT];
+        // Cross both the old 64 MiB payload and 128 MiB SQLite ceilings.
+        for index in 1..=65u8 {
+            assert_eq!(
+                store.put_bulk_v1(&grant.id, &grant.write, &[index; 32], &payload, 600, 100)?,
+                PutResult::Stored
+            );
+        }
+        assert!(std::fs::metadata(&path).unwrap().len() > 128 * 1024 * 1024);
+        drop(store);
+        let mut store = MailboxStore::open_contributor(&path, Limits::default(), true)?;
+        store.set_resources_available(true);
+        assert_eq!(store.contribution_status(101)?.retained_objects, 65);
+        // Retransmission is still idempotent above the new, smaller quota.
+        assert_eq!(
+            store.put_bulk_v1(&grant.id, &grant.write, &[1; 32], &payload, 600, 101)?,
+            PutResult::Duplicate
+        );
+        assert!(matches!(
+            store.put_bulk_v1(&grant.id, &grant.write, &[66; 32], &payload, 600, 101),
+            Err(StoreError::Quota)
+        ));
+        let received = store.fetch_bulk_v1(&grant.id, &grant.read, 101)?.unwrap();
+        assert_eq!(received.ciphertext, payload);
+        assert_eq!(received.expires, 600);
+        Ok(())
+    }
+
+    #[test]
+    fn user_storage_choice_is_persistent_and_independent_of_sharing() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.db");
+        let mut store = MailboxStore::open_contributor(&path, Limits::unlimited_storage(), true)?;
+        assert_eq!(store.storage_budget(), None);
+        assert!(store
+            .set_storage_budget(Some(499 * 1024 * 1024), 100)
+            .is_err());
+        store.set_storage_budget(Some(500 * 1024 * 1024), 100)?;
+        store.set_contribution_enabled(false, 100)?;
+        drop(store);
+        let mut store = MailboxStore::open_contributor(&path, Limits::unlimited_storage(), true)?;
+        assert_eq!(store.storage_budget(), Some(500 * 1024 * 1024));
+        assert!(!store.contribution_status(101)?.enabled);
+        store.set_storage_budget(None, 101)?;
+        drop(store);
+        let mut store = MailboxStore::open_contributor(&path, Limits::default(), true)?;
+        assert_eq!(store.storage_budget(), None);
+        assert!(!store.contribution_status(102)?.enabled);
+        Ok(())
+    }
 }

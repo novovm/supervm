@@ -182,6 +182,24 @@ mod windows {
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
+        if args[0] == "--set-self-owned-storage" {
+            use super::rendezvous_self_owned_owner::{Config, Owner};
+            ensure!(
+                args.len() == 3,
+                "usage: --set-self-owned-storage CONFIG unlimited|MIB"
+            );
+            let limit = if args[2] == "unlimited" {
+                None
+            } else {
+                Some(
+                    args[2]
+                        .to_str()
+                        .context("storage limit encoding")?
+                        .parse()?,
+                )
+            };
+            return Owner::open(Config::load(&path)?, false, None)?.set_storage_limit_mib(limit);
+        }
         if args[0] == "--set-self-owned-native-carrier" {
             use super::rendezvous_self_owned_owner::{Config, Owner};
             ensure!(
