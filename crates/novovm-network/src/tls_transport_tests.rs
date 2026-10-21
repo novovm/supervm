@@ -510,3 +510,58 @@ async fn dropping_stream_closes_io_and_releases_supervisor_and_admission() -> Re
     }
     Ok(())
 }
+
+#[cfg(feature = "iroh-transport")]
+#[tokio::test]
+async fn adaptive_connections_exceed_sixty_four_and_preserve_active_on_shrink() -> Result<()> {
+    use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+    let _serial = SERIAL.acquire().await?;
+    let resources = ResourceSnapshotV1 {
+        cpu_parallelism: 64,
+        available_memory_bytes: 16 * 1024 * 1024 * 1024,
+        pressure: ResourcePressureV1::Normal,
+    };
+    let controller = ServiceConcurrencyV1::new(resources);
+    let scope =
+        TlsScopeV1::new_continuous_v4(|| Ok(()))?.with_service_concurrency(controller.clone());
+    let key = scope.endpoint_key();
+    let mut permits = (0..65)
+        .map(|_| scope.acquire_connection())
+        .collect::<Result<Vec<_>>>()?;
+    controller.update_resources(ResourceSnapshotV1 {
+        pressure: ResourcePressureV1::Severe,
+        ..resources
+    });
+    assert!(scope.acquire_connection().is_err());
+    drop(permits.pop());
+    assert!(
+        scope.acquire_connection().is_err(),
+        "returned old permit bypassed shrink"
+    );
+    assert_eq!(scope.endpoint_key(), key);
+    assert_eq!(
+        controller.snapshot().active_work,
+        0,
+        "connections counted as work"
+    );
+    drop(permits);
+    controller.update_resources(resources);
+    let recovered = (0..65)
+        .map(|_| scope.acquire_connection())
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(recovered.len(), 65);
+    Ok(())
+}
+
+#[tokio::test]
+async fn explicit_tls_connection_budget_is_not_capped_at_sixty_four() -> Result<()> {
+    let _serial = SERIAL.acquire().await?;
+    let scope = TlsScopeV1::new(control())?.with_connection_limit(65)?;
+    let permits = (0..65)
+        .map(|_| scope.acquire_connection())
+        .collect::<Result<Vec<_>>>()?;
+    assert!(scope.acquire_connection().is_err());
+    drop(permits);
+    assert!(scope.acquire_connection().is_ok());
+    Ok(())
+}

@@ -299,7 +299,7 @@ impl TlsListenerConfig {
             |ip: IpAddr| !ip.is_multicast() && !matches!(ip, IpAddr::V4(v) if v.is_broadcast());
         ensure!(
             self.version == 1
-                && (1..=64).contains(&self.max_connections)
+                && self.max_connections > 0
                 && admissible(self.listen.ip())
                 && admissible(self.advertised.ip())
                 && !self.advertised.ip().is_unspecified()
@@ -958,6 +958,7 @@ impl Owner {
                     settings.advertised,
                     seed,
                     stop.clone(),
+                    concurrency.clone(),
                 )
                 .await
                 .context(FailureStage::TlsBind)?;
@@ -1897,12 +1898,16 @@ mod tests {
         let good = settings();
         std::fs::write(&path, serde_json::to_vec(&good)?)?;
         assert_eq!(NativeListenerConfig::load(&path)?, good);
+        let mut larger = good.clone();
+        larger.max_connections = 128;
+        std::fs::write(&path, serde_json::to_vec(&larger)?)?;
+        assert_eq!(NativeListenerConfig::load(&path)?, larger);
         let mut invalid = Vec::new();
         let mut v = good.clone();
         v.version = 2;
         invalid.push(v);
         let mut v = good.clone();
-        v.max_connections = 65;
+        v.max_connections = 0;
         invalid.push(v);
         let mut v = good.clone();
         v.max_bytes_per_minute = 0;

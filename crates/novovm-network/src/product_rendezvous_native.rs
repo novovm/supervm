@@ -37,7 +37,7 @@ use futures_util::{
     FutureExt, StreamExt,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     net::{SocketAddr, UdpSocket},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -180,7 +180,9 @@ fn mailbox_link_with_resources(
     transport: Option<&ServiceTransportPermitV1>,
 ) -> Result<NativeObjectLink> {
     let work_limit = concurrency
-        .map_or(WORK_LIMIT, |c| crate::mailbox_structured::native_session::adaptive_request_slot_ceiling_v1(c))
+        .map_or(WORK_LIMIT, |c| {
+            crate::mailbox_structured::native_session::adaptive_request_slot_ceiling_v1(c)
+        })
         .min(4096);
     let peer_limit = if concurrency.is_some() {
         work_limit
@@ -325,8 +327,8 @@ pub struct NativeMailboxListenerV7 {
 }
 impl NativeMailboxListenerV7 {
     /// The caller advertises its actually reachable address. Binding does not
-    /// establish NAT reachability. The original SDK presently has a cumulative
-    /// identity capacity (<=64), not an evicting public-server peer table.
+    /// establish NAT reachability. The explicit capacity is local owner policy,
+    /// independent of the number of clients served over the listener's lifetime.
     pub fn bind(
         listen: SocketAddr,
         advertised: SocketAddr,
@@ -364,8 +366,8 @@ impl NativeMailboxListenerV7 {
             None,
         )
     }
-    /// Existing native peer-table envelope is advertised; new work is admitted
-    /// from the platform's shared resource observation without another owner.
+    /// Advertise current capacity. Later observations govern admission and
+    /// normal signed-record renewal; this startup value is not a permanent cap.
     pub fn bind_adaptive(
         listen: SocketAddr,
         advertised: SocketAddr,
@@ -374,12 +376,13 @@ impl NativeMailboxListenerV7 {
         max_bytes_per_minute: u64,
         concurrency: Arc<ServiceConcurrencyV1>,
     ) -> Result<Self> {
+        let capacity = concurrency.snapshot().inbound_connections() as u16;
         Self::bind_with_resources(
             listen,
             advertised,
             key,
             stop,
-            64,
+            capacity,
             max_bytes_per_minute,
             Some(concurrency),
         )
@@ -393,10 +396,7 @@ impl NativeMailboxListenerV7 {
         max_bytes_per_minute: u64,
         concurrency: Option<Arc<ServiceConcurrencyV1>>,
     ) -> Result<Self> {
-        ensure!(
-            (1..=64).contains(&max_connections),
-            "native connection bounds"
-        );
+        ensure!(max_connections > 0, "native connection bounds");
         let socket = UdpSocket::bind(listen)?;
         socket.set_nonblocking(true)?;
         if advertised.port() == 0 {
@@ -458,6 +458,22 @@ impl NativeMailboxListenerV7 {
         &self.route
     }
 
+    pub(super) fn current_route(&self) -> NativeMailboxEndpointV7 {
+        let mut route = self.route.clone();
+        if let Some(c) = &self.concurrency {
+            route.max_connections = c.snapshot().inbound_connections() as u16;
+        }
+        route
+    }
+
+    pub(super) fn admission_ceiling(&self) -> usize {
+        if self.concurrency.is_some() {
+            usize::from(u16::MAX)
+        } else {
+            usize::from(self.route.max_connections)
+        }
+    }
+
     pub(super) async fn serve(
         self,
         host: &ServiceLeaseHostV1,
@@ -510,7 +526,7 @@ async fn serve_link(
     let mut outbound = 0usize;
     // Retain each response with its reservation until that response completes.
     // An unrelated continuously busy connection must not retain finished work.
-    let mut sending = Vec::<(MailboxResponse, ServiceWorkPermitV1)>::new();
+    let mut sending = Vec::<(usize, MailboxResponse, ServiceWorkPermitV1)>::new();
     // Full datagram buffer avoids WSAEMSGSIZE on Windows when peeking.
     let mut peek = vec![0u8; 65_536];
     loop {
@@ -538,12 +554,29 @@ async fn serve_link(
         authority()?;
         readiness.poll_carrier()?;
         let now = Instant::now();
+        if let Admission::Udp(slots) = &admission {
+            // The transport cannot see a database job or waiting Watch. Protect
+            // those handles until their actual work and response have drained.
+            // Reclaim idle clients only under capacity pressure, inside this
+            // existing owner; custody data is not peer transport state.
+            let protected: BTreeSet<_> = jobs
+                .values()
+                .map(|job| job.peer)
+                .chain(pending.iter().map(|item| item.peer))
+                .chain(sending.iter().map(|(peer, _, _)| *peer))
+                .collect();
+            for retired in
+                link.retire_idle_clients(now, REQUEST_DEADLINE, &protected, slots.limit())?
+            {
+                servers.remove(&retired.peer);
+            }
+        }
         let report = link
             .poll(now_ms()?, now, QUANTUM)
             .map_err(|error| readiness.link_error(error))?;
         outbound = outbound.saturating_sub(report.completed.len());
         for completed in &report.completed {
-            sending.retain(|(response, _permit)| !response.transport_complete(completed));
+            sending.retain(|(_, response, _permit)| !response.transport_complete(completed));
         }
         // Retire application bindings BEFORE accepting completed new-session
         // objects. An old committed operation has an unknown remote outcome;
@@ -567,7 +600,7 @@ async fn serve_link(
                 Ok(true) => {
                     let mut completed = pending.swap_remove(index);
                     if let Some(permit) = completed.work_permit.take() {
-                        sending.push((completed.response, permit));
+                        sending.push((completed.peer, completed.response, permit));
                     }
                     outbound += 1;
                     progress = true;
@@ -592,7 +625,8 @@ async fn serve_link(
         if active.len() + pending.len() < work_limit {
             if let Some(body) = link.poll_complete(STREAM, now, QUANTUM)? {
                 progress = true;
-                let peer = (0..link.peer_count())
+                let peer = link
+                    .peer_indices()
                     .find(|&p| link.peer_id(p).is_ok_and(|id| id == body.peer))
                     .context("native completed unknown peer")?;
                 // Always admit/validate before returning an overload reply.

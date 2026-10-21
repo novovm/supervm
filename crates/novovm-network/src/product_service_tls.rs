@@ -33,10 +33,7 @@ fn is_default_connections(value: &u16) -> bool {
 impl TlsServiceEndpointV1 {
     fn validate(&self) -> Result<()> {
         strict_key(&self.endpoint_key)?;
-        ensure!(
-            (1..=64).contains(&self.max_connections),
-            "TLS connection limit bounds"
-        );
+        ensure!(self.max_connections > 0, "TLS connection limit bounds");
         ensure!(
             self.address.port() != 0
                 && !self.address.ip().is_unspecified()

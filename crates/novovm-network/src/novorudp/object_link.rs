@@ -2,7 +2,7 @@
 //! handshake, frame, window repair, pacing and reassembly implementations.
 //! No body encoding/decoding, business execution, consensus rules or worker.
 use super::{
-    endpoint::{NativeEndpoint, NativePoll, NativeSessionChange},
+    endpoint::{NativeEndpoint, NativePeerRetirement, NativePoll, NativeSessionChange},
     fragments::{
         CompletedMessage, FragmentAdmission, FragmentProfile, OutgoingMessage, ReassemblyLimits,
     },
@@ -137,7 +137,7 @@ struct Lane {
     config: NativeLaneConfig,
     receiver: NativeObjectReceiver,
     usage: Usage,
-    peers: Vec<Usage>,
+    peers: BTreeMap<usize, Usage>,
     feedback: VecDeque<Feedback>,
     queued: BTreeSet<Feedback>,
     pending_feedback: BTreeMap<Feedback, PendingFeedback>,
@@ -213,7 +213,8 @@ impl NativeObjectLink {
             "invalid native lane count"
         );
         ensure!(!policy.ttl.is_zero(), "zero native send TTL");
-        let peers = (0..endpoint.peer_count())
+        let peers = endpoint
+            .peer_indices()
             .map(|i| Ok((endpoint.peer_id(i)?.to_owned(), i)))
             .collect::<Result<BTreeMap<_, _>>>()?;
         let ids = peers.keys().cloned().collect::<Vec<_>>();
@@ -249,7 +250,10 @@ impl NativeObjectLink {
                     config,
                     receiver,
                     usage: Usage::default(),
-                    peers: vec![Usage::default(); endpoint.peer_count()],
+                    peers: endpoint
+                        .peer_indices()
+                        .map(|peer| (peer, Usage::default()))
+                        .collect(),
                     feedback: VecDeque::new(),
                     queued: BTreeSet::new(),
                     pending_feedback: BTreeMap::new(),
@@ -291,6 +295,53 @@ impl NativeObjectLink {
     }
     pub fn peer_count(&self) -> usize {
         self.endpoint.peer_count()
+    }
+    pub fn peer_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.endpoint.peer_indices()
+    }
+    /// Called by the original owner with its active business/Watch/response
+    /// handles. Reclaim only idle dynamic identities when capacity is needed;
+    /// no admitted operation, incomplete object or queued ACK is displaced.
+    pub fn retire_idle_clients(
+        &mut self,
+        now: Instant,
+        idle_for: Duration,
+        protected: &BTreeSet<usize>,
+        capacity: usize,
+    ) -> Result<Vec<NativePeerRetirement>> {
+        ensure!(!idle_for.is_zero(), "zero client idle observation");
+        if !self.endpoint.update_client_capacity(capacity)? {
+            return Ok(Vec::new());
+        }
+        let mut retired = Vec::new();
+        for peer in self.endpoint.idle_client_candidates(now, idle_for) {
+            if !self.endpoint.needs_client_capacity(now) {
+                break;
+            }
+            let identity = self.endpoint.peer_id(peer)?.to_owned();
+            if protected.contains(&peer)
+                || self.jobs.keys().any(|key| key.0 == peer)
+                || self.lanes.values().any(|lane| {
+                    lane.receiver.has_pending_peer(&identity)
+                        || lane.feedback.iter().any(|(p, _)| *p == peer)
+                        || lane.queued.iter().any(|(p, _)| *p == peer)
+                        || lane.pending_feedback.keys().any(|(p, _)| *p == peer)
+                })
+            {
+                continue;
+            }
+            if let Some((_, validity)) = self.session_validity.remove(&peer) {
+                validity.invalidate();
+            }
+            self.application_owners.retain(|(p, _, _), _| *p != peer);
+            for lane in self.lanes.values_mut() {
+                lane.receiver.retire_authenticated_peer(&identity);
+                lane.peers.remove(&peer);
+            }
+            self.peers.remove(&identity);
+            retired.push(self.endpoint.retire_client(peer)?);
+        }
+        Ok(retired)
     }
     pub fn session_validity(&mut self, peer: usize) -> Result<NativeSessionValidity> {
         let session = self.session_id(peer).context("peer not authenticated")?;
@@ -381,7 +432,7 @@ impl NativeObjectLink {
         deadline: Instant,
     ) -> Result<bool> {
         ensure!(now < deadline, "native send operation deadline");
-        ensure!(peer < self.endpoint.peer_count(), "unknown native peer");
+        self.endpoint.peer_id(peer)?;
         let lane = self.lanes.get_mut(&stream).context("unknown native lane")?;
         ensure!(
             body.profile() == FragmentProfile::NativeUdpV2
@@ -401,7 +452,11 @@ impl NativeObjectLink {
         let bytes = body.byte_len();
         let limits = &lane.config.send;
         if !lane.usage.fits(bytes, limits.messages, limits.bytes)
-            || !lane.peers[peer].fits(bytes, limits.peer_messages, limits.peer_bytes)
+            || !lane
+                .peers
+                .get(&peer)
+                .context("missing native peer usage")?
+                .fits(bytes, limits.peer_messages, limits.peer_bytes)
         {
             return Ok(false);
         }
@@ -415,7 +470,10 @@ impl NativeObjectLink {
             self.policy.ttl.min(deadline.duration_since(now)),
         )?;
         lane.usage.add(bytes);
-        lane.peers[peer].add(bytes);
+        lane.peers
+            .get_mut(&peer)
+            .context("missing native peer usage")?
+            .add(bytes);
         self.jobs.insert(key, sender);
         self.order.push_back(key);
         Ok(true)
@@ -500,16 +558,18 @@ impl NativeObjectLink {
             session_changes,
             ..
         } = received;
-        // Append only identities authenticated by this endpoint. Indices never
-        // change, so retained jobs/ACKs cannot attach to a recycled client slot.
-        while self.peers.len() < self.endpoint.peer_count() {
-            let index = self.peers.len();
+        // Handles are monotonic and never rebound; sparse retired identities
+        // consume no per-peer state. Pending fresh-secret confirmations cannot
+        // submit objects until the endpoint activates their authenticated session.
+        for index in self.endpoint.peer_indices() {
             let id = self.endpoint.peer_id(index)?.to_owned();
-            for lane in self.lanes.values_mut() {
-                lane.receiver.admit_authenticated_peer(id.clone())?;
-                lane.peers.push(Usage::default());
+            if !self.peers.contains_key(&id) {
+                for lane in self.lanes.values_mut() {
+                    lane.receiver.admit_authenticated_peer(id.clone())?;
+                    lane.peers.insert(index, Usage::default());
+                }
+                self.peers.insert(id, index);
             }
-            self.peers.insert(id, index);
         }
         let mut report = NativeLinkPoll {
             rejected: rejected_datagrams,
@@ -660,7 +720,10 @@ impl NativeObjectLink {
             let body = sender.into_body();
             let lane = self.lanes.get_mut(&key.1).expect("configured lane");
             lane.usage.remove(body.byte_len());
-            lane.peers[key.0].remove(body.byte_len());
+            lane.peers
+                .get_mut(&key.0)
+                .context("missing native peer usage")?
+                .remove(body.byte_len());
             report.completed.push(NativeSendCompletion {
                 peer: key.0,
                 stream: key.1,

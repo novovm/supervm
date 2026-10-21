@@ -83,7 +83,14 @@ fn scratch_long_then_short_authenticated_datagrams_use_only_received_prefix() ->
             0,
             payload,
         );
-        let encrypted = client.peers[0].session.as_mut().unwrap().encode(&frame)?;
+        let encrypted = client
+            .peers
+            .get_mut(&0)
+            .unwrap()
+            .session
+            .as_mut()
+            .unwrap()
+            .encode(&frame)?;
         if old_length != 0 {
             assert!(encrypted.len() < old_length);
         }

@@ -14,7 +14,7 @@ fn key(seed: u8) -> SigningKey {
 }
 
 #[test]
-fn connect_clients_rejects_empty_oversize_and_duplicate_bindings() -> Result<()> {
+fn connect_clients_rejects_empty_and_duplicates_without_a_sixty_four_peer_cap() -> Result<()> {
     let socket = || UdpSocket::bind("127.0.0.1:0");
     let remote = NativePeer {
         key: key(1).verifying_key().to_bytes(),
@@ -31,13 +31,13 @@ fn connect_clients_rejects_empty_oversize_and_duplicate_bindings() -> Result<()>
     let mut repeated_address = remote.clone();
     repeated_address.key = key(2).verifying_key().to_bytes();
     assert!(connect(vec![remote, repeated_address]).is_err());
-    let maximum = (1..=64)
+    let configured = (1..=128)
         .map(|seed| NativePeer {
             key: key(seed).verifying_key().to_bytes(),
             address: SocketAddr::from(([127, 0, 0, 1], 12000 + u16::from(seed))),
         })
         .collect();
-    assert_eq!(connect(maximum)?.peer_count(), 64);
+    assert_eq!(connect(configured)?.peer_count(), 128);
     Ok(())
 }
 

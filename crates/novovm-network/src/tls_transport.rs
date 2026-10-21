@@ -6,6 +6,8 @@
 //! NOVOVM identity and application authority still require the bound handshake.
 //! No public API imports a caller's claimed exporter or verified binding.
 
+#[cfg(feature = "iroh-transport")]
+use crate::service_concurrency::{AdaptiveAdmissionV1, AdmissionKind, ServiceConcurrencyV1};
 use crate::transport_binding::{
     VerifiedTransportBinding, BOUND_TRANSPORT_ALPN_V1, BOUND_TRANSPORT_EXPORTER_CONTEXT_V1,
     BOUND_TRANSPORT_EXPORTER_LABEL_V1,
@@ -42,7 +44,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf, ReadHalf, WriteHalf},
-    sync::{OwnedSemaphorePermit, Semaphore, SemaphorePermit},
+    sync::{OwnedSemaphorePermit, Semaphore},
 };
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use zeroize::Zeroizing;
@@ -456,7 +458,9 @@ pub struct TlsScopeV1 {
     control: TlsControlV1,
     identity: Arc<CertifiedKey>,
     endpoint: [u8; 32],
-    connections: Semaphore,
+    connections: Arc<Semaphore>,
+    #[cfg(feature = "iroh-transport")]
+    adaptive_connections: Option<Arc<AdaptiveAdmissionV1>>,
     _admission: OwnedSemaphorePermit,
 }
 impl TlsScopeV1 {
@@ -516,16 +520,50 @@ impl TlsScopeV1 {
             control,
             identity,
             endpoint,
-            connections: Semaphore::new(TLS_MAX_CONNECTIONS_V1),
+            connections: Arc::new(Semaphore::new(TLS_MAX_CONNECTIONS_V1)),
+            #[cfg(feature = "iroh-transport")]
+            adaptive_connections: None,
             _admission: admission,
         })
     }
     /// Local owner resource budget, fixed before any stream borrows the scope.
     /// Remote peer admission and byte/request/storage limits remain independent.
     pub fn with_connection_limit(mut self, limit: usize) -> Result<Self> {
-        ensure!((1..=64).contains(&limit), "TLS connection limit bounds");
-        self.connections = Semaphore::new(limit);
+        ensure!(
+            limit > 0 && limit <= Semaphore::MAX_PERMITS,
+            "TLS connection limit bounds"
+        );
+        self.connections = Arc::new(Semaphore::new(limit));
+        #[cfg(feature = "iroh-transport")]
+        {
+            self.adaptive_connections = None;
+        }
         Ok(self)
+    }
+    /// Same platform resource controller as the outer node admission. This
+    /// local transport gate counts connections only, never service work twice.
+    #[cfg(feature = "iroh-transport")]
+    pub fn with_service_concurrency(mut self, controller: Arc<ServiceConcurrencyV1>) -> Self {
+        self.adaptive_connections = Some(AdaptiveAdmissionV1::new(
+            TLS_MAX_CONNECTIONS_V1,
+            Some(controller),
+            AdmissionKind::Connections,
+            Semaphore::MAX_PERMITS,
+        ));
+        self
+    }
+    fn acquire_connection(&self) -> Result<OwnedSemaphorePermit> {
+        #[cfg(feature = "iroh-transport")]
+        if let Some(gate) = &self.adaptive_connections {
+            return gate
+                .clone()
+                .try_acquire_owned()
+                .context("TLS connection capacity exhausted");
+        }
+        self.connections
+            .clone()
+            .try_acquire_owned()
+            .context("TLS connection capacity exhausted")
     }
     pub fn endpoint_key(&self) -> [u8; 32] {
         self.endpoint
@@ -593,10 +631,7 @@ impl TlsScopeV1 {
             check_public_key(&key)?;
             ensure!(key != self.endpoint, "invalid TLS peer key");
         }
-        let admission = self
-            .connections
-            .try_acquire()
-            .context("TLS connection capacity exhausted")?;
+        let admission = self.acquire_connection()?;
         let io = ClosableIo::new(io);
         let state = Arc::new(ConnectionState {
             failed: AtomicBool::new(false),
@@ -735,7 +770,7 @@ pub struct TlsStreamV1<'scope> {
     continuous_service: bool,
     native_continuous: bool,
     supervisor: tokio::task::JoinHandle<()>,
-    _admission: SemaphorePermit<'scope>,
+    _admission: OwnedSemaphorePermit,
 }
 pub struct TlsWriteHalfV1<'a> {
     control: &'a TlsControlV1,

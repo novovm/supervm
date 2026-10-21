@@ -87,11 +87,22 @@ This is distinct from authentication failure and does not reclassify generic E8.
 Native constructors all use the current resource exchange; convenience entrypoints
 derive a host controller and product entrypoints receive their shared owner.
 Product adaptive admission replaces the former fixed two/four admissions.
-Remaining protocol bounds are explicit: signed native endpoint metadata and
-its cumulative peer table still allow at most 64 identities, and NativeObjectLink
-metadata remains bounded at 4096 entries. The process-wide four-Endpoint guard
-counts endpoint owners, not peer connections. These are not measurements of L3
-or L4 throughput; peer-table retirement requires separate lifecycle work.
+Signed endpoint capacity now reflects the shared owner's current resource
+observation and renews with the existing signed declaration. Its u16 encoding
+bound is not an advertised allocation or a fixed 64-client product ceiling.
+NativeObjectLink metadata remains bounded at 4096 entries. The process-wide
+four-Endpoint guard counts endpoint owners, not peer connections.
+
+Dynamic UDP peers use monotonic, non-reused handles. The existing listener
+retires idle peers only when resources shrink or a verified incoming handshake
+needs capacity. At most one such handshake waits under its original deadline;
+fresh session-key possession is still required before business traffic. Active
+database jobs, Watch requests, incomplete objects and queued responses protect
+their peer until drained. Completed custody is durable storage, not disposable
+peer state. Healthy idle peers are not evicted just because the table is full.
+TLS also uses the shared adaptive admission instead of an inner 64-connection
+semaphore. Adaptive listeners must share the owner's exact controller; explicit
+local limits remain respected. These changes are not phone throughput evidence.
 Existing configured traffic quotas remain independent of concurrency.
 
 Pending request bodies and decoded replies waiting in an unpolled future share
@@ -110,3 +121,15 @@ The three Iroh multiplex checks passed after the fixture was made to wait for
 the exact retire stream instead of closing on an earlier cancelled stream;
 five repeat runs also passed. Production close semantics and the original test
 deadline were unchanged.
+
+The follow-up removing the cumulative 64-peer restriction passed real loopback
+UDP retirement/old-frame isolation (128 sequential identities), idle-without-
+demand preservation and in-flight object/Watch/response protection. The endpoint
+and object-link groups passed 22 and 14 checks; TLS passed 17, including capacity
+above 64 and shrink/recovery. Signed route/identity/withdrawal checks passed 23,
+and four real node-owner UDP/V8/TLS restart checks passed. Resource hint and
+shared-controller checks also passed. Two initial assertions still encoded the
+old 64 limit / a one-slot severe-pressure expectation; they were corrected to
+the u16 encoding boundary and the controller's existing two inbound slots.
+No production security check was relaxed to satisfy those assertions. Updated
+phone and deployed-node acceptance remains pending.

@@ -58,6 +58,7 @@ struct Peer {
     session: Option<NativeUdpSession>,
     streams: Option<BTreeSet<u64>>,
     reconnect: Option<reconnect::PendingReconnect>,
+    last_authenticated: Instant,
 }
 
 struct ConfiguredAdmission {
@@ -72,6 +73,7 @@ struct OpenAdmission {
     streams: BTreeSet<u64>,
     budget: NativeHandshakeBudget,
     reconnect_v1: bool,
+    retire_clients: bool,
 }
 
 /// A fresh authenticated generation replaced the old one. Application owners
@@ -81,6 +83,16 @@ pub struct NativeSessionChange {
     pub peer: usize,
     pub previous: [u8; 16],
     pub current: [u8; 16],
+}
+
+/// An idle dynamic peer has left this owner's live table. Handles are never
+/// reused, so old frames, completions and application adapters cannot alias a
+/// later identity. This event does not undo any durable business operation.
+#[derive(Clone, Debug)]
+pub struct NativePeerRetirement {
+    pub peer: usize,
+    pub identity: String,
+    pub previous_session: Option<[u8; 16]>,
 }
 
 /// Constructed only after source, identity, encryption and replay checks.
@@ -120,7 +132,11 @@ pub struct NativeEndpoint {
     // received prefix; old tail bytes are never input to authentication/decoding.
     receive_scratch: Vec<u8>,
     local_key: [u8; 32],
-    peers: Vec<Peer>,
+    peers: BTreeMap<usize, Peer>,
+    next_peer: usize,
+    // One fully verified admission may wait for the owner to retire idle work.
+    // Its original handshake deadline and transcript remain unchanged.
+    waiting_client: Option<Peer>,
     sources: BTreeMap<NativeRoute, usize>,
     replay: HandshakeReplayCacheV1,
     turn: usize,
@@ -162,14 +178,20 @@ impl NativeEndpoint {
             io,
             receive_scratch: vec![0; 65536],
             local_key,
-            peers: vec![Peer {
-                id,
-                configured_key: None,
-                handshake: None,
-                session: Some(session),
-                streams: Some(streams.into_iter().collect()),
-                reconnect: None,
-            }],
+            peers: BTreeMap::from([(
+                0,
+                Peer {
+                    id,
+                    configured_key: None,
+                    handshake: None,
+                    session: Some(session),
+                    streams: Some(streams.into_iter().collect()),
+                    reconnect: None,
+                    last_authenticated: Instant::now(),
+                },
+            )]),
+            next_peer: 1,
+            waiting_client: None,
             sources: BTreeMap::from([(route, 0)]),
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
@@ -219,7 +241,9 @@ impl NativeEndpoint {
             io,
             receive_scratch: vec![0; 65536],
             local_key: identity.verifying_key().to_bytes(),
-            peers: Vec::new(),
+            peers: BTreeMap::new(),
+            next_peer: 0,
+            waiting_client: None,
             sources: BTreeMap::new(),
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
@@ -256,14 +280,11 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<Self> {
-        ensure!(
-            (1..=64).contains(&peers.len()),
-            "native endpoint peer bound"
-        );
+        ensure!(!peers.is_empty(), "native endpoint peer bound");
         socket.set_nonblocking(true)?;
         let mut sources = BTreeMap::new();
         let mut ids = BTreeSet::new();
-        let mut owned = Vec::new();
+        let mut owned = BTreeMap::new();
         for (index, peer) in peers.into_iter().enumerate() {
             let id = peer_id_from_ed25519_public_key_v1(&peer.key);
             ensure!(
@@ -282,19 +303,25 @@ impl NativeEndpoint {
                 budget.lifetime,
                 budget.retry,
             )?;
-            owned.push(Peer {
-                id: id.into(),
-                configured_key: Some(peer.key),
-                handshake: Some(handshake),
-                session: None,
-                streams: None,
-                reconnect: None,
-            });
+            owned.insert(
+                index,
+                Peer {
+                    id: id.into(),
+                    configured_key: Some(peer.key),
+                    handshake: Some(handshake),
+                    session: None,
+                    streams: None,
+                    reconnect: None,
+                    last_authenticated: Instant::now(),
+                },
+            );
         }
         Ok(Self {
             io: socket,
             receive_scratch: vec![0; 65536],
             local_key: identity.verifying_key().to_bytes(),
+            next_peer: owned.len(),
+            waiting_client: None,
             peers: owned,
             sources,
             replay: HandshakeReplayCacheV1::new(256),
@@ -326,7 +353,7 @@ impl NativeEndpoint {
             "native client admission identity mismatch"
         );
         ensure!(
-            additional > 0 && additional <= 64usize.saturating_sub(self.peers.len()),
+            additional > 0 && self.peers.len().checked_add(additional).is_some(),
             "native client slot bound"
         );
         ensure!(
@@ -345,6 +372,7 @@ impl NativeEndpoint {
             streams: streams.into_iter().collect(),
             budget,
             reconnect_v1: false,
+            retire_clients: false,
         });
         Ok(())
     }
@@ -395,14 +423,11 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<Self> {
-        ensure!(
-            (1..=64).contains(&remotes.len()),
-            "native endpoint peer bound"
-        );
+        ensure!(!remotes.is_empty(), "native endpoint peer bound");
         let local_key = identity.verifying_key().to_bytes();
         let mut sources = BTreeMap::new();
         let mut ids = BTreeSet::new();
-        let mut peers = Vec::with_capacity(remotes.len());
+        let mut peers = BTreeMap::new();
         for (index, remote) in remotes.into_iter().enumerate() {
             let id = peer_id_from_ed25519_public_key_v1(&remote.key);
             ensure!(
@@ -419,19 +444,25 @@ impl NativeEndpoint {
                 budget.retry,
                 Some(true),
             )?;
-            peers.push(Peer {
-                id: id.into(),
-                configured_key: None,
-                handshake: Some(handshake),
-                session: None,
-                streams: None,
-                reconnect: None,
-            });
+            peers.insert(
+                index,
+                Peer {
+                    id: id.into(),
+                    configured_key: None,
+                    handshake: Some(handshake),
+                    session: None,
+                    streams: None,
+                    reconnect: None,
+                    last_authenticated: Instant::now(),
+                },
+            );
         }
         Ok(Self {
             io,
             receive_scratch: vec![0; 65536],
             local_key,
+            next_peer: peers.len(),
+            waiting_client: None,
             peers,
             sources,
             replay: HandshakeReplayCacheV1::new(256),
@@ -459,10 +490,25 @@ impl NativeEndpoint {
             anyhow::bail!("client must initiate")
         };
         let id = peer_id_from_ed25519_public_key_v1(&offer.initiator_identity_public_key);
-        if let Some(index) = self.peers.iter().position(|p| p.id.as_ref() == id) {
+        if let Some(index) = self
+            .peers
+            .iter()
+            .find_map(|(&i, p)| (p.id.as_ref() == id).then_some(i))
+        {
             return self.prepare_reconnect(index, source, wire, wall_ms, now);
         }
-        ensure!(self.peers.len() < open.limit, "native client slots full");
+        let full = self.peers.len() >= open.limit;
+        if self
+            .waiting_client
+            .as_ref()
+            .is_some_and(|p| p.reconnect.as_ref().is_none_or(|r| now >= r.deadline))
+        {
+            self.waiting_client = None;
+        }
+        ensure!(
+            self.waiting_client.is_none() && (!full || open.retire_clients),
+            "native client admission occupied"
+        );
         ensure!(
             !self.sources.contains_key(&source) && !self.reconnect_source_in_use(source),
             "native source already bound"
@@ -482,16 +528,86 @@ impl NativeEndpoint {
         let session = handshake
             .take_session()
             .context("client handshake did not authenticate")?;
-        self.sources.insert(source, self.peers.len());
-        self.peers.push(Peer {
+        let (handshake, session, reconnect) = if open.retire_clients {
+            // A previously retired identity can arrive with a replayed signed
+            // offer after the bounded replay cache rotates. Only fresh-channel
+            // AEAD possession activates this new handle; pending offers expire.
+            (
+                None,
+                None,
+                Some(reconnect::PendingReconnect {
+                    source,
+                    handshake,
+                    session,
+                    deadline: now
+                        .checked_add(open.budget.lifetime)
+                        .context("client deadline overflow")?,
+                }),
+            )
+        } else {
+            (Some(handshake), Some(session), None)
+        };
+        let peer = Peer {
             id: id.into(),
             configured_key: None,
-            handshake: Some(handshake),
-            session: Some(session),
+            handshake,
+            session,
             streams: Some(open.streams.clone()),
-            reconnect: None,
-        });
+            reconnect,
+            last_authenticated: now,
+        };
+        if full {
+            self.waiting_client = Some(peer);
+        } else {
+            self.insert_client(peer, source)?;
+        }
         Ok(())
+    }
+    fn insert_client(&mut self, peer: Peer, source: NativeRoute) -> Result<()> {
+        let index = self.next_peer;
+        self.next_peer = index
+            .checked_add(1)
+            .context("native peer handle exhausted")?;
+        if peer.session.is_some() {
+            self.sources.insert(source, index);
+        }
+        self.peers.insert(index, peer);
+        Ok(())
+    }
+    fn admit_waiting_client(&mut self, now: Instant) -> Result<()> {
+        if self
+            .waiting_client
+            .as_ref()
+            .is_some_and(|p| p.reconnect.as_ref().is_none_or(|r| now >= r.deadline))
+        {
+            self.waiting_client = None;
+        }
+        if self
+            .open
+            .as_ref()
+            .is_some_and(|open| self.peers.len() < open.limit)
+        {
+            if let Some(peer) = self.waiting_client.take() {
+                let source = peer
+                    .reconnect
+                    .as_ref()
+                    .context("waiting client lost handshake")?
+                    .source;
+                self.insert_client(peer, source)?;
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn needs_client_capacity(&self, now: Instant) -> bool {
+        self.open.as_ref().is_some_and(|open| {
+            self.peers.len() > open.limit
+                || (self.peers.len() == open.limit
+                    && self
+                        .waiting_client
+                        .as_ref()
+                        .and_then(|p| p.reconnect.as_ref())
+                        .is_some_and(|r| now < r.deadline))
+        })
     }
     /// Configure once, before any poll/send. Reconnects and sessions cannot reset
     /// the node-wide combined ingress-admission/egress allowance.
@@ -517,22 +633,66 @@ impl NativeEndpoint {
     pub fn peer_count(&self) -> usize {
         self.peers.len()
     }
+    /// Live handles can be sparse after dynamic client retirement.
+    pub fn peer_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.peers.keys().copied()
+    }
+    pub(crate) fn update_client_capacity(&mut self, capacity: usize) -> Result<bool> {
+        ensure!(capacity > 0, "zero native client capacity");
+        let Some(open) = self.open.as_mut() else {
+            return Ok(false);
+        };
+        open.limit = capacity;
+        open.retire_clients = true;
+        open.reconnect_v1 = true;
+        Ok(true)
+    }
+    pub(crate) fn idle_client_candidates(&self, now: Instant, idle_for: Duration) -> Vec<usize> {
+        let mut candidates: Vec<_> = self
+            .peers
+            .iter()
+            .filter_map(|(&index, peer)| {
+                (peer.configured_key.is_none()
+                    && peer.streams.is_some()
+                    && peer.reconnect.as_ref().is_none_or(|r| now >= r.deadline)
+                    && now.saturating_duration_since(peer.last_authenticated) >= idle_for)
+                    .then_some((peer.last_authenticated, index))
+            })
+            .collect();
+        candidates.sort_unstable();
+        candidates.into_iter().map(|(_, index)| index).collect()
+    }
+    pub(crate) fn retire_client(&mut self, index: usize) -> Result<NativePeerRetirement> {
+        let peer = self.peers.get(&index).context("unknown native peer")?;
+        ensure!(
+            self.open.is_some() && peer.configured_key.is_none() && peer.streams.is_some(),
+            "only dynamic clients may retire"
+        );
+        let retired = NativePeerRetirement {
+            peer: index,
+            identity: peer.id.to_string(),
+            previous_session: peer.session.as_ref().map(NativeUdpSession::session_id),
+        };
+        self.sources.retain(|_, bound| *bound != index);
+        self.peers.remove(&index);
+        Ok(retired)
+    }
     pub fn local_identity(&self) -> [u8; 32] {
         self.local_key
     }
     pub fn peer_id(&self, index: usize) -> Result<&str> {
-        Ok(&self.peers.get(index).context("unknown native peer")?.id)
+        Ok(&self.peers.get(&index).context("unknown native peer")?.id)
     }
     pub fn session_id(&self, index: usize) -> Option<[u8; 16]> {
         self.peers
-            .get(index)?
+            .get(&index)?
             .session
             .as_ref()
             .map(NativeUdpSession::session_id)
     }
     pub fn expired_handshakes(&self, now: Instant) -> usize {
         self.peers
-            .iter()
+            .values()
             .filter(|p| p.handshake.as_ref().is_some_and(|h| h.is_expired(now)))
             .count()
     }
@@ -609,6 +769,7 @@ impl NativeEndpoint {
         self.traffic_started = true;
         let mut result = NativePoll::default();
         self.expire_reconnects(now);
+        self.admit_waiting_client(now)?;
         self.renew_configured_handshakes(wall_ms, now)?;
         // Full UDP payload buffer ensures even oversized rejected datagrams
         // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).
@@ -663,7 +824,7 @@ impl NativeEndpoint {
                 }
                 continue;
             }
-            if let Some((frame, change)) = self.confirm_reconnect(source, &wire[..length]) {
+            if let Some((frame, change)) = self.confirm_reconnect(source, &wire[..length], now) {
                 result.frames.push(frame);
                 result.session_changes.extend(change);
                 continue;
@@ -672,7 +833,7 @@ impl NativeEndpoint {
                 result.rejected_datagrams += 1;
                 continue;
             };
-            let peer = &mut self.peers[index];
+            let peer = self.peers.get_mut(&index).expect("known native peer");
             if let Some(session) = &mut peer.session {
                 match session.open_route(source, &wire[..length]) {
                     Ok(frame)
@@ -681,6 +842,7 @@ impl NativeEndpoint {
                             .as_ref()
                             .is_none_or(|streams| streams.contains(&frame.stream_id)) =>
                     {
+                        peer.last_authenticated = now;
                         result.frames.push(NativeReceivedFrame {
                             peer: index,
                             identity: peer.id.clone(),
@@ -694,9 +856,15 @@ impl NativeEndpoint {
             }
         }
         for _ in 0..quantum.min(self.peers.len()) {
-            let index = self.turn % self.peers.len();
-            self.turn = (index + 1) % self.peers.len();
-            let peer = &mut self.peers[index];
+            let index = self
+                .peers
+                .range(self.turn..)
+                .next()
+                .or_else(|| self.peers.first_key_value())
+                .map(|(&i, _)| i)
+                .expect("nonempty peers");
+            self.turn = index.saturating_add(1);
+            let peer = self.peers.get_mut(&index).expect("known native peer");
             if let Some(pending) = &mut peer.reconnect {
                 match pending.handshake.try_send_limited(
                     self.io.as_ref(),
@@ -738,7 +906,7 @@ impl NativeEndpoint {
         self.traffic_started = true;
         let session = self
             .peers
-            .get_mut(peer)
+            .get_mut(&peer)
             .context("unknown native peer")?
             .session
             .as_mut()
@@ -757,7 +925,7 @@ impl NativeEndpoint {
 
     pub(crate) fn peer_uses_reliable_carrier(&self, peer: usize) -> bool {
         self.peers
-            .get(peer)
+            .get(&peer)
             .and_then(|peer| peer.session.as_ref())
             .is_some_and(NativeUdpSession::is_bound_reliable_carrier)
     }
@@ -771,7 +939,7 @@ impl NativeEndpoint {
     ) -> Result<bool> {
         let session = self
             .peers
-            .get_mut(peer)
+            .get_mut(&peer)
             .context("unknown native peer")?
             .session
             .as_mut()
@@ -804,7 +972,7 @@ impl NativeEndpoint {
     ) -> Result<()> {
         let session = self
             .peers
-            .get_mut(peer)
+            .get_mut(&peer)
             .context("unknown native peer")?
             .session
             .as_mut()
@@ -829,7 +997,7 @@ impl NativeEndpoint {
         self.traffic_started = true;
         let session = self
             .peers
-            .get_mut(peer)
+            .get_mut(&peer)
             .context("unknown native peer")?
             .session
             .as_mut()
@@ -855,6 +1023,8 @@ mod client_set_tests;
 
 #[cfg(test)]
 mod io_tests;
+#[cfg(test)]
+mod retirement_tests;
 #[cfg(test)]
 mod scratch_tests;
 #[cfg(test)]

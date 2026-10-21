@@ -137,7 +137,7 @@ fn udp_label_does_not_authorize_unknown_mailbox_protocol_or_malformed_alternativ
             "{uri}"
         );
     }
-    for capacity in [0, 65, u32::MAX] {
+    for capacity in [0, u32::from(u16::MAX) + 1, u32::MAX] {
         let mut wrong = endpoint.clone();
         wrong.max_sessions = capacity;
         if let Ok(r) = record(vec![wrong], 1, 1000) {
@@ -206,6 +206,108 @@ fn native_host_publication_is_durable_and_keeps_legacy_alternatives_on_rotation(
     assert_eq!(r.endpoints.len(), 2);
     assert!(host.check_continuous_native_peer_v7(3004).is_err());
     host.check_continuous_peer_v4(iroh.address.endpoint_key, 3004)?;
+    Ok(())
+}
+
+#[test]
+fn resource_rotation_updates_all_carriers_without_retiring_live_identity() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("resources.enc");
+    let iroh = carrier().iroh;
+    let original_tls = TlsServiceEndpointV1 {
+        address: "127.0.0.1:40211".parse()?,
+        endpoint_key: pin(),
+        max_connections: 4,
+        native_mailbox_v8: false,
+    };
+    let book = ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![record(
+            vec![
+                iroh.endpoint()?,
+                original_tls.endpoint()?,
+                route().endpoint()?,
+            ],
+            1,
+            1000,
+        )?],
+        2000,
+    )?;
+    let host = durable_host(book, &path)?;
+    let mut sequence = 1;
+    for (index, (capacity, tls_limit, udp_limit)) in
+        [(128, 4, 8), (128, 128, 128), (2, 2, 2), (192, 192, 192)]
+            .into_iter()
+            .enumerate()
+    {
+        let now = 3000 + index as u64;
+        let mut tls = original_tls.clone();
+        tls.max_connections = tls_limit;
+        let mut udp = route();
+        udp.max_connections = udp_limit;
+        let updated = host.rotate_self_owned_resources_v1(
+            &iroh,
+            Some(&tls),
+            Some(&udp),
+            capacity,
+            now,
+            now + 90_000,
+        )?;
+        assert_eq!(updated.sequence, sequence + 1);
+        sequence = updated.sequence;
+        assert_eq!(
+            TlsServiceEndpointV1::from_record(&updated)?
+                .unwrap()
+                .max_connections,
+            tls_limit.min(capacity)
+        );
+        assert_eq!(
+            NativeMailboxEndpointV7::from_record(&updated)?
+                .unwrap()
+                .max_connections,
+            udp_limit.min(capacity)
+        );
+        assert_eq!(
+            updated
+                .endpoints
+                .iter()
+                .find(|e| e.transport == RelayTransportV1::IrohRendezvousV1)
+                .unwrap()
+                .max_sessions,
+            u32::from(capacity)
+        );
+        assert_eq!(updated.relay_public_key, pin());
+        host.check_continuous_peer_v4(iroh.address.endpoint_key, now)?;
+        host.check_continuous_tls_peer_v1(&original_tls, now)?;
+        host.check_continuous_native_peer_v7(now)?;
+    }
+    for now in [3004, 3005] {
+        let updated = host.rotate_self_owned_resources_v1(
+            &iroh,
+            Some(&original_tls),
+            None,
+            192,
+            now,
+            now + 90_000,
+        )?;
+        assert_eq!(updated.sequence, sequence + 1);
+        sequence = updated.sequence;
+        assert!(NativeMailboxEndpointV7::from_record(&updated)?.is_none());
+        host.check_continuous_tls_peer_v1(&original_tls, now)?;
+        host.check_continuous_peer_v4(iroh.address.endpoint_key, now)?;
+    }
+    drop(host);
+    let (_file, saved) = ServiceLeaseFileV1::open(&path, zeroize::Zeroizing::new([91; 32]))?;
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3006)?;
+    let actual = restored.routes(3006)?;
+    assert_eq!(actual[0].sequence, sequence);
+    assert!(NativeMailboxEndpointV7::from_record(&actual[0])?.is_none());
+    assert_eq!(
+        TlsServiceEndpointV1::from_record(&actual[0])?
+            .unwrap()
+            .max_connections,
+        4
+    );
     Ok(())
 }
 

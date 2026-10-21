@@ -247,7 +247,14 @@ fn supplied_udp_io_keeps_exact_source_replay_and_receive_error_semantics() -> Re
         0,
         vec![9; 24],
     );
-    let wire = client.peers[0].session.as_mut().unwrap().encode(&frame)?;
+    let wire = client
+        .peers
+        .get_mut(&0)
+        .unwrap()
+        .session
+        .as_mut()
+        .unwrap()
+        .encode(&frame)?;
     let remote = NativeRoute::Udp(server.local_addr()?);
     let stranger = UdpSocket::bind("127.0.0.1:0")?;
     stranger.try_send(&wire, remote)?;

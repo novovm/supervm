@@ -100,7 +100,14 @@ fn multiplex_shared_socket_keeps_handshake_source_replay_and_byte_checks() -> Re
         0,
         vec![7; 20],
     );
-    let encrypted = client.peers[0].session.as_mut().unwrap().encode(&frame)?;
+    let encrypted = client
+        .peers
+        .get_mut(&0)
+        .unwrap()
+        .session
+        .as_mut()
+        .unwrap()
+        .encode(&frame)?;
     // A third socket cannot claim the authenticated peer's source.
     let stranger = UdpSocket::bind("127.0.0.1:0")?;
     stranger.send_to(&encrypted, socket.local_addr()?)?;

@@ -174,6 +174,13 @@ pub struct Reassembler {
 }
 
 impl Reassembler {
+    pub(crate) fn has_pending_peer(&self, peer: &str) -> bool {
+        self.entries.keys().any(|(id, _)| id == peer)
+    }
+    pub(crate) fn retire_authenticated_peer(&mut self, peer: &str) {
+        self.retire_peer_session(peer);
+        self.peers.remove(peer);
+    }
     /// Only the transport owner calls this after a fresh authenticated session
     /// replaces this peer. Neither partial bytes nor DONE history cross epochs.
     pub(crate) fn retire_peer_session(&mut self, peer: &str) -> usize {
@@ -196,10 +203,8 @@ impl Reassembler {
             !peer.is_empty() && peer.len() <= 256,
             "invalid fragment peer id"
         );
-        ensure!(
-            self.peers.contains(&peer) || self.peers.len() < 1024,
-            "fragment peer bound"
-        );
+        // The sole authenticated endpoint owner bounds the live identity table.
+        // Retired identities are removed instead of accumulating for process life.
         self.peers.insert(peer);
         Ok(())
     }

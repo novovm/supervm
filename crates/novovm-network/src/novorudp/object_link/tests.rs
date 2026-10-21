@@ -112,6 +112,161 @@ fn pair_and_third() -> Result<(NativeObjectLink, NativeObjectLink, NativeObjectL
 }
 
 #[test]
+fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_identity(
+) -> Result<()> {
+    let identity = SigningKey::from_bytes(&[241; 32]);
+    let budget = || NativeHandshakeBudget {
+        lifetime: Duration::from_secs(10),
+        retry: Duration::from_millis(5),
+    };
+    let endpoint = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        identity.clone(),
+        1,
+        vec![CONTROL, BODY],
+        budget(),
+    )?;
+    let remote = NativePeer {
+        key: identity.verifying_key().to_bytes(),
+        address: endpoint.local_addr()?,
+    };
+    let mut server = NativeObjectLink::new(endpoint, configs(), policy())?;
+    let idle = Duration::from_secs(1);
+    server.retire_idle_clients(Instant::now(), idle, &BTreeSet::new(), 1)?;
+    for ordinal in 0..1usize {
+        let start = Instant::now();
+        let mut client = NativeObjectLink::new(
+            NativeEndpoint::connect_client(
+                UdpSocket::bind("127.0.0.1:0")?,
+                SigningKey::from_bytes(&[242 + ordinal as u8; 32]),
+                remote.clone(),
+                budget(),
+                1000,
+                start,
+            )?,
+            configs(),
+            policy(),
+        )?;
+        while client.session_id(0).is_none() {
+            ensure!(start.elapsed() < Duration::from_secs(3), "client handshake");
+            let _ = client.poll(1000, Instant::now(), 8)?;
+            let _ = server.poll(1000, Instant::now(), 8)?;
+        }
+        let body = message(BODY, 7, 2048)?;
+        assert!(client.try_send(0, BODY, &body, Instant::now())?);
+        while server.lanes[&BODY].receiver.pending_messages() == 0 {
+            ensure!(start.elapsed() < Duration::from_secs(3), "receive object");
+            let _ = client.poll(1000, Instant::now(), 8)?;
+            let _ = server.poll(1000, Instant::now(), 8)?;
+        }
+        let later = Instant::now() + Duration::from_secs(2);
+        // Equality alone never evicts a healthy idle client. Only a verified
+        // pending admission (or actual resource shrink) requests capacity.
+        assert!(server
+            .retire_idle_clients(later, idle, &BTreeSet::new(), 1)?
+            .is_empty());
+        let mut waiting = NativeObjectLink::new(
+            NativeEndpoint::connect_client(
+                UdpSocket::bind("127.0.0.1:0")?,
+                SigningKey::from_bytes(&[246; 32]),
+                remote.clone(),
+                budget(),
+                1000,
+                Instant::now(),
+            )?,
+            configs(),
+            policy(),
+        )?;
+        while !server.endpoint.needs_client_capacity(Instant::now()) {
+            ensure!(
+                start.elapsed() < Duration::from_secs(3),
+                "pending admission"
+            );
+            let _ = waiting.poll(1000, Instant::now(), 8)?;
+            let _ = server.poll(1000, Instant::now(), 8)?;
+        }
+        assert!(waiting.session_id(0).is_none());
+        // Even a complete-but-unclaimed object protects its sender's identity.
+        assert!(server
+            .retire_idle_clients(later, idle, &BTreeSet::new(), 1)?
+            .is_empty());
+        let mut received = None;
+        while received.is_none() || !client.jobs.is_empty() {
+            ensure!(start.elapsed() < Duration::from_secs(3), "complete object");
+            if received.is_none() {
+                received = server.poll_complete(BODY, Instant::now(), 8)?;
+            }
+            let _ = client.poll(1000, Instant::now(), 8)?;
+            let _ = server.poll(1000, Instant::now(), 8)?;
+        }
+        assert_eq!(received.unwrap().chunks.concat(), vec![7; 2048]);
+        let validity = server.session_validity(ordinal)?;
+        server.claim_application_session(
+            ordinal,
+            BODY,
+            [BODY as u8; 32],
+            NativeApplicationRole::Service,
+        )?;
+        assert!(server
+            .retire_idle_clients(later, idle, &BTreeSet::from([ordinal]), 1)?
+            .is_empty());
+        assert!(validity.is_current()); // Represents an executing Watch/business operation.
+        let reply = message(BODY, 9, 1024)?;
+        assert!(server.try_send(ordinal, BODY, &reply, Instant::now())?);
+        assert!(server
+            .retire_idle_clients(later, idle, &BTreeSet::new(), 1)?
+            .is_empty());
+        assert!(server.cancel_send(ordinal, BODY, &reply));
+        while !server.jobs.is_empty() {
+            let _ = server.poll(1000, Instant::now(), 8)?;
+        }
+        let retired = server.retire_idle_clients(later, idle, &BTreeSet::new(), 1)?;
+        assert_eq!(retired.len(), 1);
+        assert_eq!(retired[0].peer, ordinal);
+        assert!(!validity.is_current());
+        assert!(server.application_owners.is_empty());
+        assert!(server.peers.is_empty());
+        assert!(server.lanes.values().all(|lane| lane.peers.is_empty()));
+        assert!(server
+            .try_send(ordinal, BODY, &reply, Instant::now())
+            .is_err());
+        // The verified waiting transcript survives capacity reclamation. It
+        // need not restart authentication or bypass replay checks.
+        while waiting.session_id(0).is_none() {
+            ensure!(
+                start.elapsed() < Duration::from_secs(3),
+                "activate waiting admission"
+            );
+            let _ = server.poll(1000, Instant::now(), 8)?;
+            let _ = waiting.poll(1000, Instant::now(), 8)?;
+        }
+        assert_eq!(server.peer_indices().collect::<Vec<_>>(), vec![ordinal + 1]);
+        assert!(server.session_id(ordinal + 1).is_none());
+        waiting.try_send(0, BODY, &body, Instant::now())?;
+        loop {
+            ensure!(
+                start.elapsed() < Duration::from_secs(3),
+                "fresh waiting client data"
+            );
+            let _ = waiting.poll(1000, Instant::now(), 8)?;
+            let _ = server.poll(1000, Instant::now(), 8)?;
+            if let Some(received) = server.poll_complete(BODY, Instant::now(), 8)? {
+                assert_eq!(received.chunks.concat(), vec![7; 2048]);
+                break;
+            }
+        }
+        while !waiting.jobs.is_empty() {
+            let _ = server.poll(1000, Instant::now(), 8)?;
+            let _ = waiting.poll(1000, Instant::now(), 8)?;
+        }
+        assert!(server
+            .retire_idle_clients(later, idle, &BTreeSet::new(), 1)?
+            .is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn reconnect_retires_only_old_generation_and_preserves_unknown_outgoing_custody() -> Result<()> {
     let node_key = SigningKey::from_bytes(&[51; 32]);
     let client_key = SigningKey::from_bytes(&[52; 32]);

@@ -378,7 +378,7 @@ impl ServiceLeaseHostV1 {
             .get(&self.key.verifying_key().to_bytes())
             .context("service revoked")?;
         let tls = TlsServiceEndpointV1::from_record(&entry.current)?;
-        self.rotate_with_routes(&mut book, endpoint, tls.as_ref(), now, expires)
+        self.rotate_with_routes(&mut book, endpoint, tls.as_ref(), None, now, expires)
     }
 
     /// Explicit owner publication/removal of the optional TLS listener. This
@@ -394,7 +394,34 @@ impl ServiceLeaseHostV1 {
             .book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?;
-        self.rotate_with_routes(&mut book, endpoint, tls, now, expires)
+        self.rotate_with_routes(&mut book, endpoint, tls, None, now, expires)
+    }
+
+    /// Refresh resource hints for the currently running listeners in one
+    /// existing signing transaction. A hint is not a reservation or permission;
+    /// live admission can shrink without killing accepted operations.
+    pub(crate) fn rotate_self_owned_resources_v1(
+        &self,
+        endpoint: &IrohServiceEndpointV1,
+        tls: Option<&TlsServiceEndpointV1>,
+        native: Option<&NativeMailboxEndpointV7>,
+        inbound_capacity: u16,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        ensure!(inbound_capacity > 0, "empty service capacity hint");
+        let mut book = self
+            .book
+            .lock()
+            .map_err(|_| anyhow::anyhow!("host unavailable"))?;
+        self.rotate_with_routes(
+            &mut book,
+            endpoint,
+            tls,
+            Some((native, inbound_capacity)),
+            now,
+            expires,
+        )
     }
 
     fn rotate_with_routes(
@@ -402,6 +429,7 @@ impl ServiceLeaseHostV1 {
         book: &mut ServiceLeaseBookV1,
         endpoint: &IrohServiceEndpointV1,
         tls: Option<&TlsServiceEndpointV1>,
+        resources: Option<(Option<&NativeMailboxEndpointV7>, u16)>,
         now: u64,
         expires: u64,
     ) -> Result<PeerSignedRelayRecordV1> {
@@ -441,15 +469,25 @@ impl ServiceLeaseHostV1 {
             .find(|e| e.transport == RelayTransportV1::IrohRendezvousV1)
             .context("Iroh service endpoint required")?;
         carrier.priority = previous.priority;
-        carrier.max_sessions = previous.max_sessions;
+        carrier.max_sessions = resources.map_or(previous.max_sessions, |(_, n)| u32::from(n));
         carrier.max_bytes_per_minute = previous.max_bytes_per_minute;
         let mut endpoints = vec![carrier];
         if let Some(tls) = tls {
-            endpoints.push(tls.endpoint()?);
+            let mut current = tls.clone();
+            if let Some((_, capacity)) = resources {
+                current.max_connections = current.max_connections.min(capacity);
+            }
+            endpoints.push(current.endpoint()?);
         }
         // Normal Iroh/TLS declaration renewal preserves the independent native
         // service. Only explicit native publication/removal changes that route.
-        if let Some(native) = entry
+        if let Some((native, capacity)) = resources {
+            if let Some(native) = native {
+                let mut current = native.clone();
+                current.max_connections = current.max_connections.min(capacity);
+                endpoints.push(current.endpoint()?);
+            }
+        } else if let Some(native) = entry
             .current
             .endpoints
             .iter()

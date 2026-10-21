@@ -70,6 +70,17 @@ pub struct ServiceConcurrencySnapshotV1 {
     pub active_work: usize,
     pub reserved_bytes: usize,
 }
+impl ServiceConcurrencySnapshotV1 {
+    /// Observed capacity of the node's shared inbound service budget. The two
+    /// outbound reservations let the device keep using the network while it
+    /// contributes. This is a current capacity hint, not a lifetime grant.
+    pub fn inbound_connections(&self) -> usize {
+        self.connection_limit
+            .saturating_sub(2)
+            .max(1)
+            .min(usize::from(u16::MAX))
+    }
+}
 struct State {
     admitted: u64,
     completed: u64,
@@ -120,8 +131,8 @@ impl ServiceConcurrencyV1 {
             && resources.pressure == ResourcePressureV1::Normal;
         s.resources = resources;
         s.platform_managed = true;
-        let capacity_recovered = resources.pressure == ResourcePressureV1::Normal
-            && Self::ceiling(&s).0 > old_ceiling;
+        let capacity_recovered =
+            resources.pressure == ResourcePressureV1::Normal && Self::ceiling(&s).0 > old_ceiling;
         if pressure_cleared || capacity_recovered {
             // Recover the measured CPU baseline once, not on every sample.
             // Extra outbound slots otherwise cannot produce the completions
@@ -399,9 +410,18 @@ impl AdaptiveAdmissionV1 {
         kind: AdmissionKind,
         ceiling: usize,
     ) -> Arc<Self> {
+        let initial = controller.as_ref().map_or(fixed, |c| {
+            let s = c.snapshot();
+            match kind {
+                AdmissionKind::Connections => s.connection_limit,
+                AdmissionKind::Inbound => s.inbound_connections(),
+                AdmissionKind::Streams => s.multiplex_stream_limit,
+            }
+            .min(ceiling)
+        });
         let gate = Arc::new(Self {
-            semaphore: Arc::new(Semaphore::new(fixed)),
-            capacity: Mutex::new(fixed),
+            semaphore: Arc::new(Semaphore::new(initial)),
+            capacity: Mutex::new(initial),
             controller,
             kind,
             ceiling,
@@ -419,7 +439,7 @@ impl AdaptiveAdmissionV1 {
                 let s = c.snapshot();
                 match self.kind {
                     AdmissionKind::Connections => s.connection_limit,
-                    AdmissionKind::Inbound => s.connection_limit.saturating_sub(2).max(1),
+                    AdmissionKind::Inbound => s.inbound_connections(),
                     AdmissionKind::Streams => s.multiplex_stream_limit,
                 }
                 .min(self.ceiling)
@@ -604,5 +624,4 @@ mod tests {
         c.update_resources(resources(ResourcePressureV1::Normal));
         assert_eq!(c.snapshot().work_limit, 8);
     }
-
 }

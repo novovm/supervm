@@ -84,10 +84,7 @@ pub struct NativeMailboxEndpointV7 {
 
 impl NativeMailboxEndpointV7 {
     fn validate(&self) -> Result<()> {
-        ensure!(
-            (1..=64).contains(&self.max_connections),
-            "native connection limit bounds"
-        );
+        ensure!(self.max_connections > 0, "native connection limit bounds");
         ensure!(
             (MIN_BYTES_PER_MINUTE..=MAX_BYTES_PER_MINUTE).contains(&self.max_bytes_per_minute),
             "native byte budget bounds"

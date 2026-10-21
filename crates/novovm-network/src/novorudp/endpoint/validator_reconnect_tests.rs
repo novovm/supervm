@@ -193,7 +193,10 @@ fn configured_peer_restart_requires_fresh_aead_and_rejects_old_generation() -> R
         let old_offer = captured[..length].to_vec();
         exchange(&mut a, &mut b, 1000, start)?;
         let original = a.session_id(0).unwrap();
-        let old_wire = a.peers[0]
+        let old_wire = a
+            .peers
+            .get_mut(&0)
+            .unwrap()
             .session
             .as_mut()
             .unwrap()

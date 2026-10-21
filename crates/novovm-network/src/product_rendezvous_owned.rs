@@ -29,6 +29,38 @@ use std::{
 };
 
 type Store = Arc<Mutex<RendezvousStoreV1>>;
+
+fn check_shared_controller(
+    owner: Option<&Arc<crate::service_concurrency::ServiceConcurrencyV1>>,
+    listener: Option<&Arc<crate::service_concurrency::ServiceConcurrencyV1>>,
+) -> Result<()> {
+    if let Some(listener) = listener {
+        ensure!(
+            owner.is_some_and(|owner| Arc::ptr_eq(owner, listener)),
+            "adaptive listener requires the original owner's resource controller"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn adaptive_listener_rejects_missing_or_different_owner_controller() {
+    use crate::service_concurrency::{
+        ResourcePressureV1, ResourceSnapshotV1, ServiceConcurrencyV1,
+    };
+    let resources = ResourceSnapshotV1 {
+        cpu_parallelism: 8,
+        available_memory_bytes: 1024 * 1024 * 1024,
+        pressure: ResourcePressureV1::Normal,
+    };
+    let a = ServiceConcurrencyV1::new(resources);
+    let b = ServiceConcurrencyV1::new(resources);
+    assert!(check_shared_controller(None, Some(&a)).is_err());
+    assert!(check_shared_controller(Some(&a), Some(&b)).is_err());
+    assert!(check_shared_controller(Some(&a), Some(&a)).is_ok());
+    assert!(check_shared_controller(Some(&a), None).is_ok());
+}
 #[path = "product_rendezvous_native.rs"]
 mod native;
 pub use native::{NativeMailboxListenerV7, NativeMailboxResourcesUnavailableV1};
@@ -72,7 +104,7 @@ pub async fn run_self_owned_node_v1(
         stop,
         mailbox,
         if carrier.service_concurrency().is_some() {
-            64
+            usize::from(u16::MAX)
         } else {
             IROH_MAX_CONNECTIONS_V1
         },
@@ -103,13 +135,7 @@ pub async fn run_self_owned_node_with_tls_v1(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
-    let mut node = Node::new(
-        key,
-        clients,
-        stop,
-        Some(mailbox),
-        usize::from(tls.route().max_connections),
-    )?;
+    let mut node = Node::new(key, clients, stop, Some(mailbox), tls.admission_ceiling())?;
     node.tls = Some(tls);
     let revoked = node.stop.clone();
     with_iroh_owned_listener_v1(
@@ -128,8 +154,8 @@ pub async fn run_self_owned_node_with_tls_v1(
 /// must keep the endpoint owner alive, observe service termination, and close
 /// that owner after all borrowers have ended. Endpoint ownership is not a
 /// recipient capability or service identity; the original verifiers still run.
-/// At most two inbound connections are serviced, leaving two of the shared
-/// endpoint's four slots available for the device's own outbound work.
+/// A resource-managed endpoint shares the device's current service budget.
+/// Explicit fixed scopes retain their caller-selected admission policy.
 pub async fn run_self_owned_node_on_endpoint_v1(
     endpoint: &IrohEndpointOwnerV1,
     key: SigningKey,
@@ -145,7 +171,7 @@ pub async fn run_self_owned_node_on_endpoint_v1(
         stop,
         mailbox,
         if endpoint.service_concurrency().is_some() {
-            64
+            usize::from(u16::MAX)
         } else {
             2
         },
@@ -174,7 +200,7 @@ pub async fn run_self_owned_mailbox_on_endpoint_v1(
 /// The same permissionless L4 dispatcher with an optional already-bound native
 /// UDP listener. Both carriers use the original signer, signed locator and
 /// custody service; the platform still owns endpoint lifetime and shutdown.
-/// Native admission shares the two inbound-work slots rather than reserving
+/// Native admission shares the inbound-work budget rather than reserving
 /// another independent budget. This does not publish an Iroh NAT mapping as a
 /// native UDP route: the caller must supply the native socket's actual address.
 #[allow(clippy::too_many_arguments)]
@@ -192,7 +218,7 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
         "mailbox node signer mismatch"
     );
     let mut max_connections = if endpoint.service_concurrency().is_some() {
-        64
+        usize::from(u16::MAX)
     } else {
         2
     };
@@ -205,7 +231,7 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
             listener.identity() == key.verifying_key().to_bytes(),
             "native node signer mismatch"
         );
-        max_connections = max_connections.min(usize::from(listener.route().max_connections));
+        max_connections = max_connections.min(listener.admission_ceiling());
     }
     Node {
         key,
@@ -267,9 +293,7 @@ pub async fn run_self_owned_node_with_native_tls_v8(
     if let Some(tls) = tls {
         // Neither configured resource ceiling is silently raised by composing
         // listeners. Active connections share the same semaphore in Node::serve.
-        node.max_connections = node
-            .max_connections
-            .min(usize::from(tls.route().max_connections));
+        node.max_connections = node.max_connections.min(tls.admission_ceiling());
         node.tls = Some(tls);
     }
     let revoked = node.stop.clone();
@@ -304,7 +328,7 @@ fn native_node(
         clients,
         stop,
         Some(mailbox),
-        usize::from(native.route().max_connections),
+        native.admission_ceiling(),
     )?;
     node.native = Some(native);
     Ok(node)
@@ -331,7 +355,8 @@ pub async fn run_self_owned_native_mailbox_v7(
             && mailbox.identity_public_key() == key.verifying_key().to_bytes(),
         "native node signer mismatch"
     );
-    let route = listener.route().clone();
+    let mut route = listener.current_route();
+    let admission_ceiling = listener.admission_ceiling();
     let expiry = now_ms()?
         .checked_add(90_000)
         .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
@@ -351,7 +376,7 @@ pub async fn run_self_owned_native_mailbox_v7(
             usize::from(route.max_connections),
             concurrency.clone(),
             AdmissionKind::Inbound,
-            usize::from(route.max_connections),
+            admission_ceiling,
         ),
     );
     tokio::pin!(serving);
@@ -377,6 +402,9 @@ pub async fn run_self_owned_native_mailbox_v7(
                 let now = now_ms()?;
                 host.check_continuous_native_peer_v7(now)?;
                 if Instant::now() >= rotate_at {
+                    if let Some(c) = &concurrency {
+                        route.max_connections = c.snapshot().inbound_connections() as u16;
+                    }
                     let expiry = now.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
                     let record = host.rotate_native_mailbox_v7(Some(&route), now, expiry)?;
                     mailbox.update_native_record_v7(record.clone())?;
@@ -463,6 +491,16 @@ impl Node {
             #[cfg(feature = "tls-transport")]
             tls,
         } = self;
+        let concurrency = scope.service_concurrency();
+        check_shared_controller(
+            concurrency.as_ref(),
+            native.as_ref().and_then(|n| n.concurrency()).as_ref(),
+        )?;
+        #[cfg(feature = "tls-transport")]
+        check_shared_controller(
+            concurrency.as_ref(),
+            tls.as_ref().and_then(|t| t.concurrency()).as_ref(),
+        )?;
         #[cfg(feature = "tls-transport")]
         let has_other_listener = native.is_some() || tls.is_some();
         #[cfg(not(feature = "tls-transport"))]
@@ -478,18 +516,34 @@ impl Node {
             .checked_add(90_000)
             .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
         let host = activate(&endpoint, expires_ms)?;
+        let native_adaptive = native.as_ref().is_some_and(|n| n.concurrency().is_some());
+        let mut native_route = native.as_ref().map(NativeMailboxListenerV7::current_route);
         #[cfg(feature = "tls-transport")]
-        let first = host.rotate_self_owned_with_tls_v1(
-            &endpoint,
-            tls.as_ref().map(TlsMailboxListenerV1::route),
-            now_ms()?,
-            expires_ms,
-        )?;
+        let tls_route = tls.as_ref().map(TlsMailboxListenerV1::current_route);
         #[cfg(not(feature = "tls-transport"))]
-        let first = host.rotate_self_owned_with_tls_v1(&endpoint, None, now_ms()?, expires_ms)?;
+        let tls_route = None;
+        let first = if let Some(c) = &concurrency {
+            host.rotate_self_owned_resources_v1(
+                &endpoint,
+                tls_route.as_ref(),
+                native_route.as_ref(),
+                c.snapshot().inbound_connections().min(max_connections) as u16,
+                now_ms()?,
+                expires_ms,
+            )?
+        } else {
+            host.rotate_self_owned_with_tls_v1(
+                &endpoint,
+                tls_route.as_ref(),
+                now_ms()?,
+                expires_ms,
+            )?
+        };
         // Reconcile the advertised native route with an actually bound listener.
         // Do not leave a previously published UDP route live after disabling it.
-        let first = if native.is_some() || NativeMailboxEndpointV7::from_record(&first)?.is_some() {
+        let first = if concurrency.is_none()
+            && (native.is_some() || NativeMailboxEndpointV7::from_record(&first)?.is_some())
+        {
             host.rotate_native_mailbox_v7(
                 native.as_ref().map(NativeMailboxListenerV7::route),
                 now_ms()?,
@@ -516,7 +570,6 @@ impl Node {
             }
         }
         publish(&first)?;
-        let concurrency = scope.service_concurrency();
         let slots = AdaptiveAdmissionV1::new(
             max_connections,
             concurrency.clone(),
@@ -604,7 +657,22 @@ impl Node {
                         // store. Existing streams retain only their old bounded
                         // store and lease; its tombstones are never transplanted.
                         let mut current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
-                        let record = host.rotate_self_owned(&endpoint, now_ms()?, expiry)?;
+                        let record = if let Some(c) = &concurrency {
+                            let capacity = c.snapshot().inbound_connections().min(max_connections) as u16;
+                            if native_adaptive {
+                                if let Some(route) = &mut native_route {
+                                    route.max_connections = capacity;
+                                }
+                            }
+                            #[cfg(feature = "tls-transport")]
+                            let tls_route = tls.as_ref().map(TlsMailboxListenerV1::current_route);
+                            #[cfg(not(feature = "tls-transport"))]
+                            let tls_route = None;
+                            host.rotate_self_owned_resources_v1(&endpoint, tls_route.as_ref(),
+                                native_route.as_ref(), capacity, now_ms()?, expiry)?
+                        } else {
+                            host.rotate_self_owned(&endpoint, now_ms()?, expiry)?
+                        };
                         *current = Generation { store: next, expires_ms: expiry };
                         if let Some(service) = &mailbox {
                             if NativeCarrierMailboxEndpointV8::from_record(&record)?.is_some() {
@@ -630,6 +698,7 @@ impl Node {
                             // original platform owner may bind a fresh listener
                             // on its next network generation; no retry owner here.
                             native_running = false;
+                            native_route = None;
                             let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
                             let record = host.rotate_native_mailbox_v7(None, now_ms()?, current.expires_ms)?;
                             if let Some(service) = &mailbox {

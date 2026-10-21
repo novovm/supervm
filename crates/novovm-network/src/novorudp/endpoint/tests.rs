@@ -92,7 +92,10 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
             )
         };
         // Old encrypted traffic cannot prove possession of the pending key.
-        let old_wire = old.peers[0]
+        let old_wire = old
+            .peers
+            .get_mut(&0)
+            .unwrap()
             .session
             .as_mut()
             .unwrap()
