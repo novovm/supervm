@@ -195,3 +195,25 @@ already-ready peers before its window test. Next correction must release only
 completed execution admission, retaining reply bytes until ACK/drop, and drain
 queued probe ACKs. No larger constant, extra scheduler or protocol is needed.
 All rejected samples remain recorded; original identities/custody are retained.
+
+## Handler completion and retained reply memory (candidate after v94)
+
+`ServiceWorkPermitV1::completed()` now returns execution/Watch admission and
+records the local completion once. The SAME permit retains response bytes until
+transport ACK/drop. Unfinished cancellation returns admission and bytes without
+counting success; repeated completion cannot decrement another job. Native
+handler/pending/sending ownership and all response/signature checks are retained.
+No rate, time limit, negotiated slot constant or scheduler was added or enlarged.
+
+The diagnostic client advances existing queued DONE feedback after consuming
+responses before parking a ready connection. This adds no business request or
+retry, and does not promise every ACK reaches the peer (especially deferred TLS
+writes). Old four-offered/three-completed samples remain failures.
+
+Twelve release controller tests pass, including held-completed-reply execution
+reuse, retained-memory exhaustion, pressure shrink, Watch completion and double
+completion/cancellation. This is component validation, not new phone acceptance.
+A normalized tracked-source comparison also verified all 508 WSL build inputs
+match pre-fix HEAD58d89c45; the two new source files must be synchronized and all
+candidate binaries rebuilt before deployment. Existing old binaries are not
+relabeled as current-source artifacts.

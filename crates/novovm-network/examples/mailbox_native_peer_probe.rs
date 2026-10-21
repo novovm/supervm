@@ -92,22 +92,38 @@ mod probe {
         pump: Option<NativeCarrierPump<'a>>,
     }
     impl Client<'_> {
-        async fn progress(&mut self, at: Instant) -> Result<Vec<(RequestId, Vec<Reply>)>> {
-            self.session.progress_capacity(&mut self.link, at)?;
+        fn poll_transport(&mut self, at: Instant) -> Result<()> {
+            // Incoming bodies remain in the link until poll_complete below (or
+            // the next progress call); only outbound completions transfer here.
             for done in self.link.poll(now_ms()?, at, 64)?.completed {
                 ensure!(
                     self.session.transport_complete(&done).is_none(),
                     "native probe transport failed"
                 );
             }
+            Ok(())
+        }
+
+        async fn progress(&mut self, at: Instant) -> Result<Vec<(RequestId, Vec<Reply>)>> {
+            self.session.progress_capacity(&mut self.link, at)?;
+            self.poll_transport(at)?;
             let mut replies = Vec::new();
+            let mut consumed = false;
             for _ in 0..8 {
                 let Some(body) = self.link.poll_complete(STREAM, at, 64)? else {
                     break;
                 };
+                consumed = true;
                 if !self.session.receive_capacity(&self.link, &body, at)? {
                     replies.push(self.session.receive(&self.link, body, at, || Ok(()))?);
                 }
+            }
+            if consumed {
+                // Whole-object verification queues DONE in poll_complete, after
+                // the first transport poll. Drive that feedback before returning
+                // the final grant/preflight reply and parking this ready client.
+                // This is transport progress, not another business request.
+                self.poll_transport(Instant::now())?;
             }
             if let Some(pump) = &mut self.pump {
                 tokio::select! {

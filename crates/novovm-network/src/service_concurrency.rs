@@ -300,17 +300,25 @@ impl ServiceConcurrencyV1 {
             bytes,
             started: Instant::now(),
             complete: false,
-            service_elapsed: None,
             waiting,
         })
     }
-    fn finish(&self, bytes: usize, elapsed: Duration, success: bool, waiting: bool) {
+    fn complete_work(&self, elapsed: Duration, waiting: bool) {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        Self::finish_execution(&mut s, elapsed, true, waiting);
+    }
+    fn release_work(&self, bytes: usize, unfinished: Option<bool>) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(waiting) = unfinished {
+            Self::finish_execution(&mut s, Duration::ZERO, false, waiting);
+        }
+        s.bytes = s.bytes.saturating_sub(bytes);
+    }
+    fn finish_execution(s: &mut State, elapsed: Duration, success: bool, waiting: bool) {
         s.active = s.active.saturating_sub(1);
         if success {
             s.completed = s.completed.saturating_add(1);
         }
-        s.bytes = s.bytes.saturating_sub(bytes);
         if waiting {
             s.watches = s.watches.saturating_sub(1);
             return;
@@ -326,7 +334,7 @@ impl ServiceConcurrencyV1 {
         } else {
             s.fast_completions += 1;
             if s.demand && s.fast_completions >= s.target.max(2) {
-                s.target = s.target.saturating_add(1).min(Self::ceiling(&s).0);
+                s.target = s.target.saturating_add(1).min(Self::ceiling(s).0);
                 s.demand = false;
                 s.fast_completions = 0;
             }
@@ -372,24 +380,23 @@ pub struct ServiceWorkPermitV1 {
     bytes: usize,
     started: Instant,
     complete: bool,
-    service_elapsed: Option<Duration>,
     waiting: bool,
 }
 impl ServiceWorkPermitV1 {
+    /// Execution is finished; waiting for the reply's transport ACK retains
+    /// bytes only, not CPU/Watch capacity or a remote-latency service sample.
     pub fn completed(&mut self) {
-        self.complete = true;
-        self.service_elapsed
-            .get_or_insert_with(|| self.started.elapsed());
+        if !self.complete {
+            self.owner.complete_work(self.started.elapsed(), self.waiting);
+            self.complete = true;
+        }
     }
 }
 impl Drop for ServiceWorkPermitV1 {
     fn drop(&mut self) {
-        self.owner.finish(
+        self.owner.release_work(
             self.bytes,
-            self.service_elapsed
-                .unwrap_or_else(|| self.started.elapsed()),
-            self.complete,
-            self.waiting,
+            (!self.complete).then_some(self.waiting),
         );
     }
 }
@@ -661,6 +668,102 @@ mod tests {
         drop(permit);
         assert_eq!(c.snapshot().work_limit, before);
         assert_eq!(c.snapshot().completed_work, 0);
+    }
+    #[test]
+    fn completed_replies_release_execution_before_ack_without_double_completion() {
+        let c = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            available_memory_bytes: 1024 * MIB,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let mut replies: Vec<_> = (0..2)
+            .map(|_| c.try_acquire_work(4096).unwrap())
+            .collect();
+        assert!(c.try_acquire_work(1).is_none());
+        for permit in &mut replies {
+            // Fixed local service sample; no sleep or remote RTT in this test.
+            permit.started = Instant::now() - Duration::from_secs(1);
+            permit.completed();
+        }
+        let completed = c.snapshot();
+        assert_eq!(completed.active_work, 0);
+        assert_eq!(completed.completed_work, 2);
+        assert_eq!(completed.reserved_bytes, 8192);
+        assert_eq!(
+            completed.work_limit, 3,
+            "local demand feedback applies before ACK"
+        );
+        let next: Vec<_> = (0..completed.work_limit)
+            .map(|_| c.try_acquire_work(1024).unwrap())
+            .collect();
+        // An old response may be reported complete more than once. It cannot
+        // decrement a new handler's active count or add another success sample.
+        replies[0].completed();
+        assert_eq!(c.snapshot().active_work, next.len());
+        assert_eq!(c.snapshot().completed_work, 2);
+        drop(replies);
+        assert_eq!(c.snapshot().active_work, next.len());
+        assert_eq!(c.snapshot().reserved_bytes, next.len() * 1024);
+        drop(next); // cancellation is not successful completion
+        assert_eq!(c.snapshot().completed_work, 2);
+        assert_eq!(c.snapshot().active_work, 0);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+    }
+    #[test]
+    fn completed_reply_memory_remains_bounded_through_pressure_shrink() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let bytes = c.snapshot().retained_bytes;
+        let mut reply = c.try_acquire_work(bytes).unwrap();
+        reply.completed();
+        assert_eq!(c.snapshot().active_work, 0);
+        assert_eq!(c.snapshot().reserved_bytes, bytes);
+        assert!(
+            c.try_acquire_work(1).is_none(),
+            "reply bytes still await ACK"
+        );
+        c.update_resources(ResourceSnapshotV1 {
+            available_memory_bytes: 128 * MIB,
+            ..resources(ResourcePressureV1::Severe)
+        });
+        assert!(c.snapshot().retained_bytes < bytes);
+        assert!(c.try_acquire_work(1).is_none());
+        reply.completed();
+        assert_eq!(c.snapshot().completed_work, 1);
+        drop(reply);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+        let next = c.try_acquire_work(4096).unwrap();
+        assert!(
+            c.try_acquire_work(1).is_none(),
+            "new work obeys reduced CPU budget"
+        );
+        drop(next);
+        assert_eq!(c.snapshot().active_work, 0);
+        assert_eq!(c.snapshot().completed_work, 1);
+    }
+    #[test]
+    fn watch_completion_releases_subscription_but_retains_reply_memory() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let limits = c.snapshot();
+        let mut watches: Vec<_> = (0..limits.waiting_watch_limit)
+            .map(|_| c.try_acquire_watch(1024).unwrap())
+            .collect();
+        assert!(c.try_acquire_watch(1).is_none());
+        watches[0].completed();
+        assert_eq!(c.snapshot().active_work, watches.len() - 1);
+        assert_eq!(c.snapshot().reserved_bytes, watches.len() * 1024);
+        let next = c.try_acquire_watch(1024).unwrap();
+        assert!(c.try_acquire_watch(1).is_none());
+        watches[0].completed();
+        assert_eq!(c.snapshot().active_work, watches.len());
+        assert_eq!(c.snapshot().completed_work, 1);
+        assert_eq!(c.snapshot().work_limit, limits.work_limit);
+        drop(watches);
+        assert_eq!(c.snapshot().active_work, 1);
+        assert_eq!(c.snapshot().reserved_bytes, 1024);
+        drop(next);
+        assert_eq!(c.snapshot().active_work, 0);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+        assert_eq!(c.snapshot().completed_work, 1);
     }
     #[test]
     fn aggregate_transport_lease_preserves_text_and_typical_image_memory() {
