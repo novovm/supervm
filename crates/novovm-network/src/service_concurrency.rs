@@ -65,6 +65,11 @@ pub struct ServiceConcurrencySnapshotV1 {
     pub watch_admission_rejections: u64,
     pub store_quota_rejections: u64,
     pub store_full_rejections: u64,
+    /// Last local backoff observation; no request identity or retained history.
+    pub execution_backoffs: u64,
+    pub last_backoff_execution_us: u64,
+    pub last_backoff_baseline_us: u64,
+    pub last_backoff_active_work: usize,
     /// Last observation of the native UDP listener, never a carrier claim.
     pub native_peer_count: usize,
     pub native_peer_capacity: usize,
@@ -99,6 +104,10 @@ struct State {
     watch_admission_rejections: u64,
     store_quota_rejections: u64,
     store_full_rejections: u64,
+    execution_backoffs: u64,
+    last_backoff_execution_us: u64,
+    last_backoff_baseline_us: u64,
+    last_backoff_active_work: usize,
     native_peer_count: usize,
     native_peer_capacity: usize,
     native_authenticated_waiting: bool,
@@ -132,6 +141,10 @@ impl ServiceConcurrencyV1 {
                 watch_admission_rejections: 0,
                 store_quota_rejections: 0,
                 store_full_rejections: 0,
+                execution_backoffs: 0,
+                last_backoff_execution_us: 0,
+                last_backoff_baseline_us: 0,
+                last_backoff_active_work: 0,
                 native_peer_count: 0,
                 native_peer_capacity: 0,
                 native_authenticated_waiting: false,
@@ -214,10 +227,14 @@ impl ServiceConcurrencyV1 {
         // object work. The caller applies any existing advertised wire bound.
         // A connection shares bidirectional frame retention with decoded work.
         // This is a memory estimate using the actual mailbox frame bound, not
-        // a connection constant or a promise of throughput.
+        // a connection constant or a promise of throughput. Keep this budget
+        // tied to observed resources, not the execution-latency target: an idle
+        // authenticated connection does not execute a handler. Otherwise one
+        // slow handler can strand new handshakes waiting for work completions
+        // that those not-yet-connected clients cannot produce.
         let frame = crate::mailbox_structured::BULK_LIMITS.wire_bytes;
         let connection_memory = (bytes / frame.saturating_mul(4)).max(1);
-        let connection_limit = work
+        let connection_limit = ceiling
             .saturating_mul(2)
             .saturating_add(2)
             .min(connection_memory);
@@ -230,6 +247,10 @@ impl ServiceConcurrencyV1 {
             watch_admission_rejections: s.watch_admission_rejections,
             store_quota_rejections: s.store_quota_rejections,
             store_full_rejections: s.store_full_rejections,
+            execution_backoffs: s.execution_backoffs,
+            last_backoff_execution_us: s.last_backoff_execution_us,
+            last_backoff_baseline_us: s.last_backoff_baseline_us,
+            last_backoff_active_work: s.last_backoff_active_work,
             native_peer_count: s.native_peer_count,
             native_peer_capacity: s.native_peer_capacity,
             native_authenticated_waiting: s.native_authenticated_waiting,
@@ -370,6 +391,7 @@ impl ServiceConcurrencyV1 {
         s.bytes = s.bytes.saturating_sub(bytes);
     }
     fn finish_execution(s: &mut State, elapsed: Duration, success: bool, waiting: bool) {
+        let active_work = s.active.saturating_sub(s.watches);
         s.active = s.active.saturating_sub(1);
         if success {
             s.completed = s.completed.saturating_add(1);
@@ -384,6 +406,10 @@ impl ServiceConcurrencyV1 {
             return;
         } // cancellation/network failure is not CPU pressure
         if slowed || s.resources.pressure != ResourcePressureV1::Normal {
+            s.execution_backoffs = s.execution_backoffs.saturating_add(1);
+            s.last_backoff_execution_us = us;
+            s.last_backoff_baseline_us = s.service_us;
+            s.last_backoff_active_work = active_work;
             s.target = (s.target / 2).max(1);
             s.fast_completions = 0;
         } else {
@@ -699,6 +725,87 @@ mod tests {
         drop(held);
     }
     #[test]
+    fn slow_execution_does_not_shrink_authenticated_connection_capacity() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let initial = c.snapshot();
+        let gate = AdaptiveAdmissionV1::new(
+            1,
+            Some(c.clone()),
+            AdmissionKind::Inbound,
+            usize::from(u16::MAX),
+        );
+        let held: Vec<_> = (0..initial.inbound_connections())
+            .map(|_| gate.clone().try_acquire_owned().unwrap())
+            .collect();
+        assert!(gate.clone().try_acquire_owned().is_err());
+        let watch = c.try_acquire_watch(1024).unwrap();
+        c.state.lock().unwrap().service_us = 10_000;
+        let mut slow = c.try_acquire_work(4096).unwrap();
+        slow.execution_timing().finish(Duration::from_millis(1010));
+        slow.completed();
+        let after = c.snapshot();
+        assert_eq!(after.work_limit, initial.work_limit / 2);
+        assert_eq!(after.connection_limit, initial.connection_limit);
+        assert_eq!(gate.limit(), initial.inbound_connections());
+        assert_eq!(after.execution_backoffs, 1);
+        assert_eq!(after.last_backoff_execution_us, 1_010_000);
+        assert_eq!(after.last_backoff_baseline_us, 10_000);
+        assert_eq!(after.last_backoff_active_work, 1, "idle Watch is excluded");
+        slow.completed();
+        assert_eq!(c.snapshot().execution_backoffs, 1, "no duplicate feedback");
+        drop((held, slow, watch));
+        let restored: Vec<_> = (0..initial.inbound_connections())
+            .map(|_| gate.clone().try_acquire_owned().unwrap())
+            .collect();
+        assert!(gate.clone().try_acquire_owned().is_err());
+        drop(restored);
+    }
+    #[test]
+    fn connection_capacity_tracks_resources_and_preserves_active_leases() {
+        let normal = resources(ResourcePressureV1::Normal);
+        let c = ServiceConcurrencyV1::new(normal);
+        let initial = c.snapshot();
+        let gate = AdaptiveAdmissionV1::new(
+            1,
+            Some(c.clone()),
+            AdmissionKind::Inbound,
+            usize::from(u16::MAX),
+        );
+        let held: Vec<_> = (0..initial.inbound_connections())
+            .map(|_| gate.clone().try_acquire_owned().unwrap())
+            .collect();
+        c.update_resources(ResourceSnapshotV1 {
+            pressure: ResourcePressureV1::Moderate,
+            ..normal
+        });
+        let moderate = c.snapshot();
+        assert!(moderate.connection_limit < initial.connection_limit);
+        assert!(gate.clone().try_acquire_owned().is_err());
+        assert_eq!(held.len(), initial.inbound_connections());
+        c.update_resources(ResourceSnapshotV1 {
+            available_memory_bytes: 32 * MIB,
+            ..normal
+        });
+        let scarce = c.snapshot();
+        let memory_bound = (32 * MIB as usize
+            / 4
+            / crate::mailbox_structured::BULK_LIMITS
+                .wire_bytes
+                .saturating_mul(4))
+        .max(1);
+        assert!(scarce.connection_limit <= memory_bound);
+        assert!(scarce.connection_limit < moderate.connection_limit);
+        assert!(gate.clone().try_acquire_owned().is_err());
+        drop(held);
+        let bounded: Vec<_> = (0..gate.limit())
+            .map(|_| gate.clone().try_acquire_owned().unwrap())
+            .collect();
+        assert!(gate.clone().try_acquire_owned().is_err());
+        drop(bounded);
+        c.update_resources(normal);
+        assert_eq!(gate.limit(), initial.inbound_connections());
+    }
+    #[test]
     fn low_memory_watches_leave_small_requests_and_receipts_usable() {
         let c = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
             available_memory_bytes: 32 * MIB,
@@ -726,7 +833,7 @@ mod tests {
         });
         let limits = c.snapshot();
         assert_eq!(limits.work_limit, 2);
-        assert_eq!(limits.inbound_connections(), 4);
+        assert_eq!(limits.inbound_connections(), 8);
         assert_eq!(limits.waiting_watch_limit, limits.inbound_connections());
         let watches: Vec<_> = (0..limits.inbound_connections())
             .map(|_| {
@@ -932,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_udp_demand_requires_real_work_before_capacity_growth() {
+    fn authenticated_udp_demand_requires_real_work_before_execution_growth() {
         let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
         let old = c.snapshot();
         c.observe_native_admission(old.inbound_connections(), old.inbound_connections(), true);

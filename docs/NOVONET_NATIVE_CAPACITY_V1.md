@@ -276,3 +276,20 @@ rejection counters separate connection/work/Watch admission from store quota and
 SQLite DiskFull; reasons may overlap within one rejected request. No protocol,
 timer, request-rate or capacity constant is increased. Phone performance remains
 pending until the coordinated candidate is installed and measured.
+
+## Connection admission separated from execution latency (v97 candidate)
+
+v96 real B8 had 7/8 clients complete with one handshake deadline: peerCount and
+capacity reached 10/10 while authenticatedWaiting=true and useful completions
+stalled during preparation. A4 had one work-admission rejection, no store quota
+or DiskFull; those are separate problems. The same controller now computes
+connection admission from its existing resource ceiling and frame-memory bound,
+not the latency-adjusted work target. No multiplier, timer or negotiated-slot
+constant changes. CPU/thermal/memory observations still restrict new leases;
+existing leases and custody remain protected when resources shrink.
+
+Four local integer observations retain only the latest execution backoff: count,
+execution elapsed, prior baseline and active non-Watch work at completion. They
+contain no addresses, identities or message contents. Existing slowdown/pressure
+policy is unchanged, and a recorded backoff alone does not establish CPU overload.
+This candidate requires rebuilt phone/node acceptance; v96 pressure remains NOT PASS.
