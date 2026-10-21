@@ -2,7 +2,8 @@
 //! novovm-relay's rendezvous_dual_owner_tests and native owner tests.
 //! No server, production identity, relay, new codec or retry scheduler.
 //! Run with --features iroh-transport,tls-transport.
-//! Arguments: RECORD EXPECTED_PIN_HEX udp|tls.
+//! Arguments: RECORD EXPECTED_PIN_HEX udp|tls [CLIENTS ROUNDS PLAINTEXT_BYTES].
+//! Load mode is UDP only; preparation/window checks are excluded from load rates.
 //! Only random probe ciphertext/capabilities are created, with a five-minute TTL.
 //! This verifies service custody, NOT Android delivery or a DeviceReceipt.
 #[cfg(not(all(feature = "iroh-transport", feature = "tls-transport")))]
@@ -31,7 +32,10 @@ mod probe {
         mailbox_rpc::{MailboxRejectionV1, MailboxReplyV1 as Reply, MailboxRequestV1 as Request},
         mailbox_store::MailboxGrant,
         mailbox_structured::{
-            native_session::{domain, NativeMailboxClient, REQUEST_DEADLINE},
+            native_session::{
+                adaptive_request_slot_ceiling_v1, adaptive_retained_bytes_v1, domain,
+                NativeMailboxClient, RequestId, REQUEST_DEADLINE,
+            },
             LIMITS, STREAM,
         },
         novorudp::{
@@ -46,6 +50,7 @@ mod probe {
         product_service_lease::{
             NativeMailboxEndpointV7, SelfOwnedTrustV1, ServiceLeaseBookV1, TlsServiceEndpointV1,
         },
+        service_concurrency::ServiceConcurrencyV1,
         tls_transport::TlsScopeV1,
     };
     use std::{
@@ -55,23 +60,26 @@ mod probe {
     };
     use zeroize::Zeroizing;
 
-    fn lane() -> NativeLaneConfig {
+    fn lane(controller: &ServiceConcurrencyV1) -> NativeLaneConfig {
+        // Diagnostic working set only; the product controller is unchanged.
+        let messages = adaptive_request_slot_ceiling_v1(controller).min(8);
+        let bytes = adaptive_retained_bytes_v1(controller).min(LIMITS.wire_bytes * 4);
         NativeLaneConfig {
             stream: STREAM,
             domain: domain(),
             receive: ReassemblyLimits {
                 max_message_bytes: LIMITS.wire_bytes,
-                messages: 4,
-                bytes: LIMITS.wire_bytes * 4,
-                peer_messages: 4,
-                peer_bytes: LIMITS.wire_bytes * 4,
+                messages,
+                bytes,
+                peer_messages: messages,
+                peer_bytes: bytes,
                 ttl: REQUEST_DEADLINE,
             },
             send: NativeSendLimits {
-                messages: 4,
-                bytes: LIMITS.wire_bytes * 4,
-                peer_messages: 4,
-                peer_bytes: LIMITS.wire_bytes * 4,
+                messages,
+                bytes,
+                peer_messages: messages,
+                peer_bytes: bytes,
             },
         }
     }
@@ -84,45 +92,154 @@ mod probe {
         pump: Option<NativeCarrierPump<'a>>,
     }
     impl Client<'_> {
-        async fn request(&mut self, request: Request) -> Result<Reply> {
-            let id = self.session.begin(0, vec![request], Instant::now())?;
-            let deadline = Instant::now() + Duration::from_secs(10);
-            let mut result = None;
-            loop {
-                let at = Instant::now();
-                ensure!(at < deadline, "native probe request deadline");
-                self.session.progress_capacity(&mut self.link, at)?;
-                if result.is_none() {
-                    self.session.try_send(&mut self.link, id, at, || Ok(()))?;
-                }
-                for done in self.link.poll(now_ms()?, at, 64)?.completed {
-                    ensure!(
-                        self.session.transport_complete(&done).is_none(),
-                        "native probe transport failed"
-                    );
-                }
-                if let Some(body) = self.link.poll_complete(STREAM, at, 64)? {
-                    if !self.session.receive_capacity(&self.link, &body, at)? {
-                        let (got, mut replies) =
-                            self.session.receive(&self.link, body, at, || Ok(()))?;
-                        ensure!(got == id && replies.len() == 1, "probe reply binding");
-                        result = Some(replies.remove(0));
-                    }
-                }
-                if self.session.negotiated_retained_bytes().is_some() {
-                    if let Some(reply) = result.take() {
-                        return Ok(reply);
-                    }
-                }
-                if let Some(pump) = &mut self.pump {
-                    tokio::select! {
-                        result = pump.progress() => result?,
-                        _ = tokio::time::sleep(Duration::from_millis(1)) => {},
-                    }
-                } else {
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+        async fn progress(&mut self, at: Instant) -> Result<Vec<(RequestId, Vec<Reply>)>> {
+            self.session.progress_capacity(&mut self.link, at)?;
+            for done in self.link.poll(now_ms()?, at, 64)?.completed {
+                ensure!(
+                    self.session.transport_complete(&done).is_none(),
+                    "native probe transport failed"
+                );
+            }
+            let mut replies = Vec::new();
+            for _ in 0..8 {
+                let Some(body) = self.link.poll_complete(STREAM, at, 64)? else {
+                    break;
+                };
+                if !self.session.receive_capacity(&self.link, &body, at)? {
+                    replies.push(self.session.receive(&self.link, body, at, || Ok(()))?);
                 }
             }
+            if let Some(pump) = &mut self.pump {
+                tokio::select! {
+                    result = pump.progress() => result?,
+                    _ = tokio::time::sleep(Duration::from_millis(1)) => {},
+                }
+            } else {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            Ok(replies)
+        }
+
+        async fn negotiate(&mut self) -> Result<()> {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while self.session.negotiated_retained_bytes().is_none() {
+                ensure!(Instant::now() < deadline, "native probe capacity deadline");
+                ensure!(
+                    self.progress(Instant::now()).await?.is_empty(),
+                    "unsolicited probe reply"
+                );
+            }
+            Ok(())
+        }
+
+        async fn request(&mut self, request: Request) -> Result<Reply> {
+            self.negotiate().await?;
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let id = self
+                .session
+                .begin_until(0, vec![request], Instant::now(), deadline)?;
+            let outcome = async {
+                loop {
+                    let at = Instant::now();
+                    ensure!(at < deadline, "native probe request deadline");
+                    self.session.try_send(&mut self.link, id, at, || Ok(()))?;
+                    for (got, mut replies) in self.progress(at).await? {
+                        ensure!(got == id && replies.len() == 1, "probe reply binding");
+                        return Ok(replies.remove(0));
+                    }
+                }
+            }
+            .await;
+            if outcome.is_err() {
+                self.session.cancel(id);
+                self.session.invalidate();
+            }
+            outcome
+        }
+
+        async fn window_preflight(&mut self, connection: usize) -> Result<()> {
+            self.negotiate().await?;
+            let drain_deadline = Instant::now() + Duration::from_secs(10);
+            while self.link.outbound_usage(STREAM)?.0 != 0 {
+                ensure!(
+                    Instant::now() < drain_deadline,
+                    "capacity transport drain deadline"
+                );
+                ensure!(
+                    self.progress(Instant::now()).await?.is_empty(),
+                    "unsolicited preflight reply"
+                );
+            }
+            let slots = self.session.slot_capacity();
+            let target = slots.min(8);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut pending = Vec::new();
+            let mut sent = Vec::new();
+            let mut peak = 0;
+            let mut verified = 0;
+            let mut rejections = std::collections::BTreeMap::<String, usize>::new();
+            let outcome: Result<()> = async {
+                for slot in 0..target {
+                    pending.push(self.session.begin_until(
+                        slot,
+                        vec![Request::ServiceRecordV7],
+                        Instant::now(),
+                        deadline,
+                    )?);
+                }
+                while !pending.is_empty() {
+                    let at = Instant::now();
+                    ensure!(at < deadline, "native probe window deadline");
+                    for &id in &pending {
+                        if self.session.try_send(&mut self.link, id, at, || Ok(()))?
+                            && !sent.contains(&id)
+                        {
+                            sent.push(id);
+                        }
+                    }
+                    peak = peak.max(sent.len());
+                    for (id, mut replies) in self.progress(at).await? {
+                        ensure!(
+                            pending.contains(&id) && sent.contains(&id) && replies.len() == 1,
+                            "window reply binding"
+                        );
+                        pending.retain(|p| *p != id);
+                        sent.retain(|p| *p != id);
+                        match replies.remove(0) {
+                            Reply::ServiceRecordV7 { .. } => verified += 1,
+                            Reply::Rejected(reason) => {
+                                *rejections.entry(format!("{reason:?}")).or_default() += 1
+                            }
+                            _ => bail!("window metadata response mismatch"),
+                        }
+                    }
+                }
+                ensure!(
+                    rejections.is_empty(),
+                    "window requests rejected: {rejections:?}"
+                );
+                Ok(())
+            }
+            .await;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "phase":"native_window_preflight", "connection":connection,
+                    "negotiated_slots":slots, "negotiated_retained_bytes":self.session.negotiated_retained_bytes(),
+                    "requested_metadata":target, "peak_sent_without_business_reply":peak,
+                    "verified_metadata_replies":verified, "rejections":rejections,
+                    "eight_request_window_verified":target == 8 && peak >= 8 && verified == 8 && outcome.is_ok(),
+                    "error":outcome.as_ref().err().map(ToString::to_string),
+                    "server_simultaneous_execution_proven":false
+                })
+            );
+            if outcome.is_err() {
+                for id in pending {
+                    self.session.cancel(id);
+                }
+                self.session.invalidate();
+            }
+            outcome
         }
     }
 
@@ -146,9 +263,10 @@ mod probe {
             now_ms()?,
             Instant::now(),
         )?;
+        let controller = ServiceConcurrencyV1::from_host();
         let mut link = NativeObjectLink::new(
             endpoint,
-            vec![lane()],
+            vec![lane(&controller)],
             NativeSendPolicy {
                 window: NovoRudpWindowConfig::default(),
                 pacing: NovoRudpPacingProfile::default(),
@@ -164,7 +282,12 @@ mod probe {
             let _ = link.poll(now_ms()?, Instant::now(), 64)?;
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        let session = NativeMailboxClient::attach(&mut link, 0, record.relay_public_key)?;
+        let session = NativeMailboxClient::attach_adaptive(
+            &mut link,
+            0,
+            record.relay_public_key,
+            controller,
+        )?;
         Ok(Client {
             link,
             session,
@@ -192,12 +315,13 @@ mod probe {
         );
         let (endpoint, pump) =
             NativeCarrierPump::attach_continuous_v7(stream, channel, vec![STREAM])?;
+        let controller = ServiceConcurrencyV1::from_host();
         let mut link = NativeObjectLink::new(
             endpoint,
-            vec![lane()],
+            vec![lane(&controller)],
             NativeSendPolicy::reliable_carrier_v1(REQUEST_DEADLINE),
         )?;
-        let session = NativeMailboxClient::attach(&mut link, 0, pin)?;
+        let session = NativeMailboxClient::attach_adaptive(&mut link, 0, pin, controller)?;
         Ok(Client {
             link,
             session,
@@ -350,7 +474,7 @@ mod probe {
         pin: [u8; 32],
         rounds: usize,
         size: usize,
-        durations: &mut Vec<u128>,
+        stats: &mut LoadStats,
     ) -> Result<()> {
         let grant = MailboxGrant::generate()?;
         let mailbox = grant.id;
@@ -393,6 +517,7 @@ mod probe {
                 _ => bail!("load Put receipt missing"),
             };
             receipt.verify(pin, mailbox, object, &ciphertext, expires)?;
+            stats.stored_plaintext_bytes += size;
             let digest = match client
                 .request(Request::Fetch {
                     mailbox,
@@ -416,8 +541,10 @@ mod probe {
                             .map_err(|_| anyhow::anyhow!("load authentication failed"))?,
                     );
                     ensure!(*decrypted == *plain, "load plaintext mismatch");
+                    stats.fetched_plaintext_bytes += size;
                     digest
                 }
+                Reply::Rejected(reason) => bail!("load Fetch rejected: {reason:?}"),
                 _ => bail!("load Fetch missing object"),
             };
             require(
@@ -432,9 +559,24 @@ mod probe {
                 |r| matches!(r, Reply::Consumed),
                 "load Consume",
             )?;
-            durations.push(start.elapsed().as_millis());
+            stats.cycles_ms.push(start.elapsed().as_millis());
         }
         Ok(())
+    }
+
+    #[derive(Default)]
+    struct LoadStats {
+        cycles_ms: Vec<u128>,
+        stored_plaintext_bytes: usize,
+        fetched_plaintext_bytes: usize,
+    }
+    // Nearest-rank empirical percentiles; a small sample remains a small sample.
+    fn percentile(sorted: &[u128], percent: usize) -> Option<u128> {
+        if sorted.is_empty() {
+            return None;
+        }
+        let rank = (sorted.len() * percent).div_ceil(100).max(1);
+        sorted.get(rank - 1).copied()
     }
 
     async fn load(
@@ -445,48 +587,112 @@ mod probe {
         size: usize,
     ) -> Result<()> {
         use futures_util::{stream::FuturesUnordered, StreamExt};
+        let preparation = Instant::now();
+        let mut preparing = FuturesUnordered::new();
+        for connection in 0..clients {
+            preparing.push(async move {
+                let seed = Zeroizing::new(rand::random::<[u8; 32]>());
+                let mut client = udp(record, SigningKey::from_bytes(&seed))
+                    .await
+                    .with_context(|| format!("connection {connection} handshake"))?;
+                client
+                    .negotiate()
+                    .await
+                    .with_context(|| format!("connection {connection} resource negotiation"))?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "phase":"native_capacity_negotiated", "connection":connection,
+                        "negotiated_slots":client.session.slot_capacity(),
+                        "negotiated_retained_bytes":client.session.negotiated_retained_bytes()
+                    })
+                );
+                Ok::<_, anyhow::Error>((connection, client))
+            });
+        }
+        let mut ready = Vec::new();
+        let mut failures = Vec::new();
+        while let Some(result) = preparing.next().await {
+            match result {
+                Ok(client) => ready.push(client),
+                Err(error) => failures.push(format!("preparation: {error}")),
+            }
+        }
+        // One session proves the logical request window; do not turn this into
+        // CLIENTS * 8 artificial metadata traffic before measuring payload work.
+        if let Some((connection, mut client)) = ready.pop() {
+            match client.window_preflight(connection).await {
+                Ok(()) => ready.push((connection, client)),
+                Err(error) => failures.push(format!("preflight connection {connection}: {error}")),
+            }
+        }
+        let preparation_errors = failures.len();
+        let preparation_seconds = preparation.elapsed().as_secs_f64();
         let start = Instant::now();
         let mut pending = FuturesUnordered::new();
-        for _ in 0..clients {
-            pending.push(async {
-                let mut times = Vec::new();
-                let result = async {
-                    let seed = Zeroizing::new(rand::random::<[u8; 32]>());
-                    let mut client = udp(record, SigningKey::from_bytes(&seed)).await?;
-                    load_exchange(&mut client, pin, rounds, size, &mut times).await
-                }
-                .await;
-                (times, result)
+        for (connection, mut client) in ready {
+            pending.push(async move {
+                let mut stats = LoadStats::default();
+                let result = load_exchange(&mut client, pin, rounds, size, &mut stats)
+                    .await
+                    .with_context(|| format!("connection {connection}"));
+                (stats, result)
             });
         }
         let mut completed_clients = 0;
-        let mut samples = Vec::new();
-        let mut failures = Vec::new();
-        while let Some((mut times, result)) = pending.next().await {
-            samples.append(&mut times);
+        let mut total = LoadStats::default();
+        while let Some((mut stats, result)) = pending.next().await {
+            total.cycles_ms.append(&mut stats.cycles_ms);
+            total.stored_plaintext_bytes += stats.stored_plaintext_bytes;
+            total.fetched_plaintext_bytes += stats.fetched_plaintext_bytes;
             match result {
-                Ok(()) => {
-                    completed_clients += 1;
-                }
-                Err(error) => failures.push(error.to_string()),
+                Ok(()) => completed_clients += 1,
+                Err(error) => failures.push(format!("load: {error}")),
             }
         }
         let seconds = start.elapsed().as_secs_f64();
-        samples.sort_unstable();
+        total.cycles_ms.sort_unstable();
         println!(
             "{}",
-            serde_json::json!({"mode":"bounded_service_load", "carrier":"native-udp",
-            "offered_clients":clients,"completed_clients":completed_clients,"rounds_per_client":rounds,
-            "payload_bytes":size,"verified_put_fetch_consume":samples.len(),"elapsed_seconds":seconds,
-            "objects_per_second":samples.len() as f64 / seconds,
-            "p50_ms":samples.get(samples.len()/2),"max_ms":samples.last(),"failures":failures,
-            "device_delivery_receipt":false,"android_ui_acceptance":false})
+            serde_json::json!({
+                "mode":"bounded_service_load", "carrier":"native-udp",
+                "offered_clients":clients, "completed_clients":completed_clients, "rounds_per_client":rounds,
+                "payload_bytes":size, "verified_put_fetch_consume":total.cycles_ms.len(),
+                "preparation_seconds":preparation_seconds, "elapsed_seconds":seconds,
+                "objects_per_second":total.cycles_ms.len() as f64 / seconds,
+                "verified_stored_plaintext_bytes":total.stored_plaintext_bytes,
+                "verified_fetched_plaintext_bytes":total.fetched_plaintext_bytes,
+                "put_plaintext_bytes_per_second":total.stored_plaintext_bytes as f64 / seconds,
+                "fetch_verified_plaintext_bytes_per_second":total.fetched_plaintext_bytes as f64 / seconds,
+                "put_plus_fetch_plaintext_bytes_per_second":(total.stored_plaintext_bytes + total.fetched_plaintext_bytes) as f64 / seconds,
+                "p50_ms":percentile(&total.cycles_ms, 50), "p95_ms":percentile(&total.cycles_ms, 95),
+                "p99_ms":percentile(&total.cycles_ms, 99), "max_ms":total.cycles_ms.last(),
+                "percentile_method":"nearest_rank_successful_put_fetch_consume_cycles",
+                "preparation_errors":preparation_errors, "load_errors":failures.len() - preparation_errors,
+                "error_count":failures.len(), "failures":failures,
+                "device_delivery_receipt":false, "android_ui_acceptance":false
+            })
         );
         ensure!(
             completed_clients == clients,
             "load retains failed clients; not a full PASS"
         );
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn nearest_rank_percentiles_keep_small_sample_tail_and_empty_unknown() {
+            assert_eq!(percentile(&[], 95), None);
+            assert_eq!(percentile(&[3, 5, 8, 59], 50), Some(5));
+            assert_eq!(percentile(&[3, 5, 8, 59], 95), Some(59));
+            assert_eq!(percentile(&[3, 5, 8, 59], 99), Some(59));
+            let hundred: Vec<_> = (1..=100).collect();
+            assert_eq!(percentile(&hundred, 95), Some(95));
+            assert_eq!(percentile(&hundred, 99), Some(99));
+        }
     }
 
     pub async fn run() -> Result<()> {
@@ -552,6 +758,7 @@ mod probe {
                 book.check_native_mailbox_route_v7(pin, &route, now_ms()?)?;
                 let mut client = udp(&record, key).await?;
                 println!("{}", serde_json::json!({"phase":"authenticated","carrier":"udp","elapsed_ms":start.elapsed().as_millis()}));
+                client.window_preflight(0).await?;
                 exchange(&mut client, pin).await?;
             } else {
                 let route = TlsServiceEndpointV1::from_record(&record)?.context("TLS not advertised")?;
@@ -564,6 +771,7 @@ mod probe {
                 let mut stream = CarrierStreamV1::from(scope.connect(tcp, route.endpoint_key).await?);
                 let mut client = tls(&mut stream, &key, pin).await?;
                 println!("{}", serde_json::json!({"phase":"authenticated","carrier":"tls-v8","elapsed_ms":start.elapsed().as_millis()}));
+                client.window_preflight(0).await?;
                 exchange(&mut client, pin).await?;
             }
             Ok::<_, anyhow::Error>(())
