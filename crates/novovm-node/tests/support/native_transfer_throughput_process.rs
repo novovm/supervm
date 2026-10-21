@@ -131,13 +131,34 @@ pub(super) fn inputs() -> (FreshGenesisConfigV1, NovNativeCandidateExecutionPlan
 }
 
 pub(super) fn address_for(node: &Node, label: &str) -> Option<String> {
-    fs::read_to_string(node.0.join(format!("{label}.stdout.log")))
-        .ok()?
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("native_fresh_rpc_listening: ")
-                .map(str::to_owned)
-        })
+    let log = fs::read_to_string(node.0.join(format!("{label}.stdout.log"))).ok()?;
+    let mut address = None;
+    // bind() precedes lifecycle recovery and candidate-owner setup. Wait for
+    // that existing completion event, within the caller's original deadline,
+    // rather than spending an RPC timeout on a socket nobody can poll yet.
+    for line in log
+        .split_inclusive('\n')
+        .filter(|line| line.ends_with('\n'))
+    {
+        let line = line.trim_end_matches(['\r', '\n']);
+        if let Some(value) = line.strip_prefix("native_fresh_rpc_listening: ") {
+            address = Some(value.to_owned());
+        }
+        if let Some(status) = line.strip_prefix("native_seal_service_startup: ") {
+            let status: Value =
+                serde_json::from_str(status).expect("invalid lifecycle startup event");
+            assert!(
+                status["enabled"] == true
+                    && status["ok"] == true
+                    && status["halted"] == false
+                    && status["lifecycle_halted"] == false,
+                "unhealthy lifecycle startup: {status}; {}",
+                node.0.display()
+            );
+            return Some(address.expect("lifecycle startup event preceded RPC bind"));
+        }
+    }
+    None
 }
 
 // No retry: uncertain admission is an observed failure, never hidden by a helper.
@@ -1213,6 +1234,59 @@ fn exercise_workload(
 #[cfg(test)]
 mod continuous_scheduler_tests {
     use super::*;
+
+    #[test]
+    fn rpc_startup_waits_for_lifecycle_after_socket_bind() {
+        let node = Node::new("rpc-startup-readiness");
+        let server =
+            novovm_node::native_fresh_rpc::FreshRpcServer::bind("127.0.0.1:0".parse().unwrap())
+                .unwrap();
+        let address = server.local_addr().unwrap().to_string();
+        let path = node.0.join("startup.stdout.log");
+        let bound = format!("native_fresh_rpc_listening: {address}\n");
+        fs::write(&path, &bound).unwrap();
+        assert_eq!(
+            address_for(&node, "startup"),
+            None,
+            "a real bound socket cannot serve RPC until lifecycle recovery finishes"
+        );
+        let ready = format!(
+            "{bound}native_seal_service_startup: {{\"enabled\":true,\"ok\":true,\"halted\":false,\"lifecycle_halted\":false}}"
+        );
+        // The process can be observed between writes to a single log line.
+        fs::write(&path, &ready[..ready.len() - 1]).unwrap();
+        assert_eq!(address_for(&node, "startup"), None);
+        fs::write(&path, &ready).unwrap();
+        assert_eq!(address_for(&node, "startup"), None);
+        fs::write(&path, format!("{ready}\n")).unwrap();
+        assert_eq!(address_for(&node, "startup"), Some(address));
+    }
+
+    #[test]
+    fn rpc_startup_rejects_unhealthy_or_invalid_completion() {
+        let node = Node::new("rpc-startup-rejected");
+        let path = node.0.join("startup.stdout.log");
+        for status in [
+            r#"{"enabled":false,"ok":true,"halted":false,"lifecycle_halted":false}"#,
+            r#"{"enabled":true,"ok":false,"halted":false,"lifecycle_halted":false}"#,
+            r#"{"enabled":true,"ok":true,"halted":true,"lifecycle_halted":false}"#,
+            r#"{"enabled":true,"ok":true,"halted":false,"lifecycle_halted":true}"#,
+            r#"{"ok":true}"#,
+            "not JSON",
+        ] {
+            fs::write(
+                &path,
+                format!(
+                    "native_fresh_rpc_listening: 127.0.0.1:1\nnative_seal_service_startup: {status}\n"
+                ),
+            )
+            .unwrap();
+            assert!(
+                std::panic::catch_unwind(|| address_for(&node, "startup")).is_err(),
+                "a failed startup must not become RPC-ready: {status}"
+            );
+        }
+    }
 
     #[test]
     fn durable_receipt_profile_changes_only_the_explicit_receipt_flag() {

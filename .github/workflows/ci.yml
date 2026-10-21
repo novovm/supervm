@@ -518,7 +518,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: original-node-transfer-rpc-recovery
-          path: artifacts/audit/candidate-node-processes/**/mixed-*.json
+          # Preserve this step's startup/recovery logs on failure, without keys,
+          # node configuration or databases. The earlier upload predates this run.
+          path: |
+            artifacts/audit/candidate-node-processes/**/mixed-*.json
+            artifacts/audit/candidate-node-processes/**/continuous-mixed-*.stdout.log
+            artifacts/audit/candidate-node-processes/**/continuous-mixed-*.stderr.log
           if-no-files-found: warn
 
       - name: Mainline soak freshness coverage and progress tests

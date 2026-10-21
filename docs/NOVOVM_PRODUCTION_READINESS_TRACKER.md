@@ -1,5 +1,50 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-21 CI 39518429389: historical RPC startup readiness and failure evidence
+
+Run `39518429389` matches `5c4aac9490434c1a1e5809b15afb4ccbb58aa19b`.
+Both preserved runtime platforms and Rust security passed. Rust checks failed
+at `Signed Transfer RPC finality and wallet recovery without Host permission`:
+`fresh_record_transfers_conflict_failure_serial_parity`, transaction-status RPC,
+`timeout: global`. Later steps were skipped, not independently failed.
+The signed Transfer evidence upload succeeded. Its ten-file ZIP SHA-256 is
+`d09c8368cc008f5cab5809af2ac8197b7e2ccf18d7b8a0d7cf9c5fa4ca9e91dc`.
+Admission, finality receipts and all four before-restart oracle outputs exist;
+after-restart acceptance does not. The error therefore falls in restart status
+queries. Cleanup TLS disconnects and previously caught panic tests are not
+established causes. This artifact did not include this step's process logs.
+
+Source inspection establishes a readiness race: the historical node prints its
+bound port before lifecycle open/recovery, candidate-owner cleanup and ledger
+session setup, but the test originally queried immediately on that port event.
+The test now waits for the existing complete, healthy lifecycle-startup event
+from each child, retaining the original startup deadline and process-exit checks.
+Partial lines remain pending; disabled, unhealthy, incomplete-schema or malformed
+completion events fail. No RPC retry or uncertain-admission replay is added.
+The 10-second client limit, 120-second mixed startup deadline, production source,
+Host denial, signatures, economic/receipt/restart assertions and AOEM are unchanged.
+
+The new real bound-but-unpolled listener regression fails the old helper, then
+passes after the fix. Another non-ignored regression rejects invalid startup
+events. Windows original four-process mixed test passes before the change;
+two intermediate repaired runs also pass. Final CLI runs 15 passed/0 failed,
+with the same 16 pre-existing environment-specific ignored cases; the mixed
+case is run explicitly, not claimed from the default suite. Final rebuilt mixed
+case passes 1/1 in 72.25 seconds, including after-restart oracle checks; observed
+startup-ready times are 1686/1736/3903 ms for admission/finality/restart, not a
+reproduction of a 10-second Linux timeout. Explicit Host=0 new/existing-store
+startup refusal passes 1/1. Root all-workspace/all-target strict Clippy, root and
+nested fmt, diff check and actionlint 1.7.7 pass. Independent static review has
+no actionable finding; it is not a second runtime acceptance result.
+
+This proves the helper defect, not the precise Linux CI timeout mechanism.
+A slow post-startup read is not excluded without logs. CI now retains only this
+step's allowlisted `continuous-mixed-*.stdout.log`/`stderr.log` alongside its
+existing JSON evidence, never node configs, keys or databases. Phase, readiness
+time, address and transaction-hash errors improve diagnosis without changing
+acceptance. Linux rerun, remote CI, physical multi-device and performance results
+remain separate. User-requested automatic monitoring stays paused.
+
 ## 2026-10-21 CI 39489567228: exact workspace roster and certificate dependencies
 
 Fast-forwarded the shared main from `2c70f669` to `873e9b72`, preserving the

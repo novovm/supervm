@@ -1,5 +1,20 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-21 CI 39518429389 RPC startup repair claim (released; remote verification pending):** input main
+`5c4aac94`, shared main and clean tree verified. Reuse the historical process
+test's existing startup event after lifecycle recovery; its bound-port event
+alone is not readiness. Scope: test orchestration, negative readiness tests,
+phase/error diagnostics and this step's allowlisted failure logs. Keep original
+RPC/startup deadlines, explicit Host=0, economic/recovery assertions and all
+production source/guards unchanged. Windows original mixed case passes; do not
+claim the exact Linux timeout reproduced. A real bound-but-unpolled listener
+regression fails the old readiness helper. Final rebuilt mixed case and Host=0
+new/existing-store refusal each pass 1/1. Historical CLI passes 15/15 with the
+same 16 existing ignored cases; two intermediate explicit mixed runs also pass.
+Root all-workspace/all-target strict Clippy, both fmt checks, diff check and
+actionlint pass. Independent static review has no actionable finding. Remote
+Linux CI remains pending, and automatic monitoring stays paused by user request.
+
 **2026-10-21 CI 39489567228 repair claim (released; remote verification pending):** input main `873e9b72`.
 Reuse `runtime/check-isolation.ps1` and the existing root/component Cargo graphs.
 The shared App quota crate is already an explicit product member; reconcile the
