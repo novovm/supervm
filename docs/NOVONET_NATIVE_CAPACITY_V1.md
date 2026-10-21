@@ -131,5 +131,15 @@ and four real node-owner UDP/V8/TLS restart checks passed. Resource hint and
 shared-controller checks also passed. Two initial assertions still encoded the
 old 64 limit / a one-slot severe-pressure expectation; they were corrected to
 the u16 encoding boundary and the controller's existing two inbound slots.
-No production security check was relaxed to satisfy those assertions. Updated
-phone and deployed-node acceptance remains pending.
+No production security check was relaxed to satisfy those assertions.
+
+The first coordinated phone/node deployment of SDK `bed6a850` and App `9752001`
+failed the phone startup gate: both phones completed native authentication but
+stopped during business preparation with generic E8. No concurrent phone load
+was started. Metadata/bulk rejection handling is under local investigation;
+the originating phone error has not yet been established. The original Windows
+and Ubuntu binaries and capacity-safe v90 APK were restored without rolling back
+keys or databases. Both phones resumed L3/L4 and exchanged new text messages;
+KINGCLUB remained isolated. Detailed evidence is in NOVOCHAT
+`docs/implementation/ADAPTIVE_CONCURRENCY.md`. Adaptive phone throughput and UI
+smoothness are not accepted.
