@@ -1,5 +1,46 @@
 # Native mailbox resource capacity exchange v1
 
+
+## 2026-10-21 v95 phone gate: four clients PASS; higher load remains incomplete
+
+Runtime SDK 84886e26 and App a6f3168 were deployed together to both original
+Android installations and matching Windows/Ubuntu nodes. Identity/configuration,
+SQLite custody, original history and verified rollback artifacts were retained.
+Two-way text, full online/offline image preview, sender-independent fetch,
+original device receipt and L4 passed. KINGCLUB isolation checks passed.
+
+Both phones negotiated 16 logical slots and verified one session's eight-request
+metadata window. At four offered clients x eight 32-KiB Put/verified Fetch/Consume
+cycles, each completed all 32 cycles without error: A 12.69 / B 12.39 cycles/s,
+P95 326/368 ms, P99 338/382 ms. A separate B four-client x 16-round load completed 64
+cycles while one actual new chat Send overlapped the live probe, persisted on B
+and obtained A's device confirmation. These are separate service and chat proofs,
+not production TPS or message-latency percentiles. A logical window does not
+prove eight simultaneously executing handlers. The host sessions are not separate
+operator/fault domains.
+
+Eight-client gates did not fully pass, and 16 was not attempted. A completed one
+client/11 cycles with 7 payload failures (old probe lost the detailed causes).
+Diagnostic-only ff51e7e9 retains full failure chains, without traffic changes.
+B completed 4 clients/32 cycles, with one 10-s UDP handshake deadline and three
+Register Quota refusals. Preparation and successful-cycle timing remain separate.
+No generic E8/account shutdown was observed during these v95 pressure gates;
+subsequent two-way new messages, L3/L4 and identity checks remained healthy.
+This is not proof of long-term stability or a unique cause for the v94 natural E8.
+
+Observed admission limits responded to service latency/load (A work 8 -> 3, B 4 -> 5),
+not a new fixed four-client ceiling. This does not establish optimal hardware
+utilization, maximum capacity or a universal throughput increase: v94's fourth
+client failed preflight, so its partial successful rates are not equivalent full
+load results. Independent Windows/cloud pressure capacity remains unmeasured.
+Four-client UI samples 43 frames each had P95 total span8.906/7.763ms, max10.674/
+10.657ms; mixed-load 51 frames had P95 12.659 ms / max 15.971 ms. These small profile
+samples do not establish product-wide FPS or typing SLOs. See App P0_CHECKPOINT.md
+for CPU/RSS sample scope, discarded preparations, controlled profiler cold starts,
+private evidence and exact APK/node provenance. Historical 59.49-s TLS first-connect
+latency remains unresolved and was not signed off by this resource test.
+
+
 Status: implementation candidate; device acceptance is recorded separately.
 
 ## Existing capability and actual gap

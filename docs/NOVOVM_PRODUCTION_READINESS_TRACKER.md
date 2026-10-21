@@ -1,5 +1,26 @@
 # NOVOVM 生产部署目标与验收台账
 
+
+## 2026-10-21 NOVONET v95: bounded phone capacity gate, not full throughput acceptance
+
+App a6f3168/runtime SDK 84886e26 passed coordinated phone startup, two-way text,
+online/independent offline image previews and original DeviceReceipt with L4.
+Both pinned phones accepted a single-session eight-request metadata window and
+completed all 32 verified 32-KiB Put/Fetch/Consume cycles at four clients (12.69 /
+12.39 cycles/s). A separate four-client 64-cycle load preserved a real overlapping
+chat receipt. Original identities/history/custody and matching node state remain.
+The isolated Ubuntu binary update preserved KINGCLUB containers/config/health.
+
+Eight-client load did NOT pass: A 1/8 completed with 7 payload errors; B 4/8 completed
+with one handshake deadline and three Register Quota rejections. 16 clients were
+not attempted. No v95 E8 shutdown occurred during these gates, and post-pressure
+new chat/L4 remained healthy. These observations do not prove unattended recovery,
+maximum throughput, independent L3 load capacity or the historical TLS-tail fix.
+Details/denominators: NOVONET_NATIVE_CAPACITY_V1.md and NOVOCHAT P0_CHECKPOINT.md.
+The later SDK ff51e7e9 change is diagnostic probe error reporting only; deployed
+runtime source is 84886e26. Retained v94 natural E8 cases are not erased by v95.
+
+
 ## 2026-10-21 CI 39518429389: historical RPC startup readiness and failure evidence
 
 Run `39518429389` matches `5c4aac9490434c1a1e5809b15afb4ccbb58aa19b`.
