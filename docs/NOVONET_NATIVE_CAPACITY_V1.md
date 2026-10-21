@@ -177,3 +177,21 @@ investigation in the App, not attributed to the shared controller without proof.
 No phone load gate was started. Phones and both node binaries were restored,
 original identities/history retained, KINGCLUB health/isolation checked. Current
 installed baseline is v90, not accepted adaptive-concurrency throughput.
+
+## v94 real-phone gate (2026-10-21)
+
+NOVOCHAT `76274d0` using SDK `ee45c280` passed original-phone text, online image,
+independent offline image/full preview/DeviceReceipt and post-load chat. Both
+phones negotiated 16 logical slots, but the one eight-request metadata preflight
+got five successes and three Quota replies. Each four-client run therefore
+completed only three clients / 24 real 32-KiB Put-Fetch-Consume cycles. The raw
+successful-cycle results were 9.09 and 14.09 cycles/s (P95 413 and 224 ms).
+This is not a full four-client PASS, old/new speed comparison or chat latency.
+
+Review found native completed handlers retain ServiceWorkPermit through pending
+and sending until response transport completion. completed() captures service
+time but does not yet return CPU admission. Probe preparation also stops polling
+already-ready peers before its window test. Next correction must release only
+completed execution admission, retaining reply bytes until ACK/drop, and drain
+queued probe ACKs. No larger constant, extra scheduler or protocol is needed.
+All rejected samples remain recorded; original identities/custody are retained.
