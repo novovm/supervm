@@ -195,21 +195,27 @@ impl ServiceConcurrencyV1 {
             .saturating_mul(2)
             .saturating_add(2)
             .min(connection_memory);
-        ServiceConcurrencySnapshotV1 {
+        let mut snapshot = ServiceConcurrencySnapshotV1 {
             resources: s.resources,
             admitted_work: s.admitted,
             completed_work: s.completed,
             connection_limit,
             work_limit: work,
             work_ceiling: ceiling,
-            waiting_watch_limit: (work / 2).max(1),
+            waiting_watch_limit: 0,
             multiplex_stream_limit: work.saturating_add(2),
             retained_bytes: bytes / 3,
             transport_bytes: bytes.saturating_sub(bytes / 3),
             reserved_transport_bytes: s.transport_bytes,
             active_work: s.active,
             reserved_bytes: s.bytes,
-        }
+        };
+        // An admitted inbound connection needs its own idle subscription.
+        // Waiting consumes retained memory, not a CPU execution slot. Match
+        // the shared inbound budget; acquire_work still limits all Watch
+        // reservations to half the retained pool so data/receipts can run.
+        snapshot.waiting_watch_limit = snapshot.inbound_connections();
+        snapshot
     }
     pub fn snapshot(&self) -> ServiceConcurrencySnapshotV1 {
         Self::snapshot_locked(&self.state.lock().unwrap_or_else(|e| e.into_inner()))
@@ -564,6 +570,87 @@ mod tests {
         assert!(c.try_acquire_work(64 * 1024 * 1024).is_none());
         drop(work);
         drop(watches);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+    }
+    #[test]
+    fn idle_watches_cover_admitted_connections_without_consuming_data_slots() {
+        let c = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            available_memory_bytes: 1024 * MIB,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let limits = c.snapshot();
+        assert_eq!(limits.work_limit, 2);
+        assert_eq!(limits.inbound_connections(), 4);
+        assert_eq!(limits.waiting_watch_limit, limits.inbound_connections());
+        let watches: Vec<_> = (0..limits.inbound_connections())
+            .map(|_| {
+                c.try_acquire_watch(2 * crate::mailbox_structured::BULK_LIMITS.wire_bytes)
+                    .expect("each admitted connection can wait for a bulk notification")
+            })
+            .collect();
+        assert!(c.try_acquire_watch(1).is_none());
+        let data: Vec<_> = (0..limits.work_limit)
+            .map(|_| {
+                c.try_acquire_work(4096)
+                    .expect("data and receipts still progress")
+            })
+            .collect();
+        assert!(c.try_acquire_work(1).is_none());
+        drop((watches, data));
+        assert_eq!(c.snapshot().active_work, 0);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+    }
+    #[test]
+    fn watch_memory_cap_and_pressure_shrink_preserve_existing_permits() {
+        let normal = ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            available_memory_bytes: 1024 * MIB,
+            pressure: ResourcePressureV1::Normal,
+        };
+        let c = ServiceConcurrencyV1::new(normal);
+        let limits = c.snapshot();
+        let watch = c.try_acquire_watch(limits.retained_bytes / 2).unwrap();
+        assert!(
+            c.try_acquire_watch(1).is_none(),
+            "Watch cannot consume the data half"
+        );
+        let data = c
+            .try_acquire_work(limits.retained_bytes - limits.retained_bytes / 2)
+            .expect("the other half remains usable by delivery");
+        drop((watch, data));
+
+        let mut watches: Vec<_> = (0..limits.inbound_connections())
+            .map(|_| c.try_acquire_watch(1024).unwrap())
+            .collect();
+        c.update_resources(ResourceSnapshotV1 {
+            available_memory_bytes: 128 * MIB,
+            pressure: ResourcePressureV1::Severe,
+            ..normal
+        });
+        assert_eq!(c.snapshot().waiting_watch_limit, 1);
+        assert_eq!(c.snapshot().active_work, watches.len());
+        assert!(c.try_acquire_watch(1).is_none());
+        let data = c.try_acquire_work(4096).expect("shrink leaves data progress");
+        drop(data);
+        while watches.len() > c.snapshot().waiting_watch_limit {
+            drop(watches.pop());
+            assert!(c.try_acquire_watch(1).is_none());
+        }
+        drop(watches);
+        let watch = c
+            .try_acquire_watch(1024)
+            .expect("released permits are reusable");
+        assert!(c.try_acquire_watch(1).is_none());
+        c.update_resources(normal);
+        let recovered: Vec<_> = (1..limits.inbound_connections())
+            .map(|_| {
+                c.try_acquire_watch(1024)
+                    .expect("resource recovery restores admission")
+            })
+            .collect();
+        drop((watch, recovered));
+        assert_eq!(c.snapshot().active_work, 0);
         assert_eq!(c.snapshot().reserved_bytes, 0);
     }
     #[test]

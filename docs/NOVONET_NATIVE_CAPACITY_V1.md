@@ -143,3 +143,27 @@ keys or databases. Both phones resumed L3/L4 and exchanged new text messages;
 KINGCLUB remained isolated. Detailed evidence is in NOVOCHAT
 `docs/implementation/ADAPTIVE_CONCURRENCY.md`. Adaptive phone throughput and UI
 smoothness are not accepted.
+
+## Waiting notification admission correction (2026-10-21)
+
+The next v92 phone gate directly observed an authenticated notification
+`Rejected(Quota)` becoming generic E8 on PKL110. The other phone stayed running;
+load testing was not started. Both phones and node binaries were restored,
+identities retained, and the two original queued messages appeared on both
+screens without resending. This does not establish the origin of v91's generic
+preparation error or a throughput improvement.
+
+Source review independently found contradictory budgets on a 2-CPU/1-GiB node:
+four inbound sessions were admitted but only one idle Watch was allowed. Idle
+notifications now use the same resource-derived inbound count; they do not
+occupy CPU execution slots. The shared half-retained-memory Watch budget and
+independent data/receipt work admission remain enforced. Pressure reductions
+decline new subscriptions while existing permits drain; no accepted custody is
+discarded. The App must also preserve authenticated rejection types for Watch,
+not only locator and bulk probing. Only Quota/Unavailable can use the existing
+affected-peer recovery; security and storage failures remain distinct.
+
+The nine shared-controller regressions passed in the release build, including
+four bulk Watch subscriptions and two data work permits on a 2-CPU/1-GiB fixture,
+memory caps and pressure shrink/recovery. Coordinated phone acceptance is still
+pending. A configured subscription count is not measured throughput.
