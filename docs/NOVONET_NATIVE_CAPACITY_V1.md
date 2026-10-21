@@ -167,3 +167,13 @@ The nine shared-controller regressions passed in the release build, including
 four bulk Watch subscriptions and two data work permits on a 2-CPU/1-GiB fixture,
 memory caps and pressure shrink/recovery. Coordinated phone acceptance is still
 pending. A configured subscription count is not measured throughput.
+
+Coordinated v93 phone result: startup, bidirectional text, online 1.6-MB image
+and controlled cold-start passed with App `20a919e` / SDK `ee45c280`; both phones
+had L3:2/L4:1, without the earlier startup E8. Two independent offline-image
+tests did not pass while the sender stayed offline; the original images arrived
+after sender network restoration. Local-versus-external custody status is under
+investigation in the App, not attributed to the shared controller without proof.
+No phone load gate was started. Phones and both node binaries were restored,
+original identities/history retained, KINGCLUB health/isolation checked. Current
+installed baseline is v90, not accepted adaptive-concurrency throughput.
