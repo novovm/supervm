@@ -186,6 +186,10 @@ fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_i
             let _ = server.poll(1000, Instant::now(), 8)?;
         }
         assert!(waiting.session_id(0).is_none());
+        let admission = server.client_admission_snapshot_v1(Instant::now()).unwrap();
+        assert_eq!(admission.peer_count, 1);
+        assert_eq!(admission.capacity, 1);
+        assert!(admission.authenticated_waiting);
         // Even a complete-but-unclaimed object protects its sender's identity.
         assert!(server
             .retire_idle_clients(later, idle, &BTreeSet::new(), 1)?

@@ -190,10 +190,32 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
         .is_err());
     assert!(server.waiting_client.is_none());
     assert!(!server.needs_client_capacity(later));
+    assert_eq!(
+        server.client_admission_snapshot_v1(start),
+        Some(NativeClientAdmissionSnapshotV1 {
+            peer_count: 1,
+            capacity: 1,
+            authenticated_waiting: false,
+        }),
+        "an invalid signed offer must not produce adaptive demand"
+    );
     *wire.last_mut().unwrap() ^= 1;
     server.accept_client(NativeRoute::Udp(other.local_addr()?), &wire, 1000, start)?;
     assert!(server.needs_client_capacity(start));
     assert_eq!(server.peer_count(), 1);
+    assert!(
+        server
+            .client_admission_snapshot_v1(start)
+            .unwrap()
+            .authenticated_waiting
+    );
+    assert!(
+        !server
+            .client_admission_snapshot_v1(start + Duration::from_secs(5))
+            .unwrap()
+            .authenticated_waiting,
+        "exact original deadline ends demand even before the next poll"
+    );
     assert!(
         !server.needs_client_capacity(later),
         "expired offer cannot demand eviction"
@@ -201,5 +223,60 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
     server.admit_waiting_client(later)?;
     assert!(server.waiting_client.is_none());
     assert_eq!(server.peer_count(), 1);
+    Ok(())
+}
+
+#[test]
+fn admission_snapshot_tracks_verified_waiter_without_evicting_existing_peer() -> Result<()> {
+    use crate::product_overlay::{handshake_wire, NodeHandshakeInitiatorV1};
+    let key = SigningKey::from_bytes(&[234; 32]);
+    let start = Instant::now();
+    let mut server = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        key.clone(),
+        1,
+        vec![17],
+        NativeHandshakeBudget {
+            lifetime: Duration::from_secs(5),
+            retry: Duration::from_millis(5),
+        },
+    )?;
+    server.update_client_capacity(1)?;
+    let target = peer_id_from_ed25519_public_key_v1(&key.verifying_key().to_bytes());
+    let sources = [
+        UdpSocket::bind("127.0.0.1:0")?,
+        UdpSocket::bind("127.0.0.1:0")?,
+    ];
+    for (index, source) in sources.iter().enumerate() {
+        let offer = NodeHandshakeInitiatorV1::start(
+            &SigningKey::from_bytes(&[235 + index as u8; 32]),
+            target.clone(),
+            1000,
+            1000,
+        )?;
+        server.accept_client(
+            NativeRoute::Udp(source.local_addr()?),
+            &handshake_wire::encode_offer(offer.offer())?,
+            1000,
+            start,
+        )?;
+    }
+    let snapshot = server.client_admission_snapshot_v1(start).unwrap();
+    assert_eq!(snapshot.peer_count, 1);
+    assert_eq!(snapshot.capacity, 1);
+    assert!(snapshot.authenticated_waiting);
+    // Only the existing owner changes capacity. Observing demand never does.
+    assert_eq!(server.peer_count(), 1);
+    server.update_client_capacity(2)?;
+    server.admit_waiting_client(start)?;
+    let snapshot = server.client_admission_snapshot_v1(start).unwrap();
+    assert_eq!(snapshot.peer_count, 2);
+    assert!(!snapshot.authenticated_waiting);
+    assert_eq!(server.peer_indices().collect::<Vec<_>>(), vec![0, 1]);
+    server.update_client_capacity(1)?;
+    let snapshot = server.client_admission_snapshot_v1(start).unwrap();
+    assert_eq!(snapshot.peer_count, 2);
+    assert_eq!(snapshot.capacity, 1);
+    assert!(!snapshot.authenticated_waiting, "shrink is not new demand");
     Ok(())
 }

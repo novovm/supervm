@@ -2,7 +2,10 @@
 //! handshake, frame, window repair, pacing and reassembly implementations.
 //! No body encoding/decoding, business execution, consensus rules or worker.
 use super::{
-    endpoint::{NativeEndpoint, NativePeerRetirement, NativePoll, NativeSessionChange},
+    endpoint::{
+        NativeClientAdmissionSnapshotV1, NativeEndpoint, NativePeerRetirement, NativePoll,
+        NativeSessionChange,
+    },
     fragments::{
         CompletedMessage, FragmentAdmission, FragmentProfile, OutgoingMessage, ReassemblyLimits,
     },
@@ -293,6 +296,15 @@ impl NativeObjectLink {
     pub fn peer_id(&self, peer: usize) -> Result<&str> {
         self.endpoint.peer_id(peer)
     }
+    /// Read-only, local listener demand for the existing resource owner. A
+    /// rejected datagram is not evidence of authenticated admission demand.
+    pub fn client_admission_snapshot_v1(
+        &self,
+        now: Instant,
+    ) -> Option<NativeClientAdmissionSnapshotV1> {
+        self.endpoint.client_admission_snapshot_v1(now)
+    }
+
     pub fn peer_count(&self) -> usize {
         self.endpoint.peer_count()
     }

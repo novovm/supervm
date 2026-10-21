@@ -17,6 +17,7 @@ use crate::{
     },
     product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
     product_service_lease::{NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7},
+    service_concurrency::ServiceExecutionTimingV1,
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Result};
@@ -413,6 +414,13 @@ impl MailboxServiceV1 {
     /// identity/contact policy before and after awaiting this method.
     /// Transport negotiation belongs to authenticated network streams only.
     pub async fn request_local_v1(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        self.request_local_timed(request, None).await
+    }
+    pub(crate) async fn request_local_timed(
+        &self,
+        request: MailboxRequestV1,
+        timing: Option<&ServiceExecutionTimingV1>,
+    ) -> Result<MailboxReplyV1> {
         if matches!(
             &request,
             MailboxRequestV1::BeginSession
@@ -422,8 +430,10 @@ impl MailboxServiceV1 {
         ) {
             return Ok(MailboxReplyV1::Rejected(MailboxRejectionV1::Invalid));
         }
+        let waiting = timing.map(ServiceExecutionTimingV1::wait);
         self.admit_request_v4().await?;
-        self.execute(request).await
+        drop(waiting);
+        self.execute_timed(request, timing).await
     }
 
     /// Local platform control, not remotely callable. Uses the same fair store
@@ -485,6 +495,13 @@ impl MailboxServiceV1 {
         .await?
     }
     async fn execute(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+        self.execute_timed(request, None).await
+    }
+    async fn execute_timed(
+        &self,
+        request: MailboxRequestV1,
+        timing: Option<&ServiceExecutionTimingV1>,
+    ) -> Result<MailboxReplyV1> {
         let counter = match &request {
             MailboxRequestV1::Put { .. } => &self.timings.put,
             MailboxRequestV1::Fetch { .. } => &self.timings.fetch,
@@ -495,12 +512,16 @@ impl MailboxServiceV1 {
             _ => &self.timings.other,
         };
         let sample = counter.start();
-        let reply = self.execute_inner(request).await?;
+        let reply = self.execute_inner(request, timing).await?;
         sample.complete(matches!(&reply, MailboxReplyV1::Rejected(_)));
         Ok(reply)
     }
 
-    async fn execute_inner(&self, request: MailboxRequestV1) -> Result<MailboxReplyV1> {
+    async fn execute_inner(
+        &self,
+        request: MailboxRequestV1,
+        timing: Option<&ServiceExecutionTimingV1>,
+    ) -> Result<MailboxReplyV1> {
         if let MailboxRequestV1::EndpointDeliverV1 {
             mailbox,
             write,
@@ -570,15 +591,20 @@ impl MailboxServiceV1 {
         if let MailboxRequestV1::WatchFetchV6 { boxes, wait_ms } = &request {
             return self.watch_inner(boxes, *wait_ms, true).await;
         }
+        // Exclude deliberate store admission, blocking-worker scheduling and
+        // mutex queueing, but retain actual validation/SQLite/durability work.
+        let waiting = timing.map(ServiceExecutionTimingV1::wait);
         let permit = self.slots.clone().acquire_owned().await?;
         let store = self.store.clone();
         let signer = self.signer.clone();
         let changed = self.changed.clone();
+        let timing = timing.cloned();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let mut store = store
                 .lock()
                 .map_err(|_| anyhow::anyhow!("mailbox store unavailable"))?;
+            drop(waiting);
             let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
@@ -702,12 +728,20 @@ impl MailboxServiceV1 {
                 Err(error) => MailboxReplyV1::Rejected(match error {
                     StoreError::Unauthorized => MailboxRejectionV1::Unauthorized,
                     StoreError::Invalid | StoreError::Random => MailboxRejectionV1::Invalid,
-                    StoreError::Quota => MailboxRejectionV1::Quota,
+                    StoreError::Quota => {
+                        if let Some(timing) = &timing {
+                            timing.note_store_rejection(false);
+                        }
+                        MailboxRejectionV1::Quota
+                    }
                     StoreError::Conflict => MailboxRejectionV1::Conflict,
                     StoreError::Consumed => MailboxRejectionV1::Consumed,
                     StoreError::Database(rusqlite::Error::SqliteFailure(code, _))
                         if code.code == rusqlite::ErrorCode::DiskFull =>
                     {
+                        if let Some(timing) = &timing {
+                            timing.note_store_rejection(true);
+                        }
                         MailboxRejectionV1::Quota
                     }
                     StoreError::Database(_) | StoreError::ClockRollback => {
@@ -1701,6 +1735,153 @@ mod notification_tests {
         }
         assert!(budget.take().is_some());
     }
+    #[tokio::test(flavor = "current_thread")]
+    async fn timed_local_work_waits_for_real_store_queue_and_keeps_authorization() -> Result<()> {
+        use crate::service_concurrency::{
+            ResourcePressureV1, ResourceSnapshotV1, ServiceConcurrencyV1,
+        };
+        let dir = tempfile::tempdir()?;
+        let mut store = MailboxStore::open(dir.path().join("timing.db"), Default::default())?;
+        let grant = store.create(now()?, 600)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[73; 32]));
+        let controller = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            available_memory_bytes: 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let mut permit = controller.try_acquire_work(4096).unwrap();
+        let timing = permit.execution_timing();
+        let held = service.slots.clone().acquire_owned().await?;
+        let work = timing.measure(service.request_local_timed(
+            MailboxRequestV1::Fetch {
+                mailbox: grant.id,
+                read: [99; 32],
+            },
+            Some(&timing),
+        ));
+        tokio::pin!(work);
+        assert!(futures_util::poll!(&mut work).is_pending());
+        assert_eq!(controller.snapshot().active_work, 1);
+        assert_eq!(controller.snapshot().completed_work, 0);
+        assert_eq!(controller.snapshot().reserved_bytes, 4096);
+        drop(held);
+        assert!(matches!(
+            work.await?,
+            MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)
+        ));
+        permit.completed();
+        assert_eq!(controller.snapshot().active_work, 0);
+        assert_eq!(controller.snapshot().reserved_bytes, 4096);
+        drop(permit);
+        assert_eq!(controller.snapshot().reserved_bytes, 0);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn timed_token_wait_remains_cancellable_without_feedback_or_store_access() -> Result<()> {
+        use crate::service_concurrency::{
+            ResourcePressureV1, ResourceSnapshotV1, ServiceConcurrencyV1,
+        };
+        let dir = tempfile::tempdir()?;
+        let service = MailboxServiceV1::new(
+            MailboxStore::open(dir.path().join("rate.db"), Default::default())?,
+            SigningKey::from_bytes(&[74; 32]),
+        )
+        .with_continuous_request_rate_v4(1, 1)?;
+        service.admit_request_v4().await?;
+        let controller = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            available_memory_bytes: 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let permit = controller.try_acquire_work(4096).unwrap();
+        let before = controller.snapshot().work_limit;
+        let timing = permit.execution_timing();
+        {
+            let work = timing.measure(service.request_local_timed(
+                MailboxRequestV1::Register {
+                    mailbox: [1; 32],
+                    write: [2; 32],
+                    read: [3; 32],
+                    expires: now()? + 600,
+                },
+                Some(&timing),
+            ));
+            tokio::pin!(work);
+            assert!(futures_util::poll!(&mut work).is_pending());
+            assert_eq!(
+                service.slots.available_permits(),
+                1,
+                "token wait has not entered store"
+            );
+            assert_eq!(controller.snapshot().active_work, 1);
+        } // same cancellation behavior as the original request timeout
+        drop(permit);
+        assert_eq!(controller.snapshot().completed_work, 0);
+        assert_eq!(controller.snapshot().active_work, 0);
+        assert_eq!(controller.snapshot().reserved_bytes, 0);
+        assert_eq!(controller.snapshot().work_limit, before);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_timed_blocking_commit_keeps_custody_without_success_feedback() -> Result<()>
+    {
+        use crate::service_concurrency::{
+            ResourcePressureV1, ResourceSnapshotV1, ServiceConcurrencyV1,
+        };
+        let dir = tempfile::tempdir()?;
+        let mut store =
+            MailboxStore::open(dir.path().join("cancel-timing.db"), Default::default())?;
+        let grant = store.create(now()?, 600)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[75; 32]));
+        let controller = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            available_memory_bytes: 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let permit = controller.try_acquire_work(4096).unwrap();
+        let timing = permit.execution_timing();
+        let held_store = service.store.lock().unwrap();
+        {
+            let work = timing.measure(service.request_local_timed(
+                MailboxRequestV1::Put {
+                    mailbox: grant.id,
+                    write: *grant.write.as_bytes(),
+                    object: [6; 32],
+                    ciphertext: vec![7; 32],
+                    expires: now()? + 300,
+                },
+                Some(&timing),
+            ));
+            tokio::pin!(work);
+            assert!(futures_util::poll!(&mut work).is_pending());
+            assert_eq!(
+                service.slots.available_permits(),
+                0,
+                "blocking commit owns the store slot but cannot pass the held lock"
+            );
+        } // dropping JoinHandle cannot undo an already submitted durable worker
+        drop(permit);
+        assert_eq!(controller.snapshot().completed_work, 0);
+        drop(held_store);
+        // Same fair store slot gives a deterministic completion barrier: no sleeps.
+        let reply = service
+            .execute(MailboxRequestV1::Fetch {
+                mailbox: grant.id,
+                read: *grant.read.as_bytes(),
+            })
+            .await?;
+        assert!(
+            matches!(reply, MailboxReplyV1::Object { object, ciphertext, .. }
+            if object == [6;32] && ciphertext == vec![7;32])
+        );
+        assert_eq!(controller.snapshot().completed_work, 0);
+        assert_eq!(controller.snapshot().active_work, 0);
+        assert_eq!(controller.snapshot().reserved_bytes, 0);
+        Ok(())
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn app_disk_full_rejects_put_without_receipt_and_recovers_after_limit_change(
     ) -> Result<()> {

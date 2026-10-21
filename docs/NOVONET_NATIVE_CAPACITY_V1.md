@@ -258,3 +258,21 @@ A normalized tracked-source comparison also verified all 508 WSL build inputs
 match pre-fix HEAD58d89c45; the two new source files must be synchronized and all
 candidate binaries rebuilt before deployment. Existing old binaries are not
 relabeled as current-source artifacts.
+
+## Admission waiting and verified UDP demand (candidate after v95)
+
+Native execution feedback now measures the work future itself, excluding explicit
+token, store-slot, blocking-worker and store-lock queue waits. These waits retain
+the same bounded admission/memory and original request deadline. Actual validation,
+store work and response preparation remain measured; embedded endpoint-handler
+waits remain included, so this is not a pure CPU-time metric. Reply ACK retention
+and cancellation after a durable commit keep their existing semantics.
+
+The existing UDP owner now receives a local snapshot of peer count, capacity and
+the original verified, unexpired waiting offer. Such an offer records demand;
+growth still requires useful completions and resource allowance. Rejected unsigned
+traffic and a resource-driven shrink do not establish demand. Local aggregate
+rejection counters separate connection/work/Watch admission from store quota and
+SQLite DiskFull; reasons may overlap within one rejected request. No protocol,
+timer, request-rate or capacity constant is increased. Phone performance remains
+pending until the coordinated candidate is installed and measured.

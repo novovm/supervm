@@ -116,6 +116,16 @@ impl NativeReceivedFrame {
     }
 }
 
+/// Local listener accounting only. No peer identifiers or wire metadata.
+/// A verified waiting offer expresses demand, never permission to enlarge a
+/// resource budget or displace an active authenticated peer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeClientAdmissionSnapshotV1 {
+    pub peer_count: usize,
+    pub capacity: usize,
+    pub authenticated_waiting: bool,
+}
+
 #[derive(Default)]
 pub struct NativePoll {
     pub frames: Vec<NativeReceivedFrame>,
@@ -598,6 +608,25 @@ impl NativeEndpoint {
         }
         Ok(())
     }
+    /// Read the original admission state without changing its deadline. The
+    /// waiting slot is populated only after signature/domain/time/replay checks
+    /// in accept_client; malformed offers and resource shrink are not demand.
+    pub fn client_admission_snapshot_v1(
+        &self,
+        now: Instant,
+    ) -> Option<NativeClientAdmissionSnapshotV1> {
+        let open = self.open.as_ref()?;
+        Some(NativeClientAdmissionSnapshotV1 {
+            peer_count: self.peers.len(),
+            capacity: open.limit,
+            authenticated_waiting: self
+                .waiting_client
+                .as_ref()
+                .and_then(|peer| peer.reconnect.as_ref())
+                .is_some_and(|pending| now < pending.deadline),
+        })
+    }
+
     pub(crate) fn needs_client_capacity(&self, now: Instant) -> bool {
         self.open.as_ref().is_some_and(|open| {
             self.peers.len() > open.limit

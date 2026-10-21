@@ -574,6 +574,15 @@ async fn serve_link(
         let report = link
             .poll(now_ms()?, now, QUANTUM)
             .map_err(|error| readiness.link_error(error))?;
+        if let (Some(controller), Some(snapshot)) =
+            (concurrency.as_ref(), link.client_admission_snapshot_v1(now))
+        {
+            controller.observe_native_admission(
+                snapshot.peer_count,
+                snapshot.capacity,
+                snapshot.authenticated_waiting,
+            );
+        }
         outbound = outbound.saturating_sub(report.completed.len());
         for completed in &report.completed {
             sending.retain(|(_, response, _permit)| !response.transport_complete(completed));
@@ -674,6 +683,14 @@ async fn serve_link(
                             || permit.is_none()
                             || (concurrency.is_some() && work_permit.is_none())
                         {
+                            // A controller rejection already counted this attempt.
+                            // Count the per-peer Watch policy only when its work
+                            // permit was admitted, so one request is not counted twice.
+                            if watch_saturated && work_permit.is_some() {
+                                if let Some(controller) = &concurrency {
+                                    controller.note_watch_admission_rejection();
+                                }
+                            }
                             // The resource-derived Watch budget, one per peer,
                             // leaves ordinary Put/Fetch/Consume work available.
                             if let Ok(response) = work.reject_quota(service, authority) {
@@ -690,6 +707,9 @@ async fn serve_link(
                                 .context("native job sequence exhausted")?;
                             let id = next_job;
                             let (abort, registration) = AbortHandle::new_pair();
+                            let timing = work_permit
+                                .as_ref()
+                                .map(ServiceWorkPermitV1::execution_timing);
                             jobs.insert(
                                 id,
                                 Job {
@@ -705,7 +725,7 @@ async fn serve_link(
                                     (
                                         id,
                                         Abortable::new(
-                                            work.execute(service, authority),
+                                            work.execute_timed(service, authority, timing.as_ref()),
                                             registration,
                                         )
                                         .await,

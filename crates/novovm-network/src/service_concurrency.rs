@@ -59,6 +59,16 @@ pub struct ServiceConcurrencySnapshotV1 {
     pub resources: ResourceSnapshotV1,
     pub admitted_work: u64,
     pub completed_work: u64,
+    /// Local attempt counters, not unique clients or remote service receipts.
+    pub connection_admission_rejections: u64,
+    pub work_admission_rejections: u64,
+    pub watch_admission_rejections: u64,
+    pub store_quota_rejections: u64,
+    pub store_full_rejections: u64,
+    /// Last observation of the native UDP listener, never a carrier claim.
+    pub native_peer_count: usize,
+    pub native_peer_capacity: usize,
+    pub native_authenticated_waiting: bool,
     pub connection_limit: usize,
     pub work_limit: usize,
     pub work_ceiling: usize,
@@ -84,6 +94,14 @@ impl ServiceConcurrencySnapshotV1 {
 struct State {
     admitted: u64,
     completed: u64,
+    connection_admission_rejections: u64,
+    work_admission_rejections: u64,
+    watch_admission_rejections: u64,
+    store_quota_rejections: u64,
+    store_full_rejections: u64,
+    native_peer_count: usize,
+    native_peer_capacity: usize,
+    native_authenticated_waiting: bool,
     resources: ResourceSnapshotV1,
     target: usize,
     demand: bool,
@@ -109,6 +127,14 @@ impl ServiceConcurrencyV1 {
             state: Mutex::new(State {
                 admitted: 0,
                 completed: 0,
+                connection_admission_rejections: 0,
+                work_admission_rejections: 0,
+                watch_admission_rejections: 0,
+                store_quota_rejections: 0,
+                store_full_rejections: 0,
+                native_peer_count: 0,
+                native_peer_capacity: 0,
+                native_authenticated_waiting: false,
                 resources,
                 target: resources.cpu_parallelism.max(1),
                 demand: false,
@@ -199,6 +225,14 @@ impl ServiceConcurrencyV1 {
             resources: s.resources,
             admitted_work: s.admitted,
             completed_work: s.completed,
+            connection_admission_rejections: s.connection_admission_rejections,
+            work_admission_rejections: s.work_admission_rejections,
+            watch_admission_rejections: s.watch_admission_rejections,
+            store_quota_rejections: s.store_quota_rejections,
+            store_full_rejections: s.store_full_rejections,
+            native_peer_count: s.native_peer_count,
+            native_peer_capacity: s.native_peer_capacity,
+            native_authenticated_waiting: s.native_authenticated_waiting,
             connection_limit,
             work_limit: work,
             work_ceiling: ceiling,
@@ -264,6 +298,21 @@ impl ServiceConcurrencyV1 {
     pub fn note_demand(&self) {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).demand = true;
     }
+    pub(crate) fn observe_native_admission(&self, peers: usize, capacity: usize, waiting: bool) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        s.native_peer_count = peers;
+        s.native_peer_capacity = capacity;
+        s.native_authenticated_waiting = waiting;
+        if waiting {
+            // Only a verified, unexpired handshake supplies this demand. It
+            // still cannot grow capacity without measured useful completions.
+            s.demand = true;
+        }
+    }
+    pub(crate) fn note_watch_admission_rejection(&self) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        s.watch_admission_rejections = s.watch_admission_rejections.saturating_add(1);
+    }
     pub fn try_acquire_work(self: &Arc<Self>, bytes: usize) -> Option<ServiceWorkPermitV1> {
         self.acquire_work(bytes, false)
     }
@@ -286,6 +335,11 @@ impl ServiceConcurrencyV1 {
             limit.retained_bytes
         };
         if slots_full || bytes > memory_limit.saturating_sub(s.bytes) {
+            if waiting {
+                s.watch_admission_rejections = s.watch_admission_rejections.saturating_add(1);
+            } else {
+                s.work_admission_rejections = s.work_admission_rejections.saturating_add(1);
+            }
             s.demand = true;
             return None;
         }
@@ -299,6 +353,7 @@ impl ServiceConcurrencyV1 {
             owner: self.clone(),
             bytes,
             started: Instant::now(),
+            timing: ServiceExecutionTimingV1::for_owner(self),
             complete: false,
             waiting,
         })
@@ -375,29 +430,104 @@ impl Drop for ServiceTransportPermitV1 {
         s.transport_bytes = s.transport_bytes.saturating_sub(self.bytes);
     }
 }
+/// Per-work local timing only. Admission, transport and memory ownership stay
+/// with the existing permit. Explicit policy/queue waits are excluded from
+/// execution feedback; this is service elapsed time, not a CPU-time counter.
+#[derive(Clone, Default)]
+pub(crate) struct ServiceExecutionTimingV1(Arc<Mutex<ExecutionTiming>>);
+#[derive(Default)]
+struct ExecutionTiming {
+    owner: std::sync::Weak<ServiceConcurrencyV1>,
+    excluded: Duration,
+    elapsed: Option<Duration>,
+}
+impl ServiceExecutionTimingV1 {
+    fn for_owner(owner: &Arc<ServiceConcurrencyV1>) -> Self {
+        Self(Arc::new(Mutex::new(ExecutionTiming {
+            owner: Arc::downgrade(owner),
+            ..Default::default()
+        })))
+    }
+    pub(crate) fn note_store_rejection(&self, disk_full: bool) {
+        let owner = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .owner
+            .upgrade();
+        if let Some(owner) = owner {
+            let mut s = owner.state.lock().unwrap_or_else(|e| e.into_inner());
+            let counter = if disk_full {
+                &mut s.store_full_rejections
+            } else {
+                &mut s.store_quota_rejections
+            };
+            *counter = counter.saturating_add(1);
+        }
+    }
+    pub(crate) fn wait(&self) -> ServiceExecutionWaitV1 {
+        ServiceExecutionWaitV1 {
+            timing: self.clone(),
+            started: Instant::now(),
+        }
+    }
+    pub(crate) async fn measure<T>(&self, work: impl std::future::Future<Output = T>) -> T {
+        // Begin on first poll, not when the owner queues the future. Finish
+        // before the owner observes the result, not at a later network tick.
+        let started = Instant::now();
+        let result = work.await;
+        self.finish(started.elapsed());
+        result
+    }
+    fn finish(&self, wall: Duration) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.elapsed = Some(wall.saturating_sub(state.excluded));
+    }
+    fn elapsed(&self) -> Option<Duration> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).elapsed
+    }
+}
+pub(crate) struct ServiceExecutionWaitV1 {
+    timing: ServiceExecutionTimingV1,
+    started: Instant,
+}
+impl Drop for ServiceExecutionWaitV1 {
+    fn drop(&mut self) {
+        let mut state = self.timing.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.excluded = state.excluded.saturating_add(self.started.elapsed());
+    }
+}
+
 pub struct ServiceWorkPermitV1 {
     owner: Arc<ServiceConcurrencyV1>,
     bytes: usize,
     started: Instant,
+    timing: ServiceExecutionTimingV1,
     complete: bool,
     waiting: bool,
 }
 impl ServiceWorkPermitV1 {
+    pub(crate) fn execution_timing(&self) -> ServiceExecutionTimingV1 {
+        self.timing.clone()
+    }
     /// Execution is finished; waiting for the reply's transport ACK retains
     /// bytes only, not CPU/Watch capacity or a remote-latency service sample.
     pub fn completed(&mut self) {
         if !self.complete {
-            self.owner.complete_work(self.started.elapsed(), self.waiting);
+            self.owner.complete_work(
+                self.timing
+                    .elapsed()
+                    .unwrap_or_else(|| self.started.elapsed()),
+                self.waiting,
+            );
             self.complete = true;
         }
     }
 }
 impl Drop for ServiceWorkPermitV1 {
     fn drop(&mut self) {
-        self.owner.release_work(
-            self.bytes,
-            (!self.complete).then_some(self.waiting),
-        );
+        self.owner
+            .release_work(self.bytes, (!self.complete).then_some(self.waiting));
     }
 }
 
@@ -497,7 +627,15 @@ impl AdaptiveAdmissionV1 {
         };
         if result.is_err() {
             if let Some(c) = &self.controller {
-                c.note_demand();
+                let mut s = c.state.lock().unwrap_or_else(|e| e.into_inner());
+                s.demand = true;
+                if matches!(
+                    self.kind,
+                    AdmissionKind::Connections | AdmissionKind::Inbound
+                ) {
+                    s.connection_admission_rejections =
+                        s.connection_admission_rejections.saturating_add(1);
+                }
             }
         }
         result
@@ -638,7 +776,9 @@ mod tests {
         assert_eq!(c.snapshot().waiting_watch_limit, 1);
         assert_eq!(c.snapshot().active_work, watches.len());
         assert!(c.try_acquire_watch(1).is_none());
-        let data = c.try_acquire_work(4096).expect("shrink leaves data progress");
+        let data = c
+            .try_acquire_work(4096)
+            .expect("shrink leaves data progress");
         drop(data);
         while watches.len() > c.snapshot().waiting_watch_limit {
             drop(watches.pop());
@@ -676,9 +816,7 @@ mod tests {
             available_memory_bytes: 1024 * MIB,
             pressure: ResourcePressureV1::Normal,
         });
-        let mut replies: Vec<_> = (0..2)
-            .map(|_| c.try_acquire_work(4096).unwrap())
-            .collect();
+        let mut replies: Vec<_> = (0..2).map(|_| c.try_acquire_work(4096).unwrap()).collect();
         assert!(c.try_acquire_work(1).is_none());
         for permit in &mut replies {
             // Fixed local service sample; no sleep or remote RTT in this test.
@@ -709,6 +847,111 @@ mod tests {
         assert_eq!(c.snapshot().active_work, 0);
         assert_eq!(c.snapshot().reserved_bytes, 0);
     }
+    #[test]
+    fn policy_and_queue_waits_do_not_reduce_execution_feedback() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let before = c.snapshot().work_limit;
+        c.state.lock().unwrap().service_us = 10_000;
+        let mut permit = c.try_acquire_work(4096).unwrap();
+        let timing = permit.execution_timing();
+        // Fixed phase accounting, independent of wall-clock scheduler speed:
+        // 600 ms token wait + 400 ms store/worker queue + 10 ms useful work.
+        timing.0.lock().unwrap().excluded = Duration::from_secs(1);
+        timing.finish(Duration::from_millis(1010));
+        permit.started = Instant::now() - Duration::from_secs(30);
+        permit.completed();
+        assert_eq!(c.snapshot().work_limit, before);
+        assert_eq!(c.state.lock().unwrap().service_us, 10_000);
+        assert_eq!(c.snapshot().active_work, 0);
+        assert_eq!(c.snapshot().reserved_bytes, 4096, "reply still awaits ACK");
+        drop(permit);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+
+        // Equally long actual service, without the excluded waits, must still
+        // produce the original adaptive backoff. This is not a relaxed limit.
+        let mut slow = c.try_acquire_work(4096).unwrap();
+        slow.execution_timing().finish(Duration::from_millis(1010));
+        slow.completed();
+        assert_eq!(c.snapshot().work_limit, (before / 2).max(1));
+    }
+
+    #[test]
+    fn waiting_work_keeps_admission_memory_and_cancellation_semantics() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let before = c.snapshot().work_limit;
+        let permits: Vec<_> = (0..before)
+            .map(|_| c.try_acquire_work(4096).unwrap())
+            .collect();
+        let waiting = permits[0].execution_timing().wait();
+        assert!(c.try_acquire_work(1).is_none(), "waiting is still bounded");
+        assert_eq!(c.snapshot().reserved_bytes, before * 4096);
+        drop(waiting);
+        drop(permits);
+        assert_eq!(c.snapshot().active_work, 0);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+        assert_eq!(c.snapshot().completed_work, 0, "cancel is not useful work");
+        assert_eq!(c.snapshot().work_limit, before);
+    }
+
+    #[tokio::test]
+    async fn execution_measurement_finishes_before_owner_observation() {
+        let timing = ServiceExecutionTimingV1::default();
+        assert_eq!(timing.measure(async { 7 }).await, 7);
+        let measured = timing.elapsed().expect("future result fixes its sample");
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let mut permit = c.try_acquire_work(4096).unwrap();
+        permit.timing = timing;
+        permit.started = Instant::now() - Duration::from_secs(30);
+        permit.completed();
+        assert_eq!(
+            c.state.lock().unwrap().service_us,
+            measured.as_micros() as u64
+        );
+    }
+
+    #[test]
+    fn rejection_counters_separate_admission_and_store_causes() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let limits = c.snapshot();
+        assert!(c.try_acquire_work(limits.retained_bytes + 1).is_none());
+        assert!(c.try_acquire_watch(limits.retained_bytes / 2 + 1).is_none());
+        let gate = AdaptiveAdmissionV1::new(1, Some(c.clone()), AdmissionKind::Inbound, 1);
+        let held = gate.clone().try_acquire_owned().unwrap();
+        assert!(gate.try_acquire_owned().is_err());
+        let permit = c.try_acquire_work(4096).unwrap();
+        permit.execution_timing().note_store_rejection(false);
+        permit.execution_timing().note_store_rejection(true);
+        let snapshot = c.snapshot();
+        assert_eq!(snapshot.connection_admission_rejections, 1);
+        assert_eq!(snapshot.work_admission_rejections, 1);
+        assert_eq!(snapshot.watch_admission_rejections, 1);
+        assert_eq!(snapshot.store_quota_rejections, 1);
+        assert_eq!(snapshot.store_full_rejections, 1);
+        assert_eq!(snapshot.completed_work, 0);
+        drop((held, permit));
+    }
+
+    #[test]
+    fn authenticated_udp_demand_requires_real_work_before_capacity_growth() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let old = c.snapshot();
+        c.observe_native_admission(old.inbound_connections(), old.inbound_connections(), true);
+        assert_eq!(c.snapshot().work_limit, old.work_limit);
+        assert!(c.snapshot().native_authenticated_waiting);
+        for _ in 0..old.work_limit.max(2) {
+            let mut p = c.try_acquire_work(4096).unwrap();
+            p.execution_timing().finish(Duration::from_millis(1));
+            p.completed();
+        }
+        assert!(c.snapshot().work_limit > old.work_limit);
+        c.observe_native_admission(
+            old.inbound_connections() + 1,
+            c.snapshot().inbound_connections(),
+            false,
+        );
+        assert!(!c.snapshot().native_authenticated_waiting);
+    }
+
     #[test]
     fn completed_reply_memory_remains_bounded_through_pressure_shrink() {
         let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));

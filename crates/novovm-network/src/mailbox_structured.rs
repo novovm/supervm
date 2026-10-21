@@ -768,12 +768,24 @@ pub async fn execute_local_batch(
     context: [u8; 32],
     authority: impl Fn() -> Result<()>,
 ) -> Result<Zeroizing<Vec<u8>>> {
+    execute_local_batch_timed(service, bytes, context, authority, None).await
+}
+
+pub(crate) async fn execute_local_batch_timed(
+    service: &MailboxServiceV1,
+    bytes: &[u8],
+    context: [u8; 32],
+    authority: impl Fn() -> Result<()>,
+    timing: Option<&crate::service_concurrency::ServiceExecutionTimingV1>,
+) -> Result<Zeroizing<Vec<u8>>> {
     authority()?;
     let batch = RequestBatch::decode(bytes, context)?;
     let mut replies = Vec::with_capacity(batch.len());
     for row in 0..batch.len() {
         authority()?;
-        let reply = service.request_local_v1(batch.request(row)?).await?;
+        let reply = service
+            .request_local_timed(batch.request(row)?, timing)
+            .await?;
         authority()?;
         replies.push(reply);
     }

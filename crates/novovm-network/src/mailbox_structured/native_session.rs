@@ -968,6 +968,27 @@ impl MailboxWork {
         service: &MailboxServiceV1,
         authority: impl Fn() -> Result<()>,
     ) -> Result<MailboxResponse> {
+        self.execute_timed(service, authority, None).await
+    }
+    pub(crate) async fn execute_timed(
+        self,
+        service: &MailboxServiceV1,
+        authority: impl Fn() -> Result<()>,
+        timing: Option<&crate::service_concurrency::ServiceExecutionTimingV1>,
+    ) -> Result<MailboxResponse> {
+        let work = self.execute_inner_timed(service, authority, timing);
+        if let Some(timing) = timing {
+            timing.measure(work).await
+        } else {
+            work.await
+        }
+    }
+    async fn execute_inner_timed(
+        self,
+        service: &MailboxServiceV1,
+        authority: impl Fn() -> Result<()>,
+        timing: Option<&crate::service_concurrency::ServiceExecutionTimingV1>,
+    ) -> Result<MailboxResponse> {
         ensure!(
             Instant::now() < self.deadline,
             "mailbox work expired before execution"
@@ -991,10 +1012,16 @@ impl MailboxWork {
         }
         let bytes = tokio::time::timeout_at(
             self.deadline.into(),
-            execute_local_batch(service, &self.bytes, self.context, || {
-                self.guard.check()?;
-                authority()
-            }),
+            execute_local_batch_timed(
+                service,
+                &self.bytes,
+                self.context,
+                || {
+                    self.guard.check()?;
+                    authority()
+                },
+                timing,
+            ),
         )
         .await
         .context("mailbox deadline; outcome unknown")??;
