@@ -117,6 +117,7 @@ struct State {
     fast_completions: usize,
     active: usize,
     watches: usize,
+    saturation_generation: u64,
     bytes: usize,
     request_body_bytes: usize,
     transport_bytes: usize,
@@ -154,6 +155,7 @@ impl ServiceConcurrencyV1 {
                 fast_completions: 0,
                 active: 0,
                 watches: 0,
+                saturation_generation: 0,
                 bytes: 0,
                 request_body_bytes: 0,
                 transport_bytes: 0,
@@ -369,6 +371,14 @@ impl ServiceConcurrencyV1 {
         if waiting {
             s.watches += 1;
         }
+        let admitted_at_capacity =
+            !waiting && s.active.saturating_sub(s.watches) >= limit.work_limit;
+        if admitted_at_capacity {
+            // Local evidence only, not an identity/authorization sequence. A
+            // generation lets earlier work remember overlap even if all other
+            // handlers finish before that work's result is observed.
+            s.saturation_generation = s.saturation_generation.wrapping_add(1);
+        }
         s.bytes += bytes;
         Some(ServiceWorkPermitV1 {
             owner: self.clone(),
@@ -377,20 +387,37 @@ impl ServiceConcurrencyV1 {
             timing: ServiceExecutionTimingV1::for_owner(self),
             complete: false,
             waiting,
+            saturation_generation: s.saturation_generation,
+            admitted_at_capacity,
         })
     }
-    fn complete_work(&self, elapsed: Duration, waiting: bool) {
+    fn complete_work(
+        &self,
+        elapsed: Duration,
+        waiting: bool,
+        saturation_generation: u64,
+        admitted_at_capacity: bool,
+        finished_generation: Option<u64>,
+    ) {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        Self::finish_execution(&mut s, elapsed, true, waiting);
+        let observed_saturation = admitted_at_capacity
+            || saturation_generation != finished_generation.unwrap_or(s.saturation_generation);
+        Self::finish_execution(&mut s, elapsed, true, waiting, observed_saturation);
     }
     fn release_work(&self, bytes: usize, unfinished: Option<bool>) {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(waiting) = unfinished {
-            Self::finish_execution(&mut s, Duration::ZERO, false, waiting);
+            Self::finish_execution(&mut s, Duration::ZERO, false, waiting, false);
         }
         s.bytes = s.bytes.saturating_sub(bytes);
     }
-    fn finish_execution(s: &mut State, elapsed: Duration, success: bool, waiting: bool) {
+    fn finish_execution(
+        s: &mut State,
+        elapsed: Duration,
+        success: bool,
+        waiting: bool,
+        observed_saturation: bool,
+    ) {
         let active_work = s.active.saturating_sub(s.watches);
         s.active = s.active.saturating_sub(1);
         if success {
@@ -405,7 +432,11 @@ impl ServiceConcurrencyV1 {
         if !success {
             return;
         } // cancellation/network failure is not CPU pressure
-        if slowed || s.resources.pressure != ResourcePressureV1::Normal {
+          // Heterogeneous requests have different useful work: a single large
+          // commit being slower than metadata does not prove concurrency pressure.
+          // Only a saturated interval supplies latency-based backoff evidence;
+          // actual platform resource pressure remains independently authoritative.
+        if (slowed && observed_saturation) || s.resources.pressure != ResourcePressureV1::Normal {
             s.execution_backoffs = s.execution_backoffs.saturating_add(1);
             s.last_backoff_execution_us = us;
             s.last_backoff_baseline_us = s.service_us;
@@ -466,6 +497,7 @@ struct ExecutionTiming {
     owner: std::sync::Weak<ServiceConcurrencyV1>,
     excluded: Duration,
     elapsed: Option<Duration>,
+    finished_saturation_generation: Option<u64>,
 }
 impl ServiceExecutionTimingV1 {
     fn for_owner(owner: &Arc<ServiceConcurrencyV1>) -> Self {
@@ -506,11 +538,31 @@ impl ServiceExecutionTimingV1 {
         result
     }
     fn finish(&self, wall: Duration) {
+        let owner = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .owner
+            .upgrade();
+        let finished_saturation_generation = owner.map(|owner| {
+            owner
+                .state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .saturation_generation
+        });
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         state.elapsed = Some(wall.saturating_sub(state.excluded));
+        state.finished_saturation_generation = finished_saturation_generation;
     }
     fn elapsed(&self) -> Option<Duration> {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).elapsed
+    }
+    fn finished_saturation_generation(&self) -> Option<u64> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .finished_saturation_generation
     }
 }
 pub(crate) struct ServiceExecutionWaitV1 {
@@ -531,6 +583,8 @@ pub struct ServiceWorkPermitV1 {
     timing: ServiceExecutionTimingV1,
     complete: bool,
     waiting: bool,
+    saturation_generation: u64,
+    admitted_at_capacity: bool,
 }
 impl ServiceWorkPermitV1 {
     pub(crate) fn execution_timing(&self) -> ServiceExecutionTimingV1 {
@@ -545,6 +599,9 @@ impl ServiceWorkPermitV1 {
                     .elapsed()
                     .unwrap_or_else(|| self.started.elapsed()),
                 self.waiting,
+                self.saturation_generation,
+                self.admitted_at_capacity,
+                self.timing.finished_saturation_generation(),
             );
             self.complete = true;
         }
@@ -741,6 +798,10 @@ mod tests {
         let watch = c.try_acquire_watch(1024).unwrap();
         c.state.lock().unwrap().service_us = 10_000;
         let mut slow = c.try_acquire_work(4096).unwrap();
+        let concurrent: Vec<_> = (1..initial.work_limit)
+            .map(|_| c.try_acquire_work(4096).unwrap())
+            .collect();
+        drop(concurrent);
         slow.execution_timing().finish(Duration::from_millis(1010));
         slow.completed();
         let after = c.snapshot();
@@ -974,12 +1035,91 @@ mod tests {
         drop(permit);
         assert_eq!(c.snapshot().reserved_bytes, 0);
 
-        // Equally long actual service, without the excluded waits, must still
-        // produce the original adaptive backoff. This is not a relaxed limit.
+        // Equally long actual service under real concurrent saturation still
+        // produces backoff. A heterogeneous single request alone is not load.
         let mut slow = c.try_acquire_work(4096).unwrap();
+        let concurrent: Vec<_> = (1..before)
+            .map(|_| c.try_acquire_work(4096).unwrap())
+            .collect();
         slow.execution_timing().finish(Duration::from_millis(1010));
         slow.completed();
         assert_eq!(c.snapshot().work_limit, (before / 2).max(1));
+        drop(concurrent);
+    }
+
+    #[test]
+    fn isolated_slow_request_does_not_infer_concurrency_pressure() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let initial = c.snapshot();
+        c.state.lock().unwrap().service_us = 14_920;
+        let mut work = c.try_acquire_work(4096).unwrap();
+        work.execution_timing()
+            .finish(Duration::from_micros(628_899));
+        work.completed();
+        assert_eq!(c.snapshot().work_limit, initial.work_limit);
+        assert_eq!(c.snapshot().execution_backoffs, 0);
+        assert_eq!(c.snapshot().completed_work, 1);
+        assert_eq!(c.snapshot().reserved_bytes, 4096);
+        drop(work);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+    }
+
+    #[test]
+    fn completed_overlap_remains_saturation_evidence_for_slow_work() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let initial = c.snapshot();
+        c.state.lock().unwrap().service_us = 10_000;
+        let mut slow = c.try_acquire_work(4096).unwrap();
+        let mut concurrent: Vec<_> = (1..initial.work_limit)
+            .map(|_| c.try_acquire_work(4096).unwrap())
+            .collect();
+        for work in &mut concurrent {
+            work.execution_timing().finish(Duration::from_millis(10));
+            work.completed();
+        }
+        assert_eq!(c.snapshot().active_work, 1);
+        slow.execution_timing()
+            .finish(Duration::from_micros(628_899));
+        slow.completed();
+        assert_eq!(c.snapshot().work_limit, initial.work_limit / 2);
+        assert_eq!(c.snapshot().execution_backoffs, 1);
+        assert_eq!(c.snapshot().last_backoff_active_work, 1);
+        drop((slow, concurrent));
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+    }
+
+    #[test]
+    fn saturation_after_future_completion_does_not_change_its_feedback() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let initial = c.snapshot();
+        c.state.lock().unwrap().service_us = 14_920;
+        let mut finished = c.try_acquire_work(4096).unwrap();
+        finished
+            .execution_timing()
+            .finish(Duration::from_micros(628_899));
+        // Owner observation is delayed. Later admissions cannot retroactively
+        // turn the already-finished unsaturated operation into load evidence.
+        let later: Vec<_> = (1..initial.work_limit)
+            .map(|_| c.try_acquire_work(4096).unwrap())
+            .collect();
+        finished.completed();
+        assert_eq!(c.snapshot().work_limit, initial.work_limit);
+        assert_eq!(c.snapshot().execution_backoffs, 0);
+        drop((finished, later));
+    }
+
+    #[test]
+    fn platform_pressure_backs_off_without_saturated_or_slow_work() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let mut work = c.try_acquire_work(4096).unwrap();
+        c.update_resources(resources(ResourcePressureV1::Moderate));
+        let before = c.snapshot().work_limit;
+        work.execution_timing().finish(Duration::from_millis(1));
+        work.completed();
+        assert_eq!(c.snapshot().work_limit, before / 2);
+        assert_eq!(c.snapshot().execution_backoffs, 1);
+        drop(work);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
     }
 
     #[test]

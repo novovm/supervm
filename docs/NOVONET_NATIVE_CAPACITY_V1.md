@@ -293,3 +293,20 @@ execution elapsed, prior baseline and active non-Watch work at completion. They
 contain no addresses, identities or message contents. Existing slowdown/pressure
 policy is unchanged, and a recorded backoff alone does not establish CPU overload.
 This candidate requires rebuilt phone/node acceptance; v96 pressure remains NOT PASS.
+
+## Execution backoff requires an observed saturated interval (v98 candidate)
+
+The v97 phone test authenticated all eight clients in about0.22-0.24 seconds,
+but four Register requests on each phone met a latency-reduced work target.
+A pre-load backoff recorded628899us against14920us baseline with only one
+non-Watch work remaining. Metadata and durable device delivery do not have
+identical costs; elapsed time alone does not establish concurrency pressure.
+
+The existing work permit now remembers whether its own interval overlapped a
+full execution window. Latency-based reduction requires that evidence plus the
+existing slowdown comparison. Platform thermal/memory pressure still reduces
+admission independently. Generation at actual future completion is fixed with
+the measured elapsed sample, so later unrelated load does not retroactively
+change a completed request. Successful completion, bounded admission/memory,
+original deadlines, token waiting, cancellation and custody remain unchanged.
+This is a local controller correction, with no new scheduler, queue or protocol.
