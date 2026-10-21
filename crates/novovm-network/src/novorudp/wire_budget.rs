@@ -4,6 +4,13 @@
 //! 61 one-second buckets conservatively retain the oldest partial second, so
 //! every rolling 60-second interval fits the limit without per-packet allocation.
 //! Outstanding reservations remain charged separately until explicitly resolved.
+//!
+//! Large budgets are paced, not burst-then-blocked: one eighth of the limit is
+//! available immediately; above it each second admits at most the remaining
+//! seven eighths divided over 61 buckets. A window therefore never reaches the
+//! rolling hard limit through admitted traffic, so a burst can no longer drain
+//! the whole minute in seconds and then refuse every peer (including ACKs and
+//! handshakes) until it ages out. Small budgets keep the plain rolling limit.
 
 use super::carrier::{NativeDatagramIo, NativeRoute};
 use anyhow::{ensure, Result};
@@ -13,6 +20,9 @@ const MAX_PENDING_SENDS: usize = 64;
 
 pub const MIN_BYTES_PER_MINUTE: u64 = 2400;
 pub const MAX_BYTES_PER_MINUTE: u64 = 1024 * 1024 * 1024;
+/// Pacing applies only when each second can admit at least this much; smaller
+/// budgets could not carry one datagram per second and keep the rolling limit.
+const MIN_PACED_BYTES_PER_SECOND: u64 = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NativeWireUsage {
@@ -94,6 +104,24 @@ impl NativeWireBudget {
         self.usage
     }
 
+    /// Admission rule shared by ingress, UDP sends and held writes. `advance`
+    /// must already have run for `now`. Burst bytes in any window stay within
+    /// limit/8 and paced bytes within 61 * second_cap = 7/8 * limit, so paced
+    /// traffic always fits the rolling limit. Held reservations are covered by
+    /// the rolling limit only; native UDP sends never hold one.
+    fn fits(&self, bytes: u64) -> bool {
+        if bytes > self.usage.remaining {
+            return false;
+        }
+        let limit = self.usage.limit;
+        let burst = limit / 8;
+        let second_cap = (limit - burst) / 61;
+        if second_cap < MIN_PACED_BYTES_PER_SECOND || self.usage.used + bytes <= burst {
+            return true;
+        }
+        self.buckets[(self.second % 61) as usize] + bytes <= second_cap
+    }
+
     fn charge(&mut self, bytes: usize) {
         self.buckets[(self.second % 61) as usize] += bytes as u64;
         self.usage.used += bytes as u64;
@@ -110,7 +138,7 @@ impl NativeWireBudget {
         ensure!(bytes > 0, "empty native send reservation");
         self.advance(now);
         let slot = self.pending_sends.iter().position(Option::is_none);
-        if bytes as u64 > self.usage.remaining || slot.is_none() {
+        if !self.fits(bytes as u64) || slot.is_none() {
             self.usage.send_deferred = self.usage.send_deferred.saturating_add(1);
             return Ok(None);
         }
@@ -172,7 +200,7 @@ impl NativeWireBudget {
     pub(crate) fn admit_receive(&mut self, bytes: usize, now: Instant) -> bool {
         self.advance(now);
         self.usage.received_bytes = self.usage.received_bytes.saturating_add(bytes as u64);
-        if bytes as u64 > self.usage.remaining {
+        if !self.fits(bytes as u64) {
             self.usage.receive_dropped = self.usage.receive_dropped.saturating_add(1);
             return false;
         }
@@ -196,7 +224,7 @@ pub(crate) fn try_send_datagram(
 ) -> Result<bool> {
     if let Some(budget) = budget.as_deref_mut() {
         budget.advance(now);
-        if wire.len() as u64 > budget.usage.remaining {
+        if !budget.fits(wire.len() as u64) {
             budget.usage.send_deferred = budget.usage.send_deferred.saturating_add(1);
             return Ok(false);
         }
@@ -425,6 +453,55 @@ mod tests {
             (2400, 1200, 1200)
         );
         assert_eq!(usage.send_deferred, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn large_budget_paces_greedy_traffic_without_rolling_blackout() -> Result<()> {
+        // Phone L4 allowance with greedy 1200-byte datagrams polled every 10 ms.
+        // Unpaced, this drained the minute in ~20 s and then refused everything.
+        let limit = 64 * 1024 * 1024;
+        let start = Instant::now();
+        let mut budget = NativeWireBudget::new(limit, start)?;
+        let mut per_second = vec![0u64; 180];
+        for tick in 0..18_000u64 {
+            let now = start + Duration::from_millis(tick * 10);
+            while budget.admit_receive(1200, now) {
+                per_second[(tick / 100) as usize] += 1200;
+            }
+        }
+        let second_cap = (limit - limit / 8) / 61;
+        assert!(per_second[0] + 1200 > limit / 8, "burst is immediate");
+        for (second, bytes) in per_second.iter().enumerate().skip(1) {
+            assert!(
+                *bytes + 1200 > second_cap,
+                "second {second} admitted only {bytes} bytes"
+            );
+        }
+        for window in per_second.windows(60) {
+            assert!(window.iter().sum::<u64>() <= limit);
+        }
+        assert!(
+            budget
+                .usage(start + Duration::from_secs(180))
+                .receive_dropped
+                > 0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn budgets_below_pacing_floor_keep_plain_rolling_limit() -> Result<()> {
+        let now = Instant::now();
+        let limit = 1024 * 1024;
+        let mut budget = NativeWireBudget::new(limit, now)?;
+        let mut admitted = 0;
+        while budget.admit_receive(1200, now) {
+            admitted += 1200;
+        }
+        assert!(admitted <= limit && admitted + 1200 > limit);
+        assert!(!budget.admit_receive(1200, now + Duration::from_secs(60)));
+        assert!(budget.admit_receive(1200, now + Duration::from_secs(61)));
         Ok(())
     }
 }

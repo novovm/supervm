@@ -310,3 +310,34 @@ the measured elapsed sample, so later unrelated load does not retroactively
 change a completed request. Successful completion, bounded admission/memory,
 original deadlines, token waiting, cancellation and custody remain unchanged.
 This is a local controller correction, with no new scheduler, queue or protocol.
+
+## Paced node-wide wire budget replaces burst-then-blackout (v99 candidate)
+
+v98 eight-client sustained load stopped after 104 cycles with every client at
+its request deadline while execution backoff stayed 0, work limit 8/16, phone
+CPU about 0.6 core and its status path responsive. Repeated real-phone runs on
+PCLM50 (unchanged v98 process) reproduced it: all clients froze within 0.1 s,
+recovered after 5-8 s or never (the sender's 8 x 1 s no-progress backoff then
+suppresses retries until the request deadline). ICMP to the phone mostly
+stayed healthy during freezes, so this was not a Wi-Fi blackout.
+
+Root cause: the L4 native UDP endpoint enforces the advertised 64 MiB rolling
+minute over every admitted datagram in both directions (handshakes, copies,
+repairs, feedback). Redundant transmission costs about 5x the payload: one
+32 KiB Put+Fetch cycle consumed about 330 KB, so a greedy load drained the
+whole minute in about 20 s. Admission then refused ingress and deferred egress
+for all peers until the oldest second aged out, roughly 40 s later. Client
+counters froze at 62.8-65 MiB of total datagrams; the same 8 x 60 cycle run
+with 4 KiB objects (about 23 MiB) passed with no error.
+
+`wire_budget.rs` keeps the same limit and rolling accounting but paces large
+budgets: one eighth is immediate burst, and above it each second admits at most
+(limit - burst) / 61. Burst bytes per window stay within limit/8 and paced bytes
+within 61 seconds of that rate, so admitted traffic never reaches the rolling
+hard limit and refusal lasts at most the rest of one second. Budgets whose paced
+second would be below 64 KiB keep the plain rolling limit unchanged. No limit,
+deadline, timer, queue or protocol changed. Sustained capacity at 64 MiB is
+about 0.94 MiB/s instead of bursts followed by tens of seconds of silence.
+Measurement tooling and evidence: NOVOCHAT `artifacts/claude-diag-*`
+(ignored, local). The roughly 5x redundancy overhead is the larger remaining
+capacity lever and is not changed here.
