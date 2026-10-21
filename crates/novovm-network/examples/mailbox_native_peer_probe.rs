@@ -87,10 +87,14 @@ mod probe {
         async fn request(&mut self, request: Request) -> Result<Reply> {
             let id = self.session.begin(0, vec![request], Instant::now())?;
             let deadline = Instant::now() + Duration::from_secs(10);
+            let mut result = None;
             loop {
                 let at = Instant::now();
                 ensure!(at < deadline, "native probe request deadline");
-                self.session.try_send(&mut self.link, id, at, || Ok(()))?;
+                self.session.progress_capacity(&mut self.link, at)?;
+                if result.is_none() {
+                    self.session.try_send(&mut self.link, id, at, || Ok(()))?;
+                }
                 for done in self.link.poll(now_ms()?, at, 64)?.completed {
                     ensure!(
                         self.session.transport_complete(&done).is_none(),
@@ -98,10 +102,17 @@ mod probe {
                     );
                 }
                 if let Some(body) = self.link.poll_complete(STREAM, at, 64)? {
-                    let (got, mut replies) =
-                        self.session.receive(&self.link, body, at, || Ok(()))?;
-                    ensure!(got == id && replies.len() == 1, "probe reply binding");
-                    return Ok(replies.remove(0));
+                    if !self.session.receive_capacity(&self.link, &body, at)? {
+                        let (got, mut replies) =
+                            self.session.receive(&self.link, body, at, || Ok(()))?;
+                        ensure!(got == id && replies.len() == 1, "probe reply binding");
+                        result = Some(replies.remove(0));
+                    }
+                }
+                if self.session.negotiated_retained_bytes().is_some() {
+                    if let Some(reply) = result.take() {
+                        return Ok(reply);
+                    }
                 }
                 if let Some(pump) = &mut self.pump {
                     tokio::select! {
@@ -332,11 +343,157 @@ mod probe {
         Ok(())
     }
 
+    // Explicit bounded load mode: real authenticated service operations and
+    // verified receipts, never application messages or production TPS claims.
+    async fn load_exchange(
+        client: &mut Client<'_>,
+        pin: [u8; 32],
+        rounds: usize,
+        size: usize,
+        durations: &mut Vec<u128>,
+    ) -> Result<()> {
+        let grant = MailboxGrant::generate()?;
+        let mailbox = grant.id;
+        let caps = Zeroizing::new((*grant.read.as_bytes(), *grant.write.as_bytes()));
+        let expires = (now_ms()? / 1000) as i64 + 300;
+        require(
+            client
+                .request(Request::Register {
+                    mailbox,
+                    read: caps.0,
+                    write: caps.1,
+                    expires,
+                })
+                .await?,
+            |r| matches!(r, Reply::Registered),
+            "load Register",
+        )?;
+        let key = Zeroizing::new(rand::random::<[u8; 32]>());
+        let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref()).unwrap();
+        let plain = Zeroizing::new(vec![0x5a; size]);
+        for _ in 0..rounds {
+            let nonce: [u8; 12] = rand::random();
+            let ciphertext = cipher
+                .encrypt(Nonce::from_slice(&nonce), plain.as_slice())
+                .map_err(|_| anyhow::anyhow!("load encryption failed"))?;
+            let object: [u8; 32] = rand::random();
+            let start = Instant::now();
+            let receipt = match client
+                .request(Request::Put {
+                    mailbox,
+                    write: caps.1,
+                    object,
+                    ciphertext: ciphertext.clone(),
+                    expires,
+                })
+                .await?
+            {
+                Reply::Stored(value) => value,
+                Reply::Rejected(reason) => bail!("load Put rejected: {reason:?}"),
+                _ => bail!("load Put receipt missing"),
+            };
+            receipt.verify(pin, mailbox, object, &ciphertext, expires)?;
+            let digest = match client
+                .request(Request::Fetch {
+                    mailbox,
+                    read: caps.0,
+                })
+                .await?
+            {
+                Reply::Object {
+                    object: got,
+                    ciphertext: bytes,
+                    digest,
+                    expires: ttl,
+                } => {
+                    ensure!(
+                        got == object && bytes == ciphertext && ttl == expires,
+                        "load object mismatch"
+                    );
+                    let decrypted = Zeroizing::new(
+                        cipher
+                            .decrypt(Nonce::from_slice(&nonce), bytes.as_slice())
+                            .map_err(|_| anyhow::anyhow!("load authentication failed"))?,
+                    );
+                    ensure!(*decrypted == *plain, "load plaintext mismatch");
+                    digest
+                }
+                _ => bail!("load Fetch missing object"),
+            };
+            require(
+                client
+                    .request(Request::Consume {
+                        mailbox,
+                        read: caps.0,
+                        object,
+                        digest,
+                    })
+                    .await?,
+                |r| matches!(r, Reply::Consumed),
+                "load Consume",
+            )?;
+            durations.push(start.elapsed().as_millis());
+        }
+        Ok(())
+    }
+
+    async fn load(
+        record: &PeerSignedRelayRecordV1,
+        pin: [u8; 32],
+        clients: usize,
+        rounds: usize,
+        size: usize,
+    ) -> Result<()> {
+        use futures_util::{stream::FuturesUnordered, StreamExt};
+        let start = Instant::now();
+        let mut pending = FuturesUnordered::new();
+        for _ in 0..clients {
+            pending.push(async {
+                let mut times = Vec::new();
+                let result = async {
+                    let seed = Zeroizing::new(rand::random::<[u8; 32]>());
+                    let mut client = udp(record, SigningKey::from_bytes(&seed)).await?;
+                    load_exchange(&mut client, pin, rounds, size, &mut times).await
+                }
+                .await;
+                (times, result)
+            });
+        }
+        let mut completed_clients = 0;
+        let mut samples = Vec::new();
+        let mut failures = Vec::new();
+        while let Some((mut times, result)) = pending.next().await {
+            samples.append(&mut times);
+            match result {
+                Ok(()) => {
+                    completed_clients += 1;
+                }
+                Err(error) => failures.push(error.to_string()),
+            }
+        }
+        let seconds = start.elapsed().as_secs_f64();
+        samples.sort_unstable();
+        println!(
+            "{}",
+            serde_json::json!({"mode":"bounded_service_load", "carrier":"native-udp",
+            "offered_clients":clients,"completed_clients":completed_clients,"rounds_per_client":rounds,
+            "payload_bytes":size,"verified_put_fetch_consume":samples.len(),"elapsed_seconds":seconds,
+            "objects_per_second":samples.len() as f64 / seconds,
+            "p50_ms":samples.get(samples.len()/2),"max_ms":samples.last(),"failures":failures,
+            "device_delivery_receipt":false,"android_ui_acceptance":false})
+        );
+        ensure!(
+            completed_clients == clients,
+            "load retains failed clients; not a full PASS"
+        );
+        Ok(())
+    }
+
     pub async fn run() -> Result<()> {
         let args: Vec<_> = std::env::args().collect();
         ensure!(
-            args.len() == 4,
-            "usage: mailbox_native_peer_probe RECORD EXPECTED_PIN_HEX udp|tls"
+            args.len() == 4 || args.len() == 7,
+            "usage: mailbox_native_peer_probe RECORD EXPECTED_PIN_HEX udp|tls [CLIENTS ROUNDS PLAINTEXT_BYTES]"
         );
         ensure!(
             matches!(args[3].as_str(), "udp" | "tls"),
@@ -361,6 +518,23 @@ mod probe {
             "record differs from approved pin"
         );
         validate_relay_record_v1(&record, now_ms()?)?;
+        if args.len() == 7 {
+            ensure!(args[3] == "udp", "bounded load uses native UDP only");
+            let clients: usize = args[4].parse()?;
+            let rounds: usize = args[5].parse()?;
+            let size: usize = args[6].parse()?;
+            ensure!(
+                (1..=32).contains(&clients)
+                    && (1..=16).contains(&rounds)
+                    && (1..=32768).contains(&size),
+                "bounded diagnostic limits"
+            );
+            return tokio::time::timeout(
+                Duration::from_secs(90),
+                load(&record, pin, clients, rounds, size),
+            )
+            .await?;
+        }
         let mut book = ServiceLeaseBookV1::new_self_owned(
             SelfOwnedTrustV1 {
                 version: 1,

@@ -1,5 +1,6 @@
 //! Self-owned lifecycle for the EXISTING rendezvous V2 offer and authenticated
 //! RPC. Stable listener; rotating opaque stores and resource-bound mailbox sessions.
+use crate::service_concurrency::{AdaptiveAdmissionV1, AdmissionKind};
 use crate::{
     bound_session::ServicePeerPolicyV1,
     carrier_stream::CarrierStreamV1,
@@ -30,7 +31,7 @@ use std::{
 type Store = Arc<Mutex<RendezvousStoreV1>>;
 #[path = "product_rendezvous_native.rs"]
 mod native;
-pub use native::NativeMailboxListenerV7;
+pub use native::{NativeMailboxListenerV7, NativeMailboxResourcesUnavailableV1};
 #[cfg(feature = "tls-transport")]
 #[path = "product_rendezvous_tls.rs"]
 mod tls;
@@ -65,7 +66,17 @@ pub async fn run_self_owned_node_v1(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
-    let node = Node::new(key, clients, stop, mailbox, IROH_MAX_CONNECTIONS_V1)?;
+    let node = Node::new(
+        key,
+        clients,
+        stop,
+        mailbox,
+        if carrier.service_concurrency().is_some() {
+            64
+        } else {
+            IROH_MAX_CONNECTIONS_V1
+        },
+    )?;
     let revoked = node.stop.clone();
     with_iroh_owned_listener_v1(
         carrier,
@@ -128,7 +139,17 @@ pub async fn run_self_owned_node_on_endpoint_v1(
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
-    let node = Node::new(key, clients, stop, mailbox, 2)?;
+    let node = Node::new(
+        key,
+        clients,
+        stop,
+        mailbox,
+        if endpoint.service_concurrency().is_some() {
+            64
+        } else {
+            2
+        },
+    )?;
     node.on_endpoint(endpoint, activate, publish).await
 }
 
@@ -170,7 +191,11 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
         mailbox.identity_public_key() == key.verifying_key().to_bytes(),
         "mailbox node signer mismatch"
     );
-    let mut max_connections = 2;
+    let mut max_connections = if endpoint.service_concurrency().is_some() {
+        64
+    } else {
+        2
+    };
     if let Some(listener) = &native {
         ensure!(
             listener.uses_stop(&stop),
@@ -318,12 +343,16 @@ pub async fn run_self_owned_native_mailbox_v7(
     );
     mailbox.update_native_record_v7(record.clone())?;
     publish(&record)?;
+    let concurrency = listener.concurrency();
     let serving = listener.serve(
         &host,
         &mailbox,
-        Arc::new(tokio::sync::Semaphore::new(usize::from(
-            route.max_connections,
-        ))),
+        AdaptiveAdmissionV1::new(
+            usize::from(route.max_connections),
+            concurrency.clone(),
+            AdmissionKind::Inbound,
+            usize::from(route.max_connections),
+        ),
     );
     tokio::pin!(serving);
     let sweeping = async {
@@ -344,6 +373,7 @@ pub async fn run_self_owned_native_mailbox_v7(
             result = &mut sweeping => return result,
             _ = maintenance.tick() => {
                 if stop.load(Ordering::Acquire) { return Ok(()); }
+                if let Some(c) = &concurrency { c.refresh_host(); }
                 let now = now_ms()?;
                 host.check_continuous_native_peer_v7(now)?;
                 if Instant::now() >= rotate_at {
@@ -486,7 +516,13 @@ impl Node {
             }
         }
         publish(&first)?;
-        let slots = Arc::new(tokio::sync::Semaphore::new(max_connections));
+        let concurrency = scope.service_concurrency();
+        let slots = AdaptiveAdmissionV1::new(
+            max_connections,
+            concurrency.clone(),
+            AdmissionKind::Inbound,
+            max_connections,
+        );
         #[cfg(feature = "tls-transport")]
         let extra_serving = async {
             if let Some(tls) = &tls {
@@ -545,6 +581,7 @@ impl Node {
                 biased;
                 _ = maintenance.tick() => {
                     if stop.load(Ordering::Acquire) { break; }
+                    if let Some(c) = &concurrency { c.refresh_host(); }
                     let now = Instant::now();
                     if now >= rotate_at {
                         // The listener survives network changes. Re-signing its
@@ -609,7 +646,7 @@ impl Node {
                 }
                 result = &mut extra_serving => { result?; anyhow::bail!("TLS mailbox listener ended"); }
                 Some(_) = active.next(), if !active.is_empty() => {}
-                accepted = &mut incoming, if active.len() < max_connections => {
+                accepted = &mut incoming, if active.len() < slots.limit() => {
                     incoming = Box::pin(scope.accept_inbound());
                     if let Ok(stream) = accepted {
                         let Ok(permit) = slots.clone().try_acquire_owned() else { drop(stream); continue };
@@ -623,6 +660,7 @@ impl Node {
                         let mailbox=mailbox.clone();
                         let transport = endpoint.address.endpoint_key;
                         let native_stop = stop.clone();
+                        let concurrency = concurrency.clone();
                         active.push(async move {
                             let permit = Arc::new(permit);
                             let mut stream: CarrierStreamV1<'_> = stream.into();
@@ -642,7 +680,7 @@ impl Node {
                                         native::NativeCarrierHandshake::SessionClockV8 { received: clock, deadline: admitted_at + Duration::from_secs(30) }
                                     } else { native::NativeCarrierHandshake::UtcV7 };
                                     return native::serve_carrier(
-                                        &mut stream, key, mailbox_policy, mailbox, native_stop, permit,
+                                        &mut stream, key, mailbox_policy, mailbox, native_stop, permit, concurrency,
                                         || if kind == NodeServiceV1::MailboxNativeV8 {
                                             host.check_continuous_native_carrier_v8(transport, now_ms()?)
                                         } else { host.check_continuous_native_carrier_v7(transport, now_ms()?) }, handshake,

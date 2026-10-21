@@ -152,6 +152,7 @@ impl Client {
     }
     async fn tick(&mut self) -> Result<()> {
         let now = Instant::now();
+        self.session.progress_capacity(&mut self.link, now)?;
         for done in self.link.poll(now_ms()?, now, 64)?.completed {
             ensure!(
                 self.session.transport_complete(&done).is_none(),
@@ -159,6 +160,9 @@ impl Client {
             );
         }
         while let Some(body) = self.link.poll_complete(STREAM, now, 64)? {
+            if self.session.receive_capacity(&self.link, &body, now)? {
+                continue;
+            }
             self.received
                 .push(self.session.receive(&self.link, body, now, || Ok(()))?);
         }
@@ -619,6 +623,19 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
         let mut cancel_link = Client::connect_link(&route, 89).await?;
         let (mut cancel_driver, cancel_handle) =
             NativeMailboxDriver::attach(&mut cancel_link, 0, pin)?;
+        let setup_deadline = Instant::now() + Duration::from_secs(5);
+        while !cancel_handle.has_negotiated_capacity() {
+            ensure!(Instant::now() < setup_deadline, "resource exchange timeout");
+            let now = Instant::now();
+            cancel_driver.progress(&mut cancel_link, now)?;
+            for done in cancel_link.poll(now_ms()?, now, 64)?.completed {
+                cancel_driver.transport_complete(&done);
+            }
+            while let Some(body) = cancel_link.poll_complete(STREAM, now, 64)? {
+                cancel_driver.receive(&cancel_link, body, now)?;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
         let unsent = cancel_handle.request(
             0,
             vec![fetch(3)],

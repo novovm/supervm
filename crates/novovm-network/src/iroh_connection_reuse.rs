@@ -32,19 +32,20 @@ impl Pool {
         lane: u8,
         connection: Connection,
         permit: tokio::sync::OwnedSemaphorePermit,
+        limit: usize,
     ) -> Result<()> {
         let mut pool = self
             .0
             .lock()
             .map_err(|_| anyhow::anyhow!("carrier pool unavailable"))?;
-        // Leave two of the existing four slots for discovery/short operations.
+        // Retain only this owner's resource-derived idle share; active work is never evicted.
         pool.retain(|entry| {
             entry.connection.as_ref().is_some_and(|old| {
                 old.close_reason().is_none()
                     && !(entry.lane == lane && old.remote_id() == connection.remote_id())
             })
         });
-        if pool.len() == 2 {
+        while pool.len() >= limit.max(1) {
             pool.remove(0);
         }
         pool.push(Idle {
@@ -52,6 +53,16 @@ impl Pool {
             connection: Some(connection),
             permit: Some(permit),
         });
+        Ok(())
+    }
+    pub(super) fn trim(&self, limit: usize) -> Result<()> {
+        let mut pool = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("carrier pool unavailable"))?;
+        while pool.len() > limit {
+            pool.remove(0);
+        }
         Ok(())
     }
     fn take(&self, lane: u8, remote: [u8; 32]) -> Result<Option<Idle>> {

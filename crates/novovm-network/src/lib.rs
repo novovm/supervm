@@ -57,6 +57,8 @@ pub mod relay;
 pub mod route;
 pub mod routing;
 pub mod runtime_status;
+#[cfg(feature = "iroh-transport")]
+pub mod service_concurrency;
 #[cfg(feature = "tls-transport")]
 pub mod tls_transport;
 pub mod transport;

@@ -70,7 +70,10 @@ mod dual_owner_tests {
             loop {
                 let at = Instant::now();
                 ensure!(at < deadline, "dual owner carrier request deadline");
-                self.session.try_send(&mut self.link, id, at, || Ok(()))?;
+                self.session.progress_capacity(&mut self.link, at)?;
+                if self.session.negotiated_retained_bytes().is_some() {
+                    self.session.try_send(&mut self.link, id, at, || Ok(()))?;
+                }
                 for done in self.link.poll(now_ms()?, at, 64)?.completed {
                     ensure!(
                         self.session.transport_complete(&done).is_none(),
@@ -78,10 +81,12 @@ mod dual_owner_tests {
                     );
                 }
                 if let Some(body) = self.link.poll_complete(STREAM, at, 64)? {
-                    let (got, mut replies) =
-                        self.session.receive(&self.link, body, at, || Ok(()))?;
-                    ensure!(got == id && replies.len() == 1);
-                    return Ok(replies.remove(0));
+                    if !self.session.receive_capacity(&self.link, &body, at)? {
+                        let (got, mut replies) =
+                            self.session.receive(&self.link, body, at, || Ok(()))?;
+                        ensure!(got == id && replies.len() == 1);
+                        return Ok(replies.remove(0));
+                    }
                 }
                 tokio::select! {
                     result = self.pump.progress() => result?,

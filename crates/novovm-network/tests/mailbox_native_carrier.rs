@@ -144,6 +144,7 @@ impl<'a> Client<'a> {
     }
     async fn tick(&mut self) -> Result<()> {
         let now = Instant::now();
+        self.session.progress_capacity(&mut self.link, now)?;
         let report = self.link.poll(now_ms()?, now, 64)?;
         ensure!(
             report.session_changes.is_empty(),
@@ -156,6 +157,9 @@ impl<'a> Client<'a> {
             );
         }
         while let Some(body) = self.link.poll_complete(STREAM, now, 64)? {
+            if self.session.receive_capacity(&self.link, &body, now)? {
+                continue;
+            }
             ensure!(
                 self.received.len() < SLOTS,
                 "fixture reply budget exhausted"

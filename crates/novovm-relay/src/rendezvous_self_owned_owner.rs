@@ -890,11 +890,19 @@ impl Owner {
             )
             })().context(FailureStage::Publish)
         };
+        let concurrency = novovm_network::service_concurrency::ServiceConcurrencyV1::from_host();
         let native = if let Some(settings) = native_settings {
-            Some(novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_with_wire_budget(
-                settings.listen, settings.advertised, key.clone(), stop.clone(),
-                settings.max_connections, settings.max_bytes_per_minute,
-            ).context(FailureStage::NativeBind)?)
+            Some(
+                novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_adaptive(
+                    settings.listen,
+                    settings.advertised,
+                    key.clone(),
+                    stop.clone(),
+                    settings.max_bytes_per_minute,
+                    concurrency.clone(),
+                )
+                .context(FailureStage::NativeBind)?,
+            )
         } else {
             None
         };
@@ -926,7 +934,8 @@ impl Owner {
         }
         let carrier = (|| -> Result<_> {
             let mut carrier = IrohConfigV1::new(effective_relays(&self.policy), config.nameserver)?
-                .with_owned_service_identity(self.transport.clone())?;
+                .with_owned_service_identity(self.transport.clone())?
+                .with_service_concurrency(concurrency.clone());
             if let Some(bind) = config.bind_address {
                 carrier = carrier.with_bind_address(bind)?;
             }
@@ -944,12 +953,11 @@ impl Owner {
                 .map_err(|_| anyhow::anyhow!("TLS key derivation failed"))
                 .context(FailureStage::CarrierSetup)?;
             let listener =
-                novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind_with_capacity(
+                novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind_adaptive(
                     settings.listen,
                     settings.advertised,
                     seed,
                     stop.clone(),
-                    settings.max_connections,
                 )
                 .await
                 .context(FailureStage::TlsBind)?;
@@ -2019,7 +2027,10 @@ mod tests {
             loop {
                 let now = Instant::now();
                 ensure!(now < until, "fixture request deadline");
-                self.session.try_send(&mut self.link, id, now, || Ok(()))?;
+                self.session.progress_capacity(&mut self.link, now)?;
+                if self.session.negotiated_retained_bytes().is_some() {
+                    self.session.try_send(&mut self.link, id, now, || Ok(()))?;
+                }
                 for done in self.link.poll(now_ms()?, now, 64)?.completed {
                     ensure!(
                         self.session.transport_complete(&done).is_none(),
@@ -2027,10 +2038,12 @@ mod tests {
                     );
                 }
                 if let Some(body) = self.link.poll_complete(STREAM, now, 64)? {
-                    let (got, mut replies) =
-                        self.session.receive(&self.link, body, now, || Ok(()))?;
-                    ensure!(got == id && replies.len() == 1, "fixture response binding");
-                    return Ok(replies.remove(0));
+                    if !self.session.receive_capacity(&self.link, &body, now)? {
+                        let (got, mut replies) =
+                            self.session.receive(&self.link, body, now, || Ok(()))?;
+                        ensure!(got == id && replies.len() == 1, "fixture response binding");
+                        return Ok(replies.remove(0));
+                    }
                 }
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }

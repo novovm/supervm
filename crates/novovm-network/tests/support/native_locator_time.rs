@@ -24,6 +24,16 @@ async fn temporal_peer(
     let mut replies = VecDeque::new();
     let mut metadata_count = 0;
     let mut attached = None;
+    let directory = tempfile::tempdir()?;
+    let service = MailboxServiceV1::new(
+        MailboxStore::open_contributor(
+            directory.path().join("mailbox.db"),
+            Default::default(),
+            true,
+        )?,
+        key(17),
+    );
+    let mut capacity_replies = VecDeque::new();
     while !stop.load(Ordering::Acquire) {
         ensure!(Instant::now() < end, "temporal fixture server deadline");
         let now = Instant::now();
@@ -34,12 +44,28 @@ async fn temporal_peer(
         while let Some(body) = link.poll_complete(STREAM, now, 64)? {
             // Real peer/session encryption and reassembly precede this test-only
             // response injection; request context is taken from validated APFL.
-            let bytes: Vec<u8> = body.chunks.into_iter().flatten().collect();
+            let bytes: Vec<u8> = body.chunks.iter().flatten().copied().collect();
             let context: [u8; 32] = bytes
                 .get(24..56)
                 .context("temporal request context")?
                 .try_into()?;
-            let batch = RequestBatch::decode(&bytes, context)?;
+            let batch = match RequestBatch::decode(&bytes, context) {
+                Ok(batch) => batch,
+                Err(_) => {
+                    let work = attached.as_mut().context("session attached")?.admit(
+                        &link,
+                        body,
+                        now,
+                        || Ok(()),
+                    )?;
+                    ensure!(
+                        work.is_capacity_negotiation(),
+                        "only resource control uses alternate codec"
+                    );
+                    capacity_replies.push_back(work.execute(&service, || Ok(())).await?);
+                    continue;
+                }
+            };
             ensure!(batch.len() == 1, "temporal fixture request count");
             ensure!(
                 contexts.insert(context),
@@ -79,6 +105,11 @@ async fn temporal_peer(
                 LIMITS.wire_bytes,
                 FragmentProfile::NativeUdpV2,
             )?));
+        }
+        if let Some(reply) = capacity_replies.front_mut() {
+            if reply.try_send(&mut link, now, || Ok(()))? {
+                capacity_replies.pop_front();
+            }
         }
         if let Some(reply) = replies.front() {
             if link.try_send(0, STREAM, reply, now)? {

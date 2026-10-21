@@ -8,7 +8,7 @@ pub const IROH_MAX_MULTIPLEX_STREAMS_V1: usize = 4;
 pub(super) struct SharedConnection {
     connection: Connection,
     _admission: tokio::sync::OwnedSemaphorePermit,
-    streams: Arc<tokio::sync::Semaphore>,
+    streams: Arc<AdaptiveAdmissionV1>,
 }
 impl Drop for SharedConnection {
     fn drop(&mut self) {
@@ -55,9 +55,12 @@ impl<'scope> IrohStreamV1<'scope> {
                 && u64::from(self.send.id()) == 0,
             "multiplex requires fresh owned service connection"
         );
-        let streams = Arc::new(tokio::sync::Semaphore::new(
+        let streams = AdaptiveAdmissionV1::new(
             self.scope.multiplex_stream_budget,
-        ));
+            self.scope.service_concurrency.clone(),
+            AdmissionKind::Streams,
+            u32::MAX as usize,
+        );
         let stream_admission = streams.clone().try_acquire_owned()?;
         let admission = self
             ._admission
@@ -72,7 +75,7 @@ impl<'scope> IrohStreamV1<'scope> {
         // selected responder accepts extra client streams, up to this budget.
         if !self.initiator {
             self.connection
-                .set_max_concurrent_bi_streams((self.scope.multiplex_stream_budget as u32).into());
+                .set_max_concurrent_bi_streams((shared.streams.limit() as u32).into());
         }
         self.shared = Some(shared.clone());
         self._stream_admission = Some(stream_admission);
@@ -92,11 +95,16 @@ impl<'scope> IrohStreamV1<'scope> {
 impl<'scope> IrohMultiplexV1<'scope> {
     /// The local owner's bound, shared by root and all service lanes.
     pub fn stream_capacity(&self) -> usize {
-        self.scope.multiplex_stream_budget
+        self.shared.streams.limit()
     }
 
     fn check(&self) -> Result<()> {
         self.scope.control.check()?;
+        if !self.initiator {
+            self.shared
+                .connection
+                .set_max_concurrent_bi_streams((self.shared.streams.limit() as u32).into());
+        }
         if let Some(error) = self.shared.connection.close_reason() {
             return Err(IrohStreamIoFailureV1(error.into()).into());
         }
@@ -219,6 +227,7 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let (binding_tx, binding_rx) = tokio::sync::oneshot::channel();
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+        let (retire_tx, retire_rx) = tokio::sync::oneshot::channel::<u64>();
         let listener = with_iroh_owned_listener_v1(
             config()
                 .with_multiplex_stream_budget(budget)?
@@ -250,7 +259,22 @@ mod tests {
                     drop(child);
                     // The connection owner keeps admission even between streams.
                     ensure!(scope.connections.available_permits() == IROH_MAX_CONNECTIONS_V1 - 1);
-                    let child = group.accept().await?;
+                    // Reset unused lanes may become observable before the retire
+                    // lane. Wait for the client to finish its sibling, then retire
+                    // only the explicitly identified lane, not an arbitrary accept.
+                    let retire_id = retire_rx.await?;
+                    let mut skipped = 0;
+                    let mut child = loop {
+                        let candidate = group.accept().await?;
+                        let id = u64::from(candidate.send.id());
+                        if id == retire_id {
+                            break candidate;
+                        }
+                        ensure!(id < retire_id && skipped < budget - 2, "unexpected test lane");
+                        skipped += 1;
+                        drop(candidate);
+                    };
+                    ensure!(child.read_frame().await? == b"retire");
                     // Dropping the sole connection owner closes outstanding lanes.
                     drop(group);
                     ensure!(child.connection.close_reason().is_some());
@@ -311,7 +335,8 @@ mod tests {
                             drop(child);
                             let mut extra = group.open().await?;
                             // Make the stream observable; no application credential is sent.
-                            let _ = extra.write_frame(b"retire").await;
+                            extra.write_frame(b"retire").await?;
+                            retire_tx.send(u64::from(extra.send.id())).unwrap();
                             done_rx.await?;
                             drop((extra, group));
                             ensure!(

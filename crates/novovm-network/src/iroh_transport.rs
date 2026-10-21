@@ -4,6 +4,7 @@
 //! NOVOVM application identity and E2E authentication remain a separate layer.
 
 pub use crate::duplex::{decode_iroh_envelope_v1, encode_iroh_envelope_v1};
+use crate::service_concurrency::{AdaptiveAdmissionV1, AdmissionKind, ServiceConcurrencyV1};
 use crate::transport_binding::{
     VerifiedTransportBinding, BOUND_TRANSPORT_ALPN_V1, BOUND_TRANSPORT_EXPORTER_CONTEXT_V1,
     BOUND_TRANSPORT_EXPORTER_LABEL_V1,
@@ -456,9 +457,13 @@ pub struct IrohConfigV1 {
     service_identity: Option<iroh::SecretKey>,
     inbound_observer: Option<InboundObserver>,
     multiplex_stream_budget: usize,
+    service_concurrency: Option<Arc<ServiceConcurrencyV1>>,
 }
 
 impl IrohConfigV1 {
+    pub fn service_concurrency(&self) -> Option<Arc<ServiceConcurrencyV1>> {
+        self.service_concurrency.clone()
+    }
     pub fn new(relays: &[String], nameserver: IpAddr) -> Result<Self> {
         ensure!(relays.len() <= 4, "too many relay services");
         ensure!(
@@ -490,7 +495,14 @@ impl IrohConfigV1 {
             service_identity: None,
             inbound_observer: None,
             multiplex_stream_budget: IROH_MAX_MULTIPLEX_STREAMS_V1,
+            service_concurrency: None,
         })
+    }
+
+    /// Same platform controller for node admission and transport connections.
+    pub fn with_service_concurrency(mut self, controller: Arc<ServiceConcurrencyV1>) -> Self {
+        self.service_concurrency = Some(controller);
+        self
     }
 
     /// Local resource budget for explicitly selected service streams. This does
@@ -574,13 +586,14 @@ pub struct IrohScopeV1 {
     control: IrohControlV1,
     relays: Vec<RelayUrl>,
     relay_only: bool,
-    connections: Arc<tokio::sync::Semaphore>,
+    connections: Arc<AdaptiveAdmissionV1>,
     accept_consumer: Arc<tokio::sync::Mutex<()>>,
     listener_budget: Option<Duration>,
     continuous_service: bool,
     reuse: Option<(Arc<reuse::Pool>, u8)>,
     inbound_observer: Option<InboundObserver>,
     multiplex_stream_budget: usize,
+    service_concurrency: Option<Arc<ServiceConcurrencyV1>>,
 }
 
 /// Process-local diagnostics, not identifiers, receipts or permission to retry.
@@ -653,7 +666,7 @@ pub struct IrohEndpointOwnerV1 {
     bind_address: Option<SocketAddr>,
     relay_only: bool,
     service_identity: Option<EndpointId>,
-    connections: Arc<tokio::sync::Semaphore>,
+    connections: Arc<AdaptiveAdmissionV1>,
     accept_consumer: Arc<tokio::sync::Mutex<()>>,
     reuse: Arc<reuse::Pool>,
     close_gate: tokio::sync::Mutex<()>,
@@ -661,9 +674,14 @@ pub struct IrohEndpointOwnerV1 {
     permit: std::sync::Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     inbound_observer: Option<InboundObserver>,
     multiplex_stream_budget: usize,
+    service_concurrency: Option<Arc<ServiceConcurrencyV1>>,
 }
 
 impl IrohEndpointOwnerV1 {
+    pub fn service_concurrency(&self) -> Option<Arc<ServiceConcurrencyV1>> {
+        self.service_concurrency.clone()
+    }
+
     /// `check` grants only local endpoint ownership, never peer/application
     /// trust. It must be fast and non-blocking, and failure permanently stops
     /// admission. The platform is responsible for observing its policy while
@@ -719,7 +737,12 @@ impl IrohEndpointOwnerV1 {
             nameserver: config.nameserver,
             bind_address: config.bind_address,
             relay_only: config.relay_only,
-            connections: Arc::new(tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1)),
+            connections: AdaptiveAdmissionV1::new(
+                IROH_MAX_CONNECTIONS_V1,
+                config.service_concurrency.clone(),
+                AdmissionKind::Connections,
+                tokio::sync::Semaphore::MAX_PERMITS,
+            ),
             accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
             reuse: Arc::new(reuse::Pool::default()),
             close_gate: tokio::sync::Mutex::new(()),
@@ -727,6 +750,7 @@ impl IrohEndpointOwnerV1 {
             permit: std::sync::Mutex::new(Some(permit)),
             inbound_observer: config.inbound_observer,
             multiplex_stream_budget: config.multiplex_stream_budget,
+            service_concurrency: config.service_concurrency.clone(),
         })
     }
 
@@ -749,6 +773,11 @@ impl IrohEndpointOwnerV1 {
             && self.bind_address == config.bind_address
             && self.relay_only == config.relay_only
             && self.multiplex_stream_budget == config.multiplex_stream_budget
+            && match (&self.service_concurrency, &config.service_concurrency) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            }
             && self.service_identity
                 == config
                     .service_identity
@@ -917,6 +946,7 @@ impl IrohEndpointOwnerV1 {
             reuse: lane.map(|lane| (self.reuse.clone(), lane)),
             inbound_observer: self.inbound_observer.clone(),
             multiplex_stream_budget: self.multiplex_stream_budget,
+            service_concurrency: self.service_concurrency.clone(),
         };
         let mut reuse_guard =
             reuse::OperationGuard::new(scope.reuse.as_ref().map(|(pool, _)| pool.clone()));
@@ -1164,13 +1194,19 @@ where
         control,
         relays: config.relays,
         relay_only: config.relay_only,
-        connections: Arc::new(tokio::sync::Semaphore::new(IROH_MAX_CONNECTIONS_V1)),
+        connections: AdaptiveAdmissionV1::new(
+            IROH_MAX_CONNECTIONS_V1,
+            config.service_concurrency.clone(),
+            AdmissionKind::Connections,
+            tokio::sync::Semaphore::MAX_PERMITS,
+        ),
         accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
         listener_budget,
         continuous_service: false,
         reuse: None,
         inbound_observer: config.inbound_observer,
         multiplex_stream_budget: config.multiplex_stream_budget,
+        service_concurrency: config.service_concurrency.clone(),
     };
     let result = tokio::select! {
         biased;
@@ -1208,6 +1244,10 @@ where
 }
 
 impl IrohScopeV1 {
+    pub fn service_concurrency(&self) -> Option<Arc<ServiceConcurrencyV1>> {
+        self.service_concurrency.clone()
+    }
+
     pub(crate) fn check_authority(&self) -> Result<()> {
         self.control.check()
     }
@@ -1342,6 +1382,9 @@ impl IrohScopeV1 {
         if let Some(stream) = self.retained(peer.endpoint_key, true).await? {
             observe(Retained);
             return Ok(stream);
+        }
+        if let Some((pool, _)) = &self.reuse {
+            pool.trim(self.connections.limit().saturating_sub(2))?;
         }
         // Reserve before dialing: outbound work shares the same active budget
         // as inbound TLS handshakes and streams, without a waiting queue.
@@ -2025,7 +2068,15 @@ impl Drop for IrohStreamV1<'_> {
         {
             if let (Some((pool, lane)), Some(permit)) = (&self.scope.reuse, self._admission.take())
             {
-                if pool.put(*lane, self.connection.clone(), permit).is_ok() {
+                if pool
+                    .put(
+                        *lane,
+                        self.connection.clone(),
+                        permit,
+                        self.scope.connections.limit().saturating_sub(2).max(1),
+                    )
+                    .is_ok()
+                {
                     return;
                 }
             }

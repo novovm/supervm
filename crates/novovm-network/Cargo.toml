@@ -49,6 +49,7 @@ zeroize = { version = "1", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 atomicwrites = "=0.4.4"
+sysinfo = { version = "=0.38.4", default-features = false, features = ["system"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # std::fs::File::try_lock is unsupported on Android in the pinned toolchain.

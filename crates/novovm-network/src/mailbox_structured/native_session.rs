@@ -2,8 +2,8 @@
 //! socket owner keeps polling the SAME link while mailbox work awaits storage
 //! or Watch. No socket, worker, store or identity is created here.
 //!
-//! Four bounded logical request slots prevent an idle Watch from owning all
-//! request progress. Every slot has its own monotonic sequence, bound to the
+//! Four business-owned lanes and an authenticated resource capacity exchange
+//! keep request progress bounded without making four the device ceiling. Every slot has its own monotonic sequence, bound to the
 //! authenticated transport session. Errors/cancellation latch the slot; never
 //! reset counters or automatically retry an unknown business outcome.
 use super::*;
@@ -24,8 +24,29 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Dedicated control/watch/receipt/send lanes; additional work uses negotiated slots.
 pub const SLOTS: usize = 4;
+mod capacity;
+use crate::service_concurrency::ServiceConcurrencyV1;
+pub use capacity::request_retained_bytes_v1;
+use capacity::{ClientCapacity, ServerCapacity, Window};
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(30);
+#[derive(Debug)]
+pub struct CapacityNegotiationExpired;
+impl std::fmt::Display for CapacityNegotiationExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("native resource negotiation deadline")
+    }
+}
+impl std::error::Error for CapacityNegotiationExpired {}
+/// Resource-derived protocol allocation ceiling shared by the existing link owner.
+pub fn adaptive_request_slot_ceiling_v1(controller: &ServiceConcurrencyV1) -> usize {
+    Window::from_controller(controller).slots
+}
+pub fn adaptive_retained_bytes_v1(controller: &ServiceConcurrencyV1) -> usize {
+    Window::from_controller(controller).bytes
+}
+
 pub fn domain() -> [u8; 32] {
     Sha256::digest(b"novonet.mailbox.apfl.v7\0").into()
 }
@@ -189,8 +210,9 @@ impl ClientSlot {
 pub struct NativeMailboxClient {
     binding: Binding,
     node: [u8; 32],
-    slots: [ClientSlot; SLOTS],
+    slots: Vec<ClientSlot>,
     bulk_ready: bool,
+    capacity: Option<ClientCapacity>,
 }
 impl NativeMailboxClient {
     pub fn enable_verified_bulk_v1(&mut self) {
@@ -198,6 +220,9 @@ impl NativeMailboxClient {
     }
 
     pub fn invalidate(&mut self) {
+        if let Some(c) = &self.capacity {
+            c.cancellation.cancel();
+        }
         for slot in &mut self.slots {
             slot.fail_pending();
         }
@@ -248,24 +273,120 @@ impl NativeMailboxClient {
     /// No handshake per batch; node must be that same peer, not a receipt key
     /// supplied by an unauthenticated response.
     pub fn attach(link: &mut NativeObjectLink, peer: usize, node: [u8; 32]) -> Result<Self> {
+        Self::attach_adaptive(link, peer, node, ServiceConcurrencyV1::from_host())
+    }
+    /// Exchange resource capacity on the existing authenticated lane.
+    pub fn attach_adaptive(
+        link: &mut NativeObjectLink,
+        peer: usize,
+        node: [u8; 32],
+        controller: Arc<ServiceConcurrencyV1>,
+    ) -> Result<Self> {
         ensure!(
             link.peer_id(peer)? == peer_id_from_ed25519_public_key_v1(&node),
             "mailbox node pin mismatch"
         );
-        Ok(Self {
+        let mut value = Self {
             binding: Binding::claim(link, peer, NativeApplicationRole::Client)?,
             node,
             bulk_ready: false,
-            slots: std::array::from_fn(|_| ClientSlot {
+            capacity: None,
+            slots: (0..SLOTS)
+                .map(|_| ClientSlot {
+                    retired: None,
+                    sequence: 1,
+                    failed: false,
+                    pending: None,
+                })
+                .collect(),
+        };
+        let offer = Window::from_controller(&controller);
+        value.capacity = Some(ClientCapacity {
+            offer,
+            body: outgoing(capacity::request(capacity::binding(&value.binding), offer)?)?,
+            deadline: Instant::now() + REQUEST_DEADLINE,
+            cancellation: NativeSendCancellation::default(),
+            sent: false,
+            grant: None,
+        });
+        Ok(value)
+    }
+    pub fn slot_capacity(&self) -> usize {
+        self.slots.len()
+    }
+    pub fn negotiated_retained_bytes(&self) -> Option<usize> {
+        self.capacity
+            .as_ref()
+            .and_then(|c| c.grant.map(|w| w.bytes))
+    }
+    pub fn capacity_deadline(&self) -> Option<Instant> {
+        self.capacity
+            .as_ref()
+            .filter(|c| c.grant.is_none())
+            .map(|c| c.deadline)
+    }
+    /// Required control data never occupies or retires a business slot.
+    pub fn progress_capacity(&mut self, link: &mut NativeObjectLink, now: Instant) -> Result<()> {
+        self.binding.check(link)?;
+        if let Some(c) = &mut self.capacity {
+            if c.grant.is_some() {
+                return Ok(());
+            }
+            if now >= c.deadline {
+                c.cancellation.cancel();
+                return Err(CapacityNegotiationExpired.into());
+            }
+            if !c.sent {
+                c.sent = link.try_send_cancellable_until(
+                    self.binding.peer,
+                    STREAM,
+                    &c.body,
+                    now,
+                    c.deadline,
+                    &c.cancellation,
+                )?;
+            }
+        }
+        Ok(())
+    }
+    /// True only for the current session's authenticated resource context.
+    pub fn receive_capacity(
+        &mut self,
+        link: &NativeObjectLink,
+        body: &CompletedMessage,
+        now: Instant,
+    ) -> Result<bool> {
+        self.binding.check(link)?;
+        let expected = capacity::binding(&self.binding);
+        if !capacity::is_context(body, expected) {
+            return Ok(false);
+        }
+        ensure!(body.peer == self.binding.id, "capacity reply peer");
+        let c = self
+            .capacity
+            .as_mut()
+            .context("unsolicited capacity reply")?;
+        let (offer, grant) = capacity::decode(&capacity::flatten_control(body)?, expected, true)?;
+        ensure!(offer == c.offer, "capacity reply offer mismatch");
+        let grant = grant.context("capacity reply grant")?;
+        if let Some(previous) = c.grant {
+            ensure!(previous == grant, "capacity grant changed");
+        }
+        if c.grant.is_none() {
+            if now >= c.deadline {
+                return Err(CapacityNegotiationExpired.into());
+            }
+            self.slots.resize_with(grant.slots, || ClientSlot {
                 retired: None,
                 sequence: 1,
                 failed: false,
                 pending: None,
-            }),
-        })
+            });
+            c.grant = Some(grant);
+        }
+        Ok(true)
     }
-    /// Bounded local preparation, NOT service receipt. Caller keeps retryable
-    /// business inputs/IDs until a verified outcome; there is no automatic replay.
+    /// Bounded local preparation, not a service receipt or automatic replay.
     pub fn begin(
         &mut self,
         slot: usize,
@@ -580,11 +701,13 @@ struct ServerSlot {
     sequence: u64,
     phase: Phase,
 }
-type Slots = Arc<Mutex<[ServerSlot; SLOTS]>>;
+type Slots = Arc<Mutex<Vec<ServerSlot>>>;
 pub struct NativeMailboxServer {
     binding: Binding,
     cancellation: NativeSendCancellation,
     slots: Slots,
+    controller: Arc<ServiceConcurrencyV1>,
+    capacity: Option<ServerCapacity>,
 }
 impl NativeMailboxServer {
     pub fn invalidate(&mut self) {
@@ -596,13 +719,26 @@ impl NativeMailboxServer {
         }
     }
     pub fn attach(link: &mut NativeObjectLink, peer: usize) -> Result<Self> {
+        Self::attach_adaptive(link, peer, ServiceConcurrencyV1::from_host())
+    }
+    pub fn attach_adaptive(
+        link: &mut NativeObjectLink,
+        peer: usize,
+        controller: Arc<ServiceConcurrencyV1>,
+    ) -> Result<Self> {
         Ok(Self {
             binding: Binding::claim(link, peer, NativeApplicationRole::Service)?,
             cancellation: NativeSendCancellation::default(),
-            slots: Arc::new(Mutex::new(std::array::from_fn(|_| ServerSlot {
-                sequence: 1,
-                phase: Phase::Ready,
-            }))),
+            slots: Arc::new(Mutex::new(
+                (0..SLOTS)
+                    .map(|_| ServerSlot {
+                        sequence: 1,
+                        phase: Phase::Ready,
+                    })
+                    .collect(),
+            )),
+            controller,
+            capacity: None,
         })
     }
     /// Owner must hold at most one adapter per authenticated peer and retain its
@@ -624,6 +760,54 @@ impl NativeMailboxServer {
             "mailbox service owner cancelled"
         );
         ensure!(body.peer == self.binding.id, "mailbox request peer");
+        let control_context = capacity::binding(&self.binding);
+        if capacity::is_context(&body, control_context) {
+            let bytes = capacity::flatten_control(&body)?;
+            let (offer, _) = capacity::decode(&bytes, control_context, false)?;
+            if let Some(previous) = &self.capacity {
+                ensure!(
+                    previous.offer == offer,
+                    "capacity offer changed within session"
+                );
+            } else {
+                let grant = offer.intersect(Window::from_controller(&self.controller));
+                let reply = outgoing(capacity::reply(control_context, offer, grant)?)?;
+                self.slots
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("mailbox owner poisoned"))?
+                    .resize_with(grant.slots, || ServerSlot {
+                        sequence: 1,
+                        phase: Phase::Ready,
+                    });
+                self.capacity = Some(ServerCapacity { offer, body: reply });
+            }
+            let response = self.capacity.as_ref().unwrap().body.clone();
+            // A control-only response guard does not reset or borrow any normal
+            // slot. Replays reproduce exactly the frozen grant, never allocate more.
+            return Ok(MailboxWork {
+                waiting_watch: false,
+                rows: 1,
+                bytes,
+                context: control_context,
+                guard: WorkGuard {
+                    slots: Arc::new(Mutex::new(vec![ServerSlot {
+                        sequence: 1,
+                        phase: Phase::Working,
+                    }])),
+                    slot: 0,
+                    sequence: 1,
+                    armed: true,
+                    validity: self.binding.validity.clone(),
+                    cancellation: self.cancellation.clone(),
+                },
+                peer: self.binding.peer,
+                session: self.binding.session,
+                signer: self.binding.local,
+                deadline: now + REQUEST_DEADLINE,
+                capacity_response: Some(response),
+                retained_bytes: 4096,
+            });
+        }
         let bytes = flatten(&body)?;
         let context = context(&bytes)?;
         let mut slots = self
@@ -640,6 +824,7 @@ impl NativeMailboxServer {
         let batch = RequestBatch::decode(&bytes, context)?; // ALL rows before any durable effects
         let waiting_watch = batch.has_waiting_watch()?;
         let rows = batch.len();
+        let retained_bytes = batch.retained_bytes_estimate()?;
         slots[index].phase = Phase::Working;
         Ok(MailboxWork {
             waiting_watch,
@@ -658,6 +843,8 @@ impl NativeMailboxServer {
             session: self.binding.session,
             signer: self.binding.local,
             deadline: now + REQUEST_DEADLINE,
+            capacity_response: None,
+            retained_bytes,
         })
     }
 }
@@ -712,6 +899,8 @@ impl Drop for WorkGuard {
     }
 }
 pub struct MailboxWork {
+    capacity_response: Option<Arc<OutgoingMessage>>,
+    retained_bytes: usize,
     waiting_watch: bool,
     rows: usize,
     bytes: Zeroizing<Vec<u8>>,
@@ -723,6 +912,12 @@ pub struct MailboxWork {
     deadline: Instant,
 }
 impl MailboxWork {
+    pub fn retained_bytes_estimate(&self) -> usize {
+        self.retained_bytes
+    }
+    pub fn is_capacity_negotiation(&self) -> bool {
+        self.capacity_response.is_some()
+    }
     pub fn has_waiting_watch(&self) -> bool {
         self.waiting_watch
     }
@@ -742,6 +937,17 @@ impl MailboxWork {
         );
         self.guard.check()?;
         authority()?;
+        if let Some(body) = self.capacity_response {
+            return Ok(MailboxResponse {
+                body,
+                guard: self.guard,
+                peer: self.peer,
+                session: self.session,
+                deadline: self.deadline,
+                sent: false,
+                failed: false,
+            });
+        }
         let replies = (0..self.rows)
             .map(|_| Reply::Rejected(MailboxRejectionV1::Quota))
             .collect::<Vec<_>>();
@@ -770,6 +976,19 @@ impl MailboxWork {
             service.identity_public_key() == self.signer,
             "mailbox signer differs from authenticated node"
         );
+        if let Some(body) = self.capacity_response {
+            self.guard.check()?;
+            authority()?;
+            return Ok(MailboxResponse {
+                body,
+                guard: self.guard,
+                peer: self.peer,
+                session: self.session,
+                deadline: self.deadline,
+                sent: false,
+                failed: false,
+            });
+        }
         let bytes = tokio::time::timeout_at(
             self.deadline.into(),
             execute_local_batch(service, &self.bytes, self.context, || {
@@ -802,6 +1021,10 @@ pub struct MailboxResponse {
 }
 
 impl MailboxResponse {
+    /// The retained body is released only after this exact send completes.
+    pub fn transport_complete(&self, event: &NativeSendCompletion) -> bool {
+        event.peer == self.peer && event.stream == STREAM && Arc::ptr_eq(&event.body, &self.body)
+    }
     /// false retains THIS handle for retry; do not drop/rebuild it. Successful
     /// enqueue advances this slot only after owner work completed. Later sender
     /// expiry remains an unknown client outcome, not storage rollback.

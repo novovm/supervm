@@ -1,5 +1,15 @@
 # Agent Highest Law
 
+## 2026-10-21 first release uses one current node protocol
+
+The user confirmed no node version has been formally released. Do not create or
+retain old-node compatibility modes for these development builds. Converge the
+current node/client implementation and coordinate upgrades of the test fleet.
+Resource negotiation between different devices remains necessary; it is not a
+reason to keep a permanent legacy four-slot path. Preserve existing identities,
+history, custody obligations and verified rollback artifacts. This supersedes
+older instructions to retain unreleased wire compatibility for its own sake.
+
 ## 2026-10-21 local storage owner policy
 
 User storage policy defaults to no configured aggregate ceiling. Explicit finite

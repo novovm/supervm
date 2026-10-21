@@ -228,6 +228,7 @@ impl<'a> Client<'a> {
     }
     async fn tick(&mut self) -> Result<Option<(RequestId, Vec<Reply>)>> {
         let now = Instant::now();
+        self.session.progress_capacity(&mut self.link, now)?;
         let report = self.link.poll(now_ms()?, now, 64)?;
         ensure!(report.session_changes.is_empty(), "native session replaced");
         for done in report.completed {
@@ -237,9 +238,11 @@ impl<'a> Client<'a> {
             );
         }
         if let Some(body) = self.link.poll_complete(STREAM, now, 64)? {
-            return Ok(Some(
-                self.session.receive(&self.link, body, now, || Ok(()))?,
-            ));
+            if !self.session.receive_capacity(&self.link, &body, now)? {
+                return Ok(Some(
+                    self.session.receive(&self.link, body, now, || Ok(()))?,
+                ));
+            }
         }
         tokio::select! {
             result = self.pump.progress() => result?,
@@ -249,12 +252,12 @@ impl<'a> Client<'a> {
     }
     async fn request(&mut self, slot: usize, request: Request) -> Result<Reply> {
         let id = self.session.begin(slot, vec![request], Instant::now())?;
-        ensure!(self
-            .session
-            .try_send(&mut self.link, id, Instant::now(), || Ok(()))?);
         let end = Instant::now() + Duration::from_secs(8);
         loop {
             ensure!(Instant::now() < end, "native request deadline");
+            if self.session.negotiated_retained_bytes().is_some() {
+                self.session.try_send(&mut self.link, id, Instant::now(), || Ok(()))?;
+            }
             if let Some((seen, mut replies)) = self.tick().await? {
                 ensure!(seen == id && replies.len() == 1, "unexpected native reply");
                 return Ok(replies.remove(0));

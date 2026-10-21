@@ -86,6 +86,7 @@ struct Fixture {
     origin: Instant,
     received: Vec<(RequestId, Vec<Reply>)>,
     admitted: usize,
+    pending_budget: usize,
     _directory: tempfile::TempDir,
 }
 
@@ -145,6 +146,12 @@ impl Fixture {
         }
     }
     async fn new() -> Result<Self> {
+        Self::new_with_pressure(novovm_network::service_concurrency::ResourcePressureV1::Normal)
+            .await
+    }
+    async fn new_with_pressure(
+        pressure: novovm_network::service_concurrency::ResourcePressureV1,
+    ) -> Result<Self> {
         let key = SigningKey::from_bytes(&[17; 32]);
         let pin = key.verifying_key().to_bytes();
         let socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -181,7 +188,7 @@ impl Fixture {
         )?;
         let mut server_link = NativeObjectLink::new(
             NativeEndpoint::listen_clients(socket, key.clone(), 1, vec![STREAM], budget())?,
-            vec![lane()],
+            vec![capacity_lane()],
             policy(),
         )?;
         let origin = Instant::now();
@@ -197,7 +204,7 @@ impl Fixture {
                 1000,
                 origin,
             )?,
-            vec![lane()],
+            vec![capacity_lane()],
             policy(),
         )?;
         while client_link.session_id(0).is_none() || server_link.session_id(0).is_none() {
@@ -213,8 +220,17 @@ impl Fixture {
         }
         assert!(NativeMailboxClient::attach(&mut client_link, 0, [99; 32]).is_err());
         directory_book.check_continuous_native_peer_v7(selected.public_key, 1000)?;
-        let client = NativeMailboxClient::attach(&mut client_link, 0, selected.public_key)?;
-        let server = NativeMailboxServer::attach(&mut server_link, 0)?;
+        let client = NativeMailboxClient::attach_adaptive(
+            &mut client_link,
+            0,
+            selected.public_key,
+            capacity_controller(pressure),
+        )?;
+        let server = NativeMailboxServer::attach_adaptive(
+            &mut server_link,
+            0,
+            capacity_controller(pressure),
+        )?;
         assert!(NativeMailboxClient::attach(&mut client_link, 0, pin).is_err());
         assert!(NativeMailboxServer::attach(&mut server_link, 0).is_err());
         // Same authenticated peer may provide AND consume service; roles have
@@ -245,6 +261,7 @@ impl Fixture {
             origin,
             received: Vec::new(),
             admitted: 0,
+            pending_budget: 64,
             _directory: directory,
         })
     }
@@ -259,6 +276,7 @@ impl Fixture {
     }
     async fn tick(&mut self) -> Result<()> {
         let now = Instant::now();
+        self.client.progress_capacity(&mut self.client_link, now)?;
         let wall = 1000 + self.origin.elapsed().as_millis() as u64;
         for done in self.client_link.poll(wall, now, 64)?.completed {
             ensure!(
@@ -272,7 +290,7 @@ impl Fixture {
                 recipient_role(&body)?,
                 novovm_network::novorudp::object_link::NativeApplicationRole::Service
             );
-            ensure!(self.jobs.len() < 4, "work budget");
+            ensure!(self.jobs.len() < self.pending_budget, "work budget");
             let work = self.server.admit(&self.server_link, body, now, || Ok(()))?;
             let service = self.service.clone();
             let alive = self.alive.clone();
@@ -287,7 +305,10 @@ impl Fixture {
         }
         while let Some(result) = self.jobs.try_join_next() {
             self.responses.push_back(result??);
-            ensure!(self.responses.len() <= 4, "response budget");
+            ensure!(
+                self.responses.len() <= self.pending_budget,
+                "response budget"
+            );
         }
         if let Some(response) = self.responses.front_mut() {
             if response.try_send(&mut self.server_link, now, || Ok(()))? {
@@ -299,6 +320,12 @@ impl Fixture {
                 recipient_role(&body)?,
                 novovm_network::novorudp::object_link::NativeApplicationRole::Client
             );
+            if self
+                .client
+                .receive_capacity(&self.client_link, &body, now)?
+            {
+                continue;
+            }
             self.received.push(
                 self.client
                     .receive(&self.client_link, body, now, || Ok(()))?,
@@ -739,5 +766,166 @@ async fn response_cancel_after_enqueue_is_latched_but_other_slot_keeps_working()
         }],
     )?;
     assert!(matches!(f.until(next).await?.as_slice(), [Reply::Empty]));
+    Ok(())
+}
+
+fn capacity_controller(
+    pressure: novovm_network::service_concurrency::ResourcePressureV1,
+) -> Arc<novovm_network::service_concurrency::ServiceConcurrencyV1> {
+    use novovm_network::service_concurrency::*;
+    ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+        cpu_parallelism: 8,
+        available_memory_bytes: 16 * 1024 * 1024 * 1024,
+        pressure,
+    })
+}
+fn capacity_lane() -> NativeLaneConfig {
+    let mut result = lane();
+    {
+        result.receive.messages = 64;
+        result.receive.peer_messages = 64;
+        result.receive.bytes = LIMITS.wire_bytes * 64;
+        result.receive.peer_bytes = LIMITS.wire_bytes * 64;
+        result.send.messages = 64;
+        result.send.peer_messages = 64;
+        result.send.bytes = LIMITS.wire_bytes * 64;
+        result.send.peer_bytes = LIMITS.wire_bytes * 64;
+    }
+    result
+}
+#[tokio::test]
+async fn adaptive_capacity_negotiates_eight_simultaneous_requests_on_one_authenticated_session(
+) -> Result<()> {
+    let mut f = Fixture::new().await?;
+    let original = f.client_link.session_id(0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while f.client.slot_capacity() < 8 {
+        ensure!(Instant::now() < deadline, "capacity negotiation timeout");
+        f.tick().await?;
+    }
+    let mut ids = Vec::new();
+    for slot in 0..8 {
+        ids.push(
+            f.send(
+                slot,
+                vec![Request::Register {
+                    mailbox: [slot as u8 + 1; 32],
+                    write: [51; 32],
+                    read: [52; 32],
+                    expires: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs() as i64
+                        + 600,
+                }],
+            )?,
+        );
+    }
+    // All eight sends are admitted before consuming any response.
+    assert!(f.received.is_empty());
+    for id in ids {
+        assert!(matches!(f.until(id).await?.as_slice(), [Reply::Registered]));
+    }
+    assert_eq!(f.client_link.session_id(0), original);
+    Ok(())
+}
+#[tokio::test]
+async fn adaptive_capacity_negotiates_device_metadata_during_temporary_severe_pressure(
+) -> Result<()> {
+    let mut f =
+        Fixture::new_with_pressure(novovm_network::service_concurrency::ResourcePressureV1::Severe)
+            .await?;
+    let original = f.client_link.session_id(0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while f.client.slot_capacity() < 8 {
+        ensure!(Instant::now() < deadline, "capacity negotiation timeout");
+        f.tick().await?;
+    }
+    assert_eq!(f.client.slot_capacity(), 16);
+    assert_eq!(f.client_link.session_id(0), original);
+    // This negotiation allocates metadata only. native_requests capacity tests
+    // separately verify live pressure blocks extras until it clears.
+    Ok(())
+}
+#[tokio::test]
+async fn adaptive_capacity_drop_replay_and_wrong_identity_do_not_reset_business_sequences(
+) -> Result<()> {
+    use novovm_network::novorudp::fragments::CompletedMessage;
+    let mut f = Fixture::new().await?;
+    f.client
+        .progress_capacity(&mut f.client_link, Instant::now())?;
+    let body = f.receive_request().await?;
+    let copy = || CompletedMessage {
+        peer: body.peer.clone(),
+        id: body.id,
+        chunks: body.chunks.clone(),
+    };
+    let mut wrong = copy();
+    wrong.peer = "wrong authenticated peer".into();
+    assert!(f
+        .server
+        .admit(&f.server_link, wrong, Instant::now(), || Ok(()))
+        .is_err());
+    let first = f
+        .server
+        .admit(&f.server_link, copy(), Instant::now(), || Ok(()))?;
+    assert!(first.is_capacity_negotiation());
+    drop(first.execute(&f.service, || Ok(())).await?); // Lost application response.
+    assert_eq!(f.client.slot_capacity(), 4);
+    let id = f.send(
+        0,
+        vec![Request::Register {
+            mailbox: [11; 32],
+            write: [12; 32],
+            read: [13; 32],
+            expires: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs() as i64
+                + 600,
+        }],
+    )?;
+    assert!(matches!(f.until(id).await?.as_slice(), [Reply::Registered]));
+    let replay = f
+        .server
+        .admit(&f.server_link, copy(), Instant::now(), || Ok(()))?;
+    f.responses
+        .push_back(replay.execute(&f.service, || Ok(())).await?);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while f.client.slot_capacity() < 8 {
+        ensure!(
+            Instant::now() < deadline,
+            "idempotent capacity reply timeout"
+        );
+        f.tick().await?;
+    }
+    let next = f.send(0, vec![Request::ProbeBulkV1])?;
+    assert_eq!(next.sequence, id.sequence + 1);
+    assert!(matches!(
+        f.until(next).await?.as_slice(),
+        [Reply::BulkReady { .. }]
+    ));
+    let mut other = Fixture::new().await?;
+    assert!(other
+        .server
+        .admit(&other.server_link, copy(), Instant::now(), || Ok(()))
+        .is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn resource_negotiation_missing_reply_is_a_bounded_typed_failure() -> Result<()> {
+    let mut f = Fixture::new().await?;
+    let deadline = f
+        .client
+        .capacity_deadline()
+        .expect("resource exchange required");
+    let error = f
+        .client
+        .progress_capacity(&mut f.client_link, deadline)
+        .unwrap_err();
+    assert!(error.is::<CapacityNegotiationExpired>());
+    assert!(f.client.negotiated_retained_bytes().is_none());
+    assert_eq!(f.client.slot_capacity(), SLOTS);
+    // No directory, durable data, business request or sequence was created.
+    assert_eq!(f.admitted, 0);
     Ok(())
 }

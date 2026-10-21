@@ -6,7 +6,7 @@ use crate::{
     tls_transport::TlsScopeV1,
 };
 use std::net::SocketAddr;
-use tokio::{net::TcpListener, sync::Semaphore};
+use tokio::net::TcpListener;
 use zeroize::Zeroizing;
 
 pub struct TlsMailboxListenerV1 {
@@ -26,6 +26,16 @@ impl TlsMailboxListenerV1 {
         stop: Arc<AtomicBool>,
     ) -> Result<Self> {
         Self::bind_with_capacity(listen, advertised, seed, stop, 4).await
+    }
+    pub async fn bind_adaptive(
+        listen: SocketAddr,
+        advertised: SocketAddr,
+        seed: Zeroizing<[u8; 32]>,
+        stop: Arc<AtomicBool>,
+    ) -> Result<Self> {
+        // Existing signed/native peer envelope; live resource limits are supplied
+        // by the same node owner's shared adaptive gate, not by this maximum.
+        Self::bind_with_capacity(listen, advertised, seed, stop, 64).await
     }
     pub async fn bind_with_capacity(
         listen: SocketAddr,
@@ -79,7 +89,7 @@ impl TlsMailboxListenerV1 {
         clients: &Option<Vec<[u8; 32]>>,
         host: &ServiceLeaseHostV1,
         service: &crate::mailbox_rpc::MailboxServiceV1,
-        slots: Arc<Semaphore>,
+        slots: Arc<AdaptiveAdmissionV1>,
     ) -> Result<()> {
         let policy = clients.as_deref().map_or(
             ServicePeerPolicyV1::AnyAuthenticated,
@@ -96,6 +106,7 @@ impl TlsMailboxListenerV1 {
                     // queue unbounded unauthenticated TLS handshakes in memory.
                     let Ok(permit) = slots.clone().try_acquire_owned() else { drop(tcp); continue };
                     tcp.set_nodelay(true)?;
+                    let concurrency = slots.controller();
                     active.push(async move {
                         let permit = Arc::new(permit);
                         let check = || host.check_continuous_tls_peer_v1(&self.route, now_ms()?);
@@ -111,7 +122,7 @@ impl TlsMailboxListenerV1 {
                         ).await??;
                         if kind == NodeServiceV1::MailboxNativeV8 {
                             return native::serve_carrier(
-                                &mut stream, key, policy, service, self.stop.clone(), permit,
+                                &mut stream, key, policy, service, self.stop.clone(), permit, concurrency,
                                 || host.check_continuous_native_tls_v8(&self.route, now_ms()?),
                                 native::NativeCarrierHandshake::SessionClockV8 {
                                     received: clock, deadline: admitted_at + Duration::from_secs(30),

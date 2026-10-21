@@ -347,6 +347,21 @@ impl<'a> RequestBatch<'a> {
         }
         Ok(false)
     }
+    /// Retained wire/reply estimate without cloning large ciphertext fields.
+    pub fn retained_bytes_estimate(&self) -> Result<usize> {
+        let mut total = 4096usize;
+        for row in 0..self.len() {
+            let f = fields(&self.0, row)?;
+            let bytes = match f[0][0] {
+                2 | 11 | 14 => f[6].len().saturating_mul(3).saturating_add(4096),
+                12 | 13 => BULK_LIMITS.wire_bytes.saturating_mul(2),
+                3 | 8 => LIMITS.wire_bytes.saturating_mul(2),
+                _ => 8192,
+            };
+            total = total.saturating_add(bytes);
+        }
+        Ok(total)
+    }
     pub fn request(&self, index: usize) -> Result<Request> {
         let f = fields(&self.0, index)?;
         Ok(match f[0][0] {

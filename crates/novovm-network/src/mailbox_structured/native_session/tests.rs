@@ -1,6 +1,63 @@
 use super::*;
 
 #[test]
+fn response_transport_completion_releases_only_its_exact_body() -> Result<()> {
+    let make = |context| -> Result<MailboxResponse> {
+        Ok(MailboxResponse {
+            failed: false,
+            sent: true,
+            peer: 0,
+            session: [7; 16],
+            deadline: Instant::now() + REQUEST_DEADLINE,
+            body: outgoing(encode_replies(context, &[Reply::Empty])?)?,
+            guard: WorkGuard {
+                slots: slots(),
+                slot: 0,
+                sequence: 1,
+                armed: false,
+                cancellation: NativeSendCancellation::default(),
+                validity: NativeSessionValidity::new(),
+            },
+        })
+    };
+    let a = make([1; 32])?;
+    let b = make([2; 32])?;
+    let mut event = NativeSendCompletion {
+        peer: 0,
+        stream: STREAM,
+        state: ObjectSendState::Cancelled,
+        body: a.body.clone(),
+    };
+    assert!(a.transport_complete(&event));
+    assert!(!b.transport_complete(&event));
+    event.peer = 1;
+    assert!(!a.transport_complete(&event));
+    event.peer = 0;
+    event.stream = STREAM + 1;
+    assert!(!a.transport_complete(&event));
+    event.stream = STREAM;
+    event.body = b.body.clone();
+    assert!(b.transport_complete(&event));
+    assert!(!a.transport_complete(&event));
+    let controller = ServiceConcurrencyV1::new(crate::service_concurrency::ResourceSnapshotV1 {
+        cpu_parallelism: 8,
+        available_memory_bytes: 1024 * 1024 * 1024,
+        pressure: crate::service_concurrency::ResourcePressureV1::Normal,
+    });
+    event.body = a.body.clone();
+    let mut retained = vec![
+        (a, controller.try_acquire_work(4096).unwrap()),
+        (b, controller.try_acquire_work(4096).unwrap()),
+    ];
+    assert_eq!(controller.snapshot().active_work, 2);
+    retained.retain(|(response, _)| !response.transport_complete(&event));
+    assert_eq!(controller.snapshot().active_work, 1);
+    assert_eq!(retained.len(), 1);
+    assert!(!retained[0].0.transport_complete(&event));
+    Ok(())
+}
+
+#[test]
 fn bulk_probe_reply_requires_exact_capability_and_original_request() {
     let ready = Reply::BulkReady {
         max_ciphertext: crate::mailbox_store::MAX_BULK_CIPHERTEXT as u32,
@@ -26,15 +83,21 @@ fn binding() -> Binding {
     }
 }
 fn slots() -> Slots {
-    Arc::new(Mutex::new(std::array::from_fn(|_| ServerSlot {
-        sequence: 1,
-        phase: Phase::Ready,
-    })))
+    Arc::new(Mutex::new(
+        (0..SLOTS)
+            .map(|_| ServerSlot {
+                sequence: 1,
+                phase: Phase::Ready,
+            })
+            .collect(),
+    ))
 }
 fn work(slots: Slots, deadline: Instant) -> Result<MailboxWork> {
     let context = binding().context(0, 1);
     slots.lock().unwrap()[0].phase = Phase::Working;
     Ok(MailboxWork {
+        capacity_response: None,
+        retained_bytes: 8192,
         waiting_watch: false,
         rows: 1,
         bytes: encode_requests(
