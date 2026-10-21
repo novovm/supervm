@@ -10,6 +10,26 @@ reason to keep a permanent legacy four-slot path. Preserve existing identities,
 history, custody obligations and verified rollback artifacts. This supersedes
 older instructions to retain unreleased wire compatibility for its own sake.
 
+## 2026-10-21 public test deployment and fresh production genesis
+
+All current chain nodes are pre-production public-test nodes, not a released
+mainnet. Public testing must use the intended production configuration and
+service deployment practices: the same native entry, authentication, quorum,
+durable storage, restart/reconnect/catch-up and operational checks. Distinguish
+production-grade configuration from production release; do not weaken checks
+or create a separate execution path merely because this is a test network.
+
+At the explicitly authorized formal launch, start from a fresh approved genesis
+with a distinct chain/signing domain and separate data directory. Public-test
+blocks, balances, nonces and consensus state do not automatically carry into
+mainnet. This future reset is not permission to clear any current data or signing
+history now, reuse a cleared signing journal in the same chain domain, or skip
+catch-up/recovery acceptance during public testing. Preserve test evidence and
+keep unrelated UCA/device identities, NOVOCHAT history and custody out of chain
+reset scope. Exact mainnet genesis/economic configuration and cutover remain
+subject to explicit launch authorization; packaging, pushing or green CI alone
+does not constitute release.
+
 ## 2026-10-21 local storage owner policy
 
 User storage policy defaults to no configured aggregate ceiling. Explicit finite
