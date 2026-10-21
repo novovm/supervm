@@ -631,7 +631,7 @@ mod probe {
         while let Some(result) = preparing.next().await {
             match result {
                 Ok(client) => ready.push(client),
-                Err(error) => failures.push(format!("preparation: {error}")),
+                Err(error) => failures.push(format!("preparation: {error:#}")),
             }
         }
         // One session proves the logical request window; do not turn this into
@@ -639,7 +639,7 @@ mod probe {
         if let Some((connection, mut client)) = ready.pop() {
             match client.window_preflight(connection).await {
                 Ok(()) => ready.push((connection, client)),
-                Err(error) => failures.push(format!("preflight connection {connection}: {error}")),
+                Err(error) => failures.push(format!("preflight connection {connection}: {error:#}")),
             }
         }
         let preparation_errors = failures.len();
@@ -663,7 +663,7 @@ mod probe {
             total.fetched_plaintext_bytes += stats.fetched_plaintext_bytes;
             match result {
                 Ok(()) => completed_clients += 1,
-                Err(error) => failures.push(format!("load: {error}")),
+                Err(error) => failures.push(format!("load: {error:#}")),
             }
         }
         let seconds = start.elapsed().as_secs_f64();
