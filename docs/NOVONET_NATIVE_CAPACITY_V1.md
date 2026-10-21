@@ -341,3 +341,31 @@ about 0.94 MiB/s instead of bursts followed by tens of seconds of silence.
 Measurement tooling and evidence: NOVOCHAT `artifacts/claude-diag-*`
 (ignored, local). The roughly 5x redundancy overhead is the larger remaining
 capacity lever and is not changed here.
+
+## Adaptive wire allowance and unconfirmed-tail repair (v100 candidate)
+
+Pacing alone (63bf33a9) removed the blackout but the same 8 x 60 x 32 KiB phone
+load still failed 3/8 clients: senders do not slow down for the receiver's
+allowance, so paced refusals became sustained loss. Two causes were measured.
+
+Wasted bytes: one light client still sent about 3x the fragments of each object
+(88 datagrams for one 28-fragment Put). UDP receivers ACK almost every fragment,
+so ACKs listed fragments still in flight or not yet sent as missing, and for any
+object within one 64-fragment window every repair used the tail copy count (6).
+`object_sender.rs` now repairs only gaps behind the receiver's newest fragment
+in the object's final window; the trailing run waits for the existing ack_wait
+retry from the full last plan or the tail probe. Non-final windows, wire format
+and copy policy are unchanged; a genuinely lost tail costs at most ack_wait.
+
+Fixed allowance: the 64 MiB/minute value was a constant inherited from the
+first signed listener (781e41f8), kept unchanged when connection and execution
+limits became resource-derived. `ServiceConcurrencyV1` now owns the native wire
+allowance too. The listener reports usage each loop; at most every 5 s the owner
+halves the allowance under platform pressure or new execution backoff, and grows
+it by half while the allowance itself refused traffic and nothing else was
+limiting. The startup value is the ceiling on metered networks (the platform
+reports cost; metered is assumed until told otherwise) and its eighth is the
+floor; unmetered networks may grow to the global maximum. `NativeWireBudget`
+supports runtime limit changes without forgiving bytes already in the window.
+The signed record still advertises the startup value; advertising the current
+allowance at renewal is a follow-up.

@@ -1,10 +1,14 @@
 //! Local resource admission owned by the existing node/application runtime.
 //! No peer authorization, timer, worker, protocol or persistent policy lives here.
+use crate::novorudp::wire_budget::{NativeWireUsage, MAX_BYTES_PER_MINUTE, MIN_BYTES_PER_MINUTE};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 const MIB: u64 = 1024 * 1024;
+/// Native wire allowance decisions use the same at-most-every-5 s cadence as
+/// host refresh; observations between decisions only report usage.
+const WIRE_DECISION_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourcePressureV1 {
@@ -84,6 +88,12 @@ pub struct ServiceConcurrencySnapshotV1 {
     pub reserved_transport_bytes: usize,
     pub active_work: usize,
     pub reserved_bytes: usize,
+    /// Current native wire allowance and its last observed usage; zero/None
+    /// until a native listener with a configured budget reports.
+    pub wire_bytes_per_minute: u64,
+    pub wire_usage: Option<NativeWireUsage>,
+    /// Platform network-cost observation; metered until reported otherwise.
+    pub network_unmetered: bool,
 }
 impl ServiceConcurrencySnapshotV1 {
     /// Observed capacity of the node's shared inbound service budget. The two
@@ -124,6 +134,19 @@ struct State {
     service_us: u64,
     platform_managed: bool,
     refreshed: Instant,
+    wire: WireState,
+}
+/// Native wire allowance owned by the same resource controller. The listener's
+/// startup budget is the metered ceiling; an unmetered network may grow beyond
+/// it while every other resource stays healthy.
+struct WireState {
+    startup: u64,
+    limit: u64,
+    unmetered: bool,
+    decided: Instant,
+    refusals: u64,
+    backoffs: u64,
+    usage: Option<NativeWireUsage>,
 }
 pub struct ServiceConcurrencyV1 {
     state: Mutex<State>,
@@ -162,6 +185,15 @@ impl ServiceConcurrencyV1 {
                 service_us: 0,
                 platform_managed: false,
                 refreshed: Instant::now(),
+                wire: WireState {
+                    startup: 0,
+                    limit: 0,
+                    unmetered: false,
+                    decided: Instant::now(),
+                    refusals: 0,
+                    backoffs: 0,
+                    usage: None,
+                },
             }),
         })
     }
@@ -203,6 +235,53 @@ impl ServiceConcurrencyV1 {
             }
             s.target = s.target.min(ceiling).max(1);
         }
+    }
+    /// Platform network-cost observation. Until an unmetered network is
+    /// reported, the native wire allowance never exceeds its startup value.
+    pub fn observe_network_cost(&self, unmetered: bool) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        s.wire.unmetered = unmetered;
+        if !unmetered && s.wire.startup > 0 {
+            s.wire.limit = s.wire.limit.min(s.wire.startup);
+        }
+    }
+    /// The native listener reports its configured allowance usage and receives
+    /// the allowance to enforce now. At most one decision per interval: halve
+    /// under platform pressure or new execution backoff; grow by half while the
+    /// allowance itself refused traffic and everything else stayed healthy.
+    /// Metered networks keep the startup value as ceiling; the floor keeps
+    /// ordinary messages usable under pressure.
+    pub(crate) fn observe_native_wire(&self, usage: NativeWireUsage, now: Instant) -> u64 {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let refusals = usage.send_deferred.saturating_add(usage.receive_dropped);
+        s.wire.usage = Some(usage);
+        if s.wire.startup == 0 {
+            s.wire.startup = usage.limit;
+            s.wire.limit = usage.limit;
+            s.wire.decided = now;
+            s.wire.refusals = refusals;
+            s.wire.backoffs = s.execution_backoffs;
+        }
+        let ceiling = if s.wire.unmetered {
+            MAX_BYTES_PER_MINUTE
+        } else {
+            s.wire.startup
+        };
+        let floor = (s.wire.startup / 8).clamp(MIN_BYTES_PER_MINUTE, ceiling);
+        if now.saturating_duration_since(s.wire.decided) >= WIRE_DECISION_INTERVAL {
+            let pressured = s.resources.pressure != ResourcePressureV1::Normal
+                || s.execution_backoffs > s.wire.backoffs;
+            if pressured {
+                s.wire.limit /= 2;
+            } else if refusals > s.wire.refusals {
+                s.wire.limit = s.wire.limit.saturating_add(s.wire.limit / 2);
+            }
+            s.wire.decided = now;
+            s.wire.refusals = refusals;
+            s.wire.backoffs = s.execution_backoffs;
+        }
+        s.wire.limit = s.wire.limit.clamp(floor, ceiling);
+        s.wire.limit
     }
     fn ceiling(s: &State) -> (usize, usize) {
         // Leave most memory to UI/OS/other applications. These are resource
@@ -266,6 +345,9 @@ impl ServiceConcurrencyV1 {
             reserved_transport_bytes: s.transport_bytes,
             active_work: s.active,
             reserved_bytes: s.bytes,
+            wire_bytes_per_minute: s.wire.limit,
+            wire_usage: s.wire.usage,
+            network_unmetered: s.wire.unmetered,
         };
         // An admitted inbound connection needs its own idle subscription.
         // Waiting consumes retained memory, not a CPU execution slot. Match
@@ -1303,5 +1385,48 @@ mod tests {
         assert_eq!(c.snapshot().work_limit, 1);
         c.update_resources(resources(ResourcePressureV1::Normal));
         assert_eq!(c.snapshot().work_limit, 8);
+    }
+
+    #[test]
+    fn native_wire_allowance_follows_cost_pressure_and_actual_refusals() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let start = Instant::now();
+        let at = |seconds: u64| start + Duration::from_secs(seconds);
+        let usage = |limit: u64, refused: u64| NativeWireUsage {
+            limit,
+            send_deferred: refused,
+            ..NativeWireUsage::default()
+        };
+        let startup = 64 * MIB;
+        assert_eq!(c.observe_native_wire(usage(startup, 0), at(0)), startup);
+        // Metered (default): refusals never raise the allowance above startup.
+        assert_eq!(c.observe_native_wire(usage(startup, 9), at(5)), startup);
+        // Unmetered and healthy: grows only while the allowance refuses traffic.
+        c.observe_network_cost(true);
+        assert_eq!(c.observe_native_wire(usage(startup, 20), at(10)), 96 * MIB);
+        assert_eq!(c.observe_native_wire(usage(96 * MIB, 20), at(15)), 96 * MIB);
+        assert_eq!(c.observe_native_wire(usage(96 * MIB, 21), at(16)), 96 * MIB);
+        assert_eq!(
+            c.observe_native_wire(usage(96 * MIB, 30), at(20)),
+            144 * MIB
+        );
+        // Platform pressure halves it every decision, down to startup / 8.
+        c.update_resources(resources(ResourcePressureV1::Severe));
+        let mut limit = 144 * MIB;
+        for step in 0..6 {
+            limit = c.observe_native_wire(usage(limit, 30), at(25 + step * 5));
+        }
+        assert_eq!(limit, 8 * MIB);
+        // Back to metered caps immediately at the startup value.
+        c.update_resources(resources(ResourcePressureV1::Normal));
+        c.observe_network_cost(true);
+        for step in 0..8 {
+            limit = c.observe_native_wire(usage(limit, 40 + step), at(60 + step * 5));
+        }
+        assert!(limit > startup);
+        c.observe_network_cost(false);
+        assert_eq!(c.snapshot().wire_bytes_per_minute, startup);
+        assert_eq!(c.observe_native_wire(usage(limit, 99), at(200)), startup);
+        assert!(!c.snapshot().network_unmetered);
     }
 }

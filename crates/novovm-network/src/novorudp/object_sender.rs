@@ -204,12 +204,20 @@ impl NativeObjectSender {
                         .checked_add(1)
                         .context("native repair generation exhausted")?;
                     self.last_plan = Some(plan.clone());
-                    self.repair = Some(RepairCursor {
-                        plan: plan.clone(),
-                        range: 0,
-                        index: plan.window.missing_ranges[0].start,
-                        copy: 0,
-                    });
+                    // UDP receivers ACK after almost every fragment, so the
+                    // final window's trailing missing run is usually still in
+                    // flight or not yet sent. Repair only gaps behind the
+                    // receiver's newest fragment now; the ack_wait retry
+                    // repairs a genuinely lost tail from the full last_plan.
+                    self.repair =
+                        trim_unconfirmed_tail(plan, self.body.frame_count() as u64).map(|plan| {
+                            RepairCursor {
+                                index: plan.window.missing_ranges[0].start,
+                                plan,
+                                range: 0,
+                                copy: 0,
+                            }
+                        });
                 }
             }
         }
@@ -446,6 +454,27 @@ impl NativeObjectSender {
         .unwrap_or(self.deadline)
         .min(self.deadline)
     }
+}
+
+/// In the object's final window, drop the trailing missing run: fragments after
+/// the receiver's newest one are not yet known lost. Earlier gaps are kept, and
+/// non-final windows are unchanged. `None` means no gap needs repair now.
+fn trim_unconfirmed_tail(plan: &NovoRudpRepairPlan, total: u64) -> Option<NovoRudpRepairPlan> {
+    let ranges = &plan.window.missing_ranges;
+    let last = ranges.last()?;
+    if plan.window.range.end_inclusive.saturating_add(1) != total
+        || last.end_inclusive.saturating_add(1) != total
+    {
+        return Some(plan.clone());
+    }
+    let gaps = ranges[..ranges.len() - 1].to_vec();
+    if gaps.is_empty() {
+        return None;
+    }
+    let mut trimmed = plan.clone();
+    trimmed.window.missing_count = missing_count(&gaps);
+    trimmed.window.missing_ranges = gaps;
+    Some(trimmed)
 }
 
 #[cfg(test)]

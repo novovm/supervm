@@ -418,6 +418,13 @@ impl NativeObjectLink {
             .usage;
         Ok((u.messages, u.bytes))
     }
+    /// The endpoint's node-wide wire allowance, if one is configured.
+    pub fn wire_usage_v1(&mut self, now: Instant) -> Option<super::wire_budget::NativeWireUsage> {
+        self.endpoint.wire_usage_v1(now)
+    }
+    pub fn update_wire_budget_v1(&mut self, bytes_per_minute: u64, now: Instant) -> Result<()> {
+        self.endpoint.update_wire_budget_v1(bytes_per_minute, now)
+    }
     /// Encoding/hash belongs to the assembly caller. False leaves its original
     /// Arc untouched; duplicate in-flight work does not reset repair or TTL.
     pub fn try_send(

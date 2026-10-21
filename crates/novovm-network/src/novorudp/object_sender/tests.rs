@@ -224,12 +224,14 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
 fn invalid_and_stale_feedback_cannot_deliver_or_rewrite_repair_state() -> Result<()> {
     let (_, _, a, _) = link()?;
     let now = Instant::now();
+    // Three fragments so the ACK reports a gap behind the newest received one.
     let body = Arc::new(OutgoingMessage::with_profile(
         [1; 32],
-        vec![1; 1000],
-        2000,
+        vec![1; 2 * super::super::fragments::UDP_CHUNK_BYTES + 1],
+        100_000,
         FragmentProfile::NativeUdpV2,
     )?);
+    assert_eq!(body.frame_count(), 3);
     let (config, pacing) = settings();
     let mut sender = NativeObjectSender::new(
         body.clone(),
@@ -249,10 +251,10 @@ fn invalid_and_stale_feedback_cannot_deliver_or_rewrite_repair_state() -> Result
             sequence: None,
             window_id: Some(0),
         },
-        expected_total: 2,
+        expected_total: 3,
         receiver_done: false,
         missing_count: 1,
-        current_window: Some(NovoRudpRange::new(1, 1)),
+        current_window: Some(NovoRudpRange::new(1, 2)),
         current_window_missing_ranges: vec![NovoRudpRange::new(1, 1)],
     };
     let frame = encode_object_ack(body.id(), 11, &ack)?;
@@ -338,6 +340,35 @@ fn missing_ack(
         },
     )
 }
+/// Missing [start, end] behind the receiver's newest fragment (the last one),
+/// so the sender treats it as a real gap rather than an unconfirmed tail.
+fn gap_ack(
+    sender: &NativeObjectSender,
+    epoch: u64,
+    start: u64,
+    end: u64,
+) -> Result<NovoRudpTransportFrameV0> {
+    let total = sender.body.frame_count() as u64;
+    encode_object_ack(
+        sender.body.id(),
+        sender.stream,
+        &NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: sender.session,
+                epoch,
+                sequence: None,
+                window_id: Some(start / OBJECT_WINDOW),
+            },
+            expected_total: total,
+            receiver_done: false,
+            missing_count: end - start + 1,
+            current_window: Some(NovoRudpRange::new(start, total - 1)),
+            current_window_missing_ranges: vec![NovoRudpRange::new(start, end)],
+        },
+    )
+}
 #[test]
 fn blocked_initial_write_keeps_exact_frame_across_new_ack_epoch() -> Result<()> {
     let (left, right, mut a, mut b) = link()?;
@@ -382,12 +413,14 @@ fn blocked_repair_completion_does_not_skip_replacement_cursor() -> Result<()> {
         blocked: false.into(),
     };
     let now = Instant::now();
+    // Three fragments: both ACKs report gaps behind the received last fragment.
     let body = Arc::new(OutgoingMessage::with_profile(
         [1; 32],
-        vec![5; 1000],
-        2000,
+        vec![5; 2 * super::super::fragments::UDP_CHUNK_BYTES + 1],
+        100_000,
         FragmentProfile::NativeUdpV2,
     )?);
+    assert_eq!(body.frame_count(), 3);
     let (config, pacing) = settings();
     let mut sender = NativeObjectSender::new(
         body,
@@ -398,15 +431,15 @@ fn blocked_repair_completion_does_not_skip_replacement_cursor() -> Result<()> {
         now,
         Duration::from_secs(5),
     )?;
-    for _ in 0..2 {
+    for _ in 0..3 {
         assert_eq!(sender.poll_send_limited(&io, &mut a, now, 2, None)?, 1);
         receive(&right, &mut b)?;
     }
-    sender.on_ack(&missing_ack(&sender, 1, 0)?, now)?;
+    sender.on_ack(&gap_ack(&sender, 1, 0, 1)?, now)?;
     io.blocked.store(true, std::sync::atomic::Ordering::Relaxed);
     assert_eq!(sender.poll_send_limited(&io, &mut a, now, 1, None)?, 0);
     let original = sender.pending.as_ref().unwrap().frame.clone();
-    sender.on_ack(&missing_ack(&sender, 2, 1)?, now)?;
+    sender.on_ack(&gap_ack(&sender, 2, 1, 1)?, now)?;
     io.blocked
         .store(false, std::sync::atomic::Ordering::Relaxed);
     assert_eq!(sender.poll_send_limited(&io, &mut a, now, 1, None)?, 1);
@@ -500,5 +533,70 @@ fn udp_small_poll_keeps_existing_pause_policy() -> Result<()> {
         1
     );
     receive(&right, &mut b)?;
+    Ok(())
+}
+
+#[test]
+fn final_window_repairs_gaps_now_and_unconfirmed_tail_only_after_ack_wait() -> Result<()> {
+    use super::super::fragments::*;
+    let (left, right, mut a, mut b) = link()?;
+    let now = Instant::now();
+    let body = Arc::new(OutgoingMessage::with_profile(
+        [2; 32],
+        vec![9; 20 * UDP_CHUNK_BYTES],
+        100_000,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let total = body.frame_count() as u64;
+    let (config, pacing) = settings();
+    let mut sender = NativeObjectSender::new(
+        body.clone(),
+        a.session_id(),
+        11,
+        config,
+        pacing,
+        now,
+        Duration::from_secs(5),
+    )?;
+    while sender.initial < body.frame_count() {
+        for _ in 0..sender.poll_send(&left, &mut a, now, 8)? {
+            receive(&right, &mut b)?;
+        }
+    }
+    // An ACK taken mid-flight: one real gap, then a trailing unconfirmed run.
+    let ack = NovoRudpAckFrame {
+        header: NovoRudpFrameHeader {
+            version: 1,
+            kind: NovoRudpFrameKind::Ack,
+            session_id: a.session_id(),
+            epoch: 1,
+            sequence: None,
+            window_id: Some(0),
+        },
+        expected_total: total,
+        receiver_done: false,
+        missing_count: 6,
+        current_window: Some(NovoRudpRange::new(3, total - 1)),
+        current_window_missing_ranges: vec![
+            NovoRudpRange::new(3, 3),
+            NovoRudpRange::new(total - 5, total - 1),
+        ],
+    };
+    assert!(b.try_send(&right, &encode_object_ack(body.id(), 11, &ack)?)?);
+    sender.on_ack(&receive(&left, &mut a)?, now)?;
+    assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 1);
+    let gap = receive(&right, &mut b)?;
+    assert_eq!(
+        (gap.kind, gap.sequence),
+        (NovoRudpTransportFrameKindV0::Repair, 3)
+    );
+    assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 0);
+    // No newer feedback within ack_wait: the existing retry repairs the tail.
+    let later = now + Duration::from_millis(20);
+    let mut repaired = Vec::new();
+    for _ in 0..sender.poll_send(&left, &mut a, later, 8)? {
+        repaired.push(receive(&right, &mut b)?.sequence);
+    }
+    assert!((total - 5..total).all(|index| repaired.contains(&index)));
     Ok(())
 }

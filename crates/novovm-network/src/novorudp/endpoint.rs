@@ -653,6 +653,15 @@ impl NativeEndpoint {
         self.wire_budget.as_mut().map(|budget| budget.usage(now))
     }
 
+    /// Adjust an already configured allowance to the owner's current resource
+    /// decision. It cannot remove the budget or reset its rolling accounting.
+    pub fn update_wire_budget_v1(&mut self, bytes_per_minute: u64, now: Instant) -> Result<()> {
+        self.wire_budget
+            .as_mut()
+            .context("native wire budget not configured")?
+            .set_limit(bytes_per_minute, now)
+    }
+
     pub fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.io.local_udp_addr()?)
     }

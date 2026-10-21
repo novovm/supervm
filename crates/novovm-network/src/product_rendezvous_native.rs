@@ -583,6 +583,16 @@ async fn serve_link(
                 snapshot.authenticated_waiting,
             );
         }
+        // The node-wide wire allowance follows the same resource owner: lower
+        // under pressure, higher while it is the only limiting resource.
+        if let Some(controller) = concurrency.as_ref() {
+            if let Some(usage) = link.wire_usage_v1(now) {
+                let limit = controller.observe_native_wire(usage, now);
+                if limit != usage.limit {
+                    link.update_wire_budget_v1(limit, now)?;
+                }
+            }
+        }
         outbound = outbound.saturating_sub(report.completed.len());
         for completed in &report.completed {
             sending.retain(|(_, response, _permit)| !response.transport_complete(completed));

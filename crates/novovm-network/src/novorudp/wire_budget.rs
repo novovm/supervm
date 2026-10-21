@@ -96,12 +96,26 @@ impl NativeWireBudget {
             }
         }
         self.second = second;
-        self.usage.remaining = self.usage.limit - self.usage.used;
+        self.usage.remaining = self.usage.limit.saturating_sub(self.usage.used);
     }
 
     pub fn usage(&mut self, now: Instant) -> NativeWireUsage {
         self.advance(now);
         self.usage
+    }
+
+    /// Follow the owner's current resource decision. Bytes already in the
+    /// rolling window stay charged: lowering takes effect at once and raising
+    /// never forgives past traffic. Outstanding reservations are unaffected.
+    pub fn set_limit(&mut self, limit: u64, now: Instant) -> Result<()> {
+        ensure!(
+            (MIN_BYTES_PER_MINUTE..=MAX_BYTES_PER_MINUTE).contains(&limit),
+            "native UDP byte budget out of range"
+        );
+        self.advance(now);
+        self.usage.limit = limit;
+        self.usage.remaining = limit.saturating_sub(self.usage.used);
+        Ok(())
     }
 
     /// Admission rule shared by ingress, UDP sends and held writes. `advance`
@@ -125,7 +139,7 @@ impl NativeWireBudget {
     fn charge(&mut self, bytes: usize) {
         self.buckets[(self.second % 61) as usize] += bytes as u64;
         self.usage.used += bytes as u64;
-        self.usage.remaining = self.usage.limit - self.usage.used;
+        self.usage.remaining = self.usage.limit.saturating_sub(self.usage.used);
     }
 
     /// Hold capacity before yielding to a carrier write. The same node-wide
@@ -150,7 +164,7 @@ impl NativeWireBudget {
         self.pending_sends[slot.expect("available reservation slot")] = Some((id, bytes));
         self.usage.reserved_send_bytes += bytes as u64;
         self.usage.used += bytes as u64;
-        self.usage.remaining = self.usage.limit - self.usage.used;
+        self.usage.remaining = self.usage.limit.saturating_sub(self.usage.used);
         Ok(Some(NativeSendReservation {
             owner: Arc::clone(&self.reservation_owner),
             id,
