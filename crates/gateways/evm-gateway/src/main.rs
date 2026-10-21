@@ -1432,8 +1432,13 @@ fn gateway_reconcile_rpc_call(
         "method": method,
         "params": params,
     });
-    let response = ureq::post(&cfg.rpc_endpoint)
-        .timeout(timeout)
+    let mut response = ureq::post(&cfg.rpc_endpoint)
+        .config()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_global(Some(timeout))
+        .build()
         .send_json(payload)
         .with_context(|| {
             format!(
@@ -1441,12 +1446,17 @@ fn gateway_reconcile_rpc_call(
                 cfg.rpc_endpoint, method
             )
         })?;
-    let value: serde_json::Value = response.into_json().with_context(|| {
-        format!(
-            "reconcile rpc decode failed: endpoint={} method={}",
-            cfg.rpc_endpoint, method
-        )
-    })?;
+    let value: serde_json::Value =
+        response
+            .body_mut()
+            .with_config()
+            .read_json()
+            .with_context(|| {
+                format!(
+                    "reconcile rpc decode failed: endpoint={} method={}",
+                    cfg.rpc_endpoint, method
+                )
+            })?;
     if let Some(err) = value.get("error") {
         bail!(
             "reconcile rpc returned error: endpoint={} method={} error={}",

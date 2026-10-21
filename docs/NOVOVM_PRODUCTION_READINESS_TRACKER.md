@@ -1,5 +1,113 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-21 CI 39518429389: historical RPC startup readiness and failure evidence
+
+Run `39518429389` matches `5c4aac9490434c1a1e5809b15afb4ccbb58aa19b`.
+Both preserved runtime platforms and Rust security passed. Rust checks failed
+at `Signed Transfer RPC finality and wallet recovery without Host permission`:
+`fresh_record_transfers_conflict_failure_serial_parity`, transaction-status RPC,
+`timeout: global`. Later steps were skipped, not independently failed.
+The signed Transfer evidence upload succeeded. Its ten-file ZIP SHA-256 is
+`d09c8368cc008f5cab5809af2ac8197b7e2ccf18d7b8a0d7cf9c5fa4ca9e91dc`.
+Admission, finality receipts and all four before-restart oracle outputs exist;
+after-restart acceptance does not. The error therefore falls in restart status
+queries. Cleanup TLS disconnects and previously caught panic tests are not
+established causes. This artifact did not include this step's process logs.
+
+Source inspection establishes a readiness race: the historical node prints its
+bound port before lifecycle open/recovery, candidate-owner cleanup and ledger
+session setup, but the test originally queried immediately on that port event.
+The test now waits for the existing complete, healthy lifecycle-startup event
+from each child, retaining the original startup deadline and process-exit checks.
+Partial lines remain pending; disabled, unhealthy, incomplete-schema or malformed
+completion events fail. No RPC retry or uncertain-admission replay is added.
+The 10-second client limit, 120-second mixed startup deadline, production source,
+Host denial, signatures, economic/receipt/restart assertions and AOEM are unchanged.
+
+The new real bound-but-unpolled listener regression fails the old helper, then
+passes after the fix. Another non-ignored regression rejects invalid startup
+events. Windows original four-process mixed test passes before the change;
+two intermediate repaired runs also pass. Final CLI runs 15 passed/0 failed,
+with the same 16 pre-existing environment-specific ignored cases; the mixed
+case is run explicitly, not claimed from the default suite. Final rebuilt mixed
+case passes 1/1 in 72.25 seconds, including after-restart oracle checks; observed
+startup-ready times are 1686/1736/3903 ms for admission/finality/restart, not a
+reproduction of a 10-second Linux timeout. Explicit Host=0 new/existing-store
+startup refusal passes 1/1. Root all-workspace/all-target strict Clippy, root and
+nested fmt, diff check and actionlint 1.7.7 pass. Independent static review has
+no actionable finding; it is not a second runtime acceptance result.
+
+This proves the helper defect, not the precise Linux CI timeout mechanism.
+A slow post-startup read is not excluded without logs. CI now retains only this
+step's allowlisted `continuous-mixed-*.stdout.log`/`stderr.log` alongside its
+existing JSON evidence, never node configs, keys or databases. Phase, readiness
+time, address and transaction-hash errors improve diagnosis without changing
+acceptance. Linux rerun, remote CI, physical multi-device and performance results
+remain separate. User-requested automatic monitoring stays paused.
+
+## 2026-10-21 CI 39489567228: exact workspace roster and certificate dependencies
+
+Fast-forwarded the shared main from `2c70f669` to `873e9b72`, preserving the
+App-wide quota implementation and both upstream policy/recovery records.
+Before pushing, merged the concurrent documentation-only `7c0976ac` public-test
+and fresh-genesis clarification without changing either implementation tree.
+The failed run did not reach the early-body tests: root Rust and both component
+jobs rejected the newly added `novovm-storage-budget` path at the common assembly
+checker. Windows also logged that same failed step despite its overall matrix
+cancellation. The separate security job found three new RustSec advisories
+across four dependency versions; Cargo deny was skipped after audit failed.
+
+The checker now explicitly includes that already-approved product member, with
+all unknown/local/legacy and cross-workspace checks retained. The actual Cargo
+graphs pass (22 product, 3 component members). New metadata fixtures accept one
+exact roster and reject 11 invalid cases; they run in the existing boundary CI
+steps and leave an explicit successful exit only after all assertions pass.
+
+Both lock graphs now use `rustls-webpki 0.103.16`; root WebPKI roots/certificates
+are `1.0.10`. The nested runtime also moves its fixed `rustls 0.23.45` to
+`0.23.46`, closing its previously unscanned TLS advisories. Root and nested
+`cargo audit` and `cargo deny check advisories bans licenses sources` exit zero,
+with existing warnings retained and no new ignore/license/source exemptions.
+CI now checks both lock graphs instead of auditing only the root graph.
+
+`ureq 2.12.1` retained the affected `webpki-roots 0.26.11`; its three consumers
+now use upstream `ureq 3.4.2`, without a vendored compatibility implementation.
+Existing Rustls/WebPKI trust, gzip, no environment proxy, five-redirect bound,
+timeout values, HTTP status refusals and response limits are retained in the
+API adapters. This is not a claim of perfect HTTP behavioral equivalence:
+3.x uses phase-total IO deadlines rather than 2.x per-operation timeouts, and
+body-bearing POST 307/308 redirects fail with `RedirectFailed`, not a replay
+compatibility path. No startup permission or mainchain authority was changed.
+
+Windows local checks: the new CI Bash commands enumerate and execute exactly
+4 HTTP/TLS tests (2 node, 1 gateway, 1 rollout), all passing; the wider gateway
+upstream module passes 8/8. The TLS fixture first failed because Windows accepted
+the nonblocking listener mode; closing that incomplete handshake produced a
+connection abort before verifiable certificate refusal. Blocking IO with bounded socket
+timeouts and client-completion coordination now asserts the typed
+`InvalidCertificate(UnknownIssuer)`, not merely any network error.
+
+Real AOEM runtime release workspace `--include-ignored --test-threads=1` passes:
+AOEM 32, host 414, network 211, all accompanying integration/doctests, zero
+failures/ignored. The original early case and its real full-owner regression
+both execute. Historical node CLI first ran with the wrong Host=0 suite-wide
+environment (10 passed/3 guarded refusals/16 existing ignored); replay with the
+unchanged CI historical Host=1 environment passes 13/13, with 16 existing
+ignored cases unchanged. The production missing-config/new-or-existing-store
+refusal case passes in both runs; no fixture or startup guard was relaxed.
+
+Final strict all-workspace/all-targets Clippy, network all-features/all-targets
+Clippy, nested workspace/no-default Clippy, both fmt checks and actionlint 1.7.7
+pass. Current native successor tests execute 4/4 with Host=0; quota tests execute
+11/11. The root WSS debug filter initially ran 1/5 with 4 existing ignored timing
+cases; explicit release `--include-ignored` then executes all 5/5 successfully.
+An independent static diff review found no actionable defect; it is not another
+execution or remote acceptance result.
+
+Remote CI for this repair, Linux execution, physical multi-machine deployment,
+production throughput and mobile acceptance remain separate and pending. This
+round does not modify AOEM, quota behavior, peer discovery policy or sibling repos.
+
 ## 2026-10-21 用户确认：生产级公测部署，正式发布全新创世
 
 当前节点均未正式生产发布。下一阶段按公测运行，同时采用正式配置要求和服务

@@ -3,7 +3,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
 $legacyPrefix = [IO.Path]::GetFullPath((Join-Path $repoRoot 'legacy')) + [IO.Path]::DirectorySeparatorChar
 
-# Twenty explicit original product members, plus the existing EVM core path
+# Twenty-one explicit approved product members, plus the existing EVM core path
 # dependency which Cargo automatically includes as a workspace member.
 $productMembers = @(
     'crates/aoem-bindings',
@@ -19,6 +19,7 @@ $productMembers = @(
     'crates/novovm-exec',
     'crates/novovm-governance-observability',
     'crates/novovm-network',
+    'crates/novovm-storage-budget',
     'crates/novovm-relay',
     'crates/novovm-node',
     'crates/novovm-rollout-policy',

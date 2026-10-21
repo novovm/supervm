@@ -1,5 +1,39 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-21 CI 39518429389 RPC startup repair claim (released; remote verification pending):** input main
+`5c4aac94`, shared main and clean tree verified. Reuse the historical process
+test's existing startup event after lifecycle recovery; its bound-port event
+alone is not readiness. Scope: test orchestration, negative readiness tests,
+phase/error diagnostics and this step's allowlisted failure logs. Keep original
+RPC/startup deadlines, explicit Host=0, economic/recovery assertions and all
+production source/guards unchanged. Windows original mixed case passes; do not
+claim the exact Linux timeout reproduced. A real bound-but-unpolled listener
+regression fails the old readiness helper. Final rebuilt mixed case and Host=0
+new/existing-store refusal each pass 1/1. Historical CLI passes 15/15 with the
+same 16 existing ignored cases; two intermediate explicit mixed runs also pass.
+Root all-workspace/all-target strict Clippy, both fmt checks, diff check and
+actionlint pass. Independent static review has no actionable finding. Remote
+Linux CI remains pending, and automatic monitoring stays paused by user request.
+
+**2026-10-21 CI 39489567228 repair claim (released; remote verification pending):** input main `873e9b72`.
+Reuse `runtime/check-isolation.ps1` and the existing root/component Cargo graphs.
+The shared App quota crate is already an explicit product member; reconcile the
+exact boundary roster without admitting arbitrary paths or legacy dependencies.
+Update vulnerable certificate-verification/root-store dependencies to patched
+releases in the existing lock graphs; no advisory ignore or TLS verification
+bypass. Root owns dependencies, this evidence and the single build slot; bounded
+boundary work owns only the roster and its regression checks. No node execution,
+consensus, production startup guard, AOEM kernel or sibling repository changes.
+Windows local validation passes: exact boundary roster and 11 rejection fixtures;
+root/nested audit and deny, strict Clippy and fmt; real AOEM runtime release
+workspace (32/414/211 plus integration/docs, zero failures/ignored); four HTTP/TLS
+regressions, gateway upstream 8, historical CLI 13 (16 existing ignored), current
+native successor 4, quota 11 and explicit release WSS 5 (zero ignored).
+HTTP phase-total deadlines and body-bearing POST redirect refusal are explicit
+upstream version differences, not claimed as identical compatibility behavior.
+No production guard, advisory ignore or test assertion was bypassed. Remote CI,
+Linux runtime/deployment, physical multi-machine and performance remain separate.
+
 **2026-10-21 门禁与存储政策失败恢复（认领已释放，远端另验）：** 输入 main `1093cf11`，
 另无冲突快进保留`f9a9d924`。不重复`9245724f`格式修正或`2c70f669`旧runtime测试修复。
 复用目录/信任账本/真实UDP反例，补原CI的精确枚举和执行，防止过滤0项仍通过；

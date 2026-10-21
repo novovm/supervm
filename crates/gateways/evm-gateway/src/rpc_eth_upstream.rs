@@ -324,22 +324,28 @@ pub(super) fn execute_gateway_eth_upstream_json_rpc(
     params: serde_json::Value,
     timeout_ms: u64,
 ) -> Result<serde_json::Value> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_millis(timeout_ms))
-        .build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_global(Some(Duration::from_millis(timeout_ms)))
+        .build()
+        .into();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": method,
         "params": params,
     });
-    let response = agent
+    let mut response = agent
         .post(url)
-        .set("Content-Type", "application/json")
+        .header("Content-Type", "application/json")
         .send_json(body)
         .map_err(|error| anyhow::anyhow!("upstream rpc request failed: {}", error))?;
     let payload: serde_json::Value = response
-        .into_json()
+        .body_mut()
+        .with_config()
+        .read_json()
         .context("decode upstream rpc response json failed")?;
     if let Some(error) = payload.get("error") {
         bail!("upstream rpc returned error: {}", error);
@@ -387,6 +393,60 @@ pub(super) fn maybe_gateway_eth_upstream_read(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upstream_http_status_and_json_errors_remain_refused() {
+        for (status, body, error_fragment) in [
+            (200, r#"{"jsonrpc":"2.0","id":1,"result":"ok"}"#, None),
+            (
+                400,
+                r#"{"result":"must-not-be-accepted"}"#,
+                Some("http status: 400"),
+            ),
+            (
+                503,
+                r#"{"result":"must-not-be-accepted"}"#,
+                Some("http status: 503"),
+            ),
+            (
+                200,
+                "not-json",
+                Some("decode upstream rpc response json failed"),
+            ),
+            (
+                200,
+                r#"{"error":{"code":-1,"message":"refused"}}"#,
+                Some("upstream rpc returned error"),
+            ),
+        ] {
+            let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/rpc", server.server_addr());
+            let worker = std::thread::spawn(move || {
+                let mut request = server
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(request.method(), &tiny_http::Method::Post);
+                let payload: serde_json::Value =
+                    serde_json::from_reader(request.as_reader()).unwrap();
+                assert_eq!(payload["method"], "eth_chainId");
+                request
+                    .respond(tiny_http::Response::from_string(body).with_status_code(status))
+                    .unwrap();
+            });
+            let result = execute_gateway_eth_upstream_json_rpc(
+                &url,
+                "eth_chainId",
+                serde_json::json!([]),
+                3_000,
+            );
+            worker.join().unwrap();
+            match error_fragment {
+                Some(fragment) => assert!(format!("{:#}", result.unwrap_err()).contains(fragment)),
+                None => assert_eq!(result.unwrap(), serde_json::json!("ok")),
+            }
+        }
+    }
 
     #[test]
     fn gateway_eth_upstream_chain_string_env_prefers_chain_specific_key() {

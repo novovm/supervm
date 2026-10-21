@@ -112,6 +112,10 @@ fn start(
     label: &str,
     evidence: &std::path::Path,
 ) -> (Vec<(usize, Child)>, Vec<String>) {
+    eprintln!(
+        "mixed Transfer phase={label}; evidence={}",
+        evidence.display()
+    );
     let mut children = start_cluster(nodes, &(0..nodes.len()).collect::<Vec<_>>(), label, 0);
     let began = Instant::now();
     loop {
@@ -121,6 +125,10 @@ fn start(
             .map(|node| transfer_throughput::address_for(node, label))
             .collect::<Option<Vec<_>>>()
         {
+            eprintln!(
+                "mixed Transfer ready phase={label} elapsed_ms={}",
+                began.elapsed().as_millis()
+            );
             return (children, addresses);
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -294,7 +302,12 @@ fn transaction_statuses(
                         "nov_getTransactionStatus",
                         serde_json::json!([hex(hash)]),
                     )
-                    .unwrap()
+                    .unwrap_or_else(|error| {
+                        panic!(
+                            "transaction status RPC failed: node={address} tx_hash={} error={error:#}",
+                            hex(hash)
+                        )
+                    })
                 })
                 .collect()
         })

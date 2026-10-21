@@ -29,7 +29,7 @@ sha2 = "0.10"
 sha3 = "0.10"
 snap = "1"
 tiny_http = "0.12"
-ureq = { version = "2.12", features = ["json"] }
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "gzip", "json"] }
 
 [dev-dependencies]
 web30-core = { path = "../../../vendor/web30-core" }

@@ -1775,14 +1775,19 @@ fn eth_dns_txt_unquote_v1(data: &str) -> String {
 }
 
 fn eth_dns_query_txt_doh_v1(agent: &ureq::Agent, doh_url: &str, name: &str) -> Result<Vec<String>> {
-    let response = agent
-        .get(doh_url)
-        .query("name", name)
-        .query("type", "TXT")
+    let mut url = url::Url::parse(doh_url)
+        .with_context(|| format!("dns_discovery_txt_query_failed:{name}"))?;
+    url.query_pairs_mut()
+        .append_pair("name", name)
+        .append_pair("type", "TXT");
+    let mut response = agent
+        .get(url.as_str())
         .call()
         .with_context(|| format!("dns_discovery_txt_query_failed:{name}"))?;
     let text = response
-        .into_string()
+        .body_mut()
+        .read_to_vec()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
         .with_context(|| format!("dns_discovery_txt_response_read_failed:{name}"))?;
     let value: serde_json::Value = serde_json::from_str(text.as_str())
         .with_context(|| format!("dns_discovery_txt_response_json_failed:{name}"))?;
@@ -2006,7 +2011,13 @@ fn eth_dns_query_txt_doh_with_deadline_v1(
     let Some(query_timeout) = eth_discovery_remaining_timeout_v1(deadline, fallback_timeout) else {
         return Ok(Vec::new());
     };
-    let agent = ureq::AgentBuilder::new().timeout(query_timeout).build();
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_global(Some(query_timeout))
+        .build()
+        .into();
     eth_dns_query_txt_doh_v1(&agent, doh_url, name)
 }
 
@@ -8599,6 +8610,127 @@ mod mainline_evm_cli_tests {
         )
         .expect("expired deadline should skip network query");
         assert!(records.is_empty());
+    }
+
+    #[test]
+    fn eth_dns_doh_http_preserves_query_encoding_and_rejects_error_status_v1() {
+        for status in [200, 400, 503] {
+            let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/dns-query?existing=a%2Bb", server.server_addr());
+            let worker = std::thread::spawn(move || {
+                let request = server
+                    .recv_timeout(Duration::from_secs(3))
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(request.method(), &tiny_http::Method::Get);
+                assert_eq!(
+                    request.url(),
+                    "/dns-query?existing=a%2Bb&name=test+%2B%26%2F%3F.example&type=TXT"
+                );
+                request
+                    .respond(
+                        tiny_http::Response::from_string(
+                            r#"{"Status":0,"Answer":[{"type":16,"data":"\"verified-txt\""}]}"#,
+                        )
+                        .with_status_code(status),
+                    )
+                    .unwrap();
+            });
+            let result = eth_dns_query_txt_doh_with_deadline_v1(
+                &url,
+                "test +&/?.example",
+                None,
+                Duration::from_secs(3),
+            );
+            worker.join().unwrap();
+            if status == 200 {
+                assert_eq!(result.unwrap(), vec!["verified-txt"]);
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    matches!(error.downcast_ref::<ureq::Error>(), Some(ureq::Error::StatusCode(code)) if *code == status)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn eth_dns_doh_rejects_untrusted_tls_certificate_v1() {
+        let certificate = rcgen::generate_simple_self_signed(vec!["127.0.0.1".into()]).unwrap();
+        let config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![rustls::pki_types::CertificateDer::from(
+                certificate.serialize_der().unwrap(),
+            )],
+            rustls::pki_types::PrivatePkcs8KeyDer::from(certificate.serialize_private_key_der())
+                .into(),
+        )
+        .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("https://{}/dns-query", listener.local_addr().unwrap());
+        let (client_done, wait_client) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "TLS client did not connect");
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("TLS test accept failed: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut tls = rustls::ServerConnection::new(std::sync::Arc::new(config)).unwrap();
+            while tls.is_handshaking() {
+                if let Err(error) = tls.complete_io(&mut stream) {
+                    eprintln!("TLS fixture rejected handshake: {error:?}");
+                    // Keep the socket alive until the client reports its own
+                    // verification error; an early close can replace it with RST.
+                    wait_client.recv_timeout(Duration::from_secs(3)).unwrap();
+                    return;
+                }
+            }
+            panic!("untrusted TLS certificate was accepted");
+        });
+        let result = eth_dns_query_txt_doh_with_deadline_v1(
+            &url,
+            "test.example",
+            None,
+            Duration::from_secs(3),
+        );
+        client_done.send(()).unwrap();
+        worker.join().unwrap();
+        let error = result.unwrap_err();
+        let certificate_error = match error.downcast_ref::<ureq::Error>() {
+            Some(ureq::Error::Rustls(error)) => Some(error),
+            Some(ureq::Error::Io(error)) => error
+                .get_ref()
+                .and_then(|error| error.downcast_ref::<rustls::Error>()),
+            _ => None,
+        };
+        assert!(
+            matches!(
+                certificate_error,
+                Some(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::UnknownIssuer
+                ))
+            ),
+            "unexpected TLS refusal: {error:?}"
+        );
     }
 
     #[test]

@@ -142,16 +142,23 @@ fn rpc(address: &str, method: &str, argument: Option<&[u8]>) -> Result<Value, St
     let params = argument
         .map(|bytes| serde_json::json!([hex(bytes)]))
         .unwrap_or_else(|| serde_json::json!([]));
-    let response = ureq::post(&format!("http://{address}/"))
-        .timeout(Duration::from_secs(5))
-        .set("Content-Type", "application/json")
-        .send_string(
-            &serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params})
-                .to_string(),
+    let mut response = ureq::post(&format!("http://{address}/"))
+        .config()
+        .proxy(None)
+        .max_redirects(5)
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build()
+        .header("Content-Type", "application/json")
+        .send(
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string(),
         )
         .map_err(|error| error.to_string())?;
-    serde_json::from_str(&response.into_string().map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())
+    let bytes = response
+        .body_mut()
+        .read_to_vec()
+        .map_err(|error| error.to_string())?;
+    serde_json::from_str(&String::from_utf8_lossy(&bytes)).map_err(|error| error.to_string())
 }
 
 fn stop(child: &mut Child) {
