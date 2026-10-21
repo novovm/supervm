@@ -360,12 +360,21 @@ and copy policy are unchanged; a genuinely lost tail costs at most ack_wait.
 Fixed allowance: the 64 MiB/minute value was a constant inherited from the
 first signed listener (781e41f8), kept unchanged when connection and execution
 limits became resource-derived. `ServiceConcurrencyV1` now owns the native wire
-allowance too. The listener reports usage each loop; at most every 5 s the owner
-halves the allowance under platform pressure or new execution backoff, and grows
-it by half while the allowance itself refused traffic and nothing else was
+allowance too. The listener reports usage each loop; at most every 2 s the owner
+halves the allowance under platform pressure or new execution backoff, and
+doubles it while the allowance itself refused traffic and nothing else was
 limiting. The startup value is the ceiling on metered networks (the platform
 reports cost; metered is assumed until told otherwise) and its eighth is the
 floor; unmetered networks may grow to the global maximum. `NativeWireBudget`
 supports runtime limit changes without forgiving bytes already in the window.
 The signed record still advertises the startup value; advertising the current
 allowance at renewal is a follow-up.
+
+Real-phone run (v100, PCLM50 Wi-Fi, unmetered reported): the allowance grew
+64 -> 96 -> 144 -> 216 -> 324 MiB and then stopped growing once nothing was
+refused; 428 cycles at 9.9 cycles/s, 7/8 clients complete. Every slow request
+and the one deadline fell inside the ramp, when the paced phone deferred its own
+ACKs behind bulk replies and clients reached the 8 s no-progress suppression.
+Decisions are therefore every 2 s with doubling, and datagrams of at most 512
+bytes (object ACKs with up to 32 runs, handshakes) are not paced: feedback keeps
+flowing while bulk fragments wait, still within the rolling hard limit.

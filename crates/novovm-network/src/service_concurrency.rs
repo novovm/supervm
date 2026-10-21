@@ -6,9 +6,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 const MIB: u64 = 1024 * 1024;
-/// Native wire allowance decisions use the same at-most-every-5 s cadence as
-/// host refresh; observations between decisions only report usage.
-const WIRE_DECISION_INTERVAL: Duration = Duration::from_secs(5);
+/// At most one native wire allowance decision per interval; observations in
+/// between only report usage. Short enough that doubling reaches a capable
+/// unmetered allowance within seconds of sustained refusals.
+const WIRE_DECISION_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourcePressureV1 {
@@ -247,7 +248,7 @@ impl ServiceConcurrencyV1 {
     }
     /// The native listener reports its configured allowance usage and receives
     /// the allowance to enforce now. At most one decision per interval: halve
-    /// under platform pressure or new execution backoff; grow by half while the
+    /// under platform pressure or new execution backoff; double while the
     /// allowance itself refused traffic and everything else stayed healthy.
     /// Metered networks keep the startup value as ceiling; the floor keeps
     /// ordinary messages usable under pressure.
@@ -274,7 +275,7 @@ impl ServiceConcurrencyV1 {
             if pressured {
                 s.wire.limit /= 2;
             } else if refusals > s.wire.refusals {
-                s.wire.limit = s.wire.limit.saturating_add(s.wire.limit / 2);
+                s.wire.limit = s.wire.limit.saturating_mul(2);
             }
             s.wire.decided = now;
             s.wire.refusals = refusals;
@@ -1403,16 +1404,23 @@ mod tests {
         assert_eq!(c.observe_native_wire(usage(startup, 9), at(5)), startup);
         // Unmetered and healthy: grows only while the allowance refuses traffic.
         c.observe_network_cost(true);
-        assert_eq!(c.observe_native_wire(usage(startup, 20), at(10)), 96 * MIB);
-        assert_eq!(c.observe_native_wire(usage(96 * MIB, 20), at(15)), 96 * MIB);
-        assert_eq!(c.observe_native_wire(usage(96 * MIB, 21), at(16)), 96 * MIB);
+        assert_eq!(c.observe_native_wire(usage(startup, 20), at(10)), 128 * MIB);
+        // No new refusal: no growth. Within one interval: no decision at all.
         assert_eq!(
-            c.observe_native_wire(usage(96 * MIB, 30), at(20)),
-            144 * MIB
+            c.observe_native_wire(usage(128 * MIB, 20), at(15)),
+            128 * MIB
+        );
+        assert_eq!(
+            c.observe_native_wire(usage(128 * MIB, 21), at(16)),
+            128 * MIB
+        );
+        assert_eq!(
+            c.observe_native_wire(usage(128 * MIB, 30), at(20)),
+            256 * MIB
         );
         // Platform pressure halves it every decision, down to startup / 8.
         c.update_resources(resources(ResourcePressureV1::Severe));
-        let mut limit = 144 * MIB;
+        let mut limit = 256 * MIB;
         for step in 0..6 {
             limit = c.observe_native_wire(usage(limit, 30), at(25 + step * 5));
         }

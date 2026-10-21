@@ -11,6 +11,7 @@
 //! rolling hard limit through admitted traffic, so a burst can no longer drain
 //! the whole minute in seconds and then refuse every peer (including ACKs and
 //! handshakes) until it ages out. Small budgets keep the plain rolling limit.
+//! Control-sized datagrams are never paced, so ACKs keep flowing past bulk data.
 
 use super::carrier::{NativeDatagramIo, NativeRoute};
 use anyhow::{ensure, Result};
@@ -23,6 +24,10 @@ pub const MAX_BYTES_PER_MINUTE: u64 = 1024 * 1024 * 1024;
 /// Pacing applies only when each second can admit at least this much; smaller
 /// budgets could not carry one datagram per second and keep the rolling limit.
 const MIN_PACED_BYTES_PER_SECOND: u64 = 64 * 1024;
+/// Control datagrams (object ACKs up to 32 runs, handshakes, small requests)
+/// are not paced, so feedback keeps flowing while bulk fragments wait; they
+/// still count against the rolling limit. Full data fragments are 1200 bytes.
+const UNPACED_CONTROL_BYTES: u64 = 512;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NativeWireUsage {
@@ -121,8 +126,8 @@ impl NativeWireBudget {
     /// Admission rule shared by ingress, UDP sends and held writes. `advance`
     /// must already have run for `now`. Burst bytes in any window stay within
     /// limit/8 and paced bytes within 61 * second_cap = 7/8 * limit, so paced
-    /// traffic always fits the rolling limit. Held reservations are covered by
-    /// the rolling limit only; native UDP sends never hold one.
+    /// traffic always fits the rolling limit. Held reservations and unpaced
+    /// control datagrams are covered by the rolling limit only.
     fn fits(&self, bytes: u64) -> bool {
         if bytes > self.usage.remaining {
             return false;
@@ -130,7 +135,10 @@ impl NativeWireBudget {
         let limit = self.usage.limit;
         let burst = limit / 8;
         let second_cap = (limit - burst) / 61;
-        if second_cap < MIN_PACED_BYTES_PER_SECOND || self.usage.used + bytes <= burst {
+        if second_cap < MIN_PACED_BYTES_PER_SECOND
+            || bytes <= UNPACED_CONTROL_BYTES
+            || self.usage.used + bytes <= burst
+        {
             return true;
         }
         self.buckets[(self.second % 61) as usize] + bytes <= second_cap
@@ -516,6 +524,39 @@ mod tests {
         assert!(admitted <= limit && admitted + 1200 > limit);
         assert!(!budget.admit_receive(1200, now + Duration::from_secs(60)));
         assert!(budget.admit_receive(1200, now + Duration::from_secs(61)));
+        Ok(())
+    }
+
+    #[test]
+    fn control_datagrams_pass_a_paced_second_that_refuses_bulk_fragments() -> Result<()> {
+        let start = Instant::now();
+        let mut budget = NativeWireBudget::new(64 * 1024 * 1024, start)?;
+        // Spend the burst, then the first paced second's allowance.
+        let now = start + Duration::from_secs(1);
+        while budget.admit_receive(1200, start) {}
+        while budget.admit_receive(1200, now) {}
+        assert!(!budget.admit_receive(1200, now));
+        assert!(
+            budget.admit_receive(300, now),
+            "ACK-sized datagram is not paced"
+        );
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        let receiver = UdpSocket::bind("127.0.0.1:0")?;
+        assert!(try_send_datagram(
+            &socket,
+            &[1; 400],
+            receiver.local_addr()?,
+            now,
+            Some(&mut budget)
+        )?);
+        assert!(!try_send_datagram(
+            &socket,
+            &[1; 1200],
+            receiver.local_addr()?,
+            now,
+            Some(&mut budget)
+        )?);
+        assert!(budget.admit_receive(1200, start + Duration::from_secs(2)));
         Ok(())
     }
 }
