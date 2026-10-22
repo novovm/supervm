@@ -458,3 +458,10 @@ Clock skew tolerance and historical first-TLS 59.49-second tail remain open.
 No new cross-operator, physical P2P, TLS-only, censorship or anonymity gate is
 claimed by this Wi-Fi load acceptance. Full records/rollback hashes and private
 evidence paths: NOVOCHAT `P0_CHECKPOINT.md` and `CLAUDE_V101_REVIEW.md`.
+
+## v102 follow-up: rate policy is not hardware throughput
+
+See [continuous concurrency review](NOVONET_CONTINUOUS_CONCURRENCY_REVIEW.md).
+The shared L4 request policy is32 requests/s; the probe uses three requests per
+cycle. Controlled native UDP component comparison separates this waiting from
+service execution before any further controller or production-rate changes.

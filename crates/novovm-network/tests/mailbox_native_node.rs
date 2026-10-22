@@ -995,3 +995,268 @@ async fn production_owner_waits_for_shared_execution_without_quota_or_restart() 
     );
     Ok(())
 }
+
+/// Manual loopback component comparison, never Android/chat/mainchain evidence.
+/// Reuses the SAME release-build diagnostic as the phone load gate, including its
+/// completion-ACK progress, encryption, receipt verification and original guards.
+#[tokio::test]
+#[ignore = "manual sequential UDP comparison; requires NOVOVM_NATIVE_PEER_PROBE; no competing load"]
+async fn native_service_rate_policy_comparison() -> Result<()> {
+    let probe = std::env::var_os("NOVOVM_NATIVE_PEER_PROBE")
+        .context("set NOVOVM_NATIVE_PEER_PROBE to the existing release diagnostic executable")?;
+    let probe = Path::new(&probe).canonicalize()?;
+    ensure!(probe.is_file(), "native probe executable missing");
+    let mut reports = Vec::new();
+    for rate in [32, 128] {
+        let report = native_service_rate_case(rate, &probe)
+            .await
+            .with_context(|| format!("native comparison case {rate} requests/second"))?;
+        println!("{}", serde_json::json!({"rate_comparison_case": &report}));
+        ensure!(
+            report["passed"] == true,
+            "native comparison rate {rate} failed; see aggregate case report"
+        );
+        reports.push(report);
+    }
+    println!(
+        "{}",
+        serde_json::json!({"mode":"manual_native_udp_rate_comparison", "cases_run_sequentially":true, "reports":reports})
+    );
+    Ok(())
+}
+
+async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json::Value> {
+    use novovm_network::service_concurrency::{
+        ResourcePressureV1, ResourceSnapshotV1, ServiceConcurrencyV1,
+    };
+    let directory = tempfile::tempdir()?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let resources = ResourceSnapshotV1 {
+        cpu_parallelism: 8,
+        available_memory_bytes: 1024 * 1024 * 1024,
+        pressure: ResourcePressureV1::Normal,
+    };
+    let controller = ServiceConcurrencyV1::new(resources);
+    controller.update_resources(resources); // Keep both cases' platform observation fixed.
+                                            // Identical TEST-only wire budget; 128cycles transfer ~8MiB plaintext total.
+                                            // Its 128MiB initial burst avoids the old fixture's second 8MiB pacing cap.
+    let listener = NativeMailboxListenerV7::bind_adaptive(
+        "127.0.0.1:0".parse()?,
+        "127.0.0.1:0".parse()?,
+        key(17),
+        stop.clone(),
+        1024 * 1024 * 1024,
+        controller.clone(),
+    )?;
+    let service = Arc::new(
+        MailboxServiceV1::new(
+            MailboxStore::open_contributor(
+                directory.path().join("rate.db"),
+                Default::default(),
+                true,
+            )?,
+            key(17),
+        )
+        .with_continuous_request_rate_v4(64, rate)?,
+    );
+    service.set_resources_available(true).await?;
+    let journal = directory.path().join("authority.bin");
+    let record_path = directory.path().join("record.json");
+    let published_path = record_path.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = Mutex::new(Some(tx));
+    let server = run_self_owned_native_mailbox_v7(
+        listener,
+        key(17),
+        stop.clone(),
+        service.clone(),
+        move |route, until| {
+            let at = now_ms()?;
+            let record = sign_relay_record_v1(
+                &key(17),
+                "rate-comparison-fixture",
+                vec![route.endpoint()?],
+                at,
+                until,
+                1,
+            )?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let checkpoint = book.checkpoint()?;
+            let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([94; 32]), &checkpoint)?;
+            book.attach_persistence(file, &checkpoint)?;
+            Ok(Arc::new(ServiceLeaseHostV1::new(key(17), book)?))
+        },
+        move |record| {
+            std::fs::write(&published_path, serde_json::to_vec(record)?)?;
+            if let Some(tx) = tx.lock().unwrap().take() {
+                let _ = tx.send(());
+            }
+            Ok(())
+        },
+    );
+    let clients = async {
+        rx.await?;
+        let before = serde_json::to_value(service.timing_snapshot_v1())?;
+        let control_before = controller.snapshot();
+        let stdout_path = directory.path().join("probe.stdout.txt");
+        let stderr_path = directory.path().join("probe.stderr.txt");
+        // Files avoid an undrained stdout/stderr pipe blocking the child.
+        let pin: String = key(17)
+            .verifying_key()
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let child = std::process::Command::new(probe)
+            .arg(&record_path)
+            .arg(pin)
+            .args(["udp", "8", "16", "32768"])
+            .stdout(std::fs::File::create(&stdout_path)?)
+            .stderr(std::fs::File::create(&stderr_path)?)
+            .spawn()?;
+        struct Child(std::process::Child);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Child(child);
+        // Existing diagnostic has its own90s guard. Match the existing phone
+        // harness100s process guard without changing any SDK request deadline.
+        let until = Instant::now() + Duration::from_secs(100);
+        let exit = loop {
+            if let Some(exit) = child.0.try_wait()? {
+                break exit;
+            }
+            ensure!(
+                Instant::now() < until,
+                "existing diagnostic process guard elapsed"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        let after = serde_json::to_value(service.timing_snapshot_v1())?;
+        let control = controller.snapshot();
+        let custody = service.contribution_status().await?;
+        let bytes = std::fs::read(&stdout_path)?;
+        ensure!(
+            bytes.len() <= 65536,
+            "diagnostic output exceeds bounded fixture reader"
+        );
+        let lines: Vec<serde_json::Value> = std::str::from_utf8(&bytes)?
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        let summary = lines
+            .iter()
+            .find(|v| v["mode"] == "bounded_service_load")
+            .context("existing diagnostic did not emit load summary")?;
+        let metadata: u64 = lines
+            .iter()
+            .filter(|v| v["phase"] == "native_window_preflight")
+            .filter_map(|v| v["verified_metadata_replies"].as_u64())
+            .sum();
+        let mut delta = serde_json::Map::new();
+        for stage in [
+            "admission",
+            "put",
+            "fetch",
+            "consume",
+            "watch",
+            "other",
+            "response_enqueue",
+        ] {
+            let mut counter = serde_json::Map::new();
+            for field in [
+                "started",
+                "completed",
+                "rejected",
+                "interrupted",
+                "total_us",
+            ] {
+                counter.insert(
+                    field.into(),
+                    serde_json::json!(after[stage][field]
+                        .as_u64()
+                        .context("missing final timing")?
+                        .checked_sub(
+                            before[stage][field]
+                                .as_u64()
+                                .context("missing initial timing")?
+                        )
+                        .context("timing rollback")?),
+                );
+            }
+            // A maximum is not additive. Explicitly retain both snapshots.
+            counter.insert("max_us_before".into(), before[stage]["max_us"].clone());
+            counter.insert("max_us_after".into(), after[stage]["max_us"].clone());
+            delta.insert(stage.into(), serde_json::Value::Object(counter));
+        }
+        let mut safe_summary = serde_json::Map::new();
+        for field in [
+            "offered_clients",
+            "completed_clients",
+            "rounds_per_client",
+            "payload_bytes",
+            "verified_put_fetch_consume",
+            "preparation_seconds",
+            "elapsed_seconds",
+            "objects_per_second",
+            "p50_ms",
+            "p95_ms",
+            "p99_ms",
+            "max_ms",
+            "error_count",
+            "preparation_errors",
+            "load_errors",
+            "verified_stored_plaintext_bytes",
+            "verified_fetched_plaintext_bytes",
+        ] {
+            safe_summary.insert(field.into(), summary[field].clone());
+        }
+        let admitted = delta["admission"]["completed"]
+            .as_u64()
+            .context("missing admission count")?;
+        let passed = exit.success()
+            && summary["completed_clients"] == 8
+            && summary["verified_put_fetch_consume"] == 128
+            && summary["error_count"] == 0
+            && metadata == 8
+            && admitted == 392 + metadata
+            && custody.retained_objects == 0
+            && custody.retained_bytes == 0;
+        Ok::<_, anyhow::Error>(serde_json::json!({
+            "passed":passed,"configured_requests_per_second":rate,"configured_burst":64,"test_wire_bytes_per_minute":1024u64*1024*1024,
+            "probe":safe_summary,"actual_server_admitted_requests_including_preflight":admitted,"verified_preflight_metadata_requests":metadata,
+            "expected_payload_phase_requests_including_register":392,
+            "timing_delta_includes_preparation":delta,
+            "timing_scope":"operation includes store scheduling/commit; admission separate; store blocking and body CPU not independently measured",
+            "controller":{"work_limit_before":control_before.work_limit,"work_limit_after":control.work_limit,
+                "execution_backoffs_delta":control.execution_backoffs-control_before.execution_backoffs,
+                "work_admission_rejections_delta":control.work_admission_rejections-control_before.work_admission_rejections,
+                "wire_send_deferred":control.wire_usage.map_or(0,|v|v.send_deferred),"wire_receive_dropped":control.wire_usage.map_or(0,|v|v.receive_dropped)},
+            "custody":{"retained_objects_after":custody.retained_objects,"retained_bytes_after":custody.retained_bytes},"device_delivery_receipt":false
+        }))
+    };
+    tokio::pin!(server);
+    let (result, ended) = tokio::select! {
+        result=clients => (result,false),
+        result=&mut server => (result.and_then(|_|Err(anyhow::anyhow!("listener ended before diagnostic"))),true),
+    };
+    stop.store(true, Ordering::Release);
+    if !ended {
+        tokio::time::timeout(Duration::from_secs(5), &mut server).await??;
+    }
+    ensure!(
+        controller.snapshot().active_work == 0 && controller.snapshot().reserved_bytes == 0,
+        "rate fixture leaked reservations"
+    );
+    // Retain bounded test-only files on failure; do not print locator or stderr.
+    if result.as_ref().map_or(true, |v| v["passed"] != true) {
+        eprintln!(
+            "comparison diagnostic evidence retained at {}",
+            directory.keep().display()
+        );
+    }
+    result
+}
