@@ -854,8 +854,19 @@ impl NativeObjectLink {
         now: Instant,
         quantum: usize,
     ) -> Result<Option<CompletedMessage>> {
+        self.poll_complete_with_progress(stream, now, quantum)
+            .map(|(item, _)| item)
+    }
+    /// An assembly owner can immediately continue real hash work without
+    /// mistaking incomplete output for an idle transport. Missing input waits.
+    pub(crate) fn poll_complete_with_progress(
+        &mut self,
+        stream: u64,
+        now: Instant,
+        quantum: usize,
+    ) -> Result<(Option<CompletedMessage>, bool)> {
         let lane = self.lanes.get_mut(&stream).context("unknown native lane")?;
-        let item = lane.receiver.poll_complete(now, quantum)?;
+        let (item, progress) = lane.receiver.poll_complete_with_progress(now, quantum)?;
         if let Some(item) = &item {
             let peer = *self
                 .peers
@@ -863,7 +874,7 @@ impl NativeObjectLink {
                 .context("completed unknown peer")?;
             lane.feedback(peer, item.id);
         }
-        Ok(item)
+        Ok((item, progress))
     }
 }
 

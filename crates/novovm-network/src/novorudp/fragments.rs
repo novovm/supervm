@@ -492,15 +492,27 @@ impl Reassembler {
         now: Instant,
         chunk_quantum: usize,
     ) -> Result<Option<CompletedMessage>> {
+        self.poll_complete_with_progress(now, chunk_quantum)
+            .map(|(item, _)| item)
+    }
+
+    /// Report actual bounded hash work, even before an object is complete.
+    /// Retained objects waiting for missing chunks do not count as progress.
+    pub(crate) fn poll_complete_with_progress(
+        &mut self,
+        now: Instant,
+        chunk_quantum: usize,
+    ) -> Result<(Option<CompletedMessage>, bool)> {
         ensure!(
             (1..=64).contains(&chunk_quantum),
             "invalid reassembly quantum"
         );
         self.expire(now);
+        let mut progress = false;
         for _ in 0..chunk_quantum {
             let count = self.entries.len();
             if count == 0 {
-                return Ok(None);
+                return Ok((None, progress));
             }
             let selected = (0..count).find_map(|offset| {
                 let index = (self.turn + offset) % count;
@@ -511,7 +523,7 @@ impl Reassembler {
                 })
             });
             let Some((index, key)) = selected else {
-                return Ok(None);
+                return Ok((None, progress));
             };
             self.turn = (index + 1) % count;
             let entry = self
@@ -524,6 +536,7 @@ impl Reassembler {
                     .context("fragment missing")?,
             );
             entry.next_hash += 1;
+            progress = true;
             if entry.next_hash == entry.chunks.len() {
                 let entry = self
                     .entries
@@ -538,14 +551,17 @@ impl Reassembler {
                     .map(|chunk| chunk.context("completed message hole"))
                     .collect::<Result<Vec<_>>>()?;
                 self.remember_completion(key.clone(), entry.length, now);
-                return Ok(Some(CompletedMessage {
-                    peer: key.0,
-                    id: key.1,
-                    chunks,
-                }));
+                return Ok((
+                    Some(CompletedMessage {
+                        peer: key.0,
+                        id: key.1,
+                        chunks,
+                    }),
+                    progress,
+                ));
             }
         }
-        Ok(None)
+        Ok((None, progress))
     }
 }
 

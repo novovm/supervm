@@ -1,5 +1,77 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 preserved-process stall follow-up: one local defect reproduced and fixed
+
+The final delta probe `b320e27d...` was run against the SAME v103 phone processes
+(A PID24523, B PID22164), without restart, reinstall, network change or a competing
+build. Both used Wi-Fi and the original32-KiB verified Put/Fetch/Consume workload,
+10-second request and90-second probe deadlines. Six original UI swipes overlapped
+each run. This is a new diagnostic sample, not acceptance of sustained stability.
+
+| Phone / initial existing peers | Clients x rounds | Completed clients / cycles | Cycles/s | P95/P99 ms |
+| --- | --- | --- | ---: | --- |
+| A /17 |16x30|16/16;480/480|16.798|1168/1464|
+| B /25 |16x30|16/16;480/480|20.136|1196/1266|
+
+Both ended with32 peers; resource-pressure retirement can reclaim old idle peers,
+so this does not prove all initial peers survived throughout. No new work/store
+or SDK wire refusals, and no execution backoff, appeared. The263 sampled Flutter
+frames per phone all had total span below16.667ms (P95 A10.392ms/B6.362ms); this is
+bounded UI evidence, not an overall FPS claim. Learned rate/wire budgets and old
+connection conditions differ from previous cases: do not attribute these speeds
+to a source change, and do not replace the historical0/16 with these passes.
+The final probe has still not captured a failed phone request. Own-UID Android
+UDP netlink statistics were permission-denied; OS packet loss remains unmeasured.
+
+### Reused implementation, demonstrated gap and minimal correction
+
+Reused `novorudp/fragments.rs` -> `object_receiver.rs` -> `object_link.rs` ->
+`product_rendezvous_native.rs::serve_link`, also used by NOVOCHAT's existing L4
+listener. No AOEM transaction execution, new App transport or second owner is
+needed. The reassembler already hashes a bounded number of received chunks,
+but returned `None` both for missing input and for real hash work not yet forming
+a whole object. The service owner could mistake that second case for idle and
+wait200ms after network/feedback drained.32KiB needs more than the owner's32
+native-UDP fragment quantum. This is a local scheduling defect, not yet a proof
+that it caused the historical all-client stall or all its outgoing symptoms.
+
+A deterministic real-UDP fixture receives a complete authenticated32-KiB Put,
+drains the server socket and ACK output, and manually polls the production owner
+once. Before the fix, real service `put.started` remained0 (1 test failed); after
+the fix it is1 (same test passed). No timing threshold, fake service, manual
+clock advance or new production test API is used. The crate-private progress
+result now reports actual hash work through the existing layers. `serve_link`
+continues its original cooperative loop on that signal. Missing chunks do not
+report progress; blocked work still waits. Public completion results, original
+quantum, ACK behavior, byte reservations, deadlines, authority and TTL stay intact.
+
+The relevant release unit groups passed130/130, including original fragment,
+ACK/repair, cancellation, session replacement, resource, UDP failure and carrier
+preservation checks. New negative cases cover a missing middle chunk without a
+busy loop, unchanged TTL and byte release, bounded hash quantum, hash rejection
+and empty completion. This is source/component validation only; no new APK or
+node binary has been installed during this round.
+
+Both phones were rechecked at their original PIDs, five identity hashes unchanged
+each, account running, L3:2/L4:1, local deposit/L4 send ready and resource pressure
+normal. Existing v103 remains the test candidate; verified capacity-compatible
+v102 remains rollback. Chat/image/offline functional evidence from the preceding
+phone gate is retained, not claimed as a new device regression of this source fix.
+No KINGCLUB source, service, configuration or80/443 listener was changed.
+
+Real production-owner UDP/carrier/TLS I/O regressions then passed14/14; the
+manual sequential rate benchmark remained explicitly ignored. These include
+custody/restart, active-session declaration rotation, shared-execution waiting,
+forged temporal metadata rejection and the borrowed L4 endpoint.
+
+Local ignored evidence: `v103-stall-{A-old17,B-old25}-16x30-delta`,
+`v103-stall-post-state.json`, `v103-native-hash-progress-red.json` and
+`v103-native-hash-progress-regression.log`. Next gate is phone validation of this
+source candidate and capture/attribution of any remaining stall with old live
+connections; do not sign off the historical stall,24-hour stability or a general
+throughput gain from this local correction. TLS59.49s and clock work remain open.
+
+
 ## 2026-10-23 v103 phone follow-up: partial gate, stalled transport not yet fixed
 
 The v103 candidate is installed on both original phones and the existing Windows

@@ -697,7 +697,10 @@ async fn serve_link(
             progress = true;
             Some(item)
         } else if active.len() + pending.len() < work_limit {
-            match link.poll_complete(STREAM, now, QUANTUM)? {
+            let (complete, hash_progress) =
+                link.poll_complete_with_progress(STREAM, now, QUANTUM)?;
+            progress |= hash_progress;
+            match complete {
                 Some(body) => {
                     progress = true;
                     let peer = link
@@ -877,6 +880,10 @@ async fn serve_link(
 #[cfg(test)]
 #[path = "product_rendezvous_native_failure_tests.rs"]
 mod failure_tests;
+
+#[cfg(test)]
+#[path = "product_rendezvous_native_progress_tests.rs"]
+mod progress_tests;
 
 #[cfg(test)]
 mod resource_boundary_tests {

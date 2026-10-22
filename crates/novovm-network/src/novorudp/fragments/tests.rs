@@ -576,6 +576,57 @@ fn expiration_releases_only_expired_messages_and_push_reclaims_capacity() {
 }
 
 #[test]
+fn hash_progress_stops_at_a_hole_and_does_not_spin_or_renew_custody() -> Result<()> {
+    let now = Instant::now();
+    let body = message(3 * CHUNK_BYTES, 7);
+    let mut receiver = receiver();
+    receiver.push(PEERS[0], &body.frame(0)?, now)?;
+    // A later fragment cannot make the missing middle fragment hashable.
+    receiver.push(PEERS[0], &body.frame(2)?, now)?;
+    let (item, progress) = receiver.poll_complete_with_progress(now, 1)?;
+    assert!(item.is_none() && progress);
+    assert_eq!(receiver.entries.values().next().unwrap().next_hash, 1);
+    for _ in 0..3 {
+        let (item, progress) = receiver.poll_complete_with_progress(now, 64)?;
+        assert!(item.is_none() && !progress);
+        assert_eq!(receiver.reserved_bytes(), 3 * CHUNK_BYTES);
+    }
+    let ttl = receiver.limits.ttl;
+    let (item, progress) = receiver.poll_complete_with_progress(now + ttl, 64)?;
+    assert!(item.is_none() && !progress);
+    assert_eq!(receiver.reserved_bytes(), 0);
+    assert_eq!(receiver.pending_messages(), 0);
+    Ok(())
+}
+
+#[test]
+fn hash_progress_preserves_quantum_and_verifies_before_completion() -> Result<()> {
+    let now = Instant::now();
+    let body = message(3 * CHUNK_BYTES, 8);
+    let mut receiver = receiver();
+    push_all(&mut receiver, PEERS[0], &body, now);
+    let (item, progress) = receiver.poll_complete_with_progress(now, 2)?;
+    assert!(item.is_none() && progress);
+    assert_eq!(receiver.entries.values().next().unwrap().next_hash, 2);
+    let (item, progress) = receiver.poll_complete_with_progress(now, 1)?;
+    assert!(progress);
+    assert_payload(item.unwrap(), PEERS[0], &body, &bytes(3 * CHUNK_BYTES, 8));
+    let (item, progress) = receiver.poll_complete_with_progress(now, 1)?;
+    assert!(item.is_none() && !progress);
+
+    // A locally advanced hash never becomes an integrity bypass.
+    let mut frame = body.frame(2)?;
+    frame[HEADER] ^= 1;
+    for frame in [body.frame(0)?, body.frame(1)?, frame] {
+        receiver.push(PEERS[0], &frame, now)?;
+    }
+    assert!(receiver.poll_complete_with_progress(now, 2)?.0.is_none());
+    assert!(receiver.poll_complete_with_progress(now, 1).is_err());
+    assert_eq!(receiver.reserved_bytes(), 0);
+    Ok(())
+}
+
+#[test]
 fn hashing_is_incremental_and_duplicates_do_not_rehash_progress() {
     let now = Instant::now();
     let outgoing = message(3 * CHUNK_BYTES, 1);

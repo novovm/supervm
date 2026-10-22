@@ -111,6 +111,13 @@ impl NativeObjectReceiver {
     ) -> Result<Option<CompletedMessage>> {
         self.objects.poll_complete(now, quantum)
     }
+    pub(crate) fn poll_complete_with_progress(
+        &mut self,
+        now: Instant,
+        quantum: usize,
+    ) -> Result<(Option<CompletedMessage>, bool)> {
+        self.objects.poll_complete_with_progress(now, quantum)
+    }
     pub fn pending_messages(&self) -> usize {
         self.objects.pending_messages()
     }
