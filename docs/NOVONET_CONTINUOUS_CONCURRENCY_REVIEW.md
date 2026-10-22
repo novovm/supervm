@@ -1,5 +1,44 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 v105 phone diagnostic candidate installed; historical cause still OPEN
+
+SDK `c804ef3c` and NOVOCHAT build `530d2de` were installed through the official
+explicit profile-diagnostics flow on both original phones; APK SHA-256
+`6fcacdeb74ec3a9c979920794a42cf0c0674996b0d9883910d0941ccc851ca79`.
+Signer, installed hash, identity hashes/history and capacity-compatible102/103/104
+rollback artifacts are preserved. No deployed Windows/Ubuntu node binary or
+KINGCLUB service/config changed; those services retain their preceding runtime.
+
+After147 related unit and15 real UDP/TLS I/O passes (one manual experiment
+ignored), six bounded real native UDP phone loads completed2,880/2,88032-KiB
+verified Put/Fetch/Consume cycles. A/B cold8x60 passed; each retained9 peer records
+then passed16x30; A's subsequent25-record pool passed another16x30 (ending32,
+not41 active peers); B's final16x30 follows offline-image network recovery (pool
+1 ->17). App PIDs798/21075 stayed unchanged after upgrade. Two cold loads included
+six UI swipes each; chat-overlap cases used actual single sends instead. Rates
+were10.835/11.032/11.959/12.496/12.033/13.160 cycles/s, P95/P99 documented in the
+[App checkpoint](../../NOVOCHAT/docs/implementation/P0_CHECKPOINT.md). These are
+instrumented, unmatched adaptive-state samples, NOT a causal speed improvement.
+
+Both phones sent new Delivered text while their own16-client load was active;
+A also received under load. Online1.6-MB full image, external custody followed by
+sender-offline independent receive/full preview/original DeviceReceipt passed.
+Final identity/PID, normal resources, local deposit/L4 send and original network
+choices were checked. Both used Wi-Fi; no new cellular/TLS-tail claim is made.
+A chat-overlap harness failed a process-query race before Send while its B load
+still passed; this retained fixture failure was not hidden as product success.
+A verified unsent draft was resumed only once; a separate B own-load gate filled
+the missing coverage. No request, probe deadline or production rule was changed.
+
+There was NO new transport failure or failure-only client snapshot. Therefore
+historical13 rejection cause/order, v104427/480 and v1030/16 remain unresolved;
+all new successes are retained as bounded functional evidence only. Normal
+builds keep the observer disabled. No larger quotas, timeouts, retries, weakened
+auth/replay checks or new scheduler is justified. Stop successful load repetition;
+use the deployed bounded evidence on the next natural failure. Snapshot retention
+counters and local monotonic origins retain the interpretation limits below.
+Long-frame samples, safety clock,59.49s TLS tail and24h stability remain open.
+
 ## 2026-10-23 classified transfer evidence candidate; no stall fix claimed
 
 This round reuses `novorudp/endpoint.rs` rejection sites, `object_link.rs`
