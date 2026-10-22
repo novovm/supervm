@@ -5,6 +5,7 @@ pub mod carrier;
 #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
 pub mod carrier_io;
 pub mod datagram;
+pub mod diagnostics;
 pub mod endpoint;
 pub mod fragments;
 pub mod handshake;

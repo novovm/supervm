@@ -532,6 +532,9 @@ async fn serve_link(
         link.local_identity() == service.identity_public_key(),
         "native listener and mailbox signer differ"
     );
+    if let Some(d) = service.native_diagnostics_v1() {
+        link.set_diagnostics_v1(d);
+    }
     let mut servers = BTreeMap::<usize, NativeMailboxServer>::new();
     let mut jobs = BTreeMap::<u64, Job>::new();
     let mut active: FuturesUnordered<LocalBoxFuture<'_, WorkResult>> = FuturesUnordered::new();

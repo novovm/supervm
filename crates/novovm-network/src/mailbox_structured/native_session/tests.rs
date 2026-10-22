@@ -4,6 +4,7 @@ use super::*;
 fn response_transport_completion_releases_only_its_exact_body() -> Result<()> {
     let make = |context| -> Result<MailboxResponse> {
         Ok(MailboxResponse {
+            request_tag: Some(transfer_tag_v1([7; 16], STREAM, context)),
             failed: false,
             sent: true,
             peer: 0,
@@ -96,6 +97,7 @@ fn work(slots: Slots, deadline: Instant) -> Result<MailboxWork> {
     let context = binding().context(0, 1);
     slots.lock().unwrap()[0].phase = Phase::Working;
     Ok(MailboxWork {
+        request_tag: Some(transfer_tag_v1([7; 16], STREAM, context)),
         capacity_response: None,
         retained_bytes: 8192,
         waiting_watch: false,

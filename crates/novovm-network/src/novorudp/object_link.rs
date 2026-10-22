@@ -2,6 +2,10 @@
 //! handshake, frame, window repair, pacing and reassembly implementations.
 //! No body encoding/decoding, business execution, consensus rules or worker.
 use super::{
+    diagnostics::{
+        transfer_tag_v1, NativeProgressStageV1, NativeRejectCountsV1, NativeRejectReasonV1,
+        NativeTransferDiagnosticsV1,
+    },
     endpoint::{
         NativeClientAdmissionSnapshotV1, NativeEndpoint, NativePeerRetirement, NativePoll,
         NativeSessionChange,
@@ -172,6 +176,8 @@ pub struct NativeSendCompletion {
 #[derive(Default)]
 pub struct NativeLinkPoll {
     pub rejected: usize,
+    pub rejection_reasons: NativeRejectCountsV1,
+    pub ack_progress: usize,
     pub backpressured: usize,
     pub accepted_fragments: usize,
     pub duplicate_fragments: usize,
@@ -204,6 +210,7 @@ pub struct NativeObjectLink {
     // the existing peer and lane counts; not an admission/entitlement registry.
     application_owners: BTreeMap<(usize, u64, NativeApplicationRole), [u8; 16]>,
     session_validity: BTreeMap<usize, ([u8; 16], NativeSessionValidity)>,
+    diagnostics: Option<Arc<NativeTransferDiagnosticsV1>>,
 }
 impl NativeObjectLink {
     pub fn new(
@@ -277,7 +284,39 @@ impl NativeObjectLink {
             policy,
             application_owners: BTreeMap::new(),
             session_validity: BTreeMap::new(),
+            diagnostics: None,
         })
+    }
+    /// Explicit local test observer. It cannot change peer/session or IO state.
+    pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
+        self.diagnostics = Some(observer);
+    }
+    pub(crate) fn note_response_diagnostic_v1(
+        &self,
+        request: Option<[u8; 32]>,
+        session: [u8; 16],
+        stream: u64,
+        id: [u8; 32],
+        now: Instant,
+    ) {
+        if let (Some(d), Some(request)) = (&self.diagnostics, request) {
+            d.response(request, transfer_tag_v1(session, stream, id), now);
+        }
+    }
+    pub(crate) fn diagnostic_transfer_tag_v1(
+        &self,
+        session: [u8; 16],
+        stream: u64,
+        id: [u8; 32],
+    ) -> Option<[u8; 32]> {
+        self.diagnostics
+            .as_ref()
+            .map(|_| transfer_tag_v1(session, stream, id))
+    }
+    pub(crate) fn note_response_validated_v1(&self, tag: [u8; 32], now: Instant) {
+        if let Some(d) = &self.diagnostics {
+            d.progress(tag, NativeProgressStageV1::ResponseValidated, 0, now);
+        }
     }
     pub fn local_addr(&self) -> Result<SocketAddr> {
         self.endpoint.local_addr()
@@ -572,6 +611,7 @@ impl NativeObjectLink {
         let NativePoll {
             frames,
             rejected_datagrams,
+            rejection_reasons,
             handshake_send_failures,
             receive_errors,
             session_changes,
@@ -592,6 +632,7 @@ impl NativeObjectLink {
         }
         let mut report = NativeLinkPoll {
             rejected: rejected_datagrams,
+            rejection_reasons,
             handshake_send_failures,
             receive_errors,
             session_changes,
@@ -624,11 +665,17 @@ impl NativeObjectLink {
             let stream = frame.stream_id;
             let Some(lane) = self.lanes.get_mut(&stream) else {
                 report.rejected += 1;
+                report
+                    .rejection_reasons
+                    .record(NativeRejectReasonV1::UnknownStream);
                 continue;
             };
             if frame.kind == NovoRudpTransportFrameKindV0::Ack {
                 let Some(id) = frame.payload.get(8..40) else {
                     report.rejected += 1;
+                    report
+                        .rejection_reasons
+                        .record(NativeRejectReasonV1::AckShort);
                     continue;
                 };
                 let key = (received.peer(), stream, id.try_into()?);
@@ -640,10 +687,28 @@ impl NativeObjectLink {
                     {
                         sender.cancel();
                     }
-                    if sender.status() == ObjectSendState::Sending
-                        && sender.on_ack(frame, now).is_err()
-                    {
-                        report.rejected += 1;
+                    if sender.status() == ObjectSendState::Sending {
+                        let before = sender.acknowledged_best_v1();
+                        if sender.on_ack(frame, now).is_err() {
+                            report.rejected += 1;
+                            report
+                                .rejection_reasons
+                                .record(NativeRejectReasonV1::ObjectAck);
+                        } else if sender.acknowledged_best_v1() > before {
+                            report.ack_progress += 1;
+                            if let Some(d) = &self.diagnostics {
+                                d.progress(
+                                    transfer_tag_v1(
+                                        sender.session_id(),
+                                        stream,
+                                        sender.body().id(),
+                                    ),
+                                    NativeProgressStageV1::AckProgress,
+                                    sender.acknowledged_best_v1(),
+                                    now,
+                                );
+                            }
+                        }
                     }
                 }
             } else {
@@ -652,6 +717,18 @@ impl NativeObjectLink {
                     Ok(admission) => {
                         if admission == FragmentAdmission::Accepted {
                             report.accepted_fragments += 1;
+                            if let Some(d) = &self.diagnostics {
+                                d.progress(
+                                    transfer_tag_v1(
+                                        frame.session_id,
+                                        stream,
+                                        frame.payload[40..72].try_into()?,
+                                    ),
+                                    NativeProgressStageV1::Fragment,
+                                    1,
+                                    now,
+                                );
+                            }
                         } else {
                             report.duplicate_fragments += 1;
                         }
@@ -668,9 +745,17 @@ impl NativeObjectLink {
                             lane.feedback(received.peer(), frame.payload[40..72].try_into()?);
                         }
                     }
-                    Err(_) => report.rejected += 1,
+                    Err(_) => {
+                        report.rejected += 1;
+                        report
+                            .rejection_reasons
+                            .record(NativeRejectReasonV1::ObjectFragment);
+                    }
                 }
             }
+        }
+        if let Some(d) = &self.diagnostics {
+            d.reject(report.rejection_reasons, now);
         }
         self.poll_feedback(now, quantum, &mut report)?;
         // Fair across retained jobs, with no per-object wait for an ACK.
@@ -736,6 +821,16 @@ impl NativeObjectLink {
             let sender = self.jobs.remove(&key).expect("finished send job");
             self.cancellations.remove(&key);
             let state = sender.status();
+            if state == ObjectSendState::Delivered {
+                if let Some(d) = &self.diagnostics {
+                    d.progress(
+                        transfer_tag_v1(sender.session_id(), key.1, key.2),
+                        NativeProgressStageV1::TransportDone,
+                        0,
+                        now,
+                    );
+                }
+            }
             let body = sender.into_body();
             let lane = self.lanes.get_mut(&key.1).expect("configured lane");
             lane.usage.remove(body.byte_len());
@@ -866,13 +961,37 @@ impl NativeObjectLink {
         quantum: usize,
     ) -> Result<(Option<CompletedMessage>, bool)> {
         let lane = self.lanes.get_mut(&stream).context("unknown native lane")?;
-        let (item, progress) = lane.receiver.poll_complete_with_progress(now, quantum)?;
+        let (item, progress) = if let Some(d) = &self.diagnostics {
+            let endpoint = &self.endpoint;
+            let peers = &self.peers;
+            lane.receiver
+                .poll_complete_observed(now, quantum, |peer, id| {
+                    if let Some(session) = peers.get(peer).and_then(|p| endpoint.session_id(*p)) {
+                        d.progress(
+                            transfer_tag_v1(session, stream, id),
+                            NativeProgressStageV1::Hash,
+                            1,
+                            now,
+                        );
+                    }
+                })?
+        } else {
+            lane.receiver.poll_complete_with_progress(now, quantum)?
+        };
         if let Some(item) = &item {
             let peer = *self
                 .peers
                 .get(&item.peer)
                 .context("completed unknown peer")?;
             lane.feedback(peer, item.id);
+            if let (Some(d), Some(session)) = (&self.diagnostics, self.endpoint.session_id(peer)) {
+                d.progress(
+                    transfer_tag_v1(session, stream, item.id),
+                    NativeProgressStageV1::Verified,
+                    0,
+                    now,
+                );
+            }
         }
         Ok((item, progress))
     }

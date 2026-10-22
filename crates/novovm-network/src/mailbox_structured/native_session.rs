@@ -9,6 +9,7 @@
 use super::*;
 use crate::{
     novorudp::{
+        diagnostics::{transfer_tag_v1, NativeProgressStageV1},
         fragments::{CompletedMessage, FragmentProfile, OutgoingMessage},
         object_link::{
             NativeApplicationRole, NativeObjectLink, NativeSendCancellation, NativeSendCompletion,
@@ -456,6 +457,19 @@ impl NativeMailboxClient {
         });
         Ok(id)
     }
+    pub fn request_transfer_tag_v1(&self, id: RequestId) -> Option<[u8; 32]> {
+        let pending = self
+            .slots
+            .get(id.slot)?
+            .pending
+            .as_ref()
+            .filter(|p| p.id == id)?;
+        Some(transfer_tag_v1(
+            self.binding.session,
+            STREAM,
+            pending.body.id(),
+        ))
+    }
     pub fn try_send(
         &mut self,
         link: &mut NativeObjectLink,
@@ -535,6 +549,9 @@ impl NativeMailboxClient {
         // may still be draining a redundant transport repair or awaiting DONE.
         // Let the original bounded link send finish; errors above still cancel.
         p.cancel_on_drop = false;
+        if let Some(tag) = link.diagnostic_transfer_tag_v1(self.binding.session, STREAM, body.id) {
+            link.note_response_validated_v1(tag, now);
+        }
         Ok((p.id, replies))
     }
     /// Feed the existing link's completion events. Returns an unknown-outcome
@@ -788,6 +805,7 @@ impl NativeMailboxServer {
             // A control-only response guard does not reset or borrow any normal
             // slot. Replays reproduce exactly the frozen grant, never allocate more.
             return Ok(MailboxWork {
+                request_tag: link.diagnostic_transfer_tag_v1(self.binding.session, STREAM, body.id),
                 waiting_watch: false,
                 rows: 1,
                 bytes,
@@ -830,6 +848,7 @@ impl NativeMailboxServer {
         let retained_bytes = batch.retained_bytes_estimate()?;
         slots[index].phase = Phase::Working;
         Ok(MailboxWork {
+            request_tag: link.diagnostic_transfer_tag_v1(self.binding.session, STREAM, body.id),
             waiting_watch,
             rows,
             bytes,
@@ -902,6 +921,7 @@ impl Drop for WorkGuard {
     }
 }
 pub struct MailboxWork {
+    request_tag: Option<[u8; 32]>,
     capacity_response: Option<Arc<OutgoingMessage>>,
     retained_bytes: usize,
     waiting_watch: bool,
@@ -945,6 +965,7 @@ impl MailboxWork {
         authority()?;
         if let Some(body) = self.capacity_response {
             return Ok(MailboxResponse {
+                request_tag: self.request_tag,
                 body,
                 guard: self.guard,
                 peer: self.peer,
@@ -959,6 +980,7 @@ impl MailboxWork {
             .collect::<Vec<_>>();
         let bytes = encode_replies(self.context, &replies)?;
         Ok(MailboxResponse {
+            request_tag: self.request_tag,
             body: outgoing(bytes)?,
             guard: self.guard,
             peer: self.peer,
@@ -982,12 +1004,23 @@ impl MailboxWork {
         authority: impl Fn() -> Result<()>,
         timing: Option<&crate::service_concurrency::ServiceExecutionTimingV1>,
     ) -> Result<MailboxResponse> {
+        let tag = self.request_tag;
+        let diagnostics = service.native_diagnostics_v1();
+        if let (Some(d), Some(tag)) = (&diagnostics, tag) {
+            d.progress(tag, NativeProgressStageV1::WorkStarted, 0, Instant::now());
+        }
         let work = self.execute_inner_timed(service, authority, timing);
-        if let Some(timing) = timing {
+        let result = if let Some(timing) = timing {
             timing.measure(work).await
         } else {
             work.await
+        };
+        if result.is_ok() {
+            if let (Some(d), Some(tag)) = (&diagnostics, tag) {
+                d.progress(tag, NativeProgressStageV1::WorkFinished, 0, Instant::now());
+            }
         }
+        result
     }
     async fn execute_inner_timed(
         self,
@@ -1007,6 +1040,7 @@ impl MailboxWork {
             self.guard.check()?;
             authority()?;
             return Ok(MailboxResponse {
+                request_tag: self.request_tag,
                 body,
                 guard: self.guard,
                 peer: self.peer,
@@ -1031,7 +1065,27 @@ impl MailboxWork {
         )
         .await
         .context("mailbox deadline; outcome unknown")??;
+        // Opt-in, bounded inspection of the existing small encoded reply.
+        // Observation never changes the business result or re-executes a row.
+        // Large Fetch bodies are not copied/decoded again for diagnostics.
+        if let (Some(d), Some(tag)) = (service.native_diagnostics_v1(), self.request_tag) {
+            if bytes.len() <= 4096
+                && decode_replies(&bytes, self.context, self.rows).is_ok_and(|replies| {
+                    replies
+                        .iter()
+                        .any(|reply| matches!(reply, Reply::Stored(_)))
+                })
+            {
+                d.progress(
+                    tag,
+                    NativeProgressStageV1::StoredReceiptCreated,
+                    0,
+                    Instant::now(),
+                );
+            }
+        }
         Ok(MailboxResponse {
+            request_tag: self.request_tag,
             body: outgoing(bytes)?,
             guard: self.guard,
             peer: self.peer,
@@ -1044,6 +1098,7 @@ impl MailboxWork {
 }
 
 pub struct MailboxResponse {
+    request_tag: Option<[u8; 32]>,
     failed: bool,
     body: Arc<OutgoingMessage>,
     guard: WorkGuard,
@@ -1116,6 +1171,13 @@ impl MailboxResponse {
             s.sequence = next;
             s.phase = Phase::Ready;
             self.guard.armed = false;
+            link.note_response_diagnostic_v1(
+                self.request_tag,
+                self.session,
+                STREAM,
+                self.body.id(),
+                now,
+            );
             self.sent = true;
         }
         Ok(self.sent)

@@ -7,11 +7,12 @@
 
 use super::{
     carrier::{NativeCarrierIoFailure, NativeDatagramIo, NativeRoute},
+    diagnostics::NativeRejectReasonV1,
     wire_budget::{try_send_datagram, NativeSendReservation, NativeWireBudget},
     NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
 };
 use crate::product_overlay::{binary, E2eSecureChannelV1};
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::Instant;
@@ -125,8 +126,12 @@ impl NativeUdpSession {
         source: NativeRoute,
         wire: &[u8],
     ) -> Result<NovoRudpTransportFrameV0> {
-        ensure!(source == self.remote, "native packet source mismatch");
-        let envelope = binary::decode(wire, MAX_DATAGRAM_BYTES)?;
+        if source != self.remote {
+            return Err(anyhow::anyhow!("native packet source mismatch")
+                .context(NativeRejectReasonV1::SecureRoute));
+        }
+        let envelope =
+            binary::decode(wire, MAX_DATAGRAM_BYTES).context(NativeRejectReasonV1::WireOrFrame)?;
         let frame = match &mut self.channel {
             NativeChannel::Udp(channel) => channel.open_novorudp_frame(&envelope)?,
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
@@ -142,10 +147,10 @@ impl NativeUdpSession {
                 })?
             }
         };
-        ensure!(
-            frame.session_id == self.session_id(),
-            "inner frame session mismatch"
-        );
+        if frame.session_id != self.session_id() {
+            return Err(anyhow::anyhow!("inner frame session mismatch")
+                .context(NativeRejectReasonV1::SecureRoute));
+        }
         Ok(frame)
     }
 

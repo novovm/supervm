@@ -23,7 +23,7 @@ use crate::{
 use anyhow::{ensure, Result};
 use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use zeroize::{Zeroize, Zeroizing};
 
 #[path = "mailbox_rpc_metrics.rs"]
@@ -248,6 +248,7 @@ pub struct MailboxServiceV1 {
     request_budget: Mutex<RequestBudgetV4>,
     rate_controller: Mutex<Option<Arc<ServiceConcurrencyV1>>>,
     timings: metrics::Timings,
+    native_diagnostics: OnceLock<Arc<crate::novorudp::diagnostics::NativeTransferDiagnosticsV1>>,
     native_record_v7: Mutex<Option<PeerSignedRelayRecordV1>>,
     endpoint_delivery: crate::endpoint_delivery::EndpointDeliveryRegistryV1,
 }
@@ -324,6 +325,7 @@ impl MailboxServiceV1 {
             slots: Arc::new(tokio::sync::Semaphore::new(1)),
             changed: tokio::sync::watch::channel(0).0,
             timings: metrics::Timings::default(),
+            native_diagnostics: OnceLock::new(),
             native_record_v7: Mutex::new(None),
             endpoint_delivery: Default::default(),
             rate_controller: Mutex::new(None),
@@ -518,6 +520,19 @@ impl MailboxServiceV1 {
 
     /// Local-only diagnostics, not a remote RPC or a service receipt. No
     /// identifiers or request values are retained; snapshots never grant work.
+    /// Explicit test observation, disabled by default. No persistent writer.
+    pub fn enable_native_diagnostics_v1(
+        &self,
+    ) -> Arc<crate::novorudp::diagnostics::NativeTransferDiagnosticsV1> {
+        self.native_diagnostics
+            .get_or_init(|| Arc::new(Default::default()))
+            .clone()
+    }
+    pub fn native_diagnostics_v1(
+        &self,
+    ) -> Option<Arc<crate::novorudp::diagnostics::NativeTransferDiagnosticsV1>> {
+        self.native_diagnostics.get().cloned()
+    }
     pub fn timing_snapshot_v1(&self) -> MailboxTimingsV1 {
         self.timings.snapshot()
     }

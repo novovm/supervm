@@ -1,5 +1,57 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 classified transfer evidence candidate; no stall fix claimed
+
+This round reuses `novorudp/endpoint.rs` rejection sites, `object_link.rs`
+verified fragment/ACK/hash progression, `mailbox_structured/native_session.rs`
+work/response lifecycle, the existing native listener and peer probe. AOEM
+execution, accounts, transport scheduling, storage and wire protocol are not
+replaced. The gap is causal evidence across the same authenticated request,
+not a demonstrated need for larger quotas/windows/deadlines.
+
+Fixed rejection categories preserve every original acceptance/rejection decision
+and aggregate count. Pre-auth route/nonce/replay checks cannot authenticate an
+object association; all rejection timing is explicitly UNATTRIBUTED. Ordinary
+stale-epoch/absent-job ACKs keep their existing non-rejection semantics. A fresh
+session-salted full-object/stream tag links verified request and response only.
+No packet header before authentication is treated as a trusted association.
+
+An explicit optional local observer records first rejection and actual progress
+(new fragment, verified ACK information high-water mark, bounded hash cursor,
+whole-object verification, work entry/finish, stored-receipt creation, response
+queue/transport completion and client reply validation). Same-gap/worse ACKs,
+duplicates and successful local send calls do not count as forward progress.
+Work entry is not admission success; work finish/reply validation may be a valid
+business rejection. A stored receipt is still verified by the original client.
+Neither transport completion nor diagnostic metadata is a DeviceReceipt.
+
+The observer is off by default. It owns at most256 local records, expires evidence
+after120 seconds on use/snapshot and exposes omission/eviction/expiry counters.
+These are evidence bounds, not business TTL or capacity changes. No new writer,
+background timer, daily packet log, address/identity/content field or route is
+added. The probe takes one snapshot on failure before original cancellation;
+NOVOCHAT may opt into a profile-only diagnostic build using its existing snapshot
+entry. Snapshot clocks are local monotonic origins: tags associate sides, their
+absolute microsecond values must not be subtracted or globally ordered. Missing
+records with omission/expiry are unknown evidence, not proof of absent requests.
+
+Acceptance: deterministic category/progress tests and real UDP/SQLite correlation
+must pass before packaging. Then preserve original phone identities/history and
+v104 plus capacity-compatible rollback APKs; observe cold and same-process idle/
+old-connection load without changing original32-KiB workload,10s request,90s test,
+rate/window or security checks. Capture a real failure with both sides' evidence
+before proposing a production correction. Historical13 rejections cannot be
+retroactively classified by new counters, and another16/16 alone is not a fix.
+No new phone deployment or sustained-stability acceptance is implied by source.
+
+Final-source local verification:147 related unit tests passed;15 real UDP/TLS
+I/O tests passed (one manual rate comparison intentionally ignored). The new real
+UDP/SQLite test verifies the exact authenticated tag chain and original signed
+StoreReceipt for a32-KiB Put, then proves an Unauthorized Put still completes
+its work/reply evidence without a Stored marker or additional custody. Existing
+mixed-identity, forged temporal metadata, withdrawal and restart cases pass.
+Logs remain ignored under NOVOCHAT artifacts/v105-classified-*-final.log.
+
 ## 2026-10-23 v104 phone follow-up: installed hash-progress correction, cold stall still open
 
 SDK `7a8b22d8` was packaged through NOVOCHAT's official profile build in App

@@ -600,3 +600,63 @@ fn final_window_repairs_gaps_now_and_unconfirmed_tail_only_after_ack_wait() -> R
     assert!((total - 5..total).all(|index| repaired.contains(&index)));
     Ok(())
 }
+
+#[test]
+fn diagnostic_ack_high_water_requires_new_verified_information() -> Result<()> {
+    let (_, _, channel, _) = link()?;
+    let now = Instant::now();
+    let body = Arc::new(OutgoingMessage::with_profile(
+        [1; 32],
+        vec![5; 3 * 768],
+        4096,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let (config, pacing) = settings();
+    let mut sender = NativeObjectSender::new(
+        body.clone(),
+        channel.session_id(),
+        11,
+        config,
+        pacing,
+        now,
+        Duration::from_secs(5),
+    )?;
+    for (epoch, start, best) in [(1, 0, 0), (2, 1, 1), (3, 0, 1), (4, 1, 1), (5, 2, 2)] {
+        sender.on_ack(&missing_ack(&sender, epoch, start)?, now)?;
+        assert_eq!(sender.acknowledged_best_v1(), best);
+    }
+    assert!(matches!(
+        sender.on_ack(&missing_ack(&sender, 4, 2)?, now)?,
+        NovoRudpSenderRepairDecision::StaleAck { .. }
+    ));
+    assert_eq!(sender.acknowledged_best_v1(), 2);
+    let mut bad = missing_ack(&sender, 6, 2)?;
+    bad.session_id[0] ^= 1;
+    assert!(sender.on_ack(&bad, now).is_err());
+    assert_eq!(sender.acknowledged_best_v1(), 2);
+    let done = encode_object_ack(
+        body.id(),
+        11,
+        &NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: channel.session_id(),
+                epoch: 6,
+                sequence: None,
+                window_id: None,
+            },
+            expected_total: 3,
+            receiver_done: true,
+            missing_count: 0,
+            current_window: None,
+            current_window_missing_ranges: vec![],
+        },
+    )?;
+    assert!(matches!(
+        sender.on_ack(&done, now)?,
+        NovoRudpSenderRepairDecision::ReceiverDone
+    ));
+    assert_eq!(sender.acknowledged_best_v1(), 3);
+    Ok(())
+}

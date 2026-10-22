@@ -6,12 +6,15 @@
 use super::{
     carrier::{NativeDatagramIo, NativeRoute},
     datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES},
+    diagnostics::{NativeRejectCountsV1, NativeRejectReasonV1},
     handshake::NativeHandshake,
     object_sender::NativeObjectSender,
     wire_budget::{NativeWireBudget, NativeWireUsage},
     NovoRudpTransportFrameV0,
 };
-use crate::product_overlay::{peer_id_from_ed25519_public_key_v1, HandshakeReplayCacheV1};
+use crate::product_overlay::{
+    peer_id_from_ed25519_public_key_v1, HandshakeReplayCacheV1, ProductOverlayErrorV1,
+};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use std::{
@@ -130,10 +133,31 @@ pub struct NativeClientAdmissionSnapshotV1 {
 pub struct NativePoll {
     pub frames: Vec<NativeReceivedFrame>,
     pub rejected_datagrams: usize,
+    pub rejection_reasons: NativeRejectCountsV1,
     pub receive_errors: usize,
     pub handshake_send_failures: usize,
     pub handshakes_sent: usize,
     pub session_changes: Vec<NativeSessionChange>,
+}
+
+// Categories describe the existing rejection boundary, not authenticated peer
+// attribution. In particular replay/route/nonce checks can precede AEAD.
+fn classify_open_rejection(error: &anyhow::Error) -> NativeRejectReasonV1 {
+    if let Some(reason) = error.downcast_ref::<NativeRejectReasonV1>() {
+        return *reason;
+    }
+    match error.downcast_ref::<ProductOverlayErrorV1>() {
+        Some(ProductOverlayErrorV1::SecureFrameRouteMismatch) => NativeRejectReasonV1::SecureRoute,
+        Some(ProductOverlayErrorV1::SecureFrameNonceMismatch) => NativeRejectReasonV1::SecureNonce,
+        Some(ProductOverlayErrorV1::SecureFrameReplay) => NativeRejectReasonV1::SecureReplay,
+        Some(ProductOverlayErrorV1::SecureFrameAuthenticationFailed) => {
+            NativeRejectReasonV1::SecureAuthentication
+        }
+        Some(
+            ProductOverlayErrorV1::UnsupportedVersion(_) | ProductOverlayErrorV1::NovoRudpDecode(_),
+        ) => NativeRejectReasonV1::WireOrFrame,
+        _ => NativeRejectReasonV1::OpenOther,
+    }
 }
 
 pub struct NativeEndpoint {
@@ -842,18 +866,26 @@ impl NativeEndpoint {
                 // Windows reports an oversized UDP datagram as WSAEMSGSIZE.
                 Err(error) if udp_io && cfg!(windows) && error.raw_os_error() == Some(10040) => {
                     result.rejected_datagrams += 1;
+                    result
+                        .rejection_reasons
+                        .record(NativeRejectReasonV1::Oversize);
                     continue;
                 }
                 Err(error) => return Err(error.into()),
             };
-            if self
+            // Keep the original budget-first short circuit: rejected oversized
+            // datagrams are still charged before their shape is examined.
+            let wire_refused = self
                 .wire_budget
                 .as_mut()
-                .is_some_and(|budget| !budget.admit_receive(length, now))
-                || length > wire.len()
-                || length > MAX_DATAGRAM_BYTES
-            {
+                .is_some_and(|budget| !budget.admit_receive(length, now));
+            if wire_refused || length > wire.len() || length > MAX_DATAGRAM_BYTES {
                 result.rejected_datagrams += 1;
+                result.rejection_reasons.record(if wire_refused {
+                    NativeRejectReasonV1::WireBudget
+                } else {
+                    NativeRejectReasonV1::Oversize
+                });
                 continue;
             }
             if wire[..length].starts_with(b"NVHSHK01") {
@@ -862,6 +894,9 @@ impl NativeEndpoint {
                     .is_err()
                 {
                     result.rejected_datagrams += 1;
+                    result
+                        .rejection_reasons
+                        .record(NativeRejectReasonV1::Handshake);
                 }
                 continue;
             }
@@ -872,6 +907,9 @@ impl NativeEndpoint {
             }
             let Some(&index) = self.sources.get(&source) else {
                 result.rejected_datagrams += 1;
+                result
+                    .rejection_reasons
+                    .record(NativeRejectReasonV1::UnknownSource);
                 continue;
             };
             let peer = self.peers.get_mut(&index).expect("known native peer");
@@ -890,10 +928,24 @@ impl NativeEndpoint {
                             frame,
                         })
                     }
-                    _ => result.rejected_datagrams += 1,
+                    Ok(_) => {
+                        result.rejected_datagrams += 1;
+                        result
+                            .rejection_reasons
+                            .record(NativeRejectReasonV1::StreamDenied);
+                    }
+                    Err(error) => {
+                        result.rejected_datagrams += 1;
+                        result
+                            .rejection_reasons
+                            .record(classify_open_rejection(&error));
+                    }
                 }
             } else {
                 result.rejected_datagrams += 1;
+                result
+                    .rejection_reasons
+                    .record(NativeRejectReasonV1::NoSession);
             }
         }
         for _ in 0..quantum.min(self.peers.len()) {
@@ -1064,6 +1116,8 @@ mod client_set_tests;
 
 #[cfg(test)]
 mod io_tests;
+#[cfg(test)]
+mod rejection_tests;
 #[cfg(test)]
 mod retirement_tests;
 #[cfg(test)]

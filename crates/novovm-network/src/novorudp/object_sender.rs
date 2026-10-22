@@ -74,6 +74,7 @@ pub struct NativeObjectSender {
     feedback_deadline: Instant,
     deadline: Instant,
     attempts: u64,
+    acknowledged_best: u64,
 }
 
 impl NativeObjectSender {
@@ -125,7 +126,11 @@ impl NativeObjectSender {
             feedback_deadline: now,
             deadline: now.checked_add(ttl).context("object TTL overflow")?,
             attempts: 0,
+            acknowledged_best: 0,
         })
+    }
+    pub(crate) fn acknowledged_best_v1(&self) -> u64 {
+        self.acknowledged_best
     }
     pub fn status(&self) -> ObjectSendState {
         self.terminal
@@ -221,6 +226,10 @@ impl NativeObjectSender {
                 }
             }
         }
+        // Diagnostic high-water only: do not alter existing retry/ACK behavior.
+        self.acknowledged_best = self
+            .acknowledged_best
+            .max(self.body.frame_count() as u64 - ack.missing_count);
         self.last_missing = Some(ack.missing_count);
         if progress {
             self.attempts = 0;

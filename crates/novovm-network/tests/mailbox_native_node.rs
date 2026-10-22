@@ -1,6 +1,8 @@
 #![cfg(feature = "iroh-transport")]
 //! Real UDP listener and original durable mailbox/authority owners. Loopback
 //! fixtures do not prove Android wiring, public reachability or device delivery.
+#[path = "support/native_evidence.rs"]
+mod native_evidence;
 use anyhow::{bail, ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use novovm_network::{

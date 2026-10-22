@@ -171,6 +171,11 @@ mod probe {
             let id = self
                 .session
                 .begin_until(0, vec![request], Instant::now(), deadline)?;
+            let diagnostics = std::sync::Arc::new(
+                novovm_network::novorudp::diagnostics::NativeTransferDiagnosticsV1::new(),
+            );
+            let request_tag = self.session.request_transfer_tag_v1(id);
+            self.link.set_diagnostics_v1(diagnostics.clone());
             let outcome = async {
                 loop {
                     let at = Instant::now();
@@ -203,6 +208,12 @@ mod probe {
                 let delta: [u64; 7] = std::array::from_fn(|i| {
                     self.transport_counts[i].saturating_sub(transport_before[i])
                 });
+                // Failure-only, bounded authenticated transfer evidence. Rejections
+                // remain window-scoped/unattributed even when one source matches.
+                let evidence = serde_json::json!({"phase":"native_request_evidence", "request_tag":request_tag,
+                    "request_elapsed_ms":started.elapsed().as_millis(), "clock_scope":"each side has its own monotonic origin; same-poll ties unordered",
+                    "evidence":diagnostics.snapshot()});
+                println!("{}", evidence);
                 self.session.cancel(id);
                 self.session.invalidate();
                 return outcome.with_context(|| {

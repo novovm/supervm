@@ -503,6 +503,14 @@ impl Reassembler {
         now: Instant,
         chunk_quantum: usize,
     ) -> Result<(Option<CompletedMessage>, bool)> {
+        self.poll_complete_observed(now, chunk_quantum, |_, _| {})
+    }
+    pub(crate) fn poll_complete_observed(
+        &mut self,
+        now: Instant,
+        chunk_quantum: usize,
+        mut hashed: impl FnMut(&str, Hash),
+    ) -> Result<(Option<CompletedMessage>, bool)> {
         ensure!(
             (1..=64).contains(&chunk_quantum),
             "invalid reassembly quantum"
@@ -536,6 +544,7 @@ impl Reassembler {
                     .context("fragment missing")?,
             );
             entry.next_hash += 1;
+            hashed(&key.0, key.1);
             progress = true;
             if entry.next_hash == entry.chunks.len() {
                 let entry = self
