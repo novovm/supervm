@@ -844,6 +844,7 @@ impl Owner {
         let publish_root = config.root.clone();
         let mailbox_path = config.root.join("mailbox.sqlite");
         let mailbox_started = config.root.join("mailbox.started");
+        let concurrency = novovm_network::service_concurrency::ServiceConcurrencyV1::from_host();
         let mailbox = (|| -> Result<_> {
             check_path(&mailbox_path)?;
             if mailbox_started.try_exists()? {
@@ -863,15 +864,13 @@ impl Owner {
                     .map(|_| limits.total_bytes),
                 i64::try_from(now_ms()? / 1000)?,
             )?;
-            let mailbox = Arc::new(
-                novovm_network::mailbox_rpc::MailboxServiceV1::new(store, key.clone())
-                    // Desktop L3 serves concurrent Put/Fetch/Consume/Watch lanes. The
-                    // conservative mobile default (2 requests/s for the entire node) makes
-                    // those lanes queue behind one another even on healthy connections.
-                    // This remains one shared budget; reconnecting cannot replenish it.
-                    // Connection bounds remain independent of storage policy.
-                    .with_continuous_request_rate_v4(64, 32)?,
-            );
+            let mailbox = Arc::new(novovm_network::mailbox_rpc::MailboxServiceV1::new(
+                store,
+                key.clone(),
+            ));
+            // Default request admission follows the SAME owner as all carriers.
+            // Binding again on reconnect cannot replenish this shared budget.
+            mailbox.bind_default_request_rate_v1(concurrency.clone())?;
             Ok(mailbox)
         })()
         .context(FailureStage::MailboxOpen)?;
@@ -890,7 +889,6 @@ impl Owner {
             )
             })().context(FailureStage::Publish)
         };
-        let concurrency = novovm_network::service_concurrency::ServiceConcurrencyV1::from_host();
         let native = if let Some(settings) = native_settings {
             Some(
                 novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_adaptive(

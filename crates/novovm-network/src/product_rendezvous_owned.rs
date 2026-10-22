@@ -355,6 +355,10 @@ pub async fn run_self_owned_native_mailbox_v7(
             && mailbox.identity_public_key() == key.verifying_key().to_bytes(),
         "native node signer mismatch"
     );
+    let concurrency = listener.concurrency();
+    if let Some(controller) = &concurrency {
+        mailbox.bind_default_request_rate_v1(controller.clone())?;
+    }
     let mut route = listener.current_route();
     let admission_ceiling = listener.admission_ceiling();
     let expiry = now_ms()?
@@ -368,7 +372,6 @@ pub async fn run_self_owned_native_mailbox_v7(
     );
     mailbox.update_native_record_v7(record.clone())?;
     publish(&record)?;
-    let concurrency = listener.concurrency();
     let serving = listener.serve(
         &host,
         &mailbox,
@@ -509,6 +512,9 @@ impl Node {
         let has_other_listener = native.is_some() || tls.is_some();
         #[cfg(not(feature = "tls-transport"))]
         let has_other_listener = native.is_some();
+        if let (Some(mailbox), Some(controller)) = (&mailbox, &concurrency) {
+            mailbox.bind_default_request_rate_v1(controller.clone())?;
+        }
         // Relay unavailability is not an owner failure. A local candidate can
         // already accept authenticated LAN peers; the same endpoint maintains
         // its relay connection in parallel. No fabricated/empty route is signed.

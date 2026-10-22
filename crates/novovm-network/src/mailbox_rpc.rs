@@ -17,7 +17,7 @@ use crate::{
     },
     product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
     product_service_lease::{NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7},
-    service_concurrency::ServiceExecutionTimingV1,
+    service_concurrency::{ServiceConcurrencyV1, ServiceExecutionTimingV1},
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Result};
@@ -246,6 +246,7 @@ pub struct MailboxServiceV1 {
     changed: tokio::sync::watch::Sender<u64>,
     // Shared across V4 connections, so reconnecting cannot reset the budget.
     request_budget: Mutex<RequestBudgetV4>,
+    rate_controller: Mutex<Option<Arc<ServiceConcurrencyV1>>>,
     timings: metrics::Timings,
     native_record_v7: Mutex<Option<PeerSignedRelayRecordV1>>,
     endpoint_delivery: crate::endpoint_delivery::EndpointDeliveryRegistryV1,
@@ -254,13 +255,47 @@ pub struct MailboxServiceV1 {
 struct RequestBudgetV4 {
     tokens: u32,
     updated: std::time::Instant,
-    burst: u16,
+    burst: u32,
+    per_second: u32,
+    fixed: bool,
     interval: std::time::Duration,
 }
+#[derive(Serialize)]
+pub struct MailboxRequestRateSnapshotV1 {
+    version: u8,
+    mode: &'static str,
+    requests_per_second: u32,
+    burst: u32,
+}
 impl RequestBudgetV4 {
+    fn reconfigure(
+        &mut self,
+        limits: crate::service_concurrency::RequestRateLimitV1,
+        now: std::time::Instant,
+    ) {
+        if self.fixed || (self.per_second == limits.per_second && self.burst == limits.burst) {
+            return;
+        }
+        let elapsed = now.saturating_duration_since(self.updated);
+        let refill = elapsed.as_nanos() / self.interval.as_nanos();
+        self.tokens = (u128::from(self.tokens) + refill).min(u128::from(self.burst)) as u32;
+        self.tokens = self.tokens.min(limits.burst);
+        self.burst = limits.burst;
+        self.per_second = limits.per_second;
+        self.interval = std::time::Duration::from_nanos(
+            1_000_000_000u64.div_ceil(u64::from(limits.per_second)),
+        );
+        // Fractional old-policy credit is conservatively discarded, never
+        // recomputed at the faster rate. Rebinding never calls this method.
+        self.updated = now;
+    }
+    #[cfg(test)]
     fn take(&mut self) -> Option<std::time::Duration> {
+        self.take_at(std::time::Instant::now())
+    }
+    fn take_at(&mut self, now: std::time::Instant) -> Option<std::time::Duration> {
         use std::time::Duration;
-        let elapsed = self.updated.elapsed();
+        let elapsed = now.saturating_duration_since(self.updated);
         let refill = elapsed.as_nanos() / self.interval.as_nanos();
         if refill > 0 {
             self.tokens = (u128::from(self.tokens) + refill).min(u128::from(self.burst)) as u32;
@@ -271,7 +306,10 @@ impl RequestBudgetV4 {
             self.tokens -= 1;
             None
         } else {
-            Some(self.interval.saturating_sub(self.updated.elapsed()))
+            Some(
+                self.interval
+                    .saturating_sub(now.saturating_duration_since(self.updated)),
+            )
         }
     }
 }
@@ -288,10 +326,13 @@ impl MailboxServiceV1 {
             timings: metrics::Timings::default(),
             native_record_v7: Mutex::new(None),
             endpoint_delivery: Default::default(),
+            rate_controller: Mutex::new(None),
             request_budget: Mutex::new(RequestBudgetV4 {
                 tokens: 64,
                 updated: std::time::Instant::now(),
                 burst: 64,
+                per_second: 2,
+                fixed: false,
                 interval: std::time::Duration::from_millis(500),
             }),
         }
@@ -373,7 +414,9 @@ impl MailboxServiceV1 {
             .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))? =
             RequestBudgetV4 {
                 tokens: u32::from(burst),
-                burst,
+                burst: u32::from(burst),
+                per_second: u32::from(per_second),
+                fixed: true,
                 interval: std::time::Duration::from_nanos(
                     1_000_000_000u64.div_ceil(u64::from(per_second)),
                 ),
@@ -382,14 +425,87 @@ impl MailboxServiceV1 {
         Ok(self)
     }
 
+    /// Bind default admission to the SAME local resource owner. Explicit owner
+    /// rate settings keep their exact cap. Neither reconnect nor idempotent
+    /// binding changes token balance, deadlines or capabilities.
+    pub fn bind_default_request_rate_v1(
+        &self,
+        controller: Arc<ServiceConcurrencyV1>,
+    ) -> Result<()> {
+        let mut current = self
+            .rate_controller
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mailbox resource owner unavailable"))?;
+        if let Some(previous) = current.as_ref() {
+            ensure!(
+                Arc::ptr_eq(previous, &controller),
+                "mailbox resource owner mismatch"
+            );
+            return Ok(());
+        }
+        let mut budget = self
+            .request_budget
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))?;
+        let now = std::time::Instant::now();
+        if !budget.fixed {
+            budget.reconfigure(
+                controller.mailbox_request_rate(self.timings.request_rate_observation(), now),
+                now,
+            );
+        }
+        *current = Some(controller);
+        Ok(())
+    }
+    /// Read-only aggregate policy state. Does not run admission or feedback.
+    pub fn request_rate_snapshot_v1(&self) -> Result<MailboxRequestRateSnapshotV1> {
+        let bound = self
+            .rate_controller
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mailbox resource owner unavailable"))?
+            .is_some();
+        let budget = self
+            .request_budget
+            .lock()
+            .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))?;
+        Ok(MailboxRequestRateSnapshotV1 {
+            version: 1,
+            mode: if budget.fixed {
+                "fixed"
+            } else if bound {
+                "adaptive"
+            } else {
+                "unbound_default"
+            },
+            requests_per_second: budget.per_second,
+            burst: budget.burst,
+        })
+    }
     async fn admit_request_v4(&self) -> Result<()> {
         let sample = self.timings.admission.start();
         loop {
-            let wait = self
-                .request_budget
+            let controller = self
+                .rate_controller
                 .lock()
-                .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))?
-                .take();
+                .map_err(|_| anyhow::anyhow!("mailbox resource owner unavailable"))?
+                .clone();
+            let wait = {
+                let mut budget = self
+                    .request_budget
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("mailbox request budget unavailable"))?;
+                let now = std::time::Instant::now();
+                if !budget.fixed {
+                    if let Some(controller) = controller {
+                        budget.reconfigure(
+                            controller
+                                .mailbox_request_rate(self.timings.request_rate_observation(), now),
+                            now,
+                        );
+                    }
+                }
+                budget.take_at(now)
+            };
             match wait {
                 None => {
                     sample.complete(false);
@@ -503,16 +619,39 @@ impl MailboxServiceV1 {
         timing: Option<&ServiceExecutionTimingV1>,
     ) -> Result<MailboxReplyV1> {
         let counter = match &request {
-            MailboxRequestV1::Put { .. } => &self.timings.put,
-            MailboxRequestV1::Fetch { .. } => &self.timings.fetch,
-            MailboxRequestV1::Consume { .. } => &self.timings.consume,
-            MailboxRequestV1::Watch { .. } | MailboxRequestV1::WatchFetchV6 { .. } => {
-                &self.timings.watch
+            MailboxRequestV1::Put { .. } | MailboxRequestV1::PutBulkV1 { .. } => &self.timings.put,
+            MailboxRequestV1::Fetch { .. } | MailboxRequestV1::FetchBulkV1 { .. } => {
+                &self.timings.fetch
             }
+            MailboxRequestV1::Consume { .. } => &self.timings.consume,
+            MailboxRequestV1::Watch { .. }
+            | MailboxRequestV1::WatchFetchV6 { .. }
+            | MailboxRequestV1::WatchFetchBulkV1 { .. } => &self.timings.watch,
             _ => &self.timings.other,
         };
+        let payload = match &request {
+            MailboxRequestV1::Put { ciphertext, .. }
+            | MailboxRequestV1::PutBulkV1 { ciphertext, .. } => ciphertext.len(),
+            _ => 0,
+        };
+        let is_fetch = matches!(
+            &request,
+            MailboxRequestV1::Fetch { .. } | MailboxRequestV1::FetchBulkV1 { .. }
+        );
         let sample = counter.start();
         let reply = self.execute_inner(request, timing).await?;
+        if !matches!(&reply, MailboxReplyV1::Rejected(_)) {
+            let fetched = if is_fetch {
+                match &reply {
+                    MailboxReplyV1::Object { ciphertext, .. } => ciphertext.len(),
+                    _ => 0,
+                }
+            } else {
+                0
+            };
+            self.timings
+                .add_payload_bytes(payload.saturating_add(fetched));
+        }
         sample.complete(matches!(&reply, MailboxReplyV1::Rejected(_)));
         Ok(reply)
     }
@@ -1716,6 +1855,8 @@ mod notification_tests {
     #[test]
     fn continuous_budget_is_bounded_and_refills_without_lifetime_reset() {
         let mut budget = RequestBudgetV4 {
+            per_second: 1,
+            fixed: true,
             tokens: 64,
             updated: std::time::Instant::now(),
             burst: 64,
@@ -1734,6 +1875,155 @@ mod notification_tests {
             assert!(budget.take().is_none());
         }
         assert!(budget.take().is_some());
+    }
+    fn rate_controller() -> Arc<ServiceConcurrencyV1> {
+        use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+        ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 1,
+            available_memory_bytes: 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        })
+    }
+    #[test]
+    fn adaptive_owner_binding_preserves_tokens_and_rejects_a_foreign_owner() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let service = MailboxServiceV1::new(
+            MailboxStore::open(dir.path().join("rate.db"), Default::default())?,
+            SigningKey::from_bytes(&[76; 32]),
+        );
+        let controller = rate_controller();
+        service.bind_default_request_rate_v1(controller.clone())?;
+        let state = serde_json::to_value(service.request_rate_snapshot_v1()?)?;
+        ensure!(
+            state["mode"] == "adaptive" && state["requests_per_second"] == 32,
+            "one-CPU host must retain the current bootstrap"
+        );
+        let at = std::time::Instant::now();
+        let updated = {
+            let mut b = service.request_budget.lock().unwrap();
+            while b.take_at(at).is_none() {}
+            ensure!(b.tokens == 0);
+            b.updated
+        };
+        service.bind_default_request_rate_v1(controller.clone())?;
+        ensure!(service.request_budget.lock().unwrap().tokens == 0);
+        ensure!(service.request_budget.lock().unwrap().updated == updated);
+        ensure!(service
+            .bind_default_request_rate_v1(rate_controller())
+            .is_err());
+        ensure!(Arc::ptr_eq(
+            service.rate_controller.lock().unwrap().as_ref().unwrap(),
+            &controller
+        ));
+        Ok(())
+    }
+    #[test]
+    fn adaptive_bucket_reconfiguration_never_mints_burst_or_reprices_old_time() {
+        use crate::service_concurrency::RequestRateLimitV1;
+        let at = std::time::Instant::now();
+        let mut b = RequestBudgetV4 {
+            tokens: 0,
+            updated: at,
+            burst: 64,
+            per_second: 2,
+            fixed: false,
+            interval: std::time::Duration::from_millis(500),
+        };
+        b.reconfigure(
+            RequestRateLimitV1 {
+                per_second: 1000,
+                burst: 128,
+            },
+            at + std::time::Duration::from_millis(100),
+        );
+        assert_eq!(b.tokens, 0, "100ms at the OLD2/s earns no token");
+        assert!(b
+            .take_at(at + std::time::Duration::from_millis(100))
+            .is_some());
+        b.reconfigure(
+            RequestRateLimitV1 {
+                per_second: 1,
+                burst: 1,
+            },
+            at + std::time::Duration::from_millis(105),
+        );
+        assert_eq!(b.tokens, 1, "shrink clamps earned old-rate credit");
+        assert!(b
+            .take_at(at + std::time::Duration::from_millis(105))
+            .is_none());
+        b.reconfigure(
+            RequestRateLimitV1 {
+                per_second: 1000,
+                burst: 128,
+            },
+            at + std::time::Duration::from_millis(105),
+        );
+        assert_eq!(b.tokens, 0, "expansion cannot refill an empty bucket");
+    }
+    #[tokio::test]
+    async fn explicit_fixed_policy_survives_adaptive_growth_and_cancelled_wait() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let service = MailboxServiceV1::new(
+            MailboxStore::open(dir.path().join("fixed.db"), Default::default())?,
+            SigningKey::from_bytes(&[77; 32]),
+        )
+        .with_continuous_request_rate_v4(1, 1)?;
+        let controller = rate_controller();
+        service.bind_default_request_rate_v1(controller.clone())?;
+        let at = std::time::Instant::now();
+        let mut o = crate::service_concurrency::RequestRateObservationV1::default();
+        controller.mailbox_request_rate(o, at);
+        for i in 1..=30 {
+            o.admitted += 2048;
+            o.successful[0] += 2048;
+            o.admission_us += 2048 * 1_000_000;
+            controller.mailbox_request_rate(o, at + std::time::Duration::from_secs(i * 2));
+        }
+        let adaptive = controller.mailbox_request_rate(o, at + std::time::Duration::from_secs(60));
+        ensure!(adaptive.per_second > 128);
+        service.bind_default_request_rate_v1(controller)?;
+        service.admit_request_v4().await?;
+        {
+            let waiting = service.admit_request_v4();
+            tokio::pin!(waiting);
+            assert!(futures_util::poll!(&mut waiting).is_pending());
+        }
+        let policy = serde_json::to_value(service.request_rate_snapshot_v1()?)?;
+        ensure!(
+            policy["mode"] == "fixed" && policy["requests_per_second"] == 1 && policy["burst"] == 1
+        );
+        let timing = serde_json::to_value(service.timing_snapshot_v1())?;
+        ensure!(timing["admission"]["completed"] == 1 && timing["admission"]["interrupted"] == 1);
+        ensure!(
+            timing["other"]["started"] == 0,
+            "waiting cannot access the store"
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn bulk_watch_wait_is_not_a_rate_execution_cost() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let mut store = MailboxStore::open(dir.path().join("watch.db"), Default::default())?;
+        let grant = store.create(now()?, 600)?;
+        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[78; 32]));
+        let reply = service
+            .request_local_v1(MailboxRequestV1::WatchFetchBulkV1 {
+                boxes: vec![MailboxWatchV1 {
+                    mailbox: grant.id,
+                    read: *grant.read.as_bytes(),
+                    after: None,
+                }],
+                wait_ms: 10,
+            })
+            .await?;
+        ensure!(!matches!(reply, MailboxReplyV1::Rejected(_)));
+        let observation = service.timings.request_rate_observation();
+        ensure!(
+            observation.successful == [0, 0, 0, 0, 1]
+                && observation.operation_us == 0
+                && observation.payload_bytes == 0
+        );
+        Ok(())
     }
     #[tokio::test(flavor = "current_thread")]
     async fn timed_local_work_waits_for_real_store_queue_and_keeps_authorization() -> Result<()> {

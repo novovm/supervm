@@ -1007,25 +1007,28 @@ async fn native_service_rate_policy_comparison() -> Result<()> {
     let probe = Path::new(&probe).canonicalize()?;
     ensure!(probe.is_file(), "native probe executable missing");
     let mut reports = Vec::new();
-    for rate in [32, 128] {
+    for rate in [Some(32), Some(128), None] {
+        let policy = rate.map_or_else(|| "adaptive-default".to_owned(), |r| format!("fixed-{r}"));
         let report = native_service_rate_case(rate, &probe)
             .await
-            .with_context(|| format!("native comparison case {rate} requests/second"))?;
+            .with_context(|| format!("native comparison case {policy}"))?;
         println!("{}", serde_json::json!({"rate_comparison_case": &report}));
-        ensure!(
-            report["passed"] == true,
-            "native comparison rate {rate} failed; see aggregate case report"
-        );
+        // Keep every case and failure in the report instead of hiding the
+        // adaptive observation after an earlier fixed-policy failure.
         reports.push(report);
     }
     println!(
         "{}",
         serde_json::json!({"mode":"manual_native_udp_rate_comparison", "cases_run_sequentially":true, "reports":reports})
     );
+    ensure!(
+        reports.iter().all(|report| report["passed"] == true),
+        "native comparison retains failed cases; see aggregate report"
+    );
     Ok(())
 }
 
-async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json::Value> {
+async fn native_service_rate_case(rate: Option<u16>, probe: &Path) -> Result<serde_json::Value> {
     use novovm_network::service_concurrency::{
         ResourcePressureV1, ResourceSnapshotV1, ServiceConcurrencyV1,
     };
@@ -1037,9 +1040,11 @@ async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json:
         pressure: ResourcePressureV1::Normal,
     };
     let controller = ServiceConcurrencyV1::new(resources);
-    controller.update_resources(resources); // Keep both cases' platform observation fixed.
-                                            // Identical TEST-only wire budget; 128cycles transfer ~8MiB plaintext total.
-                                            // Its 128MiB initial burst avoids the old fixture's second 8MiB pacing cap.
+    // Same platform observation and initial TEST-only wire allowance in all cases.
+    // The production wire controller still runs and may lower that allowance.
+    controller.update_resources(resources);
+    // 480 cycles transfer ~30 MiB plaintext total. The identical 1 GiB/minute
+    // allowance avoids introducing the old fixture's second 8 MiB pacing cap.
     let listener = NativeMailboxListenerV7::bind_adaptive(
         "127.0.0.1:0".parse()?,
         "127.0.0.1:0".parse()?,
@@ -1048,17 +1053,16 @@ async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json:
         1024 * 1024 * 1024,
         controller.clone(),
     )?;
-    let service = Arc::new(
-        MailboxServiceV1::new(
-            MailboxStore::open_contributor(
-                directory.path().join("rate.db"),
-                Default::default(),
-                true,
-            )?,
-            key(17),
-        )
-        .with_continuous_request_rate_v4(64, rate)?,
+    let mut service = MailboxServiceV1::new(
+        MailboxStore::open_contributor(directory.path().join("rate.db"), Default::default(), true)?,
+        key(17),
     );
+    if let Some(rate) = rate {
+        service = service.with_continuous_request_rate_v4(64, rate)?;
+    }
+    // The production owner binds this SAME controller in all three cases.
+    // An explicit fixed policy must remain fixed after binding and under load.
+    let service = Arc::new(service);
     service.set_resources_available(true).await?;
     let journal = directory.path().join("authority.bin");
     let record_path = directory.path().join("record.json");
@@ -1097,6 +1101,7 @@ async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json:
     let clients = async {
         rx.await?;
         let before = serde_json::to_value(service.timing_snapshot_v1())?;
+        let request_rate_before = serde_json::to_value(service.request_rate_snapshot_v1()?)?;
         let control_before = controller.snapshot();
         let stdout_path = directory.path().join("probe.stdout.txt");
         let stderr_path = directory.path().join("probe.stderr.txt");
@@ -1110,7 +1115,7 @@ async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json:
         let child = std::process::Command::new(probe)
             .arg(&record_path)
             .arg(pin)
-            .args(["udp", "8", "16", "32768"])
+            .args(["udp", "8", "60", "32768"])
             .stdout(std::fs::File::create(&stdout_path)?)
             .stderr(std::fs::File::create(&stderr_path)?)
             .spawn()?;
@@ -1122,10 +1127,28 @@ async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json:
             }
         }
         let mut child = Child(child);
+        let started = Instant::now();
+        let mut next_sample = started;
+        let mut resource_samples = Vec::new();
         // Existing diagnostic has its own90s guard. Match the existing phone
         // harness100s process guard without changing any SDK request deadline.
         let until = Instant::now() + Duration::from_secs(100);
         let exit = loop {
+            let now = Instant::now();
+            if now >= next_sample && resource_samples.len() < 51 {
+                let observed = controller.snapshot();
+                resource_samples.push(serde_json::json!({
+                    "elapsed_ms": now.duration_since(started).as_millis(),
+                    "request_rate": service.request_rate_snapshot_v1()?,
+                    "work_limit": observed.work_limit,
+                    "execution_backoffs": observed.execution_backoffs,
+                    "wire_limit": observed.wire_bytes_per_minute,
+                    "wire_used": observed.wire_usage.map_or(0, |v| v.used),
+                    "wire_deferred": observed.wire_usage.map_or(0, |v| v.send_deferred),
+                    "wire_dropped": observed.wire_usage.map_or(0, |v| v.receive_dropped),
+                }));
+                next_sample = now + Duration::from_secs(2);
+            }
             if let Some(exit) = child.0.try_wait()? {
                 break exit;
             }
@@ -1136,6 +1159,7 @@ async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json:
             tokio::time::sleep(Duration::from_millis(10)).await;
         };
         let after = serde_json::to_value(service.timing_snapshot_v1())?;
+        let request_rate_after = serde_json::to_value(service.request_rate_snapshot_v1()?)?;
         let control = controller.snapshot();
         let custody = service.contribution_status().await?;
         let bytes = std::fs::read(&stdout_path)?;
@@ -1219,19 +1243,28 @@ async fn native_service_rate_case(rate: u16, probe: &Path) -> Result<serde_json:
             .context("missing admission count")?;
         let passed = exit.success()
             && summary["completed_clients"] == 8
-            && summary["verified_put_fetch_consume"] == 128
+            && summary["verified_put_fetch_consume"] == 480
             && summary["error_count"] == 0
             && metadata == 8
-            && admitted == 392 + metadata
+            && admitted == 1448 + metadata
             && custody.retained_objects == 0
             && custody.retained_bytes == 0;
         Ok::<_, anyhow::Error>(serde_json::json!({
-            "passed":passed,"configured_requests_per_second":rate,"configured_burst":64,"test_wire_bytes_per_minute":1024u64*1024*1024,
+            "passed":passed,"rate_policy":if rate.is_some() { "fixed" } else { "adaptive" },
+            "configured_requests_per_second":rate,"configured_burst":rate.map(|_|64u16),
+            "request_rate_before":request_rate_before,"request_rate_after":request_rate_after,
+            "test_wire_bytes_per_minute":1024u64*1024*1024,
             "probe":safe_summary,"actual_server_admitted_requests_including_preflight":admitted,"verified_preflight_metadata_requests":metadata,
-            "expected_payload_phase_requests_including_register":392,
+            "expected_payload_phase_requests_including_register":1448,
+            "expected_total_requests_including_preflight":1456,
             "timing_delta_includes_preparation":delta,
+            "resource_samples":resource_samples,
             "timing_scope":"operation includes store scheduling/commit; admission separate; store blocking and body CPU not independently measured",
             "controller":{"work_limit_before":control_before.work_limit,"work_limit_after":control.work_limit,
+                "wire_limit_after":control.wire_bytes_per_minute,
+                "wire_used_after":control.wire_usage.map_or(0,|v|v.used),
+                "wire_sent_bytes":control.wire_usage.map_or(0,|v|v.sent_bytes),
+                "wire_admitted_receive_bytes":control.wire_usage.map_or(0,|v|v.admitted_receive_bytes),
                 "execution_backoffs_delta":control.execution_backoffs-control_before.execution_backoffs,
                 "work_admission_rejections_delta":control.work_admission_rejections-control_before.work_admission_rejections,
                 "wire_send_deferred":control.wire_usage.map_or(0,|v|v.send_deferred),"wire_receive_dropped":control.wire_usage.map_or(0,|v|v.receive_dropped)},

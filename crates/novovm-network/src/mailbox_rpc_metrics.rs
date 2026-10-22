@@ -79,6 +79,7 @@ impl Drop for Sample<'_> {
 #[derive(Default)]
 pub(super) struct Timings {
     pub(super) admission: Counter,
+    pub(super) payload_bytes: AtomicU64,
     pub(super) put: Counter,
     pub(super) fetch: Counter,
     pub(super) consume: Counter,
@@ -134,6 +135,47 @@ pub struct MailboxTimingsV1 {
     relay_rtt: RttSnapshot,
 }
 impl Timings {
+    pub(super) fn add_payload_bytes(&self, bytes: usize) {
+        add(&self.payload_bytes, bytes.min(u64::MAX as usize) as u64);
+    }
+
+    pub(super) fn request_rate_observation(
+        &self,
+    ) -> crate::service_concurrency::RequestRateObservationV1 {
+        let counters = [
+            &self.put,
+            &self.fetch,
+            &self.consume,
+            &self.other,
+            &self.watch,
+        ];
+        let mut successful = [0; 5];
+        let mut failed = self.admission.interrupted.load(Ordering::Relaxed);
+        let mut operation_us = 0u64;
+        for (i, counter) in counters.into_iter().enumerate() {
+            let rejected = counter.rejected.load(Ordering::Relaxed);
+            successful[i] = counter
+                .completed
+                .load(Ordering::Relaxed)
+                .saturating_sub(rejected);
+            failed = failed
+                .saturating_add(rejected)
+                .saturating_add(counter.interrupted.load(Ordering::Relaxed));
+            if i != 4 {
+                operation_us =
+                    operation_us.saturating_add(counter.total_us.load(Ordering::Relaxed));
+            }
+        }
+        crate::service_concurrency::RequestRateObservationV1 {
+            admitted: self.admission.completed.load(Ordering::Relaxed),
+            admission_us: self.admission.total_us.load(Ordering::Relaxed),
+            successful,
+            failed,
+            operation_us,
+            payload_bytes: self.payload_bytes.load(Ordering::Relaxed),
+        }
+    }
+
     pub(super) fn carrier_rtt(&self, observed: Option<(&str, std::time::Duration)>) {
         match observed {
             Some(("direct", d)) => self.direct_rtt.record(d),

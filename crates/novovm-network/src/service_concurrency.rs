@@ -5,6 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
+#[path = "service_request_rate.rs"]
+mod request_rate;
+pub(crate) use request_rate::{RequestRateLimitV1, RequestRateObservationV1};
+
 const MIB: u64 = 1024 * 1024;
 /// At most one native wire allowance decision per interval; observations in
 /// between only report usage. Short enough that doubling reaches a capable
@@ -136,6 +140,7 @@ struct State {
     platform_managed: bool,
     refreshed: Instant,
     wire: WireState,
+    request_rate: request_rate::RequestRateState,
 }
 /// Native wire allowance owned by the same resource controller. The listener's
 /// startup budget is the metered ceiling; an unmetered network may grow beyond
@@ -188,6 +193,7 @@ impl ServiceConcurrencyV1 {
                 service_us: 0,
                 platform_managed: false,
                 refreshed: Instant::now(),
+                request_rate: request_rate::RequestRateState::new(),
                 wire: WireState {
                     startup: 0,
                     limit: 0,
@@ -251,8 +257,9 @@ impl ServiceConcurrencyV1 {
     }
     /// The native listener reports its configured allowance usage and receives
     /// the allowance to enforce now. At most one decision per interval: halve
-    /// under platform pressure or new execution backoff; double while the
-    /// allowance itself refused traffic and everything else stayed healthy.
+    /// under platform pressure; double while the allowance itself refused
+    /// traffic and execution stayed healthy. Execution backoff vetoes growth,
+    /// not bandwidth: work/request admission already handles that pressure.
     /// Metered networks keep the startup value as ceiling; the floor keeps
     /// ordinary messages usable under pressure.
     pub(crate) fn observe_native_wire(&self, usage: NativeWireUsage, now: Instant) -> u64 {
@@ -273,11 +280,11 @@ impl ServiceConcurrencyV1 {
         };
         let floor = (s.wire.startup / 8).clamp(MIN_BYTES_PER_MINUTE, ceiling);
         if now.saturating_duration_since(s.wire.decided) >= WIRE_DECISION_INTERVAL {
-            let pressured = s.resources.pressure != ResourcePressureV1::Normal
-                || s.execution_backoffs > s.wire.backoffs;
+            let pressured = s.resources.pressure != ResourcePressureV1::Normal;
+            let execution_backoff = s.execution_backoffs > s.wire.backoffs;
             if pressured {
                 s.wire.limit /= 2;
-            } else if refusals > s.wire.refusals {
+            } else if !execution_backoff && refusals > s.wire.refusals {
                 s.wire.limit = s.wire.limit.saturating_mul(2);
             }
             s.wire.decided = now;
@@ -286,6 +293,28 @@ impl ServiceConcurrencyV1 {
         }
         s.wire.limit = s.wire.limit.clamp(floor, ceiling);
         s.wire.limit
+    }
+    /// Default request policy shares this owner's resource and wire feedback.
+    /// Called by the existing admission path, never a new timer or task.
+    pub(crate) fn mailbox_request_rate(
+        &self,
+        observation: RequestRateObservationV1,
+        now: Instant,
+    ) -> RequestRateLimitV1 {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let limits = Self::snapshot_locked(&s);
+        let signals = request_rate::RateSignals {
+            pressure: s.resources.pressure,
+            memory_busy: s.bytes > limits.retained_bytes.saturating_mul(3) / 4,
+            execution_backoffs: s.execution_backoffs,
+            wire_refusals: s
+                .wire
+                .usage
+                .map_or(0, |v| v.send_deferred.saturating_add(v.receive_dropped)),
+            service_us: s.service_us,
+            work: limits.work_limit,
+        };
+        s.request_rate.observe(observation, signals, now)
     }
     fn ceiling(s: &State) -> (usize, usize) {
         // Leave most memory to UI/OS/other applications. These are resource
@@ -1495,6 +1524,40 @@ mod tests {
         drop(queued);
         assert_eq!(c.snapshot().reserved_bytes, 0);
         assert!(c.try_acquire_work(1024).is_some());
+    }
+
+    #[test]
+    fn execution_backoff_vetoes_wire_growth_without_halving_bandwidth() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        c.observe_network_cost(true);
+        let start = Instant::now();
+        let usage = |refused| NativeWireUsage {
+            limit: 64 * MIB,
+            send_deferred: refused,
+            ..NativeWireUsage::default()
+        };
+        assert_eq!(c.observe_native_wire(usage(0), start), 64 * MIB);
+        for i in 1..=3 {
+            c.state.lock().unwrap().execution_backoffs += 1;
+            // The existing work controller still owns execution pressure.
+            // Repeated slow execution must not manufacture a bandwidth cut.
+            assert_eq!(
+                c.observe_native_wire(usage(i), start + Duration::from_secs(i * 5)),
+                64 * MIB
+            );
+        }
+        // New wire refusals with recovered execution can grow the allowance.
+        assert_eq!(
+            c.observe_native_wire(usage(4), start + Duration::from_secs(20)),
+            128 * MIB
+        );
+        // Real platform pressure still takes effect immediately at the next
+        // original decision boundary, regardless of observed request success.
+        c.update_resources(resources(ResourcePressureV1::Severe));
+        assert_eq!(
+            c.observe_native_wire(usage(4), start + Duration::from_secs(25)),
+            64 * MIB
+        );
     }
 
     #[test]
