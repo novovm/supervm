@@ -90,12 +90,27 @@ mod probe {
         link: NativeObjectLink,
         session: NativeMailboxClient,
         pump: Option<NativeCarrierPump<'a>>,
+        // Fixed aggregate counters: rejected, receive errors, send failures,
+        // accepted/duplicate fragments, feedback sent, data sent.
+        transport_counts: [u64; 7],
     }
     impl Client<'_> {
         fn poll_transport(&mut self, at: Instant) -> Result<()> {
             // Incoming bodies remain in the link until poll_complete below (or
             // the next progress call); only outbound completions transfer here.
-            for done in self.link.poll(now_ms()?, at, 64)?.completed {
+            let report = self.link.poll(now_ms()?, at, 64)?;
+            for (total, count) in self.transport_counts.iter_mut().zip([
+                report.rejected,
+                report.receive_errors,
+                report.send_failures,
+                report.accepted_fragments,
+                report.duplicate_fragments,
+                report.feedback_sent,
+                report.data_sent,
+            ]) {
+                *total = total.saturating_add(count as u64);
+            }
+            for done in report.completed {
                 ensure!(
                     self.session.transport_complete(&done).is_none(),
                     "native probe transport failed"
@@ -150,14 +165,32 @@ mod probe {
 
         async fn request(&mut self, request: Request) -> Result<Reply> {
             self.negotiate().await?;
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let transport_before = self.transport_counts;
+            let started = Instant::now();
+            let deadline = started + Duration::from_secs(10);
             let id = self
                 .session
                 .begin_until(0, vec![request], Instant::now(), deadline)?;
             let outcome = async {
                 loop {
                     let at = Instant::now();
-                    ensure!(at < deadline, "native probe request deadline");
+                    if at >= deadline {
+                        // Read local aggregate counters once on failure only.
+                        // They do not identify the current object or prove
+                        // remote receipt, execution or delivery.
+                        let (outbound_messages, outbound_bytes) =
+                            self.link.outbound_usage(STREAM)?;
+                        let pending_inbound_messages = self.link.pending_messages(STREAM)?;
+                        let reserved_inbound_bytes = self.link.reserved_bytes(STREAM)?;
+                        bail!(
+                            "native probe request deadline: elapsed_ms={}, outbound_messages={}, outbound_bytes={}, pending_inbound_messages={}, reserved_inbound_bytes={}",
+                            at.saturating_duration_since(started).as_millis(),
+                            outbound_messages,
+                            outbound_bytes,
+                            pending_inbound_messages,
+                            reserved_inbound_bytes
+                        );
+                    }
                     self.session.try_send(&mut self.link, id, at, || Ok(()))?;
                     for (got, mut replies) in self.progress(at).await? {
                         ensure!(got == id && replies.len() == 1, "probe reply binding");
@@ -167,8 +200,17 @@ mod probe {
             }
             .await;
             if outcome.is_err() {
+                let delta: [u64; 7] = std::array::from_fn(|i| {
+                    self.transport_counts[i].saturating_sub(transport_before[i])
+                });
                 self.session.cancel(id);
                 self.session.invalidate();
+                return outcome.with_context(|| {
+                    format!(
+                        "native probe request poll deltas: rejected={}, receive_errors={}, send_failures={}, accepted_fragments={}, duplicate_fragments={}, feedback_sent={}, data_sent={}",
+                        delta[0], delta[1], delta[2], delta[3], delta[4], delta[5], delta[6]
+                    )
+                });
             }
             outcome
         }
@@ -308,6 +350,7 @@ mod probe {
             link,
             session,
             pump: None,
+            transport_counts: [0; 7],
         })
     }
 
@@ -342,6 +385,7 @@ mod probe {
             link,
             session,
             pump: Some(pump),
+            transport_counts: [0; 7],
         })
     }
 
@@ -504,18 +548,22 @@ mod probe {
                     write: caps.1,
                     expires,
                 })
-                .await?,
+                .await
+                .with_context(|| format!("load setup before round 1/{rounds} stage Register"))?,
             |r| matches!(r, Reply::Registered),
             "load Register",
-        )?;
+        )
+        .with_context(|| format!("load setup before round 1/{rounds} stage Register"))?;
         let key = Zeroizing::new(rand::random::<[u8; 32]>());
         let cipher = ChaCha20Poly1305::new_from_slice(key.as_ref()).unwrap();
         let plain = Zeroizing::new(vec![0x5a; size]);
-        for _ in 0..rounds {
+        for round in 1..=rounds {
             let nonce: [u8; 12] = rand::random();
             let ciphertext = cipher
                 .encrypt(Nonce::from_slice(&nonce), plain.as_slice())
-                .map_err(|_| anyhow::anyhow!("load encryption failed"))?;
+                .map_err(|_| {
+                    anyhow::anyhow!("load round {round}/{rounds} stage Put encryption failed")
+                })?;
             let object: [u8; 32] = rand::random();
             let start = Instant::now();
             let receipt = match client
@@ -526,20 +574,26 @@ mod probe {
                     ciphertext: ciphertext.clone(),
                     expires,
                 })
-                .await?
+                .await
+                .with_context(|| format!("load round {round}/{rounds} stage Put request"))?
             {
                 Reply::Stored(value) => value,
-                Reply::Rejected(reason) => bail!("load Put rejected: {reason:?}"),
-                _ => bail!("load Put receipt missing"),
+                Reply::Rejected(reason) => {
+                    bail!("load round {round}/{rounds} stage Put rejected: {reason:?}")
+                }
+                _ => bail!("load round {round}/{rounds} stage Put receipt missing"),
             };
-            receipt.verify(pin, mailbox, object, &ciphertext, expires)?;
+            receipt
+                .verify(pin, mailbox, object, &ciphertext, expires)
+                .with_context(|| format!("load round {round}/{rounds} stage Put receipt verify"))?;
             stats.stored_plaintext_bytes += size;
             let digest = match client
                 .request(Request::Fetch {
                     mailbox,
                     read: caps.0,
                 })
-                .await?
+                .await
+                .with_context(|| format!("load round {round}/{rounds} stage Fetch request"))?
             {
                 Reply::Object {
                     object: got,
@@ -549,19 +603,28 @@ mod probe {
                 } => {
                     ensure!(
                         got == object && bytes == ciphertext && ttl == expires,
-                        "load object mismatch"
+                        "load round {round}/{rounds} stage Fetch object mismatch"
                     );
                     let decrypted = Zeroizing::new(
                         cipher
                             .decrypt(Nonce::from_slice(&nonce), bytes.as_slice())
-                            .map_err(|_| anyhow::anyhow!("load authentication failed"))?,
+                            .map_err(|_| {
+                                anyhow::anyhow!(
+                                    "load round {round}/{rounds} stage Fetch authentication failed"
+                                )
+                            })?,
                     );
-                    ensure!(*decrypted == *plain, "load plaintext mismatch");
+                    ensure!(
+                        *decrypted == *plain,
+                        "load round {round}/{rounds} stage Fetch plaintext mismatch"
+                    );
                     stats.fetched_plaintext_bytes += size;
                     digest
                 }
-                Reply::Rejected(reason) => bail!("load Fetch rejected: {reason:?}"),
-                _ => bail!("load Fetch missing object"),
+                Reply::Rejected(reason) => {
+                    bail!("load round {round}/{rounds} stage Fetch rejected: {reason:?}")
+                }
+                _ => bail!("load round {round}/{rounds} stage Fetch missing object"),
             };
             require(
                 client
@@ -571,10 +634,14 @@ mod probe {
                         object,
                         digest,
                     })
-                    .await?,
+                    .await
+                    .with_context(|| {
+                        format!("load round {round}/{rounds} stage Consume request")
+                    })?,
                 |r| matches!(r, Reply::Consumed),
                 "load Consume",
-            )?;
+            )
+            .with_context(|| format!("load round {round}/{rounds} stage Consume"))?;
             stats.cycles_ms.push(start.elapsed().as_millis());
         }
         Ok(())

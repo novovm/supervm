@@ -1,6 +1,76 @@
 # Continuous service concurrency: v102 follow-up review
 
-## 2026-10-22 v103 candidate: default rate uses the original resource owner
+## 2026-10-23 v103 phone follow-up: partial gate, stalled transport not yet fixed
+
+The v103 candidate is installed on both original phones and the existing Windows
+and Ubuntu services; the retained accepted rollback baseline is v102. This
+supersedes the source-only "phone pending" status below. Android's official
+profile APK hash is `bb5dd38dea8fd62fc38e589afa1614d53bb24ee53ac594a5a4ae2bce09e3c409`.
+Actual runtime SDK is281b7e64. Original identities/history/custody were preserved.
+Cloud protected configuration/nginx, four existing KINGCLUB containers and three
+healthy endpoints were unchanged. Final read-only checks kept both nodes serving
+and all four existing containers running. No KINGCLUB entry was modified.
+
+Same32-KiB verified Put/Fetch/Consume native UDP workload, original deadlines,
+one performance slot and no competing build:
+
+| Phone / case | Clients x rounds | Completed clients / cycles | Cycles/s | P95/P99 ms | Gate |
+| --- | --- | --- | ---: | --- | --- |
+| A first cold |8x60|7/8;425/480|11.450*|753/3395*|FAIL |
+| B first cold |8x60|7/8;426/480|11.055*|735/6783*|FAIL |
+| A warm |8x60|8/8;480/480|10.221|954/2088|PASS |
+| B warm |8x60|8/8;480/480|11.350|904/2017|PASS |
+| A second cold |8x60|8/8;480/480|10.882|916/1991|PASS |
+| B second cold |8x60|8/8;480/480|7.713|3380/9398|PASS, tail retained |
+| A after idle / existing peers |16x30|0/16;18/480|0.806*|9989/9989*|FAIL |
+| B existing peers |16x30|16/16;480/480|11.264|2408/3338|PASS |
+| A fresh v103 |16x30|16/16;480/480|13.829|1445/3391|PASS |
+| A fresh v102 control |16x30|16/16;480/480|8.842|3782/6325|PASS |
+
+`*` Successful-subset statistics, not accepted throughput. Do not replace failed
+cases with later passes. A diagnostic-cache failure stopped another v102 control
+before any business request; preserve it as INCOMPLETE. Intentional cold starts,
+rollback/reinstallation and client diagnostic-build differences are recorded in
+NOVOCHAT's P0 checkpoint and ignored `v103-phone-acceptance-summary.json`.
+The fresh pair is not sufficient to attribute the earlier failure or certify a
+general throughput gain. Sustained phone acceptance is incomplete.
+
+The default policy genuinely adapted (fresh A16: refill32->50, work8->16,
+burst64->128). Warm8 admission wait was nearly absent while service throughput
+remained10-11 cycles/s. Increasing request quota again would target the wrong
+bound. A16 failures instead include retained outbound Put/Consume and incomplete
+inbound Fetch responses. All16 handshakes/window negotiations passed; work/store
+and SDK wire refusals did not increase during that failed run. SDK counters do
+not account for every possible network/OS socket loss.
+
+Read-only comparison8142e1ce->281b7e64 found no changes in NovoRUDP/object repair,
+ACK, native_session, native service loop, bound_session or dependencies. Only
+mailbox policy/metrics/owner wiring and execution/wire feedback separation changed.
+Execution backoffs were zero in the failed phone16 case, so that wire branch did
+not explain it. Work8->10 does not renegotiate the established capacity grant;
+capacity/business contexts and slots remain separate. These rejected hypotheses
+are not a new proof of the unknown root cause.
+
+`examples/mailbox_native_peer_probe.rs` now adds round/operation context and one
+failure-only snapshot of existing outbound/inbound counts and seven fixed
+`NativeLinkPoll` counter deltas. No new SDK API, timer, packet, retry, deadline,
+payload/identity log or production runtime path. Deltas describe a client request
+window, potentially including residual work, not a cryptographic same-object
+proof. The phase probe1fb9b50d and final delta probeb320e27d are distinct from the
+retained v102 probe992b3717; source/build provenance remains explicit. Both new
+diagnostic variants compiled in normal release withiroh-transport,tls-transport.
+No phone failure was yet reproduced with the final delta probe, so its counters
+have not established the failing sender's retry/ACK state. Keep the original
+finite retry and TTL contract; do not increase it based on speculation.
+
+Mixed real-phone text, image/full preview and sender-offline independent image
+receipt passed; final bidirectional post-load texts have visible device receipts.
+Identity hashes/history and L3/L4 readiness remain intact. This is a functional
+candidate with open intermittent transport stalls, not a production release or
+24-hour pass. Continue that existing path before promoting the adaptive policy.
+The clock-domain work and historical59.49s cellular TLS tail remain separate.
+
+## 2026-10-22 v103 source/component checkpoint (phone results supersede status below)
 
 The default request bucket is now bound to the SAME `ServiceConcurrencyV1`
 used by the native listener, TLS/compatible carrier and Application owner.
@@ -90,8 +160,8 @@ for the reported throughput. Profile-session guards6 passed. The final normal-re
 run selected34 tests and passed34/34, including the execution/wire separation
 and real platform-pressure guard. It retains one pre-existing optional-feature
 unused-import warning, not a clean whole-SDK claim. Evidence:
-`artifacts/v103-controller-wire-fix-iroh-tests.log`. Phone/App candidate
-acceptance remains pending.
+`artifacts/v103-controller-wire-fix-iroh-tests.log`. This was the source-only
+checkpoint; subsequent phone results, including failures, are recorded above.
 
 2026-10-22. The accepted phone baseline remains v102: App `f281cda`,
 SDK runtime `8142e1ce`. This review does not announce a new phone release,
