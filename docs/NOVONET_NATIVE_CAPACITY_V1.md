@@ -380,7 +380,7 @@ bytes (object ACKs with up to 32 runs, handshakes) are not paced: feedback keeps
 flowing while bulk fragments wait, still within the rolling hard limit.
 
 
-## 2026-10-22 continuation review candidate
+## 2026-10-22 continuation component review (before phone acceptance)
 
 The v101 wire pacing and adaptive allowance remain the base. The current
 candidate reserves queued request bytes and connection ownership before waiting
@@ -396,8 +396,9 @@ The uncommitted relative-clock prototype was withdrawn: re-anchoring unseen
 expired records at receipt would revive stale statements. Existing expiry,
 future-validity, sequence, signature and revocation validation remains in place.
 Safe clock-domain integration is a separate unfinished task. This candidate
-must not be described as clock-skew tolerance, 16-client performance acceptance,
-new Android acceptance or a fix for the historical first-TLS long tail.
+did not establish clock-skew tolerance, 16-client performance acceptance,
+new Android acceptance or a fix for the historical first-TLS long tail. The
+subsequent scoped v102 phone results are recorded below.
 Validation and phone evidence: NOVOCHAT `docs/implementation/CLAUDE_V101_REVIEW.md`
 and `P0_CHECKPOINT.md`; original v101 APK and identities remain retained.
 
@@ -412,3 +413,48 @@ the initial failure remains recorded. No whole-suite clean PASS is claimed.
 An obsolete integration assertion requiring 65 clients to fail was replaced by
 the current positive resource-policy case; empty policy/streams remain rejected.
 Phone candidate build and acceptance are separate from these component checks.
+
+
+## 2026-10-22 v102: real-phone 8/16-client acceptance
+
+Runtime SDK `8142e1ce`, App `f281cda`, Android profile v102. Both original phones,
+Windows node and isolated Ubuntu node updated with identity/history/SQLite kept.
+KINGCLUB configuration, four container instances and three health checks stayed
+unchanged. v101 APK and old node binaries remain retained.
+
+Both phones on Wi-Fi, native UDP SDK client, 32-KiB Put / signed StoreReceipt /
+Fetch-decrypt / Consume per cycle, original 90-second guard. Complete denominator:
+
+| Phone | Clients x rounds | Completed | Verified cycles | Cycles/s | P95 / P99 / max ms | Errors |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| PKL110 | 8 x 60 | 8/8 | 480 | 9.66 | 981 / 2867 / 5523 | 0 |
+| PCLM50 | 8 x 60 | 8/8 | 480 | 10.19 | 1358 / 3219 / 4863 | 0 |
+| PKL110 | 16 x 30 | 16/16 | 480 | 10.72 | 1769 / 3212 / 3471 | 0 |
+| PCLM50 | 16 x 30 | 16/16 | 480 | 10.30 | 1979 / 2731 / 4950 | 0 |
+
+No connection/work/store refusals or execution backoffs were observed. A's work
+target grew 8 -> 16; wire allowances adapted to demand without clearing rolling
+usage or raising fixed protocol constants. This closes the observed Register
+refusal in the measured conditions. Throughput remains the same order as v101;
+no maximum-capacity or global speedup claim is made. Probe cycles are neither
+chain TPS nor Android DeviceReceipt latency. The initial feature-incomplete
+probe exited before load and is separately retained, not counted as phone load.
+
+Real chat while B served 8x16 and 1.6-MB image while A served 8x8 also completed
+with actual device receipts (128 and 64 additional verified service cycles).
+Six UI swipes per primary run had sampled frame-span P95 8.59–11.75 ms, with a
+42.58-ms maximum retained; not a zero-jank claim. Independent image gate passed:
+receiver offline, external Stored, sender offline, receiver independent fetch /
+decode / preview, sender later obtains original DeviceReceipt. No restart,
+manual Connect or resend during that gate. Post-restoration new two-way chat and
+L4 remained ready. Separately tested A's deliberate process reconstruction;
+not conflated with network recovery. Both original identity hashes/history and
+run choices survived; final temperature about 31 C, thermal status 0.
+
+Review correction to historical v100 prose: the maximum encrypted 32-run ACK is
+644 bytes, not 512, and current signed locator renewal reports the current wire
+allowance. The current implementation is in `8142e1ce`, not the historical prose.
+Clock skew tolerance and historical first-TLS 59.49-second tail remain open.
+No new cross-operator, physical P2P, TLS-only, censorship or anonymity gate is
+claimed by this Wi-Fi load acceptance. Full records/rollback hashes and private
+evidence paths: NOVOCHAT `P0_CHECKPOINT.md` and `CLAUDE_V101_REVIEW.md`.

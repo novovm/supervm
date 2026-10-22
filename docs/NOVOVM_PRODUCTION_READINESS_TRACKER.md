@@ -1,5 +1,23 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-22 NOVONET v102: reviewed continuation, dual-phone 16-client gate PASS
+
+Runtime SDK `8142e1ce` / App `f281cda`, profile v102 on both original phones.
+PKL110 and PCLM50 each completed 8x60 and 16x30 verified 32-KiB native UDP
+Put/StoreReceipt/Fetch/Consume: 1,920 cycles, all clients complete, zero refusals.
+Throughput 9.66–10.72 cycles/s; service-cycle P95 0.981–1.979 s, not chat latency
+or chain TPS. Work/wire capacity adapted under the existing owner without false
+execution backoff or deadline/constant increases. Real overlapping chat/image,
+independent offline image/DeviceReceipt and final two-way chat/L4 also passed.
+Both identities/history and node custody/signing state remain; isolated cloud
+update preserved KINGCLUB containers/config/health. v101 rollback artifacts kept.
+The unsafe uncommitted expiry-reanchoring prototype was withdrawn; safe clock
+integration and historical TLS long tail remain open. No global production,
+censorship/anonymity or new cross-operator acceptance is claimed. Full numerical
+denominators, sampled frame outliers, setup failure and local-check limits are in
+`NOVONET_NATIVE_CAPACITY_V1.md` and NOVOCHAT `P0_CHECKPOINT.md`.
+
+
 
 ## 2026-10-21 NOVONET v95: bounded phone capacity gate, not full throughput acceptance
 
