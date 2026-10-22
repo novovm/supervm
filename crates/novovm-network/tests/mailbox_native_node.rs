@@ -885,3 +885,113 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
     tokio::time::timeout(Duration::from_secs(5), &mut server).await??;
     result
 }
+
+#[tokio::test]
+async fn production_owner_waits_for_shared_execution_without_quota_or_restart() -> Result<()> {
+    use novovm_network::service_concurrency::{
+        ResourcePressureV1, ResourceSnapshotV1, ServiceConcurrencyV1,
+    };
+    let directory = tempfile::tempdir()?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let c = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+        cpu_parallelism: 1,
+        available_memory_bytes: 1024 * 1024 * 1024,
+        pressure: ResourcePressureV1::Normal,
+    });
+    let running: Vec<_> = (0..c.snapshot().work_limit)
+        .map(|_| c.try_acquire_work(1).unwrap())
+        .collect();
+    let listener = NativeMailboxListenerV7::bind_adaptive(
+        "127.0.0.1:0".parse()?,
+        "127.0.0.1:0".parse()?,
+        key(17),
+        stop.clone(),
+        64 * 1024 * 1024,
+        c.clone(),
+    )?;
+    let route = listener.route().clone();
+    let service = Arc::new(MailboxServiceV1::new(
+        MailboxStore::open_contributor(
+            directory.path().join("queued.db"),
+            Default::default(),
+            true,
+        )?,
+        key(17),
+    ));
+    service.set_resources_available(true).await?;
+    let authority_path = directory.path().join("queued-authority.bin");
+    let server = run_self_owned_native_mailbox_v7(
+        listener,
+        key(17),
+        stop.clone(),
+        service,
+        move |route, until| {
+            let at = now_ms()?;
+            let record = sign_relay_record_v1(
+                &key(17),
+                "queued-node",
+                vec![route.endpoint()?],
+                at,
+                until,
+                1,
+            )?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let checkpoint = book.checkpoint()?;
+            let file =
+                ServiceLeaseFileV1::create(&authority_path, Zeroizing::new([91; 32]), &checkpoint)?;
+            book.attach_persistence(file, &checkpoint)?;
+            Ok(Arc::new(ServiceLeaseHostV1::new(key(17), book)?))
+        },
+        |_| Ok(()),
+    );
+    let client = async {
+        let mut client = Client::connect(&route, 83).await?;
+        let reply = client
+            .request(Request::Register {
+                mailbox: [41; 32],
+                write: [42; 32],
+                read: [43; 32],
+                expires: (now_ms()? / 1000) as i64 + 600,
+            })
+            .await?;
+        ensure!(
+            matches!(reply, Reply::Registered),
+            "waiting was incorrectly rejected: {}; counters {:?}",
+            serde_json::to_string(&reply)?,
+            c.snapshot()
+        );
+        ensure!(
+            c.snapshot().work_admission_rejections == 0,
+            "waiting counted as refusal"
+        );
+        stop.store(true, Ordering::Release);
+        Ok::<_, anyhow::Error>(())
+    };
+    let release = async {
+        let until = Instant::now() + Duration::from_secs(2);
+        while c.snapshot().reserved_bytes <= c.snapshot().active_work {
+            ensure!(
+                Instant::now() < until,
+                "production owner did not queue authenticated work"
+            );
+            tokio::task::yield_now().await;
+        }
+        // The production owner has accepted the first authenticated request,
+        // but its execution capacity is held by another local carrier.
+        ensure!(
+            c.snapshot().reserved_bytes > c.snapshot().active_work,
+            "no queued body was accounted"
+        );
+        drop(running);
+        Ok::<_, anyhow::Error>(())
+    };
+    tokio::time::timeout(Duration::from_secs(8), async {
+        tokio::try_join!(server, client, release)
+    })
+    .await??;
+    ensure!(
+        c.snapshot().reserved_bytes == 0,
+        "stopped owner leaked reservation"
+    );
+    Ok(())
+}

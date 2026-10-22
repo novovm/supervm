@@ -188,7 +188,7 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
     assert!(server
         .accept_client(NativeRoute::Udp(other.local_addr()?), &wire, 1000, start)
         .is_err());
-    assert!(server.waiting_client.is_none());
+    assert!(server.waiting_clients.is_empty());
     assert!(!server.needs_client_capacity(later));
     assert_eq!(
         server.client_admission_snapshot_v1(start),
@@ -220,8 +220,8 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
         !server.needs_client_capacity(later),
         "expired offer cannot demand eviction"
     );
-    server.admit_waiting_client(later)?;
-    assert!(server.waiting_client.is_none());
+    server.admit_waiting_clients(later)?;
+    assert!(server.waiting_clients.is_empty());
     assert_eq!(server.peer_count(), 1);
     Ok(())
 }
@@ -268,7 +268,7 @@ fn admission_snapshot_tracks_verified_waiter_without_evicting_existing_peer() ->
     // Only the existing owner changes capacity. Observing demand never does.
     assert_eq!(server.peer_count(), 1);
     server.update_client_capacity(2)?;
-    server.admit_waiting_client(start)?;
+    server.admit_waiting_clients(start)?;
     let snapshot = server.client_admission_snapshot_v1(start).unwrap();
     assert_eq!(snapshot.peer_count, 2);
     assert!(!snapshot.authenticated_waiting);
@@ -278,5 +278,102 @@ fn admission_snapshot_tracks_verified_waiter_without_evicting_existing_peer() ->
     assert_eq!(snapshot.peer_count, 2);
     assert_eq!(snapshot.capacity, 1);
     assert!(!snapshot.authenticated_waiting, "shrink is not new demand");
+    Ok(())
+}
+
+#[test]
+fn several_verified_waiters_wait_together_and_enter_in_arrival_order() -> Result<()> {
+    use crate::product_overlay::{handshake_wire, NodeHandshakeInitiatorV1};
+    let key = SigningKey::from_bytes(&[241; 32]);
+    let start = Instant::now();
+    let mut server = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        key.clone(),
+        3,
+        vec![17],
+        NativeHandshakeBudget {
+            lifetime: Duration::from_secs(5),
+            retry: Duration::from_millis(5),
+        },
+    )?;
+    server.update_client_capacity(3)?;
+    let target = peer_id_from_ed25519_public_key_v1(&key.verifying_key().to_bytes());
+    let sources: Vec<_> = (0..6)
+        .map(|_| UdpSocket::bind("127.0.0.1:0"))
+        .collect::<std::io::Result<_>>()?;
+    let mut offers = Vec::new();
+    for (index, source) in sources.iter().enumerate() {
+        let offer = NodeHandshakeInitiatorV1::start(
+            &SigningKey::from_bytes(&[242 + index as u8; 32]),
+            target.clone(),
+            1000,
+            1000,
+        )?;
+        let wire = handshake_wire::encode_offer(offer.offer())?;
+        server.accept_client(NativeRoute::Udp(source.local_addr()?), &wire, 1000, start)?;
+        offers.push(wire);
+    }
+    // Three occupy slots; the resource-derived pending budget retains three.
+    assert_eq!(server.peer_count(), 3);
+    assert_eq!(server.waiting_clients.len(), 3);
+    let excess_source = UdpSocket::bind("127.0.0.1:0")?;
+    let excess =
+        NodeHandshakeInitiatorV1::start(&SigningKey::from_bytes(&[249; 32]), target, 1000, 1000)?;
+    assert!(server
+        .accept_client(
+            NativeRoute::Udp(excess_source.local_addr()?),
+            &handshake_wire::encode_offer(excess.offer())?,
+            1000,
+            start
+        )
+        .is_err());
+    assert_eq!(
+        server.waiting_clients.len(),
+        3,
+        "pending identities obey the resource budget"
+    );
+    // A waiting identity's retry keeps its place and is not new demand.
+    server.accept_client(
+        NativeRoute::Udp(sources[4].local_addr()?),
+        &offers[4],
+        1000,
+        start,
+    )?;
+    assert_eq!(server.waiting_clients.len(), 3);
+    let mut forged = offers[4].clone();
+    *forged.last_mut().unwrap() ^= 1;
+    assert!(server
+        .accept_client(
+            NativeRoute::Udp(sources[4].local_addr()?),
+            &forged,
+            1000,
+            start
+        )
+        .is_err());
+    assert!(server
+        .accept_client(
+            NativeRoute::Udp(sources[5].local_addr()?),
+            &offers[4],
+            1000,
+            start
+        )
+        .is_err());
+    assert_eq!(server.waiting_clients.len(), 3);
+    // Room is requested for every waiter, not one at a time.
+    assert!(server.needs_client_capacity(start));
+    server.update_client_capacity(5)?;
+    assert!(
+        server.needs_client_capacity(start),
+        "3 + 3 waiters exceed 5"
+    );
+    server.update_client_capacity(6)?;
+    assert!(!server.needs_client_capacity(start));
+    server.admit_waiting_clients(start)?;
+    assert!(server.waiting_clients.is_empty());
+    assert_eq!(server.peer_count(), 6);
+    assert_eq!(
+        server.peer_indices().collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4, 5]
+    );
     Ok(())
 }

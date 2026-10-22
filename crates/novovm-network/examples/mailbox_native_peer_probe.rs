@@ -639,7 +639,9 @@ mod probe {
         if let Some((connection, mut client)) = ready.pop() {
             match client.window_preflight(connection).await {
                 Ok(()) => ready.push((connection, client)),
-                Err(error) => failures.push(format!("preflight connection {connection}: {error:#}")),
+                Err(error) => {
+                    failures.push(format!("preflight connection {connection}: {error:#}"))
+                }
             }
         }
         let preparation_errors = failures.len();
@@ -747,7 +749,7 @@ mod probe {
             let size: usize = args[6].parse()?;
             ensure!(
                 (1..=32).contains(&clients)
-                    && (1..=16).contains(&rounds)
+                    && (1..=60).contains(&rounds)
                     && (1..=32768).contains(&size),
                 "bounded diagnostic limits"
             );

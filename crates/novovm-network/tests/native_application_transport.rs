@@ -168,12 +168,7 @@ fn empty_pinned_policy_is_not_open_and_listener_requires_explicit_limits() -> Re
         Instant::now()
     )
     .is_err());
-    for (clients, streams) in [
-        (0, vec![STREAM]),
-        (65, vec![STREAM]),
-        (1, vec![]),
-        (1, vec![0]),
-    ] {
+    for (clients, streams) in [(0, vec![STREAM]), (1, vec![]), (1, vec![0])] {
         assert!(NativeEndpoint::listen_clients(
             UdpSocket::bind("127.0.0.1:0")?,
             key.clone(),
@@ -183,6 +178,15 @@ fn empty_pinned_policy_is_not_open_and_listener_requires_explicit_limits() -> Re
         )
         .is_err());
     }
+    // Resource policy replaced the unreleased fixed 64-client ceiling.
+    let listener = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        key,
+        65,
+        vec![STREAM],
+        budget(),
+    )?;
+    assert_eq!(listener.peer_count(), 0);
     Ok(())
 }
 

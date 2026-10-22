@@ -151,6 +151,7 @@ struct WireState {
 }
 pub struct ServiceConcurrencyV1 {
     state: Mutex<State>,
+    work_changed: tokio::sync::watch::Sender<()>,
 }
 impl ServiceConcurrencyV1 {
     pub fn from_host() -> Arc<Self> {
@@ -158,6 +159,7 @@ impl ServiceConcurrencyV1 {
     }
     pub fn new(resources: ResourceSnapshotV1) -> Arc<Self> {
         Arc::new(Self {
+            work_changed: tokio::sync::watch::channel(()).0,
             state: Mutex::new(State {
                 admitted: 0,
                 completed: 0,
@@ -214,6 +216,7 @@ impl ServiceConcurrencyV1 {
             s.target = s.target.max(resources.cpu_parallelism.max(1));
         }
         s.target = s.target.min(Self::ceiling(&s).0).max(1);
+        self.work_changed.send_replace(());
     }
     /// Called by existing maintenance; at most one safe host read per 5 seconds.
     /// A mobile/platform owner supplying observations remains authoritative.
@@ -357,6 +360,9 @@ impl ServiceConcurrencyV1 {
         snapshot.waiting_watch_limit = snapshot.inbound_connections();
         snapshot
     }
+    pub(crate) fn subscribe_work_capacity(&self) -> tokio::sync::watch::Receiver<()> {
+        self.work_changed.subscribe()
+    }
     pub fn snapshot(&self) -> ServiceConcurrencySnapshotV1 {
         Self::snapshot_locked(&self.state.lock().unwrap_or_else(|e| e.into_inner()))
     }
@@ -420,12 +426,27 @@ impl ServiceConcurrencyV1 {
         s.watch_admission_rejections = s.watch_admission_rejections.saturating_add(1);
     }
     pub fn try_acquire_work(self: &Arc<Self>, bytes: usize) -> Option<ServiceWorkPermitV1> {
-        self.acquire_work(bytes, false)
+        self.acquire_work(bytes, false, true)
     }
     pub fn try_acquire_watch(self: &Arc<Self>, bytes: usize) -> Option<ServiceWorkPermitV1> {
-        self.acquire_work(bytes, true)
+        self.acquire_work(bytes, true, true)
     }
-    fn acquire_work(self: &Arc<Self>, bytes: usize, waiting: bool) -> Option<ServiceWorkPermitV1> {
+    pub(crate) fn try_acquire_ready_work(
+        self: &Arc<Self>,
+        bytes: usize,
+    ) -> Option<ServiceWorkPermitV1> {
+        self.acquire_work(bytes, false, false)
+    }
+    pub(crate) fn note_work_admission_rejection(&self) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        s.work_admission_rejections = s.work_admission_rejections.saturating_add(1);
+    }
+    fn acquire_work(
+        self: &Arc<Self>,
+        bytes: usize,
+        waiting: bool,
+        count_rejection: bool,
+    ) -> Option<ServiceWorkPermitV1> {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let limit = Self::snapshot_locked(&s);
         let slots_full = if waiting {
@@ -441,10 +462,12 @@ impl ServiceConcurrencyV1 {
             limit.retained_bytes
         };
         if slots_full || bytes > memory_limit.saturating_sub(s.bytes) {
-            if waiting {
-                s.watch_admission_rejections = s.watch_admission_rejections.saturating_add(1);
-            } else {
-                s.work_admission_rejections = s.work_admission_rejections.saturating_add(1);
+            if count_rejection {
+                if waiting {
+                    s.watch_admission_rejections = s.watch_admission_rejections.saturating_add(1);
+                } else {
+                    s.work_admission_rejections = s.work_admission_rejections.saturating_add(1);
+                }
             }
             s.demand = true;
             return None;
@@ -486,6 +509,7 @@ impl ServiceConcurrencyV1 {
         let observed_saturation = admitted_at_capacity
             || saturation_generation != finished_generation.unwrap_or(s.saturation_generation);
         Self::finish_execution(&mut s, elapsed, true, waiting, observed_saturation);
+        self.work_changed.send_replace(());
     }
     fn release_work(&self, bytes: usize, unfinished: Option<bool>) {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -493,6 +517,7 @@ impl ServiceConcurrencyV1 {
             Self::finish_execution(&mut s, Duration::ZERO, false, waiting, false);
         }
         s.bytes = s.bytes.saturating_sub(bytes);
+        self.work_changed.send_replace(());
     }
     fn finish_execution(
         s: &mut State,
@@ -548,11 +573,46 @@ pub struct ServiceRequestBodyPermitV1 {
     owner: Arc<ServiceConcurrencyV1>,
     bytes: usize,
 }
+impl ServiceRequestBodyPermitV1 {
+    /// Transfer already-accounted retained bytes into execution. Waiting itself
+    /// is not an execution sample or rejection. Shrink never admits new work
+    /// above the current budget; existing reservations survive until dropped.
+    pub(crate) fn try_start_work(&mut self) -> Option<ServiceWorkPermitV1> {
+        let mut s = self.owner.state.lock().unwrap_or_else(|e| e.into_inner());
+        let limit = ServiceConcurrencyV1::snapshot_locked(&s);
+        if self.bytes == 0
+            || s.active.saturating_sub(s.watches) >= limit.work_limit
+            || s.bytes > limit.retained_bytes
+        {
+            s.demand = true;
+            return None;
+        }
+        let bytes = std::mem::take(&mut self.bytes);
+        s.request_body_bytes = s.request_body_bytes.saturating_sub(bytes);
+        s.active += 1;
+        s.admitted = s.admitted.saturating_add(1);
+        let admitted_at_capacity = s.active.saturating_sub(s.watches) >= limit.work_limit;
+        if admitted_at_capacity {
+            s.saturation_generation = s.saturation_generation.wrapping_add(1);
+        }
+        Some(ServiceWorkPermitV1 {
+            owner: self.owner.clone(),
+            bytes,
+            started: Instant::now(),
+            timing: ServiceExecutionTimingV1::for_owner(&self.owner),
+            complete: false,
+            waiting: false,
+            saturation_generation: s.saturation_generation,
+            admitted_at_capacity,
+        })
+    }
+}
 impl Drop for ServiceRequestBodyPermitV1 {
     fn drop(&mut self) {
         let mut s = self.owner.state.lock().unwrap_or_else(|e| e.into_inner());
         s.bytes = s.bytes.saturating_sub(self.bytes);
         s.request_body_bytes = s.request_body_bytes.saturating_sub(self.bytes);
+        self.owner.work_changed.send_replace(());
     }
 }
 pub struct ServiceTransportPermitV1 {
@@ -1386,6 +1446,55 @@ mod tests {
         assert_eq!(c.snapshot().work_limit, 1);
         c.update_resources(resources(ResourcePressureV1::Normal));
         assert_eq!(c.snapshot().work_limit, 8);
+    }
+
+    #[test]
+    fn queued_body_is_accounted_without_execution_or_false_rejection() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let initial = c.snapshot();
+        let running: Vec<_> = (0..initial.work_limit)
+            .map(|_| c.try_acquire_work(1).unwrap())
+            .collect();
+        let mut queued = c.try_reserve_request_body(4096).unwrap();
+        let reserved = c.snapshot().reserved_bytes;
+        for _ in 0..8 {
+            assert!(queued.try_start_work().is_none());
+        }
+        assert_eq!(c.snapshot().reserved_bytes, reserved);
+        assert_eq!(c.snapshot().work_admission_rejections, 0);
+        assert_eq!(c.snapshot().completed_work, 0);
+        drop(running);
+        let work = queued.try_start_work().unwrap();
+        assert!(
+            queued.try_start_work().is_none(),
+            "one reservation transfers only once"
+        );
+        drop(queued);
+        assert_eq!(c.snapshot().reserved_bytes, 4096);
+        assert_eq!(c.snapshot().active_work, 1);
+        drop(work);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+        assert_eq!(c.snapshot().work_limit, initial.work_limit);
+    }
+    #[test]
+    fn queued_large_body_preserves_small_work_and_survives_shrink_without_new_admission() {
+        let c = ServiceConcurrencyV1::new(resources(ResourcePressureV1::Normal));
+        let initial = c.snapshot();
+        let mut queued = c
+            .try_reserve_request_body(initial.retained_bytes / 2)
+            .unwrap();
+        assert!(c.try_reserve_request_body(1).is_none());
+        let small = c.try_acquire_work(1024).unwrap();
+        drop(small);
+        c.update_resources(ResourceSnapshotV1 {
+            available_memory_bytes: 128 * MIB,
+            ..resources(ResourcePressureV1::Severe)
+        });
+        assert!(queued.try_start_work().is_none());
+        assert_eq!(c.snapshot().active_work, 0);
+        drop(queued);
+        assert_eq!(c.snapshot().reserved_bytes, 0);
+        assert!(c.try_acquire_work(1024).is_some());
     }
 
     #[test]

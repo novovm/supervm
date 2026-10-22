@@ -27,7 +27,10 @@ const MIN_PACED_BYTES_PER_SECOND: u64 = 64 * 1024;
 /// Control datagrams (object ACKs up to 32 runs, handshakes, small requests)
 /// are not paced, so feedback keeps flowing while bulk fragments wait; they
 /// still count against the rolling limit. Full data fragments are 1200 bytes.
-const UNPACED_CONTROL_BYTES: u64 = 512;
+// NVRLY002 envelope (59 + two 79-byte peer IDs), AEAD tag (16),
+// transport header (96), object ACK header (59), 32 missing runs (8 each).
+// Tests encode authenticated frames so codec changes cannot silently undercut it.
+const UNPACED_CONTROL_BYTES: u64 = 59 + 2 * 79 + 16 + 96 + 59 + 8 * 32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NativeWireUsage {
@@ -557,6 +560,72 @@ mod tests {
             Some(&mut budget)
         )?);
         assert!(budget.admit_receive(1200, start + Duration::from_secs(2)));
+        Ok(())
+    }
+    #[test]
+    fn maximum_encrypted_object_acks_bypass_pacing_but_not_hard_budget() -> Result<()> {
+        use crate::novorudp::{datagram::NativeUdpSession, object_ack::encode_object_ack, *};
+        use crate::product_overlay::*;
+        use ed25519_dalek::SigningKey;
+        let a = SigningKey::from_bytes(&[31; 32]);
+        let b = SigningKey::from_bytes(&[47; 32]);
+        let offer = NodeHandshakeInitiatorV1::start(
+            &a,
+            peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes()),
+            1000,
+            5000,
+        )?;
+        let response = NodeHandshakeResponderV1::respond(
+            offer.offer(),
+            &b,
+            1000,
+            5000,
+            &mut HandshakeReplayCacheV1::default(),
+        )?;
+        let channel = offer.complete(
+            response.response(),
+            1000,
+            &mut HandshakeReplayCacheV1::default(),
+        )?;
+        let mut session = NativeUdpSession::new(channel, "127.0.0.1:12345".parse()?)?;
+        for runs in [16, 32] {
+            let ack = NovoRudpAckFrame {
+                header: NovoRudpFrameHeader {
+                    version: 1,
+                    kind: NovoRudpFrameKind::Ack,
+                    session_id: session.session_id(),
+                    epoch: 1,
+                    sequence: None,
+                    window_id: Some(0),
+                },
+                expected_total: 64,
+                receiver_done: false,
+                missing_count: runs,
+                current_window: Some(NovoRudpRange::new(0, 63)),
+                current_window_missing_ranges: (0..runs)
+                    .map(|i| NovoRudpRange::new(2 * i, 2 * i))
+                    .collect(),
+            };
+            let wire = session.encode(&encode_object_ack([3; 32], 11, &ack)?)?;
+            assert_eq!(wire.len(), 388 + 8 * runs as usize);
+            assert!(wire.len() as u64 <= UNPACED_CONTROL_BYTES);
+            let start = Instant::now();
+            let now = start + Duration::from_secs(1);
+            let mut budget = NativeWireBudget::new(64 * 1024 * 1024, start)?;
+            while budget.admit_receive(1200, start) {}
+            while budget.admit_receive(1200, now) {}
+            assert!(!budget.admit_receive(1200, now));
+            assert!(budget.admit_receive(wire.len(), now));
+            let reservation = budget.reserve_send(wire.len(), now)?.unwrap();
+            budget.finish_send(reservation, wire.len(), false, now)?;
+            // A size exemption never exempts bytes from the rolling hard limit.
+            let mut hard = NativeWireBudget::new(MIN_BYTES_PER_MINUTE, now)?;
+            assert!(
+                hard.admit_receive((MIN_BYTES_PER_MINUTE - wire.len() as u64 + 1) as usize, now)
+            );
+            assert!(!hard.admit_receive(wire.len(), now));
+            assert!(hard.reserve_send(wire.len(), now)?.is_none());
+        }
         Ok(())
     }
 }

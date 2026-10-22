@@ -403,7 +403,11 @@ pub async fn run_self_owned_native_mailbox_v7(
                 host.check_continuous_native_peer_v7(now)?;
                 if Instant::now() >= rotate_at {
                     if let Some(c) = &concurrency {
-                        route.max_connections = c.snapshot().inbound_connections() as u16;
+                        let snapshot = c.snapshot();
+                        route.max_connections = snapshot.inbound_connections() as u16;
+                        if snapshot.wire_bytes_per_minute != 0 {
+                            route.max_bytes_per_minute = snapshot.wire_bytes_per_minute;
+                        }
                     }
                     let expiry = now.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
                     let record = host.rotate_native_mailbox_v7(Some(&route), now, expiry)?;
@@ -658,10 +662,14 @@ impl Node {
                         // store and lease; its tombstones are never transplanted.
                         let mut current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
                         let record = if let Some(c) = &concurrency {
-                            let capacity = c.snapshot().inbound_connections().min(max_connections) as u16;
+                            let snapshot = c.snapshot();
+                            let capacity = snapshot.inbound_connections().min(max_connections) as u16;
                             if native_adaptive {
                                 if let Some(route) = &mut native_route {
                                     route.max_connections = capacity;
+                                    if snapshot.wire_bytes_per_minute != 0 {
+                                        route.max_bytes_per_minute = snapshot.wire_bytes_per_minute;
+                                    }
                                 }
                             }
                             #[cfg(feature = "tls-transport")]

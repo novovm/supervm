@@ -1208,6 +1208,18 @@ fn native_metadata_time_does_not_install_or_override_security() -> Result<()> {
         .is_err());
     b.check_continuous_native_peer_v7(pin(), 93000)?;
 
+    // An unseen higher sequence is authentic, but is not evidence of freshness.
+    // Receiving it must never restart its original signed lifetime.
+    let mut stale_book = book()?;
+    let stale = record(vec![route().endpoint()?], 2, 1500)?;
+    assert_eq!(
+        stale_book.inspect_native_record_v7(pin(), &stale, 500_000)?,
+        Expired
+    );
+    assert!(stale_book
+        .accept_native_record_v7(pin(), stale, 500_000)
+        .is_err());
+
     for now in [2999, 93000] {
         let mut b = book()?;
         let mut forged = future.clone();

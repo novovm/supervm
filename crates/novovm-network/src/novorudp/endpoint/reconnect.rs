@@ -95,7 +95,7 @@ impl NativeEndpoint {
     pub(super) fn reconnect_source_in_use(&self, source: NativeRoute) -> bool {
         self.peers
             .values()
-            .chain(self.waiting_client.iter())
+            .chain(self.waiting_clients.iter())
             .any(|p| p.reconnect.as_ref().is_some_and(|r| r.source == source))
     }
 

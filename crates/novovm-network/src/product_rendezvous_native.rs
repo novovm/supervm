@@ -2,7 +2,8 @@
 //! runtime, new store or parallel service protocol. Watch work is polled beside
 //! packet progress, so it cannot hold the transport receive loop hostage.
 use crate::service_concurrency::{
-    AdaptiveAdmissionV1, ServiceConcurrencyV1, ServiceTransportPermitV1, ServiceWorkPermitV1,
+    AdaptiveAdmissionV1, ServiceConcurrencyV1, ServiceRequestBodyPermitV1,
+    ServiceTransportPermitV1, ServiceWorkPermitV1,
 };
 use crate::{
     bound_session::{authenticate_structured_service_client_observed, ServicePeerPolicyV1},
@@ -14,7 +15,9 @@ use crate::{
     duplex::HandshakeReplayCacheV1,
     mailbox_rpc::MailboxServiceV1,
     mailbox_structured::{
-        native_session::{domain, MailboxResponse, NativeMailboxServer, REQUEST_DEADLINE, SLOTS},
+        native_session::{
+            domain, MailboxResponse, MailboxWork, NativeMailboxServer, REQUEST_DEADLINE, SLOTS,
+        },
         BULK_LIMITS as LIMITS, STREAM,
     },
     network_time::ClockAnchorV1,
@@ -37,7 +40,7 @@ use futures_util::{
     FutureExt, StreamExt,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     net::{SocketAddr, UdpSocket},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -58,6 +61,13 @@ struct Job {
     permit: Arc<OwnedSemaphorePermit>,
     work_permit: Option<ServiceWorkPermitV1>,
 }
+struct HeldWork {
+    peer: usize,
+    work: MailboxWork,
+    permit: Arc<OwnedSemaphorePermit>,
+    body: ServiceRequestBodyPermitV1,
+}
+
 struct Pending {
     peer: usize,
     response: MailboxResponse,
@@ -461,7 +471,11 @@ impl NativeMailboxListenerV7 {
     pub(super) fn current_route(&self) -> NativeMailboxEndpointV7 {
         let mut route = self.route.clone();
         if let Some(c) = &self.concurrency {
-            route.max_connections = c.snapshot().inbound_connections() as u16;
+            let snapshot = c.snapshot();
+            route.max_connections = snapshot.inbound_connections() as u16;
+            if snapshot.wire_bytes_per_minute != 0 {
+                route.max_bytes_per_minute = snapshot.wire_bytes_per_minute;
+            }
         }
         route
     }
@@ -524,6 +538,10 @@ async fn serve_link(
     let mut pending = Vec::<Pending>::new();
     let mut next_job = 0u64;
     let mut outbound = 0usize;
+    // Waiting work shares the owner's retained-body budget and each peer's
+    // negotiated window. It cannot block polling other peers' completed objects.
+    let mut held = VecDeque::<HeldWork>::new();
+    let mut capacity_changed = concurrency.as_ref().map(|c| c.subscribe_work_capacity());
     // Retain each response with its reservation until that response completes.
     // An unrelated continuously busy connection must not retain finished work.
     let mut sending = Vec::<(usize, MailboxResponse, ServiceWorkPermitV1)>::new();
@@ -554,6 +572,10 @@ async fn serve_link(
         authority()?;
         readiness.poll_carrier()?;
         let now = Instant::now();
+        if let Some(changes) = &mut capacity_changed {
+            changes.borrow_and_update();
+        }
+        held.retain(|item| now < item.work.deadline());
         if let Admission::Udp(slots) = &admission {
             // The transport cannot see a database job or waiting Watch. Protect
             // those handles until their actual work and response have drained.
@@ -564,6 +586,7 @@ async fn serve_link(
                 .map(|job| job.peer)
                 .chain(pending.iter().map(|item| item.peer))
                 .chain(sending.iter().map(|(peer, _, _)| *peer))
+                .chain(held.iter().map(|item| item.peer))
                 .collect();
             for retired in
                 link.retire_idle_clients(now, REQUEST_DEADLINE, &protected, slots.limit())?
@@ -606,6 +629,8 @@ async fn serve_link(
                 job.abort.abort();
             }
             pending.retain(|item| item.peer != changed.peer);
+            // A held request belongs to the retired session; never run it later.
+            held.retain(|item| item.peer != changed.peer);
         }
         // Consuming a completed deferred write frees the carrier's sole slot.
         // Give the existing loop another turn to enqueue data/ACKs; otherwise
@@ -641,111 +666,182 @@ async fn serve_link(
                 c.note_demand();
             }
         }
-        if active.len() + pending.len() < work_limit {
-            if let Some(body) = link.poll_complete(STREAM, now, QUANTUM)? {
-                progress = true;
-                let peer = link
-                    .peer_indices()
-                    .find(|&p| link.peer_id(p).is_ok_and(|id| id == body.peer))
-                    .context("native completed unknown peer")?;
-                // Always admit/validate before returning an overload reply.
-                // Transport completion alone must not strand a valid request
-                // when a different carrier currently owns the shared permits.
-                if let std::collections::btree_map::Entry::Vacant(entry) = servers.entry(peer) {
-                    let attached = if let Some(controller) = &concurrency {
-                        NativeMailboxServer::attach_adaptive(&mut link, peer, controller.clone())
-                    } else {
-                        NativeMailboxServer::attach(&mut link, peer)
-                    };
-                    if let Ok(server) = attached {
-                        entry.insert(server);
-                    }
+        // Rotate waiting peers once per turn. All bytes and connection ownership
+        // remain reserved; no new operation deadline is manufactured here.
+        let mut ready = None;
+        for _ in 0..held.len() {
+            let mut item = held.pop_front().expect("queued work");
+            if now >= item.work.deadline() {
+                continue;
+            }
+            if ready.is_none() {
+                if let Some(work_permit) = item.body.try_start_work() {
+                    ready = Some((item.peer, item.work, Some(item.permit), Some(work_permit)));
+                    continue;
                 }
-                if let Some(server) = servers.get_mut(&peer) {
-                    if let Ok(work) = server.admit(&link, body, now, authority) {
-                        let waiting_watch = work.has_waiting_watch();
-                        let watch_saturated = waiting_watch
-                            && (jobs.values().filter(|job| job.waiting_watch).count()
-                                >= waiting_watch_limit
-                                || jobs
-                                    .values()
-                                    .any(|job| job.peer == peer && job.waiting_watch));
-                        let permit = jobs
-                            .values()
-                            .find(|job| job.peer == peer)
-                            .map(|job| job.permit.clone())
-                            .or_else(|| {
-                                pending
-                                    .iter()
-                                    .find(|item| item.peer == peer && item.permit.is_some())
-                                    .and_then(|item| item.permit.clone())
-                            })
-                            .or_else(|| admission.acquire());
-                        let work_permit = concurrency.as_ref().and_then(|c| {
-                            let bytes = work.retained_bytes_estimate();
-                            if waiting_watch {
-                                c.try_acquire_watch(bytes)
-                            } else {
-                                c.try_acquire_work(bytes)
-                            }
-                        });
-                        if watch_saturated
-                            || permit.is_none()
-                            || (concurrency.is_some() && work_permit.is_none())
-                        {
-                            // A controller rejection already counted this attempt.
-                            // Count the per-peer Watch policy only when its work
-                            // permit was admitted, so one request is not counted twice.
-                            if watch_saturated && work_permit.is_some() {
-                                if let Some(controller) = &concurrency {
-                                    controller.note_watch_admission_rejection();
-                                }
-                            }
-                            // The resource-derived Watch budget, one per peer,
-                            // leaves ordinary Put/Fetch/Consume work available.
-                            if let Ok(response) = work.reject_quota(service, authority) {
-                                pending.push(Pending {
-                                    peer,
-                                    response,
-                                    permit: None,
-                                    work_permit: None,
-                                });
-                            }
-                        } else if let Some(permit) = permit {
-                            next_job = next_job
-                                .checked_add(1)
-                                .context("native job sequence exhausted")?;
-                            let id = next_job;
-                            let (abort, registration) = AbortHandle::new_pair();
-                            let timing = work_permit
-                                .as_ref()
-                                .map(ServiceWorkPermitV1::execution_timing);
-                            jobs.insert(
-                                id,
-                                Job {
-                                    peer,
-                                    waiting_watch,
-                                    abort,
-                                    permit,
-                                    work_permit,
-                                },
-                            );
-                            active.push(
-                                async move {
-                                    (
-                                        id,
-                                        Abortable::new(
-                                            work.execute_timed(service, authority, timing.as_ref()),
-                                            registration,
-                                        )
-                                        .await,
-                                    )
-                                }
-                                .boxed_local(),
-                            );
+            }
+            held.push_back(item);
+        }
+        if let Some((peer, _, _, _)) = &ready {
+            // Move this peer's remaining head entries behind other peers. A
+            // single large negotiated window cannot monopolize execution.
+            for _ in 0..held.len() {
+                if held.front().is_none_or(|item| item.peer != *peer) {
+                    break;
+                }
+                let item = held.pop_front().expect("queued work");
+                held.push_back(item);
+            }
+        }
+        let next = if let Some(item) = ready {
+            progress = true;
+            Some(item)
+        } else if active.len() + pending.len() < work_limit {
+            match link.poll_complete(STREAM, now, QUANTUM)? {
+                Some(body) => {
+                    progress = true;
+                    let peer = link
+                        .peer_indices()
+                        .find(|&p| link.peer_id(p).is_ok_and(|id| id == body.peer))
+                        .context("native completed unknown peer")?;
+                    if let std::collections::btree_map::Entry::Vacant(entry) = servers.entry(peer) {
+                        let attached = if let Some(controller) = &concurrency {
+                            NativeMailboxServer::attach_adaptive(
+                                &mut link,
+                                peer,
+                                controller.clone(),
+                            )
+                        } else {
+                            NativeMailboxServer::attach(&mut link, peer)
+                        };
+                        if let Ok(server) = attached {
+                            entry.insert(server);
                         }
                     }
+                    servers
+                        .get_mut(&peer)
+                        .and_then(|server| server.admit(&link, body, now, authority).ok())
+                        .map(|work| (peer, work, None, None))
                 }
+                None => None,
+            }
+        } else {
+            None
+        };
+        if let Some((peer, work, held_connection, held_execution)) = next {
+            let waiting_watch = work.has_waiting_watch();
+            let watch_saturated = waiting_watch
+                && (jobs.values().filter(|job| job.waiting_watch).count() >= waiting_watch_limit
+                    || jobs
+                        .values()
+                        .any(|job| job.peer == peer && job.waiting_watch));
+            let permit = held_connection.or_else(|| {
+                jobs.values()
+                    .find(|job| job.peer == peer)
+                    .map(|job| job.permit.clone())
+                    .or_else(|| {
+                        pending
+                            .iter()
+                            .find(|item| item.peer == peer && item.permit.is_some())
+                            .and_then(|item| item.permit.clone())
+                    })
+                    .or_else(|| {
+                        held.iter()
+                            .find(|item| item.peer == peer)
+                            .map(|item| item.permit.clone())
+                    })
+                    .or_else(|| admission.acquire())
+            });
+            // Reserve a queued body's bytes BEFORE retaining it. Transfer the
+            // same reservation into execution, so it cannot escape accounting.
+            let mut body = None;
+            let work_permit = held_execution.or_else(|| {
+                concurrency.as_ref().and_then(|c| {
+                    let bytes = work.retained_bytes_estimate();
+                    if waiting_watch {
+                        c.try_acquire_watch(bytes)
+                    } else {
+                        if let Some(work) = c.try_acquire_ready_work(bytes) {
+                            return Some(work);
+                        }
+                        body = c.try_reserve_request_body(bytes);
+                        body.as_mut()
+                            .and_then(ServiceRequestBodyPermitV1::try_start_work)
+                    }
+                })
+            });
+            let execution_full = !waiting_watch && concurrency.is_some() && work_permit.is_none();
+            // Dedicated capacity exchange is separate from the negotiated
+            // business slots. Retained byte reservations bound the whole queue.
+            let queue_limit = servers
+                .get(&peer)
+                .map_or(0, |server| server.slot_capacity().saturating_add(1));
+            if execution_full
+                && permit.is_some()
+                && body.is_some()
+                && held.iter().filter(|item| item.peer == peer).count() < queue_limit
+                && now < work.deadline()
+            {
+                held.push_back(HeldWork {
+                    peer,
+                    work,
+                    permit: permit.unwrap(),
+                    body: body.unwrap(),
+                });
+            } else if watch_saturated
+                || permit.is_none()
+                || (concurrency.is_some() && work_permit.is_none())
+            {
+                if execution_full {
+                    if let Some(controller) = &concurrency {
+                        controller.note_work_admission_rejection();
+                    }
+                }
+                if watch_saturated && work_permit.is_some() {
+                    if let Some(controller) = &concurrency {
+                        controller.note_watch_admission_rejection();
+                    }
+                }
+                if let Ok(response) = work.reject_quota(service, authority) {
+                    pending.push(Pending {
+                        peer,
+                        response,
+                        permit: None,
+                        work_permit: None,
+                    });
+                }
+            } else if let Some(permit) = permit {
+                next_job = next_job
+                    .checked_add(1)
+                    .context("native job sequence exhausted")?;
+                let id = next_job;
+                let (abort, registration) = AbortHandle::new_pair();
+                let timing = work_permit
+                    .as_ref()
+                    .map(ServiceWorkPermitV1::execution_timing);
+                jobs.insert(
+                    id,
+                    Job {
+                        peer,
+                        waiting_watch,
+                        abort,
+                        permit,
+                        work_permit,
+                    },
+                );
+                active.push(
+                    async move {
+                        (
+                            id,
+                            Abortable::new(
+                                work.execute_timed(service, authority, timing.as_ref()),
+                                registration,
+                            )
+                            .await,
+                        )
+                    }
+                    .boxed_local(),
+                );
             }
         }
         // Flush newly queued responses/ACKs immediately. This bounded progress
@@ -768,6 +864,10 @@ async fn serve_link(
                     }
                 }
             }
+            _ = async { match capacity_changed.as_mut() {
+                Some(changes) => { let _ = changes.changed().await; }
+                None => std::future::pending::<()>().await,
+            } }, if !held.is_empty() => {}
             readable = readiness.ready(&mut peek) => { readable?; }
             _ = tokio::time::sleep(maintenance) => {}
         }
@@ -786,5 +886,47 @@ mod resource_boundary_tests {
         let error = require_mailbox_frame_budget(LIMITS.wire_bytes - 1).unwrap_err();
         assert!(error.is::<NativeMailboxResourcesUnavailableV1>());
         require_mailbox_frame_budget(LIMITS.wire_bytes).unwrap();
+    }
+    #[tokio::test]
+    async fn advertisement_tracks_live_resource_wire_allowance() -> Result<()> {
+        use crate::novorudp::wire_budget::NativeWireUsage;
+        use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+        let c = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 4,
+            available_memory_bytes: 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let startup = 64 * 1024 * 1024;
+        let listener = NativeMailboxListenerV7::bind_adaptive(
+            "127.0.0.1:0".parse()?,
+            "127.0.0.1:0".parse()?,
+            SigningKey::from_bytes(&[17; 32]),
+            Arc::new(AtomicBool::new(false)),
+            startup,
+            c.clone(),
+        )?;
+        assert_eq!(listener.current_route().max_bytes_per_minute, startup);
+        c.observe_network_cost(true);
+        let now = Instant::now();
+        c.observe_native_wire(
+            NativeWireUsage {
+                limit: startup,
+                ..Default::default()
+            },
+            now,
+        );
+        let grown = c.observe_native_wire(
+            NativeWireUsage {
+                limit: startup,
+                send_deferred: 1,
+                ..Default::default()
+            },
+            now + Duration::from_secs(3),
+        );
+        assert!(grown > startup);
+        assert_eq!(listener.current_route().max_bytes_per_minute, grown);
+        c.observe_network_cost(false);
+        assert_eq!(listener.current_route().max_bytes_per_minute, startup);
+        Ok(())
     }
 }

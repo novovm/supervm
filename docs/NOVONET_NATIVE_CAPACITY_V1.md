@@ -378,3 +378,37 @@ ACKs behind bulk replies and clients reached the 8 s no-progress suppression.
 Decisions are therefore every 2 s with doubling, and datagrams of at most 512
 bytes (object ACKs with up to 32 runs, handshakes) are not paced: feedback keeps
 flowing while bulk fragments wait, still within the rolling hard limit.
+
+
+## 2026-10-22 continuation review candidate
+
+The v101 wire pacing and adaptive allowance remain the base. The current
+candidate reserves queued request bytes and connection ownership before waiting
+for execution, preserves the original request/session deadline, bounds each peer by its negotiated window and one capacity exchange, and rotates waiting peers without stopping transport
+completion polling. Shared permit release wakes the existing listener. No work
+rate, execution slot, handshake deadline or idle retirement constant is raised.
+Pending verified handshakes use the resource-derived listener capacity and the
+same original source/transcript/deadline. Renewed signed locators reflect the
+current wire allowance, not the startup budget. Encrypted ACKs up to the actual
+32-run size bypass second pacing but not rolling hard accounting.
+
+The uncommitted relative-clock prototype was withdrawn: re-anchoring unseen
+expired records at receipt would revive stale statements. Existing expiry,
+future-validity, sequence, signature and revocation validation remains in place.
+Safe clock-domain integration is a separate unfinished task. This candidate
+must not be described as clock-skew tolerance, 16-client performance acceptance,
+new Android acceptance or a fix for the historical first-TLS long tail.
+Validation and phone evidence: NOVOCHAT `docs/implementation/CLAUDE_V101_REVIEW.md`
+and `P0_CHECKPOINT.md`; original v101 APK and identities remain retained.
+
+
+Candidate component validation: 29 native session/carrier/UDP/TLS integration
+checks passed, including an actually saturated shared execution owner that
+resumes Register without Quota, restart or retry. 69 focused library checks
+passed (owner, resource accounting, handshake retirement, wire budget and signed
+native metadata). A broader 1,200-test library run had 1,188 pass, 11 ignored and
+one unmodified Ethereum RLPx peer-head test fail; its isolated rerun passed, and
+the initial failure remains recorded. No whole-suite clean PASS is claimed.
+An obsolete integration assertion requiring 65 clients to fail was replaced by
+the current positive resource-policy case; empty policy/streams remain rejected.
+Phone candidate build and acceptance are separate from these component checks.

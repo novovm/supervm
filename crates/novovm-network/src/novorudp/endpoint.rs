@@ -15,7 +15,7 @@ use crate::product_overlay::{peer_id_from_ed25519_public_key_v1, HandshakeReplay
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     io::ErrorKind,
     net::{SocketAddr, UdpSocket},
     sync::Arc,
@@ -144,9 +144,10 @@ pub struct NativeEndpoint {
     local_key: [u8; 32],
     peers: BTreeMap<usize, Peer>,
     next_peer: usize,
-    // One fully verified admission may wait for the owner to retire idle work.
-    // Its original handshake deadline and transcript remain unchanged.
-    waiting_client: Option<Peer>,
+    // Up to MAX_WAITING_CLIENTS fully verified admissions wait, in arrival
+    // order, for the owner to retire idle work. Each keeps its original
+    // handshake deadline and transcript; none is answered before admission.
+    waiting_clients: VecDeque<Peer>,
     sources: BTreeMap<NativeRoute, usize>,
     replay: HandshakeReplayCacheV1,
     turn: usize,
@@ -201,7 +202,7 @@ impl NativeEndpoint {
                 },
             )]),
             next_peer: 1,
-            waiting_client: None,
+            waiting_clients: VecDeque::new(),
             sources: BTreeMap::from([(route, 0)]),
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
@@ -253,7 +254,7 @@ impl NativeEndpoint {
             local_key: identity.verifying_key().to_bytes(),
             peers: BTreeMap::new(),
             next_peer: 0,
-            waiting_client: None,
+            waiting_clients: VecDeque::new(),
             sources: BTreeMap::new(),
             replay: HandshakeReplayCacheV1::new(256),
             turn: 0,
@@ -331,7 +332,7 @@ impl NativeEndpoint {
             receive_scratch: vec![0; 65536],
             local_key: identity.verifying_key().to_bytes(),
             next_peer: owned.len(),
-            waiting_client: None,
+            waiting_clients: VecDeque::new(),
             peers: owned,
             sources,
             replay: HandshakeReplayCacheV1::new(256),
@@ -472,7 +473,7 @@ impl NativeEndpoint {
             receive_scratch: vec![0; 65536],
             local_key,
             next_peer: peers.len(),
-            waiting_client: None,
+            waiting_clients: VecDeque::new(),
             peers,
             sources,
             replay: HandshakeReplayCacheV1::new(256),
@@ -508,15 +509,25 @@ impl NativeEndpoint {
             return self.prepare_reconnect(index, source, wire, wall_ms, now);
         }
         let full = self.peers.len() >= open.limit;
-        if self
-            .waiting_client
-            .as_ref()
-            .is_some_and(|p| p.reconnect.as_ref().is_none_or(|r| now >= r.deadline))
+        self.waiting_clients
+            .retain(|p| p.reconnect.as_ref().is_some_and(|r| now < r.deadline));
+        if let Some(peer) = self
+            .waiting_clients
+            .iter_mut()
+            .find(|p| p.id.as_ref() == id)
         {
-            self.waiting_client = None;
+            // Only the original source and authenticated transcript may retry;
+            // retain its position and immutable original deadline.
+            let pending = peer
+                .reconnect
+                .as_mut()
+                .context("waiting client lost handshake")?;
+            return pending
+                .handshake
+                .receive_route(source, wire, wall_ms, now, &mut self.replay);
         }
         ensure!(
-            self.waiting_client.is_none() && (!full || open.retire_clients),
+            self.waiting_clients.len() < open.limit && (!full || open.retire_clients),
             "native client admission occupied"
         );
         ensure!(
@@ -566,8 +577,8 @@ impl NativeEndpoint {
             reconnect,
             last_authenticated: now,
         };
-        if full {
-            self.waiting_client = Some(peer);
+        if full || !self.waiting_clients.is_empty() {
+            self.waiting_clients.push_back(peer);
         } else {
             self.insert_client(peer, source)?;
         }
@@ -584,29 +595,30 @@ impl NativeEndpoint {
         self.peers.insert(index, peer);
         Ok(())
     }
-    fn admit_waiting_client(&mut self, now: Instant) -> Result<()> {
-        if self
-            .waiting_client
-            .as_ref()
-            .is_some_and(|p| p.reconnect.as_ref().is_none_or(|r| now >= r.deadline))
+    fn admit_waiting_clients(&mut self, now: Instant) -> Result<()> {
+        self.waiting_clients
+            .retain(|p| p.reconnect.as_ref().is_some_and(|r| now < r.deadline));
+        while !self.waiting_clients.is_empty()
+            && self
+                .open
+                .as_ref()
+                .is_some_and(|open| self.peers.len() < open.limit)
         {
-            self.waiting_client = None;
-        }
-        if self
-            .open
-            .as_ref()
-            .is_some_and(|open| self.peers.len() < open.limit)
-        {
-            if let Some(peer) = self.waiting_client.take() {
-                let source = peer
-                    .reconnect
-                    .as_ref()
-                    .context("waiting client lost handshake")?
-                    .source;
-                self.insert_client(peer, source)?;
-            }
+            let peer = self.waiting_clients.pop_front().expect("waiting client");
+            let source = peer
+                .reconnect
+                .as_ref()
+                .context("waiting client lost handshake")?
+                .source;
+            self.insert_client(peer, source)?;
         }
         Ok(())
+    }
+    fn waiting_count(&self, now: Instant) -> usize {
+        self.waiting_clients
+            .iter()
+            .filter(|p| p.reconnect.as_ref().is_some_and(|r| now < r.deadline))
+            .count()
     }
     /// Read the original admission state without changing its deadline. The
     /// waiting slot is populated only after signature/domain/time/replay checks
@@ -619,23 +631,14 @@ impl NativeEndpoint {
         Some(NativeClientAdmissionSnapshotV1 {
             peer_count: self.peers.len(),
             capacity: open.limit,
-            authenticated_waiting: self
-                .waiting_client
-                .as_ref()
-                .and_then(|peer| peer.reconnect.as_ref())
-                .is_some_and(|pending| now < pending.deadline),
+            authenticated_waiting: self.waiting_count(now) > 0,
         })
     }
 
     pub(crate) fn needs_client_capacity(&self, now: Instant) -> bool {
+        // Room for every verified waiting client, retired in one owner turn.
         self.open.as_ref().is_some_and(|open| {
-            self.peers.len() > open.limit
-                || (self.peers.len() == open.limit
-                    && self
-                        .waiting_client
-                        .as_ref()
-                        .and_then(|p| p.reconnect.as_ref())
-                        .is_some_and(|r| now < r.deadline))
+            self.peers.len().saturating_add(self.waiting_count(now)) > open.limit
         })
     }
     /// Configure once, before any poll/send. Reconnects and sessions cannot reset
@@ -807,7 +810,7 @@ impl NativeEndpoint {
         self.traffic_started = true;
         let mut result = NativePoll::default();
         self.expire_reconnects(now);
-        self.admit_waiting_client(now)?;
+        self.admit_waiting_clients(now)?;
         self.renew_configured_handshakes(wall_ms, now)?;
         // Full UDP payload buffer ensures even oversized rejected datagrams
         // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).

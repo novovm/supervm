@@ -710,6 +710,9 @@ pub struct NativeMailboxServer {
     capacity: Option<ServerCapacity>,
 }
 impl NativeMailboxServer {
+    pub(crate) fn slot_capacity(&self) -> usize {
+        self.slots.lock().map_or(0, |slots| slots.len())
+    }
     pub fn invalidate(&mut self) {
         self.cancellation.cancel();
         if let Ok(mut slots) = self.slots.lock() {
@@ -912,6 +915,9 @@ pub struct MailboxWork {
     deadline: Instant,
 }
 impl MailboxWork {
+    pub(crate) fn deadline(&self) -> Instant {
+        self.deadline
+    }
     pub fn retained_bytes_estimate(&self) -> usize {
         self.retained_bytes
     }
