@@ -1,5 +1,51 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 v104 phone follow-up: installed hash-progress correction, cold stall still open
+
+SDK `7a8b22d8` was packaged through NOVOCHAT's official profile build in App
+`c571a70`, version104. Both original phones verified the installed APK SHA-256
+`b0765d8a3dc5a73d82f9921ffbc43f1be577ef151b6389ad0259b69da6b62f99`,
+original signer and five identity hashes each. No node binary or KINGCLUB service
+was changed. The full phone matrix and evidence are in
+[NOVOCHAT's P0 checkpoint](../../NOVOCHAT/docs/implementation/P0_CHECKPOINT.md).
+
+Same final delta probe,32-KiB verified Put/Fetch/Consume, original10s request and
+90s probe, sequential loads/no competing build. All post-install loads retained
+A PID27575 / B PID9313; installation itself created new processes, so pre-upgrade
+v103 peers are not represented as retained. A cold8x60 failed7/8,427/480; B cold
+passed8/8,480/480. A idle8x60 then passed480/480 without restart. Both prescribed
+old-connection16x30 cases passed480/480 (A17.145/B22.462 cycles/s; P95/P99 A1086/
+2161ms, B901/2685ms). Those later passes and their higher learned budgets do NOT
+replace the cold failure or establish a causal performance gain over v103.
+
+The final diagnostic probe now actually captured A connection7/round8 Put at its
+10.015s deadline: outbound1/33013B, inbound0, rejected13, data_sent262, with zero
+receive/send I/O errors or admitted response fragments. Rejections may be endpoint
+source/session/auth/replay/handshake/shape or object ACK/fragment errors; they are
+not mailbox business rejection. Normal stale-epoch/absent-job ACK does not add
+this count. Valid ACK acceptance is not counted by fragment fields, and262 means
+initial+repair sends, not distinct fragments or retry count. No relaxation of
+replay/authentication/ACK checking or larger timeout/retry is justified.
+
+A whole-node wire receive-drop/send-deferral increased638/1273 during cold load;
+work/store refusals and execution backoffs remained zero. This sample therefore
+also has wire-budget pressure absent in historical A0/16. The aggregate cannot
+attribute those drops to this Put, and successful B cases also had wire refusals.
+The hash-gap source defect is fixed/delivered, but intermittent transport failure
+is NOT fixed by implication. Next evidence: typed failure-only rejection categories
+and actual same-request progression, before another production change.
+
+New bidirectional text/device receipts, text while B served16 clients, online
+1.6-MB image/full preview and sender-offline independent image/full preview plus
+original DeviceReceipt all passed. Final original PIDs and identities remained;
+L3:2/L4:1, local deposit/send ready, thermal status0 each, networks restored.
+A35.516s unloaded whole-App CPU sample was22.07%/18.53% of one core (A/B); no
+matched old-version control or isolation of hashing, so idle/power acceptance
+remains limited. v104 remains a functional candidate, not sustained/24h acceptance.
+Capacity-compatible v102 and v103 rollback APKs remain verified. Clock integration,
+historical0/16 and59.49s cellular TLS tail remain open.
+
+
 ## 2026-10-23 preserved-process stall follow-up: one local defect reproduced and fixed
 
 The final delta probe `b320e27d...` was run against the SAME v103 phone processes
