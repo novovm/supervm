@@ -1,5 +1,18 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-23 NOVONET v106 pocket receive/recovery FAILED
+
+Same installed v106:600s real unplugged screen-off B, no receiver polling or
+forced Doze. New text/image remain Stored without device receipt; user reports
+no reminder. B process survives, but service is absent, L4 paused; retained
+first-failure task1 has notify/native-peer/first_failure code8. Ordinary foreground
+return remains blocked/E8. Exact authority callback cause is unresolved; this is
+not proof of OS suppression, tail-repair failure or a reason to relax authentication.
+One explicitly MANUAL restart restores original messages/preview/receipt and L4;
+identity/history remain. No binary/node/KINGCLUB changes. Pocket and sustained
+stability gates remain OPEN; earlier finite continuity/tail fix are not revoked.
+Details: [concurrency review](NOVONET_CONTINUOUS_CONCURRENCY_REVIEW.md), App P0.
+
 ## 2026-10-23 NOVONET v106 continuity follow-up: finite pass, stability OPEN
 
 No new runtime/APK/node deployment. Same installed v106 keeps original phone

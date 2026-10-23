@@ -1,5 +1,29 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 v106 unplugged pocket gate FAILED; authority/handoff investigation
+
+Keep the SAME phone App/SDK binaries. User unplugs screen-off/HOME B for a
+planned600s window; no receiver polling, forced idle, wireless ADB or battery
+simulation. One new text and one1.6MB image remain Stored without device receipt;
+user observes no reminder. This is not an accepted background/notification gate.
+
+Before any App action after reconnect, B PID17148 remains, MessagingService is
+absent and the existing contribution snapshot is paused with normal pressure.
+Existing bounded first-failure file records task1 notify RPC8 -> native peer8 ->
+first_failure8/stage4. An ordinary foreground return confirms blocked/E8 and zero
+paths, without automatic catch-up. This native-peer branch maps8 to SDK request
+Authority; its precise inner error is not retained. Do not infer Android Doze,
+revoke/signature failure, quota or tail-repair cause, nor broadly retry Authority.
+Investigate the exact original-owner authority callback and handoff next.
+
+Explicit MANUAL cleanup (one force-stop/normal open, B17148->30729) restores the
+original text/image, complete preview and device receipt; final identities/history,
+original switches and L4 readiness remain, tiny B8x1 custody check passes8/8.
+No runtime change, timeout/quota enlargement or Windows/cloud/KINGCLUB operation.
+Details/evidence limits are in the App P0 pocket section and ignored
+`NOVOCHAT/artifacts/v106-pocket/`. The fixed active-tail defect stays closed;
+unattended receipt/recovery and sustained stability remain OPEN with a real failure.
+
 ## 2026-10-23 v106 follow-up: finite continuity, no new runtime change
 
 Reuse the installed v106 App `33196fe` / SDK `c161003f`, existing observer and
