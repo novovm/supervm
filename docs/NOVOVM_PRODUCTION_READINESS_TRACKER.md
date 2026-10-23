@@ -1,5 +1,30 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-23 NOVONET v106: active tail repair correction delivered; stability OPEN
+
+SDK `c161003f` / App build `33196fe`, official profile-diagnostics v106 on both
+original phones. A causal real-AEAD/UDP43-fragment regression fails on the prior
+sender at tail39: progress ACK cancels an already active full-tail repair and
+restarts feedback waiting despite time remaining. The minimal sender fix keeps
+that repair progressing; initial-tail suppression, pending-write ownership,
+auth/replay/integrity, original deadlines, retries, pacing and quotas remain.
+154 related unit and15 real UDP/TLS integration tests pass; manual experiment
+ignored. No new observer, protocol or scheduler.
+
+Four finite phone cases (A/B first8x60; B old-peer16x30; B real validated network
+switch then8x60) complete1,920/1,92032KiB verified custody cycles with no new stall.
+Real chat under load, reverse text, both1.6MB image directions and sender-offline
+independent image/receipt pass. Identity hashes/history and v105/102/103/104 APKs
+remain. Installed new PIDs stay unchanged throughout tests; final L4/local deposit
+ready. Only phones and host probe are upgraded, not Windows/cloud/KINGCLUB.
+
+This does not explain all earlier nine-second transmission history, attribute
+unbound handshake rejections or close historical0/16,13 rejections, TLS59.49s,
+safe clock or continuous-stability gates. Rates are finite observations with
+different learned resource state, not a controlled throughput improvement claim.
+Full evidence/limits: [sender review](NOVONET_CONTINUOUS_CONCURRENCY_REVIEW.md)
+and NOVOCHAT `docs/implementation/P0_CHECKPOINT.md`. No global production release.
+
 ## 2026-10-22 NOVONET v102: reviewed continuation, dual-phone 16-client gate PASS
 
 Runtime SDK `8142e1ce` / App `f281cda`, profile v102 on both original phones.

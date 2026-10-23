@@ -1,6 +1,6 @@
 # Continuous service concurrency: v102 follow-up review
 
-## 2026-10-23 active tail repair: causal sender regression (phone gate pending)
+## 2026-10-23 v106 active tail repair: causal fix and bounded phone regression
 
 Reuse `novorudp/object_sender.rs`, the existing authenticated UDP test link,
 `Reassembler` and `NativeWireBudget`; no new protocol, observer or scheduler.
@@ -24,7 +24,26 @@ Receiver test DONE follows full hash verification. Final-source release regressi
 passes154 related tests, including the formerly red progressive-ACK case and
 blocked old-generation tail completion. Logs are retained locally as
 `NOVOCHAT/artifacts/v106-tail-before.log` and `v106-tail-after.log`.
-Phone gate is pending; this is component evidence, not a phone fix claim.
+SDK fix `c161003f` and App build `33196fe` are now installed on the two original
+phones through the official profile-diagnostics flow. Rebuilt probe uses the
+same SDK fix.15 real UDP/TLS integration tests also pass (manual experiment is
+ignored). Original signer, five identity hashes per phone, history and retained
+v105/102/103/104 APKs are preserved. New installation PIDs18911/26192 then remain
+unchanged throughout this bounded campaign; no Windows/cloud/KINGCLUB deployment.
+
+Four finite native UDP loads pass1,920/1,92032KiB Put/Fetch/Consume cycles:
+A first8x60(11.835 cycles/s), B first8x60(15.888), B same-process old peers16x30
+(25.432, native records9->25), B real validated Wi-Fi->cellular->Wi-Fi then8x60
+(18.849, records0->9). They use original deadlines and frozen first-failure capture;
+no failure occurs. These are neither a controlled throughput comparison nor
+cellular inbound-P2P acceptance. No further load-until-green repetition.
+Real text with B's16-client load, reverse text, both1.6MB image directions,
+sender-offline independent fetch/preview and original device receipt all pass.
+Phones end running with original network choices, L4/local deposit ready.
+Full limits, P95/P99, APK/probe hashes and visual evidence are in the
+[App checkpoint](../../NOVOCHAT/docs/implementation/P0_CHECKPOINT.md) and ignored
+`NOVOCHAT/artifacts/v106-*` records. This supports delivery of the specific
+component-proven repair correction, not closure of every historical phone stall.
 
 This is NOT proof of why the paired phone request took nine seconds to reach38,
 nor attribution of its eight handshake rejections, v104's13 or historical0/16.
