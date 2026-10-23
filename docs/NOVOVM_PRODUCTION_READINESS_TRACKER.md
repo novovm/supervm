@@ -1,5 +1,19 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-23 NOVONET v106 continuity follow-up: finite pass, stability OPEN
+
+No new runtime/APK/node deployment. Same installed v106 keeps original phone
+processes and identity hashes through 1,323.984s of mixed background/idle/network
+use. Background receipt is proven before foregrounding; validated cellular text/
+image, short outage original-image catch-up and each phone's tiny 8x3 L4 wake pass.
+Afterward, separately force-stop B and open normally exactly once: original
+offline image, full preview/device receipt and new reverse text pass. Original
+identity/history/network choices and final L4 readiness remain; no KINGCLUB change.
+This is not 24h/Doze, OS-reclaim, automatic revival or a throughput/latency comparison.
+Transient reconnect/L4-not-ready is retained. Historical stalls/TLS tail and
+sustained-stability gates remain OPEN; the specific active-tail fix stays closed.
+Details: [continuity review](NOVONET_CONTINUOUS_CONCURRENCY_REVIEW.md) and App P0.
+
 ## 2026-10-23 NOVONET v106: active tail repair correction delivered; stability OPEN
 
 SDK `c161003f` / App build `33196fe`, official profile-diagnostics v106 on both

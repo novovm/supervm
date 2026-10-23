@@ -1,5 +1,36 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 v106 follow-up: finite continuity, no new runtime change
+
+Reuse the installed v106 App `33196fe` / SDK `c161003f`, existing observer and
+frozen first-failure tools. No new sender change, diagnostic fields, APK/node
+deployment, quota or deadline adjustment. A preplanned 20-minute mixed window
+ends at 1,323.984s with original A18911/B26192 and five identity hashes each intact.
+B receives new text while HOME for 379.937s: sender Delivered is verified BEFORE
+foreground return, then receiver Saved. Tiny idle wake checks on A and B each
+complete 8/8 clients, 24/24 custody cycles with zero errors, not sustained TPS.
+
+Validated cellular text/image, a 20.922s data-switch outage, original-image catch-up,
+full previews and device receipts pass without process restart or resend. Both
+original processes survive quiet/background intervals. Seventeen read-only
+samples per phone report no observation issues, but this is not leak/24h proof.
+Network task replacement and transient L4-not-ready remain accurately recorded.
+
+AFTER the same-process window, explicitly force-stop B and prove absent PID;
+sender obtains an offline image's Stored. Exactly one ordinary App open restores
+original running choice, fetches/previews that image and returns its device
+receipt. B now has new PID 17148, A remains 18911. New reverse text also passes;
+final identities/history, original network switches and L4/local deposit remain.
+This is ordinary-open cold recovery, not autonomous revival, OS reclaim or Doze.
+No Windows/cloud/KINGCLUB operation; no TLS-only/Iroh-isolation or physical-path
+acceptance. Full finite scope and ignored evidence pointers are in the
+[App checkpoint](../../NOVOCHAT/docs/implementation/P0_CHECKPOINT.md).
+
+The causal active-tail-repair correction remains delivered. Historical 0/16,
+unbound rejects, earlier nine-second progress, TLS 59.49s, safe clock and sustained
+stability are NOT closed by these successes. Keep existing first-failure capture
+for natural failures; do not repeat successful stress batches or expand observers.
+
 ## 2026-10-23 v106 active tail repair: causal fix and bounded phone regression
 
 Reuse `novorudp/object_sender.rs`, the existing authenticated UDP test link,
