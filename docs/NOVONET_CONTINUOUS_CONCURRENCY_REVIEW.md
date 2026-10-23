@@ -1,5 +1,36 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 active tail repair: causal sender regression (phone gate pending)
+
+Reuse `novorudp/object_sender.rs`, the existing authenticated UDP test link,
+`Reassembler` and `NativeWireBudget`; no new protocol, observer or scheduler.
+The c804ef3c production sender is unchanged through the preceding9b446190.
+New43-fragment/33,013B tests retain default1s ACK wait, pacing, copies/retries
+and the original10s operation deadline, using real elapsed time and AEAD UDP.
+
+Before the patch,13/14 sender tests pass: ordinary lost-tail recovery, blocked
+write, budget resumption and internal-gap suppression work. The new progressive
+ACK case fails at39: timeout already started the full38..42 repair; receiving38
+changes the missing set to39..42; `on_ack` trims that remainder toNone and waits
+another feedback interval despite ample time. This proves an active-repair
+cancellation defect, not the invalid claim that near-deadline loss must recover.
+
+The minimal change preserves a full tail repair already in progress when a
+verified new ACK updates its missing set. Initial in-flight tails and trimmed
+internal-gap plans still use the original suppression. Pending writes retain
+their exact frame/generation; a blocked old38 completion cannot advance new39.
+No acceptance/replay/integrity rule, timeout, retry count, pacing or quota changes.
+Receiver test DONE follows full hash verification. Final-source release regression
+passes154 related tests, including the formerly red progressive-ACK case and
+blocked old-generation tail completion. Logs are retained locally as
+`NOVOCHAT/artifacts/v106-tail-before.log` and `v106-tail-after.log`.
+Phone gate is pending; this is component evidence, not a phone fix claim.
+
+This is NOT proof of why the paired phone request took nine seconds to reach38,
+nor attribution of its eight handshake rejections, v104's13 or historical0/16.
+Those evidence gaps and continuous-stability acceptance remain OPEN. Existing
+v105 APKs/identity/history and102/103/104 rollback artifacts are preserved.
+
 ## 2026-10-23 bounded v105 failure paired: partial request tail, no production fix
 
 SDK/runtime remains `c804ef3c`; App installed build `530d2de`, v105. Host-only

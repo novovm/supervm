@@ -204,6 +204,21 @@ impl NativeObjectSender {
                     .as_ref()
                     .is_some_and(|old| old.window == plan.window);
                 if !same {
+                    // Once ack_wait has armed a full tail repair, genuine ACK
+                    // progress must not turn its remaining tail back into an
+                    // unconfirmed/in-flight run. A trimmed internal-gap plan
+                    // also has a final window, so check the actual last range.
+                    let repairing_tail = self.initial == self.body.frame_count()
+                        && self.repair.as_ref().is_some_and(|repair| {
+                            repair
+                                .plan
+                                .window
+                                .missing_ranges
+                                .last()
+                                .is_some_and(|range| {
+                                    range.end_inclusive + 1 == self.body.frame_count() as u64
+                                })
+                        });
                     self.repair_generation = self
                         .repair_generation
                         .checked_add(1)
@@ -214,15 +229,17 @@ impl NativeObjectSender {
                     // flight or not yet sent. Repair only gaps behind the
                     // receiver's newest fragment now; the ack_wait retry
                     // repairs a genuinely lost tail from the full last_plan.
-                    self.repair =
-                        trim_unconfirmed_tail(plan, self.body.frame_count() as u64).map(|plan| {
-                            RepairCursor {
-                                index: plan.window.missing_ranges[0].start,
-                                plan,
-                                range: 0,
-                                copy: 0,
-                            }
-                        });
+                    let next_plan = if repairing_tail {
+                        Some(plan.clone())
+                    } else {
+                        trim_unconfirmed_tail(plan, self.body.frame_count() as u64)
+                    };
+                    self.repair = next_plan.map(|plan| RepairCursor {
+                        index: plan.window.missing_ranges[0].start,
+                        plan,
+                        range: 0,
+                        copy: 0,
+                    });
                 }
             }
         }

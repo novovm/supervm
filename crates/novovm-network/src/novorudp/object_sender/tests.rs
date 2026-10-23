@@ -2,6 +2,8 @@ use super::*;
 use crate::product_overlay::*;
 use ed25519_dalek::SigningKey;
 
+mod tail;
+
 fn link() -> Result<(UdpSocket, UdpSocket, NativeUdpSession, NativeUdpSession)> {
     let left = UdpSocket::bind("127.0.0.1:0")?;
     let right = UdpSocket::bind("127.0.0.1:0")?;
