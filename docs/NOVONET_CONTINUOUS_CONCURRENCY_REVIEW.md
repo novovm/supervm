@@ -1,5 +1,45 @@
 # Continuous service concurrency: v102 follow-up review
 
+## 2026-10-23 bounded v105 failure paired: partial request tail, no production fix
+
+SDK/runtime remains `c804ef3c`; App installed build `530d2de`, v105. Host-only
+first-failure tooling (`NOVOCHAT95d723e`) leaves native diagnostics and protocol
+frozen. Nine host tests cover independent file output, zero-rejection trigger,
+evidence failure and bounded profiler capture. No APK/node/KINGCLUB deployment.
+
+One preserved-process idle case A16x30 observed no stall. One B real validated
+Wi-Fi -> cellular -> Wi-Fi, no App restart, then8x60 FAILED7/8,429/480: client5,
+round10 Put at original10.008s. No further load was run. Before budget is64MiB/min;
+request refill40/s, native peer pool0 on restored Wi-Fi. Phone resources remain
+normal; no manual capacity/rate/timeout change. This is not cellular inbound P2P.
+
+A host file watcher captures the FIRST request failure regardless of rejection
+count; phone snapshot completes1.407s after detection and15.625s before batch exit.
+Probe stdout/cancellation proceeds independently, original100s guard is not hit.
+Same authenticated full-object/session tag matches both sides. Body33,013B with
+768B UDP chunks requires43; phone admitted/hash cursor and client ACK high-water
+are38. It is a partial request missing final five fragments, BEFORE complete hash,
+Put/Stored receipt or response. Existing30s reassembly TTL has not elapsed within
+this10s request. Batch-end still has the same partial record. No support for
+blaming the corrected hash-idle turn or SQLite in THIS sample.
+
+The8 client-window rejections are handshake-only, still unattributed. First
+reject6.133470s precedes actual ACK progress9.327578s; last reject9.683212s follows
+it, all in one local observer. Rejection is not automatically the cause. Phone
+global wire receive drops+249 are a separate scope; cannot assign them to the
+Put. Work/store refusal and execution-backoff counters stay0. Historical13 and
+0/16 remain unresolved. Phone record is present; omission0 and historical
+retention counters are recorded, never used to infer absent work.
+
+Remaining candidate: existing final-tail suppression/retry versus late feedback,
+original deadline and actual transmission/loss. Fewer than1s remains after last
+ACK progress, but intentional unconfirmed-tail ACK wait is not itself proven
+wrong. No transport patch or causal red/green fixture yet; preserve auth/replay,
+ACK checks and original deadlines. Stop load repetition, investigate this state.
+Original phone PIDs798/21075/identity hashes and normal L3/L4 state remain, network
+choices restored. Full [App record](../../NOVOCHAT/docs/implementation/P0_CHECKPOINT.md)
+and ignored `v105-targeted-*` evidence retain the failed case. Stability OPEN.
+
 ## 2026-10-23 v105 phone diagnostic candidate installed; historical cause still OPEN
 
 SDK `c804ef3c` and NOVOCHAT build `530d2de` were installed through the official
