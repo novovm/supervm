@@ -788,11 +788,14 @@ async fn serve_link(
                 && held.iter().filter(|item| item.peer == peer).count() < queue_limit
                 && now < work.deadline()
             {
+                let (Some(permit), Some(body)) = (permit, body) else {
+                    unreachable!("queued work requires both checked reservations");
+                };
                 held.push_back(HeldWork {
                     peer,
                     work,
-                    permit: permit.unwrap(),
-                    body: body.unwrap(),
+                    permit,
+                    body,
                 });
             } else if watch_saturated
                 || permit.is_none()

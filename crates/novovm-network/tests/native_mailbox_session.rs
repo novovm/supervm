@@ -805,10 +805,9 @@ async fn adaptive_capacity_negotiates_eight_simultaneous_requests_on_one_authent
     }
     let mut ids = Vec::new();
     for slot in 0..8 {
-        ids.push(
-            f.send(
-                slot,
-                vec![Request::Register {
+        ids.push(f.send(
+            slot,
+            vec![Request::Register {
                     mailbox: [slot as u8 + 1; 32],
                     write: [51; 32],
                     read: [52; 32],
@@ -817,8 +816,7 @@ async fn adaptive_capacity_negotiates_eight_simultaneous_requests_on_one_authent
                         .as_secs() as i64
                         + 600,
                 }],
-            )?,
-        );
+        )?);
     }
     // All eight sends are admitted before consuming any response.
     assert!(f.received.is_empty());

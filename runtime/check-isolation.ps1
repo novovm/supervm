@@ -38,7 +38,10 @@ function Test-WorkspaceBoundary {
     })
     $metadataJson = cargo metadata --manifest-path $Manifest --locked --format-version 1
     if ($LASTEXITCODE -ne 0) { throw "$Label Cargo metadata failed" }
-    $metadata = $metadataJson | ConvertFrom-Json
+    # Cargo feature names are case-sensitive (for example USB and usb in a
+    # target-specific dependency). Preserve both rather than rejecting valid
+    # metadata or dropping transitive dependencies from the boundary check.
+    $metadata = $metadataJson | ConvertFrom-Json -AsHashtable
     $members = @($metadata.workspace_members)
     $seen = @()
     foreach ($package in $metadata.packages) {

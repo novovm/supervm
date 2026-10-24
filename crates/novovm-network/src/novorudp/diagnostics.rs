@@ -244,6 +244,7 @@ impl NativeTransferDiagnosticsV1 {
             }
         }
     }
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn response(&self, request: [u8; 32], response: [u8; 32], now: Instant) {
         self.progress(request, NativeProgressStageV1::ResponseQueued, 0, now);
         if let Ok(mut s) = self.state.lock() {

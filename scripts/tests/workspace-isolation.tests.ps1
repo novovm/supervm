@@ -107,6 +107,19 @@ Assert-True (($script:cargoCalls -join ',') -eq 'Cargo.toml,runtime/Cargo.toml')
 Assert-True ((Get-Location).Path -eq $location) 'Success changed caller location'
 Write-Output 'PASS: exact product roster including storage budget and preserved component roster'
 
+# Real Cargo metadata can contain case-distinct feature names even when that
+# dependency targets another platform. The old PSCustomObject parser rejects
+# this valid JSON before either workspace boundary is evaluated.
+$caseFeatures = [Collections.Generic.Dictionary[string, object]]::new([StringComparer]::Ordinal)
+$caseFeatures.Add('USB', @('feature-a'))
+$caseFeatures.Add('usb', @('feature-b'))
+$caseProduct = New-Metadata $productPaths
+$caseProduct.packages[0] | Add-Member -NotePropertyName features -NotePropertyValue $caseFeatures
+$caseOutput = @(Invoke-CheckerFixture $caseProduct $components)
+Assert-True ($caseOutput -contains 'PASS: Product has 22 approved members and no legacy dependency.') 'Valid case-distinct Cargo features were rejected'
+Assert-True ($caseOutput -contains 'PASS: Preserved components has 3 approved members and no legacy dependency.') 'Feature parsing skipped the component boundary'
+Write-Output 'PASS: valid metadata preserves case-distinct USB/usb Cargo features'
+
 # Transitive path dependencies are not workspace members and must still fail.
 foreach ($path in @('crates/unapproved-fixture', 'vendor/unapproved-fixture')) {
     $product = New-Metadata $productPaths
@@ -151,5 +164,5 @@ $components = New-Metadata $componentPaths
 Assert-Rejected $product $components 'Product Cargo metadata failed' 'Cargo.toml'
 Assert-True (($script:cargoCalls -join ',') -eq 'Cargo.toml') 'Failed product metadata must stop the checker'
 Assert-Rejected $product $components 'Preserved components Cargo metadata failed' 'runtime/Cargo.toml'
-Write-Output 'PASS: workspace isolation fixtures (1 accepted, 11 refused); no Cargo build invoked'
+Write-Output 'PASS: workspace isolation fixtures (2 accepted, 11 refused); no Cargo build invoked'
 exit 0
