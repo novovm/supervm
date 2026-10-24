@@ -5,17 +5,27 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      profile:
+        description: "Full candidate validation or security scan only"
+        type: choice
+        options: [full, security]
+        default: full
+  schedule:
+    - cron: '17 3 * * *'
+    - cron: '47 3 * * 0'
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   lan_script_launch:
     name: LAN diagnostic launcher checks
+    needs: detect
+    if: needs.detect.outputs.full == 'true'
+    concurrency:
+      group: ci-lan-${{ matrix.os }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: true
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -167,9 +177,12 @@ jobs:
           if-no-files-found: error
 
   detect:
-    name: Detect project types
+    name: Select conservative CI scope
     runs-on: ubuntu-latest
     outputs:
+      scope: ${{ steps.detect.outputs.scope }}
+      full: ${{ steps.detect.outputs.full }}
+      security: ${{ steps.detect.outputs.security }}
       has_rust: ${{ steps.detect.outputs.has_rust }}
       rust_manifest: ${{ steps.detect.outputs.rust_manifest }}
       has_python: ${{ steps.detect.outputs.has_python }}
@@ -178,49 +191,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Detect files
+      - name: Test scope routing (no product build)
+        run: python3 -m unittest discover -s scripts/tests -p test_ci_scope.py -v
+
+      - name: Classify complete change range (unknown means full)
         id: detect
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          manifest=""
-          if [ -f Cargo.toml ]; then
-            manifest="Cargo.toml"
-          else
-            manifest="$(git ls-files -- '**/Cargo.toml' ':!:legacy/**' ':!:runtime/**' | head -n 1 || true)"
-          fi
-          if [ -n "${manifest}" ]; then
-            echo "has_rust=true" >> "$GITHUB_OUTPUT"
-            echo "rust_manifest=${manifest}" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_rust=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if git ls-files -- '*.py' ':!:legacy/**' | grep -q .; then
-            echo "has_python=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_python=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          node_pkg=""
-          if [ -f package.json ]; then
-            node_pkg="package.json"
-          else
-            node_pkg="$(git ls-files -- '**/package.json' ':!:legacy/**' ':!:runtime/**' | head -n 1 || true)"
-          fi
-          if [ -n "${node_pkg}" ]; then
-            echo "has_node=true" >> "$GITHUB_OUTPUT"
-            echo "node_package_json=${node_pkg}" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_node=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: python3 scripts/ci_scope.py
 
   rust:
     name: Rust checks
     needs: detect
     if: needs.detect.outputs.has_rust == 'true'
+    concurrency:
+      group: ci-rust-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -660,7 +647,10 @@ jobs:
   rust_security:
     name: Rust security checks
     needs: detect
-    if: needs.detect.outputs.has_rust == 'true'
+    if: needs.detect.outputs.security == 'true'
+    concurrency:
+      group: ci-security-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -745,6 +735,11 @@ jobs:
 
   runtime_modules:
     name: Preserved runtime components / ${{ matrix.os }} (not chain acceptance)
+    needs: detect
+    if: needs.detect.outputs.full == 'true'
+    concurrency:
+      group: ci-runtime-${{ matrix.os }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: true
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -784,3 +779,15 @@ jobs:
           $env:NOVOVM_AOEM_TEST_LIBRARY = (Resolve-Path $env:AOEM_TEST_BINARY).Path
           cargo test --manifest-path runtime/Cargo.toml --workspace --release --locked -- --include-ignored --test-threads=1
           exit $LASTEXITCODE
+
+  result:
+    name: CI scope result
+    if: always()
+    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require every selected check to succeed
+        env:
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci_scope.py --check-results
