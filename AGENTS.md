@@ -1,5 +1,32 @@
 # Agent Highest Law
 
+## 2026-10-24 first-release NOV economy and signature prerequisites
+
+This machine owns NOV monetary and ecosystem closure; mobile/platform work stays
+with the NOVOCHAT machine. The approved native supply is 100,000,000 NOV, fully
+issued at genesis with 9 decimals: 100,000,000,000,000,000 base units. No subsequent
+native NOV mint or burn is permitted. Unlocks change spend conditions on already
+issued assets; rewards, trials and staged airdrops spend funded approved budgets.
+Do not migrate old mint-on-unlock or fee-burning semantics into the first release.
+Founder/foundation proceeds, treasury funds and service payables are distinct;
+unapproved splits (including 50%) are not defaults. Use calendar-month subscription
+rules, not a silently substituted 30-day term. Sponsored trial months have no
+founder/foundation subscription cut. See the current economic contract in
+`docs/NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md`.
+
+The formal first release requires ML-DSA and the existing UCA's actual spending
+authority across transaction, consensus and applicable identity/economic/service
+signatures. Ed25519 remains a development reference, never a mainnet downgrade.
+The ML-DSA parameter set and any mandatory hybrid rule remain pending the other
+conversation's GitHub update; do not infer approval from an existing Mldsa87 tag.
+Reuse AOEM crypto and existing UCA rules; do not create another account authority
+or conceal NOV policy inside AOEM. Preserve identity and replay state across key
+rotation/recovery. Do not release the old economic/signature contract first and
+defer these requirements to a post-launch upgrade. See
+`docs/NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md` for the source map and open gates.
+Capacity/cache and historical-query fixes may proceed in parallel, using exact
+parent state and bounded caches rather than a chain-wide user-count ceiling.
+
 ## 2026-10-21 first release uses one current node protocol
 
 The user confirmed no node version has been formally released. Do not create or

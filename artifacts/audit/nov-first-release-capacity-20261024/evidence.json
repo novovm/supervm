@@ -1,0 +1,73 @@
+{
+  "schema": "novovm/nonce-working-set-checkpoint/v1",
+  "date": "2026-10-24",
+  "baseline": "9280387466de2111251edc3d52397fe5164a2e22",
+  "capacity_source_commit": "9f204269",
+  "build_gate_commit": "78117ba9",
+  "environment": "Windows; one host; four independent original novovm-node processes; debug functional tests",
+  "entry": "original native_execution_tick -> NovoRUDP/APFL -> RpcLifecycle -> existing pipeline/exec/bindings/AOEM -> original journal/publication",
+  "execution_backend": "cpu_callbacks",
+  "artifacts": {
+    "node_sha256": "a7f9c0e65b6d773f8978021267aba76c01970faf2ead7eccba7f538171dbf443",
+    "test_binary_sha256": "a33a3cde1f1d6910611b8ba2712ac54783a415942009f43ed808277ece8a100d",
+    "aoem_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+    "aoem_path": "aoem/windows/core/bin/aoem_ffi.dll"
+  },
+  "checks": {
+    "protocol_lib": { "passed": 45, "failed": 0, "ignored": 0 },
+    "native_pipeline_default": { "passed": 373, "failed": 0, "ignored": 57 },
+    "nonce_component_regressions_included": 9,
+    "native_only_explicit_process_tests": { "passed": 5, "failed": 0, "ignored": 0, "seconds": 404.89 },
+    "workspace_boundary_fixtures": { "accepted": 2, "refused": 11 },
+    "real_workspace_boundaries": { "product": 22, "preserved_components": 3 },
+    "node_lib_tests_strict_clippy": true,
+    "network_all_features_lib_strict_clippy": true,
+    "root_and_component_fmt": true
+  },
+  "process_cases": [
+    "native_only_a_a_b_real_honest_signers_recover_and_restart",
+    "native_only_genesis_transactions_queries_and_cold_recovery",
+    "native_only_minority_and_pending_signature_conflict_recover",
+    "native_only_recovery_late_highest_validator_original_database_and_minority",
+    "native_only_recovery_late_lowest_validator_original_database_and_minority"
+  ],
+  "recovery_reports": [
+    {
+      "local_report": "target/native-product-rpc/native-recovery-highest-6816-1792815933553903900/recovery-report.json",
+      "sha256": "d9bb109ffd219aaac3af4007ce2c8210e29378d0f2bd7d8c60e4b78a5e7365b7",
+      "completed": true,
+      "late_start_after_ms": 125495,
+      "elapsed_ms": 192637,
+      "healthy_height_before_return": 40,
+      "interrupted_durable_height": 1,
+      "target_archive_absent_at_crash": true,
+      "final_heights": [46, 46, 46, 46],
+      "same_key_config_and_old_signing_outbox_preserved": true
+    },
+    {
+      "local_report": "target/native-product-rpc/native-recovery-lowest-6816-1792816126282095100/recovery-report.json",
+      "sha256": "863c045f2945bbcc3b90f0a1bfed0f8f7187ef28eec471e8092075af771fd65e",
+      "completed": true,
+      "late_start_after_ms": 125854,
+      "elapsed_ms": 193184,
+      "healthy_height_before_return": 40,
+      "interrupted_durable_height": 1,
+      "target_archive_absent_at_crash": true,
+      "final_heights": [46, 46, 46, 46],
+      "same_key_config_and_old_signing_outbox_preserved": true
+    }
+  ],
+  "limits": {
+    "reports_retained_locally_not_embedded": true,
+    "actual_65537_user_process_test": false,
+    "same_condition_tps_remeasured": false,
+    "multi_host": false,
+    "full_fee_state_independent_audit": false,
+    "native_historical_receipt_adapter_completed": false,
+    "formal_nov_genesis_or_supply_runtime_completed": false,
+    "mldsa_suite_approved_or_mainchain_wired": false,
+    "business_proof_acceptance": false,
+    "production_release": false,
+    "remote_ci_completed": false
+  }
+}

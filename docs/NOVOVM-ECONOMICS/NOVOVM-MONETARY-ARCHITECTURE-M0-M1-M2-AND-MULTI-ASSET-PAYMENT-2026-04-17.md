@@ -1,6 +1,14 @@
 # NOVOVM Monetary Architecture Resolution (M0/M1/M2 and Multi-Asset Payment)
 _2026-04-17_
 
+**2026-10-24 authority update:** native NOV first-release issuance, supply,
+purpose locks/releases and commercial boundaries are now governed by the
+[current first-release contract](NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md).
+Native NOV is fully issued at genesis (100,000,000 NOV), with no subsequent mint
+or burn. The M0/M1/M2 separation below remains; issuance of a distinct M2 credit
+asset is not issuance of native NOV. Historical implementation status below is
+dated evidence, not proof of current native-node integration or release readiness.
+
 ## 1. Purpose and scope
 
 This document freezes the following boundaries to prevent implementation drift:

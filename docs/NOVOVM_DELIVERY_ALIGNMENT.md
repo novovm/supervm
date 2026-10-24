@@ -1,5 +1,20 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-24 NOV首发经济/签名约束与容量修复（本片认领已释放，远端另验）：** 输入main `92803874`，
+已核对本机/远端一致且原树干净。主控拥有AGENTS/路线/签名契约/台账、最终集成及唯一
+构建槽；经济文档分工仅拥有`docs/NOVOVM-ECONOMICS/`；容量分工仅拥有原
+`native_pipeline/service/rpc.rs`及其子模块/测试，复用原pipeline的精确root读票。
+只读密码映射分工核对既有AOEM/ML-DSA/UCA能力，无兄弟仓写入，无第二执行/账本owner。
+用户确认1亿NOV全额创世、9位小数、以后不增发不销毁；未定比例/分配表不默认。
+首发ML-DSA+UCA为硬前置，参数/混合规则等另一会话GitHub更新，不先发Ed25519正式链。
+本轮先消除累计签名者投影上限：缓存未知/缺失/读取未就绪分开，旧nonce不因淘汰归零。
+不改现行开发链经济结果、密码格式或共识发布，不接管手机开发/部署。现有共享构建
+门禁只作有反例的metadata解析与等价格式/lint修正，未删特性调用或放宽名单。
+容量源码`9f204269`：组件373通过/57显式忽略；同一当前node真实原生进程5项通过，
+两种身份方向均验证125秒以上晚启动、40高度离线推进、追赶中强杀及原库恢复到46高度。
+具体制品、测试和未完成项见最新台账。9位精度已确认；正式经济运行、ML-DSA/UCA
+花费接线、长期原生历史查询与新TPS未完成，不以本片签收正式发行或生产发布。
+
 **2026-10-21 CI 39518429389 RPC startup repair claim (released; remote verification pending):** input main
 `5c4aac94`, shared main and clean tree verified. Reuse the historical process
 test's existing startup event after lifecycle recovery; its bound-port event

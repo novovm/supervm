@@ -1,6 +1,12 @@
 # NOVOVM Dual-Track Settlement and Market Pricing System (P2-A Freeze)
 _2026-04-17_
 
+**2026-10-24 authority update:** the [current first-release economic contract](NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)
+overrides conflicting native NOV issuance or fee-burning assumptions. Pool
+isolation and rule-price/market-price separation remain applicable; neither
+clearing nor fees may mint or burn native NOV. The phase-acceptance statements
+below record the April implementation, not current native-node release signoff.
+
 ## 1. Purpose
 
 This document converges boundaries across monetary, reserve, clearing, and market-pricing systems as the `P2-A` implementation freeze.
