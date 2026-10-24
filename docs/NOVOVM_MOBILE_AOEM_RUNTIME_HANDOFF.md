@@ -2,7 +2,27 @@
 
 日期2026-10-24；SUPERVM/经济侧唯一维护共享接口，Mac可作为同源码构建执行端。
 用户确认有Mac与Xcode Cloud；尚未取得该执行端的构建记录或制品。
-本文件是可执行的构建起点及资格边界，**不是已交付运行库或手机通过**。
+本文件记录构建起点、后续候选实机结果及资格边界。**Android 候选已在双手机隔离签验通过；正式 SDK 发布、App 持久持钥和可信资产执行尚未交付。** iPhone 制品仍未交付。下方原始缺口描述保留为构建前记录，以最新结果为准。
+
+## 最新结果：Android 候选双机隔离签验通过
+
+NOVOCHAT 构建执行端按本页指令，在干净 AOEM `6d590969`、NDK
+28.2.13676358/API24、`aarch64-linux-android` 下完成 release/mldsa 构建；
+无默认 features，未修改共享算法/ABI。候选 `libaoem_ffi.so` 的 SHA-256 为
+`5b08e48d4ed66893bdc7b65ec4c65e60d6fd67a58c6efa178989f857d798ac9a`。
+ELF 为 AArch64 DYN，动态依赖仅 libdl/libm/libc，原 keygen/sign/verify/free 导出存在。
+制品仍是本机隔离候选，未写入正式 SDK manifest 或提交二进制。
+
+PKL110/Android15 与 PCLM50/Android12 各用原 App 消费探针和临时密钥完成：
+4个裸算法样本/16项反例，共享规范花费对象签验/编码及8项拒绝检查
+（含未知/零值/旧授权代次），另有错核心哈希、缺库、错误参数3项入口拒绝。
+asset_authorized=false、transaction_submitted=false。临时目录执行后定向清理；
+不安装 APK、不读写 App 身份历史，v108 包哈希和原进程前后均保持。
+
+正式证据由 [App 手机签验记录](../../NOVOCHAT/docs/implementation/UCA_PQ_ANDROID_DEVICE_V1.md)
+与其原始 JSON 提供；不能从 adb shell 下的临时持钥扩展为 App Keystore、硬件
+持钥或持久恢复通过。候选的正式平台装载/分发、完整内存清理资格及应用持钥仍须
+接续验收；本轮没有原子额度/nonce/余额/费用提交、主链到账或收费结果。
 
 ## Android 构建执行端接续（2026-10-24）
 
@@ -14,7 +34,7 @@ NOVOCHAT 机器已具备本页指定 NDK/API、Rust target 和 GLSLC，按下方
 最初本机 AOEM 停在 `1061a5ee`，构建因缺少
 `word256_row_arithmetic_v0.spv` 失败；核对已有修复记录后，已将干净源码快进至
 本页原指定的 `6d590969` 重建，未自行修改 GPU/密码源码或跳过着色器构建。
-该修复与首份失败日志保留。此处是执行认领，尚非手机验收结果；结果由
+该修复与首份失败日志保留。此处原为执行认领，手机结果现见本页上方最新节及
 [App 接入记录](../../NOVOCHAT/docs/implementation/UCA_ANDROID_PQ_INTEGRATION_V1.md)
 按源码、实际制品和手机证据单独回填。仍不启用真实收费。
 
@@ -28,7 +48,7 @@ NOVOCHAT 机器已具备本页指定 NDK/API、Rust target 和 GLSLC，按下方
   引入现有SPIR-V编译依赖，不能假称完全不需要shader构建工具。
 - header使用 `crates/ffi/aoem-ffi/include/aoem.h`，保留实际ABI与缓冲区配对释放。
 - 当前SUPERVM manifest只有Windows/Linux x86_64；无合格Android/iOS条目。
-  本机只有Windows Rust target，无NDK/Apple SDK；D盘本次核查剩余约4.5GiB，
+  首次交接核查的上游主机只有Windows Rust target，无NDK/Apple SDK；当时D盘剩余约4.5GiB，
   未自动下载大工具链或清理证据。Mac/Xcode Cloud可承担Apple平台构建。
 - 既有桌面默认库查找将移动端当作Linux；Android先用明确库路径，后续须补真实
   平台manifest/loader。iPhone静态链接需要同一bindings的显式适配，`AoemDyn::load`
@@ -83,7 +103,7 @@ cargo build --manifest-path <AOEM>/Cargo.toml --locked --release -p aoem-ffi --n
 
 产物应为该target/release/libaoem_ffi.so。核ELF架构、依赖、实际导出、ABI、核心哈希及
 是否仍加载插件；有插件则逐一列身份。不能只通过core哈希就说所有代码可信。
-此构建调用已有AOEM源码；本轮未产生Android库，不以另一机消费者ELF代替。
+此构建调用已有AOEM源码。原交接时未产生Android库；后续实际候选及双机结果见上方最新节，不能以消费者ELF代替运行库。
 
 ## 同一接口与资格
 
