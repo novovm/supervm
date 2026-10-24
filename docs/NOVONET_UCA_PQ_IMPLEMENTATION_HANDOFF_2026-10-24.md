@@ -50,3 +50,13 @@ U2/U3 可按文件归属并行；手机只消费同一协议，不用本地余�
 本机只认领 NOVOCHAT `local_identity.rs`、`local_identity_node.rs`、对应测试及构建输入复核。现有聊天/服务用途收敛到私有类型，保持原签名字节、数据库、身份与历史；不创建资产签名或注册旁路。细节与实际测试结果见 [App U1 记录](../../NOVOCHAT/docs/implementation/UCA_FOUNDATION_V1.md)。本地证明、身份管理委托与原生资产支出不是同一种权限。
 
 上游下一交接需包含：已批准的签名参数/混合规则、规范域与编码、可信 UCA 状态及支出用途验证接口、Android 可用运行库及能力验证。此处登记需求，不表示另一台已收到或已开始实施。手机仍为 v108，正式注册、PQ 手机接入、资产到账闭环未交付。
+
+## 6. 2026-10-24 U2 参数建议与隔离预检交接
+
+本轮先 fetch 核对，两仓远端仍分别为 SUPERVM `7c6ec36d`、NOVOCHAT `5d58354`，未取得另一台新的接口提交；不据此判断其本地工作状态。
+
+[首发签名建议](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md)推荐评估 ML-DSA-65 + Ed25519 AND 双签名，参数、混合规则及规范签名字节仍待批准，不能从推荐直接启用。APP 不自创混合格式，也不把 65 标成既有 87 枚举。
+
+本机本轮文件归属限于 NOVOCHAT `integrations/novovm`、验证脚本与文档：复用已有身份委托，统一完整交易及独立委托的本地用途检查；复用 `novovm-prover::pq_signature` 与 AOEM 做显式 host-only 参数预检。共享 SDK 生产源码、手机主工程、原生资产账本不在此轮改动范围。实际结果见 [App 隔离预检记录](../../NOVOCHAT/docs/implementation/UCA_PQ_PREFLIGHT_V1.md)。
+
+上游仍需提供经过批准的统一算法类型/规范编码、实际 UCA 状态及支出权限验证、Android ARM64 运行库及平台验收。当前隔离实验没有签发正式 UCA，没有资产支出或经济结算能力；v108 手机与真实收费状态不变。

@@ -71,3 +71,7 @@ ML-DSA是数字签名，不替代业务执行有效性证明，也不替代通�
 
 每个检查点记录：源码、实际node/AOEM制品、签名套件/域、UCA状态来源、资金/nonce
 父绑定和未通过项。开发Ed25519成绩、MLDSA向量或能力标签不能替代整链新合同验收。
+
+## 2026-10-24 NOVOCHAT integration recommendation
+
+See [the parameter recommendation](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md): ML-DSA-65 plus Ed25519 with AND verification is a proposed suite, not approved policy or an implemented native envelope. Do not infer approval of ML-DSA-87 from the current enum. The NOVOCHAT computer owns isolated consumer preflight only; native UCA/spending and shared canonical signature format remain owned by the SUPERVM computer per the [joint handoff](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). No real billing or mobile key migration is enabled by this recommendation.
