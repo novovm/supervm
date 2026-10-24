@@ -6,6 +6,8 @@ KEY ONE 是独立高权限签名角色，支持独立 Android 手机；专用硬
 
 ## 唯一职责与复用
 
+用户明确软件仓库为`https://github.com/XujueKing/NOVOKEYONE`，本机路径`D:/WEB3_AI/NOVOKEYONE`；`D:/WEB3_AI/NOVOVM_KEY_ONE`仅专用硬件电路，不推送到软件仓库。
+
 - SUPERVM/经济电脑：唯一 UCA 账户/资产/用途合同、可信状态证明、限额、nonce、撤销、原子执行及恢复规则。请接收本编号并登记范围，不复制手机持钥或二维码实现。
 - NOVOCHAT电脑：A端请求和响应消费，KEY ONE项目B端软件原型；复用现有Android `AssetKeyOwner`/Keystore和上游AOEM ML-DSA-65单签。KEY ONE Mobile二维码封装归KEY ONE项目，A端消费同一代码，不创建第二种资产签名格式。
 - 专用硬件：后续复用同一合同独立验收。硬件工程未提交修改不纳入本轮提交。
@@ -27,3 +29,11 @@ B损坏后的恢复、重新绑定和旧权限撤销继续待定，不承诺仅�
 5. 主链限额、撤销、恢复与真实执行另行验收后才讨论真实收费。
 
 本文件为决定及分工，不是原型/双机验收完成。Git推送仅通知可取，不代表另一台已读。
+
+## 2026-10-25 vivo与软件原型增量通知
+
+用户明确软件仓库为 https://github.com/XujueKing/NOVOKEYONE ，硬件电路目录NOVOVM_KEY_ONE不推送到该仓库。本机继续负责Android持钥、扫码及A/B接口消费；请SUPERVM工作机继续可信状态/限额/撤销/原子执行，不重复Android或QR实现。
+
+用户允许仅vivo B设备刷机/清除，覆盖初始不刷机条款；原两台聊天手机不在授权范围。当前vivo API27、PD1818HF_EX_A_2.0.1、green/locked，未证实安全解锁及完整恢复闭环，先部署可退出HOME专用入口，无持钥/资产权限；不是定制OS。当前受保护持钥实现仍要求API30，API27兼容不能通过取消认证实现。
+
+扫码独立原型已构建，7项光学封装/完整图像回归通过，未完成真实相机及新B持钥验收。A复用上游验签并逐字节核对规范意图，不信任B签名能替代链状态。测试域限定、asset_authorized=false、transaction_submitted=false继续保持。详情及哈希见 [软件实查](https://github.com/XujueKing/NOVOKEYONE/blob/main/docs/VIVO-1820-EVALUATION-2026-10-25.md)。此通知待另一台Git回执；不是账户授权/收费上线。
