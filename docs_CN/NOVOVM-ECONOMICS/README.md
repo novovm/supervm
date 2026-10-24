@@ -1,5 +1,14 @@
 # NOVOVM Economics
 
+## 2026-10-24 当前服务经济入口
+
+- [首发经济契约](../../docs/NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)：定向引入远端同名文档并修正旧最低 5 USD 分账，不合并其他代码；1 亿总量、9 位精度为设计规则，执行未交付。
+- 统一基线第 11–12 节已记录职业经营、多设备、自费测试与公共补助边界：补助购买可验证容量/事先发布任务，自造订单不自动获补助。3,500 万、80/10/10、体验预算仍为候选；首笔测试 NOV 具体到账验收仅为后续开发规格。
+
+- [统一经济基线](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)：已确认、建议、待定和实现缺口分开；覆盖旧最低 5 USD 分账及原生 NOV 增发/销毁口径。
+- [English synchronization](../../docs/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)。
+- **设计决定已更新，实施未交付。** 不据此启用收费、改变创世配置或宣布节点到账。
+
 本目录存放 NOVOVM 上层经济边界、货币制度、清算制度与资产生命周期法条。
 
 边界：

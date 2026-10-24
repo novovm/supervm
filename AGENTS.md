@@ -1,5 +1,11 @@
 # Agent Highest Law
 
+## 2026-10-24 shared service economics design baseline
+
+Use [the authoritative baseline](docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) and its English synchronization. Target: all 100 million native NOV issued at genesis, no later mint/burn; default pay-as-you-go, persistent balances, no minimum founder monthly share. Preserve M2/custody/clearing rules. Founder necessary consent for new treasury decisions is not unilateral spending or a veto on established debts. Percentages, cash budgets and governance recovery remain pending. Design updated; implementation not delivered. This documentation round authorizes no code/configuration, deployment, asset actions, commit or push.
+
+Confirmed resource-income update: professional operators, multiple devices/accounts and self-funded tests are allowed; self-created orders do not automatically qualify for public subsidies. Public budgets purchase verifiable capacity or previously published tasks, without paying the same obligation twice. 35m NOV and 80/10/10 remain candidates. Income states end at confirmed credit to a specific UCA asset account; service keys cannot spend unrestricted assets. The next development milestone is labeled test-NOV custody/retrieval settlement, not activation now. See baseline sections 11–12 and the [first-release contract](docs/NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md); nine-decimal design is not end-to-end charging acceptance.
+
 ## 2026-10-21 first release uses one current node protocol
 
 The user confirmed no node version has been formally released. Do not create or
@@ -156,8 +162,9 @@ See [source-linked reuse index](docs/NOVONET_REUSE_INDEX.md).
   service obligations require NOV-funded subscription/prepaid resources. Open
   provider participation needs no official approval or prior NOV purchase;
   sharing earns only for verified funded work, never merely being online.
-  Paid monthly subscriptions allocate at least USD 5 equivalent NOV at the
-  defined quote point to one designated founder/foundation beneficiary.
+  The earlier minimum USD 5 founder/foundation monthly allocation is cancelled
+  by the 2026-10-24 baseline. Default pay-as-you-go balances persist across months;
+  candidate splits apply only to defined service events, not topups or carryover.
   Promotion ends April 2027; new globally unique UCA accounts receive one month
   of trial backed by actual sponsor NOV, not unfunded redeemable rewards.
   Reuse one UCA and purpose keys; no second asset/account/admission authority.
@@ -188,21 +195,11 @@ See [source-linked reuse index](docs/NOVONET_REUSE_INDEX.md).
   mailbox and verify actual Android continuity; architecture is not acceptance.
   See the latest section of `docs/NOVONET_TRANSPORT_POLICY_V1.md`.
 
-- 2026-10-13 latest commercial clarification: after a 1-3 month trial, NOVOCHAT
-  prices and accepts payment only in NOV; USD is a reference. A paid monthly
-  subscription must budget founder proceeds worth at least USD 5 at the defined
-  quote/settlement point, plus node rewards and service costs. Recalculate the
-  earlier USD 5-20 tier idea; no fixed NOV amount can guarantee a perpetual USD
-  floor under arbitrary price changes. No real USD value guarantee without
-  verified price/liquidity; no automatic foreign-asset collection/conversion.
-  Permissionless network participation does not mean all services must
-  be free. Use one UCA, locally verified bounded service entitlements and NOV
-  settlement, not a mandatory official account server or per-message chain RPC.
-  Reward policy is genesis-defined; fee-funded task rewards must stay below
-  actual irrevocably consumed fees across all beneficiaries and rebates. Free
-  trial usage is not paid revenue and cannot create unbounded cashable rewards.
-  Numeric tiers/splits remain proposals. Keep current communications/UI work
-  moving; this does not authorize deploying billing or modifying financial state.
+- 2026-10-13 commercial note superseded by the 2026-10-24 service economics
+  baseline: no minimum USD 5 founder share or mandatory monthly package; one
+  funded calendar-month trial, not the old 1-3 month suggestion. NOV-only App
+  payment, bounded funded task rewards, privacy and no per-message chain RPC
+  remain. Design only; billing and provider payouts are not delivered.
 
 - 2026-10-13 latest user clarification: NOVONET must have a self-owned join and
   discovery path without mandatory developer/official Publisher, public CA,

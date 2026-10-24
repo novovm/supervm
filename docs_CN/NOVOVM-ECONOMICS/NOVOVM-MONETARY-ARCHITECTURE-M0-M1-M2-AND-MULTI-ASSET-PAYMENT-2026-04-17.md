@@ -1,4 +1,12 @@
 # NOVOVM 货币架构决议（M0/M1/M2 与多币支付）  
+
+## 2026-10-24 服务经济修订（当前优先）
+
+[统一基线](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)覆盖旧原生 NOV 发行/销毁与服务分账冲突：正式目标为创世全额发行 1 亿 NOV，此后不增发、不销毁；已发行锁定余额只解锁/转移。默认按量消费、余额长期保留，取消最低 5 USD 分账。设计决定已更新，实施未交付。
+
+M2 凭证发行/赎回及客户托管隔离保留；MCP、LP 负债和已成立服务债务不能挪作可支配国库收入。RSP、fee、risk 等相互包含的口径不相加为额外资金，候选服务分成不自动覆盖这些分桶。协议价不等于市场价或服务报价，AMM spot 禁止直接进入协议清算；多资产能力不自动授权 NOVOCHAT 外币支付。
+
+下文阶段签收和代码差距按原记录日期理解；不证明 10 月的新收费、具体提供者到账或全部 Execute/Governance 入口已交付。已核对的 Transfer 入口仍拒绝 Execute/Governance，见统一基线源码定位。英文同名文档同步当前经济边界，六月详细实现记录仍以本中文文档及对应证据为准。
 _2026-04-17_
 
 ## 1. 目的与范围
@@ -63,13 +71,13 @@ _2026-04-17_
 - 禁止把 `pETH / pUSDT / pSOL` 这类镜像资产放在 M1。
 - 禁止绕过 NOV 结算直接把外币当内部结算币。
 - 禁止把 `NETH/NUSDT/nAsset` 写成 NOV 或 M1；它们是 M2 存款/信用/映射资产。
-- 禁止把外部锁仓事件直接解释为 NOV 铸造事件；NOV 铸造必须经过 Treasury policy / emission policy。
+- 禁止把外部锁仓事件解释为 NOV 铸造事件；正式目标禁止创世后新增 NOV，不再保留 Treasury/emission policy 增发例外。
 
 ### 5.3 M2 生成主线（冻结）
 
 1. 外链资产（ETH/USDT/DAI 等）先在 EVM 插件侧锁仓。  
 2. 锁仓结果进入 NOVOVM 国库储备记账。  
-3. 通过清算/兑换规则转换为 NOV 抵押基础。  
+3. 按资产规则登记储备和负债；1:1 NETH 映射不要求先兑换或新增 NOV。信用资产另受抵押和风险约束。
 4. 仅在满足抵押与风险参数时，铸造 `M2` 信用货币（`n*`）。  
 5. `M2` 资产可流通（含 RWA 类资产），但其风险归属在 M2，不回写为 M1。
 
@@ -99,7 +107,7 @@ _2026-04-17_
 2. `NETH`、`NUSDT`、`nAsset` 是外部锁仓、储备或信用生成的 M2 资产，不进入 `M0/M1`。
 3. M2 资产可以支付、抵押、兑换或进入信用扩张；`NOV <-> NETH/nAsset` 是内部自由兑换/购买，其中 `NETH/nAsset -> NOV` 走 `nov_swap`/AMM 市场兑换，`NOV -> NETH/nAsset` 走 `nov_buyAsset`/Treasury 协议清算购买；`NETH -> ETH` 才是外部锁仓合约赎回/释放，其风险与负债归属在 M2，不回写为 NOV 基础货币。
 4. `NETH` 是锁仓 ETH 的 1:1 储备/存款凭证，不是 NOV，也不是自动铸 NOV 的中间态。
-5. NOV 新增发行或矿工结算额度必须受 `reserve bucket`、`fee bucket`、`risk buffer`、`emission policy` 约束。
+5. 原生 NOV 创世全额发行 1 亿，此后无新增发行或销毁。矿工/服务结算只转移已有且可支配的 NOV，仍受 `reserve bucket`、`fee bucket`、`risk buffer` 及既有负债约束；旧 `emission policy` 不作为新增发行许可。
 
 ### 7.1A nAsset 原生账本法条
 
@@ -130,7 +138,7 @@ _2026-04-17_
 3. 支付资产进入 `Treasury Reserve Pool`，中文统一称为“国库储备池 / 外汇储备池”。
 4. 矿工/算力提供者只以 NOV 结算，避免收入碎片化。
 5. 费用扣收、矿工结算、国库分账不得绕开 Treasury settlement。
-6. 当前制度写入不声明真实 ETH lock、NOV mint、M2 credit 全自动闭环已完成。
+6. 当前制度写入不声明真实 ETH lock、M2 credit 全自动闭环已完成；创世后的 NOV mint 不再属于目标功能。
 
 ### 7.3 Treasury / AMM / Oracle 职责
 

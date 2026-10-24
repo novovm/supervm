@@ -1,5 +1,13 @@
 # NOVOVM Economics
 
+## Current service economics, 2026-10-24
+
+- [Synchronized baseline](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) and [authoritative Chinese baseline](../../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md).
+- Supersedes the minimum USD 5 founder share and conflicting native NOV emission/burn rules. Default pay-as-you-go, persistent balances, fixed supply, funded obligations.
+- **Design updated; implementation not delivered.** No activation of billing, genesis changes or claim of provider payouts.
+- [First-release economic contract](NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md): documented 100m supply and nine decimals; targeted remote-document import with obsolete USD 5 floor corrected, not a code merge.
+- Baseline update: professional/multi-device participation is allowed; construction budgets purchase verifiable capacity or public tasks, not automatic rewards for self-created orders. 35m/80-10-10 and trial budgets remain candidates; first test-NOV concrete-account payment milestone is specified, not implemented.
+
 This directory contains NOVOVM's upper-layer economic boundaries, monetary rules, settlement rules, and asset-lifecycle policy.
 
 Boundary:

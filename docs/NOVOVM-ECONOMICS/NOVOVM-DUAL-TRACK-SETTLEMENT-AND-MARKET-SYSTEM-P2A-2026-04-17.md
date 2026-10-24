@@ -1,4 +1,12 @@
 # NOVOVM Dual-Track Settlement and Market Pricing System (P2-A Freeze)
+
+## Current economic revision, 2026-10-24
+
+The [synchronized baseline](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) supersedes conflicting native NOV emission/burn and service-share requirements: issue all 100 million NOV at genesis, then transfer/unlock only, with no further mint or burn. Default pay-as-you-go balances persist; the minimum USD 5 founder share is cancelled. Design updated; implementation not delivered.
+
+M2 issuance/redemption and custody segregation remain. MCP, LP liabilities and established service debts are not discretionary treasury funds. Overlapping reserve/fee/risk buckets are not additive assets, and candidate service shares do not overwrite them. Clearing, market and service prices differ; AMM spot cannot directly determine protocol clearing. Multi-asset infrastructure does not authorize foreign-asset payments in NOVOCHAT.
+
+Phase acceptance and code-gap statements below are dated evidence, not proof of the October billing/payout design or all Execute/Governance entries. The inspected Transfer ingress still rejects Execute/Governance; see baseline source links. For the June implementation amendments, consult the [Chinese counterpart](../../docs_CN/NOVOVM-ECONOMICS/NOVOVM-DUAL-TRACK-SETTLEMENT-AND-MARKET-SYSTEM-P2A-2026-04-17.md); this English synchronization does not claim to repeat its detailed runtime acceptance.
 _2026-04-17_
 
 ## 1. Purpose
@@ -81,13 +89,13 @@ Base settlement currency (core of M0/M1).
 
 ### 5.2 Mirrored assets
 
-Use `m*` naming (for example `mETH`, `mUSDT`) to represent 1:1 custody mapping and redemption rights.
+Institutional `m*` naming denotes 1:1 custody claims; current NETH/NUSDT mapped assets also belong to this M2 class, never M0/M1. They use the native asset ledger and retain backing/redemption liabilities.
 
 ### 5.3 Credit-expansion assets
 
 Reserve `n*` naming (for example `nUSD`, `nRWA`) for M2.
 
-Frozen constraint: mirrored assets and credit-expansion assets must not share naming semantics or risk controls.
+Frozen constraint: distinguish custody-backed and credit-expansion liabilities and risk controls even where both use nAsset naming. External asset redemption does not mint native NOV.
 
 ## 6. Alignment with current code mainline
 

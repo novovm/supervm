@@ -1,12 +1,18 @@
 # NOVOVM 统一身份与资产生命周期审阅
 
+## 2026-10-24 当前制度修订与历史证据范围
+
+[统一经济基线](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)覆盖本审阅中旧 NOV emission/mint 制度方向：正式目标为创世全额发行 1 亿 NOV，此后只解锁/转移，不增发、不销毁。下文旧 runtime mint 的存在仍为源码事实，不是今后接线目标；M2 发行/赎回、托管隔离及报价安全边界继续保留。设计更新，实施未交付。
+
+下文生产入口、smoke 和待办按原 6 月审阅范围理解，不是 10 月收费、具体节点到账或所有原生 Execute/Governance 入口已验收。已核对的 Transfer 入口仍拒绝 Execute/Governance，见新基线源码定位。
+
 日期：2026-06-13  
 范围：`D:\WEB3_AI\SUPERVM` 本地代码与文档  
 不在范围：外部独立项目、外部钱包前端、真实 Ethereum lock 合约部署、安全审计
 
 ## 1. 总结结论
 
-NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济模块”的基础闭环，但还不能声明“用户从 Ethereum 锁 ETH 后自动铸造 NOV 并可全自动赎回”的完整跨链资产生命周期。
+NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济模块”的基础闭环，但不能声明真实外部锁仓/释放的完整闭环；旧“ETH 锁仓后自动铸 NOV”方向已被 2026-10-24 固定供应目标取消，不能继续列为待交付目标。
 
 可以签收的部分：
 
@@ -33,7 +39,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - 隐私能力状态查询 v1 已接入主线只读入口 `nov_getPrivacyCapabilityStatus`：返回 mainline read gate、AOEM RingCT、AOEM ZK 和 MLDSA 的分层能力状态；该入口不生成 proof、不泄露用户级 nAsset 余额、不创建第二账本，并明确 `MLDSA` 是账户/交易签名的抗量子能力，不是隐私交易系统。
 - 隐私审计策略查询 v1 已接入主线只读入口 `nov_getPrivacyAuditPolicy`：固定受保护用户级 M2 查询面为 `nov_getAssetBalance`、`account_balance`、`account_assets`，默认 `redacted`，授权披露必须带 `privacy_disclosure` 并可用 `nov_verifyPrivacyDisclosureReceipt` 验证；该入口禁止 gateway bypass、禁止第二账本，不生成 RingCT/ZK proof。
 - 授权披露 receipt v1 已接入主线资产查询：`nov_getAssetBalance`、`account_balance`、`account_assets` 在合法授权返回用户级 M2 明细时附带 `privacy_disclosure`，记录授权原因、truth source、`proof_generation_performed=false`、可升级 proof path（RingCT/ZK）、`result_commitment_digest` 和 disclosure digest；`nov_verifyPrivacyDisclosureReceipt` 可只读验证三类受保护查询的披露票据与授权响应是否匹配，并在响应被篡改时失败；未授权路径仍只返回 redacted，不返回余额或资产列表。
-- 仍没有真实“完整 external finality source 管理 -> compensation -> Treasury policy -> NOV emission”的完整链上桥接。主线治理 wrapper `nov_setMappedHeaderSourcePolicy` / `nov_setMappedHeaderAttestationPolicy` 与只读 `nov_getMappedFinalitySourceStatus` 已覆盖 header source peer quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 header attestation signature quorum、disabled signer reason/fail-closed、signer rotation 记录和状态聚合；主线产品 smoke 已覆盖未授权 policy 写入 fail-closed、source quorum 不足 fail-closed 与第二个许可 source peer 观测后通过、attestation quorum 不足/disabled signer fail-closed 与两个 active signer 通过、governed min confirmations 未达标 fail-closed 与降低确认数后通过。但 NOV mint 在 consensus token runtime 中存在，不能直接接在 ETH lock proof 上。
+- 历史“external finality source -> compensation -> Treasury policy -> NOV emission”链条未形成；其中 NOV emission 不再是目标。外部 finality、赔付及真实桥接仍按原边界待验收。主线治理 wrapper `nov_setMappedHeaderSourcePolicy` / `nov_setMappedHeaderAttestationPolicy` 与只读 `nov_getMappedFinalitySourceStatus` 已覆盖 header source peer quorum、disabled peer slashing reason/fail-closed、source peer rotation 记录、Ed25519 header attestation signature quorum、disabled signer reason/fail-closed、signer rotation 记录和状态聚合；主线产品 smoke 已覆盖未授权 policy 写入 fail-closed、source quorum 不足 fail-closed 与第二个许可 source peer 观测后通过、attestation quorum 不足/disabled signer fail-closed 与两个 active signer 通过、governed min confirmations 未达标 fail-closed 与降低确认数后通过。但 NOV mint 在 consensus token runtime 中存在，不能直接接在 ETH lock proof 上。
 - EVM 合约币可以在 EVM 产品面执行/查询 receipt，但和 NOV native account balance/treasury 是两套状态面，当前没有完整 ERC20 -> native asset 自动映射桥。
 - 并发量不能直接引用 README 的 L0/L1 百万 TPS 来代表钱包/gateway 入口吞吐。gateway 当前是单 HTTP loop，EVM pending consumer 默认 16 笔/250ms；native NOV 已新增 `nov_sendRawTransactionBatch` / `nov_executeBatch`，多笔 raw tx 会先进入 AOEM ops-wire algebraic semantic batch precommit，并记录 adaptive parallelism / ingress workers 元数据；native execution store 也已新增 `NOVOVM_NATIVE_EXECUTION_STORE_BACKEND=rocksdb|dual|json`，`rocksdb` 模式用 RocksDB sharded atomic write batch 写 `account/{account}/asset/{asset}`、`receipt/{tx_hash}`、`receipt_by_height/{height}`、`module_state/core`、`semantic_head/current`、`semantic_head/by_height/{height}`、`snapshot_meta/{height}`，不再把旧整库 snapshot blob 作为生产唯一写入；`dual` 模式同时保留 JSON 兼容快照并可与 RocksDB materialized view 对拍。该入口解决主线交易进入 AOEM 并发执行面、脱离单 JSON 主存储和减少整库 snapshot 写放大的第一刀，但最终落账仍按确定顺序提交，`module_state/core` 仍待继续拆细，不等同完整 AOEM 并发资产账本或多进程无冲突高并发账本完成。
 - native execution receipt/trace 已新增 AOEM semantic ingress metadata：每笔成功进入 native execution 的请求会生成 `aoem.ops_wire_v1.native_asset_semantic_ingress` 计划、`plan_id`、`wire_digest`、提交状态和 fallback reason；执行前后还会计算账户资产、国库储备和 NOV bucket 的 semantic delta count/digest，并写入 `aoem.native_asset.semantic_deltas` log。这证明产品口径已从“直接写存储”转向 AOEM 代数语义入口的可观测迁移，但不等同完整 AOEM 并发资产账本已完成。
@@ -66,7 +72,7 @@ NOVOVM 现在已经具备“统一身份 + EVM 产品入口 + native NOV 经济�
 - `NETH` 是锁仓 ETH 的 1:1 储备/存款凭证，不是 NOV，也不是自动铸 NOV 的中间态。
 - 用户可用白名单 M2 资产支付 Execution Fee；系统按协议清算价折算为 `NOV value`。
 - 支付资产进入 `Treasury Reserve Pool`，中文统一称为“国库储备池 / 外汇储备池”。
-- 矿工只收 NOV；NOV 发行或矿工结算额度必须受 `reserve bucket`、`fee bucket`、`risk buffer`、`emission policy` 约束。
+- 矿工只收 NOV；正式目标禁止创世后增发或销毁。结算使用已有可支配 NOV，仍受 `reserve bucket`、`fee bucket`、`risk buffer` 和未决负债约束，旧 emission policy 不是新增发行许可。
 - AMM 只负责市场价格发现、用户交易和套利收敛，不直接决定 Execution Fee 清算价。
 - 外部 oracle 只能作为治理许可参考源，用于偏离检测、熔断和兜底，不能开放喂价，不能单独决定协议清算价。
 
@@ -341,7 +347,7 @@ native NOV 入口：
 - Phase4 shadow/no-go 环境变量可阻断 live register 路径。
 - `settlement_effect=neth_m2_credit` 只表示内部 NETH/M2 入账，不应直接解释为链上 ETH 已释放。
 
-### 2.8 NOV 铸造
+### 2.8 旧 NOV 铸造能力（源码事实，正式目标待替换）
 
 已存在能力：
 
@@ -353,7 +359,7 @@ native NOV 入口：
 
 - `ua_registerMappedLock(ETH)` 成功后不得直接调用 `TokenRuntime::mint` 铸造 NOV。
 - ETH lock 先生成 `NETH` M2 凭证。
-- NOV mint 或矿工 NOV 结算必须经过 Treasury policy / emission policy，并受 reserve/fee/risk bucket 约束。
+- 正式目标不再允许创世后 NOV mint；矿工 NOV 结算经过 Treasury policy，使用已有余额并受 reserve/fee/risk bucket 与负债约束。
 
 未完成接线：
 
@@ -420,7 +426,7 @@ native NOV 入口：
   - `receipts_root` 已不再只信任用户自报；finalized block number 仍只作为确认数约束字段，最终锚定以本地 canonical finalized block 为准。
   - bridge pause 已能阻断 live register/burn/release；source anchor reorg gate 已能阻断 unsafe burn/release；header source whitelist/quorum gate 已能阻断非许可 source peer、被禁用 source peer 或 quorum 不足；Ed25519 header attestation quorum gate 已能阻断无效签名、禁用 signer 或许可 signer quorum 不足；manual freeze/unfreeze/rollback 已能冻结、安全恢复或终止异常 NETH 暴露；`nov_runMappedAssetAutoHeal` 已能在 `nov_applyTreasuryPolicy` 治理开启后执行 scheduler-authorized auto-heal tick，自动冻结 unsafe active/burn_pending live NETH，并在额外开启 rollback policy 后自动终止 unsafe frozen NETH；下一步补完整 finality source、治理赔付规则和常驻后台调度。
   - 只把 ETH 映射为 `NETH`，不要直接铸 NOV。
-  - NOV mint / 矿工结算必须通过 Treasury policy，并使用 epoch 固定的协议清算价。
+  - 矿工结算必须通过 Treasury policy，涉及清算时使用 epoch 固定的协议价；不得把旧 NOV mint 当作新任务的资金来源。
 
 ### P1：钱包/用户入口缺失
 

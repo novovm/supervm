@@ -1,4 +1,12 @@
 # NOVOVM Monetary Architecture Resolution (M0/M1/M2 and Multi-Asset Payment)
+
+## Current economic revision, 2026-10-24
+
+The [synchronized baseline](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) supersedes conflicting native NOV emission/burn and service-share requirements: issue all 100 million NOV at genesis, then transfer/unlock only, with no further mint or burn. Default pay-as-you-go balances persist; the minimum USD 5 founder share is cancelled. Design updated; implementation not delivered.
+
+M2 issuance/redemption and custody segregation remain. MCP, LP liabilities and established service debts are not discretionary treasury funds. Overlapping reserve/fee/risk buckets are not additive assets, and candidate service shares do not overwrite them. Clearing, market and service prices differ; AMM spot cannot directly determine protocol clearing. Multi-asset infrastructure does not authorize foreign-asset payments in NOVOCHAT.
+
+Phase acceptance and code-gap statements below are dated evidence, not proof of the October billing/payout design or all Execute/Governance entries. The inspected Transfer ingress still rejects Execute/Governance; see baseline source links. For the June implementation amendments, consult the [Chinese counterpart](../../docs_CN/NOVOVM-ECONOMICS/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md); this English synchronization does not claim to repeat its detailed runtime acceptance.
 _2026-04-17_
 
 ## 1. Purpose and scope
@@ -56,7 +64,7 @@ This document is an implementation constraint, not a concept draft.
 
 - `M0`: base money layer, only `NOV`.
 - `M1`: circulating money layer, only NOV-system circulating money; no mirrored external assets.
-- `M2`: credit expansion layer, where new credit assets (`n*`) are issued.
+- `M2`: external-lock, reserve or credit assets (`nAsset` / `n*`), including NETH and NUSDT; these are not native NOV or M1.
 
 ### 5.2 Explicit prohibitions
 
@@ -67,7 +75,7 @@ This document is an implementation constraint, not a concept draft.
 
 1. External assets (ETH/USDT/DAI...) are locked on the EVM plugin side.
 2. Lock results are booked into NOVOVM treasury reserves.
-3. Through clearing/exchange rules, value is converted into NOV collateral basis.
+3. Book reserves and liabilities under each asset policy; a 1:1 NETH mapping does not require conversion into or minting NOV. Credit assets retain collateral/risk constraints.
 4. `M2` credit assets (`n*`) are minted only when collateral and risk constraints are satisfied.
 5. M2 assets can circulate (including RWA-like assets), but their risk belongs to M2 and must not be reclassified as M1.
 
@@ -103,7 +111,7 @@ This document is an implementation constraint, not a concept draft.
 
 ## 9. Execution priority (next cut only)
 
-1. Implement NOV-native payment/clearing route skeleton (crate-level interface draft).
+1. Historical April proposal: payment/clearing skeleton. Reuse the later existing owners documented in the Chinese amendments; do not create a duplicate module.
 2. Upgrade native tx wire (express Execute/Governance, no longer transfer-only).
 3. Add M2 risk boundaries (collateral ratio, liquidation threshold, treasury backstop, pause switch).
 
