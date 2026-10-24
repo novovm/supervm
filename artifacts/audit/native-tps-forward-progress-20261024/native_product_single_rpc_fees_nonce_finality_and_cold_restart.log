@@ -1,0 +1,13 @@
+
+running 1 test
+native product RPC artifacts=\\?\D:\WorksArea\SUPERVM\target\native-product-rpc\13068-1792819889300348900
+Error: HTTP fixture requires historical-http
+test native_pipeline::consensus::tests::native_product_rpc::native_product_single_rpc_fees_nonce_finality_and_cold_restart ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_product_single_rpc_fees_nonce_finality_and_cold_restart
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1576 filtered out; finished in 0.01s
+

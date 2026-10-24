@@ -1,0 +1,13 @@
+
+running 1 test
+native-only artifacts=\\?\D:\WorksArea\SUPERVM\target\native-product-rpc\native-only-17056-1792820265167989800
+Error: native query timeout: Status
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_genesis_transactions_queries_and_cold_recovery ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_genesis_transactions_queries_and_cold_recovery
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1576 filtered out; finished in 5.17s
+

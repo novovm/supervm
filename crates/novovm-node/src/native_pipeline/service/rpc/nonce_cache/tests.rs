@@ -51,6 +51,7 @@ fn pending(subject: Hash, nonces: &[u64]) -> (VecDeque<Hash>, BTreeMap<Hash, Pen
             hash,
             Pending {
                 input: AdmissionInput::Raw(vec![0; 8]),
+                admitted: None,
                 canonical_len: 8,
                 signer: subject,
                 nonce: *nonce,
@@ -203,9 +204,11 @@ fn every_parent_binding_change_discards_old_reads_and_values() -> Result<()> {
         cache.poll(old, [subject(2)].into_iter(), |_, _| {
             Ok(Some(Completion::Pending))
         })?;
+        assert!(cache.has_pending_reads());
         cache.bind_current_parent(new);
         assert!(cache.values.is_empty());
         assert!(cache.reads.is_empty());
+        assert!(!cache.has_pending_reads());
         assert!(cache
             .accept_read(old, subject(2), Some(99_u64.to_le_bytes().to_vec()))
             .is_err());
@@ -291,6 +294,7 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
             hash,
             Pending {
                 input: AdmissionInput::Raw(vec![0; 8]),
+                admitted: None,
                 canonical_len: 8,
                 signer: id,
                 nonce: 0,
@@ -324,9 +328,11 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
             prepared_cleanup_turns += 1;
         }
         if phase < 128 {
+            assert!(cache.has_pending_reads());
             assert!(selection.is_none(), "phase {phase} offered a partial block");
             assert_eq!(prepared_cleanup_turns, 0);
         } else {
+            assert!(!cache.has_pending_reads());
             assert_eq!(selection, Some(order.iter().copied().collect()));
         }
     }
@@ -337,6 +343,46 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
     assert_eq!(cache.values.len(), 1024);
     assert_eq!(prepared_cleanup_turns, 1);
     assert_eq!(pending.len(), 1024, "preparation does not consume inputs");
+    Ok(())
+}
+
+#[test]
+fn published_prefetch_cannot_install_a_private_successor_override() -> Result<()> {
+    let mut cache = cache(2);
+    let parent = parent(2);
+    let id = subject(99);
+    let (order, pending) = pending(id, &[1]);
+    assert!(
+        !cache.has_pending_reads(),
+        "idle cache needs no extra polling"
+    );
+    cache.poll(parent, [id].into_iter(), |root, subject| {
+        assert_eq!((root, subject), (parent.state_root, id));
+        Ok(Some(Completion::Pending))
+    })?;
+    assert!(cache.has_pending_reads());
+    assert!(!cache.poll(parent, [id].into_iter(), |_, _| panic!("duplicate read"))?);
+    assert_eq!(cache.get(&id), None, "unfinished does not mean nonce zero");
+    cache.reads[0].ticket = Completion::Ready(None);
+    cache.poll(parent, [id].into_iter(), |_, _| panic!("resolved read"))?;
+    assert!(!cache.has_pending_reads());
+    assert_eq!(cache.lookup(&id), Lookup::Absent);
+    assert!(select_pending_batch(&order, &pending, &cache.values, BTreeMap::new(), 2).is_empty());
+    assert_eq!(
+        select_pending_batch(
+            &order,
+            &pending,
+            &cache.values,
+            BTreeMap::from([(id, 1)]),
+            2
+        ),
+        order.iter().copied().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        cache.get(&id),
+        Some(&0),
+        "private selection is not publication"
+    );
     Ok(())
 }
 
@@ -354,6 +400,7 @@ fn fully_known_gap_window_rotates_to_ready_work_but_unknown_window_does_not() {
             hash,
             Pending {
                 input: AdmissionInput::Raw(vec![0; 8]),
+                admitted: None,
                 canonical_len: 8,
                 signer: id,
                 nonce: if index < 4 { 7 } else { 0 },

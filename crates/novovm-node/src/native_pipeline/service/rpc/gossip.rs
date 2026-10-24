@@ -234,6 +234,7 @@ mod tests {
                 hash,
                 Pending {
                     input: AdmissionInput::Raw(vec![n; 8]),
+                    admitted: None,
                     canonical_len: 8,
                     signer: [1; 32],
                     nonce: n as u64,
@@ -271,6 +272,7 @@ mod tests {
                         batch: source.clone(),
                         index,
                     },
+                    admitted: None,
                     canonical_len: raw.len(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,

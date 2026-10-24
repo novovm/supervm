@@ -13,6 +13,9 @@ pub struct AuthenticationRequest {
 }
 
 impl AuthenticationRequest {
+    pub fn from_authenticated(batch: AdmittedBatch, policy: DirectNovFeePolicy) -> Result<Self> {
+        Self::from_input(compute::CandidateInput::Admitted(batch), policy)
+    }
     /// Assembly-owner operation: checks lengths/policy, not signatures or state.
     pub fn new(raw_transactions: Vec<Vec<u8>>, policy: DirectNovFeePolicy) -> Result<Self> {
         Self::from_source(BatchSource::Raw(raw_transactions), policy)
@@ -23,12 +26,25 @@ impl AuthenticationRequest {
     }
 
     fn from_source(raw_transactions: BatchSource, policy: DirectNovFeePolicy) -> Result<Self> {
-        ensure!(!raw_transactions.is_empty(), "empty pipeline request");
+        Self::from_input(
+            compute::CandidateInput::Unverified(raw_transactions),
+            policy,
+        )
+    }
+
+    fn from_input(
+        raw_transactions: compute::CandidateInput,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        ensure!(
+            !raw_transactions.source().is_empty(),
+            "empty pipeline request"
+        );
         policy.validate()?;
-        let (body_bytes, max_transaction_bytes) = raw_transactions.sizes()?;
+        let (body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
         Ok(Self {
             max_transaction_bytes,
-            transaction_count: raw_transactions.len(),
+            transaction_count: raw_transactions.source().len(),
             body_bytes,
             request: Box::new(compute::AuthenticateRequest {
                 raw_transactions,
@@ -166,6 +182,10 @@ impl CandidatePipeline {
         &self,
         request: &AuthenticationRequest,
     ) -> Result<bool> {
+        request
+            .request
+            .raw_transactions
+            .ensure_owner(&self.identity)?;
         let bytes = request.reservation(&self.config)?;
         let current = BatchRequest::retained_reservation(
             self.config
@@ -188,6 +208,10 @@ impl CandidatePipeline {
         request: AuthenticationRequest,
     ) -> std::result::Result<AuthenticationSubmission, RejectedAuthenticationSubmission> {
         let prerequisites = (|| {
+            request
+                .request
+                .raw_transactions
+                .ensure_owner(&self.identity)?;
             let bytes = request.reservation(&self.config)?;
             let sender = self.sender.as_ref().context("pipeline closed")?;
             let worker = self

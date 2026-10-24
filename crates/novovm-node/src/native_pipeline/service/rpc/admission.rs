@@ -441,7 +441,7 @@ impl RpcLifecycle {
         let mut results = VecDeque::with_capacity(rows);
         match output {
             Ok(mut output) => {
-                while let Some(row) = output.pop_front() {
+                while let Some(row) = output.pop_admitted() {
                     self.admission.checked_rows += 1;
                     if row.result.is_err() {
                         self.admission.rejected_rows += 1;

@@ -1,0 +1,248 @@
+{
+  "profile": "native_execution_tick",
+  "experimental": true,
+  "core": "novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
+  "transport": "native_novorudp_apfl",
+  "consensus": "novovm-consensus/round_bft/journal",
+  "chain_id": 292,
+  "head": null,
+  "current_height": 1,
+  "round": 0,
+  "scheduled_proposer": "0x0becdc2bad0c6badb0bb45bc13bf8ab44d6575fb6c0a2c3faa9025a5025531eb",
+  "local_proposer": false,
+  "recovery_in_progress": false,
+  "pending": 0,
+  "pending_bytes": 0,
+  "rpc_indexed_height": 0,
+  "projection_error": null,
+  "warm_projection_blocks": 0,
+  "archive_projection_blocks": 0,
+  "executed_batches": 0,
+  "durable_decisions": 0,
+  "execution_failures": 0,
+  "execution_backend": "aoem_integer_complete_effect_composition",
+  "execution_integer_rows_total": 0,
+  "execution_integer_plans_total": 0,
+  "execution_apfl_view_transactions_total": 0,
+  "requested_bodies": 0,
+  "served_bodies": 0,
+  "native_pending_deliveries": 3,
+  "native_rejected_messages": 0,
+  "native_expired_sends": 0,
+  "successor_overlap_active": true,
+  "business_proof_required": false,
+  "business_proof_verified": false,
+  "mempool_gossip": true,
+  "gossip_delivery": "bounded_native_custody_not_durable_admission",
+  "gossip_repair": {
+    "omitted_recipient_inputs": 0,
+    "repair_batches_reserved": 0,
+    "repair_inputs_reserved": 0,
+    "scope": "local omitted-recipient repair; not remote or durable receipt"
+  },
+  "gossip_verified_inputs": 0,
+  "gossip_rejected_inputs": 0,
+  "authentication_cache_hits": 0,
+  "rpc_authentication": {
+    "owner": "same_resident_aoem_compute_session",
+    "http_waiting": 0,
+    "signature_batch_pending": false,
+    "submitted_batches": 0,
+    "completed_batches": 0,
+    "checked_rows": 0,
+    "rejected_rows": 0,
+    "cancelled_http": 0,
+    "control_polls_while_checking": 0,
+    "backpressured_polls": 0,
+    "scope": "local signature checks, not unique transactions or finality"
+  },
+  "pending_survives_restart": false,
+  "receipt_query_scope": "recent 65536 entries or explicit verified archive height",
+  "historical_receipt_queries": 0,
+  "pending_retained_payload_bytes": 0,
+  "pending_retained_authentication_bytes": 0,
+  "pending_retained_total_bytes": 0,
+  "pending_retained_apfl_owners": 0,
+  "signature_work": {
+    "strict_verified_rows": 0,
+    "reused_rows": 0,
+    "scope": "local graph-success strict rows and prepare-consumed reused rows; later stages may fail; not unique transactions, nonce admission or finality"
+  },
+  "stage_profile": {
+    "enabled": true,
+    "scope": "process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence",
+    "phases": {
+      "admission": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "authentication": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "bind": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "capture": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "finalize_capture": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "execute_cpu": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "execute_integer": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "integer_wire": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "reduction": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "state_tree": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "packet": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "io_nodes": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "io_metadata_read": {
+        "calls": 2,
+        "wall_ns": 59000,
+        "max_wall_ns": 46200
+      },
+      "io_metadata_write": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "io_persist": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "io_recover": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "lifecycle": {
+        "calls": 393,
+        "wall_ns": 5991400,
+        "max_wall_ns": 487400
+      },
+      "consensus": {
+        "calls": 786,
+        "wall_ns": 308500,
+        "max_wall_ns": 5900
+      },
+      "projection": {
+        "calls": 393,
+        "wall_ns": 23100,
+        "max_wall_ns": 1200
+      },
+      "gossip": {
+        "calls": 393,
+        "wall_ns": 23700,
+        "max_wall_ns": 1000
+      },
+      "http": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "idle": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "yield": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "queue_admission": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "queue_candidate": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "integer_compile": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "integer_projection": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "candidate_registration": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "native_io": {
+        "calls": 393,
+        "wall_ns": 3992000,
+        "max_wall_ns": 403400
+      },
+      "native_assembly": {
+        "calls": 393,
+        "wall_ns": 1020800,
+        "max_wall_ns": 103900
+      },
+      "native_query": {
+        "calls": 393,
+        "wall_ns": 103900,
+        "max_wall_ns": 2200
+      },
+      "native_selection": {
+        "calls": 393,
+        "wall_ns": 379700,
+        "max_wall_ns": 16200
+      }
+    },
+    "integer_resource": null
+  },
+  "successor": {
+    "authentication_started": 0,
+    "execution_started": 0,
+    "completed_before_parent": 0,
+    "promoted": 0,
+    "discarded": 0,
+    "scope": "local_next_proposer_after_durable_parent_candidate"
+  },
+  "entry": "original_native_execution_tick",
+  "ticks": 393
+}

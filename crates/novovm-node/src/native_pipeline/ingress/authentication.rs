@@ -51,6 +51,33 @@ impl CheckedSource {
 }
 
 impl SignatureCheckedTransfer {
+    pub(crate) fn matches_apfl_source(&self, batch: &Arc<ApflTransferBatch>, index: usize) -> bool {
+        matches!(&self.transfer, CheckedSource::Apfl { batch: source, index: source_index }
+            if Arc::ptr_eq(source, batch) && *source_index == index)
+    }
+
+    /// Rebind verified immutable input to a regrouped structured batch. This is
+    /// not a hash cache: the entire signed row (including signature bytes) must
+    /// be identical. The returned capability retains ONLY the new dictionary.
+    pub(crate) fn rebind_apfl(
+        &self,
+        batch: Arc<ApflTransferBatch>,
+        index: usize,
+        chain_id: u64,
+    ) -> Result<Self> {
+        let target = batch.row(index)?;
+        ensure!(
+            target.chain_id == chain_id && self.transfer() == target,
+            "admitted transfer differs from exact signed structured input"
+        );
+        Ok(Self {
+            transfer: CheckedSource::Apfl { batch, index },
+            tx_hash: self.tx_hash,
+            public_key: self.public_key,
+            nonce_identity: self.nonce_identity,
+        })
+    }
+
     pub(crate) fn is_apfl_view(&self) -> bool {
         matches!(self.transfer, CheckedSource::Apfl { .. })
     }

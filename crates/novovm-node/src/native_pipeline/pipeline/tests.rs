@@ -8,7 +8,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) fn request(root: NodeHash) -> BatchRequest {
     let input = compute::tests::control_test_request(root);
-    BatchRequest::from_source(input.raw_transactions, input.context, input.policy).unwrap()
+    BatchRequest::from_input(input.raw_transactions, input.context, input.policy).unwrap()
 }
 
 pub(super) fn config(database: PathBuf) -> PipelineConfig {
@@ -65,6 +65,7 @@ pub(super) fn inert_pipeline(
             metadata: None,
             identity: Arc::new(()),
             usage: Arc::new(Mutex::new(Usage::default())),
+            signatures: Arc::new(SignatureWork::default()),
         },
         receiver,
     )
@@ -487,6 +488,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
             packet: cfg.store.packet_budget,
             timeout: cfg.compute_timeout,
             domain: cfg.store.domain,
+            signatures: Arc::new(SignatureWork::default()),
         },
         None,
     )?;
@@ -518,6 +520,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
         metadata: Some(metadata),
         identity,
         usage: Arc::new(Mutex::new(Usage::default())),
+        signatures: Arc::new(SignatureWork::default()),
     };
     let mut ticket = admitted(&pipeline, request(update.root()));
     assert!(ticket.try_take()?.is_none());

@@ -1,0 +1,461 @@
+{
+  "runs": [
+    {
+      "label": "original-4",
+      "directory": "target/native-product-load/12116-1792819763840608200",
+      "tps": 11249.498341996696,
+      "seconds": 5.8256820000000005,
+      "p95_us": 885884,
+      "p99_us": 1132488,
+      "first_height_us": 523081,
+      "diagnostics": false,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x4908c63e352fbd90667783cd4d22e738dd32a11cb9a061964a8236c799b43cf8",
+      "report_sha256": "85dbaff7d4a70d8732b54f243f0b481081d524140ab47645034becfef43a846b"
+    },
+    {
+      "label": "reuse-baseline-1",
+      "directory": "target/native-product-load/15452-1792819778658557400",
+      "tps": 11177.687469224946,
+      "seconds": 5.863109,
+      "p95_us": 857101,
+      "p99_us": 1103157,
+      "first_height_us": 502205,
+      "diagnostics": false,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x1accc3187d254aef9c7f7c82c6a44125e7e5308ac48c2216659f6694abece440",
+      "report_sha256": "0259a9f9908a475a6e8cce510e9e5bec850fdcec2deba8ef8a748fdc436efcf2"
+    },
+    {
+      "label": "admitted-1",
+      "directory": "target/native-product-load/17036-1792819793457886100",
+      "tps": 12214.191169536389,
+      "seconds": 5.365562,
+      "p95_us": 799662,
+      "p99_us": 1036462,
+      "first_height_us": 472630,
+      "diagnostics": false,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+      "report_sha256": "f14632ef01dd694ecf022a527b7b30eae4a53a7c3b75fc524987ec053a4ffa27"
+    },
+    {
+      "label": "admitted-2",
+      "directory": "target/native-product-load/22572-1792819808043291000",
+      "tps": 11969.247712252973,
+      "seconds": 5.475365,
+      "p95_us": 813944,
+      "p99_us": 1046609,
+      "first_height_us": 502189,
+      "diagnostics": false,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+      "report_sha256": "ee2f7fcaeb5a194b548ac2f4901b4729a2f2e040b663479941f4e81aeae58df7"
+    },
+    {
+      "label": "reuse-baseline-2",
+      "directory": "target/native-product-load/6052-1792819822415759900",
+      "tps": 11302.371728618216,
+      "seconds": 5.7984290000000005,
+      "p95_us": 860006,
+      "p99_us": 1116536,
+      "first_height_us": 503678,
+      "diagnostics": false,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x1accc3187d254aef9c7f7c82c6a44125e7e5308ac48c2216659f6694abece440",
+      "report_sha256": "eb4572b359925de7f3e76173f1be68d116cc5eaa94c1b5705fe72728c11ad437"
+    },
+    {
+      "label": "original-5",
+      "directory": "target/native-product-load/19636-1792819837111663700",
+      "tps": 11078.242113412693,
+      "seconds": 5.9157399999999996,
+      "p95_us": 858847,
+      "p99_us": 1239274,
+      "first_height_us": 482284,
+      "diagnostics": false,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x4908c63e352fbd90667783cd4d22e738dd32a11cb9a061964a8236c799b43cf8",
+      "report_sha256": "36a550da61ef6a7c18841acbf646b6c65519ffe910f303898509dc77704141c3"
+    },
+    {
+      "label": "admitted-diag",
+      "directory": "target/native-product-load/26712-1792819851868790000",
+      "tps": 12059.637202479202,
+      "seconds": 5.434326,
+      "p95_us": 820888,
+      "p99_us": 1057355,
+      "first_height_us": 486650,
+      "diagnostics": true,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+      "report_sha256": "cbb197118d796d03c37f8bb530453dda15d174a18ff05899d968e59db38b4f0a"
+    }
+  ],
+  "adjacent_groups": [
+    {
+      "labels": [
+        "original-4",
+        "original-5"
+      ],
+      "seconds": 11.741422,
+      "success": 131072,
+      "samples": 131072,
+      "tps": 11163.213450636558,
+      "p95_us": 875073,
+      "p99_us": 1162903
+    },
+    {
+      "labels": [
+        "reuse-baseline-1",
+        "reuse-baseline-2"
+      ],
+      "seconds": 11.661538,
+      "success": 131072,
+      "samples": 131072,
+      "tps": 11239.683822151075,
+      "p95_us": 857661,
+      "p99_us": 1116106
+    },
+    {
+      "labels": [
+        "admitted-1",
+        "admitted-2"
+      ],
+      "seconds": 10.840927,
+      "success": 131072,
+      "samples": 131072,
+      "tps": 12090.478978412086,
+      "p95_us": 810289,
+      "p99_us": 1039872
+    }
+  ],
+  "signature_work": [
+    {
+      "node": 0,
+      "height": 64,
+      "pending": 0,
+      "executed_batches": 64,
+      "signature_work": {
+        "strict_verified_rows": 65536,
+        "reused_rows": 65536,
+        "scope": "local graph-success strict rows and prepare-consumed reused rows; later stages may fail; not unique transactions, nonce admission or finality"
+      },
+      "admission": {
+        "owner": "same_resident_aoem_compute_session",
+        "http_waiting": 0,
+        "signature_batch_pending": false,
+        "submitted_batches": 64,
+        "completed_batches": 64,
+        "checked_rows": 65536,
+        "rejected_rows": 0,
+        "cancelled_http": 0,
+        "control_polls_while_checking": 47021,
+        "backpressured_polls": 0,
+        "scope": "local signature checks, not unique transactions or finality"
+      }
+    },
+    {
+      "node": 1,
+      "height": 64,
+      "pending": 0,
+      "executed_batches": 64,
+      "signature_work": {
+        "strict_verified_rows": 65536,
+        "reused_rows": 65536,
+        "scope": "local graph-success strict rows and prepare-consumed reused rows; later stages may fail; not unique transactions, nonce admission or finality"
+      },
+      "admission": {
+        "owner": "same_resident_aoem_compute_session",
+        "http_waiting": 0,
+        "signature_batch_pending": false,
+        "submitted_batches": 64,
+        "completed_batches": 64,
+        "checked_rows": 65536,
+        "rejected_rows": 0,
+        "cancelled_http": 0,
+        "control_polls_while_checking": 36089,
+        "backpressured_polls": 0,
+        "scope": "local signature checks, not unique transactions or finality"
+      }
+    },
+    {
+      "node": 2,
+      "height": 64,
+      "pending": 0,
+      "executed_batches": 64,
+      "signature_work": {
+        "strict_verified_rows": 65536,
+        "reused_rows": 65536,
+        "scope": "local graph-success strict rows and prepare-consumed reused rows; later stages may fail; not unique transactions, nonce admission or finality"
+      },
+      "admission": {
+        "owner": "same_resident_aoem_compute_session",
+        "http_waiting": 0,
+        "signature_batch_pending": false,
+        "submitted_batches": 64,
+        "completed_batches": 64,
+        "checked_rows": 65536,
+        "rejected_rows": 0,
+        "cancelled_http": 0,
+        "control_polls_while_checking": 27886,
+        "backpressured_polls": 0,
+        "scope": "local signature checks, not unique transactions or finality"
+      }
+    },
+    {
+      "node": 3,
+      "height": 64,
+      "pending": 0,
+      "executed_batches": 64,
+      "signature_work": {
+        "strict_verified_rows": 65536,
+        "reused_rows": 65536,
+        "scope": "local graph-success strict rows and prepare-consumed reused rows; later stages may fail; not unique transactions, nonce admission or finality"
+      },
+      "admission": {
+        "owner": "same_resident_aoem_compute_session",
+        "http_waiting": 0,
+        "signature_batch_pending": false,
+        "submitted_batches": 64,
+        "completed_batches": 64,
+        "checked_rows": 65536,
+        "rejected_rows": 0,
+        "cancelled_http": 0,
+        "control_polls_while_checking": 23977,
+        "backpressured_polls": 0,
+        "scope": "local signature checks, not unique transactions or finality"
+      }
+    }
+  ],
+  "phase_sample": {
+    "enabled": true,
+    "scope": "process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence",
+    "phases": {
+      "admission": {
+        "calls": 64,
+        "wall_ns": 257167600,
+        "max_wall_ns": 6772100
+      },
+      "authentication": {
+        "calls": 64,
+        "wall_ns": 35388500,
+        "max_wall_ns": 762300
+      },
+      "bind": {
+        "calls": 16,
+        "wall_ns": 16884300,
+        "max_wall_ns": 1147100
+      },
+      "capture": {
+        "calls": 26433,
+        "wall_ns": 672159300,
+        "max_wall_ns": 976600
+      },
+      "finalize_capture": {
+        "calls": 64,
+        "wall_ns": 271040700,
+        "max_wall_ns": 5887800
+      },
+      "execute_cpu": {
+        "calls": 64,
+        "wall_ns": 694634100,
+        "max_wall_ns": 15735600
+      },
+      "execute_integer": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "integer_wire": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "reduction": {
+        "calls": 64,
+        "wall_ns": 582046500,
+        "max_wall_ns": 14231700
+      },
+      "state_tree": {
+        "calls": 64,
+        "wall_ns": 400282800,
+        "max_wall_ns": 9243900
+      },
+      "packet": {
+        "calls": 64,
+        "wall_ns": 571201300,
+        "max_wall_ns": 11164200
+      },
+      "io_nodes": {
+        "calls": 39,
+        "wall_ns": 2690700,
+        "max_wall_ns": 135100
+      },
+      "io_metadata_read": {
+        "calls": 11,
+        "wall_ns": 94000,
+        "max_wall_ns": 27000
+      },
+      "io_metadata_write": {
+        "calls": 259,
+        "wall_ns": 387823200,
+        "max_wall_ns": 5785200
+      },
+      "io_persist": {
+        "calls": 8512,
+        "wall_ns": 1209492000,
+        "max_wall_ns": 96753700
+      },
+      "io_recover": {
+        "calls": 3,
+        "wall_ns": 31281300,
+        "max_wall_ns": 11159100
+      },
+      "lifecycle": {
+        "calls": 404803,
+        "wall_ns": 3984175000,
+        "max_wall_ns": 15314900
+      },
+      "consensus": {
+        "calls": 809606,
+        "wall_ns": 123792400,
+        "max_wall_ns": 5348800
+      },
+      "projection": {
+        "calls": 404803,
+        "wall_ns": 143837700,
+        "max_wall_ns": 3810900
+      },
+      "gossip": {
+        "calls": 404803,
+        "wall_ns": 103107600,
+        "max_wall_ns": 10042000
+      },
+      "http": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "idle": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "yield": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "queue_admission": {
+        "calls": 64,
+        "wall_ns": 406144300,
+        "max_wall_ns": 24164500
+      },
+      "queue_candidate": {
+        "calls": 144,
+        "wall_ns": 26514200,
+        "max_wall_ns": 3356000
+      },
+      "integer_compile": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "integer_projection": {
+        "calls": 0,
+        "wall_ns": 0,
+        "max_wall_ns": 0
+      },
+      "candidate_registration": {
+        "calls": 95848,
+        "wall_ns": 33439500,
+        "max_wall_ns": 108600
+      },
+      "native_io": {
+        "calls": 404803,
+        "wall_ns": 2031993600,
+        "max_wall_ns": 13834000
+      },
+      "native_assembly": {
+        "calls": 404803,
+        "wall_ns": 516030300,
+        "max_wall_ns": 8465100
+      },
+      "native_query": {
+        "calls": 404803,
+        "wall_ns": 373077500,
+        "max_wall_ns": 9103700
+      },
+      "native_selection": {
+        "calls": 351371,
+        "wall_ns": 536798100,
+        "max_wall_ns": 4444400
+      }
+    },
+    "integer_resource": null
+  },
+  "comparison": {
+    "reuse_only_tps_percent": 7.569564853632893,
+    "combined_tps_percent": 8.306439108020935,
+    "reuse_only_p95_percent": -5.523394441393514,
+    "reuse_only_p99_percent": -6.830354822929008,
+    "combined_p95_percent": -7.403268070206714,
+    "combined_p99_percent": -10.579644217961427,
+    "aggregation": "sum successful finalized transactions / sum elapsed seconds; nearest-rank P95/P99 from merged original per-transaction observations, never averaged quantiles"
+  },
+  "claims": {
+    "limited_cpu_improvement": true,
+    "stable_mainnet_capacity": false,
+    "hundred_thousand_tps_achieved": false,
+    "million_tps_achieved": false,
+    "gpu_improvement_claim": false,
+    "full_business_proof_claim": false,
+    "first_release_mldsa_uca_acceptance": false,
+    "full_fee_state_audited": false,
+    "signature_counts": "new diagnostic actual per-pipeline graph-success strict checks and worker-consumed reused rows; not unique/finality; old frozen binaries lack these counters; old duplicate verification is source-verified, not an old counter measurement",
+    "timers": "process lifetime inclusive/concurrent walls are not additive critical-path CPU time"
+  }
+}

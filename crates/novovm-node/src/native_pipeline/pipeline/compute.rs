@@ -10,7 +10,7 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 };
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
 use crate::native_pipeline::ingress::batch::{
-    authenticate_admission_rows, authenticate_source_batch, AdmissionInput, AdmissionRows,
+    authenticate_admission_rows, authenticate_source_batch_observed, AdmissionInput, AdmissionRows,
     AuthenticationBudget, BatchSource,
 };
 use crate::native_pipeline::persistence::{PacketBudget, PreparedCandidate, StorageDomain};
@@ -36,16 +36,84 @@ pub(crate) struct ComputeConfig {
     pub capture: crate::native_pipeline::state::frontier::CaptureBudget,
     pub timeout: Duration,
     pub domain: StorageDomain,
+    pub signatures: Arc<super::SignatureWork>,
+}
+
+/// Both forms use the existing compute command and identical preparation,
+/// capture and execution. The admitted form is not externally constructible.
+pub(crate) enum CandidateInput {
+    Unverified(BatchSource),
+    Admitted(super::AdmittedBatch),
+}
+
+impl CandidateInput {
+    pub(super) fn source(&self) -> &BatchSource {
+        match self {
+            Self::Unverified(source) => source,
+            Self::Admitted(batch) => batch.source(),
+        }
+    }
+    pub(super) fn ensure_owner(&self, owner: &Arc<()>) -> Result<()> {
+        match self {
+            Self::Unverified(_) => Ok(()),
+            Self::Admitted(batch) => batch.ensure_owner(owner),
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn into_raw(self) -> Result<Vec<Vec<u8>>> {
+        match self {
+            Self::Unverified(source) => source.into_raw(),
+            Self::Admitted(_) => anyhow::bail!("raw-only allocation fixture"),
+        }
+    }
+}
+
+impl From<Vec<Vec<u8>>> for CandidateInput {
+    fn from(raw: Vec<Vec<u8>>) -> Self {
+        Self::Unverified(BatchSource::Raw(raw))
+    }
+}
+
+// Preserve allocation/backpressure fixture access, not a mutable product API.
+#[cfg(test)]
+impl std::ops::Deref for CandidateInput {
+    type Target = BatchSource;
+    fn deref(&self) -> &Self::Target {
+        self.source()
+    }
+}
+#[cfg(test)]
+impl std::ops::DerefMut for CandidateInput {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Unverified(source) => source,
+            Self::Admitted(_) => panic!("authenticated input is immutable"),
+        }
+    }
+}
+#[cfg(test)]
+impl PartialEq<Vec<Vec<u8>>> for CandidateInput {
+    fn eq(&self, other: &Vec<Vec<u8>>) -> bool {
+        self.source() == other
+    }
+}
+#[cfg(test)]
+impl std::fmt::Debug for CandidateInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("CandidateInput")
+            .field(self.source())
+            .finish()
+    }
 }
 
 pub(crate) struct PrepareRequest {
-    pub raw_transactions: BatchSource,
+    pub raw_transactions: CandidateInput,
     pub context: BatchContext,
     pub policy: DirectNovFeePolicy,
 }
 
 pub(crate) struct AuthenticateRequest {
-    pub raw_transactions: BatchSource,
+    pub raw_transactions: CandidateInput,
     pub policy: DirectNovFeePolicy,
 }
 
@@ -413,13 +481,24 @@ fn authenticate(
     let _span = crate::native_pipeline::profile::span(
         crate::native_pipeline::profile::Phase::Authentication,
     );
-    let batch = authenticate_source_batch(
-        session,
-        config.domain.chain_id,
-        request.raw_transactions,
-        config.authentication,
-        config.timeout,
-    )?;
+    let batch = match request.raw_transactions {
+        CandidateInput::Unverified(source) => authenticate_source_batch_observed(
+            session,
+            config.domain.chain_id,
+            source,
+            config.authentication,
+            config.timeout,
+            Some(config.signatures.strict_verified.clone()),
+        )?,
+        CandidateInput::Admitted(batch) => {
+            let checked = batch.into_checked(config.domain.chain_id, config.authentication)?;
+            config
+                .signatures
+                .reused
+                .fetch_add(checked.transactions().len() as u64, Ordering::Relaxed);
+            checked
+        }
+    };
     NovTransferBody::prepare(batch, request.policy, config.plan)
 }
 
@@ -481,6 +560,7 @@ fn run_owner(
                         inputs,
                         config.authentication,
                         config.timeout,
+                        Some(config.signatures.strict_verified.clone()),
                     )
                 });
                 let _ = reply.send(result);

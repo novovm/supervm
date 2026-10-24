@@ -19,6 +19,7 @@ pub(super) fn start(
     receiver: mpsc::Receiver<DriverMessage>,
     ready: mpsc::SyncSender<Result<Arc<IoService>>>,
     identity: Arc<()>,
+    signatures: Arc<SignatureWork>,
 ) -> Result<()> {
     let startup = (|| {
         let notify = Some(thread::current());
@@ -40,6 +41,7 @@ pub(super) fn start(
                 capture: config.capture,
                 timeout: config.compute_timeout,
                 domain: config.store.domain,
+                signatures,
             },
             notify,
         )?;
@@ -439,7 +441,11 @@ pub(super) fn run(
             ) {
                 Ok(Advancement::Admitted(rows)) => {
                     if let Reply::Admission(reply) = reply {
-                        let _ = reply.send(Ok(SignatureAdmissionOutput { rows, _permit }));
+                        let _ = reply.send(Ok(SignatureAdmissionOutput {
+                            rows,
+                            _permit,
+                            owner: identity.clone(),
+                        }));
                     } else {
                         reply.fail(anyhow::anyhow!("signature rows for candidate request"));
                     }

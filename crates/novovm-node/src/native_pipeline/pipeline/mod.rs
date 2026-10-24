@@ -15,9 +15,12 @@ mod compute;
 mod driver;
 mod seed;
 pub use crate::native_pipeline::ingress::batch::{AdmissionInput, AdmissionRow};
+#[cfg(test)]
+pub(crate) use admission::admitted_apfl_for_test;
 pub use admission::{
-    RejectedSignatureAdmissionSubmission, SignatureAdmissionOutput, SignatureAdmissionRequest,
-    SignatureAdmissionSubmission, SignatureAdmissionTicket,
+    AdmittedBatch, AdmittedRow, AdmittedTransfer, RejectedSignatureAdmissionSubmission,
+    SignatureAdmissionOutput, SignatureAdmissionRequest, SignatureAdmissionSubmission,
+    SignatureAdmissionTicket,
 };
 pub use authentication::{
     AuthenticatedBody, AuthenticatedRequest, AuthenticatedSubmission, AuthenticationRequest,
@@ -42,6 +45,7 @@ use crate::native_pipeline::persistence::{
 use crate::native_pipeline::state::frontier::CaptureBudget;
 use crate::native_pipeline::state::tree::NodeHash;
 use anyhow::{ensure, Context, Result};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -127,6 +131,13 @@ pub struct BatchRequest {
 }
 
 impl BatchRequest {
+    pub fn from_authenticated(
+        batch: AdmittedBatch,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        Self::from_input(compute::CandidateInput::Admitted(batch), context, policy)
+    }
     pub fn new(
         raw_transactions: Vec<Vec<u8>>,
         context: BatchContext,
@@ -148,10 +159,25 @@ impl BatchRequest {
         context: BatchContext,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {
-        ensure!(!raw_transactions.is_empty(), "empty pipeline request");
+        Self::from_input(
+            compute::CandidateInput::Unverified(raw_transactions),
+            context,
+            policy,
+        )
+    }
+
+    fn from_input(
+        raw_transactions: compute::CandidateInput,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        ensure!(
+            !raw_transactions.source().is_empty(),
+            "empty pipeline request"
+        );
         policy.validate()?;
-        let (body_bytes, max_transaction_bytes) = raw_transactions.sizes()?;
-        let transaction_count = raw_transactions.len();
+        let (body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
+        let transaction_count = raw_transactions.source().len();
         Ok(Self {
             request: Box::new(compute::PrepareRequest {
                 raw_transactions,
@@ -393,6 +419,12 @@ enum DriverMessage {
     Admission(admission::AdmissionCommand),
 }
 
+#[derive(Default)]
+pub(crate) struct SignatureWork {
+    strict_verified: Arc<AtomicU64>,
+    reused: AtomicU64,
+}
+
 pub struct CandidatePipeline {
     config: PipelineConfig,
     sender: Option<mpsc::SyncSender<DriverMessage>>,
@@ -402,9 +434,18 @@ pub struct CandidatePipeline {
     metadata: Option<IoMetadataClient>,
     identity: Arc<()>,
     usage: Arc<Mutex<Usage>>,
+    signatures: Arc<SignatureWork>,
 }
 
 impl CandidatePipeline {
+    /// Process-local observations only, never part of any signed commitment.
+    /// Counts successful strict row checks and actual candidate-row reuse.
+    pub fn signature_counts(&self) -> (u64, u64) {
+        (
+            self.signatures.strict_verified.load(Ordering::Relaxed),
+            self.signatures.reused.load(Ordering::Relaxed),
+        )
+    }
     pub fn execution_backend(&self) -> ExecutionBackend {
         self.config.execution_backend
     }
@@ -418,9 +459,20 @@ impl CandidatePipeline {
         let worker_config = config.clone();
         let identity = Arc::new(());
         let worker_identity = identity.clone();
+        let signatures = Arc::new(SignatureWork::default());
+        let worker_signatures = signatures.clone();
         let worker = thread::Builder::new()
             .name("novovm-candidate-pipeline".into())
-            .spawn(move || driver::start(worker_config, mode, receiver, ready, worker_identity))
+            .spawn(move || {
+                driver::start(
+                    worker_config,
+                    mode,
+                    receiver,
+                    ready,
+                    worker_identity,
+                    worker_signatures,
+                )
+            })
             .context("start candidate pipeline")?;
         let io = ready_receiver
             .recv()
@@ -436,6 +488,7 @@ impl CandidatePipeline {
             metadata: Some(metadata),
             identity,
             usage: Arc::new(Mutex::new(Usage::default())),
+            signatures,
         })
     }
 
@@ -476,6 +529,13 @@ impl CandidatePipeline {
         request: BatchRequest,
         background: bool,
     ) -> std::result::Result<Submission, RejectedSubmission> {
+        if let Err(error) = request
+            .request
+            .raw_transactions
+            .ensure_owner(&self.identity)
+        {
+            return Err(RejectedSubmission { request, error });
+        }
         let bytes = match request.reservation(&self.config) {
             Ok(bytes) => bytes,
             Err(error) => return Err(RejectedSubmission { request, error }),

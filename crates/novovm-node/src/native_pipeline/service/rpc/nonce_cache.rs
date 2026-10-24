@@ -98,6 +98,10 @@ impl<T: NonceReadTicket> NonceCache<T> {
         self.values.get(subject)
     }
 
+    pub(super) fn has_pending_reads(&self) -> bool {
+        !self.reads.is_empty()
+    }
+
     fn lookup(&self, subject: &Hash) -> Lookup {
         if let Some(value) = self.values.get(subject) {
             if self.absent.contains(subject) {

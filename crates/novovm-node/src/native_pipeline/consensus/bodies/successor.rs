@@ -193,6 +193,37 @@ impl CandidateBodies {
         progress: &RoundProgress,
         validators: &ValidatorSet,
     ) -> Result<bool> {
+        self.offer_successor_inner(message, selection, pipeline, progress, validators, None)
+    }
+
+    pub(crate) fn offer_successor_admitted(
+        &mut self,
+        message: &Arc<Message>,
+        selection: &SuccessorSelection,
+        pipeline: &CandidatePipeline,
+        progress: &RoundProgress,
+        validators: &ValidatorSet,
+        admitted: &[&AdmittedTransfer],
+    ) -> Result<bool> {
+        self.offer_successor_inner(
+            message,
+            selection,
+            pipeline,
+            progress,
+            validators,
+            Some(admitted),
+        )
+    }
+
+    fn offer_successor_inner(
+        &mut self,
+        message: &Arc<Message>,
+        selection: &SuccessorSelection,
+        pipeline: &CandidatePipeline,
+        progress: &RoundProgress,
+        validators: &ValidatorSet,
+        admitted: Option<&[&AdmittedTransfer]>,
+    ) -> Result<bool> {
         ensure!(
             Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
             "successor execution owner changed"
@@ -222,7 +253,20 @@ impl CandidateBodies {
                 && work.id == id
                 && Pin::from_selection(&work.selection) == pin);
         }
-        let request = AuthenticationRequest::from_apfl(batch.clone(), self.policy.clone())?;
+        let (request, metadata) = match admitted {
+            Some(rows) => {
+                let checked = pipeline.rebind_admitted_apfl(batch.clone(), rows)?;
+                let bytes = checked.retained_metadata_bytes();
+                (
+                    AuthenticationRequest::from_authenticated(checked, self.policy.clone())?,
+                    bytes,
+                )
+            }
+            None => (
+                AuthenticationRequest::from_apfl(batch.clone(), self.policy.clone())?,
+                0,
+            ),
+        };
         if !pipeline.can_authenticate_background(&request)? {
             return Ok(false);
         }
@@ -230,6 +274,7 @@ impl CandidateBodies {
             .len()
             .checked_mul(2)
             .and_then(|n| n.checked_add(actual.nonce_after.len().checked_mul(96)?))
+            .and_then(|n| n.checked_add(metadata))
             .context("successor retained charge overflow")?;
         // Reserve one worst-case ordinary body. Optional work must never occupy
         // the last current-height input slot or its logical retained bytes.

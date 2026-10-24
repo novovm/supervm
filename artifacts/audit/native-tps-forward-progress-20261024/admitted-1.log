@@ -1,0 +1,7 @@
+
+running 1 test
+native original-tick load artifacts=\\?\D:\WorksArea\SUPERVM\target\native-product-load\17036-1792819793457886100
+test native_pipeline::consensus::tests::native_product_rpc::native_load::original_native_sdk_65536_final_receipts_and_cold_economics ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1564 filtered out; finished in 14.47s
+
