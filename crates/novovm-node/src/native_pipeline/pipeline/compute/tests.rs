@@ -297,6 +297,7 @@ fn real_integer_lane_does_not_block_authentication_and_drains_accepted_work() ->
         capture: cfg.capture,
         timeout: cfg.compute_timeout,
         domain: cfg.store.domain,
+        signatures: Arc::new(super::super::SignatureWork::default()),
     };
     let owner = ComputeOwner::start(config, Some(thread::current()))?;
     let mut changes = fee_record_changes(&policy(), &FeeState::default())?;
@@ -430,6 +431,7 @@ fn real_resident_owner_authenticates_and_executes_repeated_owned_captures() -> R
         },
         timeout: Duration::from_secs(30),
         domain: domain(),
+        signatures: Arc::new(super::super::SignatureWork::default()),
     };
     let owner = ComputeOwner::start(config, Some(thread::current()))?;
     let mut changes = fee_record_changes(&policy(), &FeeState::default())?;
@@ -496,6 +498,7 @@ fn real_compute_owner_gpu_selection_rejects_old_library_without_cpu_fallback() -
         capture: cfg.capture,
         timeout: cfg.compute_timeout,
         domain: cfg.store.domain,
+        signatures: Arc::new(super::super::SignatureWork::default()),
     };
     let error = match ComputeOwner::start(config, None) {
         Ok(owner) => {

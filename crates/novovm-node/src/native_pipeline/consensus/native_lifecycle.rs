@@ -194,6 +194,16 @@ impl NativeLifecycle {
         ensure!(!self.frozen, "native lifecycle frozen");
         self.bodies.offer(body, true, &self.progress)
     }
+    pub(crate) fn offer_admitted(
+        &mut self,
+        body: &Arc<Message>,
+        admitted: &[&crate::native_pipeline::pipeline::AdmittedTransfer],
+        pipeline: &CandidatePipeline,
+    ) -> Result<bool> {
+        ensure!(!self.frozen, "native lifecycle frozen");
+        self.bodies
+            .offer_admitted(body, admitted, pipeline, &self.progress)
+    }
     pub fn executed(&self) -> u64 {
         self.bodies.executed
     }

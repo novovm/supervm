@@ -11,8 +11,8 @@ use crate::native_pipeline::{
     business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch::effect_contract},
     execution::plan::BatchContext,
     pipeline::{
-        BatchRequest, CandidatePipeline, DurableCandidate, FailureStage, PipelineFailure,
-        PipelineTicket, Submission,
+        AdmittedTransfer, BatchRequest, CandidatePipeline, DurableCandidate, FailureStage,
+        PipelineFailure, PipelineTicket, Submission,
     },
 };
 use anyhow::{ensure, Context, Result};
@@ -133,6 +133,32 @@ impl CandidateBodies {
         local: bool,
         progress: &RoundProgress,
     ) -> Result<bool> {
+        self.offer_inner(message, local, progress, None)
+    }
+
+    /// Local, process-only signature evidence. Remote bodies never carry these
+    /// capabilities; all parent/execution/consensus qualifications remain below.
+    pub(crate) fn offer_admitted(
+        &mut self,
+        message: &Arc<Message>,
+        admitted: &[&AdmittedTransfer],
+        pipeline: &CandidatePipeline,
+        progress: &RoundProgress,
+    ) -> Result<bool> {
+        ensure!(
+            Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
+            "admitted body execution owner changed"
+        );
+        self.offer_inner(message, true, progress, Some((pipeline, admitted)))
+    }
+
+    fn offer_inner(
+        &mut self,
+        message: &Arc<Message>,
+        local: bool,
+        progress: &RoundProgress,
+        admitted: Option<(&CandidatePipeline, &[&AdmittedTransfer])>,
+    ) -> Result<bool> {
         ensure!(!self.frozen, "body owner frozen");
         ensure!(!progress.is_frozen(), "consensus owner frozen");
         if progress.is_recovering() {
@@ -171,7 +197,7 @@ impl CandidateBodies {
         }
         // Charge canonical input plus a request copy. The pipeline separately
         // reserves its own execution/capture/output memory before taking work.
-        let charge = transport::encode(message, self.codec)?
+        let mut charge = transport::encode(message, self.codec)?
             .len()
             .checked_mul(2)
             .context("body charge overflow")?;
@@ -184,11 +210,21 @@ impl CandidateBodies {
             Message::Body {
                 raw_transactions, ..
             } => BatchRequest::new(raw_transactions.clone(), *context, self.policy.clone())?,
-            Message::ApflBody { batch, .. } => {
-                BatchRequest::from_apfl(batch.clone(), *context, self.policy.clone())?
-            }
+            Message::ApflBody { batch, .. } => match admitted {
+                Some((pipeline, rows)) => {
+                    let checked = pipeline.rebind_admitted_apfl(batch.clone(), rows)?;
+                    charge = charge
+                        .checked_add(checked.retained_metadata_bytes())
+                        .context("admitted body charge overflow")?;
+                    BatchRequest::from_authenticated(checked, *context, self.policy.clone())?
+                }
+                None => BatchRequest::from_apfl(batch.clone(), *context, self.policy.clone())?,
+            },
             _ => unreachable!(),
         };
+        if charge > self.limits.bytes.saturating_sub(self.bytes) {
+            return Ok(false);
+        }
         self.bodies.insert(
             id,
             Body {

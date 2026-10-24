@@ -21,7 +21,7 @@ use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v
 use crate::native_pipeline::ingress::wire::{decode_transfer_view_v3, TransferView};
 use crate::native_pipeline::persistence::io::IoTicket;
 use crate::native_pipeline::persistence::packet::{ReceiptProjection, ReceiptView};
-use crate::native_pipeline::pipeline::AdmissionInput;
+use crate::native_pipeline::pipeline::{AdmissionInput, AdmittedTransfer};
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -61,6 +61,8 @@ impl IdleBackoff {
 }
 
 mod admission;
+#[cfg(test)]
+mod admitted_tests;
 mod gossip;
 mod history;
 mod native_query;
@@ -78,6 +80,9 @@ struct BalanceQuery {
 
 struct Pending {
     input: AdmissionInput,
+    // Parent-independent signature capability from this pipeline. APFL only:
+    // a Raw row must not retain its separately decoded duplicate transaction.
+    admitted: Option<AdmittedTransfer>,
     canonical_len: usize,
     signer: Hash,
     nonce: u64,
@@ -86,6 +91,12 @@ struct Pending {
 }
 
 impl Pending {
+    fn retained_metadata_bytes(&self) -> usize {
+        self.admitted
+            .as_ref()
+            .map_or(0, AdmittedTransfer::retained_metadata_bytes)
+    }
+
     fn view(&self) -> Result<TransferView<'_>> {
         match &self.input {
             AdmissionInput::Raw(raw) => decode_transfer_view_v3(raw, 1024),
@@ -107,12 +118,13 @@ impl Pending {
 #[derive(Default)]
 struct PoolRetention {
     bytes: usize,
+    metadata_bytes: usize,
     owners: BTreeMap<usize, (usize, usize)>, // references, retained owner bytes
 }
 
 impl PoolRetention {
-    fn reserve(&mut self, input: &AdmissionInput, limit: usize) -> Result<()> {
-        let (owner, additional) = match input {
+    fn reserve(&mut self, input: &AdmissionInput, metadata: usize, limit: usize) -> Result<()> {
+        let (owner, payload) = match input {
             AdmissionInput::Raw(raw) => (None, raw.capacity()),
             AdmissionInput::Apfl { batch, .. } => {
                 let key = Arc::as_ptr(batch) as usize;
@@ -124,6 +136,9 @@ impl PoolRetention {
                 (Some(key), bytes)
             }
         };
+        let additional = payload
+            .checked_add(metadata)
+            .context("pool capability retained bytes overflow")?;
         let next = self
             .bytes
             .checked_add(additional)
@@ -137,17 +152,20 @@ impl PoolRetention {
                 self.owners.contains_key(&key) || self.owners.len() < MAX_POOL,
                 "RPC retained owner count limit"
             );
-            let record = self.owners.entry(key).or_insert((0, additional));
+            let record = self.owners.entry(key).or_insert((0, payload));
             record.0 = record
                 .0
                 .checked_add(1)
                 .context("pool owner reference overflow")?;
         }
         self.bytes = next;
+        self.metadata_bytes += metadata;
         Ok(())
     }
 
-    fn release(&mut self, input: &AdmissionInput) {
+    fn release(&mut self, input: &AdmissionInput, metadata: usize) {
+        self.bytes -= metadata;
+        self.metadata_bytes -= metadata;
         match input {
             AdmissionInput::Raw(raw) => self.bytes -= raw.capacity(),
             AdmissionInput::Apfl { batch, .. } => {
@@ -299,6 +317,15 @@ impl RpcLifecycle {
         // Every completed body grants a proposal turn even if the next body
         // has begun, so a continuous inbound stream cannot starve selection.
         if self.incoming.is_some() && !self.ingress_batch_boundary {
+            // Strict admission gates selection, not completion of a previously
+            // prepared window's read-only I/O. Otherwise every eight nonce
+            // reads wait for another whole body to finish authentication.
+            // Read ONLY the published parent here: even a private lookahead's
+            // nonce override is not published by this prefetch. Selection below
+            // still supplies its exact successor overlay and whole-body gate.
+            if self.nonce_window.is_some() && self.nonces.has_pending_reads() {
+                self.poll_window_nonces(&BTreeMap::new())?;
+            }
             return Ok(());
         }
         let _span = crate::native_pipeline::profile::span(
@@ -408,14 +435,25 @@ impl RpcLifecycle {
             self.offer = Some((position, Arc::new(Message::ApflBody { context, batch })));
         }
         let message = &self.offer.as_ref().expect("prepared native body").1;
-        let accepted = match &successor {
-            Some(selection) => {
-                self.node
+        let admitted = admitted_for_body(message, &self.pending)?;
+        let accepted =
+            match (&successor, admitted) {
+                (Some(selection), Some(admitted)) => self
+                    .node
                     .controller
-                    .offer_successor(message, selection, &self.node.pipeline)?
-            }
-            None => self.node.controller.offer(message)?,
-        };
+                    .offer_successor_admitted(message, selection, &self.node.pipeline, &admitted)?,
+                (None, Some(admitted)) => {
+                    self.node
+                        .controller
+                        .offer_admitted(message, &admitted, &self.node.pipeline)?
+                }
+                (Some(selection), None) => {
+                    self.node
+                        .controller
+                        .offer_successor(message, selection, &self.node.pipeline)?
+                }
+                (None, None) => self.node.controller.offer(message)?,
+            };
         if accepted {
             self.offered = Some(position);
         }
@@ -492,7 +530,8 @@ impl RpcLifecycle {
             if let Some(entry) = self.pending.remove(&receipt.tx_hash) {
                 self.gossip_repair.remove(entry.gossip_missing);
                 self.pending_bytes -= entry.canonical_len;
-                self.pending_retention.release(&entry.input);
+                self.pending_retention
+                    .release(&entry.input, entry.retained_metadata_bytes());
                 self.reservations.remove(&(entry.signer, entry.nonce));
             }
             let hash = receipt.tx_hash;
@@ -561,7 +600,8 @@ impl RpcLifecycle {
             let entry = self.pending.remove(&hash).expect("stale entry");
             self.gossip_repair.remove(entry.gossip_missing);
             self.pending_bytes -= entry.canonical_len;
-            self.pending_retention.release(&entry.input);
+            self.pending_retention
+                .release(&entry.input, entry.retained_metadata_bytes());
             self.reservations.remove(&(entry.signer, entry.nonce));
             self.receipts.insert(hash, ReceiptState::RejectedNonce);
             self.recent.push_back(hash);
@@ -579,13 +619,14 @@ impl RpcLifecycle {
     fn admit_checked(
         &mut self,
         input: crate::native_pipeline::pipeline::AdmissionInput,
-        checked: crate::native_pipeline::ingress::authentication::SignatureCheckedTransfer,
+        admitted: AdmittedTransfer,
         broadcast: bool,
     ) -> Result<Hash> {
         ensure!(
             self.projection_error.is_none(),
             "RPC projection unavailable"
         );
+        let checked = admitted.checked();
         let matches = match &input {
             crate::native_pipeline::pipeline::AdmissionInput::Raw(raw) => {
                 checked.transfer().matches_canonical_bytes(raw)?
@@ -635,12 +676,18 @@ impl RpcLifecycle {
                 && canonical_len <= MAX_POOL_BYTES.saturating_sub(self.pending_bytes),
             "RPC pool backpressure; transaction not accepted"
         );
-        self.pending_retention.reserve(&input, MAX_POOL_BYTES)?;
+        let admitted = retain_admitted_for_pool(&input, admitted)?;
+        let metadata = admitted
+            .as_ref()
+            .map_or(0, AdmittedTransfer::retained_metadata_bytes);
+        self.pending_retention
+            .reserve(&input, metadata, MAX_POOL_BYTES)?;
         self.pending_bytes += canonical_len;
         self.pending.insert(
             hash,
             Pending {
                 input,
+                admitted,
                 canonical_len,
                 signer,
                 nonce,
@@ -760,6 +807,7 @@ impl RpcLifecycle {
 
     pub fn status(&self) -> Value {
         let core = &self.node.controller;
+        let (strict_verified_rows, reused_rows) = self.node.pipeline.signature_counts();
         let backend = match self.node.pipeline.execution_backend() {
             crate::native_pipeline::pipeline::ExecutionBackend::CpuCallbacks => {
                 "aoem_semantic_v2_cpu_callbacks"
@@ -794,8 +842,14 @@ impl RpcLifecycle {
             "rpc_authentication":self.admission.status(),"pending_survives_restart":false,
             "receipt_query_scope":"recent 65536 entries or explicit verified archive height",
             "historical_receipt_queries":self.history.len()});
-        status["pending_retained_payload_bytes"] = json!(self.pending_retention.bytes);
+        status["pending_retained_payload_bytes"] =
+            json!(self.pending_retention.bytes - self.pending_retention.metadata_bytes);
+        status["pending_retained_authentication_bytes"] =
+            json!(self.pending_retention.metadata_bytes);
+        status["pending_retained_total_bytes"] = json!(self.pending_retention.bytes);
         status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
+        status["signature_work"] = json!({"strict_verified_rows":strict_verified_rows,
+            "reused_rows":reused_rows,"scope":"local graph-success strict rows and prepare-consumed reused rows; later stages may fail; not unique transactions, nonce admission or finality"});
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
         let [auth, started, before_parent, promoted, discarded] = core.successor_metrics();
         status["successor"] = json!({"authentication_started":auth,"execution_started":started,
@@ -972,6 +1026,58 @@ fn apfl_batch(raw: &[Vec<u8>], batch_size: usize) -> Result<Arc<ApflTransferBatc
             body_bytes: super::body_byte_limit(batch_size),
         },
     )?))
+}
+
+fn retain_admitted_for_pool(
+    input: &AdmissionInput,
+    admitted: AdmittedTransfer,
+) -> Result<Option<AdmittedTransfer>> {
+    match input {
+        AdmissionInput::Apfl { batch, index } => {
+            // Value equality alone does not identify retained memory: a token
+            // from another dictionary could pin uncharged source bytes.
+            ensure!(
+                admitted.matches_apfl_source(batch, *index),
+                "admission capability/input source mismatch"
+            );
+            Ok(Some(admitted))
+        }
+        // Admission has already compared all signed input fields. Only the
+        // original raw bytes remain in this pool; discard the decoded copy.
+        AdmissionInput::Raw(_) => Ok(None),
+    }
+}
+
+/// Reuse only a complete ordered body whose original signed rows are still
+/// retained by the pool. Canonical hashes omit signatures: every row AND its
+/// capability must match before the lifecycle may use the branded route.
+/// Rebinding to the new dictionary/owner belongs to the original pipeline.
+fn admitted_for_body<'a>(
+    message: &Message,
+    pending: &'a BTreeMap<Hash, Pending>,
+) -> Result<Option<Vec<&'a AdmittedTransfer>>> {
+    let Message::ApflBody { batch, .. } = message else {
+        return Ok(None);
+    };
+    let mut admitted = Vec::with_capacity(batch.len());
+    for index in 0..batch.len() {
+        let row = batch.row(index)?;
+        let hash = row.canonical_tx_hash()?;
+        let Some(entry) = pending.get(&hash) else {
+            return Ok(None);
+        };
+        if !matches!(&entry.input, AdmissionInput::Apfl { .. }) || !entry.matches(row)? {
+            return Ok(None);
+        }
+        let Some(checked) = entry.admitted.as_ref() else {
+            return Ok(None);
+        };
+        if checked.checked().transfer() != row || checked.checked().tx_hash() != hash {
+            return Ok(None);
+        }
+        admitted.push(checked);
+    }
+    Ok(Some(admitted))
 }
 
 fn selected_apfl_batch(
@@ -1393,6 +1499,7 @@ mod tests {
                 checked.tx_hash(),
                 Pending {
                     input: AdmissionInput::Raw(raw.clone()),
+                    admitted: None,
                     canonical_len: raw.len(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,
@@ -1444,6 +1551,7 @@ mod tests {
                 checked.tx_hash(),
                 Pending {
                     input: AdmissionInput::Raw(raw.clone()),
+                    admitted: None,
                     canonical_len: raw.len(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,
@@ -1521,6 +1629,7 @@ mod tests {
                 Pending {
                     canonical_len: raw.len(),
                     input: AdmissionInput::Raw(raw),
+                    admitted: None,
                     signer: [1; 32],
                     nonce: nonce as u64,
                     gossip_missing: 0,
@@ -1609,6 +1718,7 @@ mod tests {
                         batch: source.clone(),
                         index,
                     },
+                    admitted: None,
                     canonical_len: raw.len(),
                     signer: checked.nonce_identity(),
                     nonce: checked.transfer().nonce,
@@ -1664,16 +1774,16 @@ mod tests {
             })
             .collect();
         let mut retained = PoolRetention::default();
-        assert!(retained.reserve(&rows[0], owner_bytes - 1).is_err());
+        assert!(retained.reserve(&rows[0], 0, owner_bytes - 1).is_err());
         assert_eq!(retained.bytes, 0);
         assert!(retained.owners.is_empty());
         for row in &rows {
-            retained.reserve(row, owner_bytes)?;
+            retained.reserve(row, 0, owner_bytes)?;
         }
         assert_eq!(retained.bytes, owner_bytes);
         assert_eq!(retained.owners.len(), 1);
-        retained.release(&rows[0]);
-        retained.release(&rows[1]);
+        retained.release(&rows[0], 0);
+        retained.release(&rows[1], 0);
         assert_eq!(
             retained.bytes, owner_bytes,
             "one remaining row pins the full owner"
@@ -1683,14 +1793,14 @@ mod tests {
             batch: other,
             index: 0,
         };
-        assert!(retained.reserve(&other_row, owner_bytes).is_err());
+        assert!(retained.reserve(&other_row, 0, owner_bytes).is_err());
         assert_eq!(retained.bytes, owner_bytes);
         assert_eq!(retained.owners.len(), 1);
-        retained.release(&rows[2]);
+        retained.release(&rows[2], 0);
         assert_eq!(retained.bytes, 0);
         assert!(retained.owners.is_empty());
-        retained.reserve(&other_row, owner_bytes)?;
-        retained.release(&other_row);
+        retained.reserve(&other_row, 0, owner_bytes)?;
+        retained.release(&other_row, 0);
         assert_eq!(retained.bytes, 0);
         Ok(())
     }
@@ -1702,11 +1812,11 @@ mod tests {
         let capacity = raw.capacity();
         let input = AdmissionInput::Raw(raw);
         let mut retained = PoolRetention::default();
-        assert!(retained.reserve(&input, 8).is_err());
+        assert!(retained.reserve(&input, 0, 8).is_err());
         assert_eq!(retained.bytes, 0);
-        retained.reserve(&input, capacity)?;
+        retained.reserve(&input, 0, capacity)?;
         assert_eq!(retained.bytes, capacity);
-        retained.release(&input);
+        retained.release(&input, 0);
         assert_eq!(retained.bytes, 0);
         Ok(())
     }

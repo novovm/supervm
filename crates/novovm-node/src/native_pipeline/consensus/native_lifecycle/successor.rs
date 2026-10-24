@@ -25,6 +25,23 @@ impl NativeLifecycle {
             &self.validators,
         )
     }
+    pub(crate) fn offer_successor_admitted(
+        &mut self,
+        message: &Arc<Message>,
+        selection: &SuccessorSelection,
+        pipeline: &CandidatePipeline,
+        admitted: &[&crate::native_pipeline::pipeline::AdmittedTransfer],
+    ) -> Result<bool> {
+        ensure!(!self.is_frozen(), "native lifecycle frozen");
+        self.bodies.offer_successor_admitted(
+            message,
+            selection,
+            pipeline,
+            &self.progress,
+            &self.validators,
+            admitted,
+        )
+    }
     pub fn has_successor_target(&self, height: u64) -> bool {
         !self.is_frozen() && self.bodies.has_successor_target(height, &self.progress)
     }

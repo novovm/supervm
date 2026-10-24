@@ -49,7 +49,9 @@ fn native_socket_handoff_retains_structured_work_when_authentication_is_full() -
     ));
     assert_eq!(returned.body_bytes, raw.iter().map(Vec::len).sum::<usize>());
     assert_eq!(returned.transaction_count, raw.len());
-    let BatchSource::Apfl(batch) = returned.request.raw_transactions else {
+    let compute::CandidateInput::Unverified(BatchSource::Apfl(batch)) =
+        returned.request.raw_transactions
+    else {
         panic!("socket handoff expanded APFL");
     };
     assert_eq!(
@@ -84,7 +86,9 @@ fn apfl_authentication_reserves_expanded_body_and_returns_same_shared_source() {
     else {
         panic!("structured authentication bypassed ordinary reservation")
     };
-    let BatchSource::Apfl(retained) = returned.request.raw_transactions else {
+    let compute::CandidateInput::Unverified(BatchSource::Apfl(retained)) =
+        returned.request.raw_transactions
+    else {
         panic!("expanded structured input")
     };
     assert!(Arc::ptr_eq(&batch, &retained));
@@ -921,7 +925,7 @@ fn original_node_receives_1024_signed_apfl_rows_over_native_encrypted_datagrams(
     let request = deliver(wire, limits, policy())?;
     // The normal adapter is shared with the real-AOEM pipeline test. Here verify
     // all unchanged signed rows, rather than claiming network bytes as TPS.
-    let crate::native_pipeline::ingress::batch::BatchSource::Apfl(batch) =
+    let compute::CandidateInput::Unverified(BatchSource::Apfl(batch)) =
         request.request.raw_transactions
     else {
         panic!("native delivery expanded structural input");

@@ -1,0 +1,114 @@
+{
+  "runs": [
+    {
+      "label": "samepath-base-1",
+      "directory": "target/native-product-load/19592-1792820855826215000",
+      "seconds": 5.796538,
+      "tps": 11306.058892394047,
+      "p95_us": 849755,
+      "p99_us": 1096825,
+      "first_height_us": 494973,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x1accc3187d254aef9c7f7c82c6a44125e7e5308ac48c2216659f6694abece440",
+      "binary": "\\\\?\\D:\\WorksArea\\SUPERVM\\target\\native-tps-forward-progress-20261024\\execution-slot\\novovm-node.exe",
+      "report_sha256": "01fd989e0ce0d4451aa8e7b9ec287133e7a494afba1287c56425bb1a76741a38"
+    },
+    {
+      "label": "samepath-final-1",
+      "directory": "target/native-product-load/24100-1792820871113204700",
+      "seconds": 5.541197,
+      "tps": 11827.047477286946,
+      "p95_us": 955880,
+      "p99_us": 1184057,
+      "first_height_us": 635360,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+      "binary": "\\\\?\\D:\\WorksArea\\SUPERVM\\target\\native-tps-forward-progress-20261024\\execution-slot\\novovm-node.exe",
+      "report_sha256": "dff92c84ca5cd48d6ec744b838a7e73c0d67ae2fd8f5568b2016e54f8cba2bde"
+    },
+    {
+      "label": "samepath-final-2",
+      "directory": "target/native-product-load/9728-1792820885956497900",
+      "seconds": 5.474608,
+      "tps": 11970.902756873187,
+      "p95_us": 815616,
+      "p99_us": 1057331,
+      "first_height_us": 481528,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+      "binary": "\\\\?\\D:\\WorksArea\\SUPERVM\\target\\native-tps-forward-progress-20261024\\execution-slot\\novovm-node.exe",
+      "report_sha256": "b11fc2013557663fee9edace1f78e11b12e17448be06c308cf3c9681b3c196f5"
+    },
+    {
+      "label": "samepath-base-2",
+      "directory": "target/native-product-load/22460-1792820900832965700",
+      "seconds": 5.781317,
+      "tps": 11335.82538373177,
+      "p95_us": 818581,
+      "p99_us": 1063164,
+      "first_height_us": 479798,
+      "success": 65536,
+      "business_failed": 0,
+      "fees": "2949120",
+      "cold": true,
+      "account_conservation": true,
+      "nonce_sequence": true,
+      "full_fee_state_audited": false,
+      "binary_sha256": "0x1accc3187d254aef9c7f7c82c6a44125e7e5308ac48c2216659f6694abece440",
+      "binary": "\\\\?\\D:\\WorksArea\\SUPERVM\\target\\native-tps-forward-progress-20261024\\execution-slot\\novovm-node.exe",
+      "report_sha256": "ac87a7fe8c4e8d6125b9d2f91471e8e680147d250b087b657b0e2f7a1c288881"
+    }
+  ],
+  "groups": [
+    {
+      "labels": [
+        "samepath-base-1",
+        "samepath-base-2"
+      ],
+      "seconds": 11.577855,
+      "success": 131072,
+      "samples": 131072,
+      "tps": 11320.922571581697,
+      "p95_us": 846521,
+      "p99_us": 1075859
+    },
+    {
+      "labels": [
+        "samepath-final-1",
+        "samepath-final-2"
+      ],
+      "seconds": 11.015805,
+      "success": 131072,
+      "samples": 131072,
+      "tps": 11898.540324560938,
+      "p95_us": 891075,
+      "p99_us": 1119286
+    }
+  ],
+  "changes_percent": {
+    "tps": 5.102214499984337,
+    "p95": 5.263188981726374,
+    "p99": 4.036495488721115
+  },
+  "executable_path": "target/native-tps-forward-progress-20261024/execution-slot/novovm-node.exe",
+  "slot_policy": "Only an experiment-owned executable copy, hash-restricted to the two preserved frozen originals, replaced between completed runs after checking no process is using this exact path. No original binary/data/source overwritten.",
+  "conclusion": "Follow-up identical full executable path ABBA: +5.10% successful TPS, but merged P95 +5.26% and P99 +4.04%. Final-1 first-height 635.360 ms retained in timer; do not claim uniform tail improvement, stable throughput capacity or GPU acceleration."
+}

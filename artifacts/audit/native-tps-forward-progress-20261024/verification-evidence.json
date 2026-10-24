@@ -1,0 +1,245 @@
+{
+  "recovery": [
+    {
+      "path": "target/native-product-rpc/native-recovery-highest-12116-1792819923702470400/recovery-report.json",
+      "sha256": "f412e8684ab2f23d6aa68888af817b742cdd619d5789330878a5ce8d70289474",
+      "completed": true,
+      "phase": "complete",
+      "node_sha256": "0x8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+      "aoem_sha256": "0x31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+      "late_start_after_ms": 102945,
+      "offline_batches": 40,
+      "offline_healthy_confirmation_ms": 102837,
+      "catchup_crash": {
+        "durable_interrupted_height": 1,
+        "target_height": 40,
+        "target_archive_absent_at_crash": true,
+        "qc_signatures": 3,
+        "outbox_revision": 1,
+        "outbox_sha256": "0x4f2ee69cda5e84be9476c99030d33e5e29389727efbb0855bf895803c8d4dddf",
+        "source": "original stopped database; no copy or mutation"
+      },
+      "minority_no_publication_ms": 12018,
+      "final_heights": [
+        46,
+        46,
+        46,
+        46
+      ],
+      "same_key_config_and_old_signing_outbox_preserved": true
+    },
+    {
+      "path": "target/native-product-rpc/native-recovery-lowest-12116-1792820075920798600/recovery-report.json",
+      "sha256": "185ed52a1282dac4416cc7c38c5be154668cfec3afa05d3a6da98ce9cf6f019e",
+      "completed": true,
+      "phase": "complete",
+      "node_sha256": "0x8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+      "aoem_sha256": "0x31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+      "late_start_after_ms": 102976,
+      "offline_batches": 40,
+      "offline_healthy_confirmation_ms": 102874,
+      "catchup_crash": {
+        "durable_interrupted_height": 1,
+        "target_height": 40,
+        "target_archive_absent_at_crash": true,
+        "qc_signatures": 3,
+        "outbox_revision": 1,
+        "outbox_sha256": "0xe38ff219a688787bc6a8dbd57ce9de68b062e64e215f845ea68420ebe2c0e527",
+        "source": "original stopped database; no copy or mutation"
+      },
+      "minority_no_publication_ms": 12025,
+      "final_heights": [
+        46,
+        46,
+        46,
+        46
+      ],
+      "same_key_config_and_old_signing_outbox_preserved": true
+    }
+  ],
+  "gpu": [
+    {
+      "path": "target/native-product-rpc/native-only-12508-1792820740341368700/report.json",
+      "sha256": "43c57855128a2c8308d34defb238bcb83c4dfeba8e55a193b78d84f8ed862c6e",
+      "backend": "aoem_integer_v7",
+      "http_listeners": 0,
+      "real_processes": 4,
+      "real_machines": 1,
+      "before": [
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        }
+      ],
+      "cold_recovered_height": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "receipt_count": 8,
+      "throughput_acceptance": false
+    },
+    {
+      "path": "target/native-product-rpc/native-only-28024-1792820981243246600/report.json",
+      "sha256": "43c57855128a2c8308d34defb238bcb83c4dfeba8e55a193b78d84f8ed862c6e",
+      "backend": "aoem_integer_v7",
+      "http_listeners": 0,
+      "real_processes": 4,
+      "real_machines": 1,
+      "before": [
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        }
+      ],
+      "cold_recovered_height": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "receipt_count": 8,
+      "throughput_acceptance": false
+    },
+    {
+      "path": "target/native-product-rpc/native-only-9224-1792820987446330200/report.json",
+      "sha256": "43c57855128a2c8308d34defb238bcb83c4dfeba8e55a193b78d84f8ed862c6e",
+      "backend": "aoem_integer_v7",
+      "http_listeners": 0,
+      "real_processes": 4,
+      "real_machines": 1,
+      "before": [
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        },
+        {
+          "height": 3,
+          "integer_rows": 6,
+          "integer_plans": 3
+        }
+      ],
+      "cold_recovered_height": [
+        3,
+        3,
+        3,
+        3
+      ],
+      "receipt_count": 8,
+      "throughput_acceptance": false
+    }
+  ],
+  "final_node_sha256": "8222c3b711b4dc3f7ac4647cbceee38410e325eb535e743f73fcfa1901ffb4ae",
+  "local": {
+    "root_fmt": "passed",
+    "node_lib_tests_strict_clippy": "passed, no lint suppression",
+    "native_components": {
+      "passed": 384,
+      "failed": 0,
+      "explicitly_ignored": 58
+    },
+    "real_aoem_signature_reuse": {
+      "passed": 1,
+      "failed": 0,
+      "expected_observation": "strict/reuse (2,0) -> (2,2) -> (4,2)"
+    },
+    "native_only_process_suite": {
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0,
+      "elapsed_seconds": 307.39,
+      "log": "native-only-processes.log"
+    }
+  },
+  "gpu_followup": {
+    "backend": "aoem_integer_v7 existing complete-effect composition",
+    "production_or_speedup_claim": false,
+    "failed_logs": [
+      "native-integer-functional.log",
+      "native-integer-functional-retry.log",
+      "native-integer-diagnostic.log",
+      "native-integer-after-startup-observation.log"
+    ],
+    "failure": "native query timeout: Status, about 5.17-5.20 seconds; no startup-complete/progress record at timeout; retained, never extended timeout or used CPU fallback",
+    "passing_logs": [
+      "native-integer-original-control.log",
+      "native-integer-standard-name.log",
+      "samepath-integer-base.log",
+      "samepath-integer-final.log"
+    ],
+    "same_full_path_final_result": "1 passed; 0 failed; original fixture unchanged; actual plans >=3, rows>=6 on every validator, mixed failure/economics and cold restart",
+    "startup_observation": {
+      "script": "observe-integer-startup.ps1",
+      "scope": "one test node Existing on original test database/key, no transaction submitted; first progress observed with 1-second polling, not exact initialization/device time",
+      "first_final_label_seconds": 6.0780527,
+      "original_label_seconds": 3.0770142,
+      "final_standard_label_seconds": 4.0699329,
+      "final_label_repeat_seconds": 1.0076408,
+      "final_at_first_report": {
+        "strict_verified_rows": 0,
+        "reused_rows": 0,
+        "executed_batches": 0
+      },
+      "cause": "unresolved; source initialization order unchanged. Same binary later naturally ready, so neither stable filename causality nor a new signature-reuse deadlock is proven."
+    },
+    "cold_start_stability_accepted": false
+  },
+  "invalid_test_invocation": {
+    "log": "native_product_single_rpc_fees_nonce_finality_and_cold_restart.log",
+    "failed": 1,
+    "reason": "Wrong initial historical-HTTP test filter; HTTP fixture requires historical-http before node startup. No feature enabled. Excluded from native acceptance, failure preserved."
+  },
+  "exclusions": [
+    "real multihost/Linux acceptance",
+    "stable million/hundred-thousand TPS capacity",
+    "new GPU speedup or cold-start stability",
+    "formal mainnet genesis/economics",
+    "first-release ML-DSA/UCA authorization",
+    "complete business ZK proof",
+    "independent complete fee-state audit"
+  ]
+}

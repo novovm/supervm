@@ -15,6 +15,7 @@ use crate::native_pipeline::state::tree::{NodeHash, StateChange, StateNodeReader
 use anyhow::{ensure, Context, Result};
 use novovm_exec::resident::{ComputeSession, ComputeTask};
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -223,6 +224,7 @@ pub(crate) fn authenticate_admission_rows(
     inputs: Vec<AdmissionInput>,
     budget: AuthenticationBudget,
     timeout: Duration,
+    verified: Option<Arc<AtomicU64>>,
 ) -> Result<AdmissionRows> {
     let (bytes, max) = admission_sizes(&inputs)?;
     ensure!(
@@ -236,8 +238,14 @@ pub(crate) fn authenticate_admission_rows(
             && bytes <= budget.body_bytes,
         "signature admission exceeds input budget"
     );
-    let (inputs, results, peak_callbacks) =
-        authenticate_graph(session, configured_chain_id, inputs, budget, timeout)?;
+    let (inputs, results, peak_callbacks) = authenticate_graph(
+        session,
+        configured_chain_id,
+        inputs,
+        budget,
+        timeout,
+        verified,
+    )?;
     Ok(AdmissionRows {
         rows: inputs
             .into_iter()
@@ -286,6 +294,42 @@ pub struct SignatureCheckedBatch {
 }
 
 impl SignatureCheckedBatch {
+    pub(crate) fn validate_source(&self, chain: u64, budget: AuthenticationBudget) -> Result<()> {
+        ensure!(self.chain_id == chain, "authenticated batch chain mismatch");
+        self.raw_transactions.validate(chain, budget)
+    }
+
+    /// Metadata retained in addition to the source dictionary/canonical bytes.
+    /// Source payload ownership is accounted by its enclosing bounded owner.
+    pub fn retained_metadata_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(
+            self.transactions
+                .capacity()
+                .saturating_mul(std::mem::size_of::<SignatureCheckedTransfer>()),
+        )
+    }
+
+    pub(crate) fn rebind_apfl(
+        configured_chain_id: u64,
+        batch: Arc<ApflTransferBatch>,
+        transactions: &[&SignatureCheckedTransfer],
+        budget: AuthenticationBudget,
+    ) -> Result<Self> {
+        let source = BatchSource::Apfl(batch.clone());
+        source.validate(configured_chain_id, budget)?;
+        ensure!(
+            transactions.len() == batch.len(),
+            "admitted row count mismatch"
+        );
+        let checked = transactions
+            .iter()
+            .enumerate()
+            .map(|(index, transaction)| {
+                transaction.rebind_apfl(batch.clone(), index, configured_chain_id)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        finish_authentication(configured_chain_id, source, checked, 0)
+    }
     /// Immutable authenticated bytes; business preparation may check its own
     /// bounds before a parent context exists. This grants no state authority.
     pub(crate) fn source(&self) -> &BatchSource {
@@ -542,6 +586,24 @@ pub(crate) fn authenticate_source_batch(
     budget: AuthenticationBudget,
     timeout: Duration,
 ) -> Result<SignatureCheckedBatch> {
+    authenticate_source_batch_observed(
+        session,
+        configured_chain_id,
+        raw_transactions,
+        budget,
+        timeout,
+        None,
+    )
+}
+
+pub(crate) fn authenticate_source_batch_observed(
+    session: &mut ComputeSession,
+    configured_chain_id: u64,
+    raw_transactions: BatchSource,
+    budget: AuthenticationBudget,
+    timeout: Duration,
+    verified: Option<Arc<AtomicU64>>,
+) -> Result<SignatureCheckedBatch> {
     raw_transactions.validate(configured_chain_id, budget)?;
     let (raw_transactions, results, peak_callbacks) = authenticate_graph(
         session,
@@ -549,6 +611,7 @@ pub(crate) fn authenticate_source_batch(
         raw_transactions,
         budget,
         timeout,
+        verified,
     )?;
     let transactions = results
         .into_iter()
@@ -568,6 +631,7 @@ fn authenticate_graph<S: AuthenticationSource>(
     source: S,
     budget: AuthenticationBudget,
     timeout: Duration,
+    verified: Option<Arc<AtomicU64>>,
 ) -> Result<(S, Vec<Result<SignatureCheckedTransfer>>, usize)> {
     // Share immutable input allocation, not one copy of the whole body per task.
     let body = Arc::new(source);
@@ -628,5 +692,14 @@ fn authenticate_graph<S: AuthenticationSource>(
     let raw_transactions = Arc::try_unwrap(body).map_err(|_| {
         anyhow::anyhow!("authentication callbacks retained batch input after completion")
     })?;
+    // One observation per completed graph, not a shared atomic per worker row.
+    // Count the actual successful checks even if batch deduplication later
+    // rejects the complete candidate. An incomplete/failed graph is not reused.
+    if let Some(counter) = verified {
+        counter.fetch_add(
+            transactions.iter().filter(|row| row.is_ok()).count() as u64,
+            Ordering::Relaxed,
+        );
+    }
     Ok((raw_transactions, transactions, report.peak_inflight))
 }

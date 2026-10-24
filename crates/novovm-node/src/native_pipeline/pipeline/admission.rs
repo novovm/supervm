@@ -2,9 +2,110 @@
 //! owner. Results grant no nonce lease, mempool ACK, state or signing authority.
 
 use super::*;
+use crate::native_pipeline::ingress::authentication::SignatureCheckedTransfer;
 use crate::native_pipeline::ingress::batch::{
-    admission_retained_bytes, admission_sizes, AdmissionRows,
+    admission_retained_bytes, admission_sizes, AdmissionRows, SignatureCheckedBatch,
 };
+
+/// Immutable evidence from THIS pipeline's strict verifier. It grants neither
+/// a nonce lease nor spend/publication authority. Its source must stay charged
+/// in the existing pending-input owner; no ingress permit is retained here.
+pub struct AdmittedTransfer {
+    checked: Arc<SignatureCheckedTransfer>,
+    owner: Arc<()>,
+}
+
+impl AdmittedTransfer {
+    pub fn checked(&self) -> &SignatureCheckedTransfer {
+        &self.checked
+    }
+
+    /// Pool source accounting must cover the very dictionary this token pins,
+    /// not merely a different dictionary containing an equal signed row.
+    pub(crate) fn matches_apfl_source(&self, batch: &Arc<ApflTransferBatch>, index: usize) -> bool {
+        self.checked.matches_apfl_source(batch, index)
+    }
+
+    /// Additional logical metadata, excluding the shared immutable APFL source
+    /// payload which the pending pool already charges once per dictionary.
+    pub fn retained_metadata_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + std::mem::size_of::<SignatureCheckedTransfer>()
+            + 2 * std::mem::size_of::<usize>()
+    }
+}
+
+pub struct AdmittedRow {
+    pub input: AdmissionInput,
+    pub result: Result<AdmittedTransfer>,
+}
+
+/// A checked, regrouped batch branded for the pipeline which admitted every
+/// signed row. Only the NEW structured dictionary is retained, not pool tokens.
+pub struct AdmittedBatch {
+    checked: SignatureCheckedBatch,
+    owner: Arc<()>,
+}
+
+impl AdmittedBatch {
+    pub fn retained_metadata_bytes(&self) -> usize {
+        self.checked.retained_metadata_bytes() + std::mem::size_of::<Arc<()>>()
+    }
+
+    pub(super) fn source(&self) -> &BatchSource {
+        self.checked.source()
+    }
+
+    pub(super) fn ensure_owner(&self, owner: &Arc<()>) -> Result<()> {
+        ensure!(
+            Arc::ptr_eq(&self.owner, owner),
+            "admitted batch belongs to a different pipeline"
+        );
+        Ok(())
+    }
+
+    pub(super) fn into_checked(
+        self,
+        chain: u64,
+        budget: AuthenticationBudget,
+    ) -> Result<SignatureCheckedBatch> {
+        self.checked.validate_source(chain, budget)?;
+        Ok(self.checked)
+    }
+}
+
+/// Deterministic test fixture still performs the REAL strict verifier. This
+/// cannot manufacture accepted proof from fields or a canonical hash.
+#[cfg(test)]
+pub(crate) fn admitted_apfl_for_test(
+    owner: Arc<()>,
+    chain_id: u64,
+    batch: Arc<ApflTransferBatch>,
+    index: usize,
+) -> Result<AdmittedTransfer> {
+    Ok(AdmittedTransfer {
+        checked: Arc::new(
+            crate::native_pipeline::ingress::authentication::authenticate_apfl_row(
+                batch, index, chain_id,
+            )?,
+        ),
+        owner,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn admitted_for_test(
+    pipeline: &CandidatePipeline,
+    batch: Arc<ApflTransferBatch>,
+    index: usize,
+) -> Result<AdmittedTransfer> {
+    admitted_apfl_for_test(
+        pipeline.identity.clone(),
+        pipeline.config.store.domain.chain_id,
+        batch,
+        index,
+    )
+}
 
 pub struct SignatureAdmissionRequest {
     pub(super) inputs: Vec<AdmissionInput>,
@@ -123,6 +224,7 @@ impl SignatureAdmissionTicket {
 pub struct SignatureAdmissionOutput {
     pub(super) rows: AdmissionRows,
     pub(super) _permit: Arc<Permit>,
+    pub(super) owner: Arc<()>,
 }
 
 impl SignatureAdmissionOutput {
@@ -140,6 +242,20 @@ impl SignatureAdmissionOutput {
     pub fn pop_front(&mut self) -> Option<AdmissionRow> {
         self.rows.rows.pop_front()
     }
+
+    /// Consume one actual verification result without keeping the single
+    /// ingress permit alive in the pool. The caller must charge retained
+    /// metadata and source in that pool before keeping a successful token.
+    pub fn pop_admitted(&mut self) -> Option<AdmittedRow> {
+        let row = self.rows.rows.pop_front()?;
+        Some(AdmittedRow {
+            input: row.input,
+            result: row.result.map(|checked| AdmittedTransfer {
+                checked: Arc::new(checked),
+                owner: self.owner.clone(),
+            }),
+        })
+    }
     pub fn peak_callbacks(&self) -> usize {
         self.rows.peak_callbacks
     }
@@ -152,6 +268,37 @@ pub(super) struct AdmissionCommand {
 }
 
 impl CandidatePipeline {
+    /// Structural rebinding only: this never authorizes a parent or executes
+    /// business. Every new row must match its same-owner evidence in full,
+    /// including signatures; canonical transaction hashes are insufficient.
+    pub fn rebind_admitted_apfl(
+        &self,
+        batch: Arc<ApflTransferBatch>,
+        admitted: &[&AdmittedTransfer],
+    ) -> Result<AdmittedBatch> {
+        ensure!(batch.len() == admitted.len(), "admitted row count mismatch");
+        for row in admitted {
+            ensure!(
+                Arc::ptr_eq(&row.owner, &self.identity),
+                "admitted transfer belongs to a different pipeline"
+            );
+            ensure!(
+                row.checked.is_apfl_view(),
+                "only retained structured admission can be reused"
+            );
+        }
+        let checked = admitted.iter().map(|row| row.checked()).collect::<Vec<_>>();
+        Ok(AdmittedBatch {
+            checked: SignatureCheckedBatch::rebind_apfl(
+                self.config.store.domain.chain_id,
+                batch,
+                &checked,
+                self.config.authentication,
+            )?,
+            owner: self.identity.clone(),
+        })
+    }
+
     pub fn try_admit_signatures_owned(
         &self,
         request: SignatureAdmissionRequest,
