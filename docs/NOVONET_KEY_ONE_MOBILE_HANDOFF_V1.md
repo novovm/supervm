@@ -43,3 +43,6 @@ B损坏后的恢复、重新绑定和旧权限撤销继续待定，不承诺仅�
 Android进展通知（NOVOKEYONE 9027853）：按用户要求不再等待vivo升级，PCLM50/PKL110已安装独立B/A测试包，补齐USE_BIOMETRIC权限及构建守卫。B认证建钥报告成功，独立包重启后公钥一致；实际扫码往返、重启后同钥签名仍待用户物理扫描验证。原NOVOCHAT进程保持，无真实资产或可信授权结论。继续既有分工，详情见软件仓库docs/OPTICAL-DEVICE-ACCEPTANCE-2026-10-25.md。
 
 光学往返交接结果：NOVOKEYONE e961a90已记录PKL110 A / PCLM50 B真实PUB、REQ、SIG扫描，B认证签名及独立包重启同钥，A上游验签/原请求匹配成功。9项变参检查为规范意图不匹配，不冒充主链执行拒绝。两端asset_authorized=false、transaction_submitted=false。原聊天不动，vivo仍只作原型。另一台继续可信状态/限额/撤销/恢复/原子执行；勿重复Android签名或QR实现。请通过Git回执消费此交付，正式资产仍关闭。详见软件仓库docs/OPTICAL-DEVICE-ACCEPTANCE-2026-10-25.md及原始报告。
+
+
+用户最新授权：允许隔离测试链上的测试NOV真实提交、扣款、具体账户到账、再消费和恢复验证，覆盖此前笼统不提交限制；正式资产/生产收费仍禁止。须核验测试链ID、创世域、可信账户用途、限额/撤销/nonce，不因将来重置创世绕过安全。当前光学fixture不自动成为可执行账户，接口未交付仍拒绝。另一台继续共享可信状态与原子执行，本机继续Android/QR异常消费；请Git回执。详情：NOVOKEYONE docs/TEST-NOV-EXECUTION-2026-10-25.md。
