@@ -1,7 +1,7 @@
 //! Pure policy preflight over CALLER-SUPPLIED state. No constructor here can
 //! certify that state is authoritative. Native integration must read account,
-//! spend grant and nonce from the SAME captured parent and atomically consume
-//! nonce/budget with the economic effects through the existing AOEM owner.
+//! spend grant, current spend epoch and nonce from the SAME captured parent.
+//! Consume nonce/budget atomically with effects through the existing AOEM owner.
 //! Never feed an App-provided snapshot into a production authorization decision.
 use crate::unified_account::{UcaAccount, UcaStatus};
 use novovm_protocol::uca_spend::UcaSpendIntentV1;
@@ -25,6 +25,7 @@ pub enum SpendPolicyError {
 
 /// Separate from identity management; an admin/communication key has no spend
 /// grant merely because it exists in the UCA record.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SuppliedSpendGrantV1 {
     pub account_id: String,
     pub key_ref: [u8; 32],
@@ -45,6 +46,10 @@ pub struct SuppliedSpendStateV1<'a> {
     pub parent_root: [u8; 32],
     pub account: &'a UcaAccount,
     pub grant: &'a SuppliedSpendGrantV1,
+    /// Account-wide spending authorization generation at this parent. This is
+    /// not the identity-management epoch or an account timestamp. None means
+    /// unresolved; it must never be inferred from the submitted grant/intent.
+    pub current_spend_epoch: Option<u64>,
     /// Explicit resolved nonce; None is unknown/unavailable, never nonce zero.
     pub next_spend_nonce: Option<u64>,
 }
@@ -78,7 +83,11 @@ pub fn check_supplied_spend_state_v1(
     if s.grant.key_ref != intent.spend_key_ref {
         return Err(WrongKey);
     }
-    if s.grant.authorization_epoch != intent.authorization_epoch {
+    let current_spend_epoch = s.current_spend_epoch.ok_or(StateUnavailable)?;
+    if current_spend_epoch == 0
+        || s.grant.authorization_epoch != current_spend_epoch
+        || intent.authorization_epoch != current_spend_epoch
+    {
         return Err(WrongEpoch);
     }
     if !s.grant.permits_nov_transfer {

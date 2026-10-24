@@ -1,0 +1,27 @@
+{
+  "baseline": "ec32c21c199472a2adf242d975218e1684733e99",
+  "source": "commit containing this evidence",
+  "scope": "U3 immutable same-parent input and current spend epoch policy, not active spending",
+  "environment": "Windows x86_64-pc-windows-msvc Rust 1.94.0 release locked offline",
+  "aoem_path": "aoem/windows/core/bin/aoem_ffi.dll",
+  "aoem_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "node_lib_test_path": "target/runtime-rebuild/release/deps/novovm_node-39601fe997ec596c.exe",
+  "node_lib_test_sha256": "555ab3a3ad9f1cd6260ea9ef7fead278b8f53b75fc190c814705cf29ab7633ed",
+  "results": {
+    "captured_state_pure": {"passed": 7, "failed": 0, "ignored": 1},
+    "captured_state_real_aoem_explicit": {"passed": 1, "failed": 0, "ignored": 0},
+    "policy": {"passed": 5, "failed": 0},
+    "adapter_api_lib_including_policy": {"passed": 17, "failed": 0},
+    "protocol_uca_spend": {"passed": 8, "failed": 0},
+    "exec_shared_spend_real_aoem_explicit": {"passed": 1, "failed": 0, "ignored": 0},
+    "native_pipeline_including_captured_pure": {"passed": 391, "failed": 0, "ignored": 59},
+    "node_adapter_lib_and_tests_strict_clippy": "passed",
+    "root_fmt_and_diff_check": "passed"
+  },
+  "tree_fixture": "seeded original immutable tree; not an authorized live registration",
+  "activated_native_spending": false,
+  "same_batch_budget_consumption": false,
+  "new_tps_measurement": false,
+  "mobile_runtime_delivery": false,
+  "runtime_data_modified": false
+}

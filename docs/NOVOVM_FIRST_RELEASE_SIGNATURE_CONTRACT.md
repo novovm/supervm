@@ -16,6 +16,9 @@
 
 ## 2. 先复用什么，实际缺什么
 
+本表为 `92803874` 的初始核对，后续交付状态以文末 U2/U3 小节为准；
+例如共享签验门面已在 `fa4cfd79` 落地，不能继续把该初始缺口当作当前事实。
+
 | 边界 | 已有源码资产 | 当前缺口及落点 |
 | --- | --- | --- |
 | 通用ML-DSA | `crates/aoem-bindings/src/lib.rs` 的能力、尺寸、keygen/sign/verify/batch包装；`crates/novovm-prover/src/pq_signature.rs` 的显式参数、严格尺寸、官方正向量/篡改反例、自检及签后验签 | 复用同一可信AOEM运行库，通过原exec门面适配；不重写算法、不因文件在prover就另起证明服务，不以re-export冒充产品接通 |
@@ -150,4 +153,32 @@ epoch，不能保证换钥后旧 grant 已失效。
 授权根来源、记录存在、密码正确、费用成功、共识发布分别验收；本节是接合核对，
 不是 U3 或新 TPS 已通过。
 
-See [the parameter recommendation](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md): the baseline is ML-DSA-65 alone. The shared spend signature contract above is implemented; native ingress activation, trusted spending state and mobile runtime remain incomplete. Do not infer approval of ML-DSA-87 from the historical enum. The NOVOCHAT computer consumes the shared upstream interfaces; native UCA/spending and shared canonical signature format remain owned by SUPERVM per the [joint handoff](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). No real billing or mobile key migration is enabled by this work.
+### U3 本片：同一父状态捕获基础，不是资产消费许可
+
+接续 `ec32c21c`，实现位于原node
+`native_pipeline/business/uca_spend_state.rs`。复用 `UcaAccount`、`PersonaBinding`、
+`record_pages`、`OwnedStateInput` 及原 `balance_key/nonce_key`，不建立第二个账户库、
+余额地址或发布入口。调用链为已有树捕获 → 一次声明键 `read_many` → 有界规范记录
+解码 → 同根签名/权限预检；尚未作为当前V3原生交易的执行入口。
+
+- 新 `novovm/uca-spend-state/v1/` 布局按链、创世、记录类型分域；账户记录复用原
+  身份和资产绑定，加独立 `current_spend_epoch`，不借用管理代次或时间戳。
+  独立grant复用同一策略类型，nonce仍是稳定UCA域，换钥不产生新nonce桶。
+- 账户页上限8192、grant页上限512，复用原256字节树页和完整尾页校验；编码直接
+  写固定缓冲。规范二进制解码拒绝尾随/非规范字节，不经过JSON。
+- 20/32字节余额地址仅作位置hint，必须与捕获账户的原 `Web30/Bound` 绑定及
+  反向owner一致；不能按新花费公钥生成另一份余额地址。缺账户、grant、nonce或
+  余额均拒绝，不隐式注册、不当作nonce零；自转账复用相同状态。
+- `SuppliedSpendStateV1.current_spend_epoch` 不可从intent/grant推导；未知、零值或
+  三者不一致均拒绝。旧grant还存在也不能绕过账户现行代次。API调用方须适配新增字段。
+- `CapturedUcaSpendStateV1` 无外部反序列化/构造入口，绑定完整意图及原父根；预检
+  仍返回unit而非花费许可。父根可信性来自原候选/journal，不接受App声称的根。
+  该模块的访问声明只读；纯记录编码器不授予初始化、换钥或写入授权。
+
+**仍未接通**：授权初始化/注册与轮换恢复事务、版本化原生接收、同批grant预算前缀、
+原子nonce/费用/余额消费及最终发布。原 `UcaKeyAlgo::Mldsa87` 管理标签没有改名为65；
+管理身份的首发密码迁接也仍须显式完成。当前树夹具不能替代合法创世/注册证据。
+接续先将可信初始化及同批预算效应接到原计划；100额度下两笔80、失败释放、入账
+不提额和轮换nonce连续仍须在实际交易路径验证。原CPU快路径与整数效应计划未改。
+
+See [the parameter recommendation](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md): the baseline is ML-DSA-65 alone. The shared spend signature contract and captured-state foundation above are implemented; native ingress activation, authorized state initialization, atomic spending and mobile runtime remain incomplete. Do not infer approval of ML-DSA-87 from the historical enum. The NOVOCHAT computer consumes the shared upstream interfaces; native UCA/spending and shared canonical signature format remain owned by SUPERVM per the [joint handoff](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). No real billing or mobile key migration is enabled by this work.

@@ -1,5 +1,29 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-24 U3 同父状态输入与现行花费代次（未激活支出）
+
+输入 `ec32c21c`，仍在原node主线。新增 `business/uca_spend_state` 复用原
+UcaAccount/PersonaBinding、record_pages、OwnedStateInput、余额与稳定UCA nonce键。
+同一捕获父根读取账户、资产地址及反向归属、当前花费代次、grant、nonce和余额；
+错误位置hint、缺记录、错根/损坏树和非规范页拒绝，不新建账户库或按新公钥造地址。
+供值预检新增独立 `current_spend_epoch`：未知/零值拒绝，旧grant仍存在也不能
+绕过现行代次。编码固定缓冲、读取有界二进制，纯记录编码器不授予初始化权限。
+
+Windows/MSVC release：新捕获测试7通过，真实AOEM签名+同父预检1项显式通过，
+策略5、协议8、原exec签验运行测试1通过；adapter lib17及原native_pipeline391
+通过（59默认忽略，新运行库测试另行显式执行）。上述计数重叠，不累计为独立测试。
+node/adapter lib及tests严格Clippy、根fmt和diff检查通过。首次测试编译因直接unsafe加载
+被node既有forbid拒绝，改用原安全bindings加载而非放宽限制，最终编译测试通过。
+实际库仍 `31306037…15e8947`；node为lib测试二进制，不是新发布包或TPS制品。
+完整身份、命令和边界见[验收记录](../artifacts/audit/uca-spend-captured-state-20261024/README.md)。
+
+**本片没有原生ML-DSA转账、额度原子消费、轮换事务或重启追赶的新验收。** 树由
+测试夹具初始化，不能冒充合法注册/创世；captured预检返回成功不授权花费。接续仍需
+可信初始化、版本化原生入口、同批grant前缀与nonce/余额/费用共同发布。未改原
+CPU/整数业务计划、AOEM库或真实数据，未交付手机库、未复测TPS、未开启真实收费。
+CI加入新模块与显式真实库用例；Linux及本提交远端结果单列，不继承Windows通过。
+上一提交独立 native-auth CI `40079062435` 已成功，主CI查询时仍运行。
+
 ## 2026-10-24 U2 独立锁文件修复与 U3 接续核对
 
 输入 `fa4cfd79`。实查远端 Native auth relation `40077120889` 为失败，错误发生在

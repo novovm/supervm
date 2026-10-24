@@ -5,3 +5,4 @@ pub mod direct_nov_fee;
 pub mod nov_transfer_batch;
 pub mod quoted_transfer;
 mod record_pages;
+pub mod uca_spend_state;

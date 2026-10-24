@@ -50,6 +50,7 @@ fn absent_state_and_unresolved_nonce_never_become_fresh_account() {
         parent_root: [5; 32],
         account: &account,
         grant: &grant,
+        current_spend_epoch: Some(3),
         next_spend_nonce: None,
     };
     assert_eq!(
@@ -77,6 +78,7 @@ fn supplied_policy_rejects_every_authority_boundary_without_mutation() {
         (12, LimitExceeded),
         (13, LimitExceeded),
         (14, WrongAccount),
+        (15, WrongEpoch),
     ] {
         let (intent, mut account, mut grant) = fixture();
         if case == 3 {
@@ -112,12 +114,16 @@ fn supplied_policy_rejects_every_authority_boundary_without_mutation() {
         if case == 14 {
             grant.account_id = "other".into();
         }
+        if case == 15 {
+            grant.authorization_epoch = 0;
+        }
         let mut state = SuppliedSpendStateV1 {
             chain_id: 7,
             genesis: [2; 32],
             parent_root: [5; 32],
             account: &account,
             grant: &grant,
+            current_spend_epoch: Some(3),
             next_spend_nonce: Some(9),
         };
         if case == 0 {
@@ -159,6 +165,7 @@ fn rotation_keeps_account_and_nonce_and_rejects_old_key_and_replay() {
         parent_root: [5; 32],
         account: &account,
         grant: &grant,
+        current_spend_epoch: Some(4),
         next_spend_nonce: Some(9),
     };
     assert_eq!(
@@ -186,5 +193,82 @@ fn rotation_keeps_account_and_nonce_and_rejects_old_key_and_replay() {
     assert_eq!(
         check_supplied_spend_state_v1(&rotated, Some(&state), &[5; 32], 9),
         Err(SpendPolicyError::Expired)
+    );
+}
+
+#[test]
+fn unresolved_or_zero_current_epoch_cannot_be_inferred_from_matching_grant() {
+    let (intent, account, grant) = fixture();
+    for (epoch, expected) in [
+        (None, SpendPolicyError::StateUnavailable),
+        (Some(0), SpendPolicyError::WrongEpoch),
+        (Some(2), SpendPolicyError::WrongEpoch),
+        (Some(4), SpendPolicyError::WrongEpoch),
+    ] {
+        let state = SuppliedSpendStateV1 {
+            chain_id: 7,
+            genesis: [2; 32],
+            parent_root: [5; 32],
+            account: &account,
+            grant: &grant,
+            current_spend_epoch: epoch,
+            next_spend_nonce: Some(9),
+        };
+        assert_eq!(
+            check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+            Err(expected)
+        );
+    }
+}
+
+#[test]
+fn advancing_current_epoch_invalidates_retained_old_grant_without_resetting_nonce() {
+    let (old, mut account, old_grant) = fixture();
+    // Management timestamps may advance independently. Neither is a spend epoch.
+    account.updated_at = 4;
+    let mut state = SuppliedSpendStateV1 {
+        chain_id: 7,
+        genesis: [2; 32],
+        parent_root: [5; 32],
+        account: &account,
+        grant: &old_grant,
+        current_spend_epoch: Some(3),
+        next_spend_nonce: Some(9),
+    };
+    assert_eq!(
+        check_supplied_spend_state_v1(&old, Some(&state), &[5; 32], 12),
+        Ok(())
+    );
+    state.current_spend_epoch = Some(4);
+    assert!(!old_grant.revoked);
+    assert_eq!(
+        check_supplied_spend_state_v1(&old, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongEpoch)
+    );
+    let mut new_intent = old.clone();
+    new_intent.authorization_epoch = 4;
+    assert_eq!(
+        check_supplied_spend_state_v1(&new_intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongEpoch),
+        "new intent cannot revive an old grant"
+    );
+    let (_, _, mut new_grant) = fixture();
+    new_grant.authorization_epoch = 4;
+    new_grant.key_ref = [6; 32];
+    new_intent.spend_key_ref = new_grant.key_ref;
+    state.grant = &new_grant;
+    assert_eq!(
+        check_supplied_spend_state_v1(&new_intent, Some(&state), &[5; 32], 12),
+        Ok(())
+    );
+    assert_eq!(
+        old.nonce_identity().unwrap(),
+        new_intent.nonce_identity().unwrap()
+    );
+    assert_eq!(state.next_spend_nonce, Some(9));
+    new_intent.nonce = 0;
+    assert_eq!(
+        check_supplied_spend_state_v1(&new_intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::NonceMismatch)
     );
 }

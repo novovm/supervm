@@ -141,6 +141,23 @@ UCA/花费grant父状态读取、授权/额度原子消费、实际新交易入�
 
 ### SUPERVM 接续认领：独立锁文件门禁与 U3 接合核对
 
+接续输入 `ec32c21c`（本地/远端一致、原树干净）：根代理认领原node
+`native_pipeline/business/uca_spend_state*`、模块接线、CI及本轮文档，唯一构建槽。
+权限分工仅认领 adapter-api 的 `uca_spend_policy*`，补独立现行花费代次；另一路
+只读核现有账户/资产绑定与分页来源。复用原 UcaAccount/PersonaBinding/余额键/
+nonce键/record_pages/OwnedStateInput，不开新数据库、入口或账本；本片范围是
+同父状态输入和反例，不提前声称授权初始化、同批预算执行或正式支出已接通。
+
+该认领本片已交付捕获输入基础和现行花费代次检查：新node纯测试7、真实随包AOEM
+签名结合捕获预检1项显式通过；权限策略5、原协议8、原exec运行测试1及native
+流水线391通过（59默认忽略；计数重叠），严格lib Clippy与格式通过。代码/命令/制品
+身份见[本轮证据](../artifacts/audit/uca-spend-captured-state-20261024/README.md)。
+`SuppliedSpendStateV1` 新增必填的 `current_spend_epoch: Option<u64>`；不知道就传
+None并拒绝，不从grant或意图推导。App不应构造这些字段作为花费许可；新的captured
+类型是node内同父输入。尚无合法注册/授权初始化、预算消费或新原生交易，因此App
+不得开启NOV支出。下一本机工作是将初始化与同批授权前缀接进原业务/发布计划；
+Android/iPhone制品仍按既有交接等待实际构建与资格证据，不要求App补底层。
+
 输入 `fa4cfd79`；已 fetch，本地/远端一致、工作树原先干净。SUPERVM 根代理负责
 `proofs/native-auth` 两份锁文件、对应 CI 门禁、签名合同及本交接；独占构建槽。
 两名只读分工分别核对当前父状态捕获及完整效应编译器，不写第二套账户/执行实现。
