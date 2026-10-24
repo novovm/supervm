@@ -11728,6 +11728,7 @@ mod tests {
         NetworkRuntimeSyncStatus,
     };
     use ed25519_dalek::{Signer, SigningKey};
+    use k256::elliptic_curve::Generate;
     use novovm_protocol::{
         encode_block_header_wire_v1,
         protocol_catalog::distributed_occc::gossip::{
@@ -15439,7 +15440,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -15651,7 +15652,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -18042,7 +18043,7 @@ mod tests {
         let bad_peer = NodeId(1_112);
         let good_peer = NodeId(1_113);
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -18237,7 +18238,7 @@ mod tests {
         for idx in 0..6_u64 {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled peer");
             let listen_addr = listener.local_addr().expect("listener addr");
-            let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+            let responder_signing = k256::ecdsa::SigningKey::generate();
             let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
             let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
                 .expect("derive stalled pubkey");
@@ -18313,7 +18314,7 @@ mod tests {
         for idx in 0..40_u64 {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind stalled sync peer");
             let listen_addr = listener.local_addr().expect("listener addr");
-            let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+            let responder_signing = k256::ecdsa::SigningKey::generate();
             let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
             let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
                 .expect("derive stalled pubkey");
@@ -18574,7 +18575,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -18710,7 +18711,7 @@ mod tests {
         let chain_id = 9_917_u64;
         let local = NodeId(1_210);
         let remote = NodeId(1_211);
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -18988,7 +18989,7 @@ mod tests {
             .hash;
         let server_header_records = vec![header_record_1.clone(), header_record_2.clone()];
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -19340,7 +19341,7 @@ mod tests {
                 .any(|block| block.hash == header_hash && block.canonical && block.body_available)
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -19628,7 +19629,7 @@ mod tests {
         let server_raw_tx = raw_tx.clone();
         let server_receipt_blocks = receipt_blocks.clone();
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -20055,7 +20056,7 @@ mod tests {
         let server_raw_tx = raw_tx.clone();
         let (proceed_sender, proceed_receiver) = std::sync::mpsc::channel::<()>();
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -20377,7 +20378,7 @@ mod tests {
         let tx_hash = crate::eth_rlpx_transaction_hash_v1(raw_tx.as_slice());
         let server_tx = raw_tx.clone();
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -20557,7 +20558,7 @@ mod tests {
         let tx_hash = crate::eth_rlpx_transaction_hash_v1(raw_tx.as_slice());
         let server_tx = raw_tx.clone();
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -20776,7 +20777,7 @@ mod tests {
             Some(raw_tx.as_slice()),
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -20975,7 +20976,7 @@ mod tests {
         let expected_tx = raw_tx.clone();
         let expected_size = expected_tx.len() as u32;
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -21233,7 +21234,7 @@ mod tests {
         )
         .expect("store native BAL payload");
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -21459,7 +21460,7 @@ mod tests {
             .hash;
         let status_head_hash = [0x77; 32];
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -22800,7 +22801,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -23157,7 +23158,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -23534,7 +23535,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -23906,7 +23907,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -24300,7 +24301,7 @@ mod tests {
         let new_block_hash = parsed_new_block.header.hash;
         let server_receipt_blocks = receipt_blocks.clone();
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -24503,7 +24504,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -24662,7 +24663,7 @@ mod tests {
             },
         );
 
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -24844,7 +24845,7 @@ mod tests {
         let chain_id = 9_918_u64;
         let local = NodeId(1_220);
         let remote = NodeId(1_221);
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");
@@ -24963,7 +24964,7 @@ mod tests {
         let chain_id = 9_918_001_u64;
         let local = NodeId(1_222);
         let remote = NodeId(1_223);
-        let responder_signing = k256::ecdsa::SigningKey::random(&mut rand::rngs::OsRng);
+        let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = crate::eth_rlpx_pubkey_from_nodekey_bytes_v1(&responder_nodekey)
             .expect("derive responder pubkey");

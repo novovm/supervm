@@ -661,7 +661,7 @@ fn build_signature65(r_raw: &[u8], s_raw: &[u8], recovery_id: u8) -> anyhow::Res
     // recovery backends enforce the same modern EVM signature domain.
     let signature = Signature::from_slice(&out[..64])
         .map_err(|err| anyhow::anyhow!("invalid secp256k1 signature scalars: {err}"))?;
-    if signature.normalize_s().is_some() {
+    if signature.normalize_s() != signature {
         bail!("signature.s must use low-S form in the modern M0 profile");
     }
     Ok(out)
@@ -765,7 +765,7 @@ fn recover_secp256k1_pubkey_fallback_m0(
     let recovery_id = RecoveryId::from_byte(signature65[64])?;
     let verifying_key =
         VerifyingKey::recover_from_prehash(message32, &signature, recovery_id).ok()?;
-    Some(verifying_key.to_encoded_point(false).as_bytes().to_vec())
+    Some(verifying_key.to_sec1_point(false).as_bytes().to_vec())
 }
 
 fn rlp_item_as_list_items<'a>(
@@ -1712,6 +1712,44 @@ pub fn validate_tx_semantics_m0(profile: &EvmChainProfile, tx: &TxIR) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secp256k1_fixed_old_rfc6979_prehash_bytes_survive_dependency_upgrade() {
+        use k256::ecdsa::{
+            signature::hazmat::{PrehashSigner, PrehashVerifier},
+            SigningKey,
+        };
+
+        // Retained from k256 0.13.4's ethereum_end_to_end_example (itself
+        // sourced from ethers-rs ba00f549). Hash externally with the existing
+        // Keccak implementation: upgrading digest traits must not rehash or
+        // otherwise change the EVM signing transcript.
+        let secret = hex_bytes("4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318");
+        let key = SigningKey::from_slice(&secret).expect("fixed signing key");
+        let message = hex_bytes(
+            "e9808504e3b29200831e848094f0109fc8df283027b6285cc889f5aa624eac1f55843b9aca0080018080",
+        );
+        let prehash: [u8; 32] = Keccak256::digest(&message).into();
+        let (signature, recovery): (Signature, RecoveryId) =
+            key.sign_prehash(&prehash).expect("sign prehash");
+        assert_eq!(
+            signature.to_bytes().as_slice(),
+            hex_bytes(
+                "c9cf86333bcb065d140032ecaab5d9281bde80f21b9687b3e94161de42d51895727a108a0b8d101465414033c3f705a9c7b826e596766046ee1183dbc8aeaa68"
+            )
+        );
+        assert_eq!(recovery.to_byte(), 0);
+        assert_eq!(signature.normalize_s(), signature);
+        let recovered = VerifyingKey::recover_from_prehash(&prehash, &signature, recovery)
+            .expect("fixed signature recovery");
+        assert_eq!(&recovered, key.verifying_key());
+        recovered
+            .verify_prehash(&prehash, &signature)
+            .expect("fixed verification");
+        let mut changed = prehash;
+        changed[0] ^= 1;
+        assert!(recovered.verify_prehash(&changed, &signature).is_err());
+    }
 
     fn hex_bytes(raw: &str) -> Vec<u8> {
         let normalized = raw.trim_start_matches("0x");

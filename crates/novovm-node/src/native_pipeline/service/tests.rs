@@ -70,6 +70,7 @@ fn config(size: usize) -> ResidentConfig {
         udp_addr: "127.0.0.1:0".parse().unwrap(),
         peers: Vec::new(),
         native_client_limit: 1,
+        uca_initialization: None,
         workers: 1,
         execution_backend: Default::default(),
         batch_size: size,

@@ -4,6 +4,7 @@ use ed25519_dalek::{
     Verifier as Ed25519Verifier, VerifyingKey as Ed25519VerifyingKey,
 };
 use k256::ecdsa::{
+    signature::{Signer as Secp256k1Signer, Verifier as Secp256k1Verifier},
     Signature as Secp256k1Signature, SigningKey as Secp256k1SigningKey,
     VerifyingKey as Secp256k1VerifyingKey,
 };
@@ -132,7 +133,7 @@ pub fn sign_network_device_authorization_secp256k1_v1(
         NetworkAuthorityKeyAlgorithmV1::Secp256k1,
         authority_signing_key
             .verifying_key()
-            .to_encoded_point(true)
+            .to_sec1_point(true)
             .as_bytes()
             .to_vec(),
     );

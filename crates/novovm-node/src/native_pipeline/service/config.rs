@@ -40,6 +40,10 @@ pub struct ResidentConfig {
     #[serde(default)]
     pub native_client_limit: usize,
     pub genesis: GenesisConfig,
+    /// Explicitly pinned new-domain UCA initialization, not an asset ingress
+    /// switch. Omission preserves the original development reference contract.
+    #[serde(default)]
+    pub uca_initialization: Option<uca_genesis::UcaInitializationConfigV1>,
     /// AOEM ingress workers, not the V2 semantic callback pool size. The latter
     /// uses AOEM_SEMANTIC_GRAPH_V2_WORKERS (or available parallelism) at context
     /// creation. Co-located validators need an explicit process resource budget;
@@ -195,7 +199,11 @@ impl ResidentConfig {
                 "unconfigured native peer key"
             );
         }
-        self.genesis.validate()?;
+        if let Some(initialization) = &self.uca_initialization {
+            initialization.validate_manifest(&self.genesis)?;
+        } else {
+            self.genesis.validate()?;
+        }
         Ok(())
     }
 }
@@ -352,10 +360,14 @@ pub(super) fn decode_hex(text: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[path = "config/uca_startup_tests.rs"]
+mod uca_startup_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn genesis() -> GenesisConfig {
+    pub(super) fn genesis() -> GenesisConfig {
         let policy = DirectNovFeePolicy {
             quote_ttl_ms: 15_000,
             policy_version: 1,
@@ -600,6 +612,7 @@ mod tests {
                 })
                 .collect(),
             genesis,
+            uca_initialization: None,
             workers: 2,
             execution_backend: Default::default(),
             batch_size: 2,

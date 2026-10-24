@@ -1,0 +1,35 @@
+crypto-bigint v0.7.6
+├── elliptic-curve v0.14.1
+│   ├── ecdsa v0.17.0
+│   │   └── k256 v0.14.0
+│   │       ├── novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+│   │       │   ├── novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+│   │       │   │   ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│   │       │   │   └── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+│   │       │   │       ├── novovm-bench v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-bench)
+│   │       │   │       ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│   │       │   │       └── novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+│   │       │   ├── novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+│   │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin) (*)
+│   │       │   │   ├── novovm-adapter-sample-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-sample-plugin)
+│   │       │   │   ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│   │       │   │   └── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+│   │       │   ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│   │       │   └── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+│   │       ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│   │       ├── novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+│   │       │   ├── novovm-bench v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-bench)
+│   │       │   ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│   │       │   ├── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+│   │       │   └── novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+│   │       └── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+│   ├── k256 v0.14.0 (*)
+│   └── primeorder v0.14.0
+│       └── k256 v0.14.0 (*)
+├── primefield v0.14.0
+│   ├── primeorder v0.14.0 (*)
+│   └── wnaf v0.14.1
+│       ├── k256 v0.14.0 (*)
+│       └── primeorder v0.14.0 (*)
+└── rfc6979 v0.6.0
+    └── ecdsa v0.17.0 (*)

@@ -225,6 +225,11 @@ impl CandidateBodies {
         admitted: Option<&[&AdmittedTransfer]>,
     ) -> Result<bool> {
         ensure!(
+            self.pin.business_program
+                == crate::native_pipeline::business::nov_transfer_batch::program_id(),
+            "UCA native successor body admission is not active; legacy V3 bodies are forbidden"
+        );
+        ensure!(
             Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
             "successor execution owner changed"
         );

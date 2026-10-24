@@ -1,0 +1,28 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+    Checking aoem-bindings v0.1.0 (D:\WorksArea\SUPERVM\crates\aoem-bindings)
+    Checking novovm-storage-budget v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-storage-budget)
+    Checking novovm-governance-observability v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-governance-observability)
+    Checking novovm-rollout-policy v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-rollout-policy)
+    Checking web30-core v0.1.0 (D:\WorksArea\SUPERVM\vendor\web30-core)
+    Checking novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+    Checking novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+    Checking novovm-coordinator v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-coordinator)
+    Checking novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+    Checking novovm-prover v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-prover)
+    Checking novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+    Checking novovm-adapter-sample-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-sample-plugin)
+    Checking novovm-udp-batch v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-udp-batch)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Checking novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+    Checking novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+    Checking novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+    Checking novovm-bench v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-bench)
+    Finished `release` profile [optimized] target(s) in 41.61s

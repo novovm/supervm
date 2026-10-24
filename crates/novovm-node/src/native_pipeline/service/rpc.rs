@@ -623,6 +623,11 @@ impl RpcLifecycle {
         broadcast: bool,
     ) -> Result<Hash> {
         ensure!(
+            self.node.template.business_program
+                == crate::native_pipeline::business::nov_transfer_batch::program_id(),
+            "UCA native asset admission is not active; legacy V3 admission is forbidden"
+        );
+        ensure!(
             self.projection_error.is_none(),
             "RPC projection unavailable"
         );

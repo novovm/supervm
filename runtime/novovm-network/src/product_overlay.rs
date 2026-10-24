@@ -13,7 +13,8 @@ use chacha20poly1305::{
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
-use k256::{ecdh::diffie_hellman, elliptic_curve::sec1::ToEncodedPoint, PublicKey, SecretKey};
+use k256::elliptic_curve::Generate;
+use k256::{ecdh::diffie_hellman, elliptic_curve::sec1::ToSec1Point, PublicKey, SecretKey};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -247,7 +248,7 @@ impl NodeHandshakeInitiatorV1 {
         ttl_ms: u64,
     ) -> Result<Self, ProductOverlayErrorV1> {
         let responder_peer_id = responder_peer_id.into();
-        let ephemeral_secret = SecretKey::random(&mut OsRng);
+        let ephemeral_secret = SecretKey::generate();
         let mut session_id = [0u8; 16];
         let mut challenge = [0u8; 32];
         OsRng.fill_bytes(&mut session_id);
@@ -276,7 +277,7 @@ impl NodeHandshakeInitiatorV1 {
         let initiator_peer_id = peer_id_from_ed25519_public_key_v1(&identity_public_key);
         let ephemeral_public_key = ephemeral_secret
             .public_key()
-            .to_encoded_point(true)
+            .to_sec1_point(true)
             .as_bytes()
             .to_vec();
         let expires_at_ms = now_ms
@@ -344,10 +345,10 @@ impl NodeHandshakeResponderV1 {
         }
         let initiator_public = PublicKey::from_sec1_bytes(&offer.initiator_ephemeral_public_key)
             .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
-        let ephemeral_secret = SecretKey::random(&mut OsRng);
+        let ephemeral_secret = SecretKey::generate();
         let ephemeral_public_key = ephemeral_secret
             .public_key()
-            .to_encoded_point(true)
+            .to_sec1_point(true)
             .as_bytes()
             .to_vec();
         let mut response_nonce = [0u8; 32];

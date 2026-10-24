@@ -6,7 +6,8 @@ pub mod rpc;
 #[cfg(test)]
 mod tests;
 use super::business::nov_transfer_batch::{
-    effect_contract, program_id, receipt_codec, SEMANTIC_VERSION,
+    effect_contract, program_id, receipt_codec, uca_effect_contract, uca_program_id,
+    uca_receipt_codec, SEMANTIC_VERSION,
 };
 use super::consensus::{
     bodies::{BodyLimits, CandidateBodies},
@@ -87,7 +88,18 @@ impl ResidentNode {
     ) -> Result<Self> {
         config.normalize_native_paths();
         config.validate()?;
-        let (validators, initial) = config.genesis.prepare()?;
+        let (validators, reference_initial) = config.genesis.prepare()?;
+        // Verification and all three explicit pins precede opening the store.
+        // Existing mode never installs or repairs missing initialization state.
+        let initial = if let Some(material) = &config.uca_initialization {
+            let runtime = novovm_exec::AoemExecFacade::open(
+                &config.library,
+                novovm_exec::AoemExecOpenOptions::default(),
+            )?;
+            material.verify(&config.genesis, &runtime)?.into_state()
+        } else {
+            reference_initial
+        };
         let key = read_signer(&config)?;
         let local = Validator::new(key.verifying_key().to_bytes(), 1)?.id();
         ensure!(
@@ -117,15 +129,27 @@ impl ResidentNode {
             chain_id: config.genesis.chain_id,
             genesis_config_commitment: config.genesis.genesis_config_commitment,
             protocol_commitment: config.genesis.protocol_commitment,
-            business_program: program_id(),
+            business_program: if config.uca_initialization.is_some() {
+                uca_program_id()
+            } else {
+                program_id()
+            },
             semantic_version: SEMANTIC_VERSION,
-            effect_contract: effect_contract(&config.genesis.policy)?,
+            effect_contract: if config.uca_initialization.is_some() {
+                uca_effect_contract(&config.genesis.policy)?
+            } else {
+                effect_contract(&config.genesis.policy)?
+            },
             parent_block_hash: [0; 32],
             parent_height: 0,
             parent_state_root: initial.root(),
             parent_receipt_root: empty_root(),
             parent_state_version: 0,
-            receipt_codec: receipt_codec(),
+            receipt_codec: if config.uca_initialization.is_some() {
+                uca_receipt_codec()
+            } else {
+                receipt_codec()
+            },
             height: 1,
             slot: 0,
             timestamp_unix_ms: config.genesis.timestamp_unix_ms,

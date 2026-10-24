@@ -12,7 +12,7 @@ ctr = "0.9"
 dashmap = "6.1"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 hmac = "0.12"
-k256 = { version = "0.13", features = ["ecdsa", "ecdh", "arithmetic"] }
+k256 = { version = "0.14.0", features = ["ecdsa", "ecdh", "arithmetic"] }
 novovm-adapter-api = { path = "../../novovm-adapter-api" }
 novovm-adapter-evm-core = { path = "../../plugins/evm/core" }
 novovm-adapter-evm-plugin = { path = "../../plugins/evm/plugin" }

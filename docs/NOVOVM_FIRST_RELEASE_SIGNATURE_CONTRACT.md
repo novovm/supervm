@@ -228,6 +228,58 @@ UCA签名的 `max_fee=0` 是严格零上限，不继承旧费用接口“0表示
 后重开，以及全部冷重开。逐账户余额、稳定 nonce、预算、全部费用记录及历史回执
 一致。它是进程内消息交付、旧共识签名夹具，不是四真实节点、强杀断电或首发全链 PQ。
 
-**原生 SDK/APFL 的 NUAS 接收、池/传播/追赶/类型化查询和活动初始化配置仍未接通；
-App 资产入口不因此开放。** 授权变更/恢复、正式分配与经济结算仍独立验收。
+**该片交付时原生 SDK/APFL 的 NUAS 接收、池/传播/追赶/类型化查询和活动初始化配置未接通；
+后续初始化启动进展见下节，App 资产入口仍不开放。** 授权变更/恢复、正式分配与经济结算仍独立验收。
 完整结果/失败记录见[本轮证据](../artifacts/audit/uca-publication-recovery-20261024/README.md)。
+
+#### 原生接续实施顺序与硬断点（未接通）
+
+本轮先完成安全迁移及原服务启动的初始化域/最终根校验，不半开放 NUAS 资产入口。
+后续按下列接点成套迁接；复用同一 NovoRUDP/APFL、准入 owner、候选和 journal，
+不新增 mode/listener/controller，不将旧 V3 改标签或作为 ML-DSA 失败降级通道。
+
+接续 `de9e5270`：原 `ResidentConfig.uca_initialization` 已接入原启动函数，管理批准、
+签名域、初始根和最终承诺在打开数据库前核对；Existing 只验不修。Windows 实际
+启动/原库重开和错误 pin、清单、签名拒绝通过。签名/存储域仍为规范 manifest 域，
+最终含根承诺独立校验；不是用最终根反向生成签名域。新语义模板的原准入、普通正文
+与提前后继正文均拒绝旧 V3；未开放 NUAS。当前共识验证者仍是既有 Ed25519 合同，
+不得以本片代替首发全面 ML-DSA 或正式创世审批。
+证据见[启动与依赖迁移](../artifacts/audit/uca-native-startup-security-20261024/README.md)。
+
+1. **结构正文和消息身份。** `ingress/apfl.rs` 的 `NVAPFLV3` 固定96字节签名，
+   `consensus/transport.rs` tags 11–13 及 `transport/apfl.rs` 仍是该合同。
+   复用共享 `apfl_column::Column` 和唯一 `SignedUcaSpendV1` 规范编码，为 NUAS
+   明确结构版本、展开预算及正文身份；同步接 `service/client.rs::prepare`、原
+   application stream、消息验证及 body/early/transactions 交接。输入传播、
+   提案引用、精确正文补传和归档重建必须得到相同身份，不能用 JSON 外壳或旧 V3 解码。
+2. **同一异步准入、池和候选。** 扩展 `pipeline/admission.rs`、`ingress/batch.rs`
+   的输入及 owner 品牌证据，复用现有 compute owner 的 AOEM ML-DSA 验签；接入
+   `service/rpc/admission.rs::prepare_gossip_admission` 的现有原生消费，而非开放 HTTP。
+   `rpc.rs` 的 pending 字节复用、nonce 预约、选批和 `rpc/gossip.rs` 定向补传须保留
+   完整签名/结构来源计额。`consensus/bodies.rs` 及 `bodies/successor.rs` 再将同一
+   输入交给 `BatchRequest::from_uca` 对应准备/绑定能力，保留提前独立执行和父状态约束。
+   验签不授予花费权限；授权拒绝不推进 nonce，不能把选批临时 `nonce+1` 当最终状态。
+3. **可信位置与实际预算。** NUAS 签的是稳定 UCA ID，`from_uca` 仍需要资产位置
+   hints；从原状态读取 owner 有界取得或显式携带不可信定位提示，最终必须由
+   `uca_spend_state::read` 在同一父根重验账户绑定、反向 owner、grant 与 nonce。
+   不从新公钥另造地址，不接受 App 自报权限。单笔上限5662字节，不适用服务现行
+   1024字节上限；正文、消息、池、归档、元数据和提示均需计额。更不能只扩签名字节：
+   原 `service.rs` 的 `3*batch+128` 声明预算不适用 UCA；账户8192字节记录声明
+   32页及长度键，另有 owner/余额，grant512字节声明2页及长度键，还需稳定 nonce。
+   按去重后的实际声明/保留字节有界组批，守住当前4096声明门；不沿用旧1024笔容量承诺。
+4. **入口开放前补齐两处恢复硬断点。** `native_lifecycle/recovery.rs::poll_archives`
+   当前把归档原文交给 `ApflTransferBatch::from_raw`，无法重建 NUAS；
+   `progress/recovery.rs` 冷恢复当前总是 `BatchRequest::new` 加旧 `Message::Body`，
+   会落到 Ed 准备路径。按已验证 NVCAND02 的精确语义 pins 重建同一 UCA 正文和
+   原候选请求，保留 RequestDecision/ArchiveRead/RequestBody、独立 AOEM 执行及
+   原 journal 发布。不能仅凭归档解码成功就宣称独立追赶已完成。
+5. **原查询及真实闭环。** `protocol/native_query.rs` 的 NVQUERY1/2、
+   `service/rpc.rs::poll_projection` 和 `rpc/native_query.rs` 尚未表达授权拒绝与
+   grant 预算结果；按明确类型化版本接原投影及可信 UCA 余额定位。授权拒绝、业务失败、
+   非耐久 received 与最终发布分别呈现，不由 `success=false` 推断扣费或 nonce 消费。
+   验收为单原生入口合法支出、收款方再次支出、同批预算竞争与拒绝、原库重启及独立
+   追赶后余额/nonce/预算/费用/回执一致；复用现有 native_product 和恢复夹具。
+
+上述是实施接点，不是完成记录；初始化校验通过也不批准正式创世、资金发行、App
+资产开放或首发全链 PQ。旧 CPU/V3 对照保留为显式测试合同，不能在 UCA 模板下被
+受理或执行；活动入口成套验收前保持拒绝。

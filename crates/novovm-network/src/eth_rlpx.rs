@@ -9,7 +9,9 @@ use aes::{Aes128, Aes256};
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use hmac::{Hmac, Mac};
 use k256::ecdh::diffie_hellman;
+use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::{RecoveryId, Signature, SigningKey, VerifyingKey};
+use k256::elliptic_curve::Generate;
 use k256::{PublicKey as K256PublicKey, SecretKey as K256SecretKey};
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -1495,7 +1497,7 @@ pub fn eth_rlpx_parse_enode_pubkey_v1(endpoint: &str) -> Result<K256PublicKey, S
 }
 
 fn eth_rlpx_pubkey_64_from_signing_key_v1(signing_key: &SigningKey) -> [u8; ETH_RLPX_PUB_LEN] {
-    let encoded = signing_key.verifying_key().to_encoded_point(false);
+    let encoded = signing_key.verifying_key().to_sec1_point(false);
     let bytes = encoded.as_bytes();
     let mut out = [0u8; ETH_RLPX_PUB_LEN];
     out.copy_from_slice(&bytes[1..1 + ETH_RLPX_PUB_LEN]);
@@ -1503,7 +1505,7 @@ fn eth_rlpx_pubkey_64_from_signing_key_v1(signing_key: &SigningKey) -> [u8; ETH_
 }
 
 fn eth_rlpx_pubkey_65_from_signing_key_v1(signing_key: &SigningKey) -> [u8; 65] {
-    let encoded = signing_key.verifying_key().to_encoded_point(false);
+    let encoded = signing_key.verifying_key().to_sec1_point(false);
     let mut out = [0u8; 65];
     out.copy_from_slice(encoded.as_bytes());
     out
@@ -1596,8 +1598,8 @@ fn eth_discv4_sign_packet_v1(
     sign_data.push(packet_type);
     sign_data.extend_from_slice(payload.as_slice());
     let message_hash = eth_rlpx_keccak256_bytes_v1(sign_data.as_slice());
-    let (signature, recovery_id) = signing
-        .sign_prehash_recoverable(message_hash.as_slice())
+    let (signature, recovery_id): (Signature, RecoveryId) = signing
+        .sign_prehash(message_hash.as_slice())
         .map_err(|e| format!("discv4_packet_sign_failed:{e}"))?;
     let mut signed = Vec::with_capacity(ETH_DISCV4_PACKET_HEADER_LEN + payload.len());
     signed.extend_from_slice(signature.to_bytes().as_slice());
@@ -1788,7 +1790,7 @@ pub fn eth_rlpx_ecies_encrypt_v1(
     plaintext: &[u8],
     shared_mac_data: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let eph_signing = SigningKey::random(&mut OsRng);
+    let eph_signing = SigningKey::generate();
     let eph_secret = K256SecretKey::from_slice(eph_signing.to_bytes().as_slice())
         .map_err(|e| format!("rlpx_ecies_eph_secret_invalid:{e}"))?;
     let shared = eth_rlpx_ecdh_shared_v1(&eph_secret, remote_pub);
@@ -5013,7 +5015,7 @@ pub fn eth_rlpx_handshake_initiator_v1<RW: std::io::Read + std::io::Write>(
         .map_err(|e| format!("rlpx_static_secret_invalid:{e}"))?;
     let static_signing = SigningKey::from_bytes((&static_nodekey).into())
         .map_err(|e| format!("rlpx_static_signing_key_invalid:{e}"))?;
-    let ephemeral_signing = SigningKey::random(&mut OsRng);
+    let ephemeral_signing = SigningKey::generate();
     let ephemeral_secret = K256SecretKey::from_slice(ephemeral_signing.to_bytes().as_slice())
         .map_err(|e| format!("rlpx_ephemeral_secret_invalid:{e}"))?;
 
@@ -5024,8 +5026,8 @@ pub fn eth_rlpx_handshake_initiator_v1<RW: std::io::Read + std::io::Write>(
     for (slot, (a, b)) in sign_msg.iter_mut().zip(token.iter().zip(init_nonce.iter())) {
         *slot = *a ^ *b;
     }
-    let (signature, recovery_id) = ephemeral_signing
-        .sign_prehash_recoverable(sign_msg.as_slice())
+    let (signature, recovery_id): (Signature, RecoveryId) = ephemeral_signing
+        .sign_prehash(sign_msg.as_slice())
         .map_err(|e| format!("rlpx_auth_sign_failed:{e}"))?;
     let mut sig65 = [0u8; ETH_RLPX_SIG_LEN];
     sig65[..64].copy_from_slice(signature.to_bytes().as_slice());
@@ -5147,11 +5149,11 @@ pub fn eth_rlpx_handshake_responder_with_nodekey_v1<RW: std::io::Read + std::io:
     let remote_ephemeral_verify =
         VerifyingKey::recover_from_prehash(sign_msg.as_slice(), &signature, recovery_id)
             .map_err(|e| format!("rlpx_auth_ephemeral_recover_failed:{e}"))?;
-    let remote_ephemeral_encoded = remote_ephemeral_verify.to_encoded_point(false);
+    let remote_ephemeral_encoded = remote_ephemeral_verify.to_sec1_point(false);
     let remote_ephemeral = K256PublicKey::from_sec1_bytes(remote_ephemeral_encoded.as_bytes())
         .map_err(|e| format!("rlpx_auth_ephemeral_pub_invalid:{e}"))?;
 
-    let responder_ephemeral_signing = SigningKey::random(&mut OsRng);
+    let responder_ephemeral_signing = SigningKey::generate();
     let responder_ephemeral_secret =
         K256SecretKey::from_slice(responder_ephemeral_signing.to_bytes().as_slice())
             .map_err(|e| format!("rlpx_responder_ephemeral_secret_invalid:{e}"))?;
@@ -5224,7 +5226,7 @@ pub fn eth_rlpx_handshake_responder_v1<RW: std::io::Read + std::io::Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    use k256::elliptic_curve::sec1::ToSec1Point;
     use std::net::{TcpListener, TcpStream};
     use std::thread;
 
@@ -5585,7 +5587,7 @@ mod tests {
 
     #[test]
     fn parse_enode_pubkey_accepts_canonical_endpoint() {
-        let key = SigningKey::random(&mut OsRng);
+        let key = SigningKey::generate();
         let pubkey = eth_rlpx_pubkey_64_from_signing_key_v1(&key);
         let endpoint = format!(
             "enode://{}@127.0.0.1:30303",
@@ -5595,13 +5597,13 @@ mod tests {
                 .collect::<String>()
         );
         let parsed = eth_rlpx_parse_enode_pubkey_v1(endpoint.as_str()).expect("parse enode");
-        let encoded = parsed.to_encoded_point(false);
+        let encoded = parsed.to_sec1_point(false);
         assert_eq!(&encoded.as_bytes()[1..65], pubkey.as_slice());
     }
 
     #[test]
     fn discv4_ping_and_findnode_packets_are_hash_checked() {
-        let key = SigningKey::random(&mut OsRng);
+        let key = SigningKey::generate();
         let nodekey: [u8; 32] = key.to_bytes().into();
         let from = EthDiscv4EndpointV1 {
             ip: [127, 0, 0, 1],
@@ -5645,7 +5647,7 @@ mod tests {
 
     #[test]
     fn discv4_neighbors_packet_decodes_nodes() {
-        let key = SigningKey::random(&mut OsRng);
+        let key = SigningKey::generate();
         let nodekey: [u8; 32] = key.to_bytes().into();
         let neighbor_node_id =
             eth_rlpx_pubkey_from_nodekey_bytes_v1(&nodekey).expect("neighbor node id");
@@ -5757,7 +5759,7 @@ mod tests {
 
     #[test]
     fn ecies_roundtrip_recovers_plaintext() {
-        let remote_signing = SigningKey::random(&mut OsRng);
+        let remote_signing = SigningKey::generate();
         let remote_secret =
             K256SecretKey::from_slice(remote_signing.to_bytes().as_slice()).expect("remote secret");
         let remote_pub_bytes = eth_rlpx_pubkey_65_from_signing_key_v1(&remote_signing);
@@ -6411,7 +6413,7 @@ mod tests {
 
     #[test]
     fn responder_handshake_supports_hello_and_status_exchange() {
-        let responder_signing = SigningKey::random(&mut OsRng);
+        let responder_signing = SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
         let responder_pub = eth_rlpx_pubkey_64_from_signing_key_v1(&responder_signing);
         let endpoint = format!(

@@ -164,6 +164,82 @@ fn response(id: Value, result: Result<Value>) -> Value {
 }
 
 impl RpcLifecycle {
+    /// Unit-level injection at the existing bounded consumer, not a claim of
+    /// native wire delivery. Called with a real initialized original service.
+    #[cfg(test)]
+    pub(crate) fn assert_uca_asset_admission_closed_for_test(
+        &mut self,
+        nuas: Vec<u8>,
+    ) -> Result<()> {
+        use crate::native_pipeline::consensus::transport::TransactionsScope;
+        let raw = crate::native_pipeline::service::tests::signed_raw(77, 0);
+        let inputs = vec![raw.clone(), nuas];
+        let before = self.node.controller.parent();
+        for input in &inputs {
+            assert!(self
+                .cached_admission(&AdmissionInput::Raw(input.clone()), true)
+                .is_err());
+            let request = json!({"jsonrpc":"2.0", "id":1, "method":"nov_sendRawTransaction", "params":[hex(input)]});
+            let reply = match DeferredRpcHandler::start(self, request) {
+                DeferredRpcReply::Ready(reply) => reply,
+                DeferredRpcReply::Pending(token) => {
+                    self.poll_admission()?;
+                    DeferredRpcHandler::poll(self, token)
+                        .context("closed admission did not complete")?
+                }
+            };
+            assert!(reply.get("error").is_some());
+            assert!(reply.get("result").is_none());
+        }
+        let scope = TransactionsScope {
+            chain_id: self.node.template.chain_id,
+            genesis: self.node.template.genesis_config_commitment,
+            protocol: self.node.template.protocol_commitment,
+            epoch: 1,
+            validator_set_hash: self.node.validators.hash(),
+            session: [9; 32],
+            sequence: 1,
+        };
+        for message in [
+            Message::Transactions {
+                scope,
+                raw_transactions: inputs,
+            },
+            Message::ApflTransactions {
+                scope,
+                batch: apfl_batch(std::slice::from_ref(&raw), 2)?,
+            },
+        ] {
+            self.incoming = Some((Arc::new(message), 0));
+            self.incoming_from_client = true;
+            assert!(self.prepare_gossip_admission()?.is_none());
+            assert!(
+                self.incoming.is_none(),
+                "rejected body retained the bounded input slot"
+            );
+        }
+        let body = Arc::new(Message::Body {
+            context: self.node.template,
+            raw_transactions: vec![raw],
+        });
+        assert!(self.node.controller.offer(&body).is_err());
+        // Rejecting bad input does not freeze or abort the lifecycle.
+        self.poll(std::time::Instant::now())?;
+        assert_eq!(self.gossip_rejected, 3);
+        assert_eq!(self.gossip_verified, 0);
+        assert!(
+            self.pending.is_empty() && self.reservations.is_empty() && self.receipts.is_empty()
+        );
+        assert!(self.gossip_order.is_empty() && self.gossip_queued.is_empty());
+        assert!(self.admission.work.is_none() && self.admission.http.is_empty());
+        assert_eq!(self.admission.submitted_batches, 0);
+        assert_eq!(self.node.pipeline.signature_counts(), (0, 0));
+        assert_eq!(self.node.controller.executed(), 0);
+        assert_eq!(self.node.controller.parent(), before);
+        assert!(self.node.controller.head().is_none());
+        Ok(())
+    }
+
     /// Exact pending-byte reuse only. Canonical transaction hashes omit the
     /// signature, so a hash hit by itself NEVER skips cryptographic admission.
     fn cached_admission(
@@ -171,6 +247,10 @@ impl RpcLifecycle {
         input: &AdmissionInput,
         broadcast: bool,
     ) -> Result<Option<Hash>> {
+        ensure!(
+            self.node.template.business_program == crate::native_pipeline::business::nov_transfer_batch::program_id(),
+            "UCA native asset admission is not active; legacy V3 and NUAS submissions are unavailable"
+        );
         ensure!(
             self.projection_error.is_none(),
             "RPC projection unavailable"

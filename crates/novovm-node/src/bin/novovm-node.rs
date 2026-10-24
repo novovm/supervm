@@ -11,7 +11,7 @@ mod partition_test;
 
 use anyhow::{bail, Context, Result};
 use base64::Engine;
-use k256::elliptic_curve::sec1::ToEncodedPoint;
+use k256::elliptic_curve::sec1::ToSec1Point;
 use novovm_adapter_api::{ChainType, TxIR};
 use novovm_adapter_evm_core::{
     recover_raw_evm_tx_sender_m0, translate_raw_evm_tx_fields_m0, tx_ir_from_raw_fields_m0,
@@ -1682,7 +1682,7 @@ fn eth_dns_verify_enrtree_root_signature_v1(
 
 fn eth_dns_sec1_pubkey_to_enode_hex_v1(sec1: &[u8]) -> Option<String> {
     let public_key = k256::PublicKey::from_sec1_bytes(sec1).ok()?;
-    let uncompressed = public_key.to_encoded_point(false);
+    let uncompressed = public_key.to_sec1_point(false);
     let bytes = uncompressed.as_bytes();
     if bytes.len() != 65 || bytes[0] != 0x04 {
         return None;

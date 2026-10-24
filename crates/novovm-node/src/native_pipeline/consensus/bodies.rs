@@ -8,7 +8,13 @@ use super::{
     wire::Hash,
 };
 use crate::native_pipeline::{
-    business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch::effect_contract},
+    business::{
+        direct_nov_fee::DirectNovFeePolicy,
+        nov_transfer_batch::{
+            effect_contract, program_id, receipt_codec, uca_effect_contract, uca_program_id,
+            uca_receipt_codec, SEMANTIC_VERSION,
+        },
+    },
     execution::plan::BatchContext,
     pipeline::{
         AdmittedTransfer, BatchRequest, CandidatePipeline, DurableCandidate, FailureStage,
@@ -83,8 +89,14 @@ impl CandidateBodies {
             "invalid body budget"
         );
         ensure!(
-            pin.effect_contract == effect_contract(&policy)?,
-            "body policy pin mismatch"
+            pin.semantic_version == SEMANTIC_VERSION
+                && ((pin.business_program == program_id()
+                    && pin.receipt_codec == receipt_codec()
+                    && pin.effect_contract == effect_contract(&policy)?)
+                    || (pin.business_program == uca_program_id()
+                        && pin.receipt_codec == uca_receipt_codec()
+                        && pin.effect_contract == uca_effect_contract(&policy)?)),
+            "body program/receipt/policy pin mismatch"
         );
         transport::encode(&Message::RequestBody { body_id: [1; 32] }, codec)?;
         let domain = pipeline.storage_domain();
@@ -161,6 +173,10 @@ impl CandidateBodies {
     ) -> Result<bool> {
         ensure!(!self.frozen, "body owner frozen");
         ensure!(!progress.is_frozen(), "consensus owner frozen");
+        ensure!(
+            self.pin.business_program == program_id(),
+            "UCA native asset body admission is not active; legacy V3 bodies are forbidden"
+        );
         if progress.is_recovering() {
             return Ok(false);
         }

@@ -1,5 +1,35 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-24 U3 原启动三项 pin 与 crypto-bigint 安全迁移（入口仍关闭）
+
+输入 `de9e5270`，原树干净、本地远端一致。原 `ResidentConfig.uca_initialization`
+及 `ResidentNode::start_on_transport` 复用管理批准编译、exec/AOEM 签验和原 store：
+独立配置签名域、初始状态根、最终创世承诺，全部核对后才打开数据库。Existing
+只验证原初始化节点，不修写。没有创建新控制器、账户库或活动交易入口，没有改动
+实际链数据、身份、发行配置或移动端。当前共识仍为旧 Ed25519 合同，不签全面 PQ。
+
+Windows 实际启动测试已验证合法初始化、原库重开、五类错误 pin/清单/签名不建库，
+UCA 模板下旧 V3 和尚未开放的 NUAS 被拒绝且不产生准入/执行/发布副作用。
+这是原服务的进程内启动和消费者注入测试，不是真实用户网络提交，更不是正式创世。
+新测试加入 CI 实际 AOEM 步骤；最终回归及制品身份见
+[本轮证据](../artifacts/audit/uca-native-startup-security-20261024/README.md)。
+
+RustCrypto 使用上游 k256 0.14 / elliptic-curve 0.14.1 / crypto-bigint 0.7.6，
+适配原 EVM、ECDH、overlay 和 preserved runtime 调用，不改签名原文/低S规则。
+root/runtime/NOV proof host 三锁 audit 阻断漏洞归零，root/runtime deny 通过；
+未添加豁免，rand unsound 与 paste 维护警告仍保留，历史 guest 制品另行核验。
+旧 RFC6979 固定签名字节与 SEC2 ECDH 向量通过，EVM core 54 项通过。
+网络并行837通过/20失败/11忽略的记录保留，原断言不变串行复测857通过/11忽略；
+不能把串行通过改写成并行门禁全绿。workspace 全目标 release check 通过。
+最终 workspace 全目标严格 Clippy、原 native 402项、UCA启动1项、四库发布恢复1项、
+CPU/整数效应2项、原native生命周期6项均通过；保留runtime网络201项及严格Clippy通过。
+所有默认忽略、失败样本及测试exe身份分别保留，不合并为生产上线资格。
+
+**下一接合仍是完整 native NUAS 入口：** APFL版本、异步准入/池、可信位置与展开预算、
+候选、类型化查询、冷恢复与归档正文重建一起适配，然后真实节点消费/再消费与独立追赶。
+本轮不开放 App 花费，不以初始化成功代替正式分配、经济结算、全链 PQ 或多机验收，
+没有新 TPS。旧 CPU 快路径与原发布权威保持；原生迁接硬断点见唯一签名合同。
+
 ## 2026-10-24 U3 初始化编译与原 journal 资产发布恢复（进程内四库，非原生入口激活）
 
 输入 `2d504f07`，原 main/远端一致且树干净。新增受独立清单 pin 约束的初始化编译：

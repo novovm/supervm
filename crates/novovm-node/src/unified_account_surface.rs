@@ -5,6 +5,7 @@ use aoem_bindings::mldsa_verify_v1_auto;
 use ed25519_dalek::{
     Signature as Ed25519Signature, Verifier as Ed25519Verifier, VerifyingKey as Ed25519VerifyingKey,
 };
+use k256::ecdsa::signature::Verifier as Secp256k1Verifier;
 use k256::ecdsa::{Signature as Secp256k1Signature, VerifyingKey as Secp256k1VerifyingKey};
 use novovm_adapter_api::uca_key_binding::{
     derive_primary_key_ref_from_binding_v1, primary_key_proof_message_v1,
@@ -6306,6 +6307,7 @@ mod tests {
     };
     use aoem_bindings::{default_host_dll_path, mldsa_keygen_v1_auto, mldsa_sign_v1_auto};
     use ed25519_dalek::{Signer as Ed25519Signer, SigningKey as Ed25519SigningKey};
+    use k256::ecdsa::signature::Signer as Secp256k1Signer;
     use k256::ecdsa::SigningKey as Secp256k1SigningKey;
     use std::collections::BTreeMap;
 
@@ -6415,7 +6417,7 @@ mod tests {
             Secp256k1SigningKey::from_bytes((&[0x22u8; 32]).into()).expect("parse secp key");
         let public_key = signing
             .verifying_key()
-            .to_encoded_point(true)
+            .to_sec1_point(true)
             .as_bytes()
             .to_vec();
         let primary_key_ref =

@@ -1,0 +1,2524 @@
+warning[duplicate]: found 2 duplicate entries for crate 'base64'
+   ┌─ D:\WorksArea\SUPERVM/Cargo.lock:19:1
+   │  
+19 │ ╭ base64 0.22.1 registry+https://github.com/rust-lang/crates.io-index
+20 │ │ base64 0.23.1 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰───────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ base64 v0.22.1
+     ├── email-encoding v0.4.1
+     │   └── lettre v0.11.22
+     │       ├── novovm-node v0.1.0
+     │       │   ├── novovm-bench v0.1.0
+     │       │   ├── novovm-evm-gateway v0.1.0
+     │       │   └── novovmctl v0.1.0
+     │       └── novovm-rollout-policy v0.1.0
+     ├── lettre v0.11.22 (*)
+     ├── novovm-network v0.1.0
+     │   ├── novovm-bench v0.1.0 (*)
+     │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   ├── novovm-node v0.1.0 (*)
+     │   └── novovm-relay v0.1.0
+     ├── novovm-node v0.1.0 (*)
+     ├── novovm-relay v0.1.0 (*)
+     └── pem v3.0.6
+         └── rcgen v0.12.1
+             ├── (dev) novovm-network v0.1.0 (*)
+             ├── novovm-node v0.1.0 (*)
+             └── (dev) novovm-relay v0.1.0 (*)
+   ├ base64 v0.23.1
+     ├── ureq v3.4.2
+     │   ├── novovm-evm-gateway v0.1.0
+     │   ├── novovm-node v0.1.0
+     │   │   ├── novovm-bench v0.1.0
+     │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   └── novovmctl v0.1.0
+     │   └── novovm-rollout-policy v0.1.0
+     └── ureq-proto v0.6.5
+         └── ureq v3.4.2 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'block-buffer'
+   ┌─ D:\WorksArea\SUPERVM/Cargo.lock:25:1
+   │  
+25 │ ╭ block-buffer 0.10.4 registry+https://github.com/rust-lang/crates.io-index
+26 │ │ block-buffer 0.12.1 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰─────────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ block-buffer v0.10.4
+     └── digest v0.10.7
+         ├── curve25519-dalek v4.1.3
+         │   ├── ed25519-dalek v2.2.0
+         │   │   ├── novovm-adapter-api v0.1.0
+         │   │   │   ├── novovm-adapter-evm-core v0.1.0
+         │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+         │   │   │   │   │   ├── novovm-evm-gateway v0.1.0
+         │   │   │   │   │   └── novovm-node v0.1.0
+         │   │   │   │   │       ├── novovm-bench v0.1.0
+         │   │   │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   │   │   │       └── novovmctl v0.1.0
+         │   │   │   │   ├── novovm-adapter-novovm v0.1.0
+         │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+         │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+         │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   │   │   │   └── novovm-node v0.1.0 (*)
+         │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   │   │   └── novovm-node v0.1.0 (*)
+         │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+         │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+         │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+         │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   │   ├── novovm-exec v0.1.0
+         │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+         │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+         │   │   │   │   ├── novovm-bench v0.1.0 (*)
+         │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   │   │   ├── novovm-node v0.1.0 (*)
+         │   │   │   │   └── novovm-prover v0.1.0
+         │   │   │   └── novovm-node v0.1.0 (*)
+         │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+         │   │   ├── novovm-bench v0.1.0 (*)
+         │   │   ├── novovm-consensus v0.1.0
+         │   │   │   ├── novovm-bench v0.1.0 (*)
+         │   │   │   └── (dev) novovm-node v0.1.0 (*)
+         │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   ├── novovm-network v0.1.0
+         │   │   │   ├── novovm-bench v0.1.0 (*)
+         │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   │   ├── novovm-node v0.1.0 (*)
+         │   │   │   └── novovm-relay v0.1.0
+         │   │   ├── novovm-node v0.1.0 (*)
+         │   │   └── novovm-relay v0.1.0 (*)
+         │   └── web30-core v0.1.0
+         │       ├── novovm-adapter-novovm v0.1.0 (*)
+         │       ├── novovm-consensus v0.1.0 (*)
+         │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+         ├── hmac v0.12.1
+         │   ├── hkdf v0.12.4
+         │   │   └── novovm-network v0.1.0 (*)
+         │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   └── novovm-network v0.1.0 (*)
+         ├── sha1 v0.10.6
+         │   ├── novovm-network v0.1.0 (*)
+         │   ├── novovm-node v0.1.0 (*)
+         │   └── novovm-relay v0.1.0 (*)
+         ├── sha2 v0.10.9
+         │   ├── aoem-bindings v0.1.0
+         │   │   ├── novovm-adapter-evm-core v0.1.0 (*)
+         │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+         │   │   ├── novovm-exec v0.1.0 (*)
+         │   │   ├── novovm-node v0.1.0 (*)
+         │   │   ├── novovm-prover v0.1.0 (*)
+         │   │   └── web30-core v0.1.0 (*)
+         │   ├── ed25519-dalek v2.2.0 (*)
+         │   ├── novovm-adapter-api v0.1.0 (*)
+         │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+         │   ├── novovm-adapter-novovm v0.1.0 (*)
+         │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+         │   ├── novovm-bench v0.1.0 (*)
+         │   ├── novovm-consensus v0.1.0 (*)
+         │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   ├── novovm-exec v0.1.0 (*)
+         │   ├── novovm-network v0.1.0 (*)
+         │   ├── novovm-node v0.1.0 (*)
+         │   ├── novovm-protocol v0.1.0
+         │   │   ├── novovm-adapter-api v0.1.0 (*)
+         │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+         │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+         │   │   ├── novovm-bench v0.1.0 (*)
+         │   │   ├── novovm-coordinator v0.1.0
+         │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │   │   ├── novovm-exec v0.1.0 (*)
+         │   │   ├── novovm-network v0.1.0 (*)
+         │   │   └── novovm-node v0.1.0 (*)
+         │   ├── novovm-storage-budget v0.1.0
+         │   │   └── novovm-network v0.1.0 (*)
+         │   └── web30-core v0.1.0 (*)
+         └── sha3 v0.10.8
+             ├── novovm-adapter-evm-core v0.1.0 (*)
+             ├── novovm-evm-gateway v0.1.0 (*)
+             ├── novovm-exec v0.1.0 (*)
+             ├── novovm-network v0.1.0 (*)
+             ├── novovm-node v0.1.0 (*)
+             └── novovm-protocol v0.1.0 (*)
+   ├ block-buffer v0.12.1
+     └── digest v0.11.3
+         ├── ecdsa v0.17.0
+         │   └── k256 v0.14.0
+         │       ├── novovm-adapter-evm-core v0.1.0
+         │       │   ├── novovm-adapter-evm-plugin v0.1.0
+         │       │   │   ├── novovm-evm-gateway v0.1.0
+         │       │   │   └── novovm-node v0.1.0
+         │       │   │       ├── novovm-bench v0.1.0
+         │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+         │       │   │       └── novovmctl v0.1.0
+         │       │   ├── novovm-adapter-novovm v0.1.0
+         │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+         │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+         │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+         │       │   │   └── novovm-node v0.1.0 (*)
+         │       │   ├── novovm-evm-gateway v0.1.0 (*)
+         │       │   └── novovm-node v0.1.0 (*)
+         │       ├── novovm-evm-gateway v0.1.0 (*)
+         │       ├── novovm-network v0.1.0
+         │       │   ├── novovm-bench v0.1.0 (*)
+         │       │   ├── novovm-evm-gateway v0.1.0 (*)
+         │       │   ├── novovm-node v0.1.0 (*)
+         │       │   └── novovm-relay v0.1.0
+         │       └── novovm-node v0.1.0 (*)
+         ├── elliptic-curve v0.14.1
+         │   ├── ecdsa v0.17.0 (*)
+         │   ├── k256 v0.14.0 (*)
+         │   └── primeorder v0.14.0
+         │       └── k256 v0.14.0 (*)
+         ├── hmac v0.13.0
+         │   ├── hkdf v0.13.0
+         │   │   └── elliptic-curve v0.14.1 (*)
+         │   └── rfc6979 v0.6.0
+         │       └── ecdsa v0.17.0 (*)
+         ├── sha2 v0.11.0
+         │   └── k256 v0.14.0 (*)
+         └── signature v3.0.0
+             ├── ecdsa v0.17.0 (*)
+             └── k256 v0.14.0 (*)
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ D:\WorksArea\SUPERVM\deny.toml:12:4
+   │
+12 │   "GPL-3.0",
+   │    ━━━━━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ D:\WorksArea\SUPERVM\deny.toml:13:4
+   │
+13 │   "GPL-3.0-only",
+   │    ━━━━━━━━━━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ D:\WorksArea\SUPERVM\deny.toml:22:4
+   │
+22 │   "MPL-2.0",
+   │    ━━━━━━━ unmatched license allowance
+
+warning[license-not-encountered]: license was not encountered
+   ┌─ D:\WorksArea\SUPERVM\deny.toml:27:4
+   │
+27 │   "OpenSSL",
+   │    ━━━━━━━ unmatched license allowance
+
+warning[duplicate]: found 2 duplicate entries for crate 'cpufeatures'
+   ┌─ D:\WorksArea\SUPERVM/Cargo.lock:55:1
+   │  
+55 │ ╭ cpufeatures 0.2.17 registry+https://github.com/rust-lang/crates.io-index
+56 │ │ cpufeatures 0.3.1 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰───────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ cpufeatures v0.2.17
+     ├── aes v0.8.4
+     │   ├── novovm-evm-gateway v0.1.0
+     │   └── novovm-network v0.1.0
+     │       ├── novovm-bench v0.1.0
+     │       ├── novovm-evm-gateway v0.1.0 (*)
+     │       ├── novovm-node v0.1.0
+     │       │   ├── novovm-bench v0.1.0 (*)
+     │       │   ├── novovm-evm-gateway v0.1.0 (*)
+     │       │   └── novovmctl v0.1.0
+     │       └── novovm-relay v0.1.0
+     ├── chacha20 v0.9.1
+     │   └── chacha20poly1305 v0.10.1
+     │       └── novovm-network v0.1.0 (*)
+     ├── curve25519-dalek v4.1.3
+     │   ├── ed25519-dalek v2.2.0
+     │   │   ├── novovm-adapter-api v0.1.0
+     │   │   │   ├── novovm-adapter-evm-core v0.1.0
+     │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+     │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   │   ├── novovm-adapter-novovm v0.1.0
+     │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+     │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+     │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   ├── novovm-exec v0.1.0
+     │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   ├── novovm-node v0.1.0 (*)
+     │   │   │   │   └── novovm-prover v0.1.0
+     │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   ├── novovm-consensus v0.1.0
+     │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   └── (dev) novovm-node v0.1.0 (*)
+     │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   ├── novovm-network v0.1.0 (*)
+     │   │   ├── novovm-node v0.1.0 (*)
+     │   │   └── novovm-relay v0.1.0 (*)
+     │   └── web30-core v0.1.0
+     │       ├── novovm-adapter-novovm v0.1.0 (*)
+     │       ├── novovm-consensus v0.1.0 (*)
+     │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+     ├── keccak v0.1.6
+     │   ├── merlin v3.0.0
+     │   │   └── ed25519-dalek v2.2.0 (*)
+     │   └── sha3 v0.10.8
+     │       ├── novovm-adapter-evm-core v0.1.0 (*)
+     │       ├── novovm-evm-gateway v0.1.0 (*)
+     │       ├── novovm-exec v0.1.0 (*)
+     │       ├── novovm-network v0.1.0 (*)
+     │       ├── novovm-node v0.1.0 (*)
+     │       └── novovm-protocol v0.1.0
+     │           ├── novovm-adapter-api v0.1.0 (*)
+     │           ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │           ├── novovm-adapter-novovm v0.1.0 (*)
+     │           ├── novovm-bench v0.1.0 (*)
+     │           ├── novovm-coordinator v0.1.0
+     │           ├── novovm-evm-gateway v0.1.0 (*)
+     │           ├── novovm-exec v0.1.0 (*)
+     │           ├── novovm-network v0.1.0 (*)
+     │           └── novovm-node v0.1.0 (*)
+     ├── poly1305 v0.8.0
+     │   └── chacha20poly1305 v0.10.1 (*)
+     ├── sha1 v0.10.6
+     │   ├── novovm-network v0.1.0 (*)
+     │   ├── novovm-node v0.1.0 (*)
+     │   └── novovm-relay v0.1.0 (*)
+     └── sha2 v0.10.9
+         ├── aoem-bindings v0.1.0
+         │   ├── novovm-adapter-evm-core v0.1.0 (*)
+         │   ├── novovm-adapter-novovm v0.1.0 (*)
+         │   ├── novovm-exec v0.1.0 (*)
+         │   ├── novovm-node v0.1.0 (*)
+         │   ├── novovm-prover v0.1.0 (*)
+         │   └── web30-core v0.1.0 (*)
+         ├── ed25519-dalek v2.2.0 (*)
+         ├── novovm-adapter-api v0.1.0 (*)
+         ├── novovm-adapter-evm-plugin v0.1.0 (*)
+         ├── novovm-adapter-novovm v0.1.0 (*)
+         ├── novovm-adapter-sample-plugin v0.1.0 (*)
+         ├── novovm-bench v0.1.0 (*)
+         ├── novovm-consensus v0.1.0 (*)
+         ├── novovm-evm-gateway v0.1.0 (*)
+         ├── novovm-exec v0.1.0 (*)
+         ├── novovm-network v0.1.0 (*)
+         ├── novovm-node v0.1.0 (*)
+         ├── novovm-protocol v0.1.0 (*)
+         ├── novovm-storage-budget v0.1.0
+         │   └── novovm-network v0.1.0 (*)
+         └── web30-core v0.1.0 (*)
+   ├ cpufeatures v0.3.1
+     └── sha2 v0.11.0
+         └── k256 v0.14.0
+             ├── novovm-adapter-evm-core v0.1.0
+             │   ├── novovm-adapter-evm-plugin v0.1.0
+             │   │   ├── novovm-evm-gateway v0.1.0
+             │   │   └── novovm-node v0.1.0
+             │   │       ├── novovm-bench v0.1.0
+             │   │       ├── novovm-evm-gateway v0.1.0 (*)
+             │   │       └── novovmctl v0.1.0
+             │   ├── novovm-adapter-novovm v0.1.0
+             │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+             │   │   ├── novovm-adapter-sample-plugin v0.1.0
+             │   │   ├── novovm-evm-gateway v0.1.0 (*)
+             │   │   └── novovm-node v0.1.0 (*)
+             │   ├── novovm-evm-gateway v0.1.0 (*)
+             │   └── novovm-node v0.1.0 (*)
+             ├── novovm-evm-gateway v0.1.0 (*)
+             ├── novovm-network v0.1.0
+             │   ├── novovm-bench v0.1.0 (*)
+             │   ├── novovm-evm-gateway v0.1.0 (*)
+             │   ├── novovm-node v0.1.0 (*)
+             │   └── novovm-relay v0.1.0
+             └── novovm-node v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'crypto-common'
+   ┌─ D:\WorksArea\SUPERVM/Cargo.lock:65:1
+   │  
+65 │ ╭ crypto-common 0.1.7 registry+https://github.com/rust-lang/crates.io-index
+66 │ │ crypto-common 0.2.2 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰─────────────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ crypto-common v0.1.7
+     ├── aead v0.5.2
+     │   └── chacha20poly1305 v0.10.1
+     │       └── novovm-network v0.1.0
+     │           ├── novovm-bench v0.1.0
+     │           ├── novovm-evm-gateway v0.1.0
+     │           ├── novovm-node v0.1.0
+     │           │   ├── novovm-bench v0.1.0 (*)
+     │           │   ├── novovm-evm-gateway v0.1.0 (*)
+     │           │   └── novovmctl v0.1.0
+     │           └── novovm-relay v0.1.0
+     ├── cipher v0.4.4
+     │   ├── aes v0.8.4
+     │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   └── novovm-network v0.1.0 (*)
+     │   ├── chacha20 v0.9.1
+     │   │   └── chacha20poly1305 v0.10.1 (*)
+     │   ├── chacha20poly1305 v0.10.1 (*)
+     │   └── ctr v0.9.2
+     │       ├── novovm-evm-gateway v0.1.0 (*)
+     │       └── novovm-network v0.1.0 (*)
+     ├── digest v0.10.7
+     │   ├── curve25519-dalek v4.1.3
+     │   │   ├── ed25519-dalek v2.2.0
+     │   │   │   ├── novovm-adapter-api v0.1.0
+     │   │   │   │   ├── novovm-adapter-evm-core v0.1.0
+     │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+     │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0
+     │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+     │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+     │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   ├── novovm-exec v0.1.0
+     │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-node v0.1.0 (*)
+     │   │   │   │   │   └── novovm-prover v0.1.0
+     │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   ├── novovm-consensus v0.1.0
+     │   │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   │   └── (dev) novovm-node v0.1.0 (*)
+     │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   ├── novovm-network v0.1.0 (*)
+     │   │   │   ├── novovm-node v0.1.0 (*)
+     │   │   │   └── novovm-relay v0.1.0 (*)
+     │   │   └── web30-core v0.1.0
+     │   │       ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │       ├── novovm-consensus v0.1.0 (*)
+     │   │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+     │   ├── hmac v0.12.1
+     │   │   ├── hkdf v0.12.4
+     │   │   │   └── novovm-network v0.1.0 (*)
+     │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   └── novovm-network v0.1.0 (*)
+     │   ├── sha1 v0.10.6
+     │   │   ├── novovm-network v0.1.0 (*)
+     │   │   ├── novovm-node v0.1.0 (*)
+     │   │   └── novovm-relay v0.1.0 (*)
+     │   ├── sha2 v0.10.9
+     │   │   ├── aoem-bindings v0.1.0
+     │   │   │   ├── novovm-adapter-evm-core v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   ├── novovm-exec v0.1.0 (*)
+     │   │   │   ├── novovm-node v0.1.0 (*)
+     │   │   │   ├── novovm-prover v0.1.0 (*)
+     │   │   │   └── web30-core v0.1.0 (*)
+     │   │   ├── ed25519-dalek v2.2.0 (*)
+     │   │   ├── novovm-adapter-api v0.1.0 (*)
+     │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+     │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   ├── novovm-consensus v0.1.0 (*)
+     │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   ├── novovm-exec v0.1.0 (*)
+     │   │   ├── novovm-network v0.1.0 (*)
+     │   │   ├── novovm-node v0.1.0 (*)
+     │   │   ├── novovm-protocol v0.1.0
+     │   │   │   ├── novovm-adapter-api v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   ├── novovm-coordinator v0.1.0
+     │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   ├── novovm-exec v0.1.0 (*)
+     │   │   │   ├── novovm-network v0.1.0 (*)
+     │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   ├── novovm-storage-budget v0.1.0
+     │   │   │   └── novovm-network v0.1.0 (*)
+     │   │   └── web30-core v0.1.0 (*)
+     │   └── sha3 v0.10.8
+     │       ├── novovm-adapter-evm-core v0.1.0 (*)
+     │       ├── novovm-evm-gateway v0.1.0 (*)
+     │       ├── novovm-exec v0.1.0 (*)
+     │       ├── novovm-network v0.1.0 (*)
+     │       ├── novovm-node v0.1.0 (*)
+     │       └── novovm-protocol v0.1.0 (*)
+     └── universal-hash v0.5.1
+         └── poly1305 v0.8.0
+             └── chacha20poly1305 v0.10.1 (*)
+   ├ crypto-common v0.2.2
+     ├── digest v0.11.3
+     │   ├── ecdsa v0.17.0
+     │   │   └── k256 v0.14.0
+     │   │       ├── novovm-adapter-evm-core v0.1.0
+     │   │       │   ├── novovm-adapter-evm-plugin v0.1.0
+     │   │       │   │   ├── novovm-evm-gateway v0.1.0
+     │   │       │   │   └── novovm-node v0.1.0
+     │   │       │   │       ├── novovm-bench v0.1.0
+     │   │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+     │   │       │   │       └── novovmctl v0.1.0
+     │   │       │   ├── novovm-adapter-novovm v0.1.0
+     │   │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+     │   │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │       │   │   └── novovm-node v0.1.0 (*)
+     │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │       │   └── novovm-node v0.1.0 (*)
+     │   │       ├── novovm-evm-gateway v0.1.0 (*)
+     │   │       ├── novovm-network v0.1.0
+     │   │       │   ├── novovm-bench v0.1.0 (*)
+     │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │       │   ├── novovm-node v0.1.0 (*)
+     │   │       │   └── novovm-relay v0.1.0
+     │   │       └── novovm-node v0.1.0 (*)
+     │   ├── elliptic-curve v0.14.1
+     │   │   ├── ecdsa v0.17.0 (*)
+     │   │   ├── k256 v0.14.0 (*)
+     │   │   └── primeorder v0.14.0
+     │   │       └── k256 v0.14.0 (*)
+     │   ├── hmac v0.13.0
+     │   │   ├── hkdf v0.13.0
+     │   │   │   └── elliptic-curve v0.14.1 (*)
+     │   │   └── rfc6979 v0.6.0
+     │   │       └── ecdsa v0.17.0 (*)
+     │   ├── sha2 v0.11.0
+     │   │   └── k256 v0.14.0 (*)
+     │   └── signature v3.0.0
+     │       ├── ecdsa v0.17.0 (*)
+     │       └── k256 v0.14.0 (*)
+     ├── elliptic-curve v0.14.1 (*)
+     └── primefield v0.14.0
+         ├── primeorder v0.14.0 (*)
+         └── wnaf v0.14.1
+             ├── k256 v0.14.0 (*)
+             └── primeorder v0.14.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'digest'
+   ┌─ D:\WorksArea\SUPERVM/Cargo.lock:74:1
+   │  
+74 │ ╭ digest 0.10.7 registry+https://github.com/rust-lang/crates.io-index
+75 │ │ digest 0.11.3 registry+https://github.com/rust-lang/crates.io-index
+   │ ╰───────────────────────────────────────────────────────────────────┘ lock entries
+   │  
+   ├ digest v0.10.7
+     ├── curve25519-dalek v4.1.3
+     │   ├── ed25519-dalek v2.2.0
+     │   │   ├── novovm-adapter-api v0.1.0
+     │   │   │   ├── novovm-adapter-evm-core v0.1.0
+     │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+     │   │   │   │   │   ├── novovm-evm-gateway v0.1.0
+     │   │   │   │   │   └── novovm-node v0.1.0
+     │   │   │   │   │       ├── novovm-bench v0.1.0
+     │   │   │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │       └── novovmctl v0.1.0
+     │   │   │   │   ├── novovm-adapter-novovm v0.1.0
+     │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+     │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+     │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   ├── novovm-exec v0.1.0
+     │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   │   ├── novovm-node v0.1.0 (*)
+     │   │   │   │   └── novovm-prover v0.1.0
+     │   │   │   └── novovm-node v0.1.0 (*)
+     │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   ├── novovm-consensus v0.1.0
+     │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   └── (dev) novovm-node v0.1.0 (*)
+     │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   ├── novovm-network v0.1.0
+     │   │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   │   ├── novovm-node v0.1.0 (*)
+     │   │   │   └── novovm-relay v0.1.0
+     │   │   ├── novovm-node v0.1.0 (*)
+     │   │   └── novovm-relay v0.1.0 (*)
+     │   └── web30-core v0.1.0
+     │       ├── novovm-adapter-novovm v0.1.0 (*)
+     │       ├── novovm-consensus v0.1.0 (*)
+     │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+     ├── hmac v0.12.1
+     │   ├── hkdf v0.12.4
+     │   │   └── novovm-network v0.1.0 (*)
+     │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   └── novovm-network v0.1.0 (*)
+     ├── sha1 v0.10.6
+     │   ├── novovm-network v0.1.0 (*)
+     │   ├── novovm-node v0.1.0 (*)
+     │   └── novovm-relay v0.1.0 (*)
+     ├── sha2 v0.10.9
+     │   ├── aoem-bindings v0.1.0
+     │   │   ├── novovm-adapter-evm-core v0.1.0 (*)
+     │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   ├── novovm-exec v0.1.0 (*)
+     │   │   ├── novovm-node v0.1.0 (*)
+     │   │   ├── novovm-prover v0.1.0 (*)
+     │   │   └── web30-core v0.1.0 (*)
+     │   ├── ed25519-dalek v2.2.0 (*)
+     │   ├── novovm-adapter-api v0.1.0 (*)
+     │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+     │   ├── novovm-bench v0.1.0 (*)
+     │   ├── novovm-consensus v0.1.0 (*)
+     │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   ├── novovm-exec v0.1.0 (*)
+     │   ├── novovm-network v0.1.0 (*)
+     │   ├── novovm-node v0.1.0 (*)
+     │   ├── novovm-protocol v0.1.0
+     │   │   ├── novovm-adapter-api v0.1.0 (*)
+     │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+     │   │   ├── novovm-bench v0.1.0 (*)
+     │   │   ├── novovm-coordinator v0.1.0
+     │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │   │   ├── novovm-exec v0.1.0 (*)
+     │   │   ├── novovm-network v0.1.0 (*)
+     │   │   └── novovm-node v0.1.0 (*)
+     │   ├── novovm-storage-budget v0.1.0
+     │   │   └── novovm-network v0.1.0 (*)
+     │   └── web30-core v0.1.0 (*)
+     └── sha3 v0.10.8
+         ├── novovm-adapter-evm-core v0.1.0 (*)
+         ├── novovm-evm-gateway v0.1.0 (*)
+         ├── novovm-exec v0.1.0 (*)
+         ├── novovm-network v0.1.0 (*)
+         ├── novovm-node v0.1.0 (*)
+         └── novovm-protocol v0.1.0 (*)
+   ├ digest v0.11.3
+     ├── ecdsa v0.17.0
+     │   └── k256 v0.14.0
+     │       ├── novovm-adapter-evm-core v0.1.0
+     │       │   ├── novovm-adapter-evm-plugin v0.1.0
+     │       │   │   ├── novovm-evm-gateway v0.1.0
+     │       │   │   └── novovm-node v0.1.0
+     │       │   │       ├── novovm-bench v0.1.0
+     │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+     │       │   │       └── novovmctl v0.1.0
+     │       │   ├── novovm-adapter-novovm v0.1.0
+     │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+     │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+     │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+     │       │   │   └── novovm-node v0.1.0 (*)
+     │       │   ├── novovm-evm-gateway v0.1.0 (*)
+     │       │   └── novovm-node v0.1.0 (*)
+     │       ├── novovm-evm-gateway v0.1.0 (*)
+     │       ├── novovm-network v0.1.0
+     │       │   ├── novovm-bench v0.1.0 (*)
+     │       │   ├── novovm-evm-gateway v0.1.0 (*)
+     │       │   ├── novovm-node v0.1.0 (*)
+     │       │   └── novovm-relay v0.1.0
+     │       └── novovm-node v0.1.0 (*)
+     ├── elliptic-curve v0.14.1
+     │   ├── ecdsa v0.17.0 (*)
+     │   ├── k256 v0.14.0 (*)
+     │   └── primeorder v0.14.0
+     │       └── k256 v0.14.0 (*)
+     ├── hmac v0.13.0
+     │   ├── hkdf v0.13.0
+     │   │   └── elliptic-curve v0.14.1 (*)
+     │   └── rfc6979 v0.6.0
+     │       └── ecdsa v0.17.0 (*)
+     ├── sha2 v0.11.0
+     │   └── k256 v0.14.0 (*)
+     └── signature v3.0.0
+         ├── ecdsa v0.17.0 (*)
+         └── k256 v0.14.0 (*)
+
+warning[duplicate]: found 3 duplicate entries for crate 'getrandom'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:106:1
+    │  
+106 │ ╭ getrandom 0.2.17 registry+https://github.com/rust-lang/crates.io-index
+107 │ │ getrandom 0.3.4 registry+https://github.com/rust-lang/crates.io-index
+108 │ │ getrandom 0.4.2 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ getrandom v0.2.17
+      ├── rand_core v0.6.4
+      │   ├── crypto-common v0.1.7
+      │   │   ├── aead v0.5.2
+      │   │   │   └── chacha20poly1305 v0.10.1
+      │   │   │       └── novovm-network v0.1.0
+      │   │   │           ├── novovm-bench v0.1.0
+      │   │   │           ├── novovm-evm-gateway v0.1.0
+      │   │   │           ├── novovm-node v0.1.0
+      │   │   │           │   ├── novovm-bench v0.1.0 (*)
+      │   │   │           │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │           │   └── novovmctl v0.1.0
+      │   │   │           └── novovm-relay v0.1.0
+      │   │   ├── cipher v0.4.4
+      │   │   │   ├── aes v0.8.4
+      │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   │   ├── chacha20 v0.9.1
+      │   │   │   │   └── chacha20poly1305 v0.10.1 (*)
+      │   │   │   ├── chacha20poly1305 v0.10.1 (*)
+      │   │   │   └── ctr v0.9.2
+      │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       └── novovm-network v0.1.0 (*)
+      │   │   ├── digest v0.10.7
+      │   │   │   ├── curve25519-dalek v4.1.3
+      │   │   │   │   ├── ed25519-dalek v2.2.0
+      │   │   │   │   │   ├── novovm-adapter-api v0.1.0
+      │   │   │   │   │   │   ├── novovm-adapter-evm-core v0.1.0
+      │   │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+      │   │   │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0
+      │   │   │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │   │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-exec v0.1.0
+      │   │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   │   │   │   └── novovm-prover v0.1.0
+      │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-consensus v0.1.0
+      │   │   │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   │   │   └── (dev) novovm-node v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   │   └── novovm-relay v0.1.0 (*)
+      │   │   │   │   └── web30-core v0.1.0
+      │   │   │   │       ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │       ├── novovm-consensus v0.1.0 (*)
+      │   │   │   │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+      │   │   │   ├── hmac v0.12.1
+      │   │   │   │   ├── hkdf v0.12.4
+      │   │   │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   │   ├── sha1 v0.10.6
+      │   │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   └── novovm-relay v0.1.0 (*)
+      │   │   │   ├── sha2 v0.10.9
+      │   │   │   │   ├── aoem-bindings v0.1.0
+      │   │   │   │   │   ├── novovm-adapter-evm-core v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-exec v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-prover v0.1.0 (*)
+      │   │   │   │   │   └── web30-core v0.1.0 (*)
+      │   │   │   │   ├── ed25519-dalek v2.2.0 (*)
+      │   │   │   │   ├── novovm-adapter-api v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   ├── novovm-consensus v0.1.0 (*)
+      │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   ├── novovm-exec v0.1.0 (*)
+      │   │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   ├── novovm-protocol v0.1.0
+      │   │   │   │   │   ├── novovm-adapter-api v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-coordinator v0.1.0
+      │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-exec v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   ├── novovm-storage-budget v0.1.0
+      │   │   │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   │   │   └── web30-core v0.1.0 (*)
+      │   │   │   └── sha3 v0.10.8
+      │   │   │       ├── novovm-adapter-evm-core v0.1.0 (*)
+      │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       ├── novovm-exec v0.1.0 (*)
+      │   │   │       ├── novovm-network v0.1.0 (*)
+      │   │   │       ├── novovm-node v0.1.0 (*)
+      │   │   │       └── novovm-protocol v0.1.0 (*)
+      │   │   └── universal-hash v0.5.1
+      │   │       └── poly1305 v0.8.0
+      │   │           └── chacha20poly1305 v0.10.1 (*)
+      │   ├── ed25519-dalek v2.2.0 (*)
+      │   ├── merlin v3.0.0
+      │   │   └── ed25519-dalek v2.2.0 (*)
+      │   ├── rand v0.8.5
+      │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   ├── novovm-consensus v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   ├── novovm-network v0.1.0 (*)
+      │   │   ├── novovm-node v0.1.0 (*)
+      │   │   ├── novovm-relay v0.1.0 (*)
+      │   │   └── web30-core v0.1.0 (*)
+      │   └── rand_chacha v0.3.1
+      │       └── rand v0.8.5 (*)
+      └── ring v0.17.14
+          ├── rcgen v0.12.1
+          │   ├── (dev) novovm-network v0.1.0 (*)
+          │   ├── novovm-node v0.1.0 (*)
+          │   └── (dev) novovm-relay v0.1.0 (*)
+          ├── rustls v0.23.46
+          │   ├── novovm-network v0.1.0 (*)
+          │   ├── novovm-node v0.1.0 (*)
+          │   ├── novovm-relay v0.1.0 (*)
+          │   └── ureq v3.4.2
+          │       ├── novovm-evm-gateway v0.1.0 (*)
+          │       ├── novovm-node v0.1.0 (*)
+          │       └── novovm-rollout-policy v0.1.0
+          └── rustls-webpki v0.103.16
+              └── rustls v0.23.46 (*)
+    ├ getrandom v0.3.4
+      ├── jobserver v0.1.34
+      │   └── cc v1.2.57
+      │       ├── (build) aws-lc-sys v0.45.0
+      │       │   └── aws-lc-rs v1.18.1
+      │       │       ├── rustls v0.23.46
+      │       │       │   ├── novovm-network v0.1.0
+      │       │       │   │   ├── novovm-bench v0.1.0
+      │       │       │   │   ├── novovm-evm-gateway v0.1.0
+      │       │       │   │   ├── novovm-node v0.1.0
+      │       │       │   │   │   ├── novovm-bench v0.1.0 (*)
+      │       │       │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       │   │   │   └── novovmctl v0.1.0
+      │       │       │   │   └── novovm-relay v0.1.0
+      │       │       │   ├── novovm-node v0.1.0 (*)
+      │       │       │   ├── novovm-relay v0.1.0 (*)
+      │       │       │   └── ureq v3.4.2
+      │       │       │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       │       ├── novovm-node v0.1.0 (*)
+      │       │       │       └── novovm-rollout-policy v0.1.0
+      │       │       └── rustls-webpki v0.103.16
+      │       │           └── rustls v0.23.46 (*)
+      │       ├── cmake v0.1.58
+      │       │   └── (build) aws-lc-sys v0.45.0 (*)
+      │       ├── (build) iana-time-zone-haiku v0.1.2
+      │       │   └── iana-time-zone v0.1.65
+      │       │       └── chrono v0.4.44
+      │       │           ├── novovm-governance-observability v0.1.0
+      │       │           │   ├── novovm-node v0.1.0 (*)
+      │       │           │   └── novovmctl v0.1.0 (*)
+      │       │           ├── novovm-node v0.1.0 (*)
+      │       │           └── novovm-rollout-policy v0.1.0 (*)
+      │       ├── (build) librocksdb-sys v0.16.0+8.10.0
+      │       │   └── rocksdb v0.22.0
+      │       │       ├── novovm-adapter-evm-plugin v0.1.0
+      │       │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       │   └── novovm-node v0.1.0 (*)
+      │       │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       ├── novovm-node v0.1.0 (*)
+      │       │       └── (dev) novovmctl v0.1.0 (*)
+      │       ├── (build) libsqlite3-sys v0.38.2
+      │       │   ├── novovm-storage-budget v0.1.0
+      │       │   │   └── novovm-network v0.1.0 (*)
+      │       │   └── rusqlite v0.40.2
+      │       │       ├── novovm-network v0.1.0 (*)
+      │       │       └── (dev) novovm-storage-budget v0.1.0 (*)
+      │       ├── (build) novovm-storage-budget v0.1.0 (*)
+      │       ├── (build) openssl-sys v0.9.112
+      │       │   ├── native-tls v0.2.18
+      │       │   │   └── lettre v0.11.22
+      │       │   │       ├── novovm-node v0.1.0 (*)
+      │       │   │       └── novovm-rollout-policy v0.1.0 (*)
+      │       │   └── openssl v0.10.76
+      │       │       └── native-tls v0.2.18 (*)
+      │       ├── (build) ring v0.17.14
+      │       │   ├── rcgen v0.12.1
+      │       │   │   ├── (dev) novovm-network v0.1.0 (*)
+      │       │   │   ├── novovm-node v0.1.0 (*)
+      │       │   │   └── (dev) novovm-relay v0.1.0 (*)
+      │       │   ├── rustls v0.23.46 (*)
+      │       │   └── rustls-webpki v0.103.16 (*)
+      │       └── (build) sqlite-wasm-rs v0.5.5
+      │           └── rusqlite v0.40.2 (*)
+      ├── rand_core v0.9.5
+      │   ├── rand v0.9.2
+      │   │   └── proptest v1.10.0
+      │   │       └── (dev) web30-core v0.1.0
+      │   │           ├── novovm-adapter-novovm v0.1.0
+      │   │           │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │           │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │           │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │           │   └── novovm-node v0.1.0 (*)
+      │   │           ├── novovm-consensus v0.1.0
+      │   │           │   ├── novovm-bench v0.1.0 (*)
+      │   │           │   └── (dev) novovm-node v0.1.0 (*)
+      │   │           └── (dev) novovm-evm-gateway v0.1.0 (*)
+      │   ├── rand_chacha v0.9.0
+      │   │   └── proptest v1.10.0 (*)
+      │   └── rand_xorshift v0.4.0
+      │       └── proptest v1.10.0 (*)
+      └── tempfile v3.27.0
+          ├── atomicwrites v0.4.4
+          │   └── novovm-network v0.1.0 (*)
+          ├── native-tls v0.2.18 (*)
+          ├── (dev) novovm-network v0.1.0 (*)
+          ├── (dev) novovm-storage-budget v0.1.0 (*)
+          ├── proptest v1.10.0 (*)
+          └── rusty-fork v0.3.1
+              └── proptest v1.10.0 (*)
+    ├ getrandom v0.4.2
+      ├── crypto-bigint v0.7.6
+      │   ├── elliptic-curve v0.14.1
+      │   │   ├── ecdsa v0.17.0
+      │   │   │   └── k256 v0.14.0
+      │   │   │       ├── novovm-adapter-evm-core v0.1.0
+      │   │   │       │   ├── novovm-adapter-evm-plugin v0.1.0
+      │   │   │       │   │   ├── novovm-evm-gateway v0.1.0
+      │   │   │       │   │   └── novovm-node v0.1.0
+      │   │   │       │   │       ├── novovm-bench v0.1.0
+      │   │   │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   │       └── novovmctl v0.1.0
+      │   │   │       │   ├── novovm-adapter-novovm v0.1.0
+      │   │   │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │   │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   │   └── novovm-node v0.1.0 (*)
+      │   │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   └── novovm-node v0.1.0 (*)
+      │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       ├── novovm-network v0.1.0
+      │   │   │       │   ├── novovm-bench v0.1.0 (*)
+      │   │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   ├── novovm-node v0.1.0 (*)
+      │   │   │       │   └── novovm-relay v0.1.0
+      │   │   │       └── novovm-node v0.1.0 (*)
+      │   │   ├── k256 v0.14.0 (*)
+      │   │   └── primeorder v0.14.0
+      │   │       └── k256 v0.14.0 (*)
+      │   ├── primefield v0.14.0
+      │   │   ├── primeorder v0.14.0 (*)
+      │   │   └── wnaf v0.14.1
+      │   │       ├── k256 v0.14.0 (*)
+      │   │       └── primeorder v0.14.0 (*)
+      │   └── rfc6979 v0.6.0
+      │       └── ecdsa v0.17.0 (*)
+      └── crypto-common v0.2.2
+          ├── digest v0.11.3
+          │   ├── ecdsa v0.17.0 (*)
+          │   ├── elliptic-curve v0.14.1 (*)
+          │   ├── hmac v0.13.0
+          │   │   ├── hkdf v0.13.0
+          │   │   │   └── elliptic-curve v0.14.1 (*)
+          │   │   └── rfc6979 v0.6.0 (*)
+          │   ├── sha2 v0.11.0
+          │   │   └── k256 v0.14.0 (*)
+          │   └── signature v3.0.0
+          │       ├── ecdsa v0.17.0 (*)
+          │       └── k256 v0.14.0 (*)
+          ├── elliptic-curve v0.14.1 (*)
+          └── primefield v0.14.0 (*)
+
+warning[duplicate]: found 3 duplicate entries for crate 'hashbrown'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:112:1
+    │  
+112 │ ╭ hashbrown 0.14.5 registry+https://github.com/rust-lang/crates.io-index
+113 │ │ hashbrown 0.16.1 registry+https://github.com/rust-lang/crates.io-index
+114 │ │ hashbrown 0.17.1 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰──────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ hashbrown v0.14.5
+      └── dashmap v6.1.0
+          ├── novovm-adapter-novovm v0.1.0
+          │   ├── novovm-adapter-evm-plugin v0.1.0
+          │   │   ├── novovm-evm-gateway v0.1.0
+          │   │   └── novovm-node v0.1.0
+          │   │       ├── novovm-bench v0.1.0
+          │   │       ├── novovm-evm-gateway v0.1.0 (*)
+          │   │       └── novovmctl v0.1.0
+          │   ├── novovm-adapter-sample-plugin v0.1.0
+          │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   └── novovm-node v0.1.0 (*)
+          ├── novovm-evm-gateway v0.1.0 (*)
+          └── novovm-network v0.1.0
+              ├── novovm-bench v0.1.0 (*)
+              ├── novovm-evm-gateway v0.1.0 (*)
+              ├── novovm-node v0.1.0 (*)
+              └── novovm-relay v0.1.0
+    ├ hashbrown v0.16.1
+      └── rsqlite-vfs v0.1.1
+          └── sqlite-wasm-rs v0.5.5
+              └── rusqlite v0.40.2
+                  ├── novovm-network v0.1.0
+                  │   ├── novovm-bench v0.1.0
+                  │   ├── novovm-evm-gateway v0.1.0
+                  │   ├── novovm-node v0.1.0
+                  │   │   ├── novovm-bench v0.1.0 (*)
+                  │   │   ├── novovm-evm-gateway v0.1.0 (*)
+                  │   │   └── novovmctl v0.1.0
+                  │   └── novovm-relay v0.1.0
+                  └── (dev) novovm-storage-budget v0.1.0
+                      └── novovm-network v0.1.0 (*)
+    ├ hashbrown v0.17.1
+      ├── hashlink v0.12.2
+      │   └── rusqlite v0.40.2
+      │       ├── novovm-network v0.1.0
+      │       │   ├── novovm-bench v0.1.0
+      │       │   ├── novovm-evm-gateway v0.1.0
+      │       │   ├── novovm-node v0.1.0
+      │       │   │   ├── novovm-bench v0.1.0 (*)
+      │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   └── novovmctl v0.1.0
+      │       │   └── novovm-relay v0.1.0
+      │       └── (dev) novovm-storage-budget v0.1.0
+      │           └── novovm-network v0.1.0 (*)
+      └── indexmap v2.14.2
+          └── serde_json v1.0.149
+              ├── aoem-bindings v0.1.0
+              │   ├── novovm-adapter-evm-core v0.1.0
+              │   │   ├── novovm-adapter-evm-plugin v0.1.0
+              │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   │   └── novovm-node v0.1.0 (*)
+              │   │   ├── novovm-adapter-novovm v0.1.0
+              │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+              │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+              │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   │   └── novovm-node v0.1.0 (*)
+              │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   └── novovm-node v0.1.0 (*)
+              │   ├── novovm-adapter-novovm v0.1.0 (*)
+              │   ├── novovm-exec v0.1.0
+              │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+              │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+              │   │   ├── novovm-bench v0.1.0 (*)
+              │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   ├── novovm-node v0.1.0 (*)
+              │   │   └── novovm-prover v0.1.0
+              │   ├── novovm-node v0.1.0 (*)
+              │   ├── novovm-prover v0.1.0 (*)
+              │   └── web30-core v0.1.0
+              │       ├── novovm-adapter-novovm v0.1.0 (*)
+              │       ├── novovm-consensus v0.1.0
+              │       │   ├── novovm-bench v0.1.0 (*)
+              │       │   └── (dev) novovm-node v0.1.0 (*)
+              │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+              ├── criterion v0.5.1
+              │   └── (dev) novovm-consensus v0.1.0 (*)
+              ├── (dev) novovm-adapter-evm-core v0.1.0 (*)
+              ├── novovm-adapter-evm-plugin v0.1.0 (*)
+              ├── novovm-adapter-novovm v0.1.0 (*)
+              ├── novovm-bench v0.1.0 (*)
+              ├── novovm-consensus v0.1.0 (*)
+              ├── novovm-evm-gateway v0.1.0 (*)
+              ├── novovm-exec v0.1.0 (*)
+              ├── novovm-governance-observability v0.1.0
+              │   ├── novovm-node v0.1.0 (*)
+              │   └── novovmctl v0.1.0 (*)
+              ├── novovm-network v0.1.0 (*)
+              ├── novovm-node v0.1.0 (*)
+              ├── novovm-prover v0.1.0 (*)
+              ├── novovm-relay v0.1.0 (*)
+              ├── novovm-rollout-policy v0.1.0
+              ├── novovmctl v0.1.0 (*)
+              ├── tinytemplate v1.2.1
+              │   └── criterion v0.5.1 (*)
+              ├── ureq v3.4.2
+              │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   ├── novovm-node v0.1.0 (*)
+              │   └── novovm-rollout-policy v0.1.0 (*)
+              └── web30-core v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'hkdf'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:118:1
+    │  
+118 │ ╭ hkdf 0.12.4 registry+https://github.com/rust-lang/crates.io-index
+119 │ │ hkdf 0.13.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ hkdf v0.12.4
+      └── novovm-network v0.1.0
+          ├── novovm-bench v0.1.0
+          ├── novovm-evm-gateway v0.1.0
+          ├── novovm-node v0.1.0
+          │   ├── novovm-bench v0.1.0 (*)
+          │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   └── novovmctl v0.1.0
+          └── novovm-relay v0.1.0
+    ├ hkdf v0.13.0
+      └── elliptic-curve v0.14.1
+          ├── ecdsa v0.17.0
+          │   └── k256 v0.14.0
+          │       ├── novovm-adapter-evm-core v0.1.0
+          │       │   ├── novovm-adapter-evm-plugin v0.1.0
+          │       │   │   ├── novovm-evm-gateway v0.1.0
+          │       │   │   └── novovm-node v0.1.0
+          │       │   │       ├── novovm-bench v0.1.0
+          │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   │       └── novovmctl v0.1.0
+          │       │   ├── novovm-adapter-novovm v0.1.0
+          │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+          │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   │   └── novovm-node v0.1.0 (*)
+          │       │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   └── novovm-node v0.1.0 (*)
+          │       ├── novovm-evm-gateway v0.1.0 (*)
+          │       ├── novovm-network v0.1.0
+          │       │   ├── novovm-bench v0.1.0 (*)
+          │       │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   ├── novovm-node v0.1.0 (*)
+          │       │   └── novovm-relay v0.1.0
+          │       └── novovm-node v0.1.0 (*)
+          ├── k256 v0.14.0 (*)
+          └── primeorder v0.14.0
+              └── k256 v0.14.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'hmac'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:120:1
+    │  
+120 │ ╭ hmac 0.12.1 registry+https://github.com/rust-lang/crates.io-index
+121 │ │ hmac 0.13.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ hmac v0.12.1
+      ├── hkdf v0.12.4
+      │   └── novovm-network v0.1.0
+      │       ├── novovm-bench v0.1.0
+      │       ├── novovm-evm-gateway v0.1.0
+      │       ├── novovm-node v0.1.0
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   └── novovmctl v0.1.0
+      │       └── novovm-relay v0.1.0
+      ├── novovm-evm-gateway v0.1.0 (*)
+      └── novovm-network v0.1.0 (*)
+    ├ hmac v0.13.0
+      ├── hkdf v0.13.0
+      │   └── elliptic-curve v0.14.1
+      │       ├── ecdsa v0.17.0
+      │       │   └── k256 v0.14.0
+      │       │       ├── novovm-adapter-evm-core v0.1.0
+      │       │       │   ├── novovm-adapter-evm-plugin v0.1.0
+      │       │       │   │   ├── novovm-evm-gateway v0.1.0
+      │       │       │   │   └── novovm-node v0.1.0
+      │       │       │   │       ├── novovm-bench v0.1.0
+      │       │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       │   │       └── novovmctl v0.1.0
+      │       │       │   ├── novovm-adapter-novovm v0.1.0
+      │       │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │       │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       │   │   └── novovm-node v0.1.0 (*)
+      │       │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       │   └── novovm-node v0.1.0 (*)
+      │       │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       ├── novovm-network v0.1.0
+      │       │       │   ├── novovm-bench v0.1.0 (*)
+      │       │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       │   ├── novovm-node v0.1.0 (*)
+      │       │       │   └── novovm-relay v0.1.0
+      │       │       └── novovm-node v0.1.0 (*)
+      │       ├── k256 v0.14.0 (*)
+      │       └── primeorder v0.14.0
+      │           └── k256 v0.14.0 (*)
+      └── rfc6979 v0.6.0
+          └── ecdsa v0.17.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'linux-raw-sys'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:156:1
+    │  
+156 │ ╭ linux-raw-sys 0.4.15 registry+https://github.com/rust-lang/crates.io-index
+157 │ │ linux-raw-sys 0.12.1 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰──────────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ linux-raw-sys v0.4.15
+      └── rustix v0.38.44
+          └── atomicwrites v0.4.4
+              └── novovm-network v0.1.0
+                  ├── novovm-bench v0.1.0
+                  ├── novovm-evm-gateway v0.1.0
+                  ├── novovm-node v0.1.0
+                  │   ├── novovm-bench v0.1.0 (*)
+                  │   ├── novovm-evm-gateway v0.1.0 (*)
+                  │   └── novovmctl v0.1.0
+                  └── novovm-relay v0.1.0
+    ├ linux-raw-sys v0.12.1
+      └── rustix v1.1.4
+          ├── novovm-network v0.1.0
+          │   ├── novovm-bench v0.1.0
+          │   ├── novovm-evm-gateway v0.1.0
+          │   ├── novovm-node v0.1.0
+          │   │   ├── novovm-bench v0.1.0 (*)
+          │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   └── novovmctl v0.1.0
+          │   └── novovm-relay v0.1.0
+          └── tempfile v3.27.0
+              ├── atomicwrites v0.4.4
+              │   └── novovm-network v0.1.0 (*)
+              ├── native-tls v0.2.18
+              │   └── lettre v0.11.22
+              │       ├── novovm-node v0.1.0 (*)
+              │       └── novovm-rollout-policy v0.1.0
+              ├── (dev) novovm-network v0.1.0 (*)
+              ├── (dev) novovm-storage-budget v0.1.0
+              │   └── novovm-network v0.1.0 (*)
+              ├── proptest v1.10.0
+              │   └── (dev) web30-core v0.1.0
+              │       ├── novovm-adapter-novovm v0.1.0
+              │       │   ├── novovm-adapter-evm-plugin v0.1.0
+              │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │       │   │   └── novovm-node v0.1.0 (*)
+              │       │   ├── novovm-adapter-sample-plugin v0.1.0
+              │       │   ├── novovm-evm-gateway v0.1.0 (*)
+              │       │   └── novovm-node v0.1.0 (*)
+              │       ├── novovm-consensus v0.1.0
+              │       │   ├── novovm-bench v0.1.0 (*)
+              │       │   └── (dev) novovm-node v0.1.0 (*)
+              │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+              └── rusty-fork v0.3.1
+                  └── proptest v1.10.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'nom'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:168:1
+    │  
+168 │ ╭ nom 7.1.3 registry+https://github.com/rust-lang/crates.io-index
+169 │ │ nom 8.0.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ nom v7.1.3
+      └── cexpr v0.6.0
+          └── bindgen v0.69.5
+              └── (build) librocksdb-sys v0.16.0+8.10.0
+                  └── rocksdb v0.22.0
+                      ├── novovm-adapter-evm-plugin v0.1.0
+                      │   ├── novovm-evm-gateway v0.1.0
+                      │   └── novovm-node v0.1.0
+                      │       ├── novovm-bench v0.1.0
+                      │       ├── novovm-evm-gateway v0.1.0 (*)
+                      │       └── novovmctl v0.1.0
+                      ├── novovm-evm-gateway v0.1.0 (*)
+                      ├── novovm-node v0.1.0 (*)
+                      └── (dev) novovmctl v0.1.0 (*)
+    ├ nom v8.0.0
+      └── lettre v0.11.22
+          ├── novovm-node v0.1.0
+          │   ├── novovm-bench v0.1.0
+          │   ├── novovm-evm-gateway v0.1.0
+          │   └── novovmctl v0.1.0
+          └── novovm-rollout-policy v0.1.0
+
+warning[duplicate]: found 2 duplicate entries for crate 'r-efi'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:225:1
+    │  
+225 │ ╭ r-efi 5.3.0 registry+https://github.com/rust-lang/crates.io-index
+226 │ │ r-efi 6.0.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ r-efi v5.3.0
+      └── getrandom v0.3.4
+          ├── jobserver v0.1.34
+          │   └── cc v1.2.57
+          │       ├── (build) aws-lc-sys v0.45.0
+          │       │   └── aws-lc-rs v1.18.1
+          │       │       ├── rustls v0.23.46
+          │       │       │   ├── novovm-network v0.1.0
+          │       │       │   │   ├── novovm-bench v0.1.0
+          │       │       │   │   ├── novovm-evm-gateway v0.1.0
+          │       │       │   │   ├── novovm-node v0.1.0
+          │       │       │   │   │   ├── novovm-bench v0.1.0 (*)
+          │       │       │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │       │   │   │   └── novovmctl v0.1.0
+          │       │       │   │   └── novovm-relay v0.1.0
+          │       │       │   ├── novovm-node v0.1.0 (*)
+          │       │       │   ├── novovm-relay v0.1.0 (*)
+          │       │       │   └── ureq v3.4.2
+          │       │       │       ├── novovm-evm-gateway v0.1.0 (*)
+          │       │       │       ├── novovm-node v0.1.0 (*)
+          │       │       │       └── novovm-rollout-policy v0.1.0
+          │       │       └── rustls-webpki v0.103.16
+          │       │           └── rustls v0.23.46 (*)
+          │       ├── cmake v0.1.58
+          │       │   └── (build) aws-lc-sys v0.45.0 (*)
+          │       ├── (build) iana-time-zone-haiku v0.1.2
+          │       │   └── iana-time-zone v0.1.65
+          │       │       └── chrono v0.4.44
+          │       │           ├── novovm-governance-observability v0.1.0
+          │       │           │   ├── novovm-node v0.1.0 (*)
+          │       │           │   └── novovmctl v0.1.0 (*)
+          │       │           ├── novovm-node v0.1.0 (*)
+          │       │           └── novovm-rollout-policy v0.1.0 (*)
+          │       ├── (build) librocksdb-sys v0.16.0+8.10.0
+          │       │   └── rocksdb v0.22.0
+          │       │       ├── novovm-adapter-evm-plugin v0.1.0
+          │       │       │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │       │   └── novovm-node v0.1.0 (*)
+          │       │       ├── novovm-evm-gateway v0.1.0 (*)
+          │       │       ├── novovm-node v0.1.0 (*)
+          │       │       └── (dev) novovmctl v0.1.0 (*)
+          │       ├── (build) libsqlite3-sys v0.38.2
+          │       │   ├── novovm-storage-budget v0.1.0
+          │       │   │   └── novovm-network v0.1.0 (*)
+          │       │   └── rusqlite v0.40.2
+          │       │       ├── novovm-network v0.1.0 (*)
+          │       │       └── (dev) novovm-storage-budget v0.1.0 (*)
+          │       ├── (build) novovm-storage-budget v0.1.0 (*)
+          │       ├── (build) openssl-sys v0.9.112
+          │       │   ├── native-tls v0.2.18
+          │       │   │   └── lettre v0.11.22
+          │       │   │       ├── novovm-node v0.1.0 (*)
+          │       │   │       └── novovm-rollout-policy v0.1.0 (*)
+          │       │   └── openssl v0.10.76
+          │       │       └── native-tls v0.2.18 (*)
+          │       ├── (build) ring v0.17.14
+          │       │   ├── rcgen v0.12.1
+          │       │   │   ├── (dev) novovm-network v0.1.0 (*)
+          │       │   │   ├── novovm-node v0.1.0 (*)
+          │       │   │   └── (dev) novovm-relay v0.1.0 (*)
+          │       │   ├── rustls v0.23.46 (*)
+          │       │   └── rustls-webpki v0.103.16 (*)
+          │       └── (build) sqlite-wasm-rs v0.5.5
+          │           └── rusqlite v0.40.2 (*)
+          ├── rand_core v0.9.5
+          │   ├── rand v0.9.2
+          │   │   └── proptest v1.10.0
+          │   │       └── (dev) web30-core v0.1.0
+          │   │           ├── novovm-adapter-novovm v0.1.0
+          │   │           │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │   │           │   ├── novovm-adapter-sample-plugin v0.1.0
+          │   │           │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │           │   └── novovm-node v0.1.0 (*)
+          │   │           ├── novovm-consensus v0.1.0
+          │   │           │   ├── novovm-bench v0.1.0 (*)
+          │   │           │   └── (dev) novovm-node v0.1.0 (*)
+          │   │           └── (dev) novovm-evm-gateway v0.1.0 (*)
+          │   ├── rand_chacha v0.9.0
+          │   │   └── proptest v1.10.0 (*)
+          │   └── rand_xorshift v0.4.0
+          │       └── proptest v1.10.0 (*)
+          └── tempfile v3.27.0
+              ├── atomicwrites v0.4.4
+              │   └── novovm-network v0.1.0 (*)
+              ├── native-tls v0.2.18 (*)
+              ├── (dev) novovm-network v0.1.0 (*)
+              ├── (dev) novovm-storage-budget v0.1.0 (*)
+              ├── proptest v1.10.0 (*)
+              └── rusty-fork v0.3.1
+                  └── proptest v1.10.0 (*)
+    ├ r-efi v6.0.0
+      └── getrandom v0.4.2
+          ├── crypto-bigint v0.7.6
+          │   ├── elliptic-curve v0.14.1
+          │   │   ├── ecdsa v0.17.0
+          │   │   │   └── k256 v0.14.0
+          │   │   │       ├── novovm-adapter-evm-core v0.1.0
+          │   │   │       │   ├── novovm-adapter-evm-plugin v0.1.0
+          │   │   │       │   │   ├── novovm-evm-gateway v0.1.0
+          │   │   │       │   │   └── novovm-node v0.1.0
+          │   │   │       │   │       ├── novovm-bench v0.1.0
+          │   │   │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │       │   │       └── novovmctl v0.1.0
+          │   │   │       │   ├── novovm-adapter-novovm v0.1.0
+          │   │   │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │   │   │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+          │   │   │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │       │   │   └── novovm-node v0.1.0 (*)
+          │   │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │       │   └── novovm-node v0.1.0 (*)
+          │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │       ├── novovm-network v0.1.0
+          │   │   │       │   ├── novovm-bench v0.1.0 (*)
+          │   │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │       │   ├── novovm-node v0.1.0 (*)
+          │   │   │       │   └── novovm-relay v0.1.0
+          │   │   │       └── novovm-node v0.1.0 (*)
+          │   │   ├── k256 v0.14.0 (*)
+          │   │   └── primeorder v0.14.0
+          │   │       └── k256 v0.14.0 (*)
+          │   ├── primefield v0.14.0
+          │   │   ├── primeorder v0.14.0 (*)
+          │   │   └── wnaf v0.14.1
+          │   │       ├── k256 v0.14.0 (*)
+          │   │       └── primeorder v0.14.0 (*)
+          │   └── rfc6979 v0.6.0
+          │       └── ecdsa v0.17.0 (*)
+          └── crypto-common v0.2.2
+              ├── digest v0.11.3
+              │   ├── ecdsa v0.17.0 (*)
+              │   ├── elliptic-curve v0.14.1 (*)
+              │   ├── hmac v0.13.0
+              │   │   ├── hkdf v0.13.0
+              │   │   │   └── elliptic-curve v0.14.1 (*)
+              │   │   └── rfc6979 v0.6.0 (*)
+              │   ├── sha2 v0.11.0
+              │   │   └── k256 v0.14.0 (*)
+              │   └── signature v3.0.0
+              │       ├── ecdsa v0.17.0 (*)
+              │       └── k256 v0.14.0 (*)
+              ├── elliptic-curve v0.14.1 (*)
+              └── primefield v0.14.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'rand_core'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:231:1
+    │  
+231 │ ╭ rand_core 0.6.4 registry+https://github.com/rust-lang/crates.io-index
+232 │ │ rand_core 0.9.5 registry+https://github.com/rust-lang/crates.io-index
+233 │ │ rand_core 0.10.1 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰──────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ rand_core v0.6.4
+      ├── crypto-common v0.1.7
+      │   ├── aead v0.5.2
+      │   │   └── chacha20poly1305 v0.10.1
+      │   │       └── novovm-network v0.1.0
+      │   │           ├── novovm-bench v0.1.0
+      │   │           ├── novovm-evm-gateway v0.1.0
+      │   │           ├── novovm-node v0.1.0
+      │   │           │   ├── novovm-bench v0.1.0 (*)
+      │   │           │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │           │   └── novovmctl v0.1.0
+      │   │           └── novovm-relay v0.1.0
+      │   ├── cipher v0.4.4
+      │   │   ├── aes v0.8.4
+      │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   ├── chacha20 v0.9.1
+      │   │   │   └── chacha20poly1305 v0.10.1 (*)
+      │   │   ├── chacha20poly1305 v0.10.1 (*)
+      │   │   └── ctr v0.9.2
+      │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │       └── novovm-network v0.1.0 (*)
+      │   ├── digest v0.10.7
+      │   │   ├── curve25519-dalek v4.1.3
+      │   │   │   ├── ed25519-dalek v2.2.0
+      │   │   │   │   ├── novovm-adapter-api v0.1.0
+      │   │   │   │   │   ├── novovm-adapter-evm-core v0.1.0
+      │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+      │   │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0
+      │   │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   ├── novovm-exec v0.1.0
+      │   │   │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   │   │   └── novovm-prover v0.1.0
+      │   │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   ├── novovm-consensus v0.1.0
+      │   │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   │   └── (dev) novovm-node v0.1.0 (*)
+      │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   └── novovm-relay v0.1.0 (*)
+      │   │   │   └── web30-core v0.1.0
+      │   │   │       ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │       ├── novovm-consensus v0.1.0 (*)
+      │   │   │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+      │   │   ├── hmac v0.12.1
+      │   │   │   ├── hkdf v0.12.4
+      │   │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   ├── sha1 v0.10.6
+      │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   └── novovm-relay v0.1.0 (*)
+      │   │   ├── sha2 v0.10.9
+      │   │   │   ├── aoem-bindings v0.1.0
+      │   │   │   │   ├── novovm-adapter-evm-core v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   ├── novovm-exec v0.1.0 (*)
+      │   │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   │   ├── novovm-prover v0.1.0 (*)
+      │   │   │   │   └── web30-core v0.1.0 (*)
+      │   │   │   ├── ed25519-dalek v2.2.0 (*)
+      │   │   │   ├── novovm-adapter-api v0.1.0 (*)
+      │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   ├── novovm-consensus v0.1.0 (*)
+      │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   ├── novovm-exec v0.1.0 (*)
+      │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   ├── novovm-protocol v0.1.0
+      │   │   │   │   ├── novovm-adapter-api v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   │   ├── novovm-coordinator v0.1.0
+      │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   ├── novovm-exec v0.1.0 (*)
+      │   │   │   │   ├── novovm-network v0.1.0 (*)
+      │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   ├── novovm-storage-budget v0.1.0
+      │   │   │   │   └── novovm-network v0.1.0 (*)
+      │   │   │   └── web30-core v0.1.0 (*)
+      │   │   └── sha3 v0.10.8
+      │   │       ├── novovm-adapter-evm-core v0.1.0 (*)
+      │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │       ├── novovm-exec v0.1.0 (*)
+      │   │       ├── novovm-network v0.1.0 (*)
+      │   │       ├── novovm-node v0.1.0 (*)
+      │   │       └── novovm-protocol v0.1.0 (*)
+      │   └── universal-hash v0.5.1
+      │       └── poly1305 v0.8.0
+      │           └── chacha20poly1305 v0.10.1 (*)
+      ├── ed25519-dalek v2.2.0 (*)
+      ├── merlin v3.0.0
+      │   └── ed25519-dalek v2.2.0 (*)
+      ├── rand v0.8.5
+      │   ├── novovm-bench v0.1.0 (*)
+      │   ├── novovm-consensus v0.1.0 (*)
+      │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   ├── novovm-network v0.1.0 (*)
+      │   ├── novovm-node v0.1.0 (*)
+      │   ├── novovm-relay v0.1.0 (*)
+      │   └── web30-core v0.1.0 (*)
+      └── rand_chacha v0.3.1
+          └── rand v0.8.5 (*)
+    ├ rand_core v0.10.1
+      ├── crypto-bigint v0.7.6
+      │   ├── elliptic-curve v0.14.1
+      │   │   ├── ecdsa v0.17.0
+      │   │   │   └── k256 v0.14.0
+      │   │   │       ├── novovm-adapter-evm-core v0.1.0
+      │   │   │       │   ├── novovm-adapter-evm-plugin v0.1.0
+      │   │   │       │   │   ├── novovm-evm-gateway v0.1.0
+      │   │   │       │   │   └── novovm-node v0.1.0
+      │   │   │       │   │       ├── novovm-bench v0.1.0
+      │   │   │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   │       └── novovmctl v0.1.0
+      │   │   │       │   ├── novovm-adapter-novovm v0.1.0
+      │   │   │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │   │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   │   └── novovm-node v0.1.0 (*)
+      │   │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   └── novovm-node v0.1.0 (*)
+      │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       ├── novovm-network v0.1.0
+      │   │   │       │   ├── novovm-bench v0.1.0 (*)
+      │   │   │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       │   ├── novovm-node v0.1.0 (*)
+      │   │   │       │   └── novovm-relay v0.1.0
+      │   │   │       └── novovm-node v0.1.0 (*)
+      │   │   ├── k256 v0.14.0 (*)
+      │   │   └── primeorder v0.14.0
+      │   │       └── k256 v0.14.0 (*)
+      │   ├── primefield v0.14.0
+      │   │   ├── primeorder v0.14.0 (*)
+      │   │   └── wnaf v0.14.1
+      │   │       ├── k256 v0.14.0 (*)
+      │   │       └── primeorder v0.14.0 (*)
+      │   └── rfc6979 v0.6.0
+      │       └── ecdsa v0.17.0 (*)
+      ├── crypto-common v0.2.2
+      │   ├── digest v0.11.3
+      │   │   ├── ecdsa v0.17.0 (*)
+      │   │   ├── elliptic-curve v0.14.1 (*)
+      │   │   ├── hmac v0.13.0
+      │   │   │   ├── hkdf v0.13.0
+      │   │   │   │   └── elliptic-curve v0.14.1 (*)
+      │   │   │   └── rfc6979 v0.6.0 (*)
+      │   │   ├── sha2 v0.11.0
+      │   │   │   └── k256 v0.14.0 (*)
+      │   │   └── signature v3.0.0
+      │   │       ├── ecdsa v0.17.0 (*)
+      │   │       └── k256 v0.14.0 (*)
+      │   ├── elliptic-curve v0.14.1 (*)
+      │   └── primefield v0.14.0 (*)
+      ├── elliptic-curve v0.14.1 (*)
+      ├── ff v0.14.0
+      │   ├── elliptic-curve v0.14.1 (*)
+      │   ├── group v0.14.0
+      │   │   ├── elliptic-curve v0.14.1 (*)
+      │   │   └── wnaf v0.14.1 (*)
+      │   ├── primefield v0.14.0 (*)
+      │   └── wnaf v0.14.1 (*)
+      ├── getrandom v0.4.2
+      │   ├── crypto-bigint v0.7.6 (*)
+      │   └── crypto-common v0.2.2 (*)
+      ├── group v0.14.0 (*)
+      ├── primefield v0.14.0 (*)
+      └── signature v3.0.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'rustix'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:249:1
+    │  
+249 │ ╭ rustix 0.38.44 registry+https://github.com/rust-lang/crates.io-index
+250 │ │ rustix 1.1.4 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰──────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ rustix v0.38.44
+      └── atomicwrites v0.4.4
+          └── novovm-network v0.1.0
+              ├── novovm-bench v0.1.0
+              ├── novovm-evm-gateway v0.1.0
+              ├── novovm-node v0.1.0
+              │   ├── novovm-bench v0.1.0 (*)
+              │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   └── novovmctl v0.1.0
+              └── novovm-relay v0.1.0
+    ├ rustix v1.1.4
+      ├── novovm-network v0.1.0
+      │   ├── novovm-bench v0.1.0
+      │   ├── novovm-evm-gateway v0.1.0
+      │   ├── novovm-node v0.1.0
+      │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   └── novovmctl v0.1.0
+      │   └── novovm-relay v0.1.0
+      └── tempfile v3.27.0
+          ├── atomicwrites v0.4.4
+          │   └── novovm-network v0.1.0 (*)
+          ├── native-tls v0.2.18
+          │   └── lettre v0.11.22
+          │       ├── novovm-node v0.1.0 (*)
+          │       └── novovm-rollout-policy v0.1.0
+          ├── (dev) novovm-network v0.1.0 (*)
+          ├── (dev) novovm-storage-budget v0.1.0
+          │   └── novovm-network v0.1.0 (*)
+          ├── proptest v1.10.0
+          │   └── (dev) web30-core v0.1.0
+          │       ├── novovm-adapter-novovm v0.1.0
+          │       │   ├── novovm-adapter-evm-plugin v0.1.0
+          │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   │   └── novovm-node v0.1.0 (*)
+          │       │   ├── novovm-adapter-sample-plugin v0.1.0
+          │       │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   └── novovm-node v0.1.0 (*)
+          │       ├── novovm-consensus v0.1.0
+          │       │   ├── novovm-bench v0.1.0 (*)
+          │       │   └── (dev) novovm-node v0.1.0 (*)
+          │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+          └── rusty-fork v0.3.1
+              └── proptest v1.10.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'sha2'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:269:1
+    │  
+269 │ ╭ sha2 0.10.9 registry+https://github.com/rust-lang/crates.io-index
+270 │ │ sha2 0.11.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ sha2 v0.10.9
+      ├── aoem-bindings v0.1.0
+      │   ├── novovm-adapter-evm-core v0.1.0
+      │   │   ├── novovm-adapter-evm-plugin v0.1.0
+      │   │   │   ├── novovm-evm-gateway v0.1.0
+      │   │   │   └── novovm-node v0.1.0
+      │   │   │       ├── novovm-bench v0.1.0
+      │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │       └── novovmctl v0.1.0
+      │   │   ├── novovm-adapter-novovm v0.1.0
+      │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   └── novovm-node v0.1.0 (*)
+      │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   ├── novovm-exec v0.1.0
+      │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   ├── novovm-node v0.1.0 (*)
+      │   │   └── novovm-prover v0.1.0
+      │   ├── novovm-node v0.1.0 (*)
+      │   ├── novovm-prover v0.1.0 (*)
+      │   └── web30-core v0.1.0
+      │       ├── novovm-adapter-novovm v0.1.0 (*)
+      │       ├── novovm-consensus v0.1.0
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   └── (dev) novovm-node v0.1.0 (*)
+      │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+      ├── ed25519-dalek v2.2.0
+      │   ├── novovm-adapter-api v0.1.0
+      │   │   ├── novovm-adapter-evm-core v0.1.0 (*)
+      │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   ├── novovm-exec v0.1.0 (*)
+      │   │   └── novovm-node v0.1.0 (*)
+      │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   ├── novovm-bench v0.1.0 (*)
+      │   ├── novovm-consensus v0.1.0 (*)
+      │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   ├── novovm-network v0.1.0
+      │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   ├── novovm-node v0.1.0 (*)
+      │   │   └── novovm-relay v0.1.0
+      │   ├── novovm-node v0.1.0 (*)
+      │   └── novovm-relay v0.1.0 (*)
+      ├── novovm-adapter-api v0.1.0 (*)
+      ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      ├── novovm-adapter-novovm v0.1.0 (*)
+      ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      ├── novovm-bench v0.1.0 (*)
+      ├── novovm-consensus v0.1.0 (*)
+      ├── novovm-evm-gateway v0.1.0 (*)
+      ├── novovm-exec v0.1.0 (*)
+      ├── novovm-network v0.1.0 (*)
+      ├── novovm-node v0.1.0 (*)
+      ├── novovm-protocol v0.1.0
+      │   ├── novovm-adapter-api v0.1.0 (*)
+      │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   ├── novovm-bench v0.1.0 (*)
+      │   ├── novovm-coordinator v0.1.0
+      │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   ├── novovm-exec v0.1.0 (*)
+      │   ├── novovm-network v0.1.0 (*)
+      │   └── novovm-node v0.1.0 (*)
+      ├── novovm-storage-budget v0.1.0
+      │   └── novovm-network v0.1.0 (*)
+      └── web30-core v0.1.0 (*)
+    ├ sha2 v0.11.0
+      └── k256 v0.14.0
+          ├── novovm-adapter-evm-core v0.1.0
+          │   ├── novovm-adapter-evm-plugin v0.1.0
+          │   │   ├── novovm-evm-gateway v0.1.0
+          │   │   └── novovm-node v0.1.0
+          │   │       ├── novovm-bench v0.1.0
+          │   │       ├── novovm-evm-gateway v0.1.0 (*)
+          │   │       └── novovmctl v0.1.0
+          │   ├── novovm-adapter-novovm v0.1.0
+          │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │   │   ├── novovm-adapter-sample-plugin v0.1.0
+          │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   └── novovm-node v0.1.0 (*)
+          │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   └── novovm-node v0.1.0 (*)
+          ├── novovm-evm-gateway v0.1.0 (*)
+          ├── novovm-network v0.1.0
+          │   ├── novovm-bench v0.1.0 (*)
+          │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   ├── novovm-node v0.1.0 (*)
+          │   └── novovm-relay v0.1.0
+          └── novovm-node v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'signature'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:274:1
+    │  
+274 │ ╭ signature 2.2.0 registry+https://github.com/rust-lang/crates.io-index
+275 │ │ signature 3.0.0 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰─────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ signature v2.2.0
+      └── ed25519 v2.2.3
+          └── ed25519-dalek v2.2.0
+              ├── novovm-adapter-api v0.1.0
+              │   ├── novovm-adapter-evm-core v0.1.0
+              │   │   ├── novovm-adapter-evm-plugin v0.1.0
+              │   │   │   ├── novovm-evm-gateway v0.1.0
+              │   │   │   └── novovm-node v0.1.0
+              │   │   │       ├── novovm-bench v0.1.0
+              │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   │       └── novovmctl v0.1.0
+              │   │   ├── novovm-adapter-novovm v0.1.0
+              │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+              │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+              │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   │   └── novovm-node v0.1.0 (*)
+              │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   └── novovm-node v0.1.0 (*)
+              │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+              │   ├── novovm-adapter-novovm v0.1.0 (*)
+              │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+              │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   ├── novovm-exec v0.1.0
+              │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+              │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+              │   │   ├── novovm-bench v0.1.0 (*)
+              │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   ├── novovm-node v0.1.0 (*)
+              │   │   └── novovm-prover v0.1.0
+              │   └── novovm-node v0.1.0 (*)
+              ├── novovm-adapter-novovm v0.1.0 (*)
+              ├── novovm-bench v0.1.0 (*)
+              ├── novovm-consensus v0.1.0
+              │   ├── novovm-bench v0.1.0 (*)
+              │   └── (dev) novovm-node v0.1.0 (*)
+              ├── novovm-evm-gateway v0.1.0 (*)
+              ├── novovm-network v0.1.0
+              │   ├── novovm-bench v0.1.0 (*)
+              │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   ├── novovm-node v0.1.0 (*)
+              │   └── novovm-relay v0.1.0
+              ├── novovm-node v0.1.0 (*)
+              └── novovm-relay v0.1.0 (*)
+    ├ signature v3.0.0
+      ├── ecdsa v0.17.0
+      │   └── k256 v0.14.0
+      │       ├── novovm-adapter-evm-core v0.1.0
+      │       │   ├── novovm-adapter-evm-plugin v0.1.0
+      │       │   │   ├── novovm-evm-gateway v0.1.0
+      │       │   │   └── novovm-node v0.1.0
+      │       │   │       ├── novovm-bench v0.1.0
+      │       │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │       └── novovmctl v0.1.0
+      │       │   ├── novovm-adapter-novovm v0.1.0
+      │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   └── novovm-node v0.1.0 (*)
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   └── novovm-node v0.1.0 (*)
+      │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       ├── novovm-network v0.1.0
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   ├── novovm-node v0.1.0 (*)
+      │       │   └── novovm-relay v0.1.0
+      │       └── novovm-node v0.1.0 (*)
+      └── k256 v0.14.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'syn'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:286:1
+    │  
+286 │ ╭ syn 2.0.117 registry+https://github.com/rust-lang/crates.io-index
+287 │ │ syn 3.0.6 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ syn v2.0.117
+      ├── bindgen v0.69.5
+      │   └── (build) librocksdb-sys v0.16.0+8.10.0
+      │       └── rocksdb v0.22.0
+      │           ├── novovm-adapter-evm-plugin v0.1.0
+      │           │   ├── novovm-evm-gateway v0.1.0
+      │           │   └── novovm-node v0.1.0
+      │           │       ├── novovm-bench v0.1.0
+      │           │       ├── novovm-evm-gateway v0.1.0 (*)
+      │           │       └── novovmctl v0.1.0
+      │           ├── novovm-evm-gateway v0.1.0 (*)
+      │           ├── novovm-node v0.1.0 (*)
+      │           └── (dev) novovmctl v0.1.0 (*)
+      ├── clap_derive v4.6.0
+      │   └── clap v4.6.0
+      │       ├── criterion v0.5.1
+      │       │   └── (dev) novovm-consensus v0.1.0
+      │       │       ├── novovm-bench v0.1.0 (*)
+      │       │       └── (dev) novovm-node v0.1.0 (*)
+      │       ├── novovm-rollout-policy v0.1.0
+      │       └── novovmctl v0.1.0 (*)
+      ├── curve25519-dalek-derive v0.1.1
+      │   └── curve25519-dalek v4.1.3
+      │       ├── ed25519-dalek v2.2.0
+      │       │   ├── novovm-adapter-api v0.1.0
+      │       │   │   ├── novovm-adapter-evm-core v0.1.0
+      │       │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   │   │   ├── novovm-adapter-novovm v0.1.0
+      │       │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │       │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   │   │   └── novovm-node v0.1.0 (*)
+      │       │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   │   └── novovm-node v0.1.0 (*)
+      │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │       │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   ├── novovm-exec v0.1.0
+      │       │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │       │   │   │   ├── novovm-bench v0.1.0 (*)
+      │       │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   │   ├── novovm-node v0.1.0 (*)
+      │       │   │   │   └── novovm-prover v0.1.0
+      │       │   │   └── novovm-node v0.1.0 (*)
+      │       │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   ├── novovm-consensus v0.1.0 (*)
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   ├── novovm-network v0.1.0
+      │       │   │   ├── novovm-bench v0.1.0 (*)
+      │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   ├── novovm-node v0.1.0 (*)
+      │       │   │   └── novovm-relay v0.1.0
+      │       │   ├── novovm-node v0.1.0 (*)
+      │       │   └── novovm-relay v0.1.0 (*)
+      │       └── web30-core v0.1.0
+      │           ├── novovm-adapter-novovm v0.1.0 (*)
+      │           ├── novovm-consensus v0.1.0 (*)
+      │           └── (dev) novovm-evm-gateway v0.1.0 (*)
+      ├── displaydoc v0.2.5
+      │   ├── icu_collections v2.1.1
+      │   │   ├── icu_normalizer v2.1.1
+      │   │   │   └── idna_adapter v1.2.1
+      │   │   │       └── idna v1.1.0
+      │   │   │           ├── lettre v0.11.22
+      │   │   │           │   ├── novovm-node v0.1.0 (*)
+      │   │   │           │   └── novovm-rollout-policy v0.1.0 (*)
+      │   │   │           └── url v2.5.8
+      │   │   │               ├── lettre v0.11.22 (*)
+      │   │   │               └── novovm-node v0.1.0 (*)
+      │   │   └── icu_properties v2.1.2
+      │   │       └── idna_adapter v1.2.1 (*)
+      │   ├── icu_locale_core v2.1.1
+      │   │   ├── icu_properties v2.1.2 (*)
+      │   │   └── icu_provider v2.1.1
+      │   │       ├── icu_normalizer v2.1.1 (*)
+      │   │       └── icu_properties v2.1.2 (*)
+      │   ├── icu_provider v2.1.1 (*)
+      │   ├── tinystr v0.8.2
+      │   │   └── icu_locale_core v2.1.1 (*)
+      │   └── zerotrie v0.2.3
+      │       ├── icu_properties v2.1.2 (*)
+      │       └── icu_provider v2.1.1 (*)
+      ├── openssl-macros v0.1.1
+      │   └── openssl v0.10.76
+      │       └── native-tls v0.2.18
+      │           └── lettre v0.11.22 (*)
+      ├── serde_derive v1.0.228
+      │   ├── criterion v0.5.1 (*)
+      │   └── serde v1.0.228
+      │       ├── ciborium v0.2.2
+      │       │   └── criterion v0.5.1 (*)
+      │       ├── criterion v0.5.1 (*)
+      │       ├── novovm-adapter-api v0.1.0 (*)
+      │       ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       ├── novovm-adapter-novovm v0.1.0 (*)
+      │       ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │       ├── novovm-bench v0.1.0 (*)
+      │       ├── novovm-consensus v0.1.0 (*)
+      │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       ├── novovm-exec v0.1.0 (*)
+      │       ├── novovm-governance-observability v0.1.0
+      │       │   ├── novovm-node v0.1.0 (*)
+      │       │   └── novovmctl v0.1.0 (*)
+      │       ├── novovm-network v0.1.0 (*)
+      │       ├── novovm-node v0.1.0 (*)
+      │       ├── novovm-protocol v0.1.0
+      │       │   ├── novovm-adapter-api v0.1.0 (*)
+      │       │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   ├── novovm-coordinator v0.1.0
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   ├── novovm-exec v0.1.0 (*)
+      │       │   ├── novovm-network v0.1.0 (*)
+      │       │   └── novovm-node v0.1.0 (*)
+      │       ├── novovm-prover v0.1.0 (*)
+      │       ├── novovm-relay v0.1.0 (*)
+      │       ├── novovm-rollout-policy v0.1.0 (*)
+      │       ├── novovmctl v0.1.0 (*)
+      │       ├── postcard v1.1.3
+      │       │   ├── novovm-adapter-api v0.1.0 (*)
+      │       │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │       │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   ├── novovm-consensus v0.1.0 (*)
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   ├── novovm-node v0.1.0 (*)
+      │       │   └── novovm-protocol v0.1.0 (*)
+      │       ├── tinytemplate v1.2.1
+      │       │   └── criterion v0.5.1 (*)
+      │       ├── ureq v3.4.2
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   ├── novovm-node v0.1.0 (*)
+      │       │   └── novovm-rollout-policy v0.1.0 (*)
+      │       └── web30-core v0.1.0 (*)
+      ├── synstructure v0.13.2
+      │   ├── yoke-derive v0.8.1
+      │   │   └── yoke v0.8.1
+      │   │       ├── icu_collections v2.1.1 (*)
+      │   │       ├── icu_provider v2.1.1 (*)
+      │   │       ├── zerotrie v0.2.3 (*)
+      │   │       └── zerovec v0.11.5
+      │   │           ├── icu_collections v2.1.1 (*)
+      │   │           ├── icu_locale_core v2.1.1 (*)
+      │   │           ├── icu_normalizer v2.1.1 (*)
+      │   │           ├── icu_properties v2.1.2 (*)
+      │   │           ├── icu_provider v2.1.1 (*)
+      │   │           ├── potential_utf v0.1.4
+      │   │           │   └── icu_collections v2.1.1 (*)
+      │   │           └── tinystr v0.8.2 (*)
+      │   └── zerofrom-derive v0.1.6
+      │       └── zerofrom v0.1.6
+      │           ├── icu_collections v2.1.1 (*)
+      │           ├── icu_provider v2.1.1 (*)
+      │           ├── yoke v0.8.1 (*)
+      │           ├── zerotrie v0.2.3 (*)
+      │           └── zerovec v0.11.5 (*)
+      ├── thiserror-impl v1.0.69
+      │   └── thiserror v1.0.69
+      │       ├── novovm-network v0.1.0 (*)
+      │       ├── novovm-protocol v0.1.0 (*)
+      │       ├── novovmctl v0.1.0 (*)
+      │       └── web30-core v0.1.0 (*)
+      ├── thiserror-impl v2.0.18
+      │   └── thiserror v2.0.18
+      │       ├── cobs v0.3.0
+      │       │   └── postcard v1.1.3 (*)
+      │       └── rsqlite-vfs v0.1.1
+      │           └── sqlite-wasm-rs v0.5.5
+      │               └── rusqlite v0.40.2
+      │                   ├── novovm-network v0.1.0 (*)
+      │                   └── (dev) novovm-storage-budget v0.1.0
+      │                       └── novovm-network v0.1.0 (*)
+      ├── tracing-attributes v0.1.31
+      │   └── tracing v0.1.44
+      │       └── novovm-consensus v0.1.0 (*)
+      ├── wasm-bindgen-macro-support v0.2.114
+      │   └── wasm-bindgen-macro v0.2.114
+      │       └── wasm-bindgen v0.2.114
+      │           ├── iana-time-zone v0.1.65
+      │           │   └── chrono v0.4.44
+      │           │       ├── novovm-governance-observability v0.1.0 (*)
+      │           │       ├── novovm-node v0.1.0 (*)
+      │           │       └── novovm-rollout-policy v0.1.0 (*)
+      │           ├── js-sys v0.3.91
+      │           │   ├── iana-time-zone v0.1.65 (*)
+      │           │   ├── sqlite-wasm-rs v0.5.5 (*)
+      │           │   └── web-sys v0.3.91
+      │           │       └── plotters v0.3.7
+      │           │           └── criterion v0.5.1 (*)
+      │           ├── plotters v0.3.7 (*)
+      │           ├── sqlite-wasm-rs v0.5.5 (*)
+      │           └── web-sys v0.3.91 (*)
+      ├── windows-implement v0.60.2
+      │   └── windows-core v0.62.2
+      │       ├── iana-time-zone v0.1.65 (*)
+      │       ├── windows v0.62.2
+      │       │   └── sysinfo v0.38.4
+      │       │       └── novovm-network v0.1.0 (*)
+      │       ├── windows-collections v0.3.2
+      │       │   └── windows v0.62.2 (*)
+      │       ├── windows-future v0.3.2
+      │       │   └── windows v0.62.2 (*)
+      │       └── windows-numerics v0.3.1
+      │           └── windows v0.62.2 (*)
+      ├── windows-interface v0.59.3
+      │   └── windows-core v0.62.2 (*)
+      ├── yoke-derive v0.8.1 (*)
+      ├── zerocopy-derive v0.8.47
+      │   └── zerocopy v0.8.47
+      │       ├── half v2.7.1
+      │       │   └── ciborium-ll v0.2.2
+      │       │       └── ciborium v0.2.2 (*)
+      │       └── ppv-lite86 v0.2.21
+      │           ├── rand_chacha v0.3.1
+      │           │   └── rand v0.8.5
+      │           │       ├── novovm-bench v0.1.0 (*)
+      │           │       ├── novovm-consensus v0.1.0 (*)
+      │           │       ├── novovm-evm-gateway v0.1.0 (*)
+      │           │       ├── novovm-network v0.1.0 (*)
+      │           │       ├── novovm-node v0.1.0 (*)
+      │           │       ├── novovm-relay v0.1.0 (*)
+      │           │       └── web30-core v0.1.0 (*)
+      │           └── rand_chacha v0.9.0
+      │               └── proptest v1.10.0
+      │                   └── (dev) web30-core v0.1.0 (*)
+      ├── zerofrom-derive v0.1.6 (*)
+      ├── zeroize_derive v1.5.0
+      │   └── zeroize v1.9.1
+      │       ├── aws-lc-rs v1.18.1
+      │       │   ├── rustls v0.23.46
+      │       │   │   ├── novovm-network v0.1.0 (*)
+      │       │   │   ├── novovm-node v0.1.0 (*)
+      │       │   │   ├── novovm-relay v0.1.0 (*)
+      │       │   │   └── ureq v3.4.2 (*)
+      │       │   └── rustls-webpki v0.103.16
+      │       │       └── rustls v0.23.46 (*)
+      │       ├── chacha20poly1305 v0.10.1
+      │       │   └── novovm-network v0.1.0 (*)
+      │       ├── cipher v0.4.4
+      │       │   ├── aes v0.8.4
+      │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   └── novovm-network v0.1.0 (*)
+      │       │   ├── chacha20 v0.9.1
+      │       │   │   └── chacha20poly1305 v0.10.1 (*)
+      │       │   ├── chacha20poly1305 v0.10.1 (*)
+      │       │   └── ctr v0.9.2
+      │       │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │       └── novovm-network v0.1.0 (*)
+      │       ├── crypto-bigint v0.7.6
+      │       │   ├── elliptic-curve v0.14.1
+      │       │   │   ├── ecdsa v0.17.0
+      │       │   │   │   └── k256 v0.14.0
+      │       │   │   │       ├── novovm-adapter-evm-core v0.1.0 (*)
+      │       │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   │       ├── novovm-network v0.1.0 (*)
+      │       │   │   │       └── novovm-node v0.1.0 (*)
+      │       │   │   ├── k256 v0.14.0 (*)
+      │       │   │   └── primeorder v0.14.0
+      │       │   │       └── k256 v0.14.0 (*)
+      │       │   ├── primefield v0.14.0
+      │       │   │   ├── primeorder v0.14.0 (*)
+      │       │   │   └── wnaf v0.14.1
+      │       │   │       ├── k256 v0.14.0 (*)
+      │       │   │       └── primeorder v0.14.0 (*)
+      │       │   └── rfc6979 v0.6.0
+      │       │       └── ecdsa v0.17.0 (*)
+      │       ├── curve25519-dalek v4.1.3 (*)
+      │       ├── der v0.8.2
+      │       │   ├── ecdsa v0.17.0 (*)
+      │       │   ├── pkcs8 v0.11.0
+      │       │   │   └── elliptic-curve v0.14.1 (*)
+      │       │   ├── sec1 v0.8.1
+      │       │   │   └── elliptic-curve v0.14.1 (*)
+      │       │   └── spki v0.8.1
+      │       │       ├── ecdsa v0.17.0 (*)
+      │       │       └── pkcs8 v0.11.0 (*)
+      │       ├── ecdsa v0.17.0 (*)
+      │       ├── ed25519-dalek v2.2.0 (*)
+      │       ├── elliptic-curve v0.14.1 (*)
+      │       ├── hybrid-array v0.4.15
+      │       │   ├── block-buffer v0.12.1
+      │       │   │   └── digest v0.11.3
+      │       │   │       ├── ecdsa v0.17.0 (*)
+      │       │   │       ├── elliptic-curve v0.14.1 (*)
+      │       │   │       ├── hmac v0.13.0
+      │       │   │       │   ├── hkdf v0.13.0
+      │       │   │       │   │   └── elliptic-curve v0.14.1 (*)
+      │       │   │       │   └── rfc6979 v0.6.0 (*)
+      │       │   │       ├── sha2 v0.11.0
+      │       │   │       │   └── k256 v0.14.0 (*)
+      │       │   │       └── signature v3.0.0
+      │       │   │           ├── ecdsa v0.17.0 (*)
+      │       │   │           └── k256 v0.14.0 (*)
+      │       │   ├── crypto-bigint v0.7.6 (*)
+      │       │   ├── crypto-common v0.2.2
+      │       │   │   ├── digest v0.11.3 (*)
+      │       │   │   ├── elliptic-curve v0.14.1 (*)
+      │       │   │   └── primefield v0.14.0 (*)
+      │       │   ├── elliptic-curve v0.14.1 (*)
+      │       │   ├── sec1 v0.8.1 (*)
+      │       │   └── wnaf v0.14.1 (*)
+      │       ├── merlin v3.0.0
+      │       │   └── ed25519-dalek v2.2.0 (*)
+      │       ├── novovm-adapter-api v0.1.0 (*)
+      │       ├── novovm-network v0.1.0 (*)
+      │       ├── novovm-relay v0.1.0 (*)
+      │       ├── primefield v0.14.0 (*)
+      │       ├── rustls v0.23.46 (*)
+      │       ├── rustls-pki-types v1.14.0
+      │       │   ├── rustls v0.23.46 (*)
+      │       │   ├── rustls-native-certs v0.8.4
+      │       │   │   ├── novovm-network v0.1.0 (*)
+      │       │   │   ├── novovm-node v0.1.0 (*)
+      │       │   │   └── novovm-relay v0.1.0 (*)
+      │       │   ├── rustls-webpki v0.103.16 (*)
+      │       │   ├── ureq v3.4.2 (*)
+      │       │   └── webpki-roots v1.0.10
+      │       │       └── ureq v3.4.2 (*)
+      │       └── sec1 v0.8.1 (*)
+      └── zerovec-derive v0.11.2
+          └── zerovec v0.11.5 (*)
+    ├ syn v3.0.6
+      └── tokio-macros v2.7.2
+          └── tokio v1.51.6
+              ├── novovm-network v0.1.0
+              │   ├── novovm-bench v0.1.0
+              │   ├── novovm-evm-gateway v0.1.0
+              │   ├── novovm-node v0.1.0
+              │   │   ├── novovm-bench v0.1.0 (*)
+              │   │   ├── novovm-evm-gateway v0.1.0 (*)
+              │   │   └── novovmctl v0.1.0
+              │   └── novovm-relay v0.1.0
+              ├── novovm-node v0.1.0 (*)
+              ├── novovm-relay v0.1.0 (*)
+              └── (dev) web30-core v0.1.0
+                  ├── novovm-adapter-novovm v0.1.0
+                  │   ├── novovm-adapter-evm-plugin v0.1.0
+                  │   │   ├── novovm-evm-gateway v0.1.0 (*)
+                  │   │   └── novovm-node v0.1.0 (*)
+                  │   ├── novovm-adapter-sample-plugin v0.1.0
+                  │   ├── novovm-evm-gateway v0.1.0 (*)
+                  │   └── novovm-node v0.1.0 (*)
+                  ├── novovm-consensus v0.1.0
+                  │   ├── novovm-bench v0.1.0 (*)
+                  │   └── (dev) novovm-node v0.1.0 (*)
+                  └── (dev) novovm-evm-gateway v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'thiserror'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:291:1
+    │  
+291 │ ╭ thiserror 1.0.69 registry+https://github.com/rust-lang/crates.io-index
+292 │ │ thiserror 2.0.18 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰──────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ thiserror v1.0.69
+      ├── novovm-network v0.1.0
+      │   ├── novovm-bench v0.1.0
+      │   ├── novovm-evm-gateway v0.1.0
+      │   ├── novovm-node v0.1.0
+      │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   └── novovmctl v0.1.0
+      │   └── novovm-relay v0.1.0
+      ├── novovm-protocol v0.1.0
+      │   ├── novovm-adapter-api v0.1.0
+      │   │   ├── novovm-adapter-evm-core v0.1.0
+      │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+      │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   ├── novovm-adapter-novovm v0.1.0
+      │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   └── novovm-node v0.1.0 (*)
+      │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   ├── novovm-exec v0.1.0
+      │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   │   │   ├── novovm-bench v0.1.0 (*)
+      │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │   │   ├── novovm-node v0.1.0 (*)
+      │   │   │   └── novovm-prover v0.1.0
+      │   │   └── novovm-node v0.1.0 (*)
+      │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │   ├── novovm-bench v0.1.0 (*)
+      │   ├── novovm-coordinator v0.1.0
+      │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   ├── novovm-exec v0.1.0 (*)
+      │   ├── novovm-network v0.1.0 (*)
+      │   └── novovm-node v0.1.0 (*)
+      ├── novovmctl v0.1.0 (*)
+      └── web30-core v0.1.0
+          ├── novovm-adapter-novovm v0.1.0 (*)
+          ├── novovm-consensus v0.1.0
+          │   ├── novovm-bench v0.1.0 (*)
+          │   └── (dev) novovm-node v0.1.0 (*)
+          └── (dev) novovm-evm-gateway v0.1.0 (*)
+    ├ thiserror v2.0.18
+      ├── cobs v0.3.0
+      │   └── postcard v1.1.3
+      │       ├── novovm-adapter-api v0.1.0
+      │       │   ├── novovm-adapter-evm-core v0.1.0
+      │       │   │   ├── novovm-adapter-evm-plugin v0.1.0
+      │       │   │   │   ├── novovm-evm-gateway v0.1.0
+      │       │   │   │   └── novovm-node v0.1.0
+      │       │   │   │       ├── novovm-bench v0.1.0
+      │       │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   │       └── novovmctl v0.1.0
+      │       │   │   ├── novovm-adapter-novovm v0.1.0
+      │       │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+      │       │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   │   └── novovm-node v0.1.0 (*)
+      │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   └── novovm-node v0.1.0 (*)
+      │       │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │       │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   ├── novovm-exec v0.1.0
+      │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+      │       │   │   ├── novovm-bench v0.1.0 (*)
+      │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   │   ├── novovm-node v0.1.0 (*)
+      │       │   │   └── novovm-prover v0.1.0
+      │       │   └── novovm-node v0.1.0 (*)
+      │       ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │       ├── novovm-adapter-novovm v0.1.0 (*)
+      │       ├── novovm-adapter-sample-plugin v0.1.0 (*)
+      │       ├── novovm-bench v0.1.0 (*)
+      │       ├── novovm-consensus v0.1.0
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   └── (dev) novovm-node v0.1.0 (*)
+      │       ├── novovm-evm-gateway v0.1.0 (*)
+      │       ├── novovm-node v0.1.0 (*)
+      │       └── novovm-protocol v0.1.0
+      │           ├── novovm-adapter-api v0.1.0 (*)
+      │           ├── novovm-adapter-evm-plugin v0.1.0 (*)
+      │           ├── novovm-adapter-novovm v0.1.0 (*)
+      │           ├── novovm-bench v0.1.0 (*)
+      │           ├── novovm-coordinator v0.1.0
+      │           ├── novovm-evm-gateway v0.1.0 (*)
+      │           ├── novovm-exec v0.1.0 (*)
+      │           ├── novovm-network v0.1.0
+      │           │   ├── novovm-bench v0.1.0 (*)
+      │           │   ├── novovm-evm-gateway v0.1.0 (*)
+      │           │   ├── novovm-node v0.1.0 (*)
+      │           │   └── novovm-relay v0.1.0
+      │           └── novovm-node v0.1.0 (*)
+      └── rsqlite-vfs v0.1.1
+          └── sqlite-wasm-rs v0.5.5
+              └── rusqlite v0.40.2
+                  ├── novovm-network v0.1.0 (*)
+                  └── (dev) novovm-storage-budget v0.1.0
+                      └── novovm-network v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'thiserror-impl'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:293:1
+    │  
+293 │ ╭ thiserror-impl 1.0.69 registry+https://github.com/rust-lang/crates.io-index
+294 │ │ thiserror-impl 2.0.18 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰───────────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ thiserror-impl v1.0.69
+      └── thiserror v1.0.69
+          ├── novovm-network v0.1.0
+          │   ├── novovm-bench v0.1.0
+          │   ├── novovm-evm-gateway v0.1.0
+          │   ├── novovm-node v0.1.0
+          │   │   ├── novovm-bench v0.1.0 (*)
+          │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   └── novovmctl v0.1.0
+          │   └── novovm-relay v0.1.0
+          ├── novovm-protocol v0.1.0
+          │   ├── novovm-adapter-api v0.1.0
+          │   │   ├── novovm-adapter-evm-core v0.1.0
+          │   │   │   ├── novovm-adapter-evm-plugin v0.1.0
+          │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │   │   └── novovm-node v0.1.0 (*)
+          │   │   │   ├── novovm-adapter-novovm v0.1.0
+          │   │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │   │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+          │   │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │   │   └── novovm-node v0.1.0 (*)
+          │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │   └── novovm-node v0.1.0 (*)
+          │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+          │   │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+          │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   ├── novovm-exec v0.1.0
+          │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │   │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+          │   │   │   ├── novovm-bench v0.1.0 (*)
+          │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   │   │   ├── novovm-node v0.1.0 (*)
+          │   │   │   └── novovm-prover v0.1.0
+          │   │   └── novovm-node v0.1.0 (*)
+          │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │   ├── novovm-adapter-novovm v0.1.0 (*)
+          │   ├── novovm-bench v0.1.0 (*)
+          │   ├── novovm-coordinator v0.1.0
+          │   ├── novovm-evm-gateway v0.1.0 (*)
+          │   ├── novovm-exec v0.1.0 (*)
+          │   ├── novovm-network v0.1.0 (*)
+          │   └── novovm-node v0.1.0 (*)
+          ├── novovmctl v0.1.0 (*)
+          └── web30-core v0.1.0
+              ├── novovm-adapter-novovm v0.1.0 (*)
+              ├── novovm-consensus v0.1.0
+              │   ├── novovm-bench v0.1.0 (*)
+              │   └── (dev) novovm-node v0.1.0 (*)
+              └── (dev) novovm-evm-gateway v0.1.0 (*)
+    ├ thiserror-impl v2.0.18
+      └── thiserror v2.0.18
+          ├── cobs v0.3.0
+          │   └── postcard v1.1.3
+          │       ├── novovm-adapter-api v0.1.0
+          │       │   ├── novovm-adapter-evm-core v0.1.0
+          │       │   │   ├── novovm-adapter-evm-plugin v0.1.0
+          │       │   │   │   ├── novovm-evm-gateway v0.1.0
+          │       │   │   │   └── novovm-node v0.1.0
+          │       │   │   │       ├── novovm-bench v0.1.0
+          │       │   │   │       ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   │   │       └── novovmctl v0.1.0
+          │       │   │   ├── novovm-adapter-novovm v0.1.0
+          │       │   │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │       │   │   │   ├── novovm-adapter-sample-plugin v0.1.0
+          │       │   │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   │   │   └── novovm-node v0.1.0 (*)
+          │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   │   └── novovm-node v0.1.0 (*)
+          │       │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │       │   ├── novovm-adapter-novovm v0.1.0 (*)
+          │       │   ├── novovm-adapter-sample-plugin v0.1.0 (*)
+          │       │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   ├── novovm-exec v0.1.0
+          │       │   │   ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │       │   │   ├── novovm-adapter-novovm v0.1.0 (*)
+          │       │   │   ├── novovm-bench v0.1.0 (*)
+          │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+          │       │   │   ├── novovm-node v0.1.0 (*)
+          │       │   │   └── novovm-prover v0.1.0
+          │       │   └── novovm-node v0.1.0 (*)
+          │       ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │       ├── novovm-adapter-novovm v0.1.0 (*)
+          │       ├── novovm-adapter-sample-plugin v0.1.0 (*)
+          │       ├── novovm-bench v0.1.0 (*)
+          │       ├── novovm-consensus v0.1.0
+          │       │   ├── novovm-bench v0.1.0 (*)
+          │       │   └── (dev) novovm-node v0.1.0 (*)
+          │       ├── novovm-evm-gateway v0.1.0 (*)
+          │       ├── novovm-node v0.1.0 (*)
+          │       └── novovm-protocol v0.1.0
+          │           ├── novovm-adapter-api v0.1.0 (*)
+          │           ├── novovm-adapter-evm-plugin v0.1.0 (*)
+          │           ├── novovm-adapter-novovm v0.1.0 (*)
+          │           ├── novovm-bench v0.1.0 (*)
+          │           ├── novovm-coordinator v0.1.0
+          │           ├── novovm-evm-gateway v0.1.0 (*)
+          │           ├── novovm-exec v0.1.0 (*)
+          │           ├── novovm-network v0.1.0
+          │           │   ├── novovm-bench v0.1.0 (*)
+          │           │   ├── novovm-evm-gateway v0.1.0 (*)
+          │           │   ├── novovm-node v0.1.0 (*)
+          │           │   └── novovm-relay v0.1.0
+          │           └── novovm-node v0.1.0 (*)
+          └── rsqlite-vfs v0.1.1
+              └── sqlite-wasm-rs v0.5.5
+                  └── rusqlite v0.40.2
+                      ├── novovm-network v0.1.0 (*)
+                      └── (dev) novovm-storage-budget v0.1.0
+                          └── novovm-network v0.1.0 (*)
+
+warning[duplicate]: found 2 duplicate entries for crate 'windows-sys'
+    ┌─ D:\WorksArea\SUPERVM/Cargo.lock:346:1
+    │  
+346 │ ╭ windows-sys 0.52.0 registry+https://github.com/rust-lang/crates.io-index
+347 │ │ windows-sys 0.61.2 registry+https://github.com/rust-lang/crates.io-index
+    │ ╰────────────────────────────────────────────────────────────────────────┘ lock entries
+    │  
+    ├ windows-sys v0.52.0
+      ├── atomicwrites v0.4.4
+      │   └── novovm-network v0.1.0
+      │       ├── novovm-bench v0.1.0
+      │       ├── novovm-evm-gateway v0.1.0
+      │       ├── novovm-node v0.1.0
+      │       │   ├── novovm-bench v0.1.0 (*)
+      │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │       │   └── novovmctl v0.1.0
+      │       └── novovm-relay v0.1.0
+      ├── ring v0.17.14
+      │   ├── rcgen v0.12.1
+      │   │   ├── (dev) novovm-network v0.1.0 (*)
+      │   │   ├── novovm-node v0.1.0 (*)
+      │   │   └── (dev) novovm-relay v0.1.0 (*)
+      │   ├── rustls v0.23.46
+      │   │   ├── novovm-network v0.1.0 (*)
+      │   │   ├── novovm-node v0.1.0 (*)
+      │   │   ├── novovm-relay v0.1.0 (*)
+      │   │   └── ureq v3.4.2
+      │   │       ├── novovm-evm-gateway v0.1.0 (*)
+      │   │       ├── novovm-node v0.1.0 (*)
+      │   │       └── novovm-rollout-policy v0.1.0
+      │   └── rustls-webpki v0.103.16
+      │       └── rustls v0.23.46 (*)
+      └── rustix v0.38.44
+          └── atomicwrites v0.4.4 (*)
+    ├ windows-sys v0.61.2
+      ├── anstyle-query v1.1.5
+      │   └── anstream v1.0.0
+      │       └── clap_builder v4.6.0
+      │           └── clap v4.6.0
+      │               ├── criterion v0.5.1
+      │               │   └── (dev) novovm-consensus v0.1.0
+      │               │       ├── novovm-bench v0.1.0
+      │               │       └── (dev) novovm-node v0.1.0
+      │               │           ├── novovm-bench v0.1.0 (*)
+      │               │           ├── novovm-evm-gateway v0.1.0
+      │               │           └── novovmctl v0.1.0
+      │               ├── novovm-rollout-policy v0.1.0
+      │               └── novovmctl v0.1.0 (*)
+      ├── anstyle-wincon v3.0.11
+      │   └── anstream v1.0.0 (*)
+      ├── errno v0.3.14
+      │   ├── rustix v0.38.44
+      │   │   └── atomicwrites v0.4.4
+      │   │       └── novovm-network v0.1.0
+      │   │           ├── novovm-bench v0.1.0 (*)
+      │   │           ├── novovm-evm-gateway v0.1.0 (*)
+      │   │           ├── novovm-node v0.1.0 (*)
+      │   │           └── novovm-relay v0.1.0
+      │   ├── rustix v1.1.4
+      │   │   ├── novovm-network v0.1.0 (*)
+      │   │   └── tempfile v3.27.0
+      │   │       ├── atomicwrites v0.4.4 (*)
+      │   │       ├── native-tls v0.2.18
+      │   │       │   └── lettre v0.11.22
+      │   │       │       ├── novovm-node v0.1.0 (*)
+      │   │       │       └── novovm-rollout-policy v0.1.0 (*)
+      │   │       ├── (dev) novovm-network v0.1.0 (*)
+      │   │       ├── (dev) novovm-storage-budget v0.1.0
+      │   │       │   └── novovm-network v0.1.0 (*)
+      │   │       ├── proptest v1.10.0
+      │   │       │   └── (dev) web30-core v0.1.0
+      │   │       │       ├── novovm-adapter-novovm v0.1.0
+      │   │       │       │   ├── novovm-adapter-evm-plugin v0.1.0
+      │   │       │       │   │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │       │       │   │   └── novovm-node v0.1.0 (*)
+      │   │       │       │   ├── novovm-adapter-sample-plugin v0.1.0
+      │   │       │       │   ├── novovm-evm-gateway v0.1.0 (*)
+      │   │       │       │   └── novovm-node v0.1.0 (*)
+      │   │       │       ├── novovm-consensus v0.1.0 (*)
+      │   │       │       └── (dev) novovm-evm-gateway v0.1.0 (*)
+      │   │       └── rusty-fork v0.3.1
+      │   │           └── proptest v1.10.0 (*)
+      │   └── signal-hook-registry v1.4.8
+      │       └── tokio v1.51.6
+      │           ├── novovm-network v0.1.0 (*)
+      │           ├── novovm-node v0.1.0 (*)
+      │           ├── novovm-relay v0.1.0 (*)
+      │           └── (dev) web30-core v0.1.0 (*)
+      ├── is-terminal v0.4.17
+      │   └── criterion v0.5.1 (*)
+      ├── mio v1.2.0
+      │   ├── novovm-network v0.1.0 (*)
+      │   ├── novovm-node v0.1.0 (*)
+      │   ├── novovm-relay v0.1.0 (*)
+      │   └── tokio v1.51.6 (*)
+      ├── novovm-relay v0.1.0 (*)
+      ├── rustix v1.1.4 (*)
+      ├── schannel v0.1.29
+      │   ├── native-tls v0.2.18 (*)
+      │   └── rustls-native-certs v0.8.4
+      │       ├── novovm-network v0.1.0 (*)
+      │       ├── novovm-node v0.1.0 (*)
+      │       └── novovm-relay v0.1.0 (*)
+      ├── socket2 v0.6.3
+      │   ├── lettre v0.11.22 (*)
+      │   ├── (dev) novovm-network v0.1.0 (*)
+      │   ├── novovm-node v0.1.0 (*)
+      │   ├── (dev) novovm-relay v0.1.0 (*)
+      │   └── tokio v1.51.6 (*)
+      ├── tempfile v3.27.0 (*)
+      ├── tokio v1.51.6 (*)
+      ├── winapi-util v0.1.11
+      │   ├── same-file v1.0.6
+      │   │   └── walkdir v2.5.0
+      │   │       └── criterion v0.5.1 (*)
+      │   └── walkdir v2.5.0 (*)
+      └── windows-service v0.8.1
+          └── novovm-relay v0.1.0 (*)
+
+advisories ok, bans ok, licenses ok, sources ok

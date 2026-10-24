@@ -5,7 +5,9 @@ use ctr::cipher::{KeyIvInit, StreamCipher};
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use k256::ecdh::diffie_hellman;
+use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::SigningKey;
+use k256::elliptic_curve::Generate;
 use k256::{PublicKey as K256PublicKey, SecretKey as K256SecretKey};
 use novovm_network::{
     build_eth_fullnode_native_rlpx_status_v1, classify_adaptive_peer_routes,
@@ -6564,7 +6566,7 @@ fn gateway_eth_rlpx_parse_enode_pubkey(endpoint: &str) -> Result<K256PublicKey, 
 fn gateway_eth_rlpx_pubkey_64_from_signing_key(
     signing_key: &SigningKey,
 ) -> [u8; GATEWAY_ETH_PLUGIN_RLPX_PUB_LEN] {
-    let encoded = signing_key.verifying_key().to_encoded_point(false);
+    let encoded = signing_key.verifying_key().to_sec1_point(false);
     let bytes = encoded.as_bytes();
     let mut out = [0u8; GATEWAY_ETH_PLUGIN_RLPX_PUB_LEN];
     out.copy_from_slice(&bytes[1..1 + GATEWAY_ETH_PLUGIN_RLPX_PUB_LEN]);
@@ -6572,7 +6574,7 @@ fn gateway_eth_rlpx_pubkey_64_from_signing_key(
 }
 
 fn gateway_eth_rlpx_pubkey_65_from_signing_key(signing_key: &SigningKey) -> [u8; 65] {
-    let encoded = signing_key.verifying_key().to_encoded_point(false);
+    let encoded = signing_key.verifying_key().to_sec1_point(false);
     let mut out = [0u8; 65];
     out.copy_from_slice(encoded.as_bytes());
     out
@@ -6666,7 +6668,7 @@ fn gateway_eth_rlpx_ecies_encrypt(
 ) -> Result<Vec<u8>, String> {
     use rand::RngCore;
 
-    let eph_signing = SigningKey::random(&mut OsRng);
+    let eph_signing = SigningKey::generate();
     let eph_secret = K256SecretKey::from_slice(eph_signing.to_bytes().as_slice())
         .map_err(|e| format!("rlpx_ecies_eph_secret_invalid:{e}"))?;
     let shared = gateway_eth_rlpx_ecdh_shared(&eph_secret, remote_pub);
@@ -7758,7 +7760,7 @@ fn gateway_eth_plugin_peer_session_rlpx_handshake_initiator(
         .map_err(|e| format!("rlpx_static_secret_invalid:{e}"))?;
     let static_signing = SigningKey::from_bytes((&static_nodekey).into())
         .map_err(|e| format!("rlpx_static_signing_key_invalid:{e}"))?;
-    let ephemeral_signing = SigningKey::random(&mut OsRng);
+    let ephemeral_signing = SigningKey::generate();
     let ephemeral_secret = K256SecretKey::from_slice(ephemeral_signing.to_bytes().as_slice())
         .map_err(|e| format!("rlpx_ephemeral_secret_invalid:{e}"))?;
 
@@ -7769,9 +7771,10 @@ fn gateway_eth_plugin_peer_session_rlpx_handshake_initiator(
     for (slot, (a, b)) in sign_msg.iter_mut().zip(token.iter().zip(init_nonce.iter())) {
         *slot = *a ^ *b;
     }
-    let (signature, recovery_id) = ephemeral_signing
-        .sign_prehash_recoverable(sign_msg.as_slice())
-        .map_err(|e| format!("rlpx_auth_sign_failed:{e}"))?;
+    let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+        ephemeral_signing
+            .sign_prehash(sign_msg.as_slice())
+            .map_err(|e| format!("rlpx_auth_sign_failed:{e}"))?;
     let mut sig65 = [0u8; GATEWAY_ETH_PLUGIN_RLPX_SIG_LEN];
     sig65[..64].copy_from_slice(signature.to_bytes().as_slice());
     sig65[64] = recovery_id.to_byte();
@@ -9576,7 +9579,7 @@ pub(super) fn maybe_execute_gateway_eth_public_broadcast(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
-    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    use k256::elliptic_curve::sec1::ToSec1Point;
 
     #[test]
     fn native_transactions_payload_decode_accepts_bincode_vec_tx_ir() {
@@ -9910,10 +9913,7 @@ mod tests {
         let key_a_secret =
             K256SecretKey::from_slice(&key_a).expect("parse key_a as secp256k1 secret");
         let pub_a = key_a_secret.public_key();
-        assert_eq!(
-            initiator_pub,
-            &pub_a.to_encoded_point(false).as_bytes()[1..]
-        );
+        assert_eq!(initiator_pub, &pub_a.to_sec1_point(false).as_bytes()[1..]);
 
         let token = gateway_eth_rlpx_ecdh_shared(&key_b_secret, &pub_a);
         let mut sign_msg = [0u8; 32];
@@ -9926,7 +9926,7 @@ mod tests {
         let recovered =
             k256::ecdsa::VerifyingKey::recover_from_prehash(sign_msg.as_slice(), &sig, recid)
                 .expect("recover auth ephemeral pubkey")
-                .to_encoded_point(false);
+                .to_sec1_point(false);
         let eph_a = decode_hex_bytes(
             "869d6ecf5211f1cc60418a13b9d870b22959d0c16f02bec714c960dd2298a32d",
             "eph_a",
@@ -9936,7 +9936,7 @@ mod tests {
             K256SecretKey::from_slice(&eph_a).expect("parse eph_a as secp256k1 secret");
         assert_eq!(
             recovered.as_bytes(),
-            eph_a_secret.public_key().to_encoded_point(false).as_bytes()
+            eph_a_secret.public_key().to_sec1_point(false).as_bytes()
         );
     }
 
@@ -9998,7 +9998,7 @@ mod tests {
             K256SecretKey::from_slice(&eph_b).expect("parse eph_b as secp256k1 secret");
         assert_eq!(
             random_pub,
-            eph_b_secret.public_key().to_encoded_point(false).as_bytes()[1..]
+            eph_b_secret.public_key().to_sec1_point(false).as_bytes()[1..]
         );
     }
 
@@ -10076,7 +10076,7 @@ mod tests {
         let recovered_eph_pub =
             k256::ecdsa::VerifyingKey::recover_from_prehash(sign_msg.as_slice(), &sig, recid)
                 .expect("recover eph pub")
-                .to_encoded_point(false);
+                .to_sec1_point(false);
         let remote_eph_pub =
             K256PublicKey::from_sec1_bytes(recovered_eph_pub.as_bytes()).expect("parse eph pub");
 

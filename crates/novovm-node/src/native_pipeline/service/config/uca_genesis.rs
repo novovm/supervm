@@ -72,6 +72,82 @@ pub struct UcaGenesisApprovalV1 {
     pub signature: Vec<u8>,
 }
 
+/// Operator-pinned new-domain initialization material. These three independent
+/// pins are mandatory; self-supplied management proofs do not authorize changing
+/// an existing chain. Approval artifacts remain in this configuration.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UcaInitializationConfigV1 {
+    pub accounts: Vec<UcaGenesisAccountV1>,
+    pub approvals: Vec<UcaGenesisApprovalV1>,
+    pub expected_signing_domain: NodeHash,
+    pub expected_initial_root: NodeHash,
+    pub expected_final_commitment: NodeHash,
+}
+
+impl UcaInitializationConfigV1 {
+    pub fn validate_manifest(&self, genesis: &GenesisConfig) -> Result<UcaGenesisManifestV1> {
+        ensure!(
+            self.expected_signing_domain != [0; 32]
+                && self.expected_initial_root != [0; 32]
+                && self.expected_final_commitment != [0; 32]
+                && genesis.genesis_config_commitment == self.expected_signing_domain,
+            "UCA initialization requires explicit domain/root/final pins"
+        );
+        ensure!(
+            !self.accounts.is_empty()
+                && self.accounts.len() <= MAX_INITIAL_UCA_ACCOUNTS
+                && genesis.validators.len() <= 64
+                && genesis.allocations.len() <= 1024
+                && self
+                    .accounts
+                    .iter()
+                    .all(|a| a.uca_id.len() <= MAX_UCA_ID_BYTES
+                        && matches!(a.asset_account.len(), 20 | 32)
+                        && a.management_public_key.len() == MLDSA65_PUBLIC_KEY_BYTES
+                        && a.grants.len() <= MAX_INITIAL_GRANTS_PER_ACCOUNT
+                        && a.grants
+                            .iter()
+                            .all(|g| g.spend_public_key.len() == MLDSA65_PUBLIC_KEY_BYTES))
+                && self.approvals.len() == self.accounts.len()
+                && self
+                    .approvals
+                    .iter()
+                    .all(|a| a.uca_id.len() <= MAX_UCA_ID_BYTES
+                        && a.signature.len() == MLDSA65_SIGNATURE_BYTES),
+            "UCA initialization approval bounds"
+        );
+        let mut genesis = genesis.clone();
+        genesis.genesis_config_commitment = [0; 32];
+        let manifest = UcaGenesisManifestV1 {
+            genesis,
+            accounts: self.accounts.clone(),
+        };
+        ensure!(
+            manifest.signing_domain()? == self.expected_signing_domain,
+            "UCA initialization manifest/domain mismatch"
+        );
+        Ok(manifest)
+    }
+
+    /// Runs before opening any database in either fresh or existing startup.
+    pub fn verify(
+        &self,
+        genesis: &GenesisConfig,
+        runtime: &AoemExecFacade,
+    ) -> Result<VerifiedUcaGenesisV1> {
+        let manifest = self.validate_manifest(genesis)?;
+        let verified = manifest.compile(runtime, self.expected_signing_domain, &self.approvals)?;
+        ensure!(
+            verified.signing_domain() == self.expected_signing_domain
+                && verified.state().root() == self.expected_initial_root
+                && verified.final_commitment() == self.expected_final_commitment,
+            "UCA initialization verified domain/root/final pin mismatch"
+        );
+        Ok(verified)
+    }
+}
+
 /// Immutable verified staging output, never deserializable from an App request.
 /// Installing it still requires the existing fresh-store/publication owner.
 pub struct VerifiedUcaGenesisV1 {
@@ -89,6 +165,9 @@ impl VerifiedUcaGenesisV1 {
     }
     pub fn state(&self) -> &StagedStateUpdate {
         &self.state
+    }
+    pub(crate) fn into_state(self) -> StagedStateUpdate {
+        self.state
     }
 }
 

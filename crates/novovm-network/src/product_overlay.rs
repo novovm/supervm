@@ -7,7 +7,8 @@ use chacha20poly1305::{
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
-use k256::{ecdh::diffie_hellman, elliptic_curve::sec1::ToEncodedPoint, PublicKey, SecretKey};
+use k256::elliptic_curve::Generate;
+use k256::{ecdh::diffie_hellman, elliptic_curve::sec1::ToSec1Point, PublicKey, SecretKey};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -239,7 +240,7 @@ impl NodeHandshakeInitiatorV1 {
         ttl_ms: u64,
     ) -> Result<Self, ProductOverlayErrorV1> {
         let responder_peer_id = responder_peer_id.into();
-        let ephemeral_secret = SecretKey::random(&mut OsRng);
+        let ephemeral_secret = SecretKey::generate();
         let mut session_id = [0u8; 16];
         let mut challenge = [0u8; 32];
         OsRng.fill_bytes(&mut session_id);
@@ -268,7 +269,7 @@ impl NodeHandshakeInitiatorV1 {
         let initiator_peer_id = peer_id_from_ed25519_public_key_v1(&identity_public_key);
         let ephemeral_public_key = ephemeral_secret
             .public_key()
-            .to_encoded_point(true)
+            .to_sec1_point(true)
             .as_bytes()
             .to_vec();
         let expires_at_ms = now_ms
@@ -352,10 +353,10 @@ impl NodeHandshakeResponderV1 {
         }
         let initiator_public = PublicKey::from_sec1_bytes(&offer.initiator_ephemeral_public_key)
             .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
-        let ephemeral_secret = SecretKey::random(&mut OsRng);
+        let ephemeral_secret = SecretKey::generate();
         let ephemeral_public_key = ephemeral_secret
             .public_key()
-            .to_encoded_point(true)
+            .to_sec1_point(true)
             .as_bytes()
             .to_vec();
         let mut response_nonce = [0u8; 32];
@@ -793,6 +794,43 @@ fn hex_lower_v1(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::novorudp::NovoRudpTransportFrameKindV0;
+
+    #[test]
+    fn secp256k1_ecdh_sec1_fixed_wire_vector_survives_dependency_upgrade() {
+        // Scalar 1 and scalar 2 use the SEC2 generator and its double. This
+        // fixes the old SEC1 bytes and ECDH x-coordinate, not just symmetry
+        // between two instances of the upgraded implementation.
+        let mut one = [0u8; 32];
+        one[31] = 1;
+        let mut two = one;
+        two[31] = 2;
+        let alice = SecretKey::from_slice(&one).expect("scalar one");
+        let bob = SecretKey::from_slice(&two).expect("scalar two");
+        let alice_wire = alice.public_key().to_sec1_point(true);
+        let bob_wire = bob.public_key().to_sec1_point(true);
+        assert_eq!(
+            hex_lower_v1(alice_wire.as_bytes()),
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        );
+        assert_eq!(
+            hex_lower_v1(bob_wire.as_bytes()),
+            "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+        );
+        let alice_public = PublicKey::from_sec1_bytes(alice_wire.as_bytes()).expect("Alice SEC1");
+        let bob_public = PublicKey::from_sec1_bytes(bob_wire.as_bytes()).expect("Bob SEC1");
+        let alice_shared = diffie_hellman(alice.to_nonzero_scalar(), bob_public.as_affine());
+        let bob_shared = diffie_hellman(bob.to_nonzero_scalar(), alice_public.as_affine());
+        assert_eq!(
+            alice_shared.raw_secret_bytes(),
+            bob_shared.raw_secret_bytes()
+        );
+        assert_eq!(
+            hex_lower_v1(alice_shared.raw_secret_bytes()),
+            "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+        );
+        assert!(PublicKey::from_sec1_bytes(&[0u8; 33]).is_err());
+        assert!(SecretKey::from_slice(&[0u8; 32]).is_err());
+    }
 
     fn identities() -> (SigningKey, SigningKey) {
         (
