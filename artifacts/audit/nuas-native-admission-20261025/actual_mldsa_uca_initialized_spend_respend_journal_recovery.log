@@ -1,0 +1,8 @@
+
+running 1 test
+test native_pipeline::consensus::tests::uca_publication_integration::actual_mldsa_uca_initialized_spend_respend_journal_recovery ... independently regenerated management approvals differ=false, initial tree and final commitment identical
+UCA original pipeline/journal: structural body roundtrip and bounded native body execution, raw/structural exact locator equality, 4 databases, 2 heights, recipient respend, unresolved precommit RoundProgress replay, archive body identity, candidate-only reopen, unobserved decision ACK recovery, cold balances/nonce/budget/receipts checked; native SDK, real network, process kill and TPS NOT exercised
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1613 filtered out; finished in 0.88s
+

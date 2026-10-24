@@ -76,6 +76,22 @@ pub fn spend_key_ref_v1(public_key: &[u8]) -> Result<[u8; 32]> {
 }
 
 impl UcaSpendIntentV1 {
+    /// Decode the existing canonical intent, without claiming a signature or
+    /// spending authority. Used by bounded native read requests.
+    pub fn decode_signing_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > MAX_SIGNED_SPEND_BYTES - MLDSA65_PUBLIC_KEY_BYTES - MLDSA65_SIGNATURE_BYTES
+            || !bytes.starts_with(HEADER)
+        {
+            return Err(SpendEncodingError);
+        }
+        let mut reader = Reader(&bytes[HEADER.len()..]);
+        let value = reader.intent()?;
+        if !reader.0.is_empty() {
+            return Err(SpendEncodingError);
+        }
+        Ok(value)
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.chain_id == 0
             || self.genesis == [0; 32]
@@ -156,20 +172,7 @@ impl SignedUcaSpendV1 {
             return Err(SpendEncodingError);
         }
         let mut r = Reader(&bytes[HEADER.len()..]);
-        let intent = UcaSpendIntentV1 {
-            chain_id: u64::from_be_bytes(r.array()?),
-            genesis: r.array()?,
-            account_id: r.id()?,
-            authorization_epoch: u64::from_be_bytes(r.array()?),
-            spend_key_ref: r.array()?,
-            recipient_uca: r.id()?,
-            amount: u128::from_be_bytes(r.array()?),
-            max_fee: u128::from_be_bytes(r.array()?),
-            nonce: u64::from_be_bytes(r.array()?),
-            not_before_height: u64::from_be_bytes(r.array()?),
-            expires_at_height: u64::from_be_bytes(r.array()?),
-        };
-        intent.validate()?;
+        let intent = r.intent()?;
         // Check the entire fixed tail before allocating either crypto field.
         if r.0.len() != MLDSA65_PUBLIC_KEY_BYTES + MLDSA65_SIGNATURE_BYTES {
             return Err(SpendEncodingError);
@@ -188,6 +191,24 @@ impl SignedUcaSpendV1 {
 
 struct Reader<'a>(&'a [u8]);
 impl<'a> Reader<'a> {
+    fn intent(&mut self) -> Result<UcaSpendIntentV1> {
+        let value = UcaSpendIntentV1 {
+            chain_id: u64::from_be_bytes(self.array()?),
+            genesis: self.array()?,
+            account_id: self.id()?,
+            authorization_epoch: u64::from_be_bytes(self.array()?),
+            spend_key_ref: self.array()?,
+            recipient_uca: self.id()?,
+            amount: u128::from_be_bytes(self.array()?),
+            max_fee: u128::from_be_bytes(self.array()?),
+            nonce: u64::from_be_bytes(self.array()?),
+            not_before_height: u64::from_be_bytes(self.array()?),
+            expires_at_height: u64::from_be_bytes(self.array()?),
+        };
+        value.validate()?;
+        Ok(value)
+    }
+
     fn take(&mut self, count: usize) -> Result<&'a [u8]> {
         if self.0.len() < count {
             return Err(SpendEncodingError);

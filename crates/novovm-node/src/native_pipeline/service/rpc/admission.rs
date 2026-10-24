@@ -54,6 +54,7 @@ pub(super) struct AdmissionState {
     prefer_gossip: bool,
     prefer_client: bool,
     work: Option<Work>,
+    uca: Option<UcaWork>,
     submitted_batches: u64,
     completed_batches: u64,
     checked_rows: u64,
@@ -63,10 +64,22 @@ pub(super) struct AdmissionState {
     backpressured_polls: u64,
 }
 
+// Retain the original compute output/permit while authority I/O is pending.
+// One bounded batch, not a second pool or execution owner.
+struct UcaWork {
+    output: crate::native_pipeline::pipeline::SignatureAdmissionOutput,
+    current: Option<(AdmissionInput, AdmittedTransfer)>,
+    read: Option<native_query::UcaStateRead>,
+    parent: Option<ParentPoint>,
+    complete_body: bool,
+    broadcast: bool,
+}
+
 impl AdmissionState {
     pub(super) fn status(&self) -> Value {
         json!({"owner":"same_resident_aoem_compute_session",
             "http_waiting":self.http.len(),"signature_batch_pending":self.work.is_some(),
+            "uca_authority_pending":self.uca.is_some(),
             "submitted_batches":self.submitted_batches,"completed_batches":self.completed_batches,
             "checked_rows":self.checked_rows,"rejected_rows":self.rejected_rows,
             "cancelled_http":self.cancelled_http,
@@ -167,7 +180,7 @@ impl RpcLifecycle {
     /// Unit-level injection at the existing bounded consumer, not a claim of
     /// native wire delivery. Called with a real initialized original service.
     #[cfg(test)]
-    pub(crate) fn assert_uca_asset_admission_closed_for_test(
+    pub(crate) fn assert_uca_legacy_asset_rejection_for_test(
         &mut self,
         nuas: Vec<u8>,
     ) -> Result<()> {
@@ -247,9 +260,12 @@ impl RpcLifecycle {
         input: &AdmissionInput,
         broadcast: bool,
     ) -> Result<Option<Hash>> {
+        if matches!(input, AdmissionInput::Uca { .. }) {
+            return self.cached_uca(input, broadcast);
+        }
         ensure!(
             self.node.template.business_program == crate::native_pipeline::business::nov_transfer_batch::program_id(),
-            "UCA native asset admission is not active; legacy V3 and NUAS submissions are unavailable"
+            "UCA assets require explicit native NUAS structure; legacy V3/raw carriers are unavailable"
         );
         ensure!(
             self.projection_error.is_none(),
@@ -258,6 +274,7 @@ impl RpcLifecycle {
         let view = match input {
             AdmissionInput::Raw(raw) => decode_transfer_view_v3(raw, 1024)?,
             AdmissionInput::Apfl { batch, index } => batch.row(*index)?,
+            AdmissionInput::Uca { .. } => unreachable!("handled above"),
         };
         let hash = view.canonical_tx_hash()?;
         let exact = match self.pending.get(&hash) {
@@ -277,6 +294,10 @@ impl RpcLifecycle {
     pub(super) fn poll_admission(&mut self) -> Result<()> {
         self.admission.made_progress = false;
         self.ingress_batch_boundary = false;
+        if self.admission.uca.is_some() {
+            self.poll_uca_admission()?;
+            return Ok(());
+        }
         if let Some(mut work) = self.admission.work.take() {
             match work.phase {
                 Phase::Queued(request) => {
@@ -312,7 +333,7 @@ impl RpcLifecycle {
                 },
             }
         }
-        if self.admission.work.is_some() {
+        if self.admission.work.is_some() || self.admission.uca.is_some() {
             return Ok(());
         }
         // Alternate bounded sources; a continuous HTTP or peer stream cannot
@@ -461,6 +482,7 @@ impl RpcLifecycle {
                 raw_transactions, ..
             } => raw_transactions.len(),
             Message::ApflTransactions { batch, .. } => batch.len(),
+            Message::UcaTransactions { batch, .. } => batch.len(),
             _ => anyhow::bail!("transaction channel returned non-transaction message"),
         };
         let mut inputs = Vec::new();
@@ -472,6 +494,10 @@ impl RpcLifecycle {
                     raw_transactions, ..
                 } => AdmissionInput::Raw(raw_transactions[index].clone()),
                 Message::ApflTransactions { batch, .. } => AdmissionInput::Apfl {
+                    batch: batch.clone(),
+                    index,
+                },
+                Message::UcaTransactions { batch, .. } => AdmissionInput::Uca {
                     batch: batch.clone(),
                     index,
                 },
@@ -518,6 +544,27 @@ impl RpcLifecycle {
                 "signature admission result count mismatch"
             );
         }
+        let output = match (self.is_uca(), &target, output) {
+            (
+                true,
+                Target::Gossip {
+                    complete_body,
+                    broadcast,
+                },
+                Ok(output),
+            ) => {
+                self.admission.uca = Some(UcaWork {
+                    output,
+                    current: None,
+                    read: None,
+                    parent: None,
+                    complete_body: *complete_body,
+                    broadcast: *broadcast,
+                });
+                return Ok(());
+            }
+            (_, _, output) => output,
+        };
         let mut results = VecDeque::with_capacity(rows);
         match output {
             Ok(mut output) => {
@@ -574,6 +621,81 @@ impl RpcLifecycle {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn poll_uca_admission(&mut self) -> Result<()> {
+        let mut work = self.admission.uca.take().expect("pending UCA work");
+        if work.current.is_none() {
+            let Some(row) = work.output.pop_admitted() else {
+                if work.complete_body {
+                    self.incoming = None;
+                    self.ingress_batch_boundary = true;
+                }
+                self.admission.made_progress = true;
+                return Ok(());
+            };
+            self.admission.checked_rows += 1;
+            match row.result {
+                Ok(checked) => work.current = Some((row.input, checked)),
+                Err(_) => {
+                    self.admission.rejected_rows += 1;
+                    self.gossip_rejected += 1;
+                    self.admission.uca = Some(work);
+                    return Ok(());
+                }
+            }
+        }
+        let parent = self.node.controller.parent();
+        if work.parent != Some(parent) {
+            work.read = None;
+            work.parent = Some(parent);
+        }
+        let result = (|| {
+            if work.read.is_none() {
+                let (input, checked) = work.current.as_ref().expect("UCA row");
+                let intent = checked
+                    .checked_uca()
+                    .context("UCA signature type")?
+                    .intent();
+                let AdmissionInput::Uca { batch, index } = input else {
+                    anyhow::bail!("UCA source type");
+                };
+                let (payer, recipient) = batch.account_hints(*index)?;
+                work.read = Some(native_query::UcaStateRead::new(
+                    parent.state_root,
+                    intent.clone(),
+                    Account::try_from(payer).map_err(anyhow::Error::msg)?,
+                    Account::try_from(recipient).map_err(anyhow::Error::msg)?,
+                )?);
+            }
+            work.read
+                .as_mut()
+                .expect("UCA read")
+                .poll(&self.node.pipeline)
+        })();
+        match result {
+            Ok(None) => {}
+            ready => {
+                let (input, checked) = work.current.take().expect("UCA row");
+                let admitted = match ready {
+                    Ok(Some(native_query::UcaReadResult::Present(state))) => {
+                        self.admit_uca_checked(input, checked, &state, work.broadcast)
+                    }
+                    _ => Err(anyhow::anyhow!("UCA authoritative input unavailable")),
+                };
+                if admitted.is_ok() {
+                    self.gossip_verified += 1;
+                } else {
+                    self.gossip_rejected += 1;
+                    self.admission.rejected_rows += 1;
+                }
+                self.admission.made_progress = true;
+                work.read = None;
+                work.parent = None;
+            }
+        }
+        self.admission.uca = Some(work);
         Ok(())
     }
 }

@@ -44,6 +44,7 @@ pub(super) struct NonceCache<T = IoTicket<Option<Vec<u8>>>> {
     parent: Option<ParentPoint>,
     reads: VecDeque<Read<T>>,
     capacity: usize,
+    require_present: bool,
 }
 
 impl<T: NonceReadTicket> NonceCache<T> {
@@ -56,7 +57,12 @@ impl<T: NonceReadTicket> NonceCache<T> {
             parent: None,
             reads: VecDeque::new(),
             capacity,
+            require_present: false,
         }
+    }
+
+    pub(super) fn require_initialized_subjects(&mut self) {
+        self.require_present = true;
     }
 
     fn clear(&mut self) {
@@ -146,6 +152,10 @@ impl<T: NonceReadTicket> NonceCache<T> {
         // This check is also required after notification: dropping an old
         // ticket or changing roots must not reinterpret its output as current.
         ensure!(self.parent == Some(parent), "nonce read parent changed");
+        ensure!(
+            !self.require_present || value.is_some(),
+            "UCA nonce is uninitialized; absence is not zero"
+        );
         let (nonce, absent) = match value {
             None => (0, true),
             Some(bytes) => (

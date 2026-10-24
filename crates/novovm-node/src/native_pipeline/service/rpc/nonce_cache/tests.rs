@@ -41,6 +41,24 @@ fn cache(capacity: usize) -> NonceCache<Completion> {
     NonceCache::new(capacity)
 }
 
+#[test]
+fn uca_cache_requires_initialized_nonce_even_after_eviction() -> Result<()> {
+    let mut cache = cache(1);
+    cache.require_initialized_subjects();
+    let parent = parent(3);
+    cache.bind_current_parent(parent);
+    let owner = subject(1);
+    assert!(cache.accept_read(parent, owner, None).is_err());
+    assert_eq!(cache.lookup(&owner), Lookup::Unknown);
+    cache.accept_read(parent, owner, Some(0u64.to_le_bytes().to_vec()))?;
+    assert_eq!(cache.lookup(&owner), Lookup::Present(0));
+    cache.published(subject(2), 9);
+    assert_eq!(cache.lookup(&owner), Lookup::Unknown);
+    assert!(cache.accept_read(parent, owner, None).is_err());
+    assert_eq!(cache.lookup(&owner), Lookup::Unknown);
+    Ok(())
+}
+
 fn pending(subject: Hash, nonces: &[u64]) -> (VecDeque<Hash>, BTreeMap<Hash, Pending>) {
     let mut order = VecDeque::new();
     let mut pending = BTreeMap::new();

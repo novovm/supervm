@@ -1,5 +1,19 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-25 NUAS原生准入接续认领：** 基线 `1727f6e1`，先无冲突快进接收
+`0b462565` 光学取消/重启交接。根拥有原service/rpc池、选批、预算、真实联测和唯一
+构建槽；计算分工拥有pipeline/admission、compute与ingress/batch；传输分工拥有
+原native/transport/lifecycle与client；查询分工拥有原native_query及UCA状态只读适配。
+复用同一常驻AOEM、Column、权限计划、journal和原生通道，不加监听器或旁路账户库。
+最终权限/预算只由精确父状态的原计划裁决；内存received不是耐久或资产授权。
+不改移动平台/AOEM内核/实际账本。验收范围和未完成部分以本轮证据为准。
+本片实现与本地验证完成，文件认领释放：最终release流水线413、协议58及六项明确
+选择的真实AOEM测试通过，Clippy/fmt通过。原生UDP四原服务/四库在一个进程内
+完成单入口、真实ML-DSA-65花费/再消费/冷恢复；不是四进程、多机、TPS或生产激活。
+新类型化UCA查询是认证节点观察，不是证明。首次Clippy失败保留；旧Raw/V3/HTTP
+拒绝夹具保留并纠正名称。下一片沿原进程故障门禁验NUAS独立追赶，范围见
+[证据](../artifacts/audit/nuas-native-admission-20261025/README.md)。远端CI另验。
+
 **2026-10-25 NUAS结构正文接续认领：** 输入 `3927926c`，树干净、本地远端一致。
 根认领原node的候选正文/恢复接线与集成测试，唯一构建槽；协议分工仅认领共享
 `uca_spend_batch`结构编解码及导出。复用Column、NUAS规范签名、原Compute owner/

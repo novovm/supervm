@@ -1,5 +1,20 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## SUPERVM NUAS原生应用接线回执（2026-10-25）
+
+已接收 `0b462565` 光学取消/重启交接；没有修改Android、QR、持钥或AOEM兄弟仓。
+本轮共享增量是 `NativeApplicationClient::prepare_uca`、原NUAPFL01应用消息tag15、
+原池/传播/候选/journal接线及 `native_query::Query::UcaSpendState`（NVQUERY3）。
+签名仍用唯一 `SignedUcaSpendV1`；本机可信父状态决定授权，不接受App自报资产权限。
+查询是服务节点观察，不是状态证明；Delivered/Received不显示为最终到账。
+
+真实localhost UDP、一个进程中的四原服务和四库已验证：非leader单入口转账、
+到账后再消费、坏签名/错误代次拒绝、原库重开后额度/nonce/余额/回执一致。
+接口、运行证据与最终制品见[本轮记录](../artifacts/audit/nuas-native-admission-20261025/README.md)。
+这是隔离测试链共享实现交付，不是手机已接入、实际资金收费或正式创世激活；
+另一机应消费同一接口，不实现另一个账户/交易底层。独立进程追赶、中断恢复、
+高权限管理、零钱/储蓄完整隔离、状态证明和新签名TPS仍分别验收。
+
 ## SUPERVM实际接收回执（2026-10-25）
 
 本机已实际快进读取至 `49a912bf`，接收 `UCA-TIERED-2026-10-25` 与
@@ -120,6 +135,11 @@ U2/U3 可按文件归属并行；手机只消费同一协议，不用本地余�
 本机已用 NDK 28.2.13676358 / API 24 成功交叉构建同一个隔离 PQ 消费程序（Android AArch64 ELF，非 APK），没有运行设备签名测试；随包 Android AOEM 缺失仍阻止运行验收。不要把消费者编译通过登记为运行库、首发 wire 或资产接通。
 
 ## 8. 用户纠正：禁止双机重复开发（当前执行边界）
+
+2026-10-25 接续 `1727f6e1`，已实际接收 `0b462565`：SUPERVM继续唯一共享NUAS
+准入、池/选批、原生传播及类型化查询接线，分工见DELIVERY_ALIGNMENT顶节。
+NOVOCHAT/KEY ONE的光学取消与认证重启证据保留，不在本机重复开发或重新签收。
+本轮不改变正式资产关闭要求；隔离测试NOV仍需真实父状态、限额、nonce和原发布。
 
 2026-10-24 接续 `de9e5270`：fetch 后本地/远端一致、原树干净。本轮先处理
 crypto-bigint 阻断，再推进原新链启动与 native UCA 接合。安全分工只核查/适配

@@ -67,6 +67,7 @@ mod gossip;
 mod history;
 mod native_query;
 mod nonce_cache;
+mod uca;
 use nonce_cache::NonceCache;
 use novovm_protocol::native_query::{Balance, ReceiptState};
 
@@ -101,6 +102,7 @@ impl Pending {
         match &self.input {
             AdmissionInput::Raw(raw) => decode_transfer_view_v3(raw, 1024),
             AdmissionInput::Apfl { batch, index } => batch.row(*index),
+            AdmissionInput::Uca { .. } => anyhow::bail!("NUAS is not a V3 transfer view"),
         }
     }
 
@@ -108,6 +110,7 @@ impl Pending {
         match &self.input {
             AdmissionInput::Raw(raw) => view.matches_canonical_bytes(raw),
             AdmissionInput::Apfl { batch, index } => Ok(view == batch.row(*index)?),
+            AdmissionInput::Uca { .. } => Ok(false),
         }
     }
 }
@@ -127,6 +130,15 @@ impl PoolRetention {
         let (owner, payload) = match input {
             AdmissionInput::Raw(raw) => (None, raw.capacity()),
             AdmissionInput::Apfl { batch, .. } => {
+                let key = Arc::as_ptr(batch) as usize;
+                let bytes = if self.owners.contains_key(&key) {
+                    0
+                } else {
+                    batch.retained_bytes()?
+                };
+                (Some(key), bytes)
+            }
+            AdmissionInput::Uca { batch, .. } => {
                 let key = Arc::as_ptr(batch) as usize;
                 let bytes = if self.owners.contains_key(&key) {
                     0
@@ -171,6 +183,14 @@ impl PoolRetention {
             AdmissionInput::Apfl { batch, .. } => {
                 let key = Arc::as_ptr(batch) as usize;
                 let record = self.owners.get_mut(&key).expect("retained pool owner");
+                record.0 -= 1;
+                if record.0 == 0 {
+                    self.bytes -= self.owners.remove(&key).unwrap().1;
+                }
+            }
+            AdmissionInput::Uca { batch, .. } => {
+                let key = Arc::as_ptr(batch) as usize;
+                let record = self.owners.get_mut(&key).expect("retained UCA pool owner");
                 record.0 -= 1;
                 if record.0 == 0 {
                     self.bytes -= self.owners.remove(&key).unwrap().1;
@@ -234,6 +254,7 @@ pub struct RpcLifecycle {
     balances: VecDeque<BalanceQuery>,
     admission: admission::AdmissionState,
     history: history::ReceiptHistory,
+    uca_queries: native_query::UcaQueries,
 }
 
 impl RpcLifecycle {
@@ -243,6 +264,12 @@ impl RpcLifecycle {
     }
     pub fn new(node: ResidentNode, batch_size: usize) -> Result<Self> {
         ensure!((1..=1024).contains(&batch_size), "invalid RPC batch limit");
+        let mut nonces = NonceCache::new(NONCE_CACHE_ENTRIES);
+        if node.template.business_program
+            == crate::native_pipeline::business::nov_transfer_batch::uca_program_id()
+        {
+            nonces.require_initialized_subjects();
+        }
         Ok(Self {
             node,
             batch_size,
@@ -251,7 +278,7 @@ impl RpcLifecycle {
             reservations: BTreeSet::new(),
             pending_bytes: 0,
             pending_retention: PoolRetention::default(),
-            nonces: NonceCache::new(NONCE_CACHE_ENTRIES),
+            nonces,
             nonce_scan: 0,
             nonce_window: None,
             receipts: BTreeMap::new(),
@@ -276,6 +303,7 @@ impl RpcLifecycle {
             balances: VecDeque::new(),
             admission: admission::AdmissionState::default(),
             history: history::ReceiptHistory::default(),
+            uca_queries: native_query::UcaQueries::default(),
         })
     }
 
@@ -347,6 +375,11 @@ impl RpcLifecycle {
         {
             None
         } else {
+            // UCA's full authority/budget successor overlay is not yet exposed
+            // by the existing lookahead. Never reinterpret it as a V3 prefix.
+            if self.is_uca() {
+                return Ok(());
+            }
             // Reuse one bounded lookahead within the existing body owner.
             // No duplicate body or repeated nonce projection while it runs.
             let Some(next_height) = current_height.checked_add(1) else {
@@ -431,8 +464,18 @@ impl RpcLifecycle {
             context.parent_state_root = parent.state_root;
             context.parent_receipt_root = parent.receipt_batch_commitment;
             context.parent_state_version = parent.state_version;
-            let batch = selected_apfl_batch(&selected, &self.pending, self.batch_size)?;
-            self.offer = Some((position, Arc::new(Message::ApflBody { context, batch })));
+            let body = if self.is_uca() {
+                Message::UcaBody {
+                    context,
+                    batch: self.selected_uca_batch(&selected)?,
+                }
+            } else {
+                Message::ApflBody {
+                    context,
+                    batch: selected_apfl_batch(&selected, &self.pending, self.batch_size)?,
+                }
+            };
+            self.offer = Some((position, Arc::new(body)));
         }
         let message = &self.offer.as_ref().expect("prepared native body").1;
         let admitted = admitted_for_body(message, &self.pending)?;
@@ -639,6 +682,7 @@ impl RpcLifecycle {
             crate::native_pipeline::pipeline::AdmissionInput::Apfl { batch, index } => {
                 checked.transfer() == batch.row(*index)?
             }
+            AdmissionInput::Uca { .. } => false,
         };
         ensure!(matches, "admission signature/input mismatch");
         // Signature-checked memory admission is not current-state admission.
@@ -1050,6 +1094,13 @@ fn retain_admitted_for_pool(
         // Admission has already compared all signed input fields. Only the
         // original raw bytes remain in this pool; discard the decoded copy.
         AdmissionInput::Raw(_) => Ok(None),
+        AdmissionInput::Uca { batch, index } => {
+            ensure!(
+                admitted.matches_uca_source(batch, *index),
+                "UCA admission source mismatch"
+            );
+            Ok(Some(admitted))
+        }
     }
 }
 
@@ -1163,7 +1214,15 @@ fn select_pending_batch(
 ) -> Vec<Hash> {
     let mut selected = Vec::new();
     let mut raw_bytes = 0usize;
-    let body_limit = super::body_byte_limit(batch_size);
+    let body_limit = if pending
+        .values()
+        .next()
+        .is_some_and(|p| matches!(p.input, AdmissionInput::Uca { .. }))
+    {
+        super::uca_body_byte_limit(batch_size)
+    } else {
+        super::body_byte_limit(batch_size)
+    };
     for hash in order {
         let Some(entry) = pending.get(hash) else {
             continue;
@@ -1701,6 +1760,7 @@ mod tests {
             .map(|hash| match &pending[hash].input {
                 AdmissionInput::Raw(raw) => raw.clone(),
                 AdmissionInput::Apfl { batch, index } => batch.canonical_raw(*index).unwrap(),
+                AdmissionInput::Uca { batch, index } => batch.raw_transaction(*index).unwrap(),
             })
             .collect()
     }

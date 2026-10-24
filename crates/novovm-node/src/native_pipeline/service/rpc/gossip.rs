@@ -87,7 +87,12 @@ fn select_repair(
             continue;
         }
         if hashes.len() == batch_size
-            || bytes + entry.canonical_len > super::super::body_byte_limit(batch_size)
+            || bytes + entry.canonical_len
+                > if matches!(entry.input, AdmissionInput::Uca { .. }) {
+                    super::super::uca_body_byte_limit(batch_size)
+                } else {
+                    super::super::body_byte_limit(batch_size)
+                }
         {
             break;
         }
@@ -143,8 +148,7 @@ impl RpcLifecycle {
                 while let Some(hash) = self.gossip_order.front().copied() {
                     if let Some(entry) = self.pending.get(&hash) {
                         if hashes.len() == self.batch_size
-                            || bytes + entry.canonical_len
-                                > super::super::body_byte_limit(self.batch_size)
+                            || bytes + entry.canonical_len > self.input_body_limit()
                         {
                             break;
                         }
@@ -158,10 +162,22 @@ impl RpcLifecycle {
                 (hashes, None)
             };
             if !hashes.is_empty() {
-                let batch = selected_apfl_batch(&hashes, &self.pending, self.batch_size)?;
+                let message = if self.is_uca() {
+                    self.node
+                        .controller
+                        .uca_transactions_message(self.selected_uca_batch(&hashes)?)?
+                } else {
+                    self.node
+                        .controller
+                        .apfl_transactions_message(selected_apfl_batch(
+                            &hashes,
+                            &self.pending,
+                            self.batch_size,
+                        )?)?
+                };
                 self.gossip_offer = Some(GossipOffer {
                     hashes,
-                    message: self.node.controller.apfl_transactions_message(batch)?,
+                    message,
                     repair_peer,
                 });
             }

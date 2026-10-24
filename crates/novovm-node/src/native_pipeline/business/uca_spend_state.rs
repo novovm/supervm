@@ -240,6 +240,62 @@ impl UcaSpendStateAccessV1 {
         ensure!(values.len() == keys.len(), "UCA capture shape mismatch");
         let records: BTreeMap<_, _> = keys.into_iter().zip(values).collect();
         let read = |key: &[u8]| records.get(key).cloned().context("UCA undeclared input");
+        self.read_with(expected_parent, read)
+    }
+
+    /// Read-only adapter for the original asynchronous immutable-tree owner.
+    /// The caller pins EVERY supplied read to `expected_parent`; this helper
+    /// cannot authenticate a peer-supplied snapshot or issue a spend permit.
+    pub(crate) fn read_optional_with(
+        &self,
+        expected_parent: NodeHash,
+        mut read: impl FnMut(&[u8]) -> Result<Option<Vec<u8>>>,
+    ) -> Result<Option<CapturedUcaSpendStateV1>> {
+        ensure!(expected_parent != [0; 32], "UCA input parent missing");
+        // Absence means a complete required record range is absent. Partial
+        // records or orphan tail pages remain errors, never an absent account.
+        for (prefix, bytes) in [
+            (
+                account_prefix(
+                    self.intent.chain_id,
+                    &self.intent.genesis,
+                    &self.intent.account_id,
+                )?,
+                ACCOUNT_BYTES,
+            ),
+            (
+                account_prefix(
+                    self.intent.chain_id,
+                    &self.intent.genesis,
+                    &self.intent.recipient_uca,
+                )?,
+                ACCOUNT_BYTES,
+            ),
+            (grant_prefix(&self.intent)?, GRANT_BYTES),
+        ] {
+            let declarations = record_pages::declarations(&prefix, bytes, false)?;
+            if read(&declarations[0].key)?.is_none() {
+                for declaration in declarations.iter().skip(1) {
+                    ensure!(read(&declaration.key)?.is_none(), "orphan UCA record page");
+                }
+                return Ok(None);
+            }
+        }
+        let state = self.read_with(expected_parent, read)?;
+        ensure!(
+            state.grant.account_id == self.intent.account_id
+                && state.grant.key_ref == self.intent.spend_key_ref,
+            "UCA grant state identity mismatch"
+        );
+        Ok(Some(state))
+    }
+
+    fn read_with(
+        &self,
+        expected_parent: NodeHash,
+        mut read: impl FnMut(&[u8]) -> Result<Option<Vec<u8>>>,
+    ) -> Result<CapturedUcaSpendStateV1> {
+        ensure!(expected_parent != [0; 32], "UCA input parent missing");
         let mut accounts = Vec::new();
         let mut balances = Vec::new();
         for (id, hint) in [
@@ -247,7 +303,7 @@ impl UcaSpendStateAccessV1 {
             (&self.intent.recipient_uca, &self.recipient),
         ] {
             let record: UcaSpendAccountStateV1 = decode(&record_pages::read_with(
-                &read,
+                &mut read,
                 &account_prefix(self.intent.chain_id, &self.intent.genesis, id)?,
                 ACCOUNT_BYTES,
             )?)?;
@@ -269,8 +325,8 @@ impl UcaSpendStateAccessV1 {
             ));
             accounts.push(record);
         }
-        let grant = decode(&record_pages::read_with(
-            &read,
+        let grant: SuppliedSpendGrantV1 = decode(&record_pages::read_with(
+            &mut read,
             &grant_prefix(&self.intent)?,
             GRANT_BYTES,
         )?)?;
@@ -307,6 +363,10 @@ pub struct CapturedUcaSpendStateV1 {
 }
 
 impl CapturedUcaSpendStateV1 {
+    pub(crate) fn matches_intent(&self, intent: &UcaSpendIntentV1) -> bool {
+        &self.intent == intent
+    }
+
     pub(crate) fn static_failure(
         &self,
         height: u64,

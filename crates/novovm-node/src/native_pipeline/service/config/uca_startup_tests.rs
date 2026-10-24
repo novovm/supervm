@@ -1,4 +1,5 @@
-//! Actual original service startup; no asset entrance, live grants or mainnet.
+//! Actual original service startup pins and rejection of legacy asset carriers.
+//! Native typed NUAS admission has a separate real-UDP service regression.
 use super::uca_genesis::*;
 use super::*;
 use crate::native_pipeline::business::nov_transfer_batch::{
@@ -12,7 +13,7 @@ use novovm_protocol::uca_spend::spend_key_ref_v1;
 
 #[test]
 #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; actual fresh original service and reopen, not asset activation"]
-fn actual_uca_startup_three_pins_reopen_and_closed_asset_admission() -> Result<()> {
+fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
             .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY required")?,
@@ -184,7 +185,7 @@ fn actual_uca_startup_three_pins_reopen_and_closed_asset_admission() -> Result<(
             &spend.1,
         )?
         .encode()?;
-    lifecycle.assert_uca_asset_admission_closed_for_test(signed)?;
+    lifecycle.assert_uca_legacy_asset_rejection_for_test(signed)?;
     assert_eq!(lifecycle.node.controller.parent(), parent);
     lifecycle.node.shutdown()?;
     assert!(ResidentNode::start(config.clone(), StartMode::CreateNew).is_err());
@@ -197,6 +198,6 @@ fn actual_uca_startup_three_pins_reopen_and_closed_asset_admission() -> Result<(
     assert_eq!(reopened.controller.context().height, 1);
     reopened.shutdown()?;
     assert_eq!(std::fs::read(key)?, [1_u8; 32]);
-    println!("UCA startup: real approvals + three pins before DB; fresh/reopen root retained; invalid fresh/Existing rejected; native assets remain closed");
+    println!("UCA startup: real approvals + three pins before DB; fresh/reopen root retained; invalid fresh/Existing rejected; legacy Raw/APFL and HTTP asset carriers rejected");
     Ok(())
 }

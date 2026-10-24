@@ -97,6 +97,41 @@ pub(super) fn decode(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Me
     })
 }
 
+pub(super) fn append_transactions(
+    out: &mut Vec<u8>,
+    scope: &TransactionsScope,
+    batch: &UcaSpendBatch,
+    limits: DecodeLimits,
+) -> Result<()> {
+    scope.validate_shape()?;
+    validate(batch, limits)?;
+    // Reuse the same explicit version and exact session/sequence scope as the
+    // existing native input flow. No additional delivery or account identity.
+    transactions::append_scope(out, scope);
+    let bytes = batch.encode()?;
+    ensure!(
+        out.len()
+            .checked_add(bytes.len())
+            .is_some_and(|n| n <= limits.message_bytes),
+        "NUAS input envelope exceeds message budget"
+    );
+    out.extend_from_slice(&bytes);
+    Ok(())
+}
+
+pub(super) fn decode_transactions(
+    reader: &mut Reader<'_>,
+    limits: DecodeLimits,
+) -> Result<Message> {
+    let scope = transactions::read_scope(reader)?;
+    let batch = UcaSpendBatch::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
+    validate(&batch, limits)?;
+    Ok(Message::UcaTransactions {
+        scope,
+        batch: Arc::new(batch),
+    })
+}
+
 pub(crate) fn candidate_body_id(message: &Message, limits: DecodeLimits) -> Result<Hash> {
     match message {
         Message::Body {

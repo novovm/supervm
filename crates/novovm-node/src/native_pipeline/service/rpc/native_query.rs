@@ -2,6 +2,8 @@
 //! No JSON conversion, new authoritative store, or transport-finality inference.
 use super::*;
 use novovm_protocol::native_query::{Answer, Query, QueryError, Response, Status};
+mod uca;
+pub(super) use uca::{UcaQueries, UcaReadResult, UcaStateRead};
 
 impl RpcLifecycle {
     fn recent_receipt(&self, hash: Hash) -> ReceiptState {
@@ -65,6 +67,7 @@ impl RpcLifecycle {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::NativeQuery,
         );
+        self.uca_queries.poll(&self.node.pipeline, now);
         let Some((peer, request)) = self.node.controller.take_client_query(now) else {
             return Ok(());
         };
@@ -94,6 +97,25 @@ impl RpcLifecycle {
                     match self.balance_read(account) {
                         Ok(balance) => Answer::NovBalance(balance),
                         Err(_) => Answer::Error(QueryError::Busy),
+                    }
+                }
+                Query::UcaSpendState { intent, .. } => {
+                    let intent_value = intent.intent();
+                    if intent_value.chain_id != self.node.template.chain_id
+                        || intent_value.genesis != self.node.template.genesis_config_commitment
+                        || self.node.template.business_program
+                            != crate::native_pipeline::business::nov_transfer_batch::uca_program_id(
+                            )
+                    {
+                        Answer::Error(QueryError::Unavailable)
+                    } else {
+                        let parent = self.node.controller.parent();
+                        self.uca_queries.read(
+                            request.query.clone(),
+                            parent.state_root,
+                            parent.height,
+                            now,
+                        )
                     }
                 }
             }

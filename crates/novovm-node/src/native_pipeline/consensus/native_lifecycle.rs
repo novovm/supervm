@@ -507,7 +507,9 @@ impl NativeLifecycle {
                                 self.rejected_messages += 1;
                             }
                         }
-                        Message::Transactions { .. } | Message::ApflTransactions { .. } => {
+                        Message::Transactions { .. }
+                        | Message::ApflTransactions { .. }
+                        | Message::UcaTransactions { .. } => {
                             // Native DONE means bounded custody, never signature admission.
                             // RPC consumes these originals via the resident auth owner.
                             if self.transactions[peer].len() < 2 {

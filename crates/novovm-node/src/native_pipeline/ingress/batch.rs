@@ -118,6 +118,10 @@ pub enum AdmissionInput {
         batch: Arc<ApflTransferBatch>,
         index: usize,
     },
+    Uca {
+        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        index: usize,
+    },
 }
 
 impl AdmissionInput {
@@ -125,6 +129,7 @@ impl AdmissionInput {
         match self {
             Self::Raw(raw) => Ok(raw.len()),
             Self::Apfl { batch, index } => batch.row(*index)?.encoded_len(),
+            Self::Uca { batch, index } => Ok(batch.raw_transaction(*index)?.len()),
         }
     }
 
@@ -133,13 +138,52 @@ impl AdmissionInput {
         match self {
             Self::Raw(raw) => Ok(raw),
             Self::Apfl { batch, index } => batch.canonical_raw(index),
+            Self::Uca { batch, index } => Ok(batch.raw_transaction(index)?),
         }
     }
 }
 
 pub struct AdmissionRow {
     pub input: AdmissionInput,
-    pub result: Result<SignatureCheckedTransfer>,
+    pub result: Result<CheckedAdmission>,
+}
+
+/// Separate verified contracts. A UCA result cannot become a V3 capability.
+pub enum CheckedAdmission {
+    V3(SignatureCheckedTransfer),
+    Uca {
+        checked: novovm_exec::uca_spend::SignatureCheckedUcaSpendV1,
+        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        index: usize,
+    },
+}
+
+impl CheckedAdmission {
+    pub fn v3(&self) -> Option<&SignatureCheckedTransfer> {
+        match self {
+            Self::V3(value) => Some(value),
+            Self::Uca { .. } => None,
+        }
+    }
+
+    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedUcaSpendV1> {
+        match self {
+            Self::Uca { checked, .. } => Some(checked),
+            Self::V3(_) => None,
+        }
+    }
+
+    // Existing V3 diagnostic consumers must select their contract explicitly;
+    // only these backwards source-compatible test accessors expect V3.
+    #[cfg(test)]
+    pub fn tx_hash(&self) -> [u8; 32] {
+        self.v3().expect("V3 diagnostic result").tx_hash()
+    }
+    #[cfg(test)]
+    pub(crate) fn is_apfl_view(&self) -> bool {
+        self.v3()
+            .is_some_and(SignatureCheckedTransfer::is_apfl_view)
+    }
 }
 
 pub(crate) struct AdmissionRows {
@@ -186,6 +230,7 @@ impl AuthenticationSource for Vec<AdmissionInput> {
             AdmissionInput::Apfl { batch, index } => {
                 authenticate_apfl_row(batch.clone(), *index, chain)
             }
+            AdmissionInput::Uca { .. } => anyhow::bail!("NUAS cannot use V3 signature admission"),
         }
     }
 }
@@ -211,10 +256,18 @@ pub(crate) fn admission_retained_bytes(inputs: &[AdmissionInput]) -> Result<usiz
     for input in inputs {
         let retained = match input {
             AdmissionInput::Raw(raw) => raw.len(),
-            AdmissionInput::Apfl { batch, .. } if owners.insert(Arc::as_ptr(batch)) => {
+            AdmissionInput::Apfl { batch, .. }
+                if owners.insert((0u8, Arc::as_ptr(batch) as usize)) =>
+            {
                 batch.canonical_bytes()
             }
             AdmissionInput::Apfl { .. } => 0,
+            AdmissionInput::Uca { batch, .. }
+                if owners.insert((1u8, Arc::as_ptr(batch) as usize)) =>
+            {
+                batch.retained_bytes()?.max(batch.canonical_bytes())
+            }
+            AdmissionInput::Uca { .. } => 0,
         };
         bytes = bytes
             .checked_add(retained)
@@ -257,7 +310,10 @@ pub(crate) fn authenticate_admission_rows(
         rows: inputs
             .into_iter()
             .zip(results)
-            .map(|(input, result)| AdmissionRow { input, result })
+            .map(|(input, result)| AdmissionRow {
+                input,
+                result: result.map(CheckedAdmission::V3),
+            })
             .collect(),
         peak_callbacks,
     })

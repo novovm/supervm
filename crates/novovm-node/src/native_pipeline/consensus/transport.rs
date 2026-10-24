@@ -102,6 +102,12 @@ pub enum Message {
         context: BatchContext,
         batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
     },
+    /// NUAS structural application input (tag 15). Transport custody is not
+    /// signature admission or UCA spending authority.
+    UcaTransactions {
+        scope: TransactionsScope,
+        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+    },
 }
 
 /// Operational decoder ceilings, not activated production block parameters.
@@ -184,6 +190,7 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::ApflEarlyBody { .. } => 12,
         Message::ApflTransactions { .. } => 13,
         Message::UcaBody { .. } => 14,
+        Message::UcaTransactions { .. } => 15,
     });
     match message {
         Message::Body {
@@ -258,6 +265,9 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::UcaBody { context, batch } => {
             uca::append_body(&mut out, context, batch, limits)?;
         }
+        Message::UcaTransactions { scope, batch } => {
+            uca::append_transactions(&mut out, scope, batch, limits)?;
+        }
     }
     ensure!(
         out.len() <= limits.message_bytes,
@@ -283,7 +293,7 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
     match bytes[10] {
         1 | 7 | 11 | 12 | 14 => Ok(1),
         2..=6 | 8 | 10 => Ok(0),
-        9 | 13 => Ok(2),
+        9 | 13 | 15 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
 }
@@ -371,6 +381,7 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         10 => transactions::decode_taken(&mut reader)?,
         tag @ (11..=13) => apfl::decode(tag, &mut reader, limits)?,
         14 => uca::decode(&mut reader, limits)?,
+        15 => uca::decode_transactions(&mut reader, limits)?,
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(

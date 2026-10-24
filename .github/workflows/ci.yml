@@ -378,7 +378,9 @@ jobs:
           cargo test -p novovm-node --lib actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority --locked -- --ignored --test-threads=1
           cargo test -p novovm-node --lib actual_mldsa_capture_uca_cpu_atomic_effects --locked -- --ignored --test-threads=1
           cargo test -p novovm-node --lib actual_mldsa_uca_initialized_spend_respend_journal_recovery --locked -- --ignored --test-threads=1
-          cargo test -p novovm-node --lib actual_uca_startup_three_pins_reopen_and_closed_asset_admission --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib actual_native_uca_single_client_respend_and_cold_recovery --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/nuas-native-service.log"
+          cargo test -p novovm-node --lib actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection --locked -- --ignored --test-threads=1
           cargo test -p novovm-exec --lib pq_signature --locked
           cargo test -p novovm-exec --test uca_spend_runtime --locked -- --ignored --test-threads=1
           cargo test -p novovm-prover --test pq_signature_runtime --locked -- --ignored --test-threads=1
@@ -495,6 +497,8 @@ jobs:
         with:
           name: fresh-ingress-history-recovery
           path: |
+            ${{ runner.temp }}/nuas-native-service.log
+            target/runtime-rebuild/consensus-tests/uca-native-services/**/report.json
             artifacts/audit/candidate-node-processes/**/continuous-acceptance.json
             artifacts/audit/candidate-node-processes/**/*.process.json
             artifacts/audit/candidate-node-processes/**/*.stdout.log

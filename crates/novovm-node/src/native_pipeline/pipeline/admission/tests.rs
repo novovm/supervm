@@ -283,13 +283,13 @@ fn admitted_rebinding_rejects_same_hash_changed_signature_duplicates_and_foreign
         .is_err());
     assert!(pipeline.rebind_admitted_apfl(original, &[]).is_err());
     let raw_cap = AdmittedTransfer {
-        checked: Arc::new(
+        checked: Arc::new(CheckedAdmission::V3(
             crate::native_pipeline::ingress::authentication::authenticate_transfer_v3(
                 &signed(1, 10),
                 pipeline.storage_domain().chain_id,
                 4096,
             )?,
-        ),
+        )),
         owner: pipeline.identity.clone(),
     };
     assert!(pipeline
@@ -348,7 +348,7 @@ fn consumed_admitted_capability_does_not_pin_the_single_ingress_permit() -> Resu
     )?;
     let row = AdmissionRow {
         input: command.request.into_inputs().pop().unwrap(),
-        result: Ok(checked),
+        result: Ok(CheckedAdmission::V3(checked)),
     };
     assert!(command
         .reply

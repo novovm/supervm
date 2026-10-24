@@ -478,8 +478,13 @@ impl NativeChannel {
             }
             let message = transport::decode(&bytes, self.codec)?;
             ensure!(
-                !application || matches!(&message, transport::Message::ApflTransactions { .. }),
-                "application lane accepts only signed APFL transaction inputs"
+                !application
+                    || matches!(
+                        &message,
+                        transport::Message::ApflTransactions { .. }
+                            | transport::Message::UcaTransactions { .. }
+                    ),
+                "application lane accepts only signed structural transaction inputs"
             );
             let evidence = message_evidence::verify(&message, &self.domain)?;
             Ok((message, evidence))

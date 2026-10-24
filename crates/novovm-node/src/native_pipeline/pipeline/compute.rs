@@ -11,8 +11,9 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
 use crate::native_pipeline::ingress::batch::{
-    authenticate_admission_rows, authenticate_source_batch_observed, AdmissionInput, AdmissionRows,
-    AuthenticationBudget, BatchSource,
+    admission_retained_bytes, admission_sizes, authenticate_admission_rows,
+    authenticate_source_batch_observed, AdmissionInput, AdmissionRow, AdmissionRows,
+    AuthenticationBudget, BatchSource, CheckedAdmission,
 };
 use crate::native_pipeline::persistence::{PacketBudget, PreparedCandidate, StorageDomain};
 use crate::native_pipeline::profile;
@@ -504,15 +505,7 @@ fn authenticate(
                     && bytes <= config.authentication.body_bytes,
                 "UCA authentication input budget"
             );
-            if uca_facade.is_none() {
-                let selection = novovm_exec::resident::AoemLibrarySelection::new(
-                    &config.library,
-                    novovm_exec::AoemExecOpenOptions {
-                        ingress_workers: Some(config.workers),
-                    },
-                )?;
-                *uca_facade = Some(selection.open_wire_facade()?);
-            }
+            ensure_uca_facade(uca_facade, config)?;
             // One qualified existing verifier per bounded batch, never one
             // compatibility self-test/session per row. No Ed25519 fallback.
             let verifier = uca_facade
@@ -566,6 +559,82 @@ fn authenticate(
         }
     };
     NovTransferBody::prepare(batch, request.policy, config.plan)
+}
+
+fn ensure_uca_facade(
+    facade: &mut Option<novovm_exec::AoemExecFacade>,
+    config: &ComputeConfig,
+) -> Result<()> {
+    if facade.is_none() {
+        let selection = novovm_exec::resident::AoemLibrarySelection::new(
+            &config.library,
+            novovm_exec::AoemExecOpenOptions {
+                ingress_workers: Some(config.workers),
+            },
+        )?;
+        *facade = Some(selection.open_wire_facade()?);
+    }
+    Ok(())
+}
+
+/// Reuses the candidate verifier on this resident owner. A bad external row is
+/// a row rejection, never an execution/session failure or an asset permission.
+fn admit_uca_rows(
+    facade: &mut Option<novovm_exec::AoemExecFacade>,
+    config: &ComputeConfig,
+    inputs: Vec<AdmissionInput>,
+) -> Result<AdmissionRows> {
+    let (bytes, max) = admission_sizes(&inputs)?;
+    ensure!(
+        !inputs.is_empty()
+            && inputs.len() <= config.authentication.transactions
+            && max <= config.authentication.transaction_bytes
+            && bytes <= config.authentication.body_bytes
+            && admission_retained_bytes(&inputs)? <= config.authentication.body_bytes,
+        "UCA signature admission exceeds input budget"
+    );
+    ensure!(
+        inputs
+            .iter()
+            .all(|input| matches!(input, AdmissionInput::Uca { .. })),
+        "mixed UCA and V3 signature admission is forbidden"
+    );
+    ensure_uca_facade(facade, config)?;
+    let verifier = facade
+        .as_ref()
+        .context("UCA facade unavailable")?
+        .uca_spend_verifier_v1()?;
+    let mut rows = std::collections::VecDeque::with_capacity(inputs.len());
+    for input in inputs {
+        let result = (|| {
+            let AdmissionInput::Uca { batch, index } = &input else {
+                unreachable!("checked contract");
+            };
+            let signed = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(
+                &batch.raw_transaction(*index)?,
+            )?;
+            ensure!(
+                signed.intent.chain_id == config.domain.chain_id
+                    && signed.intent.genesis == config.domain.genesis_config_commitment,
+                "UCA authentication domain mismatch"
+            );
+            let checked = verifier.verify(signed)?;
+            config
+                .signatures
+                .strict_verified
+                .fetch_add(1, Ordering::Relaxed);
+            Ok(CheckedAdmission::Uca {
+                checked,
+                batch: batch.clone(),
+                index: *index,
+            })
+        })();
+        rows.push_back(AdmissionRow { input, result });
+    }
+    Ok(AdmissionRows {
+        rows,
+        peak_callbacks: 0,
+    })
 }
 
 fn execute(
@@ -623,6 +692,12 @@ fn run_owner(
                     crate::native_pipeline::profile::Phase::Admission,
                 );
                 let result = lanes::checked(failed, || {
+                    if inputs
+                        .iter()
+                        .any(|input| matches!(input, AdmissionInput::Uca { .. }))
+                    {
+                        return admit_uca_rows(&mut uca_facade, config, inputs);
+                    }
                     authenticate_admission_rows(
                         session,
                         config.domain.chain_id,

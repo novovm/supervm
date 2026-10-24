@@ -261,3 +261,158 @@ fn nuas_body_identity_commits_order_signatures_hints_and_parent() -> Result<()> 
     assert_ne!(original, uca_body_id(&parent, &f.batch, f.limits)?);
     Ok(())
 }
+
+fn input_scope(f: &Fixture) -> TransactionsScope {
+    TransactionsScope {
+        chain_id: f.context.chain_id,
+        genesis: f.context.genesis_config_commitment,
+        protocol: f.context.protocol_commitment,
+        epoch: 1,
+        validator_set_hash: [21; 32],
+        session: [22; 32],
+        sequence: 1,
+    }
+}
+
+#[test]
+fn nuas_application_input_uses_structural_tag15_not_candidate_authority() -> Result<()> {
+    let f = fixture()?;
+    let message = Message::UcaTransactions {
+        scope: input_scope(&f),
+        batch: f.batch.clone(),
+    };
+    let encoded = encode(&message, f.limits)?;
+    assert_eq!(encoded[10], 15);
+    assert_eq!(&encoded[11..13], &1u16.to_be_bytes());
+    assert_eq!(message_lane(&encoded)?, 2);
+    assert_eq!(super::super::decode(&encoded, f.limits)?, message);
+    assert!(candidate_body_id(&message, f.limits).is_err());
+    assert!(candidate_request(&message, &f.policy).is_err());
+    // Neither legacy APFL input nor exact NUAS candidate body can interpret
+    // application input as that other protocol merely by changing its tag.
+    for tag in [13, 14] {
+        let mut bad = encoded.clone();
+        bad[10] = tag;
+        assert!(super::super::decode(&bad, f.limits).is_err());
+    }
+    for end in [0, 10, 12, encoded.len() - 1] {
+        assert!(super::super::decode(&encoded[..end], f.limits).is_err());
+    }
+    let mut bad = encoded.clone();
+    bad[12] = 2;
+    assert!(super::super::decode(&bad, f.limits).is_err());
+    let mut bad = encoded;
+    bad.push(0);
+    assert!(super::super::decode(&bad, f.limits).is_err());
+    Ok(())
+}
+
+#[test]
+fn nuas_application_input_limits_charge_original_bytes_not_compressed_size() -> Result<()> {
+    let f = fixture()?;
+    let message = Message::UcaTransactions {
+        scope: input_scope(&f),
+        batch: f.batch.clone(),
+    };
+    let encoded = encode(&message, f.limits)?;
+    assert!(
+        encoded.len() < f.batch.canonical_bytes(),
+        "fixture has shared keys"
+    );
+    for restricted in [
+        DecodeLimits {
+            transactions: 3,
+            ..f.limits
+        },
+        DecodeLimits {
+            transaction_bytes: f.batch.max_transaction_bytes() - 1,
+            ..f.limits
+        },
+        DecodeLimits {
+            body_bytes: f.batch.canonical_bytes() - 1,
+            ..f.limits
+        },
+    ] {
+        assert!(encode(&message, restricted).is_err());
+        assert!(super::super::decode(&encoded, restricted).is_err());
+    }
+    let single = Arc::new(UcaSpendBatch::from_raw(
+        &f.raw[..1],
+        &f.hints[..1],
+        batch_limits(f.limits),
+    )?);
+    let message = Message::UcaTransactions {
+        scope: input_scope(&f),
+        batch: single.clone(),
+    };
+    let encoded = encode(&message, f.limits)?;
+    let restricted = DecodeLimits {
+        transaction_bytes: single.max_transaction_bytes(),
+        body_bytes: single.canonical_bytes(),
+        message_bytes: encoded.len() - 1,
+        ..f.limits
+    };
+    restricted.validate()?;
+    assert!(encode(&message, restricted).is_err());
+    assert!(super::super::decode(&encoded, restricted).is_err());
+    Ok(())
+}
+
+#[test]
+fn nuas_application_input_pins_domain_without_granting_spend_authority() -> Result<()> {
+    use crate::native_pipeline::consensus::{message_evidence, wire::ValidatorSet};
+    let f = fixture()?;
+    let keys = (101..105)
+        .map(|seed| ed25519_dalek::SigningKey::from_bytes(&[seed; 32]))
+        .collect::<Vec<_>>();
+    let validators = Arc::new(ValidatorSet::new(
+        f.context.chain_id,
+        1,
+        1,
+        keys.iter()
+            .map(|key| {
+                crate::native_pipeline::consensus::wire::Validator::new(
+                    key.verifying_key().to_bytes(),
+                    1,
+                )
+            })
+            .collect::<Result<_>>()?,
+    )?);
+    let domain = message_evidence::MessageDomain {
+        chain_id: f.context.chain_id,
+        genesis: f.context.genesis_config_commitment,
+        protocol: f.context.protocol_commitment,
+        validators: validators.clone(),
+    };
+    let scope = TransactionsScope {
+        validator_set_hash: validators.hash(),
+        ..input_scope(&f)
+    };
+    let message = Message::UcaTransactions {
+        scope,
+        batch: f.batch.clone(),
+    };
+    assert!(matches!(
+        message_evidence::verify(&message, &domain)?,
+        message_evidence::VerifiedEvidence::None
+    ));
+    let mut wrong = [scope; 7];
+    wrong[0].chain_id += 1;
+    wrong[1].genesis[0] ^= 1;
+    wrong[2].protocol[0] ^= 1;
+    wrong[3].epoch += 1;
+    wrong[4].validator_set_hash[0] ^= 1;
+    wrong[5].sequence = 0;
+    wrong[6].session = [0; 32];
+    for scope in wrong {
+        assert!(message_evidence::verify(
+            &Message::UcaTransactions {
+                scope,
+                batch: f.batch.clone()
+            },
+            &domain
+        )
+        .is_err());
+    }
+    Ok(())
+}

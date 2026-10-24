@@ -1,0 +1,30 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+    Checking novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+    Checking novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error: called `expect` on `output` after checking its variant with `is_ok`
+   --> crates\novovm-node\src\native_pipeline\service\rpc\admission.rs:554:29
+    |
+547 |         if self.is_uca() && output.is_ok() {
+    |                             -------------- the check is happening here
+...
+554 |                     output: output.expect("checked success"),
+    |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: try using `match`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_unwrap
+    = note: `-D clippy::unnecessary-unwrap` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_unwrap)]`
+
+error: could not compile `novovm-node` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `novovm-node` (lib test) due to 1 previous error

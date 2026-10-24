@@ -18,6 +18,7 @@ use novovm_network::novorudp::{
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
 };
 use novovm_protocol::native_query::{self as query, Frame, Query, Request, Response};
+use novovm_protocol::uca_spend_batch::UcaSpendBatch;
 use std::{
     net::UdpSocket,
     sync::Arc,
@@ -119,22 +120,32 @@ impl NativeApplicationClient {
     /// Preserve APFL columns and original transaction signatures through the
     /// wire. The receiver independently authenticates them on its AOEM owner.
     pub fn prepare(&mut self, batch: Arc<ApflTransferBatch>) -> Result<PreparedApplicationInput> {
+        self.prepare_input(|scope| Message::ApflTransactions { scope, batch })
+    }
+
+    /// Shared canonical ML-DSA-65 input on the same native application lane.
+    /// Hints locate state only; the receiving UCA owner establishes authority.
+    pub fn prepare_uca(&mut self, batch: Arc<UcaSpendBatch>) -> Result<PreparedApplicationInput> {
+        self.prepare_input(|scope| Message::UcaTransactions { scope, batch })
+    }
+
+    fn prepare_input(
+        &mut self,
+        build: impl FnOnce(TransactionsScope) -> Message,
+    ) -> Result<PreparedApplicationInput> {
         let sequence = self
             .sequence
             .checked_add(1)
             .context("application sequence exhausted")?;
-        let message = Message::ApflTransactions {
-            scope: TransactionsScope {
-                chain_id: self.domain.chain_id,
-                genesis: self.domain.genesis,
-                protocol: self.domain.protocol,
-                epoch: self.domain.validators.epoch(),
-                validator_set_hash: self.domain.validators.hash(),
-                session: self.session,
-                sequence,
-            },
-            batch,
-        };
+        let message = build(TransactionsScope {
+            chain_id: self.domain.chain_id,
+            genesis: self.domain.genesis,
+            protocol: self.domain.protocol,
+            epoch: self.domain.validators.epoch(),
+            validator_set_hash: self.domain.validators.hash(),
+            session: self.session,
+            sequence,
+        });
         message_evidence::verify(&message, &self.domain)?;
         let body = Arc::new(OutgoingMessage::with_profile(
             transport::fragment_domain(

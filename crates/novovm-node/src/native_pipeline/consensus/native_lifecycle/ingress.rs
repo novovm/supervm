@@ -5,6 +5,7 @@ use crate::native_pipeline::consensus::{
     statement::ParentPoint, transport::TransactionsScope, wire::Context as VoteContext,
 };
 use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
+use novovm_protocol::uca_spend_batch::UcaSpendBatch;
 
 /// The cheap availability hint retains its existing conservative bounds. Only
 /// this exact, prepared-message check grants the final local reservation; the
@@ -69,24 +70,35 @@ impl NativeLifecycle {
         &mut self,
         batch: Arc<ApflTransferBatch>,
     ) -> Result<Arc<Message>> {
+        Ok(Arc::new(Message::ApflTransactions {
+            scope: self.next_transactions_scope()?,
+            batch,
+        }))
+    }
+
+    pub fn uca_transactions_message(&mut self, batch: Arc<UcaSpendBatch>) -> Result<Arc<Message>> {
+        Ok(Arc::new(Message::UcaTransactions {
+            scope: self.next_transactions_scope()?,
+            batch,
+        }))
+    }
+
+    fn next_transactions_scope(&mut self) -> Result<TransactionsScope> {
         ensure!(!self.is_frozen(), "native lifecycle frozen");
         self.transaction_sequence = self
             .transaction_sequence
             .checked_add(1)
             .context("input sequence exhausted")?;
         let c = self.context();
-        Ok(Arc::new(Message::ApflTransactions {
-            scope: TransactionsScope {
-                chain_id: c.chain_id,
-                genesis: c.genesis_config_commitment,
-                protocol: c.protocol_commitment,
-                epoch: c.epoch,
-                validator_set_hash: c.validator_set_hash,
-                session: self.transaction_session,
-                sequence: self.transaction_sequence,
-            },
-            batch,
-        }))
+        Ok(TransactionsScope {
+            chain_id: c.chain_id,
+            genesis: c.genesis_config_commitment,
+            protocol: c.protocol_commitment,
+            epoch: c.epoch,
+            validator_set_hash: c.validator_set_hash,
+            session: self.transaction_session,
+            sequence: self.transaction_sequence,
+        })
     }
 
     pub fn transactions_available_recipients(&self) -> Vec<bool> {
@@ -118,7 +130,9 @@ impl NativeLifecycle {
         ensure!(
             matches!(
                 message.as_ref(),
-                Message::Transactions { .. } | Message::ApflTransactions { .. }
+                Message::Transactions { .. }
+                    | Message::ApflTransactions { .. }
+                    | Message::UcaTransactions { .. }
             ),
             "expected signed-input dissemination"
         );

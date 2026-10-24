@@ -1,0 +1,7 @@
+
+running 1 test
+test native_pipeline::consensus::tests::chain_integration::native_udp_apfl_three_heights_durable_votes_publication_and_cold_recovery ... real AOEM four stores x three consecutive blocks: six distinct transactions / 24 executions, different QC subsets, global signer log, stale-head guard, lost decision/advance ACK, cold recovery, historical/latest archive replay before and after reopen, balance/nonces, partial rollback and four corruption rejections PASS; native_udp=true, backend=CpuCallbacks; same process, NOT independent node processes/TPS/proof; D:\WorksArea\SUPERVM\crates\novovm-node\../../target/runtime-rebuild/consensus-tests\chain-10912-1792867974548255300
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1613 filtered out; finished in 0.83s
+

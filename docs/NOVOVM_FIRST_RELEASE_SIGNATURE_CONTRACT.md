@@ -4,6 +4,22 @@
 状态：首发约束和实施映射，**不是密码接线、生产配置或性能已验收**。
 经济约束见[正式 NOV 契约](NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)。
 
+### 最新接续：2026-10-25 原生应用输入与UCA查询
+
+`1727f6e1` 之后，原 `NativeApplicationClient::prepare_uca(Arc<UcaSpendBatch>)` 已接
+同一应用lane/tag15。调用者使用既有 `SignedUcaSpendV1` 与NUAPFL01，不自行拼另一套
+签名字节；传输Delivered不代表准入/到账。节点同一常驻AOEM验签后读取原权威父根，
+使用同一池、稳定账户nonce预留、完整效应和journal。旧Raw/V3载体仍拒绝，不降级。
+
+`Query::UcaSpendState { intent: UcaReadIntent, payer_hint, recipient_hint }` 使用NVQUERY3，
+复用原query lane和同一账户/grant记录。Pending/Missing/Unavailable分开；Present含
+root/height、预算、nonce和余额，只是认证节点观察，不是轻客户端证明或花费许可。
+一个进程内四原服务/四库、真实localhost UDP转账/再消费/冷恢复已获得运行证据；
+独立进程追赶、多机、正式发行、移动消费以及全面PQ仍未签收。
+详见[台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)和
+[验收证据](../artifacts/audit/nuas-native-admission-20261025/README.md)。下方较早的
+“NUAS不可提交”描述保留历史语境，不再作为这个隔离测试实现的现状。
+
 ## 1. 已确认与待确认
 
 - 正式首发全面采用 ML-DSA 和既有 UCA 的实际用途/花费权限，不先上线旧经济规则及

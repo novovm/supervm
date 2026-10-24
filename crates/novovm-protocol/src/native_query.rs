@@ -14,6 +14,7 @@ pub const MAX_RECEIPTS: usize = 128;
 pub const MAX_BYTES: usize = 32 * 1024;
 const MAGIC_V1: &[u8; 8] = b"NVQUERY1";
 const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
+const MAGIC_V3: &[u8; 8] = b"NVQUERY3";
 pub type Hash = [u8; 32];
 
 /// Nonempty bounded sequence. Its wire representation is an ordinary postcard
@@ -111,6 +112,84 @@ pub enum Query {
     Receipts {
         hashes: ReceiptBatch<Hash>,
     },
+    /// Read-only observation at a published root; NEVER a spend permission.
+    /// Hints locate state and must match authoritative binding records.
+    UcaSpendState {
+        intent: UcaReadIntent,
+        payer_hint: AccountId,
+        recipient_hint: AccountId,
+    },
+}
+
+/// The original NUAS intent bytes, bounded and validated BEFORE ownership.
+/// This is neither a signed transaction nor a new signing transcript.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UcaReadIntent(Vec<u8>);
+impl UcaReadIntent {
+    pub fn new(intent: &crate::uca_spend::UcaSpendIntentV1) -> Result<Self, &'static str> {
+        intent
+            .signing_bytes()
+            .map(Self)
+            .map_err(|_| "invalid UCA read intent")
+    }
+    pub fn intent(&self) -> crate::uca_spend::UcaSpendIntentV1 {
+        crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&self.0)
+            .expect("validated immutable UCA read intent")
+    }
+}
+impl Serialize for UcaReadIntent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bytes(&self.0)
+    }
+}
+impl<'de> Deserialize<'de> for UcaReadIntent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct IntentVisitor;
+        impl<'de> serde::de::Visitor<'de> for IntentVisitor {
+            type Value = UcaReadIntent;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("bounded canonical NUAS intent")
+            }
+            fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Self::Value, E> {
+                crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(value)
+                    .map_err(|_| E::custom("invalid UCA read intent"))?;
+                Ok(UcaReadIntent(value.to_vec()))
+            }
+        }
+        deserializer.deserialize_bytes(IntentVisitor)
+    }
+}
+
+/// Serving-node observation only, not a proof or reservation. All fields are
+/// read from the SAME published root, not assembled from caller declarations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UcaSpendStateView {
+    pub state_root: Hash,
+    pub height: u64,
+    pub account_active: bool,
+    pub current_spend_epoch: u64,
+    pub grant_epoch: u64,
+    pub permits_nov_transfer: bool,
+    pub revoked: bool,
+    pub not_before_height: u64,
+    pub expires_at_height: u64,
+    pub max_debit_per_intent: u128,
+    pub remaining_debit_budget: u128,
+    pub next_nonce: u64,
+    pub payer_balance: u128,
+    pub recipient_balance: u128,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UcaState {
+    Pending,
+    /// A required account or grant record was absent at this exact root. Not
+    /// unknown IO, malformed state or a claim that the UCA never existed.
+    Missing {
+        state_root: Hash,
+        height: u64,
+    },
+    Present(UcaSpendStateView),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +256,7 @@ pub enum Answer {
         states: ReceiptBatch<ReceiptState>,
         indexed_height: u64,
     },
+    UcaSpendState(UcaState),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -198,6 +278,9 @@ fn request(frame: &Frame) -> &Request {
 fn is_batch(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::Receipts { .. })
 }
+fn is_uca(frame: &Frame) -> bool {
+    matches!(request(frame).query, Query::UcaSpendState { .. })
+}
 fn valid(frame: &Frame) -> bool {
     let request = request(frame);
     if request.session == [0; 32] || request.sequence == 0 {
@@ -208,7 +291,8 @@ fn valid(frame: &Frame) -> bool {
             (_, Answer::Error(_))
             | (Query::Status, Answer::Status(_))
             | (Query::Receipt { .. }, Answer::Receipt { .. })
-            | (Query::NovBalance { .. }, Answer::NovBalance(_)) => true,
+            | (Query::NovBalance { .. }, Answer::NovBalance(_))
+            | (Query::UcaSpendState { .. }, Answer::UcaSpendState(_)) => true,
             (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
                 hashes.len() == states.len()
             }
@@ -222,7 +306,14 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
         return Err("invalid native query binding");
     }
     let batch = is_batch(&frame);
-    let mut bytes = if batch { MAGIC_V2 } else { MAGIC_V1 }.to_vec();
+    let mut bytes = if is_uca(&frame) {
+        MAGIC_V3
+    } else if batch {
+        MAGIC_V2
+    } else {
+        MAGIC_V1
+    }
+    .to_vec();
     bytes.extend(postcard::to_allocvec(&frame).map_err(|_| "native query encode")?);
     if bytes.len() > if batch { MAX_BYTES } else { MAX_V1_BYTES } {
         return Err("native query size");
@@ -230,10 +321,13 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     Ok(bytes)
 }
 pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
+    let uca = bytes.starts_with(MAGIC_V3);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
         true
+    } else if uca {
+        false
     } else {
         return Err("native query header/size");
     };
@@ -243,7 +337,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     // Fixed fields and checked length prefixes only; no unbounded Vec/String.
     let (frame, tail): (Frame, _) =
         postcard::take_from_bytes(&bytes[8..]).map_err(|_| "native query decode")?;
-    if !tail.is_empty() || !valid(&frame) || is_batch(&frame) != batch {
+    if !tail.is_empty() || !valid(&frame) || is_batch(&frame) != batch || is_uca(&frame) != uca {
         return Err("native query trailing bytes/binding");
     }
     Ok(frame)
@@ -252,6 +346,104 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn uca_intent() -> crate::uca_spend::UcaSpendIntentV1 {
+        crate::uca_spend::UcaSpendIntentV1 {
+            chain_id: 7,
+            genesis: [2; 32],
+            account_id: "uca:alice".into(),
+            authorization_epoch: 3,
+            spend_key_ref: [4; 32],
+            recipient_uca: "uca:bob".into(),
+            amount: u128::MAX - 1,
+            max_fee: 1,
+            nonce: u64::MAX - 1,
+            not_before_height: 1,
+            expires_at_height: 10,
+        }
+    }
+
+    #[test]
+    fn uca_query_canonical_intent_full_width_and_version_binding() {
+        let intent = uca_intent();
+        let raw = intent.signing_bytes().unwrap();
+        assert_eq!(
+            crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&raw).unwrap(),
+            intent
+        );
+        for len in 0..raw.len() {
+            assert!(crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&raw[..len]).is_err());
+        }
+        let mut tail = raw.clone();
+        tail.push(0);
+        assert!(crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&tail).is_err());
+        let request = Request {
+            session: [7; 32],
+            sequence: 1,
+            query: Query::UcaSpendState {
+                intent: UcaReadIntent::new(&intent).unwrap(),
+                payer_hint: AccountId::Bytes20([1; 20]),
+                recipient_hint: AccountId::Bytes32([2; 32]),
+            },
+        };
+        for answer in [
+            UcaState::Pending,
+            UcaState::Missing {
+                state_root: [9; 32],
+                height: 1,
+            },
+            UcaState::Present(UcaSpendStateView {
+                state_root: [9; 32],
+                height: u64::MAX,
+                account_active: false,
+                current_spend_epoch: u64::MAX,
+                grant_epoch: u64::MAX,
+                permits_nov_transfer: false,
+                revoked: true,
+                not_before_height: 0,
+                expires_at_height: u64::MAX,
+                max_debit_per_intent: u128::MAX,
+                remaining_debit_budget: u128::MAX,
+                next_nonce: u64::MAX,
+                payer_balance: u128::MAX,
+                recipient_balance: u128::MAX,
+            }),
+        ] {
+            let frame = Frame::Response(Response {
+                request: request.clone(),
+                answer: Answer::UcaSpendState(answer),
+            });
+            let bytes = encode(frame.clone()).unwrap();
+            assert!(bytes.starts_with(MAGIC_V3));
+            assert_eq!(decode(&bytes).unwrap(), frame);
+            for label in [MAGIC_V1, MAGIC_V2] {
+                let mut wrong = bytes.clone();
+                wrong[..8].copy_from_slice(label);
+                assert!(decode(&wrong).is_err());
+            }
+        }
+        assert!(encode(Frame::Response(Response {
+            request,
+            answer: Answer::NovBalance(None)
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn uca_read_intent_rejects_unbounded_or_invalid_body_before_ownership() {
+        let mut raw = uca_intent().signing_bytes().unwrap();
+        for bytes in [vec![0; 4096], {
+            raw[7] = 0;
+            raw[14] = 0;
+            raw
+        }] {
+            let encoded = postcard::to_allocvec(&bytes).unwrap();
+            assert!(postcard::from_bytes::<UcaReadIntent>(&encoded).is_err());
+        }
+        assert!(postcard::from_bytes::<UcaReadIntent>(
+            &postcard::to_allocvec(&usize::MAX).unwrap()
+        )
+        .is_err());
+    }
     #[test]
     fn bounded_binary_query_preserves_full_width_and_rejects_malformed_frames() {
         let request = Request {

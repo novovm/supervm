@@ -93,6 +93,7 @@ pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvide
         }
         Message::Transactions { scope, .. }
         | Message::ApflTransactions { scope, .. }
+        | Message::UcaTransactions { scope, .. }
         | Message::TransactionsTaken { scope, .. } => {
             scope.validate_shape()?;
             ensure!(

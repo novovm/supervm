@@ -5,6 +5,8 @@ pub mod config;
 pub mod rpc;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod uca_native_tests;
 use super::business::nov_transfer_batch::{
     effect_contract, program_id, receipt_codec, uca_effect_contract, uca_program_id,
     uca_receipt_codec, SEMANTIC_VERSION,
@@ -231,11 +233,29 @@ fn body_byte_limit(batch_size: usize) -> usize {
     (batch_size * 1024).min(384 * 1024)
 }
 
+// Canonical ML-DSA-65 input is >5 KiB. Keep the original total native object
+// ceiling; signature width must not be confused with the V3 1 KiB row bound.
+fn uca_body_byte_limit(batch_size: usize) -> usize {
+    (batch_size * 8192).min(384 * 1024)
+}
+
 fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
     let size = config.batch_size;
     // Arbitrary RPC transfers may have three distinct keys each (payer,
     // recipient and signer nonce), not the load fixture's shared recipient.
-    let keys = 3 * size + 128;
+    let uca = config.uca_initialization.is_some();
+    let row_bytes = if uca { 8192 } else { 1024 };
+    let body_bytes = if uca {
+        uca_body_byte_limit(size)
+    } else {
+        size * 1024
+    };
+    // UCA uses existing paged identity/grant declarations, not only balances.
+    let keys = if uca {
+        128 * size + 128
+    } else {
+        3 * size + 128
+    };
     PipelineConfig {
         store: StoreConfig {
             library: config.library.clone(),
@@ -254,13 +274,13 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
         max_retained_bytes: 256 * 1024 * 1024,
         authentication: AuthenticationBudget {
             transactions: size,
-            transaction_bytes: 1024,
-            body_bytes: size * 1024,
+            transaction_bytes: row_bytes,
+            body_bytes,
         },
         plan: PlanBudget {
             transactions: size,
-            transaction_bytes: 1024,
-            body_bytes: size * 1024,
+            transaction_bytes: row_bytes,
+            body_bytes,
             access_keys: keys,
         },
         capture: CaptureBudget {
@@ -335,8 +355,16 @@ fn start_native(
     );
     let codec = DecodeLimits {
         transactions: config.batch_size,
-        transaction_bytes: 1024,
-        body_bytes: body_byte_limit(config.batch_size),
+        transaction_bytes: if config.uca_initialization.is_some() {
+            8192
+        } else {
+            1024
+        },
+        body_bytes: if config.uca_initialization.is_some() {
+            uca_body_byte_limit(config.batch_size)
+        } else {
+            body_byte_limit(config.batch_size)
+        },
         message_bytes: 512 * 1024,
     };
     let progress = RoundProgress::new(

@@ -1,4 +1,4 @@
-//! No native library needed: verify admission accounting before authentication.
+//! Bounds without a library plus opt-in real same-owner ML-DSA admission.
 use super::*;
 use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::state::tree::empty_root;
@@ -52,4 +52,160 @@ fn uca_request_rejects_missing_hints_and_oversized_wire_before_acceptance() {
     .unwrap();
     let config = tests::config("unused-uca-oversized".into());
     assert!(request.reservation(&config).is_err());
+}
+
+#[test]
+#[ignore = "actual packaged AOEM ML-DSA admission; not spend authority or finality"]
+fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Result<()> {
+    use novovm_protocol::uca_spend::{spend_key_ref_v1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES};
+    use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+    let library = std::path::PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .context("explicit trusted AOEM test library required")?,
+    )
+    .canonicalize()?;
+    ensure!(
+        aoem_bindings::default_host_dll_path().canonicalize()? == library,
+        "test keygen and pipeline must use same packaged AOEM"
+    );
+    let mut config = tests::config(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/resident-signature-admission-tests")
+            .join(format!(
+                "uca-{}-{}",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            ))
+            .join("state.rocksdb"),
+    );
+    config.store.library = library.clone();
+    config.authentication.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
+    config.plan.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
+    std::fs::create_dir_all(config.store.database.parent().unwrap())?;
+    let facade =
+        novovm_exec::AoemExecFacade::open(&library, novovm_exec::AoemExecOpenOptions::default())?;
+    let (pk, sk) = aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 unavailable")?;
+    let signed = facade.uca_spend_signer_v1()?.sign(
+        UcaSpendIntentV1 {
+            chain_id: config.store.domain.chain_id,
+            genesis: config.store.domain.genesis_config_commitment,
+            account_id: "uca:admission-alice".into(),
+            authorization_epoch: 1,
+            spend_key_ref: spend_key_ref_v1(&pk)?,
+            recipient_uca: "uca:admission-bob".into(),
+            amount: 80,
+            max_fee: 10,
+            nonce: 0,
+            not_before_height: 1,
+            expires_at_height: 50,
+        },
+        &pk,
+        &sk,
+    )?;
+    let mut tampered = signed.clone();
+    tampered.signature[0] ^= 1;
+    let mut wrong_domain = signed.clone();
+    wrong_domain.intent.genesis[0] ^= 1;
+    let raws = vec![signed.encode()?, tampered.encode()?, wrong_domain.encode()?];
+    let hints = vec![(vec![1; 20], vec![2; 20]); raws.len()];
+    let limits = UcaSpendBatchLimits {
+        transactions: 16,
+        transaction_bytes: MAX_SIGNED_SPEND_BYTES,
+        body_bytes: 65536,
+    };
+    let batch = Arc::new(UcaSpendBatch::from_raw(&raws, &hints, limits)?);
+    assert!(SignatureAdmissionRequest::new(vec![
+        AdmissionInput::Raw(vec![1]),
+        AdmissionInput::Uca {
+            batch: batch.clone(),
+            index: 0
+        },
+    ])
+    .is_err());
+    assert!(SignatureAdmissionRequest::new(vec![AdmissionInput::Uca {
+        batch: batch.clone(),
+        index: 3
+    }])
+    .is_err());
+    let (foreign, _receiver) = tests::inert_pipeline(config.clone());
+    let pipeline = CandidatePipeline::start(config, OpenMode::CreateNew)?;
+    // Repeated rows are individual authentication facts, not nonce reservations;
+    // the one control-owned pool must reject duplicate/same-nonce admissions.
+    let request = SignatureAdmissionRequest::new(vec![
+        AdmissionInput::Uca {
+            batch: batch.clone(),
+            index: 0,
+        },
+        AdmissionInput::Uca {
+            batch: batch.clone(),
+            index: 1,
+        },
+        AdmissionInput::Uca {
+            batch: batch.clone(),
+            index: 2,
+        },
+        AdmissionInput::Uca {
+            batch: batch.clone(),
+            index: 0,
+        },
+    ])?;
+    let SignatureAdmissionSubmission::Accepted(mut ticket) = pipeline
+        .try_admit_signatures_owned(request)
+        .map_err(|rejected| rejected.error)?
+    else {
+        anyhow::bail!("unexpected UCA admission backpressure");
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut output = loop {
+        ensure!(Instant::now() < deadline, "UCA signature admission timeout");
+        if let Some(output) = ticket.try_take()? {
+            break output;
+        }
+        std::thread::yield_now();
+    };
+    let first = output.pop_admitted().unwrap();
+    assert_eq!(first.input.into_raw()?, raws[0]);
+    let checked = first.result?;
+    assert!(checked.is_uca());
+    assert!(pipeline.owns_admitted(&checked));
+    assert!(!foreign.owns_admitted(&checked));
+    assert_eq!(checked.checked_uca().unwrap().signed().encode()?, raws[0]);
+    assert!(checked.matches_uca_source(&batch, 0));
+    assert!(!checked.matches_uca_source(&batch, 1));
+    let equal_but_distinct = Arc::new(UcaSpendBatch::from_raw(&raws, &hints, limits)?);
+    assert!(!checked.matches_uca_source(&equal_but_distinct, 0));
+    assert!(checked.retained_metadata_bytes() >= raws[0].len());
+    assert!(output.pop_admitted().unwrap().result.is_err());
+    assert!(output.pop_admitted().unwrap().result.is_err());
+    assert!(output
+        .pop_admitted()
+        .unwrap()
+        .result?
+        .matches_uca_source(&batch, 0));
+    assert!(output.is_empty());
+    drop(output);
+    assert_eq!(pipeline.signature_counts(), (2, 0));
+    assert_eq!(pipeline.usage.lock().unwrap().ingress, 0);
+    // A bad external signature has not latched failure on the resident owner.
+    let SignatureAdmissionSubmission::Accepted(mut again) = pipeline
+        .try_admit_signatures_owned(SignatureAdmissionRequest::new(vec![AdmissionInput::Uca {
+            batch,
+            index: 0,
+        }])?)
+        .map_err(|rejected| rejected.error)?
+    else {
+        anyhow::bail!("bad row poisoned admission");
+    };
+    loop {
+        ensure!(Instant::now() < deadline, "UCA owner reuse timeout");
+        if let Some(mut output) = again.try_take()? {
+            assert!(output.pop_admitted().unwrap().result.is_ok());
+            break;
+        }
+        std::thread::yield_now();
+    }
+    pipeline.shutdown()?;
+    Ok(())
 }

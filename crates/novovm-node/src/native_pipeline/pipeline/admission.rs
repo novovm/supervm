@@ -4,34 +4,63 @@
 use super::*;
 use crate::native_pipeline::ingress::authentication::SignatureCheckedTransfer;
 use crate::native_pipeline::ingress::batch::{
-    admission_retained_bytes, admission_sizes, AdmissionRows, SignatureCheckedBatch,
+    admission_retained_bytes, admission_sizes, AdmissionRows, CheckedAdmission,
+    SignatureCheckedBatch,
 };
 
 /// Immutable evidence from THIS pipeline's strict verifier. It grants neither
 /// a nonce lease nor spend/publication authority. Its source must stay charged
 /// in the existing pending-input owner; no ingress permit is retained here.
 pub struct AdmittedTransfer {
-    checked: Arc<SignatureCheckedTransfer>,
+    checked: Arc<CheckedAdmission>,
     owner: Arc<()>,
 }
 
 impl AdmittedTransfer {
     pub fn checked(&self) -> &SignatureCheckedTransfer {
-        &self.checked
+        self.checked
+            .v3()
+            .expect("V3 admission accessor requires V3 contract")
+    }
+
+    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedUcaSpendV1> {
+        self.checked.uca()
+    }
+
+    pub fn is_uca(&self) -> bool {
+        self.checked_uca().is_some()
+    }
+
+    pub fn matches_uca_source(
+        &self,
+        batch: &Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        index: usize,
+    ) -> bool {
+        matches!(self.checked.as_ref(), CheckedAdmission::Uca { batch: source, index: source_index, .. }
+            if Arc::ptr_eq(source, batch) && *source_index == index)
     }
 
     /// Pool source accounting must cover the very dictionary this token pins,
     /// not merely a different dictionary containing an equal signed row.
     pub(crate) fn matches_apfl_source(&self, batch: &Arc<ApflTransferBatch>, index: usize) -> bool {
-        self.checked.matches_apfl_source(batch, index)
+        self.checked
+            .v3()
+            .is_some_and(|checked| checked.matches_apfl_source(batch, index))
     }
 
     /// Additional logical metadata, excluding the shared immutable APFL source
     /// payload which the pending pool already charges once per dictionary.
     pub fn retained_metadata_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
-            + std::mem::size_of::<SignatureCheckedTransfer>()
+            + std::mem::size_of::<CheckedAdmission>()
             + 2 * std::mem::size_of::<usize>()
+            + self.checked_uca().map_or(0, |checked| {
+                let signed = checked.signed();
+                signed.public_key.capacity()
+                    + signed.signature.capacity()
+                    + signed.intent.account_id.capacity()
+                    + signed.intent.recipient_uca.capacity()
+            })
     }
 }
 
@@ -84,11 +113,11 @@ pub(crate) fn admitted_apfl_for_test(
     index: usize,
 ) -> Result<AdmittedTransfer> {
     Ok(AdmittedTransfer {
-        checked: Arc::new(
+        checked: Arc::new(CheckedAdmission::V3(
             crate::native_pipeline::ingress::authentication::authenticate_apfl_row(
                 batch, index, chain_id,
             )?,
-        ),
+        )),
         owner,
     })
 }
@@ -117,6 +146,13 @@ pub struct SignatureAdmissionRequest {
 impl SignatureAdmissionRequest {
     pub fn new(inputs: Vec<AdmissionInput>) -> Result<Self> {
         ensure!(!inputs.is_empty(), "empty signature admission request");
+        let uca = matches!(&inputs[0], AdmissionInput::Uca { .. });
+        ensure!(
+            inputs
+                .iter()
+                .all(|input| matches!(input, AdmissionInput::Uca { .. }) == uca),
+            "mixed UCA and V3 signature admission is forbidden"
+        );
         let (body_bytes, max_transaction_bytes) = admission_sizes(&inputs)?;
         let retained_bytes = admission_retained_bytes(&inputs)?;
         Ok(Self {
@@ -135,6 +171,17 @@ impl SignatureAdmissionRequest {
         Self::new(
             (0..batch.len())
                 .map(|index| AdmissionInput::Apfl {
+                    batch: batch.clone(),
+                    index,
+                })
+                .collect(),
+        )
+    }
+
+    pub fn from_uca(batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>) -> Result<Self> {
+        Self::new(
+            (0..batch.len())
+                .map(|index| AdmissionInput::Uca {
                     batch: batch.clone(),
                     index,
                 })
@@ -268,6 +315,10 @@ pub(super) struct AdmissionCommand {
 }
 
 impl CandidatePipeline {
+    pub fn owns_admitted(&self, row: &AdmittedTransfer) -> bool {
+        Arc::ptr_eq(&row.owner, &self.identity)
+    }
+
     /// Structural rebinding only: this never authorizes a parent or executes
     /// business. Every new row must match its same-owner evidence in full,
     /// including signatures; canonical transaction hashes are insufficient.
@@ -283,7 +334,9 @@ impl CandidatePipeline {
                 "admitted transfer belongs to a different pipeline"
             );
             ensure!(
-                row.checked.is_apfl_view(),
+                row.checked
+                    .v3()
+                    .is_some_and(SignatureCheckedTransfer::is_apfl_view),
                 "only retained structured admission can be reused"
             );
         }
