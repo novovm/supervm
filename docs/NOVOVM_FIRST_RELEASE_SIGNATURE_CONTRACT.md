@@ -8,8 +8,8 @@
 
 - 正式首发全面采用 ML-DSA 和既有 UCA 的实际用途/花费权限，不先上线旧经济规则及
   Ed25519 正式链，再以全网升级替代首发交付。
-- 现行单独 Ed25519 路径仅作开发回归/性能对照，不能作为正式本链的备用验签入口；正式套件中的 Ed25519 是必需组成，不得省略。
-- 用户已确认 **ML-DSA-65 + Ed25519 AND 双签名**，两者必须通过，覆盖原参数和混合规则待定项。规范编码和可信用途状态仍需实现验收。现有 `Mldsa87` 标签不能代表此套件；不允许单签、错误参数、缺失组件或任一通过的降级。
+- 现行单独 Ed25519 路径仅作开发回归/性能对照，不能作为正式本链的备用验签入口；首发单签不再要求附加 Ed25519。
+- 用户最新指令覆盖此前强制双签决定；经必要性评估，采用 **ML-DSA-65 单签工程基线**，理由集中在[唯一评估记录](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md)。规范编码和可信用途状态仍需实现验收。现有 `Mldsa87` 标签不能代表 65；不允许错误参数或验签失败后降级至 Ed25519。
 - 未明确套件、编码/域、UCA授权和实际运行库资格时，原正式启动/发布检查必须拒绝，
   不新增另一个产品模式来绕过原节点。当前没有声称该新增运行门禁已经实施。
 - 当前均为公测链；正式新创世使用独立链域和数据目录，不清空同域签票日志重签。
@@ -38,8 +38,8 @@
 主体/域/版本与精确父状态来源；不能将管理委托直接扩大成Transfer花费权。
 
 必须实际拒绝：已撤销旧钥、过期或越用途授权、旧账户版本授权、错误链域/意图、
-重复nonce、错误套件与参数、篡改公钥/消息/签名以及仅通过其中一项的降级组合。
-已选混合签名，两个组成签名必须按批准合同同时通过，不能实现为任意一种通过即可。
+重复nonce、错误套件与参数、篡改公钥/消息/签名以及退回经典签名的降级。
+单签仅指一种算法；身份管理、设备通信、资产支出及治理多人授权的权限边界仍分别执行。
 恢复能力也不能由已撤销旧钥绕过；同一用途内的别名必须共享原本应共享的防重放状态。
 
 当前活动V3转账签名只绑定chain_id而不绑定genesis；已有共识和UCA管理签名中的
@@ -61,7 +61,7 @@ ML-DSA是数字签名，不替代业务执行有效性证明，也不替代通�
 ## 5. 接线顺序与实际验收
 
 1. 并行修复原生命周期的累计签名者缓存及长期原生查询，不以缓存未命中当nonce零。
-2. 按已确认 ML-DSA-65 + Ed25519 AND 策略，复核原 UCA/AOEM 通用接口，交付唯一规范签名字节与版本合同。
+2. 按最新 ML-DSA-65 单签基线，复核原 UCA/AOEM 通用接口，交付唯一规范签名字节与版本合同。
 3. 在原node/exec/bindings/AOEM和唯一状态/journal内接花费、管理、共识及适用服务签名。
 4. 将正式1亿NOV/9位小数/禁止再mint-burn的创世与授权资金效应接入同一合同。
 5. 用真实签名验证合法新钥花费、旧钥撤销、用途隔离、轮换/恢复后的余额及nonce连续；
@@ -72,4 +72,4 @@ ML-DSA是数字签名，不替代业务执行有效性证明，也不替代通�
 
 ## 2026-10-24 NOVOCHAT integration decision
 
-See [the parameter recommendation](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md): ML-DSA-65 plus Ed25519 with AND verification is the user-approved suite; the native envelope, trusted spending state and mobile runtime are not yet delivered. Do not infer approval of ML-DSA-87 from the current enum. The NOVOCHAT computer owns isolated consumer preflight only; native UCA/spending and shared canonical signature format remain owned by the SUPERVM computer per the [joint handoff](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). No real billing or mobile key migration is enabled by this recommendation.
+See [the parameter recommendation](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md): the latest user instruction supersedes mandatory hybrid; the assessed engineering baseline is ML-DSA-65 alone; the native envelope, trusted spending state and mobile runtime are not yet delivered. Do not infer approval of ML-DSA-87 from the current enum. The NOVOCHAT computer owns isolated consumer preflight only; native UCA/spending and shared canonical signature format remain owned by the SUPERVM computer per the [joint handoff](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). No real billing or mobile key migration is enabled by this recommendation.

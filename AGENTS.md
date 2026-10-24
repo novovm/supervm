@@ -2,11 +2,11 @@
 
 ## 2026-10-24 no duplicate two-machine implementation (latest)
 
-The user explicitly requires no duplicate development. The SUPERVM/economics computer is the single owner of signature comparison/format/shared implementation, native UCA/spending, settlement, and coordination of Android AOEM runtime production. The NOVOCHAT computer only consumes these interfaces and owns Android/App integration and device acceptance. It does not create a parallel signature protocol, account system, settlement path or AOEM build. Before shared edits, fetch and record file ownership/handoff in section 8 of [the joint sequence](docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). A pasted single-signature review has not superseded the explicit AND approval; policy reconsideration belongs to one upstream decision record, not concurrent implementations. Pushing this record does not prove the other computer has read it.
+The user explicitly requires no duplicate development. The SUPERVM/economics computer is the single owner of signature comparison/format/shared implementation, native UCA/spending, settlement, and coordination of Android AOEM runtime production. The NOVOCHAT computer only consumes these interfaces and owns Android/App integration and device acceptance. It does not create a parallel signature protocol, account system, settlement path or AOEM build. Before shared edits, fetch and record file ownership/handoff in section 8 of [the joint sequence](docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). The latest direct user instruction supersedes the previous mandatory AND decision and requests a necessity assessment. The resulting engineering baseline is ML-DSA-65 alone; do not implement a mandatory Ed25519 companion or a parallel hybrid track. The assessment and its limits live in the one upstream policy document. Pushing this record does not prove the other computer has read it.
 
-## 2026-10-24 approved first-release hybrid suite (latest)
+## 2026-10-24 single-signature assessment supersedes mandatory hybrid (latest)
 
-The user explicitly approved ML-DSA-65 + Ed25519 with AND verification: both signatures must validate. No OR, classical-only, alternate-level or missing-component fallback. This supersedes pending parameter/hybrid wording below. SUPERVM owns the one canonical suite/transcript and native UCA/spending integration; NOVOCHAT owns the consumer and Android integration. Approval of the suite does not deliver the wire contract, runtime, custody, or finality. Preserve existing phone identities/history and keep real billing disabled. See [confirmed policy](docs/NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md).
+The user explicitly withdrew the earlier mandatory-dual premise in favor of reassessing necessity. Use the resulting ML-DSA-65 single-signature engineering baseline. No Ed25519 fallback or alternate-level negotiation after verification failure. Single algorithm does not merge identity/spending keys or remove governance multi-party approval. SUPERVM owns the one canonical suite/transcript and native UCA/spending integration; NOVOCHAT owns the consumer and Android integration. Approval of the suite does not deliver the wire contract, runtime, custody, or finality. Preserve existing phone identities/history and keep real billing disabled. See [confirmed policy](docs/NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md).
 
 ## 2026-10-24 two-machine implementation authorization (latest)
 
@@ -36,7 +36,7 @@ founder/foundation subscription cut. See the current economic contract in
 The formal first release requires ML-DSA and the existing UCA's actual spending
 authority across transaction, consensus and applicable identity/economic/service
 signatures. Ed25519 alone remains a development reference, never a mainnet downgrade.
-The approved first-release suite is ML-DSA-65 + Ed25519 with AND verification;
+The latest assessed first-release baseline is ML-DSA-65 alone, superseding mandatory hybrid;
 the exact canonical encoding and native integration still need delivery.
 Reuse AOEM crypto and existing UCA rules; do not create another account authority
 or conceal NOV policy inside AOEM. Preserve identity and replay state across key
