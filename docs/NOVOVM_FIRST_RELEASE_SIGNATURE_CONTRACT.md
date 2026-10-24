@@ -6,6 +6,13 @@
 
 ### 最新接续：2026-10-25 原生应用输入与UCA查询
 
+**后续验收更新（输入 `000e221e`）：** NUAS已在Windows同机四个独立原节点进程
+通过40高度缺席、晚启动、追赶高度1强杀/原库恢复、到账再消费及四库冷重开，
+最终高度41；余额、额度、nonce、回执和原费用记录一致，未新增运行时入口。
+见[进程证据](../artifacts/audit/nuas-native-process-recovery-20261025/README.md)。
+下文“独立进程追赶未签收”是前片范围；真实多机、正式发行、移动消费、动态权限
+及全面PQ仍未签收，本轮不开放真实资产或改变最终性口径。
+
 `1727f6e1` 之后，原 `NativeApplicationClient::prepare_uca(Arc<UcaSpendBatch>)` 已接
 同一应用lane/tag15。调用者使用既有 `SignedUcaSpendV1` 与NUAPFL01，不自行拼另一套
 签名字节；传输Delivered不代表准入/到账。节点同一常驻AOEM验签后读取原权威父根，

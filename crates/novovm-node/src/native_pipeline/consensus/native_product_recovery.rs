@@ -24,7 +24,7 @@ fn phase(nodes: &ProductNodes, evidence: &mut Value, name: &str, started: Instan
     checkpoint(nodes, evidence)
 }
 
-fn stop_one(nodes: &mut ProductNodes, index: usize) -> Result<()> {
+pub(super) fn stop_one(nodes: &mut ProductNodes, index: usize) -> Result<()> {
     let mut process = nodes.processes[index]
         .take()
         .context("recovery process was not running")?;
@@ -51,7 +51,7 @@ fn same_head(values: &[Status], reference: Status) -> Result<()> {
     Ok(())
 }
 
-fn wait_height(
+pub(super) fn wait_height(
     nodes: &mut ProductNodes,
     clients: &mut [NativeApplicationClient],
     height: u64,
@@ -79,7 +79,7 @@ fn wait_height(
     }
 }
 
-fn open_stopped_store(nodes: &ProductNodes, index: usize) -> Result<CandidateStore> {
+pub(super) fn open_stopped_store(nodes: &ProductNodes, index: usize) -> Result<CandidateStore> {
     ensure!(
         nodes.processes[index].is_none(),
         "cannot read a live signer DB"
@@ -104,7 +104,7 @@ fn open_stopped_store(nodes: &ProductNodes, index: usize) -> Result<CandidateSto
 /// Read only while the process is dead. Prove the crash actually interrupted
 /// durable replay, rather than merely querying an old projection after replay
 /// had already finished. Preserve the exact old signing outbox as a restart pin.
-fn interrupted_archive(
+pub(super) fn interrupted_archive(
     nodes: &ProductNodes,
     index: usize,
     observed: Status,

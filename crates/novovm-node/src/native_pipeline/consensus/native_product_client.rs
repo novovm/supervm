@@ -28,6 +28,11 @@ fn connect(
     set: Arc<ValidatorSet>,
 ) -> Result<NativeApplicationClient> {
     let config: ResidentConfig = serde_json::from_slice(&fs::read(&nodes.configs[ingress])?)?;
+    let transaction_bytes = if config.uca_initialization.is_some() {
+        novovm_protocol::uca_spend::MAX_SIGNED_SPEND_BYTES
+    } else {
+        1024
+    };
     // This device key is NOT in genesis and is never added to a node allowlist.
     let key = SigningKey::from_bytes(&[201; 32]);
     ensure!(
@@ -46,15 +51,15 @@ fn connect(
             address: config.udp_addr,
         },
         MessageDomain {
-            chain_id: CHAIN,
+            chain_id: config.genesis.chain_id,
             genesis: config.genesis.genesis_config_commitment,
             protocol: config.genesis.protocol_commitment,
             validators: set,
         },
         DecodeLimits {
             transactions: 2,
-            transaction_bytes: 1024,
-            body_bytes: 2048,
+            transaction_bytes,
+            body_bytes: 2 * transaction_bytes,
             message_bytes: 512 * 1024,
         },
         LaneLimits {

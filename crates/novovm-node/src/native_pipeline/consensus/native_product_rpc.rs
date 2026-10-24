@@ -28,6 +28,9 @@ impl ProductNodes {
     fn start(&mut self, index: usize, mode: &str) -> Result<()> {
         ensure!(self.processes[index].is_none(), "test node already running");
         let config: Value = serde_json::from_slice(&fs::read(&self.configs[index])?)?;
+        // Independent restarts must not overwrite the interrupted recovery's
+        // stdout/stderr evidence. Each fixture directory is already unique.
+        let launch = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let mut command = Command::new(&self.binary);
         command
             .env_remove("NOVOVM_NATIVE_RESIDENT_CONFIG")
@@ -38,10 +41,12 @@ impl ProductNodes {
             .env_remove("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION")
             .stdin(Stdio::null())
             .stdout(Stdio::from(fs::File::create(
-                self.directory.join(format!("{mode}-{index}.stdout.log")),
+                self.directory
+                    .join(format!("{mode}-{index}-{launch}.stdout.log")),
             )?))
             .stderr(Stdio::from(fs::File::create(
-                self.directory.join(format!("{mode}-{index}.stderr.log")),
+                self.directory
+                    .join(format!("{mode}-{index}-{launch}.stderr.log")),
             )?));
         if config.get("rpc_addr").is_none_or(Value::is_null) {
             ensure!(

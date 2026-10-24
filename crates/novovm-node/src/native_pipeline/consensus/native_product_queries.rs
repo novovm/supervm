@@ -4,6 +4,8 @@
 mod aab;
 #[path = "native_product_recovery.rs"]
 mod recovery;
+#[path = "native_product_uca_recovery.rs"]
+mod uca_recovery;
 use super::*;
 use novovm_protocol::native_query::{AccountId, Answer, Balance, Query, ReceiptState, Status};
 
