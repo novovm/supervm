@@ -9,6 +9,14 @@ M2 issuance/redemption and custody segregation remain. MCP, LP liabilities and e
 Phase acceptance and code-gap statements below are dated evidence, not proof of the October billing/payout design or all Execute/Governance entries. The inspected Transfer ingress still rejects Execute/Governance; see baseline source links. For the June implementation amendments, consult the [Chinese counterpart](../../docs_CN/NOVOVM-ECONOMICS/NOVOVM-MONETARY-ARCHITECTURE-M0-M1-M2-AND-MULTI-ASSET-PAYMENT-2026-04-17.md); this English synchronization does not claim to repeat its detailed runtime acceptance.
 _2026-04-17_
 
+**2026-10-24 authority update:** native NOV first-release issuance, supply,
+purpose locks/releases and commercial boundaries are now governed by the
+[current first-release contract](NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md).
+Native NOV is fully issued at genesis (100,000,000 NOV), with no subsequent mint
+or burn. The M0/M1/M2 separation below remains; issuance of a distinct M2 credit
+asset is not issuance of native NOV. Historical implementation status below is
+dated evidence, not proof of current native-node integration or release readiness.
+
 ## 1. Purpose and scope
 
 This document freezes the following boundaries to prevent implementation drift:

@@ -270,7 +270,10 @@ mod tests {
                         if id == retire_id {
                             break candidate;
                         }
-                        ensure!(id < retire_id && skipped < budget - 2, "unexpected test lane");
+                        ensure!(
+                            id < retire_id && skipped < budget - 2,
+                            "unexpected test lane"
+                        );
                         skipped += 1;
                         drop(candidate);
                     };

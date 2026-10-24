@@ -291,6 +291,7 @@ impl NativeObjectLink {
     pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
         self.diagnostics = Some(observer);
     }
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn note_response_diagnostic_v1(
         &self,
         request: Option<[u8; 32]>,
@@ -303,6 +304,7 @@ impl NativeObjectLink {
             d.response(request, transfer_tag_v1(session, stream, id), now);
         }
     }
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn diagnostic_transfer_tag_v1(
         &self,
         session: [u8; 16],
@@ -313,6 +315,7 @@ impl NativeObjectLink {
             .as_ref()
             .map(|_| transfer_tag_v1(session, stream, id))
     }
+    #[cfg(feature = "iroh-transport")]
     pub(crate) fn note_response_validated_v1(&self, tag: [u8; 32], now: Instant) {
         if let Some(d) = &self.diagnostics {
             d.progress(tag, NativeProgressStageV1::ResponseValidated, 0, now);

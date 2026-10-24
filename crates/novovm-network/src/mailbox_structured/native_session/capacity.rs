@@ -29,7 +29,7 @@ impl Window {
             .saturating_mul(2)
             .min(normal_memory_work.max(1));
         Self {
-            slots: metadata_ceiling.max(SLOTS).min(MAX_SLOTS_V1),
+            slots: metadata_ceiling.clamp(SLOTS, MAX_SLOTS_V1),
             bytes: s.retained_bytes.max(LIMITS.wire_bytes),
         }
     }

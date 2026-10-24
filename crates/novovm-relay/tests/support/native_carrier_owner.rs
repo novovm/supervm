@@ -256,7 +256,8 @@ impl<'a> Client<'a> {
         loop {
             ensure!(Instant::now() < end, "native request deadline");
             if self.session.negotiated_retained_bytes().is_some() {
-                self.session.try_send(&mut self.link, id, Instant::now(), || Ok(()))?;
+                self.session
+                    .try_send(&mut self.link, id, Instant::now(), || Ok(()))?;
             }
             if let Some((seen, mut replies)) = self.tick().await? {
                 ensure!(seen == id && replies.len() == 1, "unexpected native reply");

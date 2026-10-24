@@ -9,6 +9,12 @@ M2 issuance/redemption and custody segregation remain. MCP, LP liabilities and e
 Phase acceptance and code-gap statements below are dated evidence, not proof of the October billing/payout design or all Execute/Governance entries. The inspected Transfer ingress still rejects Execute/Governance; see baseline source links. For the June implementation amendments, consult the [Chinese counterpart](../../docs_CN/NOVOVM-ECONOMICS/NOVOVM-DUAL-TRACK-SETTLEMENT-AND-MARKET-SYSTEM-P2A-2026-04-17.md); this English synchronization does not claim to repeat its detailed runtime acceptance.
 _2026-04-17_
 
+**2026-10-24 authority update:** the [current first-release economic contract](NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)
+overrides conflicting native NOV issuance or fee-burning assumptions. Pool
+isolation and rule-price/market-price separation remain applicable; neither
+clearing nor fees may mint or burn native NOV. The phase-acceptance statements
+below record the April implementation, not current native-node release signoff.
+
 ## 1. Purpose
 
 This document converges boundaries across monetary, reserve, clearing, and market-pricing systems as the `P2-A` implementation freeze.

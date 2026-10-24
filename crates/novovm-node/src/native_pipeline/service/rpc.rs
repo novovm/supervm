@@ -7,7 +7,7 @@
 
 use super::{ResidentConfig, ResidentNode, StartMode};
 use crate::native_fresh_rpc::FreshRpcServer;
-use crate::native_pipeline::business::nov_transfer_batch::balance_key;
+use crate::native_pipeline::business::nov_transfer_batch::{balance_key, nonce_key};
 use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::consensus::statement::ParentPoint;
 use crate::native_pipeline::consensus::transport::Message;
@@ -32,7 +32,8 @@ use std::time::{Duration, Instant};
 const MAX_POOL: usize = 65_536;
 const MAX_POOL_BYTES: usize = 64 * 1024 * 1024;
 const RECENT_RECEIPTS: usize = 65_536;
-const MAX_SIGNERS: usize = 65_536;
+// Cache working set, not a lifetime limit on chain accounts/nonce subjects.
+const NONCE_CACHE_ENTRIES: usize = MAX_POOL;
 
 /// Bounded cooperative handoff after real progress, then the original sleep.
 /// Pending work alone cannot refresh the bound (offline peers/nonce gaps/slow
@@ -63,6 +64,8 @@ mod admission;
 mod gossip;
 mod history;
 mod native_query;
+mod nonce_cache;
+use nonce_cache::NonceCache;
 use novovm_protocol::native_query::{Balance, ReceiptState};
 
 struct BalanceQuery {
@@ -186,7 +189,11 @@ pub struct RpcLifecycle {
     reservations: BTreeSet<(Hash, u64)>,
     pending_bytes: usize,
     pending_retention: PoolRetention,
-    nonces: BTreeMap<Hash, u64>,
+    nonces: NonceCache,
+    nonce_scan: usize,
+    // References into the existing pool, not a second transaction queue. A
+    // cold nonce cache must not turn a 1,024-row input into eight-row blocks.
+    nonce_window: Option<(Position, VecDeque<Hash>)>,
     receipts: BTreeMap<Hash, ReceiptState>,
     recent: VecDeque<Hash>,
     indexed_height: u64,
@@ -226,7 +233,9 @@ impl RpcLifecycle {
             reservations: BTreeSet::new(),
             pending_bytes: 0,
             pending_retention: PoolRetention::default(),
-            nonces: BTreeMap::new(),
+            nonces: NonceCache::new(NONCE_CACHE_ENTRIES),
+            nonce_scan: 0,
+            nonce_window: None,
             receipts: BTreeMap::new(),
             recent: VecDeque::new(),
             indexed_height: 0,
@@ -342,16 +351,45 @@ impl RpcLifecycle {
             return Ok(());
         }
         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
-            let selected = select_pending_batch(
-                &self.order,
+            if self
+                .nonce_window
+                .as_ref()
+                .is_none_or(|(old, _)| *old != position)
+            {
+                self.nonce_window = Some((
+                    position,
+                    nonce_selection_window(&self.order, self.nonce_scan, self.batch_size),
+                ));
+            }
+            let next = successor
+                .as_ref()
+                .map_or_else(BTreeMap::new, |s| s.nonce_after.clone());
+            // Keep this bounded candidate window while the original I/O owner
+            // resolves its exact-parent nonces. Eight read slots are an I/O
+            // budget, not a smaller consensus/transaction batch size.
+            self.poll_window_nonces(&next)?;
+            let window = &self.nonce_window.as_ref().expect("nonce window").1;
+            let Some(selected) = select_prepared_nonce_window(
+                window,
                 &self.pending,
-                &self.nonces,
-                successor
-                    .as_ref()
-                    .map_or_else(BTreeMap::new, |s| s.nonce_after.clone()),
+                &self.nonces.values,
+                next,
                 self.batch_size,
-            );
+            ) else {
+                return Ok(());
+            };
+            let window_len = window.len();
+            // Once per prepared window, not once per eight I/O completions.
+            // Selection already skips stale nonces; no unknown/read-wait turn
+            // needs a pool-wide cleanup. Publication retains its own cleanup.
+            self.retire_stale_pending();
             if selected.is_empty() {
+                // All required reads are known: these are actual gaps/stale
+                // entries, not temporary I/O. Try another finite window next
+                // turn rather than allowing the prefix to starve ready work.
+                self.nonce_scan =
+                    advance_nonce_window(self.nonce_scan, window_len, self.order.len());
+                self.nonce_window = None;
                 return Ok(());
             }
             let mut context = self.node.template;
@@ -424,6 +462,7 @@ impl RpcLifecycle {
                 .receipt_projection()
                 .len(),
         };
+        self.nonces.begin_published_parent(point);
         for index in 0..count {
             // Copy one fixed-size view, not a full packet/document/vector. No
             // business recomputation, persistence or signing capability here.
@@ -448,13 +487,8 @@ impl RpcLifecycle {
                     .context("published projection lost exact head")?
                     .receipt_projection()[index],
             };
-            ensure!(
-                self.nonces.contains_key(&receipt.signer_identity)
-                    || self.nonces.len() < MAX_SIGNERS,
-                "experimental RPC signer projection capacity reached; consensus remains active"
-            );
             self.nonces
-                .insert(receipt.signer_identity, receipt.nonce_after);
+                .published(receipt.signer_identity, receipt.nonce_after);
             if let Some(entry) = self.pending.remove(&receipt.tx_hash) {
                 self.gossip_repair.remove(entry.gossip_missing);
                 self.pending_bytes -= entry.canonical_len;
@@ -479,11 +513,47 @@ impl RpcLifecycle {
             }
         }
         // Conflicting same-nonce input is not reported as an executed failure.
+        self.retire_stale_pending();
+        self.indexed_height = point.height;
+        if warm {
+            self.warm_projection_blocks = self.warm_projection_blocks.saturating_add(1);
+        } else {
+            self.archive_projection_blocks = self.archive_projection_blocks.saturating_add(1);
+        }
+        self.archive = None;
+        Ok(())
+    }
+
+    fn poll_window_nonces(&mut self, successor: &BTreeMap<Hash, u64>) -> Result<()> {
+        let parent = self.node.controller.parent();
+        let pipeline = &self.node.pipeline;
+        let pending = &self.pending;
+        let subjects = self
+            .nonce_window
+            .as_ref()
+            .expect("prepared nonce window")
+            .1
+            .iter()
+            .filter_map(|hash| pending.get(hash).map(|entry| entry.signer))
+            .filter(|subject| !successor.contains_key(subject));
+        let progressed = self.nonces.poll(parent, subjects, |root, subject| {
+            pipeline.try_read_value(root, nonce_key(&subject))
+        })?;
+        self.admission.made_progress |= progressed;
+        // No pool-wide work here: a 1,024-subject cold window may need 128
+        // eight-ticket completion turns. Its prepared selection/publication
+        // boundaries, not each I/O tick, retire stale pending work.
+        Ok(())
+    }
+
+    fn retire_stale_pending(&mut self) {
         let stale: Vec<_> = self
             .pending
             .iter()
             .filter_map(|(hash, entry)| {
-                (entry.nonce < self.nonces.get(&entry.signer).copied().unwrap_or(0))
+                self.nonces
+                    .get(&entry.signer)
+                    .is_some_and(|known| entry.nonce < *known)
                     .then_some(*hash)
             })
             .collect();
@@ -504,14 +574,6 @@ impl RpcLifecycle {
             .retain(|hash| self.pending.contains_key(hash));
         self.gossip_queued
             .retain(|hash| self.pending.contains_key(hash));
-        self.indexed_height = point.height;
-        if warm {
-            self.warm_projection_blocks = self.warm_projection_blocks.saturating_add(1);
-        } else {
-            self.archive_projection_blocks = self.archive_projection_blocks.saturating_add(1);
-        }
-        self.archive = None;
-        Ok(())
     }
 
     fn admit_checked(
@@ -560,7 +622,7 @@ impl RpcLifecycle {
         let signer = checked.nonce_identity();
         let nonce = checked.transfer().nonce;
         ensure!(
-            nonce >= self.nonces.get(&signer).copied().unwrap_or(0),
+            self.nonces.get(&signer).is_none_or(|known| nonce >= *known),
             "nonce replay"
         );
         ensure!(
@@ -834,9 +896,15 @@ fn pending_apfl_prefix(
         if !entry.matches(row)? {
             return Ok(None);
         }
-        let expected = next
-            .entry(entry.signer)
-            .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
+        let expected = match next.entry(entry.signer) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let Some(known) = nonces.get(entry.key()) else {
+                    return Ok(None);
+                };
+                entry.insert(*known)
+            }
+        };
         if *expected != entry.nonce {
             return Ok(None);
         }
@@ -878,9 +946,15 @@ fn advance_pending_raw(
     if !entry.matches(decoded.as_view())? {
         return Ok(false);
     }
-    let expected = next
-        .entry(entry.signer)
-        .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
+    let expected = match next.entry(entry.signer) {
+        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            let Some(known) = nonces.get(entry.key()) else {
+                return Ok(false);
+            };
+            entry.insert(*known)
+        }
+    };
     if *expected != entry.nonce {
         return Ok(false);
     }
@@ -924,6 +998,51 @@ fn selected_apfl_batch(
     )?))
 }
 
+fn nonce_selection_window(
+    order: &VecDeque<Hash>,
+    start: usize,
+    batch_size: usize,
+) -> VecDeque<Hash> {
+    let start = start.min(order.len());
+    order
+        .iter()
+        .skip(start)
+        .chain(order.iter().take(start))
+        .take(batch_size)
+        .copied()
+        .collect()
+}
+
+fn advance_nonce_window(start: usize, count: usize, remaining: usize) -> usize {
+    if remaining == 0 {
+        0
+    } else {
+        (start.min(remaining) + count) % remaining
+    }
+}
+
+/// None is temporary nonce preparation, not an empty candidate. Some(empty)
+/// means every extant row's parent nonce is known but the real order/gaps offer
+/// no executable prefix; only then may the caller fairly rotate its window.
+fn select_prepared_nonce_window(
+    window: &VecDeque<Hash>,
+    pending: &BTreeMap<Hash, Pending>,
+    nonces: &BTreeMap<Hash, u64>,
+    next: BTreeMap<Hash, u64>,
+    batch_size: usize,
+) -> Option<Vec<Hash>> {
+    if window.iter().any(|hash| {
+        pending.get(hash).is_some_and(|entry| {
+            !next.contains_key(&entry.signer) && !nonces.contains_key(&entry.signer)
+        })
+    }) {
+        return None;
+    }
+    Some(select_pending_batch(
+        window, pending, nonces, next, batch_size,
+    ))
+}
+
 fn select_pending_batch(
     order: &VecDeque<Hash>,
     pending: &BTreeMap<Hash, Pending>,
@@ -938,9 +1057,17 @@ fn select_pending_batch(
         let Some(entry) = pending.get(hash) else {
             continue;
         };
-        let expected = next
-            .entry(entry.signer)
-            .or_insert_with(|| nonces.get(&entry.signer).copied().unwrap_or(0));
+        let expected = match next.entry(entry.signer) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let Some(known) = nonces.get(entry.key()) else {
+                    // No completed state read/verified successor output, no
+                    // nonce credit. An evicted subject is never assumed new.
+                    continue;
+                };
+                entry.insert(*known)
+            }
+        };
         if entry.nonce == *expected {
             if raw_bytes + entry.canonical_len > body_limit {
                 break;
@@ -1406,8 +1533,8 @@ mod tests {
     #[test]
     fn batch_selection_obeys_network_byte_limit_without_dropping_pending_or_nonce_credit() {
         let (order, pending) = pending_fixture(1024, 1024);
-        let selected =
-            select_pending_batch(&order, &pending, &BTreeMap::new(), BTreeMap::new(), 1024);
+        let known = BTreeMap::from([([1; 32], 0)]);
+        let selected = select_pending_batch(&order, &pending, &known, BTreeMap::new(), 1024);
         assert_eq!(selected.len(), 384);
         assert_eq!(
             selected
@@ -1438,7 +1565,8 @@ mod tests {
         let (mut order, pending) = pending_fixture(5, 8);
         let first = order.pop_front().unwrap();
         order.insert(2, first); // Future 1/2 appear before the required 0.
-        let selected = select_pending_batch(&order, &pending, &BTreeMap::new(), BTreeMap::new(), 5);
+        let known = BTreeMap::from([([1; 32], 0)]);
+        let selected = select_pending_batch(&order, &pending, &known, BTreeMap::new(), 5);
         assert_eq!(
             selected_raw_for_test(&selected, &pending),
             vec![0_u64.to_le_bytes().to_vec()]
@@ -1488,7 +1616,8 @@ mod tests {
                 },
             );
         }
-        let selected = select_pending_batch(&order, &pending, &BTreeMap::new(), BTreeMap::new(), 2);
+        let known = BTreeMap::from([(pending[&order[0]].signer, 0)]);
+        let selected = select_pending_batch(&order, &pending, &known, BTreeMap::new(), 2);
         assert_eq!(selected, order.iter().take(2).copied().collect::<Vec<_>>());
         let batch = selected_apfl_batch(&selected, &pending, 2)?;
         assert_eq!(batch.len(), 2);

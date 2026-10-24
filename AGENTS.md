@@ -1,10 +1,42 @@
 # Agent Highest Law
 
+## 2026-10-24 two-machine implementation authorization (latest)
+
+The user now authorizes committing/pushing the confirmed documentation and beginning the necessary UCA/PQ/asset-authority foundations, superseding the earlier documentation-only restriction for this scope. This NOVOCHAT computer owns mobile integration and preservation of existing chat identities/history; the other computer owns NOV economics, native UCA/spending, signature/consensus and settlement in SUPERVM. Shared SDK/protocol changes need a named owner in [the joint sequence](docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md), not two independent implementations. No real billing, grants, mainnet genesis or destructive identity migration. Do not infer that the other computer has started a task from a pushed document.
+
 ## 2026-10-24 shared service economics design baseline
 
 Use [the authoritative baseline](docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) and its English synchronization. Target: all 100 million native NOV issued at genesis, no later mint/burn; default pay-as-you-go, persistent balances, no minimum founder monthly share. Preserve M2/custody/clearing rules. Founder necessary consent for new treasury decisions is not unilateral spending or a veto on established debts. Percentages, cash budgets and governance recovery remain pending. Design updated; implementation not delivered. This documentation round authorizes no code/configuration, deployment, asset actions, commit or push.
 
 Confirmed resource-income update: professional operators, multiple devices/accounts and self-funded tests are allowed; self-created orders do not automatically qualify for public subsidies. Public budgets purchase verifiable capacity or previously published tasks, without paying the same obligation twice. 35m NOV and 80/10/10 remain candidates. Income states end at confirmed credit to a specific UCA asset account; service keys cannot spend unrestricted assets. The next development milestone is labeled test-NOV custody/retrieval settlement, not activation now. See baseline sections 11–12 and the [first-release contract](docs/NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md); nine-decimal design is not end-to-end charging acceptance.
+
+## 2026-10-24 first-release NOV economy and signature prerequisites
+
+The NOV economics computer owns monetary and ecosystem closure; mobile/platform work stays
+with the NOVOCHAT machine. The approved native supply is 100,000,000 NOV, fully
+issued at genesis with 9 decimals: 100,000,000,000,000,000 base units. No subsequent
+native NOV mint or burn is permitted. Unlocks change spend conditions on already
+issued assets; rewards, trials and staged airdrops spend funded approved budgets.
+Do not migrate old mint-on-unlock or fee-burning semantics into the first release.
+Founder/foundation proceeds, treasury funds and service payables are distinct;
+unapproved splits (including 50%) are not defaults. Default to pay-as-you-go with
+persistent balances and no minimum founder monthly share. Calendar-month trial
+rules are not a silently substituted 30-day term. Sponsored trial months have no
+founder/foundation subscription cut. See the current economic contract in
+`docs/NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md`.
+
+The formal first release requires ML-DSA and the existing UCA's actual spending
+authority across transaction, consensus and applicable identity/economic/service
+signatures. Ed25519 remains a development reference, never a mainnet downgrade.
+The ML-DSA parameter set and any mandatory hybrid rule remain pending the other
+conversation's GitHub update; do not infer approval from an existing Mldsa87 tag.
+Reuse AOEM crypto and existing UCA rules; do not create another account authority
+or conceal NOV policy inside AOEM. Preserve identity and replay state across key
+rotation/recovery. Do not release the old economic/signature contract first and
+defer these requirements to a post-launch upgrade. See
+`docs/NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md` for the source map and open gates.
+Capacity/cache and historical-query fixes may proceed in parallel, using exact
+parent state and bounded caches rather than a chain-wide user-count ceiling.
 
 ## 2026-10-21 first release uses one current node protocol
 

@@ -1,5 +1,55 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-24 NOV首发契约与 nonce 工作集修复（非正式发行）
+
+本轮基线 `9280387466de2111251edc3d52397fe5164a2e22`，容量实现提交 `9f204269`，
+构建门禁修正提交 `78117ba9`。用户确认创世全额发行
+1亿NOV、9位小数，即 `100,000,000,000,000,000` 最小单位；之后不增发、不销毁，
+解锁和奖励只能改变已有且获授权资金的可用性/归属。国库、创始人及服务应付分开。
+新[经济契约](NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)
+优先于旧mint/burn示例；不擅定分配、比例、受益人或未取得的月末/续期细则。
+[首发签名契约](NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md)明确ML-DSA＋原UCA实际
+花费权限为首发前置；档位和混合规则等另一会话GitHub更新，不默认87，不先发旧Ed正式链。
+上述是已批准方向和源码映射，不是新增经济/签名运行门禁已经接通。
+
+实际代码继续唯一原生路径：原 `native_execution_tick` → NovoRUDP/APFL →
+`service::RpcLifecycle` 的原池/选批 → 原node/exec/bindings/AOEM → 原共识发布。
+`RpcLifecycle`是当前原生入口共用的内部生命周期名称，不代表新增HTTP产品入口。
+累计65,536主体投影不再成为全链用户数上限；现为有界可淘汰nonce工作集，键仍是
+权威状态的nonce主体Hash。缓存未命中从原 `CandidatePipeline::try_read_value`
+按精确已发布父状态异步读取，最多8读票；Unknown/Reading/权威Absent/Present分开，
+未读到不视作零。旧主体淘汰后读回真实nonce，不另建状态owner或授权系统。
+完整ParentPoint改变废弃旧读票；仅已验证连续发布回执可携带/更新未变主体的缓存。
+私有durable successor输出只用于原候选准备，不提升为已发布状态或签票权限。
+
+独立复核发现并在合入前修正两项中间退化：冷1,024主体不能因8票预算被拆成8笔块；
+逐8票完成也不能反复全扫65K池。现在原selection保留不超过batch_size的既有池引用窗，
+读齐后选批；全为真实gap/stale才公平轮转。全池清理仅在准备完成/发布边界执行。
+
+Windows本机检查：原native_pipeline组件373通过、0失败、57项显式环境测试未计为通过；
+其中nonce缓存/准备窗9项覆盖低容量淘汰、跨旧65K阈值的纯缓存序列、旧nonce恢复与
+重放拒绝、根变化、读错/坏宽度、背压和1,024主体分阶段准备。它们不是65K独立用户的
+真实进程压测。原协议45项通过。当前重建node的原生实际进程用例5通过、0失败、0忽略，
+总404.89秒：原生交易/查询与冷恢复、真实A/A/B、少数派/签名冲突，以及最高/最低peer
+两个晚启动/独立重启/追赶中断方向。健康三节点各前进40高度，缺席节点在125.495/
+125.854秒后启动，追赶耐久高度1且目标40尚无归档时被强杀，原库恢复后四节点均到46。
+原密钥、配置及旧签票outbox保持；核对原测试的余额、费用、nonce、回执与根。
+node SHA-256 `a7f9c0e65b6d773f8978021267aba76c01970faf2ead7eccba7f538171dbf443`，
+AOEM仍为随包 `31306037…15e8947`。详见[本片身份/测试证据](../artifacts/audit/nov-first-release-capacity-20261024/evidence.json)；
+原始报告在所列本机target目录保留，摘要不冒充远端原始报告或多机验收。
+
+同时修正既有CI的Cargo metadata解析：合法区分大小写的 `USB/usb` 特性使用
+`ConvertFrom-Json -AsHashtable`，不删依赖或放宽成员名单。真实22/3成员边界和
+2项接受/11项拒绝夹具通过。三处既有rustfmt差异仅机械格式化；四个诊断方法按其
+真实信箱调用方的 `iroh-transport` 条件编译，未删除手机仍使用的接线。全特性检查中
+原有clamp写法及已检查Option的提取仅作等价lint修正，不改容量值、额度或持有义务。
+node的lib/tests与network全特性lib严格Clippy通过；根/嵌套fmt通过。未冒称全工作区
+全部门禁或远端CI通过。
+
+本片不声称正式创世、供应/锁仓/结算执行、UCA/ML-DSA主链接通、完整业务证明或
+TPS资格。长期二进制原生历史查询仍待适配原有ArchiveRead；旧JSON历史查询存在
+不代表原生查询已完成。真实多机、最终套件下的负载与发布验收继续保持未完成。
+
 ## 2026-10-23 NOVONET v106 pocket receive/recovery FAILED
 
 Same installed v106:600s real unplugged screen-off B, no receiver polling or
