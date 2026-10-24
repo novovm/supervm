@@ -1,5 +1,9 @@
 # Agent Highest Law
 
+## 2026-10-25 confirmed tiered spending authority
+
+The user approved mobile small-balance spending plus KEY ONE control of savings/high-value assets. The phone cannot raise limits, extend/reissue its grant or replenish indefinitely. Identity/chat recovery cannot acquire asset management authority. Implement trusted caps/revocation/atomic effects in the existing SUPERVM UCA owner; NOVOCHAT owns Android custody and consumer integration. The normative decision and pending numeric/window parameters are in [tiered authority](docs/NOVONET_UCA_TIERED_SPENDING_AUTHORITY_V1.md), handoff `UCA-TIERED-2026-10-25`. No real charging or asset activation. A pushed notice is not a recipient acknowledgment.
+
 ## 2026-10-24 no duplicate two-machine implementation (latest)
 
 The user explicitly requires no duplicate development. The SUPERVM/economics computer is the single owner of signature comparison/format/shared implementation, native UCA/spending, settlement, and coordination of Android AOEM runtime production. The NOVOCHAT computer only consumes these interfaces and owns Android/App integration and device acceptance. It does not create a parallel signature protocol, account system, settlement path or AOEM build. Before shared edits, fetch and record file ownership/handoff in section 8 of [the joint sequence](docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). The latest direct user instruction supersedes the previous mandatory AND decision and requests a necessity assessment. The resulting engineering baseline is ML-DSA-65 alone; do not implement a mandatory Ed25519 companion or a parallel hybrid track. The assessment and its limits live in the one upstream policy document. Pushing this record does not prove the other computer has read it.
