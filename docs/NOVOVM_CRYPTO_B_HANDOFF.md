@@ -1,5 +1,9 @@
 # 设备 B：密码学模块与共享接口交接
 
+2026-10-24 更新：下方历史 `novovm_prover::pq_signature` 的唯一实现已迁入
+`novovm_exec::pq_signature`；prover 为现有 App 探针/兼容调用重导出，非第二套实现。
+新 UCA 花费合同沿 `exec::uca_spend` 使用同一密码实现，可信状态与手机资格另验。
+
 认领基线：`main@10774c9`，Linux 开发设备 B；同步时工作区干净，未推送提交为零。
 这是开发分工，不是先前网络测试的 A/B 身份。共同约定见
 [产品交付主线](NOVOVM_DELIVERY_ALIGNMENT.md)。
@@ -131,7 +135,7 @@ cargo clippy --locked -p novovm-prover --all-targets -- -D warnings
 
 不能把“2 个 runtime 测试通过”写成“3 个参数集标准兼容通过”：测试验证了
 65/87 被阻断。44 的少量样本通过也不是完整标准认证或主网算法选择。
-源码内的 [公开向量来源及摘要](../crates/novovm-prover/src/pq_signature_fixtures/PROVENANCE.txt)
+源码内的 [公开向量来源及摘要](../crates/novovm-exec/src/pq_signature_fixtures/PROVENANCE.txt)
 可独立复现，不只依赖同库自签自验。原始调查还对每参数集 15 个 external pure
 和 15 个 internal/raw 用例核对：44 两组均 15/15，65/87 各为 12/15，分别拒绝
 各组全部 3 个正例。没有据此断言内核具体根因或更改算法。

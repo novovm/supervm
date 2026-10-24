@@ -2811,6 +2811,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek 2.2.0",
+ "novovm-protocol",
  "postcard",
  "serde",
  "serde_json",

@@ -10,10 +10,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 mod ingress_codec;
+pub mod pq_signature;
 pub mod resident;
 mod semantic_compute;
 mod semantic_graph_v3;
 mod semantic_integer;
+pub mod uca_spend;
 
 pub const AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1: &str = "novovm-exec/v1";
 pub const EIP7610_REJECTION_CONTRACT_V1: &str = "novovm-exec/eip7610-v1";

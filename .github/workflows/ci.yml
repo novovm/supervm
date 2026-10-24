@@ -380,6 +380,16 @@ jobs:
             target/resident-rpc-aab-tests/**/*.stdout.log
             target/resident-rpc-aab-tests/**/*.stderr.log
 
+      - name: Shared ML-DSA-65 spend contract and AOEM compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p novovm-protocol --lib uca_spend --locked
+          cargo test -p novovm-adapter-api --lib uca_spend_policy --locked
+          cargo test -p novovm-exec --lib pq_signature --locked
+          cargo test -p novovm-exec --test uca_spend_runtime --locked -- --ignored --test-threads=1
+          cargo test -p novovm-prover --test pq_signature_runtime --locked -- --ignored --test-threads=1
+
       - name: Original AOEM Transfer and recovery without Host compatibility permission
         timeout-minutes: 10
         env:

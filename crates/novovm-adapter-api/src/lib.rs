@@ -9,6 +9,7 @@ pub mod local_identity;
 pub mod mapped_asset;
 pub mod native_signing;
 pub mod uca_key_binding;
+pub mod uca_spend_policy;
 pub mod unified_account;
 
 pub use chain_adapter::{default_chain_id, AdapterFactory, ChainAdapter, ChainConfig, ChainType};

@@ -42,15 +42,15 @@ fn packaged_runtime_requires_all_standard_mldsa_parameters() {
     for (parameters, json) in [
         (
             AoemMldsaParameterSet::MlDsa44,
-            include_str!("../src/pq_signature_fixtures/mldsa44.json"),
+            include_str!("../../novovm-exec/src/pq_signature_fixtures/mldsa44.json"),
         ),
         (
             AoemMldsaParameterSet::MlDsa65,
-            include_str!("../src/pq_signature_fixtures/mldsa65.json"),
+            include_str!("../../novovm-exec/src/pq_signature_fixtures/mldsa65.json"),
         ),
         (
             AoemMldsaParameterSet::MlDsa87,
-            include_str!("../src/pq_signature_fixtures/mldsa87.json"),
+            include_str!("../../novovm-exec/src/pq_signature_fixtures/mldsa87.json"),
         ),
     ] {
         let level = parameters.level();

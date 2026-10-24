@@ -111,7 +111,7 @@ impl TailFixture {
             expected_total: total,
             receiver_done: done,
             missing_count: missing,
-            current_window: window.as_ref().map(|w| w.range.clone()),
+            current_window: window.as_ref().map(|w| w.range),
             current_window_missing_ranges: window.map(|w| w.missing_ranges).unwrap_or_default(),
         };
         assert!(self.b.try_send(

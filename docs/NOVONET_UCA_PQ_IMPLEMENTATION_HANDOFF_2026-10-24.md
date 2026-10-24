@@ -115,6 +115,28 @@ U2/U3 可按文件归属并行；手机只消费同一协议，不用本地余�
 Android ELF、Windows DLL、Linux SO 和 iOS 制品不互相替代。平台产物及真机尚未验证的部分明确不可用。
 本回执推送仅确认接收与文件认领，不代表 U2/U3、移动运行库或测试 NOV 结算已经交付。
 
+### SUPERVM 首片源码交付（本节所在提交）
+
+回执已推送 `8bcf90da`。本片实现与验证：共享 `novovm-protocol::uca_spend` 规范
+ML-DSA-65 NOV花费意图/签名字节/固定向量，`novovm-exec::uca_spend` 常驻签验门面，
+以及 `novovm-adapter-api::uca_spend_policy` 明确标为调用方供值的策略预检。
+已有密码实现、官方向量和反例原样迁到exec，prover为现有消费者重导出，无第二套密码实现。
+精确字段与调用顺序见[签名合同](NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md)。
+
+本机Windows真实随包库已通过新规范对象签验和原密码兼容测试；协议8、策略3、密码13
+组件通过。四相关crate lib回归/严格Clippy及原node lib编译通过。附带修正既有tail测试
+的Copy值clone门禁，不改网络行为。新增密码测试明确进入CI；远端结果另记，既有依赖
+安全审计未在本片关闭。本片没有TPS复测或新原生交易成功证据。
+
+**App可接共享编码及签名接口，但不能据此启用资产消费。** 尚未接通原节点的可信
+UCA/花费grant父状态读取、授权/额度原子消费、实际新交易入口、轮换恢复交易及结算。
+预检不是状态证明；当前不接受App自报权限，也不将旧管理授权扩大成支出授权。
+
+用户已确认有Mac及Xcode Cloud。Android/iPhone运行库由本侧继续协调，工具链与
+固定源码构建任务见[移动运行库交接](NOVOVM_MOBILE_AOEM_RUNTIME_HANDOFF.md)。
+本机未构建移动库，未部署APK/IPA；下一构建执行端须回传实际目标、核心/插件身份及
+失败/运行证据，不能把桌面或模拟器成绩写为手机通过。App继续保留原身份和v108。
+
 ## 10. NOVOCHAT 消费者制品核对进展（不代替接收回执）
 
 2026-10-24 再次 fetch：SUPERVM `555b9d52` / NOVOCHAT `c7cddaf`，未见另一台接收回执或新接口提交，不代表其本地无工作。NOVOCHAT 侧本轮认领仅为现有 PQ 探针与 Android 构建提示/文档：加载前核对独立交接的核心库 SHA-256，保留上游 manifest/ABI/密码能力校验；没有修改 SUPERVM 生产源码或创建 ML-DSA 算法/账户/结算实现。

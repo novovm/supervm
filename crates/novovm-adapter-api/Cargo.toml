@@ -8,6 +8,7 @@ description = "NOVOVM adapter API: IR types + adapter traits (host-facing), no L
 
 [dependencies]
 anyhow = "1"
+novovm-protocol = { path = "../novovm-protocol" }
 ed25519-dalek = { version = "2", features = ["zeroize"] }
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }

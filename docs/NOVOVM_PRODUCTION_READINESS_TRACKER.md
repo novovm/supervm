@@ -1,5 +1,25 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-24 ML-DSA-65共享花费合同首片（U2接口，U3仍未接通）
+
+基线91032e40，认领8bcf90da；固定65单签，未新增节点模式或修改现行开发链V3。
+原prover密码包装及向量迁入exec唯一实现，旧位置仅兼容重导出。protocol提供有界
+二进制UCA花费意图、稳定账户nonce域和独立固定向量；exec复用AOEM签后验签、
+官方正反例资格检查。adapter策略预检分别核父/链/账户/用途/代次/撤销/窗口/nonce/额度，
+调用方状态不冒充可信父状态或花费权限，不消费任何实际余额、nonce或预算。
+
+本机release：新协议8项、策略3项、原密码13项通过；新exec真实AOEM用例1项及
+prover兼容真实库3项显式执行通过。四相关crate lib回归、严格Clippy、原node lib
+编译通过；fmt/diff检查通过。实际Windows库SHA256仍31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947。
+测试核全意图字段/参数/用途/上下文/密钥/签名篡改、换钥nonce域和供值权限反例；
+没有真实原生UCA支出、新经济结算、新TPS或手机运行验收。远端CI结果另验。
+
+Android缺本机NDK/target和合格制品；用户有Mac/Xcode Cloud，尚未提供该执行端
+产物。iOS还需同bindings的静态接线资格，不能把.a当AoemDyn动态库。
+见[合同](NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md)、
+[双机交接](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md)及
+[移动构建任务](NOVOVM_MOBILE_AOEM_RUNTIME_HANDOFF.md)。
+
 ## 2026-10-24 手机后台收件状态补同步：v106 失败不是最新 v108 结果
 
 职责：手机后台收件/自动恢复归 NOVOCHAT 电脑；SUPERVM 电脑继续共享 UCA、签名与经济接口，不并行修改手机任务。此次仅同步已存在的验收记录，没有新测试、手机安装或运行修改。

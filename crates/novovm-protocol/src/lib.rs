@@ -18,6 +18,7 @@ pub mod native_treasury;
 pub mod protocol_catalog;
 pub mod tx_wire;
 pub mod uca_delegation;
+pub mod uca_spend;
 pub mod uca_transaction;
 pub mod wire;
 
