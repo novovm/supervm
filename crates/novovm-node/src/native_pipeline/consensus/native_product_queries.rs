@@ -10,14 +10,39 @@ use super::*;
 use novovm_protocol::native_query::{AccountId, Answer, Balance, Query, ReceiptState, Status};
 
 fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer> {
+    query_until(
+        client,
+        selector,
+        Instant::now() + Duration::from_secs(5),
+        || Ok(()),
+    )
+}
+
+#[derive(Debug)]
+struct QueryTimeout(Query);
+
+impl std::fmt::Display for QueryTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "native query timeout: {:?}", self.0)
+    }
+}
+
+impl std::error::Error for QueryTimeout {}
+
+fn query_until(
+    client: &mut NativeApplicationClient,
+    selector: Query,
+    deadline: Instant,
+    mut alive: impl FnMut() -> Result<()>,
+) -> Result<Answer> {
     let request = client.prepare_query(selector.clone())?;
-    let deadline = Instant::now() + Duration::from_secs(5);
     let mut sent = false;
     loop {
+        alive()?;
         let now = Instant::now();
         if now >= deadline {
             client.abandon_query(&request)?;
-            anyhow::bail!("native query timeout: {selector:?}");
+            return Err(QueryTimeout(selector).into());
         }
         let _ = client.poll(
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
@@ -41,18 +66,141 @@ fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer
 }
 
 fn status(client: &mut NativeApplicationClient) -> Result<Status> {
-    let Answer::Status(value) = query(client, Query::Status)? else {
+    checked_status(query(client, Query::Status)?)
+}
+
+fn checked_status(answer: Answer) -> Result<Status> {
+    let Answer::Status(value) = answer else {
         anyhow::bail!("native status missing");
     };
     ensure!(!value.projection_failed, "native archive projection failed");
     Ok(value)
 }
 
+// Only test readiness/recovery tolerates an unanswered request. Ordinary
+// receipt/asset queries remain strict. All peers share the caller's deadline.
+fn retry_status_until<T>(
+    deadline: Instant,
+    mut now: impl FnMut() -> Instant,
+    mut attempt: impl FnMut(Instant) -> Result<T>,
+) -> Result<T> {
+    loop {
+        let started = now();
+        ensure!(
+            started < deadline,
+            "native status readiness deadline exhausted"
+        );
+        match attempt(deadline.min(started + Duration::from_secs(5))) {
+            Err(error) if error.is::<QueryTimeout>() => {
+                if now() >= deadline {
+                    return Err(error.context("native status readiness deadline exhausted"));
+                }
+            }
+            result => return result,
+        }
+    }
+}
+
+fn recovery_status(
+    nodes: &mut ProductNodes,
+    client: &mut NativeApplicationClient,
+    deadline: Instant,
+) -> Result<Status> {
+    retry_status_until(deadline, Instant::now, |attempt_deadline| {
+        checked_status(query_until(
+            client,
+            Query::Status,
+            attempt_deadline,
+            || nodes.alive(),
+        )?)
+    })
+}
+
+#[test]
+fn native_status_readiness_retries_only_typed_timeouts_with_shared_deadline() -> Result<()> {
+    let start = Instant::now();
+    let clock = std::cell::Cell::new(start);
+    let deadline = start + Duration::from_secs(7);
+    let mut attempts = 0;
+    let value = retry_status_until(
+        deadline,
+        || clock.get(),
+        |until| {
+            attempts += 1;
+            if attempts == 1 {
+                assert_eq!(until, start + Duration::from_secs(5));
+                clock.set(until);
+                Err(anyhow::Error::new(QueryTimeout(Query::Status))
+                    .context("first startup request"))
+            } else {
+                assert_eq!(until, deadline); // Remaining two seconds, not a fresh five.
+                Ok(42)
+            }
+        },
+    )?;
+    assert_eq!((value, attempts), (42, 2));
+    Ok(())
+}
+
+#[test]
+fn native_status_readiness_deadline_does_not_restart_for_another_peer() {
+    let start = Instant::now();
+    let clock = std::cell::Cell::new(start);
+    let deadline = start + Duration::from_secs(7);
+    let mut attempts = 0;
+    let result: Result<()> = retry_status_until(
+        deadline,
+        || clock.get(),
+        |until| {
+            attempts += 1;
+            clock.set(until);
+            Err(QueryTimeout(Query::Status).into())
+        },
+    );
+    assert!(result.unwrap_err().is::<QueryTimeout>());
+    assert_eq!(attempts, 2);
+    let result: Result<()> = retry_status_until(
+        deadline,
+        || clock.get(),
+        |_| panic!("expired shared deadline must not query another peer"),
+    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("deadline exhausted"));
+}
+
+#[test]
+fn native_status_readiness_fatal_errors_are_not_retried() {
+    for message in [
+        "child exited",
+        "malformed response",
+        "native archive projection failed",
+        "native query timeout: Status",
+        "transport failure",
+    ] {
+        let mut attempts = 0;
+        let result: Result<()> = retry_status_until(
+            Instant::now() + Duration::from_secs(90),
+            Instant::now,
+            |_| {
+                attempts += 1;
+                anyhow::bail!("{message}")
+            },
+        );
+        assert_eq!(result.unwrap_err().to_string(), message);
+        assert_eq!(attempts, 1); // Text matching must not make arbitrary errors retryable.
+    }
+}
+
 fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> Result<Vec<Status>> {
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         nodes.alive()?;
-        let values = clients.iter_mut().map(status).collect::<Result<Vec<_>>>()?;
+        let values = clients
+            .iter_mut()
+            .map(|client| recovery_status(nodes, client, deadline))
+            .collect::<Result<Vec<_>>>()?;
         if values
             .iter()
             .all(|s| !s.recovering && s.indexed_height == s.height)
@@ -191,6 +339,59 @@ fn hashes(raw: &[Vec<u8>]) -> Result<Vec<[u8; 32]>> {
     raw.iter()
         .map(|bytes| Ok(authenticate_transfer_v3(bytes, CHAIN, 1024)?.tx_hash()))
         .collect()
+}
+
+#[test]
+#[ignore = "actual delayed original node, real AOEM and NovoRUDP; run alone"]
+fn native_only_status_readiness_survives_first_query_timeout() -> Result<()> {
+    let binary = PathBuf::from(
+        std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY").context("explicit binary required")?,
+    )
+    .canonicalize()?;
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/native-product-rpc")
+        .join(format!(
+            "native-readiness-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    fs::create_dir_all(&directory)?;
+    let directory = directory.canonicalize()?;
+    let (mut nodes, set) = setup_with_genesis(&directory, binary, genesis()?, 2)?;
+    let mut config: Value = serde_json::from_slice(&fs::read(&nodes.configs[0])?)?;
+    config["rpc_addr"] = Value::Null;
+    config["profile"] = json!(crate::native_pipeline::service::config::ORIGINAL_PROFILE);
+    config["native_client_limit"] = json!(2);
+    fs::write(&nodes.configs[0], serde_json::to_vec_pretty(&config)?)?;
+    let mut client = connect(&nodes, 0, set)?;
+    let started = Instant::now();
+    let mut attempts = 0;
+    let observed = retry_status_until(started + Duration::from_secs(90), Instant::now, |until| {
+        attempts += 1;
+        if attempts == 2 {
+            // No server existed for the first real five-second request.
+            // Reuse the same client/session and its original cancellation API.
+            nodes.start(0, "create")?;
+        }
+        checked_status(query_until(&mut client, Query::Status, until, || {
+            nodes.alive()
+        })?)
+    })?;
+    ensure!(
+        attempts >= 2 && started.elapsed() >= Duration::from_secs(5),
+        "fixture did not exercise the first unanswered request"
+    );
+    ensure!(
+        observed.height == 0 && !observed.recovering,
+        "unexpected initial head"
+    );
+    nodes.stop_all()?;
+    eprintln!(
+        "native readiness delayed-start passed: attempts={attempts} elapsed_ms={} artifacts={}",
+        started.elapsed().as_millis(),
+        directory.display()
+    );
+    Ok(())
 }
 
 #[test]

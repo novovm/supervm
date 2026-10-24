@@ -1,0 +1,21 @@
+[1m[33mwarning[0m: /home/runner/work/supervm/supervm/crates/novovm-node/Cargo.toml: file `/home/runner/work/supervm/supervm/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+[1m[92m     Running[0m unittests src/lib.rs (target/runtime-rebuild/debug/deps/novovm_node-ac784a2af78897c3)
+
+running 1 test
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::uca_recovery::native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery ... NUAS process recovery evidence=/home/runner/work/supervm/supervm/target/native-product-rpc/uca-recovery-29780-1792871631368652712
+Error: native query timeout: Status
+FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::application::queries::uca_recovery::native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1607 filtered out; finished in 6.21s
+
+[1m[91merror[0m: test failed, to rerun pass `-p novovm-node --lib`

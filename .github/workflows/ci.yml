@@ -339,6 +339,7 @@ jobs:
           # Fail instead of silently passing a filter matching zero tests.
           cargo test -p novovm-node --lib native_only_ --locked -- --ignored --list > target/native-test-list.txt
           grep -q 'native_only_genesis_transactions_queries_and_cold_recovery: test' target/native-test-list.txt
+          grep -q 'native_only_status_readiness_survives_first_query_timeout: test' target/native-test-list.txt
           grep -q 'native_only_minority_and_pending_signature_conflict_recover: test' target/native-test-list.txt
           grep -q 'native_only_recovery_late_lowest_validator_original_database_and_minority: test' target/native-test-list.txt
           grep -q 'native_only_recovery_late_highest_validator_original_database_and_minority: test' target/native-test-list.txt

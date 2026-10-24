@@ -1,0 +1,26 @@
+{
+  "completed": false,
+  "scope": "four_original_node_processes_one_host_nuas_recovery",
+  "real_processes": 4,
+  "real_machines": 1,
+  "http_listeners": 0,
+  "fixed_quorum": 3,
+  "missing_validator": 0,
+  "offline_heights": 40,
+  "mainnet": false,
+  "tps_acceptance": false,
+  "wallet_replay_to_laggard": false,
+  "database_copy": false,
+  "business_proof_verified": false,
+  "binary_sha256": "0x379edc5dba011976ec07e8b8a01eec4b0dd9f407e5443e0ae9339da33879d53d",
+  "library_sha256": "0x4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
+  "offline_progress": [],
+  "healthy_process_ids": [
+    null,
+    29782,
+    29783,
+    29785
+  ],
+  "elapsed_ms": 5063,
+  "failure": "native query timeout: Status"
+}

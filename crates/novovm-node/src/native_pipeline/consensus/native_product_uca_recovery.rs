@@ -326,7 +326,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         let deadline = Instant::now() + Duration::from_secs(90);
         let interrupted = loop {
             nodes.alive()?;
-            let observed = status(&mut late)?;
+            let observed = recovery_status(&mut nodes, &mut late, deadline)?;
             if observed.height > 0 {
                 ensure!(
                     observed.height < target.height,

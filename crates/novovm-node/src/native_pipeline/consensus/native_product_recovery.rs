@@ -59,7 +59,10 @@ pub(super) fn wait_height(
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
         nodes.alive()?;
-        let values = clients.iter_mut().map(status).collect::<Result<Vec<_>>>()?;
+        let values = clients
+            .iter_mut()
+            .map(|client| recovery_status(nodes, client, deadline))
+            .collect::<Result<Vec<_>>>()?;
         ensure!(
             values.iter().all(|value| value.height <= height),
             "fixture published unsubmitted height: {values:?} expected={height}"

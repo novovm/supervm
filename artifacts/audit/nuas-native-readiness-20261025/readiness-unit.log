@@ -1,0 +1,8 @@
+
+running 3 tests
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_deadline_does_not_restart_for_another_peer ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_fatal_errors_are_not_retried ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_retries_only_typed_timeouts_with_shared_deadline ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1616 filtered out; finished in 0.00s
+
