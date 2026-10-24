@@ -35,7 +35,7 @@
 - `novovm-adapter-api::uca_spend_policy`：现有单笔/剩余预算、用途、撤销、代次及nonce预检；供值预检不能证明状态可信。
 - 上游已将授权/预算/nonce/余额/费用接入原候选效应，推进批准初始化清单、final-root pin和原journal恢复。对应证据见[初始化与恢复](../artifacts/audit/uca-publication-recovery-20261024/README.md)、[启动与安全增量](../artifacts/audit/uca-native-startup-security-20261024/README.md)。
 - 原生NUAS/APFL准入、传播、查询与追赶/归档重建仍有缺口；当前不得显示真实可支出或已到账。首发全部共识抗量子覆盖也不能由本轮花费签验替代。
-- NOVOCHAT `a4a38bf` 已完成PKL110独立包认证建钥、重启后同钥签验与取消拒绝；PCLM50正向持钥未验收。这不是主账户、限额或冷钱包验收。
+- NOVOCHAT `a4a38bf` 完成PKL110独立包认证建钥、重启后同钥签验；后续`999eaaa`已完成PKL110升级后原钥签验、PCLM50认证建钥及重启后同钥签验，两机取消/不同UCA/畸形输入拒绝，154项Kotlin回归通过。这覆盖此前PCLM50正向未验收状态，但不是主账户、限额或冷钱包验收。详见交接中的双机证据链接。
 
 ## 分工与接收要求
 

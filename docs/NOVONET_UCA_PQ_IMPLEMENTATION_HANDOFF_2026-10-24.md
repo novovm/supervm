@@ -2,6 +2,12 @@
 
 ## 2026-10-25 用户确认与接入通知：UCA-TIERED-2026-10-25
 
+### NOVOCHAT已交付回报（不是另一台接收回执）
+
+NOVOCHAT `8a447dd`同步确认规则，`999eaaa`交付Android取消生命周期保护与双机证据：[资产owner](https://github.com/XujueKing/NOVOCHAT/blob/999eaaa/docs/implementation/ANDROID_ASSET_KEY_OWNER_V1.md)、[结构化记录](https://github.com/XujueKing/NOVOCHAT/blob/999eaaa/docs/implementation/evidence/android-asset-key-lifecycle-2026-10-25.json)。PKL110升级后原测试钥签验通过；PCLM50认证建钥、独立测试进程重启后同钥签验通过。两机不同UCA/畸形输入拒绝、认证前取消通过，154项Kotlin回归通过。包内测试无真实UCA/资金/交易；原v108哈希与进程保留，未重跑通信验收。
+
+取消在原owner的准备、认证及结果交付间持续有效；同步native工作不能强行中止，其迟到结果丢弃。已交付签名不能靠手机取消收回，仍需上游授权期限、nonce及撤销。Keystore失效/锁屏变更、完整内存擦除和KEY ONE端到端未验收。共享生产代码和App受审pin未改，请SUPERVM侧继续可信限额/高权限批准与撤销，不重复Android实现。此次fetch未见本编号另一台接收，仍等待其Git确认。
+
 用户已确认[手机零钱＋KEY ONE储蓄的共享规则](NOVONET_UCA_TIERED_SPENDING_AUTHORITY_V1.md)，手机不能自行增额、续权或无限补款。美元数值、滚动周期和余额上限仍待定。本次NOVOCHAT电脑仅认领本文、共享决定、签名契约入口及AGENTS文档；共享生产源码继续由SUPERVM电脑负责。
 
 已读取远端 `41782197` 及 `de9e5270`/`2bd58907` 的初始化、journal恢复和启动pin进展；不再把这些已交付组件写成尚未开始。原生NUAS/APFL准入/传播/查询/追赶仍按上游契约保留为缺口，App不可据此开启收费。当前App持钥受审源码输入仍为 `ee21e8f8`，不通过文档同步暗改移动构建依赖。
