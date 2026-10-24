@@ -1,5 +1,17 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-24 EVM 边界修复（本机验收完成，认领已释放）：** 输入 `6f2114d4`，fetch 后本地/远端一致、
+原树干净。主控独占构建、最终集成及交接/验收文档；解码分工只拥有原 evm-core
+`src/lib.rs`，验签分工只拥有原 adapter-novovm `src/lib.rs`，主控拥有必要 plugin
+入口回归。沿原 raw → IR → adapter → plugin 路径修复规范 RLP、legacy chain ID
+溢出和完整签名/执行字段及缓存绑定；不改交易身份算法、UCA/PQ、经济、手机或 AOEM。
+修前反例确认失败，修后 core 53、adapter 82、plugin 47 项全通过、0 忽略；三 crate
+lib/tests 严格 Clippy、修改文件格式及 diff 检查通过。插件的入队、atomic 与结算发布移到
+同一 adapter 鉴权之后，内部提交复用本次结果，不新增重复验签或执行路径。
+具体边界与环境见[最新验收](NOVOVM_PRODUCTION_READINESS_TRACKER.md#2026-10-24-evm-规范解码签名绑定与拒绝副作用修复)。
+这不是远程漏洞利用、全量 Ethereum 差分、TPS 或主网签收；另一会话的 UCA 工作保留。
+文件归属见[双机交接第 8 节](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md#8-用户纠正禁止双机重复开发当前执行边界)。
+
 **2026-10-24 当前原生TPS修复（本片认领已释放，远端另验）：** 基线main `9b54d7d1`，原树干净且与
 远端一致。根拥有唯一构建/性能槽和最终集成；两个分工仅只读核对实际控制路径与
 已有快机制，不写并行实现。继续原native tick/NovoRUDP/APFL → node/exec/bindings/AOEM

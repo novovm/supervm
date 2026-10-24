@@ -3646,8 +3646,37 @@ pub fn runtime_tap_ir_batch_v1(
 ) -> Result<EvmRuntimeTapSummaryV1, i32> {
     validate_plugin_tx_batch(txs)?;
     let prepared_txs = prepare_txs_with_hashes(txs);
+    let profile = resolve_evm_profile(chain_type, chain_id)
+        .map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
+    let mut adapter = NovoVmAdapter::new(ChainConfig {
+        chain_type,
+        chain_id,
+        name: format!("evm-plugin-{}", chain_type.as_str()),
+        enabled: true,
+        custom_config: None,
+    });
+    adapter
+        .initialize()
+        .map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
+    let verification = validate_and_verify_txs_for_apply_batch(&adapter, &profile, &prepared_txs);
+    adapter
+        .shutdown()
+        .map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
+    let verified = verification.map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
+    require_verified_batch(&verified).map_err(|_| NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED)?;
+    runtime_tap_authenticated_prepared_batch(chain_type, chain_id, &prepared_txs, flags)
+}
+
+// Private publication phase: callers must use the same adapter verification
+// gate first. The execution submit path reuses its verification results here.
+fn runtime_tap_authenticated_prepared_batch(
+    chain_type: ChainType,
+    chain_id: u64,
+    prepared_txs: &[TxIR],
+    flags: u64,
+) -> Result<EvmRuntimeTapSummaryV1, i32> {
     if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1 != 0
-        && route_txs_via_plugin_ua_self_guard(chain_id, &prepared_txs).is_err()
+        && route_txs_via_plugin_ua_self_guard(chain_id, prepared_txs).is_err()
     {
         return Err(NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED);
     }
@@ -3658,10 +3687,10 @@ pub fn runtime_tap_ir_batch_v1(
                 accepted: prepared_txs.len(),
                 ..Default::default()
             },
-            accepted_txs: prepared_txs.clone(),
+            accepted_txs: prepared_txs.to_vec(),
         }
     } else {
-        push_ingress_frames_prepared(chain_id, &prepared_txs)
+        push_ingress_frames_prepared(chain_id, prepared_txs)
     };
     let atomic_guard_requested =
         flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1 != 0;
@@ -3707,6 +3736,23 @@ fn apply_ir_batch_with_artifacts(
     txs: &[TxIR],
     flags: u64,
 ) -> anyhow::Result<ApplyBatchArtifacts> {
+    apply_ir_batch_with_verified_hook(chain_type, chain_id, txs, flags, |_| Ok(()))
+}
+
+fn require_verified_batch(verified: &[bool]) -> anyhow::Result<()> {
+    if verified.iter().any(|verified| !verified) {
+        anyhow::bail!("transaction signature verification failed before runtime publication");
+    }
+    Ok(())
+}
+
+fn apply_ir_batch_with_verified_hook(
+    chain_type: ChainType,
+    chain_id: u64,
+    txs: &[TxIR],
+    flags: u64,
+    before_execution: impl FnOnce(&[bool]) -> anyhow::Result<()>,
+) -> anyhow::Result<ApplyBatchArtifacts> {
     let profile = resolve_evm_profile(chain_type, chain_id)?;
     let _active_precompiles = active_precompile_set_m0(&profile);
 
@@ -3729,6 +3775,7 @@ fn apply_ir_batch_with_artifacts(
         u64,
     )> {
         let verify_results = validate_and_verify_txs_for_apply_batch(&adapter, &profile, txs)?;
+        before_execution(&verify_results)?;
         let mut state = StateIR::new();
         let mut verified = true;
         let mut applied = true;
@@ -3869,22 +3916,35 @@ pub fn submit_internal_batch_to_mainline_v1(
     if atomic_guard_enabled {
         flags |= NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1;
     }
-    let tap_summary = runtime_tap_ir_batch_v1(chain_type, chain_id, &prepared_txs, flags)
-        .map_err(|rc| anyhow::anyhow!("runtime tap failed: rc={rc}"))?;
-    if tap_summary.accepted < prepared_txs.len() {
-        let reason = tap_summary
-            .primary_reject_reason
-            .map(|value| value.as_str())
-            .unwrap_or("rejected");
-        anyhow::bail!(
-            "mainline batch tap rejected txs: requested={} accepted={} dropped={} reason={}",
-            tap_summary.requested,
-            tap_summary.accepted,
-            tap_summary.dropped,
-            reason
-        );
-    }
-    let artifacts = apply_ir_batch_with_artifacts(chain_type, chain_id, &prepared_txs, flags)?;
+    let mut tap_summary = None;
+    let artifacts = apply_ir_batch_with_verified_hook(
+        chain_type,
+        chain_id,
+        &prepared_txs,
+        flags,
+        |verified| {
+            require_verified_batch(verified)?;
+            let summary = runtime_tap_authenticated_prepared_batch(
+                chain_type,
+                chain_id,
+                &prepared_txs,
+                flags,
+            )
+            .map_err(|rc| anyhow::anyhow!("runtime tap failed: rc={rc}"))?;
+            if summary.accepted < prepared_txs.len() {
+                let reason = summary
+                    .primary_reject_reason
+                    .map(|value| value.as_str())
+                    .unwrap_or("rejected");
+                anyhow::bail!("mainline batch tap rejected txs: requested={} accepted={} dropped={} reason={}",
+                    summary.requested, summary.accepted, summary.dropped, reason);
+            }
+            tap_summary = Some(summary);
+            Ok(())
+        },
+    )?;
+    let tap_summary =
+        tap_summary.ok_or_else(|| anyhow::anyhow!("missing authenticated runtime tap result"))?;
     Ok(SupervmEvmNativeSubmitReportV1 {
         chain_type,
         chain_id,
@@ -3979,18 +4039,25 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v1(
     };
     let prepared_txs = prepare_txs_with_hashes(&txs);
 
-    push_ingress_frames_prepared(chain_id, &prepared_txs);
-    let atomic_intent = match prepare_atomic_intent_guard(chain_type, chain_id, &prepared_txs) {
-        Ok(v) => v,
-        Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
-    };
-    let result = match apply_ir_batch(chain_type, chain_id, &prepared_txs) {
+    let mut atomic_intent = None;
+    let result = match apply_ir_batch_with_verified_hook(
+        chain_type,
+        chain_id,
+        &prepared_txs,
+        0,
+        |verified| {
+            require_verified_batch(verified)?;
+            push_ingress_frames_prepared(chain_id, &prepared_txs);
+            atomic_intent = prepare_atomic_intent_guard(chain_type, chain_id, &prepared_txs)?;
+            Ok(())
+        },
+    ) {
         Ok(v) => {
             if let Some(intent) = atomic_intent.as_ref() {
                 mark_atomic_intent_executed(chain_id, intent);
             }
             settle_fee_income_for_batch(chain_id, &prepared_txs);
-            v
+            v.result
         }
         Err(err) => {
             if let Some(intent) = atomic_intent.as_ref() {
@@ -4034,27 +4101,32 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
     } else {
         (*options_ptr).flags
     };
-    if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1 != 0
-        && route_txs_via_plugin_ua_self_guard(chain_id, &prepared_txs).is_err()
-    {
-        return NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED;
-    }
     let atomic_guard_requested =
         flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1 != 0;
-
-    if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1 == 0 {
-        push_ingress_frames_prepared(chain_id, &prepared_txs);
-    }
-    let atomic_intent = if atomic_guard_requested {
-        match prepare_atomic_intent_guard(chain_type, chain_id, &prepared_txs) {
-            Ok(v) => v,
-            Err(_) => return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED,
-        }
-    } else {
-        None
-    };
-
-    let result = match apply_ir_batch_with_artifacts(chain_type, chain_id, &prepared_txs, flags) {
+    let mut atomic_intent = None;
+    let mut failure_rc = NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED;
+    let result = match apply_ir_batch_with_verified_hook(
+        chain_type,
+        chain_id,
+        &prepared_txs,
+        flags,
+        |verified| {
+            require_verified_batch(verified)?;
+            if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1 != 0
+                && route_txs_via_plugin_ua_self_guard(chain_id, &prepared_txs).is_err()
+            {
+                failure_rc = NOVOVM_ADAPTER_PLUGIN_RC_UA_SELF_GUARD_FAILED;
+                anyhow::bail!("unified account self guard rejected authenticated batch");
+            }
+            if flags & NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_INGRESS_BYPASS_V1 == 0 {
+                push_ingress_frames_prepared(chain_id, &prepared_txs);
+            }
+            if atomic_guard_requested {
+                atomic_intent = prepare_atomic_intent_guard(chain_type, chain_id, &prepared_txs)?;
+            }
+            Ok(())
+        },
+    ) {
         Ok(v) => {
             if let Some(intent) = atomic_intent.as_ref() {
                 mark_atomic_intent_executed(chain_id, intent);
@@ -4066,7 +4138,7 @@ pub unsafe extern "C" fn novovm_adapter_plugin_apply_v2(
             if let Some(intent) = atomic_intent.as_ref() {
                 mark_atomic_intent_apply_failed(chain_id, &intent.intent_id, &err.to_string());
             }
-            return NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED;
+            return failure_rc;
         }
     };
 
@@ -4525,6 +4597,153 @@ mod tests {
     fn with_gas_price(mut tx: TxIR, gas_price: u64) -> TxIR {
         tx.gas_price = gas_price;
         resign_tx(tx)
+    }
+
+    #[test]
+    fn apply_ir_batch_raw_signed_ir_binding_gate_v1() {
+        // Published EIP-155 signed transaction: recovery must really succeed.
+        let raw_hex = "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83";
+        let raw = raw_hex
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+            .collect::<Vec<_>>();
+        let sender = novovm_adapter_evm_core::recover_raw_evm_tx_sender_m0(&raw)
+            .expect("decode signed fixture")
+            .expect("recover signed fixture without skipping");
+        assert_eq!(
+            sender,
+            [
+                0x9d, 0x8a, 0x62, 0xf6, 0x56, 0xa8, 0xd1, 0x61, 0x5c, 0x12, 0x94, 0xfd, 0x71, 0xe9,
+                0xcf, 0xb3, 0xe4, 0x85, 0x5a, 0x4f
+            ]
+        );
+        let tx = novovm_adapter_evm_core::translate_raw_evm_tx_to_ir_m0(&raw, sender, 1)
+            .expect("translate signed fixture");
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "signed-ir-binding".into(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter.initialize().expect("initialize adapter");
+        let profile = resolve_evm_profile(ChainType::EVM, 1).unwrap();
+        assert_eq!(
+            validate_and_verify_txs_for_apply_batch(&adapter, &profile, std::slice::from_ref(&tx))
+                .unwrap(),
+            vec![true]
+        );
+        let mut gas_price_rewrite = tx.clone();
+        gas_price_rewrite.gas_price += 1;
+        let mut gas_limit_rewrite = tx.clone();
+        gas_limit_rewrite.gas_limit += 1;
+        let mut type_rewrite = tx.clone();
+        type_rewrite.tx_type = TxType::ContractCall;
+        // Use the same preparation and parallel verification gate as the public
+        // apply entry; no AOEM artifact or execution result can authorize edits.
+        let prepared =
+            prepare_txs_with_hashes(&[tx, gas_price_rewrite, gas_limit_rewrite, type_rewrite]);
+        assert_eq!(
+            validate_and_verify_txs_for_apply_batch(&adapter, &profile, &prepared).unwrap(),
+            vec![true, false, false, false]
+        );
+        adapter.shutdown().unwrap();
+    }
+
+    fn assert_rejected_signature_has_no_runtime_effects() {
+        assert!(drain_plugin_ingress_frames_for_host(16).is_empty());
+        assert!(drain_settlement_records_for_host(16).is_empty());
+        assert!(drain_payout_instructions_for_host(16).is_empty());
+        assert!(drain_atomic_receipts_for_host(16).is_empty());
+        assert!(drain_atomic_broadcast_ready_for_host(16).is_empty());
+        assert!(drain_execution_receipts_for_host(16).is_empty());
+        assert!(drain_block_metadata_for_host(16).is_empty());
+        assert!(drain_state_mirror_updates_for_host(16).is_empty());
+        assert_eq!(plugin_settlement_totals_for_host(), (0, 0));
+    }
+
+    #[test]
+    fn rejected_signature_c_abi_has_no_runtime_effects_v1() {
+        let _guard = runtime_queue_test_guard();
+        for abi in [1, 2] {
+            reset_runtime_queues_for_test();
+            let mut tx = sample_tx(1, 0);
+            tx.signature[40] ^= 1;
+            let encoded = crate::bincode_compat::serialize(&vec![tx]).unwrap();
+            let mut result = NovovmAdapterPluginApplyResultV1::default();
+            let rc = unsafe {
+                if abi == 1 {
+                    novovm_adapter_plugin_apply_v1(
+                        1,
+                        1,
+                        encoded.as_ptr(),
+                        encoded.len(),
+                        &mut result,
+                    )
+                } else {
+                    novovm_adapter_plugin_apply_v2(
+                        1,
+                        1,
+                        encoded.as_ptr(),
+                        encoded.len(),
+                        std::ptr::null(),
+                        &mut result,
+                    )
+                }
+            };
+            assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED);
+            assert_rejected_signature_has_no_runtime_effects();
+        }
+    }
+
+    #[test]
+    fn rejected_signature_mixed_batch_has_no_runtime_effects_v1() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let good = sample_tx(1, 0);
+        let mut bad = sample_tx(1, 1);
+        bad.signature[40] ^= 1;
+        let encoded = crate::bincode_compat::serialize(&vec![good, bad]).unwrap();
+        let options = NovovmAdapterPluginApplyOptionsV1 {
+            flags: NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_UA_SELF_GUARD_V1
+                | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_ATOMIC_INTENT_GUARD_V1
+                | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_EXPORT_V1
+                | NOVOVM_ADAPTER_PLUGIN_APPLY_FLAG_MAINLINE_RECEIPT_INGEST_V1,
+        };
+        let mut result = NovovmAdapterPluginApplyResultV1::default();
+        let rc = unsafe {
+            novovm_adapter_plugin_apply_v2(
+                1,
+                1,
+                encoded.as_ptr(),
+                encoded.len(),
+                &options,
+                &mut result,
+            )
+        };
+        assert_eq!(rc, NOVOVM_ADAPTER_PLUGIN_RC_APPLY_FAILED);
+        assert_rejected_signature_has_no_runtime_effects();
+    }
+
+    #[test]
+    fn rejected_signature_runtime_tap_has_no_runtime_effects_v1() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let mut tx = sample_tx(1, 0);
+        tx.signature[40] ^= 1;
+        assert!(runtime_tap_ir_batch_v1(ChainType::EVM, 1, &[tx], 0).is_err());
+        assert_rejected_signature_has_no_runtime_effects();
+    }
+
+    #[test]
+    fn rejected_signature_internal_submit_has_no_runtime_effects_v1() {
+        let _guard = runtime_queue_test_guard();
+        reset_runtime_queues_for_test();
+        let mut tx = sample_tx(1, 0);
+        tx.signature[40] ^= 1;
+        assert!(submit_internal_batch_to_mainline_v1(ChainType::EVM, 1, &[tx], false).is_err());
+        assert_rejected_signature_has_no_runtime_effects();
     }
 
     #[test]

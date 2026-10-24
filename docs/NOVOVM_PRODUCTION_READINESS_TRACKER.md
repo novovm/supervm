@@ -1,5 +1,40 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-24 EVM 规范解码、签名绑定与拒绝副作用修复
+
+输入 main `6f2114d4`，fetch 后原树干净且本地/远端一致。用户授权直接修复 Geth
+`c9a2bc73c..2006f0836` 审阅发现的问题；只修改原 evm-core、adapter-novovm、
+EVM plugin 的 `src/lib.rs` 及本轮交接/验收记录，保留另一会话的 UCA 未提交工作。
+实际路径仍是 raw 解码 → 原 TxIR → adapter 批验签 → 同一插件/AOEM 执行。
+
+共享解析与恢复入口现在拒绝非最短 RLP、整数零字节/前导零、错误字段数和 access-list
+结构、非法 typed parity/legacy v、签名标量及 high-S；长度运算和 legacy chain ID
+转换溢出返回错误。规则针对现有现代 M0 profile，不新增 fork 协商或 type4 写入能力。
+交易 hash 算法保持不变。raw 验签逐项绑定实际执行字段；既有 UCA 元数据仍经原路由，
+不将 Ethereum 签名误作第三方 fee/nonce owner 权限。原缓存用完整 IR transcript 加签名字节
+的固定摘要绑定对象，执行消费单次结果；隐私 key image 当前状态在任何路由/状态变更前重查。
+
+插件 C ABI v1/v2、internal submit 和独立 runtime tap 现在在鉴权后才入队或发布
+atomic/结算数据。internal submit 复用同一 adapter 验签结果与执行缓存，不二次验签。
+新增混合批回归确认一个坏签名会在这些入口的任何发布前拒绝；标准 -6/-7 错误码保留。
+经济比例、实际资产结算和其他旧 runtime tap 业务语义不是本轮交付范围。
+
+先红后绿：8 类规范解码反例、3 类 legacy/scalar 补充反例、raw 字段/单批缓存/
+隐私外部状态/缓存消费反例及插件未鉴权副作用均先确认修前失败；四种真实签名正例
+必须恢复固定发送者，移除两处旧假 fixture 恢复失败就早退的正例。
+最终 Windows/MSVC 本机：core 53、adapter 82、plugin 47 项全部通过、0 失败/忽略；
+三 crate lib/tests `cargo clippy --locked ... -- -D warnings`、修改文件 rustfmt/diff 检查通过。
+
+环境负证据保留：D 盘不足导致初次 RocksDB archive 和后续 PDB 链接/Clippy 原生重建失败；
+仅清理本轮可重建中间文件，并压缩构建缓存。最终插件测试临时关闭 PDB/debuginfo，
+目标、断言、溢出检查及产品源码不变；Clippy 复用本轮相同 RocksDB 8.10 静态库，未换数据库实现。
+标准测试命令为 `cargo test --locked -p novovm-adapter-evm-core -p novovm-adapter-novovm -p novovm-adapter-evm-plugin --lib -- --test-threads=1`；
+本机临时 wrapper/完整输出在 `target/upstream-review-20261024/`，不进入产品配置或发布包。
+
+本轮没有运行真实远程攻击、全量 Ethereum state/block replay、节点进程/多机、TPS 或
+隐私资产收付最终性验收，远端 CI 按本次提交另验。网络资源预算和 canonical 隐私主链接线
+仍是后续独立工作；不以本轮组件通过替它们签收。
+
 ## 2026-10-24 U3 同父状态输入与现行花费代次（未激活支出）
 
 输入 `ec32c21c`，仍在原node主线。新增 `business/uca_spend_state` 复用原

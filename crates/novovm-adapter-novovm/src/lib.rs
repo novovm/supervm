@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail, Result};
 use aoem_bindings::{
     ed25519_verify_batch_v1_auto, ed25519_verify_v1_auto, AoemEd25519VerifyItemRef,
 };
-use dashmap::DashSet;
+use dashmap::DashMap;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_adapter_api::{
     AccountRole, AccountState, BlockIR, ChainAdapter, ChainConfig, ChainType, PersonaAddress,
@@ -63,7 +63,7 @@ pub struct NovoVmAdapter {
     state: StateIR,
     kv: HashMap<Vec<u8>, Vec<u8>>,
     state_root_cache: Mutex<StateRootCache>,
-    verified_tx_cache: DashSet<Vec<u8>>,
+    verified_tx_cache: DashMap<Vec<u8>, [u8; 32]>,
     unified_account_router: UnifiedAccountRouter,
     execution_current_tx_hash: Vec<u8>,
     execution_current_tx_index: u32,
@@ -120,7 +120,7 @@ impl NovoVmAdapter {
                 root: state_root,
                 dirty: false,
             }),
-            verified_tx_cache: DashSet::new(),
+            verified_tx_cache: DashMap::new(),
             unified_account_router: UnifiedAccountRouter::new(),
             execution_current_tx_hash: Vec::new(),
             execution_current_tx_index: 0,
@@ -302,7 +302,10 @@ impl NovoVmAdapter {
 
         for (idx, verified) in verify_results.iter().copied().enumerate() {
             if verified {
-                self.verified_tx_cache.insert(txs[idx].hash.clone());
+                self.verified_tx_cache.insert(
+                    txs[idx].hash.clone(),
+                    verified_tx_cache_fingerprint_v1(&txs[idx]),
+                );
             }
         }
         Ok(verify_results)
@@ -1865,13 +1868,41 @@ impl NovoVmAdapter {
         artifact: Option<&AoemTxExecutionArtifactV1>,
     ) -> Result<NovoVmTxExecutionOutcomeV1> {
         self.ensure_initialized()?;
-        self.begin_execution_receipt_context(tx);
         let already_verified = if tx.hash.is_empty() {
             false
         } else {
-            self.verified_tx_cache.remove(&tx.hash).is_some()
+            self.verified_tx_cache
+                .remove(&tx.hash)
+                .is_some_and(|(_, fingerprint)| fingerprint == verified_tx_cache_fingerprint_v1(tx))
         };
-        if !already_verified && !self.verify_transaction(tx)? {
+
+        // A cached cryptographic proof never proves current spendability. Check before
+        // routing or applying to either the caller's state or the adapter's state.
+        if tx.tx_type == TxType::Privacy {
+            let signature = Self::decode_privacy_signature(tx)?;
+            let key_image_key = Self::privacy_key_image_key(&signature.key_image);
+            if self.kv.contains_key(&key_image_key) {
+                bail!("privacy tx key image already spent");
+            }
+        }
+
+        self.begin_execution_receipt_context(tx);
+        let signature_ok = if already_verified {
+            true
+        } else {
+            let result = self.verify_transaction(tx);
+            // verify_transaction populates the cache for a separate execution caller.
+            // This execution already consumes that proof, including on a cache miss.
+            self.verified_tx_cache.remove(&tx.hash);
+            match result {
+                Ok(verified) => verified,
+                Err(err) => {
+                    self.reset_execution_receipt_context();
+                    return Err(err);
+                }
+            }
+        };
+        if !signature_ok {
             self.reset_execution_receipt_context();
             bail!("transaction verification failed");
         }
@@ -2058,6 +2089,18 @@ fn compute_tx_ir_hash(tx: &TxIR) -> Vec<u8> {
     hasher.update(tx.nonce.to_le_bytes());
     hasher.update(&tx.data);
     hasher.finalize().to_vec()
+}
+
+fn verified_tx_cache_fingerprint_v1(tx: &TxIR) -> [u8; 32] {
+    // Reuse the existing full-IR transcript: it binds every execution/authorization
+    // field, including metadata and hash. Bind the proof bytes separately because
+    // the signing transcript intentionally excludes the signature itself.
+    let mut hasher = Sha256::new();
+    hasher.update(b"novovm_adapter_verified_tx_cache_v1");
+    hasher.update(tx_signing_message_v1(tx));
+    hasher.update((tx.signature.len() as u64).to_le_bytes());
+    hasher.update(&tx.signature);
+    hasher.finalize().into()
 }
 
 pub use novovm_adapter_api::native_signing::tx_signing_message_v1;
@@ -2255,10 +2298,22 @@ fn verify_evm_raw_tx_signature_v1(chain_type: ChainType, tx: &TxIR) -> Result<bo
     };
     let canonical =
         tx_ir_from_raw_fields_m0(&parsed_fields, &tx.signature, recovered_from, tx.chain_id);
-    if tx.hash != canonical.hash {
-        return Ok(false);
-    }
-    if tx.evm_access_list != canonical.evm_access_list {
+    // The public IR hash intentionally predates gas/type/access-list fields. Its
+    // equality is necessary but cannot substitute for binding the actual raw-EVM
+    // signature's execution fields. UCA metadata/policy remains an ingress/router
+    // responsibility, not a claim made by an Ethereum transaction signature.
+    if tx.hash != canonical.hash
+        || tx.from != canonical.from
+        || tx.to != canonical.to
+        || tx.value != canonical.value
+        || tx.nonce != canonical.nonce
+        || tx.data != canonical.data
+        || tx.gas_limit != canonical.gas_limit
+        || tx.gas_price != canonical.gas_price
+        || tx.chain_id != canonical.chain_id
+        || tx.tx_type != canonical.tx_type
+        || tx.evm_access_list != canonical.evm_access_list
+    {
         return Ok(false);
     }
     let profile = match resolve_evm_profile(chain_type, tx.chain_id) {
@@ -2339,7 +2394,8 @@ impl ChainAdapter for NovoVmAdapter {
         if !signature_ok {
             return Ok(false);
         }
-        self.verified_tx_cache.insert(tx.hash.clone());
+        self.verified_tx_cache
+            .insert(tx.hash.clone(), verified_tx_cache_fingerprint_v1(tx));
         Ok(true)
     }
 
@@ -2468,6 +2524,7 @@ pub fn create_native_adapter(config: ChainConfig) -> Result<Box<dyn ChainAdapter
 #[cfg(test)]
 mod tests {
     use super::*;
+    type TxMutationV1 = (&'static str, fn(&mut TxIR));
     use novovm_adapter_api::EvmAccessListEntryV1;
     use novovm_adapter_evm_core::{
         active_precompile_set_m0, apply_eip3529_gas_refund_m0, derive_create2_contract_address_m0,
@@ -2973,31 +3030,231 @@ mod tests {
         });
         adapter.initialize().expect("init");
 
-        // Sample EIP-155 legacy signed tx payload (same fixture style as gateway tests).
-        let raw_tx = decode_hex_bytes("0xf86c018502540be40082520894aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa88016345785d8a00008026a0b7e8e4a6c7d58a47f6d29b6cb16f1c7f5c8a7f7ec5b9fa7a1d8c19f6d8f2b87a02a6d2f8c8f42d8f6d8909f94b6f6a6a4d9f7f1c7b6a5d4e3f2c1b0a99887766");
-        let Some(sender) = recover_raw_evm_tx_sender_m0(&raw_tx)
-            .expect("raw sender recovery path should not error")
-        else {
-            return;
-        };
-        let fields = translate_raw_evm_tx_fields_m0(&raw_tx).expect("decode raw tx fields");
-        let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, sender, 1);
+        let tx = signed_eip155_fixture_tx_v1();
         assert!(
             adapter.verify_transaction(&tx).expect("verify raw tx"),
             "raw evm signature payload should verify via sender recovery"
         );
     }
 
+    fn signed_eip155_fixture_tx_v1() -> TxIR {
+        // EIP-155's published, valid chain-1 signing example; recovery is mandatory.
+        let raw = decode_hex_bytes("f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83");
+        let sender = recover_raw_evm_tx_sender_m0(&raw)
+            .expect("valid EIP-155 recovery must not error")
+            .expect("valid EIP-155 fixture must recover a sender");
+        assert_eq!(
+            sender,
+            decode_hex_bytes("9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f")
+        );
+        let fields = translate_raw_evm_tx_fields_m0(&raw).expect("valid EIP-155 decode");
+        tx_ir_from_raw_fields_m0(&fields, &raw, sender, 1)
+    }
+
+    fn signature_binding_test_adapter_v1() -> NovoVmAdapter {
+        let mut adapter = NovoVmAdapter::new(ChainConfig {
+            chain_type: ChainType::EVM,
+            chain_id: 1,
+            name: "signature-binding".to_string(),
+            enabled: true,
+            custom_config: None,
+        });
+        adapter
+            .initialize()
+            .expect("initialize signature-binding adapter");
+        adapter
+    }
+
+    #[test]
+    fn raw_evm_signature_binding_rejects_execution_ir_tampering_v1() {
+        let tx = signed_eip155_fixture_tx_v1();
+        assert!(verify_evm_raw_tx_signature_v1(ChainType::EVM, &tx)
+            .expect("unaltered valid EIP-155 fixture must verify"));
+        let mutations: &[TxMutationV1] = &[
+            ("from", |tx| tx.from[0] ^= 1),
+            ("to", |tx| tx.to.as_mut().expect("recipient")[0] ^= 1),
+            ("value", |tx| tx.value += 1),
+            ("nonce", |tx| tx.nonce += 1),
+            ("data", |tx| tx.data.push(0)),
+            ("gas_limit", |tx| tx.gas_limit += 1),
+            ("gas_price", |tx| tx.gas_price += 1),
+            ("chain_id", |tx| tx.chain_id = 56),
+            ("tx_type", |tx| tx.tx_type = TxType::ContractCall),
+            ("access_list", |tx| {
+                tx.evm_access_list
+                    .push(novovm_adapter_api::EvmAccessListEntryV1 {
+                        address: vec![0x11; 20],
+                        storage_keys: vec![vec![0x22; 32]],
+                    });
+            }),
+        ];
+        for (field, mutate) in mutations {
+            let mut changed = tx.clone();
+            mutate(&mut changed);
+            assert!(
+                !verify_evm_raw_tx_signature_v1(ChainType::EVM, &changed)
+                    .expect("tampered IR verification must complete"),
+                "raw EVM signature must bind execution field {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_evm_signature_binding_preserves_gateway_uca_metadata_v1() {
+        let mut tx = signed_eip155_fixture_tx_v1();
+        tx.account_id = Some("uca:gateway:owner".to_string());
+        tx.fee_owner_account_id = Some("uca:gateway:owner".to_string());
+        tx.nonce_owner_account_id = Some("uca:gateway:owner".to_string());
+        // These hints are resolved by the existing ingress/router, not signed by
+        // the Ethereum key. They must not be mistaken for canonical wire fields.
+        assert!(verify_evm_raw_tx_signature_v1(ChainType::EVM, &tx)
+            .expect("existing UCA metadata injection must preserve raw-EVM verification"));
+    }
+
+    fn assert_verified_cache_rejects_ir_tampering_v1(batch: bool) {
+        let tx = sample_tx(TxType::Transfer);
+        let mutations: &[TxMutationV1] = &[
+            ("from", |tx| tx.from[0] ^= 1),
+            ("to", |tx| tx.to.as_mut().expect("recipient")[0] ^= 1),
+            ("value", |tx| tx.value += 1),
+            ("nonce", |tx| tx.nonce += 1),
+            ("data", |tx| tx.data.push(0)),
+            ("gas_limit", |tx| tx.gas_limit += 1),
+            ("gas_price", |tx| tx.gas_price += 1),
+            ("chain_id", |tx| tx.chain_id = 56),
+            ("tx_type", |tx| tx.tx_type = TxType::ContractCall),
+            ("signature", |tx| tx.signature[40] ^= 1),
+            ("execution_policy", |tx| {
+                tx.execution_policy = novovm_adapter_api::TxExecutionPolicyV1::PqRequired;
+            }),
+            ("account_id", |tx| {
+                tx.account_id = Some("uca:changed".to_string())
+            }),
+            ("fee_owner", |tx| {
+                tx.fee_owner_account_id = Some("uca:changed".to_string())
+            }),
+            ("nonce_owner", |tx| {
+                tx.nonce_owner_account_id = Some("uca:changed".to_string())
+            }),
+            ("source_chain", |tx| tx.source_chain = Some(56)),
+            ("target_chain", |tx| tx.target_chain = Some(56)),
+            ("access_list", |tx| {
+                tx.evm_access_list
+                    .push(novovm_adapter_api::EvmAccessListEntryV1 {
+                        address: vec![0x11; 20],
+                        storage_keys: Vec::new(),
+                    });
+            }),
+        ];
+        // The original transaction must execute through the same verified-cache flow.
+        let mut baseline = signature_binding_test_adapter_v1();
+        if batch {
+            assert_eq!(
+                baseline
+                    .verify_transactions_batch(std::slice::from_ref(&tx))
+                    .unwrap(),
+                vec![true]
+            );
+        } else {
+            assert!(baseline.verify_transaction(&tx).unwrap());
+        }
+        let mut baseline_state = StateIR::new();
+        fund_sender_for_test(&mut baseline_state, &tx, 1_000_000);
+        baseline
+            .execute_transaction(&tx, &mut baseline_state)
+            .expect("unaltered verified transaction must execute");
+
+        for (field, mutate) in mutations {
+            let mut adapter = signature_binding_test_adapter_v1();
+            if batch {
+                assert_eq!(
+                    adapter
+                        .verify_transactions_batch(std::slice::from_ref(&tx))
+                        .unwrap(),
+                    vec![true]
+                );
+            } else {
+                assert!(adapter.verify_transaction(&tx).unwrap());
+            }
+            let mut changed = tx.clone();
+            mutate(&mut changed);
+            assert_eq!(
+                changed.hash, tx.hash,
+                "test preserves public hash for {field}"
+            );
+            let mut state = StateIR::new();
+            fund_sender_for_test(&mut state, &tx, 1_000_000);
+            assert!(
+                adapter.execute_transaction(&changed, &mut state).is_err(),
+                "cached verification must not authorize changed {field}, batch={batch}"
+            );
+            assert_eq!(
+                state.get_account(&tx.from).unwrap().balance,
+                1_000_000,
+                "rejected changed {field} must not debit sender"
+            );
+        }
+    }
+
+    #[test]
+    fn verified_single_cache_rejects_ir_tampering_v1() {
+        assert_verified_cache_rejects_ir_tampering_v1(false);
+    }
+
+    #[test]
+    fn verified_batch_cache_rejects_ir_tampering_v1() {
+        assert_verified_cache_rejects_ir_tampering_v1(true);
+    }
+
+    #[test]
+    fn execute_uncached_verification_consumes_cache_proof_v1() {
+        let tx = sample_tx(TxType::Transfer);
+        let mut adapter = signature_binding_test_adapter_v1();
+        let mut state = StateIR::new();
+        fund_sender_for_test(&mut state, &tx, 1_000_000);
+        adapter
+            .execute_transaction(&tx, &mut state)
+            .expect("valid uncached transaction must verify and execute");
+        assert!(
+            !adapter.verified_tx_cache.contains_key(&tx.hash),
+            "verification inside execute must consume its single-use cache proof"
+        );
+    }
+
+    #[test]
+    fn cached_privacy_key_image_rejection_preserves_external_state_v1() {
+        let mut tx = sample_privacy_tx_with_invalid_signature();
+        let key_image = [0x5a; 32];
+        tx.signature = serde_json::to_vec(&Web30RingSignature {
+            ring_members: vec![Web30Address::from_bytes([7; 32])],
+            key_image,
+            c: vec![[1; 32]],
+            r: vec![[2; 32]],
+        })
+        .expect("serialize cached privacy proof fixture");
+        let mut adapter = signature_binding_test_adapter_v1();
+        // Model a successful earlier cryptographic verification followed by a spend.
+        // This test isolates state freshness; it does not claim a valid ring proof.
+        adapter
+            .verified_tx_cache
+            .insert(tx.hash.clone(), verified_tx_cache_fingerprint_v1(&tx));
+        adapter
+            .kv
+            .insert(NovoVmAdapter::privacy_key_image_key(&key_image), vec![1]);
+        let mut state = StateIR::new();
+        fund_sender_for_test(&mut state, &tx, 100);
+        let state_before = crate::bincode_compat::serialize(&state).unwrap();
+        assert!(adapter.execute_transaction(&tx, &mut state).is_err());
+        assert_eq!(
+            crate::bincode_compat::serialize(&state).unwrap(),
+            state_before,
+            "spent key image must fail before any caller-owned state mutation"
+        );
+    }
+
     #[test]
     fn verify_raw_evm_signature_path_rejects_non_evm_chain_profile() {
-        let raw_tx = decode_hex_bytes("0xf86c018502540be40082520894aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa88016345785d8a00008026a0b7e8e4a6c7d58a47f6d29b6cb16f1c7f5c8a7f7ec5b9fa7a1d8c19f6d8f2b87a02a6d2f8c8f42d8f6d8909f94b6f6a6a4d9f7f1c7b6a5d4e3f2c1b0a99887766");
-        let Some(sender) = recover_raw_evm_tx_sender_m0(&raw_tx)
-            .expect("raw sender recovery path should not error")
-        else {
-            return;
-        };
-        let fields = translate_raw_evm_tx_fields_m0(&raw_tx).expect("decode raw tx fields");
-        let tx = tx_ir_from_raw_fields_m0(&fields, &raw_tx, sender, 1);
+        let tx = signed_eip155_fixture_tx_v1();
         assert!(
             !verify_evm_raw_tx_signature_v1(ChainType::NovoVM, &tx).expect("verify path"),
             "raw evm signature path must reject non-EVM chain profile"
@@ -3085,7 +3342,9 @@ mod tests {
             custom_config: None,
         });
         adapter.initialize().expect("init");
-        adapter.verified_tx_cache.insert(tx.hash.clone());
+        adapter
+            .verified_tx_cache
+            .insert(tx.hash.clone(), verified_tx_cache_fingerprint_v1(&tx));
         let mut runtime_state = StateIR::new();
         let outcome = adapter
             .execute_transaction_with_observed_metadata_v1(&tx, &mut runtime_state, None)
@@ -11683,7 +11942,10 @@ mod tests {
             if can_force_artifact_execute {
                 // Typed raw fixtures in equivalence matrix focus semantic/gas alignment.
                 // Their signatures are not always cryptographically valid test vectors.
-                adapter.verified_tx_cache.insert(case.tx.hash.clone());
+                adapter.verified_tx_cache.insert(
+                    case.tx.hash.clone(),
+                    verified_tx_cache_fingerprint_v1(&case.tx),
+                );
             }
             if !case.expected_execution_ok {
                 assert!(

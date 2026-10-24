@@ -356,7 +356,7 @@ fn parse_usize_be(raw: &[u8], field: &str) -> anyhow::Result<usize> {
     if raw.len() > std::mem::size_of::<usize>() {
         bail!("{} overflows usize", field);
     }
-    if raw.len() > 1 && raw[0] == 0 {
+    if raw[0] == 0 {
         bail!("{} has non-canonical leading zero", field);
     }
     let mut out = 0usize;
@@ -378,6 +378,9 @@ fn parse_rlp_item(input: &[u8]) -> anyhow::Result<(RlpItem<'_>, usize)> {
             if input.len() < 1 + len {
                 bail!("rlp bytes short input");
             }
+            if len == 1 && input[1] < 0x80 {
+                bail!("rlp single byte has non-canonical string prefix");
+            }
             Ok((RlpItem::Bytes(&input[1..1 + len]), 1 + len))
         }
         0xb8..=0xbf => {
@@ -386,13 +389,17 @@ fn parse_rlp_item(input: &[u8]) -> anyhow::Result<(RlpItem<'_>, usize)> {
                 bail!("rlp bytes length-of-length short input");
             }
             let len = parse_usize_be(&input[1..1 + len_of_len], "rlp bytes length")?;
-            if input.len() < 1 + len_of_len + len {
+            if len < 56 {
+                bail!("rlp bytes has non-canonical long length");
+            }
+            let header_len = 1 + len_of_len;
+            let end = header_len
+                .checked_add(len)
+                .ok_or_else(|| anyhow::anyhow!("rlp bytes length overflows usize"))?;
+            if input.len() < end {
                 bail!("rlp bytes payload short input");
             }
-            Ok((
-                RlpItem::Bytes(&input[1 + len_of_len..1 + len_of_len + len]),
-                1 + len_of_len + len,
-            ))
+            Ok((RlpItem::Bytes(&input[header_len..end]), end))
         }
         0xc0..=0xf7 => {
             let len = (b0 - 0xc0) as usize;
@@ -407,13 +414,17 @@ fn parse_rlp_item(input: &[u8]) -> anyhow::Result<(RlpItem<'_>, usize)> {
                 bail!("rlp list length-of-length short input");
             }
             let len = parse_usize_be(&input[1..1 + len_of_len], "rlp list length")?;
-            if input.len() < 1 + len_of_len + len {
+            if len < 56 {
+                bail!("rlp list has non-canonical long length");
+            }
+            let header_len = 1 + len_of_len;
+            let end = header_len
+                .checked_add(len)
+                .ok_or_else(|| anyhow::anyhow!("rlp list length overflows usize"))?;
+            if input.len() < end {
                 bail!("rlp list payload short input");
             }
-            Ok((
-                RlpItem::List(&input[1 + len_of_len..1 + len_of_len + len]),
-                1 + len_of_len + len,
-            ))
+            Ok((RlpItem::List(&input[header_len..end]), end))
         }
     }
 }
@@ -424,7 +435,9 @@ fn parse_rlp_list_payload_items<'a>(payload: &'a [u8]) -> anyhow::Result<Vec<Rlp
     while offset < payload.len() {
         let (item, used) = parse_rlp_item(&payload[offset..])?;
         items.push(item);
-        offset += used;
+        offset = offset
+            .checked_add(used)
+            .ok_or_else(|| anyhow::anyhow!("rlp list offset overflows usize"))?;
     }
     if offset != payload.len() {
         bail!("rlp list payload decode did not consume all bytes");
@@ -458,7 +471,7 @@ fn rlp_item_as_u64(item: &RlpItem<'_>, field: &str) -> anyhow::Result<u64> {
     if raw.len() > 8 {
         bail!("{} overflows u64", field);
     }
-    if raw.len() > 1 && raw[0] == 0 {
+    if raw[0] == 0 {
         bail!("{} has non-canonical leading zero", field);
     }
     let mut out = 0u64;
@@ -476,7 +489,7 @@ fn rlp_item_as_u128(item: &RlpItem<'_>, field: &str) -> anyhow::Result<u128> {
     if raw.len() > 16 {
         bail!("{} overflows u128", field);
     }
-    if raw.len() > 1 && raw[0] == 0 {
+    if raw[0] == 0 {
         bail!("{} has non-canonical leading zero", field);
     }
     let mut out = 0u128;
@@ -606,26 +619,31 @@ fn pad_signature_word_to_32(raw: &[u8], field: &str) -> anyhow::Result<[u8; 32]>
     if raw.len() > 32 {
         bail!("{field} must be <=32 bytes, got {}", raw.len());
     }
+    if raw.first() == Some(&0) {
+        bail!("{field} has non-canonical leading zero");
+    }
     let mut out = [0u8; 32];
     let start = 32usize.saturating_sub(raw.len());
     out[start..].copy_from_slice(raw);
     Ok(out)
 }
 
-fn normalize_legacy_recovery_id(v: u128) -> anyhow::Result<(u8, Option<u128>)> {
+fn normalize_legacy_recovery_id(v: u128) -> anyhow::Result<(u8, Option<u64>)> {
     match v {
-        0 | 1 => Ok((v as u8, None)),
         27 | 28 => Ok(((v - 27) as u8, None)),
-        35.. => Ok((((v - 35) % 2) as u8, Some((v - 35) / 2))),
-        _ => bail!("legacy.v must be 0/1/27/28 or >=35, got {}", v),
+        35.. => {
+            let chain_id = u64::try_from((v - 35) / 2)
+                .map_err(|_| anyhow::anyhow!("legacy.chain_id overflows u64"))?;
+            Ok((((v - 35) % 2) as u8, Some(chain_id)))
+        }
+        _ => bail!("legacy.v must be 27/28 or >=35, got {}", v),
     }
 }
 
 fn normalize_typed_recovery_id(v: u128, field: &str) -> anyhow::Result<u8> {
     match v {
         0 | 1 => Ok(v as u8),
-        27 | 28 => Ok((v - 27) as u8),
-        _ => bail!("{field} must be 0/1/27/28, got {}", v),
+        _ => bail!("{field} must be 0 or 1, got {}", v),
     }
 }
 
@@ -639,6 +657,13 @@ fn build_signature65(r_raw: &[u8], s_raw: &[u8], recovery_id: u8) -> anyhow::Res
     out[..32].copy_from_slice(&r);
     out[32..64].copy_from_slice(&s);
     out[64] = recovery_id;
+    // Reject invalid scalars and high-S at the shared input boundary so both
+    // recovery backends enforce the same modern EVM signature domain.
+    let signature = Signature::from_slice(&out[..64])
+        .map_err(|err| anyhow::anyhow!("invalid secp256k1 signature scalars: {err}"))?;
+    if signature.normalize_s().is_some() {
+        bail!("signature.s must use low-S form in the modern M0 profile");
+    }
     Ok(out)
 }
 
@@ -653,7 +678,7 @@ fn evm_address_from_secp256k1_pubkey(pubkey: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn typed_tx_recovery_input(
-    raw: &[u8],
+    items: &[RlpItem<'_>],
     tx_type_prefix: u8,
     unsigned_item_count: usize,
     v_idx: usize,
@@ -661,17 +686,6 @@ fn typed_tx_recovery_input(
     s_idx: usize,
     field_prefix: &str,
 ) -> anyhow::Result<([u8; 32], [u8; 65])> {
-    if raw.len() < 2 {
-        bail!("{field_prefix} raw tx payload is empty");
-    }
-    let items = parse_top_level_rlp_list(&raw[1..])?;
-    if items.len() <= s_idx {
-        bail!(
-            "{field_prefix} tx rlp list too short: expected >={}, got {}",
-            s_idx + 1,
-            items.len()
-        );
-    }
     let v = rlp_item_as_u128(&items[v_idx], &format!("{field_prefix}.v"))?;
     let recovery_id = normalize_typed_recovery_id(v, &format!("{field_prefix}.v"))?;
     let r = rlp_item_as_bytes(&items[r_idx], &format!("{field_prefix}.r"))?;
@@ -690,16 +704,12 @@ fn typed_tx_recovery_input(
 }
 
 fn build_raw_evm_sender_recovery_input_m0(raw: &[u8]) -> anyhow::Result<([u8; 32], [u8; 65])> {
-    let hint = resolve_raw_evm_tx_route_hint_m0(raw)?;
-    match hint.envelope {
+    // Recovery and field translation consume the same validated signed layout.
+    // In particular, neither path may ignore trailing fields or normalize an
+    // otherwise invalid integer while rebuilding the signing payload.
+    let (fields, items) = decode_raw_evm_tx_fields_and_items_m0(raw)?;
+    match fields.hint.envelope {
         EvmRawTxEnvelopeType::Legacy => {
-            let items = parse_top_level_rlp_list(raw)?;
-            if items.len() < 9 {
-                bail!(
-                    "legacy tx rlp list too short for sender recovery: expected >=9, got {}",
-                    items.len()
-                );
-            }
             let v = rlp_item_as_u128(&items[6], "legacy.v")?;
             let (recovery_id, eip155_chain_id) = normalize_legacy_recovery_id(v)?;
             let r = rlp_item_as_bytes(&items[7], "legacy.r")?;
@@ -707,7 +717,7 @@ fn build_raw_evm_sender_recovery_input_m0(raw: &[u8]) -> anyhow::Result<([u8; 32
             let signature65 = build_signature65(r, s, recovery_id)?;
             let mut unsigned_items = items[..6].iter().map(rlp_encode_item).collect::<Vec<_>>();
             if let Some(chain_id) = eip155_chain_id {
-                unsigned_items.push(rlp_encode_u128(chain_id));
+                unsigned_items.push(rlp_encode_u128(chain_id as u128));
                 unsigned_items.push(rlp_encode_bytes(&[]));
                 unsigned_items.push(rlp_encode_bytes(&[]));
             }
@@ -717,13 +727,13 @@ fn build_raw_evm_sender_recovery_input_m0(raw: &[u8]) -> anyhow::Result<([u8; 32
             Ok((message32, signature65))
         }
         EvmRawTxEnvelopeType::Type1AccessList => {
-            typed_tx_recovery_input(raw, 0x01, 8, 8, 9, 10, "type1")
+            typed_tx_recovery_input(&items, 0x01, 8, 8, 9, 10, "type1")
         }
         EvmRawTxEnvelopeType::Type2DynamicFee => {
-            typed_tx_recovery_input(raw, 0x02, 9, 9, 10, 11, "type2")
+            typed_tx_recovery_input(&items, 0x02, 9, 9, 10, 11, "type2")
         }
         EvmRawTxEnvelopeType::Type3Blob => {
-            typed_tx_recovery_input(raw, 0x03, 11, 11, 12, 13, "type3")
+            typed_tx_recovery_input(&items, 0x03, 11, 11, 12, 13, "type3")
         }
         EvmRawTxEnvelopeType::Type4SetCode => {
             bail!("type4 sender recovery is not enabled in M0")
@@ -777,7 +787,7 @@ fn rlp_access_list_entries(
     for (entry_idx, entry) in entries.iter().enumerate() {
         let entry_field = format!("{}[{}]", field, entry_idx);
         let entry_items = rlp_item_as_list_items(entry, &entry_field)?;
-        if entry_items.len() < 2 {
+        if entry_items.len() != 2 {
             bail!("{} must be [address,storageKeys]", entry_field);
         }
         let address_field = format!("{}.address", entry_field);
@@ -817,13 +827,43 @@ fn access_list_intrinsic_counts(entries: &[EvmAccessListEntryV1]) -> (u64, u64) 
     (address_count, storage_key_count)
 }
 
+fn validate_signed_envelope_signature_m0(
+    items: &[RlpItem<'_>],
+    envelope: EvmRawTxEnvelopeType,
+) -> anyhow::Result<()> {
+    let expected_fields = match envelope {
+        EvmRawTxEnvelopeType::Legacy => 9,
+        EvmRawTxEnvelopeType::Type1AccessList => 11,
+        EvmRawTxEnvelopeType::Type2DynamicFee => 12,
+        EvmRawTxEnvelopeType::Type3Blob => 14,
+        EvmRawTxEnvelopeType::Type4SetCode => bail!("type4 signed decoding is not enabled in M0"),
+    };
+    if items.len() != expected_fields {
+        bail!(
+            "signed {:?} tx must have exactly {} fields, got {}",
+            envelope,
+            expected_fields,
+            items.len()
+        );
+    }
+    let v_index = expected_fields - 3;
+    let v = rlp_item_as_u128(&items[v_index], "signature.v")?;
+    let recovery_id = if envelope == EvmRawTxEnvelopeType::Legacy {
+        normalize_legacy_recovery_id(v)?.0
+    } else {
+        normalize_typed_recovery_id(v, "signature.y_parity")?
+    };
+    let r = rlp_item_as_bytes(&items[v_index + 1], "signature.r")?;
+    let s = rlp_item_as_bytes(&items[v_index + 2], "signature.s")?;
+    build_signature65(r, s, recovery_id)?;
+    Ok(())
+}
+
 fn tx_fields_from_legacy_list(
     items: &[RlpItem<'_>],
     hint: EvmRawTxRouteHint,
 ) -> anyhow::Result<EvmRawTxFieldsM0> {
-    if items.len() < 6 {
-        bail!("legacy tx rlp list too short: expected >=6 fields");
-    }
+    validate_signed_envelope_signature_m0(items, hint.envelope)?;
     let nonce = rlp_item_as_u64(&items[0], "legacy.nonce")?;
     let gas_price = rlp_item_as_u64(&items[1], "legacy.gas_price")?;
     let gas_limit = rlp_item_as_u64(&items[2], "legacy.gas_limit")?;
@@ -831,17 +871,8 @@ fn tx_fields_from_legacy_list(
     let value = rlp_item_as_u128(&items[4], "legacy.value")?;
     let data = rlp_item_as_bytes(&items[5], "legacy.data")?.to_vec();
 
-    let chain_id = if items.len() > 6 {
-        let v = rlp_item_as_u128(&items[6], "legacy.v")?;
-        if v >= 35 {
-            let cid = ((v - 35) / 2) as u64;
-            Some(cid)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let v = rlp_item_as_u128(&items[6], "legacy.v")?;
+    let chain_id = normalize_legacy_recovery_id(v)?.1;
 
     Ok(EvmRawTxFieldsM0 {
         hint,
@@ -865,9 +896,7 @@ fn tx_fields_from_type1_list(
     items: &[RlpItem<'_>],
     hint: EvmRawTxRouteHint,
 ) -> anyhow::Result<EvmRawTxFieldsM0> {
-    if items.len() < 8 {
-        bail!("type1 tx rlp list too short: expected >=8 fields");
-    }
+    validate_signed_envelope_signature_m0(items, hint.envelope)?;
     let chain_id = rlp_item_as_u64(&items[0], "type1.chain_id")?;
     let nonce = rlp_item_as_u64(&items[1], "type1.nonce")?;
     let gas_price = rlp_item_as_u64(&items[2], "type1.gas_price")?;
@@ -900,9 +929,7 @@ fn tx_fields_from_type2_list(
     items: &[RlpItem<'_>],
     hint: EvmRawTxRouteHint,
 ) -> anyhow::Result<EvmRawTxFieldsM0> {
-    if items.len() < 9 {
-        bail!("type2 tx rlp list too short: expected >=9 fields");
-    }
+    validate_signed_envelope_signature_m0(items, hint.envelope)?;
     let chain_id = rlp_item_as_u64(&items[0], "type2.chain_id")?;
     let nonce = rlp_item_as_u64(&items[1], "type2.nonce")?;
     let max_priority_fee_per_gas = rlp_item_as_u64(&items[2], "type2.max_priority_fee_per_gas")?;
@@ -957,9 +984,7 @@ fn tx_fields_from_type3_list(
     items: &[RlpItem<'_>],
     hint: EvmRawTxRouteHint,
 ) -> anyhow::Result<EvmRawTxFieldsM0> {
-    if items.len() < 11 {
-        bail!("type3 tx rlp list too short: expected >=11 fields");
-    }
+    validate_signed_envelope_signature_m0(items, hint.envelope)?;
     let chain_id = rlp_item_as_u64(&items[0], "type3.chain_id")?;
     let nonce = rlp_item_as_u64(&items[1], "type3.nonce")?;
     let max_priority_fee_per_gas = rlp_item_as_u64(&items[2], "type3.max_priority_fee_per_gas")?;
@@ -991,51 +1016,51 @@ fn tx_fields_from_type3_list(
     })
 }
 
-pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFieldsM0> {
+fn decode_raw_evm_tx_fields_and_items_m0(
+    raw: &[u8],
+) -> anyhow::Result<(EvmRawTxFieldsM0, Vec<RlpItem<'_>>)> {
     let hint = resolve_raw_evm_tx_route_hint_m0(raw)?;
+    if hint.envelope == EvmRawTxEnvelopeType::Type4SetCode {
+        return Ok((
+            EvmRawTxFieldsM0 {
+                hint,
+                chain_id: None,
+                nonce: None,
+                gas_limit: None,
+                gas_price: None,
+                max_priority_fee_per_gas: None,
+                max_fee_per_blob_gas: None,
+                blob_hash_count: None,
+                access_list_address_count: None,
+                access_list_storage_key_count: None,
+                access_list: Vec::new(),
+                to: None,
+                value: None,
+                data: None,
+            },
+            Vec::new(),
+        ));
+    }
+    let payload = if hint.envelope == EvmRawTxEnvelopeType::Legacy {
+        raw
+    } else {
+        raw.get(1..)
+            .filter(|payload| !payload.is_empty())
+            .ok_or_else(|| anyhow::anyhow!("typed tx payload is empty"))?
+    };
+    let items = parse_top_level_rlp_list(payload)?;
     let fields = match hint.envelope {
-        EvmRawTxEnvelopeType::Legacy => {
-            let items = parse_top_level_rlp_list(raw)?;
-            tx_fields_from_legacy_list(&items, hint)
-        }
-        EvmRawTxEnvelopeType::Type1AccessList => {
-            if raw.len() < 2 {
-                bail!("type1 tx payload is empty");
-            }
-            let items = parse_top_level_rlp_list(&raw[1..])?;
-            tx_fields_from_type1_list(&items, hint)
-        }
-        EvmRawTxEnvelopeType::Type2DynamicFee => {
-            if raw.len() < 2 {
-                bail!("type2 tx payload is empty");
-            }
-            let items = parse_top_level_rlp_list(&raw[1..])?;
-            tx_fields_from_type2_list(&items, hint)
-        }
-        EvmRawTxEnvelopeType::Type3Blob => {
-            if raw.len() < 2 {
-                bail!("type3 tx payload is empty");
-            }
-            let items = parse_top_level_rlp_list(&raw[1..])?;
-            tx_fields_from_type3_list(&items, hint)
-        }
-        EvmRawTxEnvelopeType::Type4SetCode => Ok(EvmRawTxFieldsM0 {
-            hint,
-            chain_id: None,
-            nonce: None,
-            gas_limit: None,
-            gas_price: None,
-            max_priority_fee_per_gas: None,
-            max_fee_per_blob_gas: None,
-            blob_hash_count: None,
-            access_list_address_count: None,
-            access_list_storage_key_count: None,
-            access_list: Vec::new(),
-            to: None,
-            value: None,
-            data: None,
-        }),
+        EvmRawTxEnvelopeType::Legacy => tx_fields_from_legacy_list(&items, hint),
+        EvmRawTxEnvelopeType::Type1AccessList => tx_fields_from_type1_list(&items, hint),
+        EvmRawTxEnvelopeType::Type2DynamicFee => tx_fields_from_type2_list(&items, hint),
+        EvmRawTxEnvelopeType::Type3Blob => tx_fields_from_type3_list(&items, hint),
+        EvmRawTxEnvelopeType::Type4SetCode => unreachable!("type4 handled before signed decoding"),
     }?;
+    Ok((fields, items))
+}
+
+pub fn translate_raw_evm_tx_fields_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFieldsM0> {
+    let (fields, _) = decode_raw_evm_tx_fields_and_items_m0(raw)?;
     let chain_id = fields.chain_id.unwrap_or_default();
     match fields.hint.envelope {
         EvmRawTxEnvelopeType::Type1AccessList => {
@@ -1785,6 +1810,288 @@ mod tests {
             out.extend_from_slice(item);
         }
         out
+    }
+
+    fn canonical_signed_raw_fixtures_m0() -> Vec<Vec<u8>> {
+        // The same signed transfer vectors used by the product node ingress tests.
+        [
+            "f86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83",
+            "01f86601808504a817c80082c3509435353535353535353535353535353535353535350180c001a0ed87936dd64fb90fd3a3da715e41ae38298f756d6ed01c56f6b284d4fde599e9a035447ef0a16c86c3826c0108e764ace64d0cc7c96dcdedca7708942b84389e06",
+            "02f86b0180843b9aca008504a817c80082c3509435353535353535353535353535353535353535350180c080a040f728b9d668b72de626669c08a8d2309a8e27eb219c25c4be462b2d340eb341a07f2a438968937fbaba1b9e75d8b66fd9cc459bf9f69ae613d2c7704ae257a3f3",
+            "03f8930180843b9aca008504a817c80083030d409435353535353535353535353535353535353535350180c0843b9aca00e1a0010101010101010101010101010101010101010101010101010101010101010180a07bc5f130ef201b9438e86d2c7043c4f364c74eab94f04e001396a2cd87c1c19aa04e02ebc48abe83f9f56dee0d37682a1b01e2f81a24bdd9a00a03cbe8bb9f2865",
+        ]
+        .into_iter()
+        .map(hex_bytes)
+        .collect()
+    }
+
+    fn signed_raw_fixture_items_m0(raw: &[u8]) -> (Option<u8>, Vec<Vec<u8>>) {
+        let prefix = (raw[0] < 0x80).then_some(raw[0]);
+        let payload = if prefix.is_some() { &raw[1..] } else { raw };
+        let items = parse_top_level_rlp_list(payload)
+            .expect("canonical signed fixture RLP")
+            .iter()
+            .map(rlp_encode_item)
+            .collect();
+        (prefix, items)
+    }
+
+    fn signed_raw_from_items_m0(prefix: Option<u8>, items: &[Vec<u8>]) -> Vec<u8> {
+        let mut raw = prefix.into_iter().collect::<Vec<_>>();
+        raw.extend(enc_list(items));
+        raw
+    }
+
+    fn decode_signed_raw_without_write_gate_m0(raw: &[u8]) -> anyhow::Result<EvmRawTxFieldsM0> {
+        // Type 3 stays disabled in the public write policy. Exercise its existing
+        // decoder directly, without changing process-wide feature configuration.
+        let hint = resolve_raw_evm_tx_route_hint_m0(raw)?;
+        if hint.envelope == EvmRawTxEnvelopeType::Type3Blob {
+            let items = parse_top_level_rlp_list(&raw[1..])?;
+            tx_fields_from_type3_list(&items, hint)
+        } else {
+            translate_raw_evm_tx_fields_m0(raw)
+        }
+    }
+
+    fn assert_signed_raw_rejected_m0(raw: &[u8], case: &str) {
+        assert!(
+            decode_signed_raw_without_write_gate_m0(raw).is_err(),
+            "field decoder must reject {case}"
+        );
+        assert!(
+            build_raw_evm_sender_recovery_input_m0(raw).is_err(),
+            "sender recovery input must reject {case}"
+        );
+    }
+
+    #[test]
+    fn canonical_signed_raw_all_supported_envelopes_recover_expected_sender_m0() {
+        let expected = hex_bytes("9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f");
+        for (index, raw) in canonical_signed_raw_fixtures_m0().into_iter().enumerate() {
+            let fields = decode_signed_raw_without_write_gate_m0(&raw)
+                .expect("canonical signed fields must decode");
+            assert_eq!(fields.hint.tx_type_number as usize, index);
+            assert_eq!(fields.chain_id, Some(1));
+            let sender = recover_raw_evm_tx_sender_m0(&raw)
+                .expect("canonical signed recovery must not error")
+                .expect("canonical signed recovery must produce a sender");
+            assert_eq!(sender, expected, "signed envelope {index}");
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_rejects_nonminimal_string_lengths_m0() {
+        let raw = &canonical_signed_raw_fixtures_m0()[0];
+        let (prefix, items) = signed_raw_fixture_items_m0(raw);
+        for (case, nonce) in [
+            ("single byte encoded as short string", vec![0x81, 0x09]),
+            (
+                "short string encoded with long length",
+                vec![0xb8, 0x01, 0x09],
+            ),
+            (
+                "long string length has leading zero",
+                vec![0xb9, 0x00, 0x01, 0x09],
+            ),
+        ] {
+            let mut malformed = items.clone();
+            malformed[0] = nonce;
+            assert_signed_raw_rejected_m0(&signed_raw_from_items_m0(prefix, &malformed), case);
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_rejects_nonminimal_list_lengths_m0() {
+        let short = enc_list(&[
+            enc_u64(0),
+            enc_u64(1),
+            enc_u64(21_000),
+            enc_bytes(&[0x35; 20]),
+            enc_u64(1),
+            enc_bytes(&[]),
+            enc_u64(37),
+            enc_u64(1),
+            enc_u64(1),
+        ]);
+        let mut long_short = vec![0xf8, (short.len() - 1) as u8];
+        long_short.extend_from_slice(&short[1..]);
+        assert_signed_raw_rejected_m0(&long_short, "short list encoded with long length");
+
+        let valid = &canonical_signed_raw_fixtures_m0()[0];
+        assert_eq!(valid[0], 0xf8);
+        let mut leading_zero = vec![0xf9, 0, valid[1]];
+        leading_zero.extend_from_slice(&valid[2..]);
+        assert_signed_raw_rejected_m0(&leading_zero, "list length has leading zero");
+    }
+
+    #[test]
+    fn canonical_signed_raw_rejects_zero_and_leading_zero_integers_m0() {
+        for raw in canonical_signed_raw_fixtures_m0() {
+            let (prefix, items) = signed_raw_fixture_items_m0(&raw);
+            let nonce_index = usize::from(prefix.is_some());
+            for encoded in [vec![0], enc_bytes(&[0, 1])] {
+                let mut malformed = items.clone();
+                malformed[nonce_index] = encoded;
+                assert_signed_raw_rejected_m0(
+                    &signed_raw_from_items_m0(prefix, &malformed),
+                    "noncanonical nonce integer",
+                );
+            }
+            let r_index = items.len() - 2;
+            for encoded in [vec![0], enc_bytes(&[0, 1])] {
+                let mut malformed = items.clone();
+                malformed[r_index] = encoded;
+                assert_signed_raw_rejected_m0(
+                    &signed_raw_from_items_m0(prefix, &malformed),
+                    "noncanonical signature integer",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_requires_exact_envelope_field_counts_m0() {
+        for raw in canonical_signed_raw_fixtures_m0() {
+            let (prefix, items) = signed_raw_fixture_items_m0(&raw);
+            let mut extra = items.clone();
+            extra.push(enc_bytes(&[]));
+            assert_signed_raw_rejected_m0(
+                &signed_raw_from_items_m0(prefix, &extra),
+                "extra signed envelope field",
+            );
+            assert_signed_raw_rejected_m0(
+                &signed_raw_from_items_m0(prefix, &items[..items.len() - 1]),
+                "missing signed envelope field",
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_requires_exact_access_list_entry_fields_m0() {
+        for raw in canonical_signed_raw_fixtures_m0().into_iter().skip(1) {
+            let (prefix, mut items) = signed_raw_fixture_items_m0(&raw);
+            let access_list_index = if prefix == Some(1) { 7 } else { 8 };
+            items[access_list_index] = enc_list(&[enc_list(&[
+                enc_bytes(&[0x45; 20]),
+                enc_list(&[]),
+                enc_bytes(&[]),
+            ])]);
+            assert_signed_raw_rejected_m0(
+                &signed_raw_from_items_m0(prefix, &items),
+                "extra access list entry field",
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_typed_y_parity_is_only_zero_or_one_m0() {
+        for raw in canonical_signed_raw_fixtures_m0().into_iter().skip(1) {
+            let (prefix, items) = signed_raw_fixture_items_m0(&raw);
+            let parity_index = items.len() - 3;
+            for parity in [2, 27, 28, 256] {
+                let mut malformed = items.clone();
+                malformed[parity_index] = enc_u64(parity);
+                assert_signed_raw_rejected_m0(
+                    &signed_raw_from_items_m0(prefix, &malformed),
+                    "typed yParity outside 0/1",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_legacy_v_rejects_zero_or_one_m0() {
+        let raw = &canonical_signed_raw_fixtures_m0()[0];
+        let (prefix, items) = signed_raw_fixture_items_m0(raw);
+        for v in [0, 1] {
+            let mut malformed = items.clone();
+            malformed[6] = enc_u64(v);
+            assert_signed_raw_rejected_m0(
+                &signed_raw_from_items_m0(prefix, &malformed),
+                "legacy wire v outside 27/28 or EIP-155",
+            );
+        }
+        for v in [27, 28, 35, 36] {
+            let mut valid_layout = items.clone();
+            valid_layout[6] = enc_u64(v);
+            let raw = signed_raw_from_items_m0(prefix, &valid_layout);
+            decode_signed_raw_without_write_gate_m0(&raw).expect("supported legacy v domain");
+            build_raw_evm_sender_recovery_input_m0(&raw)
+                .expect("supported legacy recovery v domain");
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_signature_scalars_must_be_nonzero_below_order_m0() {
+        let order = hex_bytes("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+        for raw in canonical_signed_raw_fixtures_m0() {
+            let (prefix, items) = signed_raw_fixture_items_m0(&raw);
+            for scalar_index in [items.len() - 2, items.len() - 1] {
+                for scalar in [Vec::new(), order.clone(), vec![0xff; 32]] {
+                    let mut malformed = items.clone();
+                    malformed[scalar_index] = enc_bytes(&scalar);
+                    assert_signed_raw_rejected_m0(
+                        &signed_raw_from_items_m0(prefix, &malformed),
+                        "signature scalar zero or at/above secp256k1 order",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_signature_s_must_be_low_m0() {
+        let max_low_s =
+            hex_bytes("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+        let first_high_s =
+            hex_bytes("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a1");
+        let max_scalar =
+            hex_bytes("fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140");
+        build_signature65(&[1], &max_low_s, 0).expect("low-S boundary must remain valid");
+        for raw in canonical_signed_raw_fixtures_m0() {
+            let (prefix, items) = signed_raw_fixture_items_m0(&raw);
+            for s in [&first_high_s, &max_scalar] {
+                let mut malformed = items.clone();
+                let s_index = malformed.len() - 1;
+                malformed[s_index] = enc_bytes(s);
+                assert_signed_raw_rejected_m0(
+                    &signed_raw_from_items_m0(prefix, &malformed),
+                    "high-S signature in modern M0 profile",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_signed_raw_legacy_chain_id_must_fit_u64_m0() {
+        let raw = &canonical_signed_raw_fixtures_m0()[0];
+        let (prefix, mut items) = signed_raw_fixture_items_m0(raw);
+        items[6] = enc_u128(35 + 2 * (u64::MAX as u128 + 2));
+        assert_signed_raw_rejected_m0(
+            &signed_raw_from_items_m0(prefix, &items),
+            "legacy chain ID greater than u64",
+        );
+
+        items[6] = enc_u128(35 + 2 * u64::MAX as u128);
+        let boundary = signed_raw_from_items_m0(prefix, &items);
+        assert_eq!(
+            decode_signed_raw_without_write_gate_m0(&boundary)
+                .expect("largest supported legacy chain ID")
+                .chain_id,
+            Some(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn canonical_rlp_length_overflow_returns_error_without_panicking_m0() {
+        for prefix in [0xbf, 0xff] {
+            let mut malformed = vec![prefix];
+            malformed.extend_from_slice(&[0xff; 8]);
+            let result = std::panic::catch_unwind(|| parse_rlp_item(&malformed));
+            assert!(result.is_ok(), "RLP payload length overflow must not panic");
+            assert!(result.unwrap().is_err(), "overflow length must be rejected");
+        }
     }
 
     fn sample_tx(chain_id: u64) -> TxIR {
