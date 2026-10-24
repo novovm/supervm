@@ -54,12 +54,13 @@ pub struct SuppliedSpendStateV1<'a> {
     pub next_spend_nonce: Option<u64>,
 }
 
-/// An Ok result means only that the supplied values satisfy this policy. Caller
-/// must separately establish their provenance, verify the signature, retain the
-/// exact parent binding and execute/commit via the authoritative product path.
-/// Reserving amount+max_fee bounds potential debit; actual fee settlement remains
-/// in the original business plan and must release any unused reservation.
-pub fn check_supplied_spend_state_v1(
+/// Check only the authority facts that remain fixed during a captured spend
+/// batch: account, domain, purpose, revocation, current epoch and validity window.
+/// This does not examine or reserve nonce, per-intent debit or remaining budget;
+/// a later intent may depend on preceding effects in the same execution plan.
+/// An Ok result is NOT a spend permit. The caller must establish state provenance,
+/// verify the signature and check/consume all dynamic effects in that plan.
+pub fn check_supplied_spend_authority_v1(
     intent: &UcaSpendIntentV1,
     state: Option<&SuppliedSpendStateV1<'_>>,
     expected_parent: &[u8; 32],
@@ -103,6 +104,25 @@ pub fn check_supplied_spend_state_v1(
     {
         return Err(Expired);
     }
+    Ok(())
+}
+
+/// An Ok result means only that the supplied values satisfy this policy. Caller
+/// must separately establish their provenance, verify the signature, retain the
+/// exact parent binding and execute/commit via the authoritative product path.
+/// Reserving amount+max_fee bounds potential debit; actual fee settlement remains
+/// in the original business plan and must release any unused reservation.
+pub fn check_supplied_spend_state_v1(
+    intent: &UcaSpendIntentV1,
+    state: Option<&SuppliedSpendStateV1<'_>>,
+    expected_parent: &[u8; 32],
+    execution_height: u64,
+) -> Result<(), SpendPolicyError> {
+    use SpendPolicyError::*;
+    check_supplied_spend_authority_v1(intent, state, expected_parent, execution_height)?;
+    let s = state.ok_or(StateUnavailable)?;
+    // Keep the original precedence: a missing/wrong nonce is reported before
+    // either debit limit, even when both conditions would reject this intent.
     if s.next_spend_nonce.ok_or(StateUnavailable)? != intent.nonce {
         return Err(NonceMismatch);
     }

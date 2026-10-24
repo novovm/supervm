@@ -47,6 +47,7 @@ pub struct ExecutionObservation {
 /// Only the complete compiler/executor constructs this, not `stage(arbitrary
 /// patch)`. Still not a cryptographic proof or authorization to publish a root.
 pub struct ExecutedNovBatch {
+    spend_outputs: Option<Vec<SpendOutput>>,
     effects: UnpublishedBatchEffects,
     receipts: Vec<NovTransferReceipt>,
     fees: FeeState,
@@ -56,6 +57,9 @@ pub struct ExecutedNovBatch {
 }
 
 impl ExecutedNovBatch {
+    pub fn spend_outputs(&self) -> Option<&[SpendOutput]> {
+        self.spend_outputs.as_deref()
+    }
     pub(crate) fn into_poststate_seed(
         self,
         budget: CaptureBudget,
@@ -86,12 +90,12 @@ impl ExecutedNovBatch {
 struct Prediction {
     index: usize,
     snapshot: TransferSnapshot,
-    outcome: TransferOutcome,
+    outcome: Option<TransferOutcome>,
     fee: PreparedTransferFee,
 }
 
 struct Completion {
-    input: Option<SignatureCheckedInput>,
+    input: Option<ExecutionInput>,
     remaining: usize,
     components: Vec<Option<Vec<Prediction>>>,
 }
@@ -133,6 +137,10 @@ impl NovTransferInput {
     /// and ordered settlement used by native execution. No AOEM callback or
     /// publication authority is fabricated; this remains crate-internal.
     pub(crate) fn execute_for_proof(self) -> Result<ExecutedNovBatch> {
+        ensure!(
+            self.prepared.spend.is_none(),
+            "UCA economic contract requires its own approved proof relation"
+        );
         let now = u128::from(self.input.plan().context().timestamp_unix_ms);
         let count = self.prepared.components.len();
         ensure!(count > 0, "empty NOV component plan");
@@ -286,17 +294,28 @@ fn speculate(
     let mut predictions = Vec::with_capacity(prepared.components[component].len());
     for &index in &prepared.components[component] {
         let request = &prepared.requests[index];
-        let fee = quotation.prepare(request)?;
+        let fee = if prepared.spend.is_some() {
+            quotation.prepare_strict_cap(request)?
+        } else {
+            quotation.prepare(request)?
+        };
         let (intent, rejection) = intent(prepared, index, &fee)?;
         let snapshot = TransferSnapshot {
             payer_balance: balances[&request.payer],
             recipient_balance: balances[&request.recipient],
             next_nonce: nonces[&prepared.identities[index]],
         };
-        let outcome = compute_outcome(&intent, &snapshot, rejection.as_deref())?;
-        balances.insert(request.payer.clone(), outcome.delta().payer.after);
-        balances.insert(request.recipient.clone(), outcome.delta().recipient.after);
-        nonces.insert(prepared.identities[index], outcome.delta().nonce_after);
+        // UCA nonce/budget depend on effective authorized predecessors. Never
+        // pre-increment or reject a later row using the parent's nonce here.
+        let outcome = if prepared.spend.is_some() {
+            None
+        } else {
+            let outcome = compute_outcome(&intent, &snapshot, rejection.as_deref())?;
+            balances.insert(request.payer.clone(), outcome.delta().payer.after);
+            balances.insert(request.recipient.clone(), outcome.delta().recipient.after);
+            nonces.insert(prepared.identities[index], outcome.delta().nonce_after);
+            Some(outcome)
+        };
         predictions.push(Prediction {
             index,
             snapshot,
@@ -308,7 +327,7 @@ fn speculate(
 }
 
 fn finish(
-    input: SignatureCheckedInput,
+    input: ExecutionInput,
     prepared: &Prepared,
     components: Vec<Option<Vec<Prediction>>>,
     now: u128,
@@ -331,6 +350,20 @@ fn finish(
     let mut fees = prepared.fees.clone();
     let mut receipts = Vec::with_capacity(ordered.len());
     let mut recomputed = 0;
+    let mut budgets: BTreeMap<_, _> = prepared
+        .spend
+        .as_ref()
+        .map(|s| {
+            s.grants
+                .iter()
+                .map(|(id, g)| (*id, g.record.remaining_debit_budget))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut spend_outputs = prepared
+        .spend
+        .as_ref()
+        .map(|_| Vec::with_capacity(ordered.len()));
     for (index, prediction) in ordered.into_iter().enumerate() {
         let request = &prepared.requests[index];
         let identity = prepared.identities[index];
@@ -340,18 +373,44 @@ fn finish(
             recipient_balance: balances[&request.recipient].unwrap_or(0),
             next_nonce: nonces[&identity],
         };
+        if let Some(spend) = &prepared.spend {
+            use novovm_adapter_api::uca_spend_policy::SpendPolicyError;
+            let e = &spend.entries[index];
+            let failure = e.static_failure.or_else(|| {
+                if prepared.tx_nonces[index] != actual.next_nonce {
+                    Some(SpendPolicyError::NonceMismatch)
+                } else if e.reserve > budgets[&e.grant_id]
+                    || e.reserve > spend.grants[&e.grant_id].record.max_debit_per_intent
+                {
+                    Some(SpendPolicyError::LimitExceeded)
+                } else {
+                    None
+                }
+            });
+            if let Some(failure) = failure {
+                receipts.push(super::uca_effects::rejected_receipt(
+                    prepared, index, &actual, failure,
+                ));
+                spend_outputs.as_mut().unwrap().push(SpendOutput {
+                    failure: Some(failure),
+                    remaining: budgets[&e.grant_id],
+                });
+                continue;
+            }
+        }
         let credit_only = prepared.credit_only.contains(&request.recipient);
         let compatible = prediction.snapshot.payer_balance == actual.payer_balance
             && prediction.snapshot.next_nonce == actual.next_nonce
             && (credit_only || prediction.snapshot.recipient_balance == actual.recipient_balance);
-        let mut outcome = if compatible {
-            prediction.outcome
-        } else {
-            // One bounded repair per transaction, never replay whole suffixes.
-            // This covers earlier global fee rejection erasing predicted money.
-            recomputed += 1;
-            let (intent, rejection) = intent(prepared, index, &prediction.fee)?;
-            compute_outcome(&intent, &actual, rejection.as_deref())?
+        let mut outcome = match prediction.outcome.filter(|_| compatible) {
+            Some(outcome) => outcome,
+            None => {
+                // One bounded repair per transaction, never replay whole suffixes.
+                // This covers earlier global fee rejection erasing predicted money.
+                recomputed += 1;
+                let (intent, rejection) = intent(prepared, index, &prediction.fee)?;
+                compute_outcome(&intent, &actual, rejection.as_deref())?
+            }
         };
         let fee =
             prediction
@@ -402,6 +461,25 @@ fn finish(
             }
         }
         nonces.insert(identity, delta.nonce_after);
+        if let Some(spend) = &prepared.spend {
+            let id = spend.entries[index].grant_id;
+            let debit = if outcome.is_success() {
+                request
+                    .amount
+                    .checked_add(delta.fee_funding_delta)
+                    .context("UCA actual debit overflow")?
+            } else {
+                delta.fee_funding_delta
+            };
+            let remaining = budgets[&id]
+                .checked_sub(debit)
+                .context("UCA approved budget underflow")?;
+            budgets.insert(id, remaining);
+            spend_outputs.as_mut().unwrap().push(SpendOutput {
+                failure: None,
+                remaining,
+            });
+        }
         receipts.push(NovTransferReceipt {
             tx_hash: request.tx_hash,
             signer_identity: identity,
@@ -415,24 +493,60 @@ fn finish(
         fees = fee.after_fee_state;
     }
     stage_results(
-        input, prepared, balances, nonces, fees, receipts, recomputed,
+        input,
+        prepared,
+        balances,
+        nonces,
+        fees,
+        receipts,
+        recomputed,
+        spend_outputs,
     )
 }
 
 /// Encoding, commitment and original tree staging only. Business decisions are
 /// already complete in either the CPU reference or the AOEM composition.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn stage_results(
-    input: SignatureCheckedInput,
+    input: ExecutionInput,
     prepared: &Prepared,
     balances: BTreeMap<Account, Option<u128>>,
     nonces: BTreeMap<[u8; 32], u64>,
     fees: FeeState,
     receipts: Vec<NovTransferReceipt>,
     recomputed: usize,
+    spend_outputs: Option<Vec<SpendOutput>>,
 ) -> Result<ExecutedNovBatch> {
     fees.validate()?;
     let mut changes =
         record_pages::record_changes(FEE_PREFIX, &postcard::to_allocvec(&fees)?, FEE_BYTES)?;
+    ensure!(
+        prepared.spend.is_some() == spend_outputs.is_some(),
+        "UCA effect output missing/unexpected"
+    );
+    if let (Some(spend), Some(outputs)) = (&prepared.spend, &spend_outputs) {
+        ensure!(
+            outputs.len() == spend.entries.len(),
+            "UCA effect output shape"
+        );
+        let mut final_budgets = BTreeMap::new();
+        for (entry, output) in spend.entries.iter().zip(outputs) {
+            final_budgets.insert(entry.grant_id, output.remaining);
+        }
+        for (id, remaining) in final_budgets {
+            let grant = &spend.grants[&id];
+            if remaining != grant.record.remaining_debit_budget {
+                let mut record = grant.record.clone();
+                record.remaining_debit_budget = remaining;
+                changes.extend(
+                    crate::native_pipeline::business::uca_spend_state::grant_record_changes(
+                        &grant.intent,
+                        &record,
+                    )?,
+                );
+            }
+        }
+    }
     for (account, after) in balances {
         if after != prepared.balances[&account] {
             changes.push(StateChange::Put {
@@ -454,19 +568,22 @@ pub(super) fn stage_results(
     }
     let mut digest = Sha256::new();
     digest.update(b"novovm/replacement/nov-receipt-batch/v1\0");
-    digest.update(receipt_codec());
+    digest.update(input.plan().context().receipt_codec);
     digest.update((receipts.len() as u64).to_be_bytes());
     for receipt in &receipts {
         let bytes = postcard::to_allocvec(receipt)?;
         digest.update((bytes.len() as u64).to_be_bytes());
         digest.update(bytes);
     }
+    if let Some(outputs) = &spend_outputs {
+        digest.update(b"uca-authorized-effects/v1\0");
+        for output in outputs {
+            digest.update(super::uca_effects::authorization_code(output.failure).to_be_bytes());
+            digest.update(output.remaining.to_be_bytes());
+        }
+    }
     let receipt_batch_commitment: NodeHash = digest.finalize().into();
-    let apfl_view_transactions = input
-        .transactions()
-        .iter()
-        .filter(|tx| tx.is_apfl_view())
-        .count();
+    let apfl_view_transactions = input.apfl_count();
     let effects = {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::StateTree,
@@ -479,6 +596,7 @@ pub(super) fn stage_results(
     digest.update(effects.update().root());
     digest.update(receipt_batch_commitment);
     Ok(ExecutedNovBatch {
+        spend_outputs,
         effects,
         receipts,
         fees,

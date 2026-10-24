@@ -143,6 +143,16 @@ fn supplied_policy_rejects_every_authority_boundary_without_mutation() {
             Err(expected),
             "case {case}"
         );
+        let authority_expected = if matches!(case, 11..=13) {
+            Ok(())
+        } else {
+            Err(expected)
+        };
+        assert_eq!(
+            check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+            authority_expected,
+            "authority case {case}"
+        );
         assert_eq!(intent.nonce, 9);
     }
 }
@@ -218,7 +228,54 @@ fn unresolved_or_zero_current_epoch_cannot_be_inferred_from_matching_grant() {
             check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
             Err(expected)
         );
+        assert_eq!(
+            check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+            Err(expected)
+        );
     }
+}
+
+#[test]
+fn authority_preflight_does_not_substitute_for_dynamic_prefix_checks() {
+    let (mut intent, account, mut grant) = fixture();
+    intent.nonce = 10; // A preceding same-account intent may consume nonce 9.
+    grant.max_debit_per_intent = 0;
+    grant.remaining_debit_budget = 0;
+    let mut state = SuppliedSpendStateV1 {
+        chain_id: 7,
+        genesis: [2; 32],
+        parent_root: [5; 32],
+        account: &account,
+        grant: &grant,
+        current_spend_epoch: Some(3),
+        next_spend_nonce: Some(9),
+    };
+    assert_eq!(
+        check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+        Ok(())
+    );
+    assert_eq!(
+        check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::NonceMismatch),
+        "original nonce rejection takes priority over debit limits"
+    );
+    state.next_spend_nonce = None;
+    assert_eq!(
+        check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+        Ok(())
+    );
+    assert_eq!(
+        check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::StateUnavailable)
+    );
+    state.next_spend_nonce = Some(10);
+    assert_eq!(
+        check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::LimitExceeded),
+        "passing the authority-only check never waives debit limits"
+    );
+    assert_eq!(grant.remaining_debit_budget, 0);
+    assert_eq!(intent.nonce, 10);
 }
 
 #[test]

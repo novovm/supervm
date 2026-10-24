@@ -31,8 +31,12 @@ mod effect_assets;
 mod execution;
 mod full_effects;
 mod integer;
+mod uca_effects;
+#[cfg(test)]
+mod uca_effects_tests;
 pub use execution::{ExecutedNovBatch, ExecutionObservation, NovTransferReceipt};
 pub(crate) use integer::ResidentTransferResources;
+pub use uca_effects::{uca_effect_contract, uca_program_id, uca_receipt_codec, SpendOutput};
 
 const POLICY_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v1/policy";
 const FEE_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v1/fees";
@@ -480,8 +484,9 @@ impl NovCapturedInput {
             .collect();
         let (components, credit_only) = components(&self.requests, &identities, &balances);
         Ok(NovTransferInput {
-            input,
+            input: ExecutionInput::Reference(input),
             prepared: Prepared {
+                spend: None,
                 policy: self.policy,
                 requests: self.requests,
                 identities,
@@ -497,7 +502,7 @@ impl NovCapturedInput {
 }
 
 pub struct NovTransferInput {
-    input: SignatureCheckedInput,
+    input: ExecutionInput,
     prepared: Prepared,
 }
 
@@ -516,6 +521,7 @@ impl NovTransferInput {
 }
 
 struct Prepared {
+    spend: Option<uca_effects::SpendPlan>,
     policy: DirectNovFeePolicy,
     requests: Vec<TransferFeeRequest>,
     identities: Vec<[u8; 32]>,
@@ -525,6 +531,42 @@ struct Prepared {
     fees: FeeState,
     components: Vec<Vec<usize>>,
     credit_only: BTreeSet<Account>,
+}
+
+// Two authenticated input representations, ONE economic compiler/executor and
+// original staging owner. UCA is not a second controller or publication path.
+enum ExecutionInput {
+    Reference(SignatureCheckedInput),
+    Uca(crate::native_pipeline::execution::plan::OwnedBatchInput),
+}
+impl ExecutionInput {
+    fn plan(&self) -> &BatchPlan {
+        match self {
+            Self::Reference(v) => v.plan(),
+            Self::Uca(v) => v.plan(),
+        }
+    }
+    fn encode_witness(&self, budget: CaptureBudget) -> Result<Vec<u8>> {
+        match self {
+            Self::Reference(v) => v.encode_witness(budget),
+            Self::Uca(_) => anyhow::bail!("UCA proof relation not yet integrated"),
+        }
+    }
+    fn apfl_count(&self) -> usize {
+        match self {
+            Self::Reference(v) => v.transactions().iter().filter(|v| v.is_apfl_view()).count(),
+            Self::Uca(_) => 0,
+        }
+    }
+    fn stage(
+        self,
+        changes: &[StateChange],
+    ) -> Result<crate::native_pipeline::execution::plan::UnpublishedBatchEffects> {
+        match self {
+            Self::Reference(v) => v.stage(changes),
+            Self::Uca(v) => v.stage(changes),
+        }
+    }
 }
 
 fn components(

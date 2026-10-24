@@ -46,6 +46,27 @@ fn quote(request: &TransferFeeRequest, policy: &DirectNovFeePolicy, now: u128) -
 }
 
 #[test]
+fn signed_zero_fee_cap_is_not_the_legacy_unlimited_sentinel() {
+    let p = policy();
+    let r = request();
+    let context = FeeQuotationContext::new(&p, 172_800_000).unwrap();
+    assert!(context.prepare(&r).unwrap().quotation().is_ok());
+    let strict = context.prepare_strict_cap(&r).unwrap();
+    assert_eq!(
+        strict.quotation().as_ref().unwrap_err().code,
+        FeeFailureCode::MaxPayExceeded
+    );
+    let mut before = FeeState::default();
+    before.accounting.daily_window_day = 1;
+    before.accounting.daily_nov_used = 77;
+    let result = strict.settle(&r, &p, &before, 1000, 172_800_000).unwrap();
+    assert_eq!(result.payer_after, 1000);
+    assert_eq!(result.charged_fee(), 0);
+    assert_eq!(result.after_fee_state.accounting, before.accounting);
+    assert_eq!(result.after_fee_state.diagnostics.quote_max_pay_exceeded, 1);
+}
+
+#[test]
 fn prepared_quotation_removes_requoting_not_prefix_capacity_checks() {
     let p = policy();
     let r = request();

@@ -461,6 +461,15 @@ fn quote_transfer_validated(
     policy: &DirectNovFeePolicy,
     now: u128,
 ) -> Result<std::result::Result<FeeQuote, FeeFailure>> {
+    quote_transfer_with_cap(request, policy, now, true)
+}
+
+fn quote_transfer_with_cap(
+    request: &TransferFeeRequest,
+    policy: &DirectNovFeePolicy,
+    now: u128,
+    legacy_zero_cap: bool,
+) -> Result<std::result::Result<FeeQuote, FeeFailure>> {
     #[cfg(test)]
     QUOTE_EVALUATIONS.with(|count| count.set(count.get() + 1));
     validate_request(request)?;
@@ -475,7 +484,7 @@ fn quote_transfer_validated(
     let slippage_bps = request.slippage_bps.min(BPS as u32);
     // nov_amount <= 104; this multiplication and ceiling cannot overflow.
     let with_slippage = (nov_amount * (BPS + u128::from(slippage_bps))).div_ceil(BPS);
-    let max_pay_amount = if request.max_pay_amount == 0 {
+    let max_pay_amount = if legacy_zero_cap && request.max_pay_amount == 0 {
         with_slippage
     } else {
         request.max_pay_amount

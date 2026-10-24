@@ -88,6 +88,10 @@ fn grant_prefix(intent: &UcaSpendIntentV1) -> Result<Vec<u8>> {
     Ok(key)
 }
 
+pub(crate) fn grant_write_declarations(intent: &UcaSpendIntentV1) -> Result<Vec<DeclaredAccess>> {
+    record_pages::declarations(&grant_prefix(intent)?, GRANT_BYTES, true)
+}
+
 fn owner_key(chain: u64, genesis: &NodeHash, account: &Account) -> Result<Vec<u8>> {
     let mut key = domain(chain, genesis, b"/binding-owner/")?;
     key.push(account.as_bytes().len() as u8);
@@ -303,6 +307,26 @@ pub struct CapturedUcaSpendStateV1 {
 }
 
 impl CapturedUcaSpendStateV1 {
+    pub(crate) fn static_failure(
+        &self,
+        height: u64,
+    ) -> Option<novovm_adapter_api::uca_spend_policy::SpendPolicyError> {
+        novovm_adapter_api::uca_spend_policy::check_supplied_spend_authority_v1(
+            &self.intent,
+            Some(&SuppliedSpendStateV1 {
+                chain_id: self.intent.chain_id,
+                genesis: self.intent.genesis,
+                parent_root: self.parent,
+                account: &self.payer.account,
+                grant: &self.grant,
+                current_spend_epoch: Some(self.payer.current_spend_epoch),
+                next_spend_nonce: Some(self.next_nonce),
+            }),
+            &self.parent,
+            height,
+        )
+        .err()
+    }
     pub fn parent_root(&self) -> NodeHash {
         self.parent
     }

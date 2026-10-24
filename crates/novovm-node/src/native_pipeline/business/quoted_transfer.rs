@@ -165,6 +165,7 @@ impl std::error::Error for TransferError {}
 pub enum TransferFailure {
     Fee(String),
     Business(TransferError),
+    Authorization(String),
 }
 
 /// Only the checked operator constructs an outcome. There is deliberately no

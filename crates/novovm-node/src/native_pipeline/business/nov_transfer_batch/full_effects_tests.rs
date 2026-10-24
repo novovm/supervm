@@ -299,6 +299,7 @@ fn prepared(count: usize, diverse: bool) -> Prepared {
         fees: FeeState::default(),
         components: Vec::new(),
         credit_only: BTreeSet::from([recipient.clone()]),
+        spend: None,
     };
     p.balances.insert(recipient.clone(), Some(0));
     for i in 0..count {
@@ -436,5 +437,218 @@ fn resident_shared_and_unshared_complete_plans_match_every_export() -> Result<()
             })
         );
     }
+    Ok(())
+}
+
+fn spend_prepared(count: usize, remaining: u128) -> Prepared {
+    use super::super::uca_effects::{SpendEntry, SpendGrant, SpendPlan};
+    use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+    use novovm_protocol::uca_spend::UcaSpendIntentV1;
+    let mut p = prepared(count, false);
+    let payer = p.requests[0].payer.clone();
+    let identity = p.identities[0];
+    p.credit_only.clear();
+    for i in 0..count {
+        p.requests[i].payer = payer.clone();
+        p.requests[i].recipient = payer.clone();
+        p.requests[i].max_pay_amount = 1000;
+        p.identities[i] = identity;
+        p.tx_nonces[i] = i as u64;
+    }
+    let grant_id = [17; 32];
+    p.spend = Some(SpendPlan {
+        entries: (0..count)
+            .map(|_| SpendEntry {
+                grant_id,
+                reserve: 1010,
+                static_failure: None,
+            })
+            .collect(),
+        grants: BTreeMap::from([(
+            grant_id,
+            SpendGrant {
+                intent: UcaSpendIntentV1 {
+                    chain_id: 7,
+                    genesis: [8; 32],
+                    account_id: "uca:test-payer".into(),
+                    authorization_epoch: 1,
+                    spend_key_ref: [9; 32],
+                    recipient_uca: "uca:test-payer".into(),
+                    amount: 10,
+                    max_fee: 1000,
+                    nonce: 0,
+                    not_before_height: 1,
+                    expires_at_height: 100,
+                },
+                record: SuppliedSpendGrantV1 {
+                    account_id: "uca:test-payer".into(),
+                    key_ref: [9; 32],
+                    authorization_epoch: 1,
+                    permits_nov_transfer: true,
+                    revoked: false,
+                    not_before_height: 1,
+                    expires_at_height: 100,
+                    max_debit_per_intent: 1010,
+                    remaining_debit_budget: remaining,
+                },
+            },
+        )]),
+    });
+    p
+}
+
+#[test]
+#[ignore = "requires trusted AOEM and Vulkan; complete UCA authorization/budget effects"]
+fn resident_uca_authorization_guards_nonce_budget_and_diagnostics() -> Result<()> {
+    use novovm_adapter_api::uca_spend_policy::SpendPolicyError;
+    let library = std::path::PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY").context("AOEM library required")?,
+    );
+    let mut resources = super::super::integer::ResidentTransferResources::new(&library, 4, 16)?;
+    let now = 172_800_123;
+    let mut p = spend_prepared(2, 10_000);
+    p.spend.as_mut().unwrap().entries[0].static_failure = Some(SpendPolicyError::Revoked);
+    p.tx_nonces[1] = 0; // Rejected row must not consume the nonce.
+    let plan = compile(&p, now)?;
+    let result = resources.run_effects(&plan.nodes, &plan.exports)?;
+    let tail = 2 * ROW + 21;
+    let fee = plan.quotes[1].intent_terms().0;
+    assert_eq!(
+        result[tail],
+        super::super::uca_effects::authorization_code(Some(SpendPolicyError::Revoked))
+    );
+    assert_eq!((result[5], result[6], result[9], result[10]), (0, 0, 0, 0));
+    assert_eq!(result[tail + 1], 10_000);
+    assert_eq!(result[tail + 2], 0);
+    assert_eq!(result[ROW + 5], 1);
+    assert_eq!(result[ROW + 6], fee);
+    assert_eq!(
+        result[tail + 3],
+        10_000 - 10 - fee,
+        "successful self-transfer consumes amount plus actual fee"
+    );
+
+    // Both rows separately fit the original allowance; only the effective
+    // prefix reveals the second exceeds it. Unused max_fee is released.
+    let p = spend_prepared(2, 1010 + 10 + fee - 1);
+    let plan = compile(&p, now)?;
+    let result = resources.run_effects(&plan.nodes, &plan.exports)?;
+    assert_eq!(result[tail], 0);
+    assert_eq!(result[tail + 1], 1009);
+    assert_eq!(result[tail + 2], 21);
+    assert_eq!(result[tail + 3], 1009);
+    assert_eq!(result[ROW + 5], 1);
+    assert_eq!(result[ROW + 6], 0);
+
+    let mut p = spend_prepared(1, 1010);
+    p.balances.insert(p.requests[0].payer.clone(), Some(fee));
+    let plan = compile(&p, now)?;
+    let result = resources.run_effects(&plan.nodes, &plan.exports)?;
+    assert_eq!(result[ROW + 21], 0);
+    assert_eq!(result[10], 0, "insufficient amount is a business failure");
+    assert_eq!(result[5], 1);
+    assert_eq!(result[6], fee);
+    assert_eq!(
+        result[ROW + 22],
+        1010 - fee,
+        "business failure consumes actual fee only"
+    );
+
+    // Unauthorized rows never observe quotes or refresh the fee window. A
+    // nonzero sentinel tells projection to retain the previous failure detail.
+    let mut p = spend_prepared(1, 0);
+    p.fees.accounting.daily_window_day = 1;
+    p.fees.accounting.daily_nov_used = 77;
+    p.tx_nonces[0] = 9; // Nonce failure precedes the insufficient allowance.
+    let plan = compile(&p, now)?;
+    let result = resources.run_effects(&plan.nodes, &plan.exports)?;
+    assert_eq!(result[ROW + 21], 20);
+    assert_eq!(result[ROW + 9], 1);
+    assert_eq!(result[ROW + 10], 77);
+    assert_eq!(result[ROW + 19], 0);
+    assert_eq!(result[ROW + 20], 2);
+    assert_eq!(&result[ROW + 11..ROW + 17], &[0; 6]);
+
+    // A signed cap of zero is strict, not the old V3 automatic-quote sentinel.
+    let mut p = spend_prepared(1, 1010);
+    p.requests[0].max_pay_amount = 0;
+    let spend = p.spend.as_mut().unwrap();
+    spend.entries[0].reserve = 10;
+    spend.grants.get_mut(&[17; 32]).unwrap().intent.max_fee = 0;
+    let plan = compile(&p, now)?;
+    assert!(
+        plan.quotes[0].quotation().is_err(),
+        "strict zero cap must reject a positive fee"
+    );
+    let result = resources.run_effects(&plan.nodes, &plan.exports)?;
+    assert_eq!(result[ROW + 21], 0, "valid authority, fee rejection");
+    assert_eq!((result[5], result[6], result[9], result[10]), (1, 0, 0, 0));
+    assert_eq!(result[ROW + 22], 1010);
+
+    // All rejected rows preserve pre-existing diagnostics, including both a
+    // previous failed quote and a past fee window. Some quotes here are valid,
+    // others invalid; neither kind becomes an observed fee event.
+    let mut p = spend_prepared(2, 1010);
+    p.fees.accounting.daily_window_day = 1;
+    p.fees.accounting.daily_nov_used = 77;
+    let d = &mut p.fees.diagnostics;
+    d.quote_max_pay_exceeded = 11;
+    d.settlement_paused = 12;
+    d.settlement_amount_overflow = 13;
+    d.clearing_quote_expired = 14;
+    d.clearing_insufficient_user_balance = 15;
+    d.settlement_policy_fallback = 16;
+    d.last_quote_failure = Some(FeeFailure {
+        code: FeeFailureCode::MaxPayExceeded,
+        reason: "prior quote failure retained".into(),
+    });
+    p.requests[1].max_pay_amount = 0;
+    for entry in &mut p.spend.as_mut().unwrap().entries {
+        entry.static_failure = Some(SpendPolicyError::Revoked);
+    }
+    let plan = compile(&p, now)?;
+    let result = resources.run_effects(&plan.nodes, &plan.exports)?;
+    let f = &result[2 * ROW..2 * ROW + 21];
+    assert_eq!((f[9], f[10]), (1, 77));
+    assert_eq!(&f[11..17], &[11, 12, 13, 14, 15, 16]);
+    assert_eq!(
+        (f[17], f[19], f[20]),
+        (0, 0, 3),
+        "no clearing or quote observation; preserve prior failure"
+    );
+    for i in 0..2 {
+        let row = &result[i * ROW..(i + 1) * ROW];
+        assert_eq!(&row[3..6], &row[..3]);
+        assert_eq!((row[6], row[9], row[10]), (0, 0, 0));
+        assert_eq!(result[2 * ROW + 21 + i * 2 + 1], 1010);
+    }
+
+    // Different purpose grants share the same UCA nonce. A new grant cannot
+    // reuse nonce zero; that refusal also leaves its own independent budget.
+    let mut p = spend_prepared(3, 10_000);
+    let mut other = spend_prepared(1, 20_000)
+        .spend
+        .unwrap()
+        .grants
+        .remove(&[17; 32])
+        .unwrap();
+    other.intent.spend_key_ref = [10; 32];
+    other.record.key_ref = [10; 32];
+    let spend = p.spend.as_mut().unwrap();
+    spend.grants.insert([18; 32], other);
+    spend.entries[1].grant_id = [18; 32];
+    spend.entries[2].grant_id = [18; 32];
+    p.tx_nonces = vec![0, 0, 1];
+    let plan = compile(&p, now)?;
+    let result = resources.run_effects(&plan.nodes, &plan.exports)?;
+    let tail = 3 * ROW + 21;
+    assert_eq!(
+        (result[tail], result[tail + 2], result[tail + 4]),
+        (0, 20, 0)
+    );
+    assert_eq!((result[5], result[ROW + 5], result[2 * ROW + 5]), (1, 1, 2));
+    assert_eq!(result[tail + 1], 10_000 - 10 - fee);
+    assert_eq!(result[tail + 3], 20_000);
+    assert_eq!(result[tail + 5], 20_000 - 10 - fee);
     Ok(())
 }

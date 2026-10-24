@@ -277,6 +277,9 @@ struct Row {
     after: [V; 5],
     fee_code: V,
     accepted: V,
+    authorized: V,
+    authorization_code: V,
+    remaining: V,
 }
 
 fn static_fee_code(quote: &PreparedTransferFee, policy: &DirectNovFeePolicy, now: u128) -> u128 {
@@ -292,12 +295,13 @@ fn category(b: &mut Builder, row: &Row, static_code: u128, independent: bool, wa
     // Domain of the already compiled outcome: immutable failures take priority;
     // a verified capacity bound excludes capacity failure, not funding failure.
     if static_code != 0 {
-        return lit(u128::from(static_code == wanted));
+        return b.mul(&row.authorized, &lit(u128::from(static_code == wanted)));
     }
     if matches!(wanted, 1..=3) || (wanted == 5 && independent) {
         return lit(0);
     }
-    b.eq(&row.fee_code, &lit(wanted))
+    let matches = b.eq(&row.fee_code, &lit(wanted));
+    b.mul(&row.authorized, &matches)
 }
 
 fn branch(
@@ -320,22 +324,52 @@ fn branch(
         .map(|(k, v)| (*k, lit((*v).into())))
         .collect();
     let mut prefix = [lit(0), lit(0)];
+    let mut budgets: BTreeMap<_, _> = p
+        .spend
+        .as_ref()
+        .map(|s| {
+            s.grants
+                .iter()
+                .map(|(id, grant)| (*id, lit(grant.record.remaining_debit_budget)))
+                .collect()
+        })
+        .unwrap_or_default();
     let mut rows = Vec::with_capacity(p.requests.len());
     for (i, request) in p.requests.iter().enumerate() {
         let payer = balances[&request.payer];
         let recipient = balances[&request.recipient];
         let nonce = nonces[&p.identities[i]];
         let (fee, cap, _) = quotes[i].intent_terms();
+        let (authorization_code, authorized, remaining_before) = if let Some(spend) = &p.spend {
+            let entry = &spend.entries[i];
+            let remaining = budgets.get(&entry.grant_id).copied().unwrap_or(lit(0));
+            let code = if let Some(error) = entry.static_failure {
+                lit(super::uca_effects::authorization_code(error))
+            } else {
+                let nonce_ok = b.eq(&lit(p.tx_nonces[i].into()), &nonce);
+                let budget_ok = b.le(&lit(entry.reserve), &remaining);
+                let limit = spend.grants[&entry.grant_id].record.max_debit_per_intent;
+                let per_intent = b.le(&lit(entry.reserve), &lit(limit));
+                let allowed = b.mul(&budget_ok, &per_intent);
+                let budget_code = b.pick(&allowed, &lit(0), &lit(21));
+                b.pick(&nonce_ok, &budget_code, &lit(20))
+            };
+            let allowed = b.eq(&code, &lit(0));
+            (code, allowed, remaining)
+        } else {
+            (lit(0), lit(1), lit(0))
+        };
+        let row_guard = b.mul(guard, &authorized);
         // These are immutable quote/policy/time constants, not parent-dependent
         // business outcomes. Pause precedes expiry and funding, as on CPU.
         let static_code = static_fee_code(&quotes[i], &p.policy, now);
-        let pre = b.call(4, guard, vec![payer, lit(fee), lit(static_code)], 1);
-        let decision = if fast {
+        let pre = b.call(4, &row_guard, vec![payer, lit(fee), lit(static_code)], 1);
+        let mut decision = if fast {
             vec![lit(0), lit(0), pre[0], b.eq(&pre[0], &lit(0))]
         } else {
             b.call(
                 3,
-                guard,
+                &row_guard,
                 vec![
                     prefix[0],
                     prefix[1],
@@ -347,14 +381,18 @@ fn branch(
                 4,
             )
         };
+        decision[3] = b.mul(&authorized, &decision[3]);
         if !fast {
-            prefix = [decision[0], decision[1]];
+            prefix = [
+                b.pick(&authorized, &decision[0], &prefix[0]),
+                b.pick(&authorized, &decision[1], &prefix[1]),
+            ];
         }
         let rejected = b.not(&decision[3]);
-        let after: [V; 5] = b
+        let mut after: [V; 5] = b
             .call(
                 0,
-                guard,
+                &row_guard,
                 vec![
                     payer,
                     recipient,
@@ -371,6 +409,22 @@ fn branch(
             )
             .try_into()
             .unwrap();
+        if p.spend.is_some() {
+            after[0] = b.pick(&authorized, &after[0], &payer);
+            after[1] = b.pick(&authorized, &after[1], &recipient);
+            after[2] = b.pick(&authorized, &after[2], &nonce);
+        }
+        let remaining = if let Some(spend) = &p.spend {
+            let success = b.eq(&after[4], &lit(0));
+            let success = b.mul(&authorized, &success);
+            let amount = b.mul(&success, &lit(request.amount));
+            let debit = b.add(&amount, &after[3]);
+            let remaining = b.sub(&remaining_before, &debit);
+            budgets.insert(spend.entries[i].grant_id, remaining);
+            remaining
+        } else {
+            lit(0)
+        };
         balances.insert(request.payer.clone(), after[0]);
         // A proved credit-only recipient is never a payer, cannot overflow even
         // with every credit, and has its actual ordered receipt prefix below.
@@ -383,6 +437,9 @@ fn branch(
             after,
             fee_code: decision[2],
             accepted: decision[3],
+            authorized,
+            authorization_code,
+            remaining,
         });
     }
     rows
@@ -403,11 +460,31 @@ fn compile(p: &Prepared, now: u128) -> Result<Compiled> {
 }
 
 fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compiled> {
+    if let Some(spend) = &p.spend {
+        ensure!(
+            spend.entries.len() == p.requests.len(),
+            "UCA spend row count mismatch"
+        );
+        ensure!(
+            spend
+                .entries
+                .iter()
+                .all(|entry| entry.static_failure.is_some()
+                    || spend.grants.contains_key(&entry.grant_id)),
+            "missing admitted UCA grant"
+        );
+    }
     let context = FeeQuotationContext::new(&p.policy, now)?;
     let quotes = p
         .requests
         .iter()
-        .map(|r| context.prepare(r))
+        .map(|r| {
+            if p.spend.is_some() {
+                context.prepare_strict_cap(r)
+            } else {
+                context.prepare(r)
+            }
+        })
         .collect::<Result<Vec<_>>>()?;
     let a = &p.fees.accounting;
     let room = b.call(
@@ -452,7 +529,13 @@ fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compi
             .is_some();
     let valid = if independent { fast } else { lit(1) };
     let mut rows = branch(&mut b, p, &quotes, &valid, &room, independent, now);
-    let successes: Vec<_> = rows.iter().map(|r| b.eq(&r.after[4], &lit(0))).collect();
+    let successes: Vec<_> = rows
+        .iter()
+        .map(|r| {
+            let success = b.eq(&r.after[4], &lit(0));
+            b.mul(&r.authorized, &success)
+        })
+        .collect();
     let mut credits = BTreeMap::<Account, Vec<usize>>::new();
     for (i, r) in p.requests.iter().enumerate() {
         if p.credit_only.contains(&r.recipient) {
@@ -512,7 +595,15 @@ fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compi
         .map(|(r, s)| [r.after[3], s[0], s[1], r.accepted])
         .collect();
     let (prefix, total) = b.prefixes(&leaves);
-    let any_quote = lit(u128::from(quotes.iter().any(|q| q.quotation().is_ok())));
+    let mut any_quote = lit(u128::from(quotes.iter().any(|q| q.quotation().is_ok())));
+    if p.spend.is_some() {
+        any_quote = lit(0);
+        for (row, quote) in rows.iter().zip(&quotes) {
+            if quote.quotation().is_ok() {
+                any_quote = b.or(&any_quote, &row.authorized);
+            }
+        }
+    }
     let day = lit((now / 86_400_000) as u64 as u128);
     let same_day = b.eq(&day, &lit(a.daily_window_day.into()));
     let daily = b.pick(&same_day, &lit(a.daily_nov_used), &lit(0));
@@ -626,10 +717,27 @@ fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compi
     } else {
         0
     };
-    let count = b.add(
-        &lit(d.settlement_policy_fallback.into()),
-        &lit(fallback as u128),
-    );
+    let mut fallback = lit(fallback as u128);
+    if p.spend.is_some() && p.policy.resolution_source.starts_with("default_fallback") {
+        let leaves: Vec<_> = rows
+            .iter()
+            .zip(&quotes)
+            .map(|(r, q)| {
+                [
+                    if q.quotation().is_ok() {
+                        r.authorized
+                    } else {
+                        lit(0)
+                    },
+                    lit(0),
+                    lit(0),
+                    lit(0),
+                ]
+            })
+            .collect();
+        fallback = b.reduce(&leaves)[0];
+    }
+    let count = b.add(&lit(d.settlement_policy_fallback.into()), &fallback);
     exports.push(b.op(6, &count, &lit(u64::MAX.into())));
     // Last dynamic diagnostic is a reduction of explicit effect indices; zero
     // means preserve old, not clear it on later successful fees.
@@ -660,15 +768,40 @@ fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compi
     exports.push(indices.remove(0));
     exports.push(valid);
     // Immutable diagnostic selections are constant-folded plan effects too.
-    exports.push(lit(quotes
+    let mut last_quote = lit(quotes
         .iter()
         .rposition(|q| q.quotation().is_ok())
-        .map_or(0, |i| i + 1) as u128));
-    exports.push(lit(if quotes.last().unwrap().quotation().is_err() {
+        .map_or(0, |i| i + 1) as u128);
+    let mut last_failure = lit(if quotes.last().unwrap().quotation().is_err() {
         quotes.len()
     } else {
         0
-    } as u128));
+    } as u128);
+    if p.spend.is_some() {
+        last_quote = lit(0);
+        // n+1 means no authorized row observed: preserve the old diagnostic.
+        last_failure = lit(quotes.len() as u128 + 1);
+        for (i, (row, quote)) in rows.iter().zip(&quotes).enumerate() {
+            if quote.quotation().is_ok() {
+                last_quote = b.pick(&row.authorized, &lit(i as u128 + 1), &last_quote);
+            }
+            last_failure = b.pick(
+                &row.authorized,
+                &lit(if quote.quotation().is_err() {
+                    i as u128 + 1
+                } else {
+                    0
+                }),
+                &last_failure,
+            );
+        }
+    }
+    exports.extend([last_quote, last_failure]);
+    if p.spend.is_some() {
+        for row in &rows {
+            exports.extend([row.authorization_code, row.remaining]);
+        }
+    }
     ensure!(
         b.nodes.len() <= 65_536
             && b.nodes.iter().map(|n| n.otherwise.len()).sum::<usize>() <= 131_072,
@@ -746,7 +879,7 @@ fn fee_failure(
 }
 
 pub(super) fn execute(
-    input: SignatureCheckedInput,
+    input: super::ExecutionInput,
     prepared: &Prepared,
     resources: &mut ResidentTransferResources,
     now: u128,
@@ -770,7 +903,7 @@ pub(super) fn execute(
     let values = projection.expand(&unique)?;
     let n = prepared.requests.len();
     ensure!(
-        values.len() == n * ROW + 21,
+        values.len() == n * ROW + 21 + if prepared.spend.is_some() { n * 2 } else { 0 },
         "NOV complete effect output shape"
     );
     ensure!(
@@ -780,6 +913,7 @@ pub(super) fn execute(
     let mut balances = prepared.balances.clone();
     let mut nonces = prepared.nonces.clone();
     let mut receipts = Vec::with_capacity(n);
+    let mut spend_outputs = prepared.spend.as_ref().map(|_| Vec::with_capacity(n));
     let policy = &prepared.policy;
     for (i, v) in values[..n * ROW].chunks_exact(ROW).enumerate() {
         let request = &prepared.requests[i];
@@ -787,14 +921,38 @@ pub(super) fn execute(
             v[9] <= 1 && v[10] <= 1 && v[12] <= 2,
             "NOV effect tag out of range"
         );
-        let failure = fee_failure(v[8], &plan.quotes[i], request, v[0], now)?;
-        ensure!((v[9] == 1) == failure.is_none(), "fee effect tag mismatch");
-        let (intent, _) = super::execution::intent(prepared, i, &plan.quotes[i])?;
         let snapshot = TransferSnapshot {
             payer_balance: v[0],
             recipient_balance: v[1],
             next_nonce: u64::try_from(v[2])?,
         };
+        if let Some(outputs) = &mut spend_outputs {
+            let offset = n * ROW + 21 + i * 2;
+            let failure = super::uca_effects::authorization_error(values[offset])?;
+            outputs.push(super::uca_effects::SpendOutput {
+                failure,
+                remaining: values[offset + 1],
+            });
+            if let Some(failure) = failure {
+                ensure!(
+                    v[3] == v[0]
+                        && v[4] == v[1]
+                        && v[5] == v[2]
+                        && v[6] == 0
+                        && v[9] == 0
+                        && v[10] == 0
+                        && v[13..16] == [0, 0, 0],
+                    "unauthorized UCA result changed economic effects"
+                );
+                receipts.push(super::uca_effects::rejected_receipt(
+                    prepared, i, &snapshot, failure,
+                ));
+                continue;
+            }
+        }
+        let failure = fee_failure(v[8], &plan.quotes[i], request, v[0], now)?;
+        ensure!((v[9] == 1) == failure.is_none(), "fee effect tag mismatch");
+        let (intent, _) = super::execution::intent(prepared, i, &plan.quotes[i])?;
         let outcome = TransferOutcome::from_checked_integer_values(
             &intent,
             &snapshot,
@@ -880,7 +1038,9 @@ pub(super) fn execute(
             .context("invalid selected quote effect")?;
         d.last_quote = Some(q.clone());
     }
-    d.last_quote_failure = if f[20] == 0 {
+    d.last_quote_failure = if prepared.spend.is_some() && f[20] == n as u128 + 1 {
+        d.last_quote_failure.clone()
+    } else if f[20] == 0 {
         None
     } else {
         Some(
@@ -910,8 +1070,16 @@ pub(super) fn execute(
         });
     }
     drop(projection_span);
-    let mut result =
-        super::execution::stage_results(input, prepared, balances, nonces, fees, receipts, 0)?;
+    let mut result = super::execution::stage_results(
+        input,
+        prepared,
+        balances,
+        nonces,
+        fees,
+        receipts,
+        0,
+        spend_outputs,
+    )?;
     result.observation.gpu_rows = n;
     // One complete composition delegation, NOT one physical dispatch.
     result.observation.gpu_waves = 1;

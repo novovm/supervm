@@ -358,6 +358,9 @@ pub struct OwnedBatchInput {
 }
 
 impl OwnedBatchInput {
+    pub(crate) fn state_input(&self) -> &OwnedStateInput {
+        &self.state
+    }
     pub fn plan(&self) -> &BatchPlan {
         &self.plan
     }

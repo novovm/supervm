@@ -133,7 +133,7 @@ spend grant/花费 nonce。手工构造授权树的测试只能证明捕获适�
 轮换必须核现行花费代次或原授权的显式撤销；只比较 intent 与某个旧 grant 自带的
 epoch，不能保证换钥后旧 grant 已失效。
 
-用户在本轮明确批准以下规则（实现尚待接通）：
+用户明确批准以下规则（候选执行接线进度见文末；原生发布尚待接通）：
 
 - 授权不通过：不扣费、不消耗 nonce，不进入业务结算。
 - 授权通过且转账成功：授权额度消耗 `amount + 实际费用`，自转账也按此口径，
@@ -153,7 +153,7 @@ epoch，不能保证换钥后旧 grant 已失效。
 授权根来源、记录存在、密码正确、费用成功、共识发布分别验收；本节是接合核对，
 不是 U3 或新 TPS 已通过。
 
-### U3 本片：同一父状态捕获基础，不是资产消费许可
+### U3 前片：同一父状态捕获基础，不是资产消费许可
 
 接续 `ec32c21c`，实现位于原node
 `native_pipeline/business/uca_spend_state.rs`。复用 `UcaAccount`、`PersonaBinding`、
@@ -182,3 +182,29 @@ epoch，不能保证换钥后旧 grant 已失效。
 不提额和轮换nonce连续仍须在实际交易路径验证。原CPU快路径与整数效应计划未改。
 
 See [the parameter recommendation](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md): the baseline is ML-DSA-65 alone. The shared spend signature contract and captured-state foundation above are implemented; native ingress activation, authorized state initialization, atomic spending and mobile runtime remain incomplete. Do not infer approval of ML-DSA-87 from the historical enum. The NOVOCHAT computer consumes the shared upstream interfaces; native UCA/spending and shared canonical signature format remain owned by SUPERVM per the [joint handoff](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). No real billing or mobile key migration is enabled by this work.
+
+### U3 接续：同一候选内的授权与经济效应
+
+`NovTransferInput::capture_uca` 只接原 exec 验签产生的对象；位置hint不授予权限。
+同一原 `BatchPlan/OwnedStateInput` 捕获账户、现行花费代次、grant、稳定nonce、
+余额和费用政策。复用 `full_effects` 的通用组合计划表达授权守卫、每grant预算前缀、
+共同账户nonce及原费用/窗口/诊断/余额效应；后继引用前序实际生效值，不回node修复。
+原CPU后端作为同规则对照。两者共用原 `stage_results/input.stage`，一次生成grant页、
+余额、nonce和费用写集，仍只是未发布候选，不是耐久提交或共识最终确认。
+
+授权拒绝不观察报价、不刷新费用窗口、不推进nonce；业务失败保留原实际费用和nonce
+语义。最高费用预留释放后，后继可消费实际剩余额度；自转仍消耗gross amount+实际费。
+UCA签名的 `max_fee=0` 是严格零上限，不继承旧费用接口“0表示自动报价”的兼容语义。
+同UCA多grant共用nonce而预算分别记录；换钥不能通过新grant获得新nonce桶。
+
+候选使用独立 `uca_program_id/uca_effect_contract/uca_receipt_codec` 固定新语义，
+回执承诺包含授权结果码及预算后值；不重标旧V3票据或隐式更换旧receipt含义。
+旧proof关系拒绝此新合同，不将完整计划或候选摘要冒充业务证明。
+具体运行结果与未通过项以[本轮证据](../artifacts/audit/uca-spend-candidate-effects-20261024/README.md)为准。
+
+**初始化和激活仍未完成。** 当前UCA键/nonce身份包含genesis，而服务的genesis承诺
+又包含初始树根；直接把这些记录塞入旧 `GenesisConfig` 会循环依赖。下一接合必须
+显式定义来自规范创世清单的独立签名域再绑定最终初始根，或走合法认证的后续初始化，
+不能用随机值/旧域凑通。测试自建记录不代替合法发行/注册/授权。原生NUAS/APFL输入
+及资源预算、授权变更、原journal发布、独立重启追赶仍须成套接入；不激活App资产支出。
+移动制品的最新单独进度见移动运行库交接，不以本候选验收覆盖设备或经济到账验收。

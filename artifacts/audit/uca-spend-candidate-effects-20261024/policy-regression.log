@@ -1,0 +1,30 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+    Finished `release` profile [optimized] target(s) in 1.42s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_adapter_api-45d99a02456306ee.exe)
+
+running 18 tests
+test uca_key_binding::tests::algorithm_account_action_and_key_bindings_change_the_message ... ok
+test local_identity::tests::different_roots_cannot_relabel_a_valid_proof ... ok
+test local_identity::tests::mixed_order_and_noncanonical_public_keys_are_not_local_authorities_or_subjects ... ok
+test local_identity::tests::request_freshness_is_at_issuance_not_a_five_minute_grant_lifetime ... ok
+test local_identity::tests::signature_tampering_wrong_domain_and_unsupported_version_are_rejected ... ok
+test local_identity::tests::signature_uses_existing_root_reference_and_preserves_all_bindings ... ok
+test uca_spend_policy::tests::absent_state_and_unresolved_nonce_never_become_fresh_account ... ok
+test local_identity::tests::independent_scopes_do_not_revoke_each_other_or_extend_original_proofs ... ok
+test uca_spend_policy::tests::advancing_current_epoch_invalidates_retained_old_grant_without_resetting_nonce ... ok
+test local_identity::tests::issuance_and_verification_reject_invalid_time_windows_without_overflow ... ok
+test uca_spend_policy::tests::supplied_policy_rejects_every_authority_boundary_without_mutation ... ok
+test uca_spend_policy::tests::rotation_keeps_account_and_nonce_and_rejects_old_key_and_replay ... ok
+test uca_spend_policy::tests::authority_preflight_does_not_substitute_for_dynamic_prefix_checks ... ok
+test uca_spend_policy::tests::unresolved_or_zero_current_epoch_cannot_be_inferred_from_matching_grant ... ok
+test uca_key_binding::tests::existing_transcript_has_exact_domain_delimiters_and_hex ... ok
+test local_identity::tests::all_transcript_fields_are_cryptographically_bound_even_with_matching_expectations ... ok
+test local_identity::tests::zero_bindings_weak_keys_and_root_subject_reuse_fail_before_signing ... ok
+test local_identity::tests::every_expected_binding_and_trusted_root_epoch_are_required ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

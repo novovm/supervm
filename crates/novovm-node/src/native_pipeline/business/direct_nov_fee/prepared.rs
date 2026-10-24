@@ -29,6 +29,19 @@ impl FeeQuotationContext {
             context: Arc::clone(self),
         })
     }
+
+    /// A signed UCA cap is literal, including zero. Retain the legacy sentinel
+    /// only for the existing reference transaction contract.
+    pub fn prepare_strict_cap(
+        self: &Arc<Self>,
+        request: &TransferFeeRequest,
+    ) -> Result<PreparedTransferFee> {
+        Ok(PreparedTransferFee {
+            quotation: quote_transfer_with_cap(request, &self.policy, self.now, false)?,
+            request: request.clone(),
+            context: Arc::clone(self),
+        })
+    }
 }
 
 pub(in crate::native_pipeline::business) struct PreparedTransferFee {
