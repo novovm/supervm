@@ -37,3 +37,5 @@ B损坏后的恢复、重新绑定和旧权限撤销继续待定，不承诺仅�
 用户允许仅vivo B设备刷机/清除，覆盖初始不刷机条款；原两台聊天手机不在授权范围。当前vivo API27、PD1818HF_EX_A_2.0.1、green/locked，未证实安全解锁及完整恢复闭环，先部署可退出HOME专用入口，无持钥/资产权限；不是定制OS。当前受保护持钥实现仍要求API30，API27兼容不能通过取消认证实现。
 
 扫码独立原型已构建，7项光学封装/完整图像回归通过，未完成真实相机及新B持钥验收。A复用上游验签并逐字节核对规范意图，不信任B签名能替代链状态。测试域限定、asset_authorized=false、transaction_submitted=false继续保持。详情及哈希见 [软件实查](https://github.com/XujueKing/NOVOKEYONE/blob/main/docs/VIVO-1820-EVALUATION-2026-10-25.md)。此通知待另一台Git回执；不是账户授权/收费上线。
+
+设备准入补充通知：NOVOKEYONE 30d98de记录vivo官方更新实查，PD1818HF_EX / 2.0.1仍为Android8.1且更新页显示最新，尚无匹配Android11证据。当前仅原型用途，不作为正式高权限终端；Android11只是接口门槛，安全更新/可信启动/持钥恢复须独立验收。本机继续光学原型与设备兼容；上游继续可信权限，不等待旧机升级，不重复开发Android。
