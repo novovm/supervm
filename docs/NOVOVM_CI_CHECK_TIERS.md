@@ -80,3 +80,15 @@ head SHA, and verify its complete results. Continue independent development with
 relevant local tests; do not treat unrelated cancellation as a product defect.
 Known security, financial or consensus failures remain blockers for their affected
 delivery, not something to hide by selecting a lighter profile.
+
+## Actual GitHub routing evidence
+
+Code commit `42464842` selected full checks in
+[40118293960](https://github.com/novovm/supervm/actions/runs/40118293960).
+The subsequent real handoff document commit `834c1c59` selected docs in
+[40118394541](https://github.com/novovm/supervm/actions/runs/40118394541): success,
+25 seconds from run start to final update, only scope selection and result jobs
+executed, product/security jobs explicitly skipped. The earlier full code run
+was still in progress after the docs run completed; it was not cancelled by
+that push. This validates the automatic docs/code separation for this sample,
+not manual/scheduled concurrency, product full green or any throughput gain.
