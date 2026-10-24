@@ -1,5 +1,9 @@
 # Agent Highest Law
 
+## 2026-10-24 approved first-release hybrid suite (latest)
+
+The user explicitly approved ML-DSA-65 + Ed25519 with AND verification: both signatures must validate. No OR, classical-only, alternate-level or missing-component fallback. This supersedes pending parameter/hybrid wording below. SUPERVM owns the one canonical suite/transcript and native UCA/spending integration; NOVOCHAT owns the consumer and Android integration. Approval of the suite does not deliver the wire contract, runtime, custody, or finality. Preserve existing phone identities/history and keep real billing disabled. See [confirmed policy](docs/NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md).
+
 ## 2026-10-24 two-machine implementation authorization (latest)
 
 The user now authorizes committing/pushing the confirmed documentation and beginning the necessary UCA/PQ/asset-authority foundations, superseding the earlier documentation-only restriction for this scope. This NOVOCHAT computer owns mobile integration and preservation of existing chat identities/history; the other computer owns NOV economics, native UCA/spending, signature/consensus and settlement in SUPERVM. Shared SDK/protocol changes need a named owner in [the joint sequence](docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md), not two independent implementations. No real billing, grants, mainnet genesis or destructive identity migration. Do not infer that the other computer has started a task from a pushed document.
@@ -27,9 +31,9 @@ founder/foundation subscription cut. See the current economic contract in
 
 The formal first release requires ML-DSA and the existing UCA's actual spending
 authority across transaction, consensus and applicable identity/economic/service
-signatures. Ed25519 remains a development reference, never a mainnet downgrade.
-The ML-DSA parameter set and any mandatory hybrid rule remain pending the other
-conversation's GitHub update; do not infer approval from an existing Mldsa87 tag.
+signatures. Ed25519 alone remains a development reference, never a mainnet downgrade.
+The approved first-release suite is ML-DSA-65 + Ed25519 with AND verification;
+the exact canonical encoding and native integration still need delivery.
 Reuse AOEM crypto and existing UCA rules; do not create another account authority
 or conceal NOV policy inside AOEM. Preserve identity and replay state across key
 rotation/recovery. Do not release the old economic/signature contract first and
