@@ -41,3 +41,5 @@ B损坏后的恢复、重新绑定和旧权限撤销继续待定，不承诺仅�
 设备准入补充通知：NOVOKEYONE 30d98de记录vivo官方更新实查，PD1818HF_EX / 2.0.1仍为Android8.1且更新页显示最新，尚无匹配Android11证据。当前仅原型用途，不作为正式高权限终端；Android11只是接口门槛，安全更新/可信启动/持钥恢复须独立验收。本机继续光学原型与设备兼容；上游继续可信权限，不等待旧机升级，不重复开发Android。
 
 Android进展通知（NOVOKEYONE 9027853）：按用户要求不再等待vivo升级，PCLM50/PKL110已安装独立B/A测试包，补齐USE_BIOMETRIC权限及构建守卫。B认证建钥报告成功，独立包重启后公钥一致；实际扫码往返、重启后同钥签名仍待用户物理扫描验证。原NOVOCHAT进程保持，无真实资产或可信授权结论。继续既有分工，详情见软件仓库docs/OPTICAL-DEVICE-ACCEPTANCE-2026-10-25.md。
+
+光学往返交接结果：NOVOKEYONE e961a90已记录PKL110 A / PCLM50 B真实PUB、REQ、SIG扫描，B认证签名及独立包重启同钥，A上游验签/原请求匹配成功。9项变参检查为规范意图不匹配，不冒充主链执行拒绝。两端asset_authorized=false、transaction_submitted=false。原聊天不动，vivo仍只作原型。另一台继续可信状态/限额/撤销/恢复/原子执行；勿重复Android签名或QR实现。请通过Git回执消费此交付，正式资产仍关闭。详见软件仓库docs/OPTICAL-DEVICE-ACCEPTANCE-2026-10-25.md及原始报告。
