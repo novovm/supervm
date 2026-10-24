@@ -1,5 +1,29 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-24 U2 独立锁文件修复与 U3 接续核对
+
+输入 `fa4cfd79`。实查远端 Native auth relation `40077120889` 为失败，错误发生在
+`--locked` 解析依赖阶段，尚未执行测试；主 CI `40077120840` 查询时仍运行，不称全绿。
+根工作区增加的 adapter-api → protocol 路径依赖遗漏于 native-auth host 和 guest
+两份独立锁文件。本片分别只补这一条依赖边，无第三方版本/checksum变化；原测试、
+Clippy 的 `--locked` 保留，CI 另检查 guest 的锁定 metadata，且不构建或执行 guest。
+
+本机 WSL Ubuntu 24.04 / Rust 1.94.0、`RISC0_SKIP_BUILD=1`：原
+`cargo test --manifest-path proofs/native-auth/Cargo.toml --workspace --locked`
+通过9项（2+1+6，0失败/忽略）；同工作区 all-targets 严格Clippy、host/guest格式、
+guest `cargo metadata --locked` 均通过。仅 host 关系/固定声明检查，不是完整业务证明。
+先尝试的 Windows debug 构建在旧 risc0-zkvm-platform 链接报 `sys_alloc_aligned`
+未解析；该平台差异保留，不用 Linux 通过覆盖，也未改密码或删除依赖绕过。
+
+两路只读核查与根复核确认 U3 仍缺当前 native 树的 UCA/资产绑定、独立 grant 初始化、
+现行花费代次及输入版本迁接。现有96字节 Ed/APFL 与1024字节单笔预算不接受新的
+最大5662字节 NUAS；仅把供值预检接到放行会绕过可信状态/同批消费。实际落点、
+复用 full_effects 的 grant 前缀及共同 stage 写集见[签名合同](NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md)
+U3接续节。用户随后批准：授权拒绝不收费/不消费nonce；成功（含自转账）额度扣
+金额+实际费；业务失败仅扣实际费，未用预留释放，原余额/失败nonce规则不变。
+这是规则确认，尚未接入当前执行计划，不当作额度原子消费已经通过。
+本片没有激活新转账、修改运行数据、交付手机运行库或新TPS；远端修复提交另验。
+
 ## 2026-10-24 ML-DSA-65共享花费合同首片（U2接口，U3仍未接通）
 
 基线91032e40，认领8bcf90da；固定65单签，未新增节点模式或修改现行开发链V3。

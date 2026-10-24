@@ -538,6 +538,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
+ "novovm-protocol",
  "postcard",
  "serde",
  "sha2",

@@ -39,6 +39,8 @@ jobs:
           rustfmt --check --edition 2021 proofs/native-auth/methods/guest/src/bin/novovm-parent-nonce-guest.rs
       - name: Signature relation and frozen statement tests
         run: cargo test --manifest-path proofs/native-auth/Cargo.toml --workspace --locked
+      - name: Guest dependency lock consistency (no guest execution)
+        run: cargo metadata --manifest-path proofs/native-auth/methods/guest/Cargo.toml --format-version 1 --locked > /dev/null
       - name: Host and core strict Clippy
         run: cargo clippy --manifest-path proofs/native-auth/Cargo.toml --workspace --all-targets --locked -- -D warnings
       - name: State scope

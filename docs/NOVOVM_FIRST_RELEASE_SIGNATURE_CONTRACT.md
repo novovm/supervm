@@ -112,4 +112,42 @@ lib回归、定向严格Clippy、原node lib编译通过。实际Windows AOEM SH
 本片没有新的主链交易、TPS、Android/iPhone运行或真实资金验收；CI远端另验。
 移动构建与消费边界见[运行库交接](NOVOVM_MOBILE_AOEM_RUNTIME_HANDOFF.md)。
 
+### U3 接续源核对：不是把供值预检改名为授权
+
+固定 `fa4cfd79` 核查，以下是实际迁接位置，不表示这些改动已完成：
+
+| 接点 | 复用来源 | 需要补齐的内容 |
+| --- | --- | --- |
+| 权威账户和资产归属 | `novovm-adapter-api::unified_account::UcaAccount`、`novovm-adapter-novovm::uca_state::NativeUcaAccountRecordV1` | 原管理记录仍是旧 Ed25519 管理域，并未在活动 native 树初始化；需明确稳定 UCA 到原资产记录的可信绑定，不临时按新公钥造余额地址 |
+| 可信输入 | `NovTransferBody::prepare` → `NovTransferPlan::begin_capture` → `NovCapturedInput::finalize_capture` | 在现有访问声明及一次 `OwnedStateInput::read_many` 中读取账户、独立授权、现行花费代次、稳定账户 nonce；根来自原候选/journal 的父上下文，不由 App 提供 |
+| 同批额度 | `nov_transfer_batch/full_effects.rs::branch` / `compile_with_builder` | 每个 grant 的预算输出成为后继引用；账户 nonce 仍按稳定账户共用。余额到账不增加授权预算；不能每笔重复检查初始预算 |
+| 共同生效 | `nov_transfer_batch/execution.rs::stage_results` | 额度、nonce、余额、费用纳入同一 `StateChange` 批及原 `input.stage`，不另写授权库、不在回执返回后补扣 |
+| 原生接收 | `ingress/authentication.rs`、`wire.rs`、`apfl.rs` 及 `service.rs` | 当前 V3/APFL 是96字节 Ed 签名，单笔资源配置1024字节；NUAS 最大5662字节，必须整套版本化，不能仅扩签名数组或假装旧 Transfer |
+
+当前 `GenesisConfig::prepare` 只初始化费用及20/32字节账户余额，没有上述 UCA/独立
+spend grant/花费 nonce。手工构造授权树的测试只能证明捕获适配，不能证明真实注册、
+注资和原生支出已接通。旧管理 `delegation_epoch/next_nonce` 不直接复用为花费权限。
+轮换必须核现行花费代次或原授权的显式撤销；只比较 intent 与某个旧 grant 自带的
+epoch，不能保证换钥后旧 grant 已失效。
+
+用户在本轮明确批准以下规则（实现尚待接通）：
+
+- 授权不通过：不扣费、不消耗 nonce，不进入业务结算。
+- 授权通过且转账成功：授权额度消耗 `amount + 实际费用`，自转账也按此口径，
+  不按付款方净余额变化折算；现有自转账余额规则保持。
+- 授权通过但业务失败：额度仅消耗原规则实际收取的费用；原业务失败 nonce 规则保持。
+- 最高费用预留未用部分释放；同一候选后继消费前序裁决后的有效预算。
+  预留不是额外扣款，收入不自动增加 grant 额度。
+
+这些是授权额度规则，不改变现有 NOV 余额/费用经济语义。CPU/整数两后端应实现同一规则，
+原费用容量 fast 分支也须核新增授权前缀，不能因原费用安全就略过 grant 检查。
+计划/效应/回执版本随真实语义升级，不在旧版本标签下静默更换含义。
+
+实施顺序：权威记录/资产绑定与测试链初始化 → 同一原生输入版本及可信捕获 →
+同一代数计划预算/nonce/经济效应 → 原发布、重启追赶与新签名负载验收。
+退出用例包括100额度下两笔各80的冲突、失败释放后恰可完成的正反对照、入账不提额、
+撤销及换钥后 nonce 连续、错父根/缺失状态拒绝、CPU/整数同结果及原库恢复。
+授权根来源、记录存在、密码正确、费用成功、共识发布分别验收；本节是接合核对，
+不是 U3 或新 TPS 已通过。
+
 See [the parameter recommendation](NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md): the baseline is ML-DSA-65 alone. The shared spend signature contract above is implemented; native ingress activation, trusted spending state and mobile runtime remain incomplete. Do not infer approval of ML-DSA-87 from the historical enum. The NOVOCHAT computer consumes the shared upstream interfaces; native UCA/spending and shared canonical signature format remain owned by SUPERVM per the [joint handoff](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). No real billing or mobile key migration is enabled by this work.
