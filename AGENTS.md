@@ -1,5 +1,9 @@
 # Agent Highest Law
 
+## 2026-10-24 no duplicate two-machine implementation (latest)
+
+The user explicitly requires no duplicate development. The SUPERVM/economics computer is the single owner of signature comparison/format/shared implementation, native UCA/spending, settlement, and coordination of Android AOEM runtime production. The NOVOCHAT computer only consumes these interfaces and owns Android/App integration and device acceptance. It does not create a parallel signature protocol, account system, settlement path or AOEM build. Before shared edits, fetch and record file ownership/handoff in section 8 of [the joint sequence](docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md). A pasted single-signature review has not superseded the explicit AND approval; policy reconsideration belongs to one upstream decision record, not concurrent implementations. Pushing this record does not prove the other computer has read it.
+
 ## 2026-10-24 approved first-release hybrid suite (latest)
 
 The user explicitly approved ML-DSA-65 + Ed25519 with AND verification: both signatures must validate. No OR, classical-only, alternate-level or missing-component fallback. This supersedes pending parameter/hybrid wording below. SUPERVM owns the one canonical suite/transcript and native UCA/spending integration; NOVOCHAT owns the consumer and Android integration. Approval of the suite does not deliver the wire contract, runtime, custody, or finality. Preserve existing phone identities/history and keep real billing disabled. See [confirmed policy](docs/NOVONET_FIRST_RELEASE_PQ_RECOMMENDATION_2026-10-24.md).
