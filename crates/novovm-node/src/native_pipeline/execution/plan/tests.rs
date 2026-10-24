@@ -266,7 +266,7 @@ fn apfl_plan_retains_shared_source_and_exact_raw_commitment() {
     assert_eq!(Arc::strong_count(&source), 2);
     match &plan.source {
         BatchSource::Apfl(retained) => assert!(Arc::ptr_eq(retained, &source)),
-        BatchSource::Raw(_) => panic!("structural source was expanded"),
+        BatchSource::Raw(_) | BatchSource::Uca(_) => panic!("unexpected structural source"),
     }
     assert!(plan.raw_transactions_if_materialized().is_none());
     assert_eq!(

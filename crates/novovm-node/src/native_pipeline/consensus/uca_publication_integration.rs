@@ -7,6 +7,13 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     uca_effect_contract, uca_program_id, uca_receipt_codec,
 };
 use crate::native_pipeline::business::uca_spend_state::UcaSpendStateAccessV1;
+use crate::native_pipeline::consensus::{
+    bodies::{BodyLimits, CandidateBodies},
+    collector::CollectorLimits,
+    pacemaker::TimeoutPolicy,
+    progress::{ProgressLimits, RoundProgress},
+    transport::{self, DecodeLimits, Message},
+};
 use crate::native_pipeline::service::config::uca_genesis::{
     UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
     INITIALIZATION_CONTEXT_V1,
@@ -17,9 +24,82 @@ use crate::native_pipeline::service::config::{
 use crate::native_pipeline::state::frontier::OwnedStateInput;
 use crate::native_pipeline::state::tree::read_state_value;
 use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_consensus::round_bft::journal::JournalBackend;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
 use novovm_protocol::uca_spend::{spend_key_ref_v1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES};
+use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+
+fn progress(
+    journal: ValidatorJournal,
+    pipeline: &CandidatePipeline,
+    set: Arc<ValidatorSet>,
+) -> Result<RoundProgress> {
+    RoundProgress::new(
+        journal,
+        pipeline,
+        set,
+        ProgressLimits {
+            candidates: 5,
+            candidate_bytes: 32 * 1024 * 1024,
+            votes: CollectorLimits {
+                max_retained_rounds: 4,
+                max_future_round_span: 32,
+                max_votes: 44,
+            },
+        },
+        TimeoutPolicy {
+            propose: Duration::from_secs(5),
+            prevote: Duration::from_secs(5),
+            precommit: Duration::from_secs(5),
+            round_increment: Duration::from_secs(1),
+        },
+    )
+}
+
+fn codec() -> DecodeLimits {
+    DecodeLimits {
+        transactions: 8,
+        transaction_bytes: MAX_SIGNED_SPEND_BYTES,
+        body_bytes: 64 * 1024,
+        message_bytes: 128 * 1024,
+    }
+}
+
+fn structured_body(
+    context: BatchContext,
+    raw: &[Vec<u8>],
+    hints: &[(Account, Account)],
+) -> Result<Message> {
+    let hints = hints
+        .iter()
+        .map(|(a, b)| (a.as_bytes().to_vec(), b.as_bytes().to_vec()))
+        .collect::<Vec<_>>();
+    let batch = UcaSpendBatch::from_raw(
+        raw,
+        &hints,
+        UcaSpendBatchLimits {
+            transactions: codec().transactions,
+            transaction_bytes: codec().transaction_bytes,
+            body_bytes: codec().body_bytes,
+        },
+    )?;
+    let message = Message::UcaBody {
+        context,
+        batch: Arc::new(batch),
+    };
+    let wire = transport::encode(&message, codec())?;
+    ensure!(
+        transport::message_lane(&wire)? == 1,
+        "NUAS must use bounded body lane"
+    );
+    let decoded = transport::decode(&wire, codec())?;
+    ensure!(
+        decoded == message,
+        "NUAS body roundtrip changed signed input/hints"
+    );
+    Ok(decoded)
+}
 
 fn configuration(path: &Path, domain: Hash) -> Result<PipelineConfig> {
     let mut config = pipeline_config(path)?;
@@ -62,7 +142,8 @@ fn execute(
     raw: &[Vec<u8>],
     hints: &[(Account, Account)],
 ) -> Result<DurableCandidate> {
-    let request = BatchRequest::from_uca(raw.to_vec(), hints.to_vec(), context, policy())?;
+    let body = structured_body(context, raw, hints)?;
+    let request = transport::candidate_request(&body, &policy())?;
     let Submission::Accepted(mut ticket) = pipeline.try_submit(request)? else {
         bail!("empty UCA pipeline unexpectedly backpressured");
     };
@@ -333,6 +414,20 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
         execution.height = height;
         execution.slot = height - 1;
         execution.timestamp_unix_ms += height;
+        if height == 1 {
+            let mut wrong_hints = hints.clone();
+            wrong_hints[0].0 = Account::try_from(vec![99; 20]).map_err(anyhow::Error::msg)?;
+            ensure!(
+                execute(&services.0[0], execution, &raw, &wrong_hints).is_err(),
+                "untrusted structural hint bypassed parent binding"
+            );
+            let mut forged = raw.clone();
+            *forged[0].last_mut().unwrap() ^= 1;
+            ensure!(
+                execute(&services.0[0], execution, &forged, &hints).is_err(),
+                "structural signature corruption bypassed AOEM verifier"
+            );
+        }
         // Independent original quotation/settlement reference; do not infer
         // fees from the implementation's budget decrement or from balance sums.
         let expected_tx_hash: Hash = Sha256::digest(signed.intent.signing_bytes()?).into();
@@ -369,6 +464,27 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             .iter()
             .map(|p| execute(p, execution, &raw, &hints))
             .collect::<Result<Vec<_>>>()?;
+        // Preserve raw NUAS as the existing candidate reference, not a second
+        // product path. Exact locator equality includes all economics/receipts.
+        let Submission::Accepted(mut reference_ticket) = services.0[0].try_submit(
+            BatchRequest::from_uca(raw.clone(), hints.clone(), execution, policy())?,
+        )?
+        else {
+            bail!("reference request backpressured");
+        };
+        let deadline = Instant::now() + DEADLINE;
+        let reference_candidate = loop {
+            ensure!(Instant::now() < deadline, "raw NUAS comparison deadline");
+            if let Some(done) = reference_ticket.try_take()? {
+                break done.candidate().clone();
+            }
+            std::thread::yield_now();
+        };
+        ensure!(
+            CandidatePipeline::candidate_locator(&reference_candidate, [1; 32])
+                == CandidatePipeline::candidate_locator(&candidates[0], [1; 32]),
+            "structural input changed candidate results"
+        );
         ensure!(
             candidates
                 .iter()
@@ -412,6 +528,72 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
                     == set.leader(height, 0).unwrap()
             })
             .unwrap();
+        // Exercise the actual native body's bounded handoff, not only its
+        // request helper. No consensus poll is run here, so execution must not
+        // publish or grant a vote on its own.
+        if height == 1 {
+            let mut driver = progress(
+                journals[leader].take().unwrap(),
+                &services.0[leader],
+                set.clone(),
+            )?;
+            let mut bodies = CandidateBodies::new(
+                &services.0[leader],
+                execution,
+                policy(),
+                codec(),
+                BodyLimits {
+                    bodies: 4,
+                    bytes: 2 * 1024 * 1024,
+                    inflight: 1,
+                },
+            )?;
+            let body = Arc::new(structured_body(execution, &raw, &hints)?);
+            let id = transport::candidate_body_id(&body, codec())?;
+            let old = Arc::new(Message::Body {
+                context: execution,
+                raw_transactions: raw.clone(),
+            });
+            ensure!(
+                bodies.offer(&old, true, &driver).is_err(),
+                "UCA accepted V3 body downgrade"
+            );
+            ensure!(
+                bodies.offer(&body, false, &driver).is_err(),
+                "unsolicited body accepted"
+            );
+            ensure!(
+                bodies.offer(&body, true, &driver)?,
+                "local structured body backpressured"
+            );
+            let deadline = Instant::now() + DEADLINE;
+            while !driver.retains_body(id) {
+                ensure!(
+                    Instant::now() < deadline,
+                    "native UCA body execution deadline"
+                );
+                bodies.poll(&services.0[leader], &mut driver)?;
+                std::thread::yield_now();
+            }
+            ensure!(
+                bodies.executed == 1
+                    && !bodies.is_frozen()
+                    && driver.head() == (height > 1).then_some(parent),
+                "native UCA body execution or publication boundary mismatch"
+            );
+            drop(bodies);
+            drop(driver);
+            journals[leader] = Some(open_journal(
+                ValidatorJournal::open(
+                    &services.0[leader],
+                    genesis,
+                    anchor,
+                    set.clone(),
+                    validator_key(leader),
+                )?,
+                &services.0[leader],
+            )?);
+        }
         journals[leader]
             .as_mut()
             .unwrap()
@@ -446,6 +628,62 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             )?);
         }
         let decision = Quorum::from_votes(&set, votes[..3].to_vec())?.verify(&set)?;
+        if height == 1 {
+            // A genuinely unresolved durable precommit is reopened on its own
+            // database. Original RoundProgress must re-execute the candidate,
+            // match its locator and restore signing evidence before progressing.
+            drop(journals[0].take());
+            services.0.remove(0).shutdown()?;
+            services.0.insert(
+                0,
+                CandidatePipeline::start(configuration(&paths[0], domain)?, OpenMode::Existing)?,
+            );
+            let reopened = open_journal(
+                ValidatorJournal::open(
+                    &services.0[0],
+                    genesis,
+                    anchor,
+                    set.clone(),
+                    validator_key(0),
+                )?,
+                &services.0[0],
+            )?;
+            let mut progress = progress(reopened, &services.0[0], set.clone())?;
+            ensure!(
+                progress.is_recovering() && progress.recovery_candidates().count() > 0,
+                "fixture did not preserve unresolved UCA signing root"
+            );
+            let deadline = Instant::now() + DEADLINE;
+            while progress.is_recovering() {
+                ensure!(
+                    Instant::now() < deadline,
+                    "NUAS undecided cold replay deadline"
+                );
+                progress.poll_recovery(&services.0[0], &policy(), codec())?;
+                progress.poll_acknowledgements(&services.0[0])?;
+                std::thread::yield_now();
+            }
+            let message = structured_body(execution, &raw, &hints)?;
+            let id = transport::candidate_body_id(&message, codec())?;
+            ensure!(
+                progress.candidate_body(id).is_some_and(|m| *m == message)
+                    && progress.head().is_none()
+                    && !progress.is_frozen(),
+                "cold recovery changed body or prematurely published"
+            );
+            drop(progress);
+            journals[0] = Some(open_journal(
+                ValidatorJournal::open(
+                    &services.0[0],
+                    genesis,
+                    anchor,
+                    set.clone(),
+                    validator_key(0),
+                )?,
+                &services.0[0],
+            )?);
+            candidates[0] = execute(&services.0[0], execution, &raw, &hints)?;
+        }
         for i in 0..4 {
             let journal = journals[i].as_mut().unwrap();
             journal.observe_decision(&proposal, &candidates[i], &decision)?;
@@ -518,6 +756,15 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             ensure!(
                 block.stored().raw_transactions() == raw,
                 "archive changed signed NUAS"
+            );
+            let archived_body = transport::stored_body(block.stored(), codec())?;
+            let live_body = structured_body(execution, &raw, &hints)?;
+            ensure!(
+                transport::encode(&archived_body, codec())?
+                    == transport::encode(&live_body, codec())?
+                    && transport::candidate_body_id(&archived_body, codec())?
+                        == transport::candidate_body_id(&live_body, codec())?,
+                "archive changed NUAS structure, locator hints or body identity"
             );
             let encoded = block.stored().receipt_bytes().to_vec();
             ensure!(
@@ -652,6 +899,6 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
     for (_, secret) in &mut keys {
         secret.fill(0);
     }
-    println!("UCA original pipeline/journal: 4 databases, 2 heights, recipient respend, candidate-only reopen, unobserved decision ACK recovery, cold balances/nonce/budget/receipts checked; native SDK and process kill NOT exercised");
+    println!("UCA original pipeline/journal: structural body roundtrip and bounded native body execution, raw/structural exact locator equality, 4 databases, 2 heights, recipient respend, unresolved precommit RoundProgress replay, archive body identity, candidate-only reopen, unobserved decision ACK recovery, cold balances/nonce/budget/receipts checked; native SDK, real network, process kill and TPS NOT exercised");
     Ok(())
 }

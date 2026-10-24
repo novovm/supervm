@@ -3,7 +3,6 @@
 //! the original RoundProgress/AOEM/journal still validates and applies each block.
 use super::*;
 use crate::native_pipeline::consensus::{transport, wire::Context as VoteContext, ArchiveRead};
-use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 
 struct Cached {
     context: VoteContext,
@@ -145,25 +144,8 @@ impl NativeLifecycle {
                             self.rejected_messages += 1;
                             self.archives[peer].requested = None;
                         } else {
-                            let body = Message::ApflBody {
-                                context: *block.stored().context(),
-                                batch: Arc::new(ApflTransferBatch::from_raw(
-                                    block.stored().raw_transactions(),
-                                    ApflLimits {
-                                        transactions: self.codec.transactions,
-                                        transaction_bytes: self.codec.transaction_bytes,
-                                        body_bytes: self.codec.body_bytes,
-                                    },
-                                )?),
-                            };
-                            let Message::ApflBody {
-                                context: body_context,
-                                batch,
-                            } = &body
-                            else {
-                                unreachable!()
-                            };
-                            let body_id = transport::apfl_body_id(body_context, batch, self.codec)?;
+                            let body = transport::stored_body(block.stored(), self.codec)?;
+                            let body_id = transport::candidate_body_id(&body, self.codec)?;
                             let body = self.channel.prepare(&body)?;
                             let decision = self.channel.prepare(&Message::Decision {
                                 proposal: block.proposal().clone(),

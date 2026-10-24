@@ -339,6 +339,36 @@ impl StoredCandidate {
     pub fn spend_outputs(&self) -> Option<&[SpendOutput]> {
         self.spend_outputs.as_deref()
     }
+    /// Recover only balance-location hints from the content-checked UCA archive.
+    /// These are NOT spending authority or an executed capability. Replaying a
+    /// candidate must independently verify its signatures and both bindings,
+    /// reverse owners, grants and economic effects against the exact parent root.
+    pub(crate) fn uca_account_hints(
+        &self,
+    ) -> Result<
+        Vec<(
+            crate::native_pipeline::business::quoted_transfer::Account,
+            crate::native_pipeline::business::quoted_transfer::Account,
+        )>,
+    > {
+        use crate::native_pipeline::business::quoted_transfer::Account;
+        ensure!(
+            uca::is_profile(self.context()) && self.spend_outputs.is_some(),
+            "balance-location hints require a UCA candidate"
+        );
+        self.receipts
+            .iter()
+            .map(|bytes| {
+                let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
+                ensure!(tail.is_empty(), "trailing UCA receipt bytes");
+                Ok((
+                    Account::try_from(receipt.delta.payer.account).map_err(anyhow::Error::msg)?,
+                    Account::try_from(receipt.delta.recipient.account)
+                        .map_err(anyhow::Error::msg)?,
+                ))
+            })
+            .collect()
+    }
     /// Query-only view of an already content-checked stored receipt. This cannot
     /// construct an executed batch, durable candidate or signing permission.
     pub fn receipt_view(&self, index: usize) -> Result<ReceiptView> {

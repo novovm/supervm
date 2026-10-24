@@ -3,7 +3,13 @@
 //! poll. Reads and execution are async; no network wait or new signing rule.
 use super::*;
 use crate::native_pipeline::{
-    business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch::effect_contract},
+    business::{
+        direct_nov_fee::DirectNovFeePolicy,
+        nov_transfer_batch::{
+            effect_contract, program_id, receipt_codec, uca_effect_contract, uca_program_id,
+            uca_receipt_codec, SEMANTIC_VERSION,
+        },
+    },
     consensus::{statement::BlockStatement, transport},
     persistence::{io::IoTicket, StoredCandidate},
     pipeline::{BatchRequest, PipelineTicket, Submission},
@@ -77,10 +83,18 @@ impl RoundProgress {
                 };
                 let stored = stored.context("cold candidate marker missing")?;
                 let locator = *locator;
+                let context = stored.context();
+                let matches_policy = context.semantic_version == SEMANTIC_VERSION
+                    && ((context.business_program == program_id()
+                        && context.receipt_codec == receipt_codec()
+                        && context.effect_contract == effect_contract(policy)?)
+                        || (context.business_program == uca_program_id()
+                            && context.receipt_codec == uca_receipt_codec()
+                            && context.effect_contract == uca_effect_contract(policy)?));
                 ensure!(
                     stored.candidate_id() == locator.candidate_id
                         && stored.document_digest() == locator.document_digest
-                        && stored.context().effect_contract == effect_contract(policy)?,
+                        && matches_policy,
                     "cold locator/business policy mismatch"
                 );
                 ensure!(
@@ -102,20 +116,16 @@ impl RoundProgress {
                             .saturating_sub(self.candidate_bytes),
                     "cold candidate byte budget"
                 );
-                let body_id =
-                    transport::body_id(stored.context(), stored.raw_transactions(), limits)?;
-                let request = BatchRequest::new(
-                    stored.raw_transactions().to_vec(),
-                    *stored.context(),
-                    policy.clone(),
-                )?;
+                // Restore the same typed body used by live assembly. Stored UCA
+                // hints remain untrusted locations; the original pipeline below
+                // rechecks them and re-executes before any signing is resumed.
+                let body = transport::stored_body(&stored, limits)?;
+                let body_id = transport::candidate_body_id(&body, limits)?;
+                let request = transport::candidate_request(&body, policy)?;
                 self.recovery_work = Some(Work::Execute {
                     locator,
                     body_id,
-                    body: Arc::new(Message::Body {
-                        context: *stored.context(),
-                        raw_transactions: stored.raw_transactions().to_vec(),
-                    }),
+                    body: Arc::new(body),
                     request: Some(request),
                     ticket: None,
                 });

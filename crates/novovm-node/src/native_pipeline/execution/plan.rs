@@ -154,6 +154,7 @@ impl BatchPlan {
             let len = match &source {
                 BatchSource::Raw(raw) => raw[index].len(),
                 BatchSource::Apfl(batch) => batch.row(index)?.encoded_len()?,
+                BatchSource::Uca(batch) => batch.raw_transaction(index)?.len(),
             };
             if len == 0 || len > budget.transaction_bytes {
                 bail!("batch raw transaction size exceeds budget or empty");
@@ -237,6 +238,7 @@ impl BatchPlan {
                     .context("batch transaction index out of bounds")?,
             )),
             BatchSource::Apfl(batch) => Ok(Cow::Owned(batch.canonical_raw(index)?)),
+            BatchSource::Uca(batch) => Ok(Cow::Owned(batch.raw_transaction(index)?)),
         }
     }
 
@@ -245,7 +247,7 @@ impl BatchPlan {
     pub fn raw_transactions_if_materialized(&self) -> Option<&[Vec<u8>]> {
         match &self.source {
             BatchSource::Raw(raw) => Some(raw),
-            BatchSource::Apfl(_) => None,
+            BatchSource::Apfl(_) | BatchSource::Uca(_) => None,
         }
     }
 
@@ -439,6 +441,7 @@ fn framed_source_row(digest: &mut Sha256, source: &BatchSource, index: usize) ->
             digest.update(u64::try_from(row.encoded_len()?)?.to_be_bytes());
             row.update_canonical_digest(digest)
         }
+        BatchSource::Uca(batch) => framed(digest, &batch.raw_transaction(index)?),
     }
 }
 

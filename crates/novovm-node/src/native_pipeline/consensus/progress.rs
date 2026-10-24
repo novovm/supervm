@@ -467,7 +467,11 @@ impl RoundProgress {
                 self.candidates.clear();
                 let height = self.context().height;
                 self.recovered_bodies.retain(|_, body| match body.as_ref() {
-                    Message::Body { context, .. } => context.height.saturating_add(1) >= height,
+                    Message::Body { context, .. }
+                    | Message::ApflBody { context, .. }
+                    | Message::UcaBody { context, .. } => {
+                        context.height.saturating_add(1) >= height
+                    }
                     _ => false,
                 });
                 self.candidate_bytes = 0;

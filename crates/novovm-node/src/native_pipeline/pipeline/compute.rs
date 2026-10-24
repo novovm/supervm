@@ -496,13 +496,10 @@ fn authenticate(
     let batch = match request.raw_transactions {
         CandidateInput::Uca { source, hints } => {
             let (bytes, max) = source.sizes()?;
-            let BatchSource::Raw(raw) = source else {
-                anyhow::bail!("UCA input requires canonical NUAS bytes, not V3 APFL projection");
-            };
             ensure!(
-                !raw.is_empty()
-                    && raw.len() == hints.len()
-                    && raw.len() <= config.authentication.transactions
+                !source.is_empty()
+                    && source.len() == hints.len()
+                    && source.len() <= config.authentication.transactions
                     && max <= config.authentication.transaction_bytes
                     && bytes <= config.authentication.body_bytes,
                 "UCA authentication input budget"
@@ -522,9 +519,22 @@ fn authenticate(
                 .as_ref()
                 .context("UCA facade unavailable")?
                 .uca_spend_verifier_v1()?;
-            let mut signed = Vec::with_capacity(raw.len());
-            for wire in raw {
-                let tx = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(&wire)?;
+            ensure!(
+                !matches!(source, BatchSource::Apfl(_)),
+                "UCA input cannot use V3 APFL projection"
+            );
+            let mut signed = Vec::with_capacity(source.len());
+            for index in 0..source.len() {
+                let projected;
+                let wire = match &source {
+                    BatchSource::Raw(raw) => &raw[index],
+                    BatchSource::Uca(batch) => {
+                        projected = batch.raw_transaction(index)?;
+                        &projected
+                    }
+                    BatchSource::Apfl(_) => unreachable!(),
+                };
+                let tx = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(wire)?;
                 ensure!(
                     tx.intent.chain_id == config.domain.chain_id
                         && tx.intent.genesis == config.domain.genesis_config_commitment,

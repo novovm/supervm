@@ -76,7 +76,9 @@ fn fixed_binding(
 
 pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvidence> {
     match message {
-        Message::Body { context, .. } | Message::ApflBody { context, .. } => {
+        Message::Body { context, .. }
+        | Message::ApflBody { context, .. }
+        | Message::UcaBody { context, .. } => {
             ensure!(
                 context.chain_id == config.chain_id
                     && context.genesis_config_commitment == config.genesis

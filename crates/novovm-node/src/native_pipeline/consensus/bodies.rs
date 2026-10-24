@@ -173,28 +173,25 @@ impl CandidateBodies {
     ) -> Result<bool> {
         ensure!(!self.frozen, "body owner frozen");
         ensure!(!progress.is_frozen(), "consensus owner frozen");
-        ensure!(
-            self.pin.business_program == program_id(),
-            "UCA native asset body admission is not active; legacy V3 bodies are forbidden"
-        );
         if progress.is_recovering() {
             return Ok(false);
         }
         let context = match message.as_ref() {
-            Message::Body { context, .. } | Message::ApflBody { context, .. } => context,
+            Message::Body { context, .. }
+            | Message::ApflBody { context, .. }
+            | Message::UcaBody { context, .. } => context,
             _ => anyhow::bail!("candidate input must be an exact body"),
         };
         ensure!(
             matches_context(context, &self.pin, progress),
             "body parent/business pins mismatch"
         );
-        let id = match message.as_ref() {
-            Message::Body {
-                raw_transactions, ..
-            } => transport::body_id(context, raw_transactions, self.codec)?,
-            Message::ApflBody { batch, .. } => transport::apfl_body_id(context, batch, self.codec)?,
-            _ => unreachable!(),
-        };
+        ensure!(
+            matches!(message.as_ref(), Message::UcaBody { .. })
+                == (self.pin.business_program == uca_program_id()),
+            "candidate body wire/profile mismatch"
+        );
+        let id = transport::candidate_body_id(message, self.codec)?;
         ensure!(
             local || progress.missing_bodies().any(|(_, wanted)| wanted == id),
             "unsolicited body or different ordered input"
@@ -217,6 +214,18 @@ impl CandidateBodies {
             .len()
             .checked_mul(2)
             .context("body charge overflow")?;
+        // Structured NUAS retains a dictionary plus expanded locator pairs in
+        // the request. Charge canonical input as well; compression is not quota.
+        if let Message::UcaBody { batch, .. } = message.as_ref() {
+            ensure!(
+                admitted.is_none(),
+                "V3 admission capability cannot authorize NUAS"
+            );
+            charge = charge
+                .checked_add(batch.canonical_bytes())
+                .and_then(|n| batch.len().checked_mul(64).and_then(|h| n.checked_add(h)))
+                .context("NUAS body charge overflow")?;
+        }
         if self.retained().0 >= self.limits.bodies
             || charge > self.limits.bytes.saturating_sub(self.bytes)
         {
@@ -236,6 +245,7 @@ impl CandidateBodies {
                 }
                 None => BatchRequest::from_apfl(batch.clone(), *context, self.policy.clone())?,
             },
+            Message::UcaBody { .. } => transport::candidate_request(message, &self.policy)?,
             _ => unreachable!(),
         };
         if charge > self.limits.bytes.saturating_sub(self.bytes) {

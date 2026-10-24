@@ -1,0 +1,12 @@
+
+running 1 test
+Error: wrong replayed body type
+test native_pipeline::consensus::tests::progress_integration::native_progress_three_heights_with_unresolved_restart ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::progress_integration::native_progress_three_heights_with_unresolved_restart
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1604 filtered out; finished in 0.27s
+

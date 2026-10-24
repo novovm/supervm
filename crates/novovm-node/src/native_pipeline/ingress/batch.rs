@@ -32,6 +32,7 @@ pub struct AuthenticationBudget {
 pub(crate) enum BatchSource {
     Raw(Vec<Vec<u8>>),
     Apfl(Arc<ApflTransferBatch>),
+    Uca(Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>),
 }
 
 impl BatchSource {
@@ -42,6 +43,7 @@ impl BatchSource {
         match self {
             Self::Raw(raw) => raw.len(),
             Self::Apfl(batch) => batch.len(),
+            Self::Uca(batch) => batch.len(),
         }
     }
 
@@ -60,6 +62,7 @@ impl BatchSource {
                 Ok((total, max))
             }
             Self::Apfl(batch) => Ok((batch.canonical_bytes(), batch.max_transaction_bytes())),
+            Self::Uca(batch) => Ok((batch.canonical_bytes(), batch.max_transaction_bytes())),
         }
     }
 
@@ -85,6 +88,7 @@ impl BatchSource {
         match self {
             Self::Raw(raw) => authenticate_transfer_v3(&raw[index], chain, max),
             Self::Apfl(batch) => authenticate_apfl_row(Arc::clone(batch), index, chain),
+            Self::Uca(_) => anyhow::bail!("NUAS cannot use V3 signature admission"),
         }
     }
 
@@ -93,6 +97,9 @@ impl BatchSource {
         match self {
             Self::Raw(raw) => Ok(raw),
             Self::Apfl(batch) => (0..batch.len()).map(|i| batch.canonical_raw(i)).collect(),
+            Self::Uca(batch) => (0..batch.len())
+                .map(|i| Ok(batch.raw_transaction(i)?))
+                .collect(),
         }
     }
 }
@@ -264,7 +271,7 @@ impl std::ops::Deref for BatchSource {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Raw(raw) => raw,
-            Self::Apfl(_) => panic!("raw-only test accessor"),
+            Self::Apfl(_) | Self::Uca(_) => panic!("raw-only test accessor"),
         }
     }
 }
@@ -274,7 +281,7 @@ impl std::ops::DerefMut for BatchSource {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
             Self::Raw(raw) => raw,
-            Self::Apfl(_) => panic!("raw-only test accessor"),
+            Self::Apfl(_) | Self::Uca(_) => panic!("raw-only test accessor"),
         }
     }
 }

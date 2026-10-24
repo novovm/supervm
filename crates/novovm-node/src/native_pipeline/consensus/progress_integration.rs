@@ -366,16 +366,10 @@ fn run(backend: ExecutionBackend) -> Result<()> {
                         let restored = drivers[i]
                             .candidate_body(body_id)
                             .context("replayed body missing")?;
-                        let Message::Body {
-                            context,
-                            raw_transactions,
-                        } = restored.as_ref()
-                        else {
-                            bail!("wrong replayed body type")
-                        };
                         ensure!(
-                            transport::body_id(context, raw_transactions, codec())? == body_id,
-                            "recovered body changed exact identity"
+                            restored.as_ref() == &body
+                                && transport::candidate_body_id(&restored, codec())? == body_id,
+                            "recovered body changed original APFL fields or exact identity"
                         );
                     }
                 }

@@ -351,7 +351,8 @@ impl NativeChannel {
                     Some((proposal.context.height, None))
                 }
                 transport::Message::Body { context, .. }
-                | transport::Message::ApflBody { context, .. } => Some((context.height, None)),
+                | transport::Message::ApflBody { context, .. }
+                | transport::Message::UcaBody { context, .. } => Some((context.height, None)),
                 transport::Message::RequestDecision { context } => Some((context.height, None)),
                 _ => None,
             },

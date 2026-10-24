@@ -479,7 +479,9 @@ impl NativeLifecycle {
                 if let Some(received) = self.pending[lane].take() {
                     let peer = received.peer;
                     match received.message.as_ref() {
-                        Message::Body { .. } | Message::ApflBody { .. } => {
+                        Message::Body { .. }
+                        | Message::ApflBody { .. }
+                        | Message::UcaBody { .. } => {
                             match self.bodies.offer(&received.message, false, &self.progress) {
                                 Ok(true) => {}
                                 Ok(false) => self.pending[lane] = Some(received),

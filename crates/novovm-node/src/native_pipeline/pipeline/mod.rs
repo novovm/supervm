@@ -131,6 +131,31 @@ pub struct BatchRequest {
 }
 
 impl BatchRequest {
+    /// Preserve the immutable structural batch until the resident verifier
+    /// consumes each canonical row. Hints locate state; they grant no authority.
+    pub fn from_uca_batch(
+        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        let hints = (0..batch.len())
+            .map(|index| {
+                let (payer, recipient) = batch.account_hints(index)?;
+                Ok((
+                    payer.try_into().map_err(anyhow::Error::msg)?,
+                    recipient.try_into().map_err(anyhow::Error::msg)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Self::from_input(
+            compute::CandidateInput::Uca {
+                source: BatchSource::Uca(batch),
+                hints,
+            },
+            context,
+            policy,
+        )
+    }
     /// Typed NUAS candidate input on the original bounded preparation/capture
     /// owner. This does not activate a public native listener or grant authority.
     pub fn from_uca(
