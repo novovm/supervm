@@ -16,6 +16,9 @@ use crate::native_pipeline::state::tree::{
 };
 use ed25519_dalek::{Signer, SigningKey};
 
+#[path = "uca_tests.rs"]
+mod uca_tests;
+
 struct Empty;
 impl StateNodeReader for Empty {
     fn read_node(&self, _: &NodeHash) -> Result<Option<Vec<u8>>> {

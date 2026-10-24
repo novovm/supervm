@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-24 U3 原发布恢复接续：** 输入 `2d504f07`，沿原 CandidatePipeline/exec/AOEM/
+packet/journal 接类型化 UCA，不新增控制器或活跃入口。初始化编译解决签名域/根循环，
+原管理签名需真实验证，确定性承诺入树、批准原件保留。Windows 进程内四原流水线/四库
+完成真实转账、重放拒绝、到账再消费及原库重开核对；实际 native 配置、APFL 准入和
+网络追赶仍未激活，不向 App 签发资产可用结论。本轮交接与未完成项见
+[证据](../artifacts/audit/uca-publication-recovery-20261024/README.md)。
+安全依赖虽有兼容修复，crypto-bigint 公告仍阻塞完整安全门禁。
+
 **2026-10-24 EVM 边界修复（本机验收完成，认领已释放）：** 输入 `6f2114d4`，fetch 后本地/远端一致、
 原树干净。主控独占构建、最终集成及交接/验收文档；解码分工只拥有原 evm-core
 `src/lib.rs`，验签分工只拥有原 adapter-novovm `src/lib.rs`，主控拥有必要 plugin

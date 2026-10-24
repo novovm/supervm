@@ -129,10 +129,9 @@ fn follower_preparation(backend: ExecutionBackend) -> Result<()> {
                 node.progress.step() == TimeoutStep::Propose,
                 "preparation alone advanced signing phase"
             );
-            ensure!(
-                node.pending_deliveries() == 0,
-                "preparation emitted protocol output"
-            );
+            // Recovery legitimately queues unsigned RequestDecision probes.
+            // It must not emit any candidate/vote/decision while preparing.
+            node.assert_only_initial_archive_probes_for_test()?;
         }
         if nodes
             .iter()

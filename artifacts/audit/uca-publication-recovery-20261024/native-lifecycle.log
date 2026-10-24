@@ -1,0 +1,18 @@
+
+running 6 tests
+test native_pipeline::consensus::tests::progress_integration::deadline::native_lifecycle_ready_proposal_wins_deadline_without_disabling_timeout ... ok
+test native_pipeline::consensus::tests::progress_integration::deadline::native_lifecycle_second_ready_control_wins_deadline_without_disabling_timeout ... ok
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_algebraic ... FAILED
+Error: preparation emitted protocol output
+Error: preparation emitted protocol output
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_cpu ... FAILED
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_single_body_three_heights_algebraic ... ok
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_single_body_three_heights_cpu ... ok
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_algebraic
+    native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_cpu
+
+test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 1594 filtered out; finished in 3.18s

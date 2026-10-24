@@ -8,6 +8,7 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     ExecutionObservation, NovCapturedInput, NovTransferBody, NovTransferPlan,
     ResidentTransferResources,
 };
+use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
 use crate::native_pipeline::ingress::batch::{
     authenticate_admission_rows, authenticate_source_batch_observed, AdmissionInput, AdmissionRows,
@@ -39,11 +40,16 @@ pub(crate) struct ComputeConfig {
     pub signatures: Arc<super::SignatureWork>,
 }
 
-/// Both forms use the existing compute command and identical preparation,
-/// capture and execution. The admitted form is not externally constructible.
+/// All forms use the existing compute command and bounded preparation,
+/// capture and execution. UCA is an explicitly typed input contract, not a
+/// V3 reinterpretation. The admitted form is not externally constructible.
 pub(crate) enum CandidateInput {
     Unverified(BatchSource),
     Admitted(super::AdmittedBatch),
+    Uca {
+        source: BatchSource,
+        hints: Vec<(Account, Account)>,
+    },
 }
 
 impl CandidateInput {
@@ -51,11 +57,12 @@ impl CandidateInput {
         match self {
             Self::Unverified(source) => source,
             Self::Admitted(batch) => batch.source(),
+            Self::Uca { source, .. } => source,
         }
     }
     pub(super) fn ensure_owner(&self, owner: &Arc<()>) -> Result<()> {
         match self {
-            Self::Unverified(_) => Ok(()),
+            Self::Unverified(_) | Self::Uca { .. } => Ok(()),
             Self::Admitted(batch) => batch.ensure_owner(owner),
         }
     }
@@ -64,6 +71,7 @@ impl CandidateInput {
         match self {
             Self::Unverified(source) => source.into_raw(),
             Self::Admitted(_) => anyhow::bail!("raw-only allocation fixture"),
+            Self::Uca { .. } => anyhow::bail!("raw-only allocation fixture"),
         }
     }
 }
@@ -88,6 +96,7 @@ impl std::ops::DerefMut for CandidateInput {
         match self {
             Self::Unverified(source) => source,
             Self::Admitted(_) => panic!("authenticated input is immutable"),
+            Self::Uca { .. } => panic!("typed UCA input is immutable"),
         }
     }
 }
@@ -458,12 +467,14 @@ fn domain_matches(domain: StorageDomain, context: &BatchContext) -> Result<()> {
 
 fn prepare(
     session: &mut ComputeSession,
+    uca_facade: &mut Option<novovm_exec::AoemExecFacade>,
     config: &ComputeConfig,
     request: PrepareRequest,
 ) -> Result<NovTransferPlan> {
     domain_matches(config.domain, &request.context)?;
     let body = authenticate(
         session,
+        uca_facade,
         config,
         AuthenticateRequest {
             raw_transactions: request.raw_transactions,
@@ -475,6 +486,7 @@ fn prepare(
 
 fn authenticate(
     session: &mut ComputeSession,
+    uca_facade: &mut Option<novovm_exec::AoemExecFacade>,
     config: &ComputeConfig,
     request: AuthenticateRequest,
 ) -> Result<NovTransferBody> {
@@ -482,6 +494,50 @@ fn authenticate(
         crate::native_pipeline::profile::Phase::Authentication,
     );
     let batch = match request.raw_transactions {
+        CandidateInput::Uca { source, hints } => {
+            let (bytes, max) = source.sizes()?;
+            let BatchSource::Raw(raw) = source else {
+                anyhow::bail!("UCA input requires canonical NUAS bytes, not V3 APFL projection");
+            };
+            ensure!(
+                !raw.is_empty()
+                    && raw.len() == hints.len()
+                    && raw.len() <= config.authentication.transactions
+                    && max <= config.authentication.transaction_bytes
+                    && bytes <= config.authentication.body_bytes,
+                "UCA authentication input budget"
+            );
+            if uca_facade.is_none() {
+                let selection = novovm_exec::resident::AoemLibrarySelection::new(
+                    &config.library,
+                    novovm_exec::AoemExecOpenOptions {
+                        ingress_workers: Some(config.workers),
+                    },
+                )?;
+                *uca_facade = Some(selection.open_wire_facade()?);
+            }
+            // One qualified existing verifier per bounded batch, never one
+            // compatibility self-test/session per row. No Ed25519 fallback.
+            let verifier = uca_facade
+                .as_ref()
+                .context("UCA facade unavailable")?
+                .uca_spend_verifier_v1()?;
+            let mut signed = Vec::with_capacity(raw.len());
+            for wire in raw {
+                let tx = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(&wire)?;
+                ensure!(
+                    tx.intent.chain_id == config.domain.chain_id
+                        && tx.intent.genesis == config.domain.genesis_config_commitment,
+                    "UCA authentication domain mismatch"
+                );
+                signed.push(verifier.verify(tx)?);
+                config
+                    .signatures
+                    .strict_verified
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            return NovTransferBody::prepare_uca(signed, hints, request.policy, config.plan);
+        }
         CandidateInput::Unverified(source) => authenticate_source_batch_observed(
             session,
             config.domain.chain_id,
@@ -541,6 +597,9 @@ fn run_owner(
     notification: &Notification,
     failed: &AtomicBool,
 ) {
+    // The original unified facade lives on this existing compute owner; it
+    // owns no database and cannot publish state. Reference-only runs open none.
+    let mut uca_facade = None;
     while let Ok(queued) = receiver.recv() {
         let command = queued.into_command();
         match command {
@@ -571,7 +630,9 @@ fn run_owner(
                 reply,
             } => {
                 profile::elapsed(profile::Phase::QueueCandidate, queued);
-                let result = lanes::checked(failed, || authenticate(session, config, *request));
+                let result = lanes::checked(failed, || {
+                    authenticate(session, &mut uca_facade, config, *request)
+                });
                 let _ = reply.send(result);
             }
             Command::Bind {
@@ -595,7 +656,9 @@ fn run_owner(
                 reply,
             } => {
                 profile::elapsed(profile::Phase::QueueCandidate, queued);
-                let result = lanes::checked(failed, || prepare(session, config, *request));
+                let result = lanes::checked(failed, || {
+                    prepare(session, &mut uca_facade, config, *request)
+                });
                 let _ = reply.send(result);
             }
             Command::Execute {

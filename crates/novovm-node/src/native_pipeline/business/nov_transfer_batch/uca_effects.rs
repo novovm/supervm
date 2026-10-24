@@ -28,7 +28,7 @@ pub struct SpendOutput {
     pub failure: Option<SpendPolicyError>,
     pub remaining: u128,
 }
-pub(super) fn authorization_code(error: impl Into<Option<SpendPolicyError>>) -> u128 {
+pub(crate) fn authorization_code(error: impl Into<Option<SpendPolicyError>>) -> u128 {
     use SpendPolicyError::*;
     match error.into() {
         None => 0,
@@ -47,7 +47,7 @@ pub(super) fn authorization_code(error: impl Into<Option<SpendPolicyError>>) -> 
         Some(LimitExceeded) => 21,
     }
 }
-pub(super) fn authorization_error(code: u128) -> Result<Option<SpendPolicyError>> {
+pub(crate) fn authorization_error(code: u128) -> Result<Option<SpendPolicyError>> {
     use SpendPolicyError::*;
     Ok(match code {
         0 => None,
@@ -136,13 +136,28 @@ impl NovTransferInput {
         plan_budget: PlanBudget,
         capture_budget: CaptureBudget,
     ) -> Result<Self> {
-        ensure!(
-            context.business_program == uca_program_id()
-                && context.receipt_codec == uca_receipt_codec()
-                && context.semantic_version == 1
-                && context.effect_contract == uca_effect_contract(&policy)?,
-            "UCA economic contract mismatch"
-        );
+        NovTransferBody::prepare_uca(signed, hints, policy, plan_budget)?
+            .bind(context)?
+            .capture(reader, capture_budget)
+    }
+}
+
+pub(super) struct UcaMetadata {
+    signed: Vec<SignatureCheckedUcaSpendV1>,
+    hints: Vec<(Account, Account)>,
+    accesses: Vec<UcaSpendStateAccessV1>,
+}
+
+impl NovTransferBody {
+    /// Compile only signature-checked bodies. State hints are locators, not
+    /// authority; all authority/nonce/balance reads occur in exact-parent capture.
+    pub fn prepare_uca(
+        signed: Vec<SignatureCheckedUcaSpendV1>,
+        hints: Vec<(Account, Account)>,
+        policy: DirectNovFeePolicy,
+        plan_budget: PlanBudget,
+    ) -> Result<Self> {
+        let effect_contract = uca_effect_contract(&policy)?;
         ensure!(
             !signed.is_empty()
                 && signed.len() == hints.len()
@@ -156,10 +171,6 @@ impl NovTransferInput {
         let mut seen = BTreeSet::new();
         for (tx, (payer, recipient)) in signed.iter().zip(&hints) {
             let i = tx.intent();
-            ensure!(
-                i.chain_id == context.chain_id && i.genesis == context.genesis_config_commitment,
-                "UCA execution domain mismatch"
-            );
             ensure!(seen.insert(i.signing_bytes()?), "duplicate UCA intent");
             let bytes = tx.signed().encode()?;
             body_bytes = body_bytes
@@ -203,14 +214,50 @@ impl NovTransferInput {
         {
             declarations.insert(d.key.clone(), d);
         }
-        ensure!(declarations.len() <= 4096, "UCA tree effect budget");
-        let input = BatchPlan::new(
-            context,
-            raw,
-            declarations.into_values().collect(),
-            plan_budget,
-        )?
-        .capture(reader, capture_budget)?;
+        ensure!(
+            declarations.len() <= 4096 && declarations.len() <= plan_budget.access_keys,
+            "UCA tree effect budget"
+        );
+        Ok(Self {
+            batch: BodyInput::Uca {
+                raw,
+                metadata: Box::new(UcaMetadata {
+                    signed,
+                    hints,
+                    accesses,
+                }),
+            },
+            policy,
+            requests: vec![],
+            declarations: declarations.into_values().collect(),
+            effect_contract,
+            budget: plan_budget,
+        })
+    }
+}
+
+impl UcaMetadata {
+    pub(super) fn check_domain(&self, context: &BatchContext) -> Result<()> {
+        ensure!(
+            self.signed.iter().all(|tx| {
+                tx.intent().chain_id == context.chain_id
+                    && tx.intent().genesis == context.genesis_config_commitment
+            }),
+            "UCA execution domain mismatch"
+        );
+        Ok(())
+    }
+    pub(super) fn finalize(
+        self,
+        input: crate::native_pipeline::execution::plan::OwnedBatchInput,
+        policy: DirectNovFeePolicy,
+    ) -> Result<NovTransferInput> {
+        let context = *input.plan().context();
+        let Self {
+            signed,
+            hints,
+            accesses,
+        } = self;
         let policy_bytes = record_pages::read_with(|k| input.read(k), POLICY_PREFIX, POLICY_BYTES)?;
         let captured: DirectNovFeePolicy = decode_record(&policy_bytes)?;
         ensure!(captured == policy, "UCA fee policy differs from parent");
@@ -283,7 +330,7 @@ impl NovTransferInput {
         }
         (p.components, p.credit_only) = components(&p.requests, &p.identities, &p.balances);
         p.spend = Some(spend);
-        Ok(Self {
+        Ok(NovTransferInput {
             input: ExecutionInput::Uca(input),
             prepared: p,
         })

@@ -384,11 +384,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"
           cargo test -p novovm-protocol --lib uca_spend --locked
           cargo test -p novovm-adapter-api --lib uca_spend_policy --locked
           cargo test -p novovm-node --lib native_pipeline::business::uca_spend_state --locked
           cargo test -p novovm-node --lib actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority --locked -- --ignored --test-threads=1
-            cargo test -p novovm-node --lib actual_mldsa_capture_uca_cpu_atomic_effects --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib actual_mldsa_capture_uca_cpu_atomic_effects --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib actual_mldsa_uca_initialized_spend_respend_journal_recovery --locked -- --ignored --test-threads=1
           cargo test -p novovm-exec --lib pq_signature --locked
           cargo test -p novovm-exec --test uca_spend_runtime --locked -- --ignored --test-threads=1
           cargo test -p novovm-prover --test pq_signature_runtime --locked -- --ignored --test-threads=1

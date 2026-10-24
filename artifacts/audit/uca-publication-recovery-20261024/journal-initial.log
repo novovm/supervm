@@ -1,0 +1,12 @@
+
+running 1 test
+test native_pipeline::consensus::tests::uca_publication_integration::actual_mldsa_uca_initialized_spend_respend_journal_recovery ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::uca_publication_integration::actual_mldsa_uca_initialized_spend_respend_journal_recovery
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1599 filtered out; finished in 0.59s
+
+Error: fee reference unexpectedly deletes state

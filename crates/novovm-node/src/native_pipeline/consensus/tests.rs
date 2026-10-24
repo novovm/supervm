@@ -21,6 +21,8 @@ mod native_product_rpc;
 mod pacemaker_integration;
 #[path = "progress_integration.rs"]
 mod progress_integration;
+#[path = "uca_publication_integration.rs"]
+mod uca_publication_integration;
 
 use super::statement::{BlockStatement, ParentPoint};
 use super::wire::{

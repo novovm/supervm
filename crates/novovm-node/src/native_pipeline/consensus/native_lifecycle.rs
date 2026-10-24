@@ -85,6 +85,29 @@ pub struct NativeLifecycle {
 }
 impl NativeLifecycle {
     #[cfg(test)]
+    pub(crate) fn assert_only_initial_archive_probes_for_test(&self) -> Result<()> {
+        // Preparation is not permission to sign. The original recovery owner
+        // does, however, ask every peer for the current decided height even
+        // before a proposal. Check exact original wire identity, not just lane
+        // or queue length, so votes/proposals/bodies cannot satisfy this test.
+        let expected = self.channel.prepare(&Message::RequestDecision {
+            context: self.progress.context(),
+        })?;
+        ensure!(
+            self.outbox.is_none()
+                && self.deliveries.iter().all(|queue| {
+                    queue.len() == 1
+                        && queue.iter().all(|delivery| {
+                            !delivery.prepared.is_durable_control()
+                                && delivery.prepared.fragment_id() == expected.fragment_id()
+                        })
+                }),
+            "preparation emitted output other than exact initial archive probes"
+        );
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub(crate) fn retain_control_for_deadline_test(
         &mut self,
         peer: Hash,

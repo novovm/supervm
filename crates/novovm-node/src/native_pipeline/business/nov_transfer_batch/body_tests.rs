@@ -213,7 +213,7 @@ fn original_compile(
         "NOV effect key budget exceeds tree bound"
     );
     Ok(NovTransferPlan {
-        plan: batch.bind(context, declarations, budget)?,
+        plan: PlanInput::Reference(batch.bind(context, declarations, budget)?),
         policy,
         requests,
     })

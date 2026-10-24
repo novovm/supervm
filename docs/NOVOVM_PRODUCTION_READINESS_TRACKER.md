@@ -1,5 +1,41 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-24 U3 初始化编译与原 journal 资产发布恢复（进程内四库，非原生入口激活）
+
+输入 `2d504f07`，原 main/远端一致且树干净。新增受独立清单 pin 约束的初始化编译：
+所有管理钥经原 exec/AOEM ML-DSA-65 批准完整清单，签名域与最终根承诺分离，
+状态只存确定性初始化承诺，避免合法签名随机性改变初始根；原批准单独保留。
+未替换活动 GenesisConfig，没有变更现有数据/密钥/发行，尚未完成启动 final-root pin。
+
+NUAS 类型输入进入原 CandidatePipeline 的常驻 compute owner、原增量捕获/I/O、
+CPU/完整整数效应、原 packet/store/journal。旧捕获便利接口委托同一实现；
+NVCAND02 为 UCA 明确编码授权结果/预算，旧 NVCAND01 对照合同保留，旧 proof 拒绝新语义。
+没有新增控制器、数据库、监听入口或 AOEM 业务指令。
+
+Windows release 同随包 AOEM313：实际管理批准、真实花费/重放拒绝/到账再消费，
+四个原 pipeline、四库、四 journal 两高度发布与回读测试 1 通过（0.78秒）。
+候选未发布重开、决定入队但 ACK 未观察时正常 drain/reopen、全库冷重开均核对；
+精确余额、nonce、grant、费用窗口/诊断及两高度原文/回执一致。
+这是进程内消息交付和旧共识签名夹具，不是真实原节点进程、故障强杀、断电或多机。
+当前 runtime 重复管理签名的字节相同；未宣称实测了两份不同随机签名。
+
+原 native 回归402通过/63默认忽略，原真实 ML-DSA CPU与整数等价2项通过；
+adapter-api18通过；node/exec/adapter-api lib/tests release严格Clippy通过。
+兼容依赖更新后NovoRUDP相关149项、原签名组件13项通过。旧提前执行测试误将
+正常历史决定探测也当作违规输出；保留原失败记录后改为核对精确RequestDecision，
+仍禁止提前签票/发布，最终原native CPU/整数生命周期6项通过，生产行为未变。
+没有新TPS成绩，也不继承旧Ed负载为ML-DSA性能资格。
+初次集成编译/费用尾页断言失败记录保留；详见
+[完整证据](../artifacts/audit/uca-publication-recovery-20261024/README.md)。
+
+安全依赖兼容修复 ctutils/Tokio/mio/独立proof webpki；复扫仍因 crypto-bigint
+RUSTSEC-2026-0387 失败，未添加豁免，不能签远端全绿或生产发布。
+见[依赖证据](../artifacts/audit/security-dependencies-20261024/README.md)。
+
+**下一接合：** 原鲜域配置的最终根 pin、同一 native SDK/APFL 的 NUAS 准入/传播/查询/
+追赶；随后真实节点重启与接收方再消费。当前 App 资产入口仍不可用，不能把
+本进程内测试扩大成用户已经能通过原生网络花费。授权变更、正式创世与结算继续独立验收。
+
 ## 2026-10-24 U3 授权预算与原经济候选效应（本地候选验收，未激活花费入口）
 
 输入`6f2114d4`，保留并同步其他会话的EVM/移动交付至`144812cf`。本片复用原

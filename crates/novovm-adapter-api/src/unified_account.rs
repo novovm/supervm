@@ -105,6 +105,8 @@ pub enum UcaKeyAlgo {
     Secp256k1,
     Ed25519,
     Mldsa87,
+    /// Explicit first-release suite; never an alias for the historical 87 tag.
+    Mldsa65,
 }
 
 impl UcaKeyAlgo {
@@ -114,6 +116,7 @@ impl UcaKeyAlgo {
             Self::Secp256k1 => "secp256k1",
             Self::Ed25519 => "ed25519",
             Self::Mldsa87 => "mldsa87",
+            Self::Mldsa65 => "mldsa65",
         }
     }
 }
@@ -122,6 +125,12 @@ impl UcaKeyAlgo {
 #[serde(rename_all = "snake_case")]
 pub enum UcaKeyProofType {
     SignatureV1,
+    /// Deterministic commitment to the exact pinned initialization manifest and
+    /// management key AFTER actual approval verification. Payload is a digest,
+    /// not the randomized approval signature or a legacy create/rotate proof.
+    /// Raw approvals remain separate audit evidence; this tag cannot authorize
+    /// a change to an existing account by itself.
+    GenesisInitializationV1,
 }
 
 impl UcaKeyProofType {
@@ -129,6 +138,7 @@ impl UcaKeyProofType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::SignatureV1 => "signature_v1",
+            Self::GenesisInitializationV1 => "genesis_initialization_v1",
         }
     }
 }

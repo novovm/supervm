@@ -16,6 +16,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+pub mod uca_genesis;
+
 pub const PROFILE: &str = "native-resident-udp-v1";
 /// Existing original node tick mode, not another bootstrap/runtime mode.
 pub const ORIGINAL_PROFILE: &str = "native_execution_tick";

@@ -9,7 +9,7 @@
 
 use crate::native_pipeline::business::direct_nov_fee::{FeeFailure, FeeQuote, ThresholdState};
 use crate::native_pipeline::business::nov_transfer_batch::{
-    program_id, receipt_codec, ExecutedNovBatch, SEMANTIC_VERSION,
+    program_id, receipt_codec, ExecutedNovBatch, SpendOutput, SEMANTIC_VERSION,
 };
 use crate::native_pipeline::execution::plan::{BatchContext, BatchPlan, PlanBudget};
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
@@ -21,6 +21,9 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 const DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND01";
+// UCA extends the same candidate document, never re-labels a V3 body/receipt.
+const UCA_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND02";
+mod uca;
 const MARKER_MAGIC: &[u8; 8] = b"NVCOMP01";
 const MARKER_BYTES: usize = 8 + 32 + 8 + 4 + 32;
 const CHUNK_BYTES: usize = 64 * 1024;
@@ -128,7 +131,7 @@ impl PreparedCandidate {
             .iter()
             .map(postcard::to_allocvec)
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        prepare(
+        prepare_with_spend(
             effects.plan(),
             effects.update().root(),
             &receipts,
@@ -136,6 +139,7 @@ impl PreparedCandidate {
             batch.receipt_batch_commitment(),
             batch.statement_commitment(),
             budget,
+            batch.spend_outputs(),
         )
     }
 
@@ -211,6 +215,7 @@ pub struct StoredCandidate {
     summary: Summary,
     plan: BatchPlan,
     receipts: Vec<Vec<u8>>,
+    spend_outputs: Option<Vec<SpendOutput>>,
     nodes: BTreeMap<NodeHash, Vec<u8>>,
     record_bytes: usize,
 }
@@ -286,6 +291,7 @@ impl StoredCandidate {
             },
             plan: decoded.plan,
             receipts: decoded.receipts,
+            spend_outputs: decoded.spend_outputs,
             nodes,
             record_bytes: total,
         }))
@@ -328,6 +334,10 @@ impl StoredCandidate {
     }
     pub fn receipt_bytes(&self) -> &[Vec<u8>] {
         &self.receipts
+    }
+    /// Content-checked UCA receipt effects, not authorization or finality proof.
+    pub fn spend_outputs(&self) -> Option<&[SpendOutput]> {
+        self.spend_outputs.as_deref()
     }
     /// Query-only view of an already content-checked stored receipt. This cannot
     /// construct an executed batch, durable candidate or signing permission.
@@ -475,6 +485,7 @@ fn statement_hash(plan: NodeHash, root: NodeHash, receipts: NodeHash) -> NodeHas
     hash.finalize().into()
 }
 
+#[cfg(test)]
 fn prepare(
     plan: &BatchPlan,
     root: NodeHash,
@@ -484,12 +495,44 @@ fn prepare(
     statement_commitment: NodeHash,
     budget: PacketBudget,
 ) -> Result<PreparedCandidate> {
+    prepare_with_spend(
+        plan,
+        root,
+        receipts,
+        nodes,
+        receipt_commitment,
+        statement_commitment,
+        budget,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_with_spend(
+    plan: &BatchPlan,
+    root: NodeHash,
+    receipts: &[Vec<u8>],
+    nodes: &BTreeMap<NodeHash, Vec<u8>>,
+    receipt_commitment: NodeHash,
+    statement_commitment: NodeHash,
+    budget: PacketBudget,
+    spend_outputs: Option<&[SpendOutput]>,
+) -> Result<PreparedCandidate> {
+    let is_uca = uca::is_profile(plan.context());
+    ensure!(
+        is_uca == spend_outputs.is_some(),
+        "candidate UCA output/profile mismatch"
+    );
     ensure!(
         nodes.len() <= budget.max_nodes.min(TREE_MAX_NODES),
         "candidate node count exceeds budget"
     );
     let mut document = Encoder::new(budget.max_bytes);
-    document.put(DOCUMENT_MAGIC)?;
+    document.put(if is_uca {
+        UCA_DOCUMENT_MAGIC
+    } else {
+        DOCUMENT_MAGIC
+    })?;
     document.put(&plan.commitment())?;
     encode_plan(&mut document, plan, budget)?;
     document.put(&root)?;
@@ -507,10 +550,25 @@ fn prepare(
     );
     for bytes in receipts {
         ensure!(
-            !bytes.is_empty() && bytes.len() <= budget.max_receipt_bytes,
+            !bytes.is_empty()
+                && bytes
+                    .len()
+                    .checked_add(if is_uca { 32 } else { 0 })
+                    .is_some_and(|len| len <= budget.max_receipt_bytes),
             "candidate receipt exceeds budget"
         );
         document.frame(bytes)?;
+    }
+    if let Some(outputs) = spend_outputs {
+        ensure!(
+            outputs.len() == receipts.len(),
+            "candidate UCA effect count mismatch"
+        );
+        document.u64(outputs.len() as u64)?;
+        for output in outputs {
+            document.put(&uca::authorization_code(output.failure).to_be_bytes())?;
+            document.put(&output.remaining.to_be_bytes())?;
+        }
     }
     let document = document.bytes;
     // The codec's independent recovery validator also checks structural receipt
@@ -562,7 +620,13 @@ fn prepare(
         max_transaction_bytes: plan.max_transaction_bytes(),
         access_keys: plan.declared_access().len(),
         nodes: nodes.len(),
-        max_receipt_bytes: receipts.iter().map(Vec::len).max().unwrap_or(0),
+        max_receipt_bytes: receipts
+            .iter()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0)
+            .checked_add(if is_uca { 32 } else { 0 })
+            .context("receipt resource overflow")?,
         max_value_bytes: records.values().map(Vec::len).max().unwrap_or(0),
         total_bytes: total,
         retained_bytes,
@@ -725,9 +789,10 @@ fn decode_plan(input: &mut Reader<'_>, budget: PacketBudget) -> Result<BatchPlan
         timestamp_unix_ms: input.u64()?,
     };
     ensure!(
-        context.business_program == program_id()
+        (context.business_program == program_id()
             && context.receipt_codec == receipt_codec()
-            && context.semantic_version == SEMANTIC_VERSION,
+            && context.semantic_version == SEMANTIC_VERSION)
+            || uca::is_profile(&context),
         "unsupported candidate business/receipt profile"
     );
     let count = input.count(budget.max_transactions, 9)?;
@@ -764,6 +829,7 @@ struct Decoded {
     statement_commitment: NodeHash,
     node_hashes: Vec<NodeHash>,
     receipts: Vec<Vec<u8>>,
+    spend_outputs: Option<Vec<SpendOutput>>,
 }
 
 fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<Decoded> {
@@ -772,12 +838,18 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         "candidate document exceeds budget"
     );
     let mut input = Reader::new(bytes);
+    let magic = input.take(8)?;
     ensure!(
-        input.take(8)? == DOCUMENT_MAGIC,
+        magic == DOCUMENT_MAGIC || magic == UCA_DOCUMENT_MAGIC,
         "unsupported candidate document codec"
     );
     ensure!(input.hash()? == id, "candidate document identity mismatch");
     let plan = decode_plan(&mut input, budget)?;
+    let is_uca = magic == UCA_DOCUMENT_MAGIC;
+    ensure!(
+        is_uca == uca::is_profile(plan.context()),
+        "candidate document/profile mismatch"
+    );
     ensure!(
         plan.commitment() == id,
         "candidate reconstructed plan commitment mismatch"
@@ -806,12 +878,43 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
     );
     let mut receipts = Vec::with_capacity(count);
     for _ in 0..count {
-        receipts.push(input.frame(budget.max_receipt_bytes)?.to_vec());
+        let limit = budget
+            .max_receipt_bytes
+            .checked_sub(if is_uca { 32 } else { 0 })
+            .context("UCA receipt budget too small")?;
+        receipts.push(input.frame(limit)?.to_vec());
     }
+    let spend_outputs = if is_uca {
+        let count = input.count(budget.max_transactions, 32)?;
+        ensure!(
+            count == receipts.len(),
+            "candidate UCA output count mismatch"
+        );
+        let mut outputs = Vec::with_capacity(count);
+        for _ in 0..count {
+            outputs.push(SpendOutput {
+                failure: uca::authorization_error(u128::from_be_bytes(
+                    input.take(16)?.try_into()?,
+                ))?,
+                remaining: u128::from_be_bytes(input.take(16)?.try_into()?),
+            });
+        }
+        Some(outputs)
+    } else {
+        None
+    };
     input.finish()?;
-    validate_receipts(&plan, &receipts, budget)?;
+    if let Some(outputs) = &spend_outputs {
+        uca::validate_receipts(&plan, &receipts, outputs, budget)?;
+    } else {
+        validate_receipts(&plan, &receipts, budget)?;
+    }
     ensure!(
-        receipt_hash(plan.context().receipt_codec, &receipts) == receipt_commitment,
+        uca::receipt_hash_with_spend(
+            plan.context().receipt_codec,
+            &receipts,
+            spend_outputs.as_deref()
+        ) == receipt_commitment,
         "candidate ordered receipt commitment mismatch"
     );
     ensure!(
@@ -825,6 +928,7 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         statement_commitment,
         node_hashes,
         receipts,
+        spend_outputs,
     })
 }
 
@@ -900,6 +1004,7 @@ enum ErrorRef {
 enum FailureRef<'a> {
     Fee(#[serde(borrow)] &'a str),
     Business(ErrorRef),
+    Authorization(#[serde(borrow)] &'a str),
 }
 #[derive(Serialize, Deserialize)]
 struct JournalRef<'a> {
@@ -994,6 +1099,10 @@ fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudge
             "noncanonical candidate receipt bytes"
         );
         ensure!(
+            !matches!(&receipt.failure, Some(FailureRef::Authorization(_))),
+            "UCA authorization result cannot use the V3 receipt contract"
+        );
+        ensure!(
             receipt.tx_hash == tx_hash
                 && receipt.delta.tx_hash == tx_hash
                 && receipt.signer_identity == identity
@@ -1019,71 +1128,88 @@ fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudge
                 "candidate signer nonce order mismatch"
             );
         }
-        if let Some(quote) = &receipt.quote {
-            quote.validate()?;
+        validate_fee_receipt(
+            &receipt,
+            tx_hash,
+            &transaction.from,
+            plan.context(),
+            &mut journal_seq,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_fee_receipt(
+    receipt: &ReceiptRef<'_>,
+    tx_hash: NodeHash,
+    payer: &[u8],
+    context: &BatchContext,
+    journal_seq: &mut Option<u64>,
+) -> Result<()> {
+    if let Some(quote) = &receipt.quote {
+        quote.validate()?;
+    }
+    match (&receipt.failure, &receipt.fee_failure) {
+        (Some(FailureRef::Fee(reason)), Some(fee)) => {
+            ensure!(
+                *reason == fee.reason && reason.len() <= 512,
+                "candidate fee rejection mismatch"
+            );
         }
-        match (&receipt.failure, &receipt.fee_failure) {
-            (Some(FailureRef::Fee(reason)), Some(fee)) => {
-                ensure!(
-                    *reason == fee.reason && reason.len() <= 512,
-                    "candidate fee rejection mismatch"
-                );
-            }
-            (Some(FailureRef::Fee(_)), None) | (_, Some(_)) => {
-                anyhow::bail!("candidate fee rejection incomplete")
-            }
-            _ => {}
+        (Some(FailureRef::Fee(_)), None) | (_, Some(_)) => {
+            anyhow::bail!("candidate fee rejection incomplete")
         }
+        _ => {}
+    }
+    ensure!(
+        receipt.clear_clearing_candidates == receipt.journal.is_some(),
+        "candidate fee journal/clear mismatch"
+    );
+    if let Some(journal) = &receipt.journal {
         ensure!(
-            receipt.clear_clearing_candidates == receipt.journal.is_some(),
-            "candidate fee journal/clear mismatch"
+            receipt.fee_failure.is_none()
+                && journal.tx_hash == tx_hash
+                && journal.payer == payer
+                && journal.unix_ms == u128::from(context.timestamp_unix_ms)
+                && journal.seq > 0
+                && journal.policy_version > 0,
+            "candidate journal identity mismatch"
         );
-        if let Some(journal) = &receipt.journal {
+        ensure!(
+            journal.policy_source.len() <= 128
+                && journal.policy_constrained_strategy.len() <= 128
+                && journal.policy_contract_id.len() <= 2048,
+            "candidate journal metadata exceeds bound"
+        );
+        ensure!(
+            journal.source_amount == journal.settled_nov
+                && journal.settled_nov == receipt.delta.fee_funding_delta
+                && receipt
+                    .quote
+                    .as_ref()
+                    .is_some_and(|quote| quote.nov_amount == journal.settled_nov),
+            "candidate journal fee amount mismatch"
+        );
+        ensure!(
+            journal
+                .reserve_bucket_delta_nov
+                .checked_add(journal.fee_bucket_delta_nov)
+                .and_then(|sum| sum.checked_add(journal.risk_buffer_delta_nov))
+                == Some(journal.settled_nov),
+            "candidate journal split mismatch"
+        );
+        if let Some(previous) = *journal_seq {
             ensure!(
-                receipt.fee_failure.is_none()
-                    && journal.tx_hash == tx_hash
-                    && journal.payer == transaction.from
-                    && journal.unix_ms == u128::from(plan.context().timestamp_unix_ms)
-                    && journal.seq > 0
-                    && journal.policy_version > 0,
-                "candidate journal identity mismatch"
-            );
-            ensure!(
-                journal.policy_source.len() <= 128
-                    && journal.policy_constrained_strategy.len() <= 128
-                    && journal.policy_contract_id.len() <= 2048,
-                "candidate journal metadata exceeds bound"
-            );
-            ensure!(
-                journal.source_amount == journal.settled_nov
-                    && journal.settled_nov == receipt.delta.fee_funding_delta
-                    && receipt
-                        .quote
-                        .as_ref()
-                        .is_some_and(|quote| quote.nov_amount == journal.settled_nov),
-                "candidate journal fee amount mismatch"
-            );
-            ensure!(
-                journal
-                    .reserve_bucket_delta_nov
-                    .checked_add(journal.fee_bucket_delta_nov)
-                    .and_then(|sum| sum.checked_add(journal.risk_buffer_delta_nov))
-                    == Some(journal.settled_nov),
-                "candidate journal split mismatch"
-            );
-            if let Some(previous) = journal_seq {
-                ensure!(
-                    previous.checked_add(1) == Some(journal.seq),
-                    "candidate fee journal sequence mismatch"
-                );
-            }
-            journal_seq = Some(journal.seq);
-        } else {
-            ensure!(
-                receipt.delta.fee_funding_delta == 0 && receipt.fee_failure.is_some(),
-                "candidate missing charged-fee journal or rejection"
+                previous.checked_add(1) == Some(journal.seq),
+                "candidate fee journal sequence mismatch"
             );
         }
+        *journal_seq = Some(journal.seq);
+    } else {
+        ensure!(
+            receipt.delta.fee_funding_delta == 0 && receipt.fee_failure.is_some(),
+            "candidate missing charged-fee journal or rejection"
+        );
     }
     Ok(())
 }

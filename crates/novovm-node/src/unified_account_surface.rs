@@ -270,6 +270,9 @@ pub(crate) fn seed_unified_account_key_algo_for_tests_v1(
         UcaKeyAlgo::Secp256k1 => vec![0x02; 33],
         UcaKeyAlgo::Ed25519 => vec![0x11; 32],
         UcaKeyAlgo::Mldsa87 => vec![0x87; 32],
+        UcaKeyAlgo::Mldsa65 => {
+            bail!("ML-DSA-65 requires the pinned native initialization contract")
+        }
     };
     snapshot.router.create_uca_with_primary_key_binding(
         account_id.to_string(),
@@ -5171,6 +5174,9 @@ fn validate_public_key_format_v1(key_algo: UcaKeyAlgo, public_key: &[u8]) -> Res
                 bail!("mldsa87 public key must not be empty");
             }
         }
+        UcaKeyAlgo::Mldsa65 => {
+            bail!("ML-DSA-65 is not enabled in the legacy account surface");
+        }
     }
     Ok(())
 }
@@ -5186,6 +5192,9 @@ fn verify_primary_key_binding_proof_v1(
 ) -> Result<()> {
     match proof_type {
         UcaKeyProofType::SignatureV1 => {}
+        UcaKeyProofType::GenesisInitializationV1 => {
+            bail!("genesis initialization approval is not a legacy management proof");
+        }
     }
     let message =
         primary_key_proof_message_v1(account_id, action, key_algo, public_key, primary_key_ref);
@@ -5216,6 +5225,9 @@ fn verify_primary_key_binding_proof_v1(
             if !valid {
                 bail!("invalid mldsa87 proof signature");
             }
+        }
+        UcaKeyAlgo::Mldsa65 => {
+            bail!("ML-DSA-65 requires the pinned native initialization contract");
         }
     }
     Ok(())

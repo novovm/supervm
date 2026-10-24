@@ -26,6 +26,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod candidate_input;
 pub(crate) mod checked_integer_asset;
 mod effect_assets;
 mod execution;
@@ -34,8 +35,10 @@ mod integer;
 mod uca_effects;
 #[cfg(test)]
 mod uca_effects_tests;
+use candidate_input::{BodyInput, CaptureInput, CapturedInput, PlanInput};
 pub use execution::{ExecutedNovBatch, ExecutionObservation, NovTransferReceipt};
 pub(crate) use integer::ResidentTransferResources;
+pub(crate) use uca_effects::{authorization_code, authorization_error};
 pub use uca_effects::{uca_effect_contract, uca_program_id, uca_receipt_codec, SpendOutput};
 
 const POLICY_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v1/policy";
@@ -142,7 +145,7 @@ fn is_nov(asset: &str) -> bool {
 /// }
 /// ```
 pub struct NovTransferBody {
-    batch: SignatureCheckedBatch,
+    batch: BodyInput,
     policy: DirectNovFeePolicy,
     requests: Vec<TransferFeeRequest>,
     declarations: Vec<DeclaredAccess>,
@@ -224,7 +227,7 @@ impl NovTransferBody {
             "batch access budget exceeded or empty"
         );
         Ok(Self {
-            batch,
+            batch: BodyInput::Reference(batch),
             policy,
             requests,
             declarations,
@@ -238,8 +241,9 @@ impl NovTransferBody {
     /// nonzero domain pins, height/version arithmetic, body and access limits.
     /// Successful binding is not validation of the parent's authority or state.
     pub fn bind(self, context: BatchContext) -> Result<NovTransferPlan> {
+        let uca = matches!(&self.batch, BodyInput::Uca { .. });
         ensure!(
-            context.business_program == program_id(),
+            context.business_program == if uca { uca_program_id() } else { program_id() },
             "unsupported NOV business program"
         );
         ensure!(
@@ -247,7 +251,12 @@ impl NovTransferBody {
             "unsupported NOV semantic version"
         );
         ensure!(
-            context.receipt_codec == receipt_codec(),
+            context.receipt_codec
+                == if uca {
+                    uca_receipt_codec()
+                } else {
+                    receipt_codec()
+                },
             "unsupported NOV receipt codec"
         );
         ensure!(
@@ -266,7 +275,7 @@ impl NovTransferBody {
 /// A caller cannot attach arbitrary declarations, metadata or another policy
 /// to the result. Its claimed parent still needs independent chain authority.
 pub struct NovTransferPlan {
-    plan: SignatureCheckedPlan,
+    plan: PlanInput,
     policy: DirectNovFeePolicy,
     requests: Vec<TransferFeeRequest>,
 }
@@ -329,7 +338,7 @@ impl NovTransferPlan {
 
 /// Bounded incremental capture; neither state nor authenticated plan is replaceable.
 pub struct NovTransferCapture {
-    capture: SignatureCheckedCapture,
+    capture: CaptureInput,
     policy: DirectNovFeePolicy,
     requests: Vec<TransferFeeRequest>,
 }
@@ -377,7 +386,7 @@ impl NovTransferCapture {
 /// Detached exact capture, not yet a business-admitted input or an authority.
 /// Private construction prevents replacing authenticated raw input/parent.
 pub struct NovCapturedInput {
-    input: SignatureCheckedInput,
+    input: CapturedInput,
     policy: DirectNovFeePolicy,
     requests: Vec<TransferFeeRequest>,
 }
@@ -401,7 +410,12 @@ impl NovCapturedInput {
     }
 
     pub(crate) fn finalize_capture(self) -> Result<NovTransferInput> {
-        let input = self.input;
+        let input = match self.input {
+            CapturedInput::Reference(input) => input,
+            CapturedInput::Uca { input, metadata } => {
+                return metadata.finalize(input, self.policy);
+            }
+        };
         // Read the complete compiler-declared set in one authenticated tree
         // traversal, including every absent fee/policy tail page. This local
         // immutable projection belongs only to this exact owned parent input;

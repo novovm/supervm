@@ -8,6 +8,24 @@ use aoem_bindings::AoemDyn;
 use serde::Deserialize;
 use std::fmt;
 
+impl crate::AoemExecFacade {
+    /// Borrow the already loaded runtime, retaining the existing suite and
+    /// known-answer qualification. Consumers own canonical messages/purposes.
+    pub fn mldsa_verifier_v1(
+        &self,
+        parameters: AoemMldsaParameterSet,
+    ) -> Result<MldsaVerifier<'_>, PqVerificationError> {
+        MldsaVerifier::new(&self.dynlib, parameters)
+    }
+
+    pub fn mldsa_signer_v1(
+        &self,
+        parameters: AoemMldsaParameterSet,
+    ) -> Result<MldsaSigner<'_>, PqVerificationError> {
+        MldsaSigner::new(&self.dynlib, parameters)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AoemMldsaParameterSet {
     MlDsa44,

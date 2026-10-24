@@ -1,0 +1,40 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+   Compiling tokio-macros v2.7.2
+   Compiling mio v1.2.0
+   Compiling tokio v1.51.6
+   Compiling novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+   Compiling novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+   Compiling novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error: usage of an `unsafe` block
+  --> crates\novovm-node\src\native_pipeline\consensus\uca_publication_integration.rs:88:19
+   |
+88 |     let runtime = unsafe { aoem_bindings::AoemDyn::load(&library)? };
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: the lint level is defined here
+  --> crates\novovm-node\src\native_pipeline\mod.rs:1:11
+   |
+ 1 | #![forbid(unsafe_code)]
+   |           ^^^^^^^^^^^
+
+error[E0599]: no method named `receipts` found for reference `&std::sync::Arc<persistence::packet::StoredCandidate>` in the current scope
+   --> crates\novovm-node\src\native_pipeline\consensus\uca_publication_integration.rs:264:42
+    |
+264 |             let encoded = block.stored().receipts().to_vec();
+    |                                          ^^^^^^^^ private field, not a method
+    |
+help: there is a method `receipt_bytes` with a similar name
+    |
+264 |             let encoded = block.stored().receipt_bytes().to_vec();
+    |                                                 +++++
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `novovm-node` (lib test) due to 2 previous errors

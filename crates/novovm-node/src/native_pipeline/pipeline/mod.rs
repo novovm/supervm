@@ -131,6 +131,30 @@ pub struct BatchRequest {
 }
 
 impl BatchRequest {
+    /// Typed NUAS candidate input on the original bounded preparation/capture
+    /// owner. This does not activate a public native listener or grant authority.
+    pub fn from_uca(
+        raw_transactions: Vec<Vec<u8>>,
+        hints: Vec<(
+            crate::native_pipeline::business::quoted_transfer::Account,
+            crate::native_pipeline::business::quoted_transfer::Account,
+        )>,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        ensure!(
+            raw_transactions.len() == hints.len(),
+            "UCA input/hint shape mismatch"
+        );
+        Self::from_input(
+            compute::CandidateInput::Uca {
+                source: BatchSource::Raw(raw_transactions),
+                hints,
+            },
+            context,
+            policy,
+        )
+    }
     pub fn from_authenticated(
         batch: AdmittedBatch,
         context: BatchContext,
@@ -176,7 +200,15 @@ impl BatchRequest {
             "empty pipeline request"
         );
         policy.validate()?;
-        let (body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
+        let (mut body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
+        if let compute::CandidateInput::Uca { hints, .. } = &raw_transactions {
+            for (payer, recipient) in hints {
+                body_bytes = body_bytes
+                    .checked_add(payer.as_bytes().len())
+                    .and_then(|n| n.checked_add(recipient.as_bytes().len()))
+                    .context("UCA input/hint byte budget overflow")?;
+            }
+        }
         let transaction_count = raw_transactions.source().len();
         Ok(Self {
             request: Box::new(compute::PrepareRequest {
@@ -718,3 +750,5 @@ impl Drop for CandidatePipeline {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod uca_input_tests;

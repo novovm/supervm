@@ -1,5 +1,20 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 本机接续认领（2026-10-24，输入 2d504f07）
+
+本轮实现/验收结果见[原 journal 四库证据](../artifacts/audit/uca-publication-recovery-20261024/README.md)。
+已实现受批准清单约束的初始化编译及原 pipeline/journal 发布恢复；不是活动鲜域配置，
+不是原生 SDK 入口，App 不可据此启用支出或显示真实到账。手机继续只消费唯一共享合同。
+下一步在原服务接 final-root pin 与 NUAS/APFL 准入/传播/查询/追赶，不另建模式。
+
+已 fetch，本地/远端一致、原树干净。根负责集成、唯一构建槽与原库恢复测试；
+初始化分工仅拥有原 service/config 的 UCA 创世清单编译及必要账户枚举接合；
+持久化分工仅拥有原 persistence/packet 及反例；安全分工负责现有依赖锁与必要版本约束。
+复用原规范签名、账户记录、完整效应与 CandidateStore/journal，不新建运行模式或入口。
+先明确确定性清单域/最终根的绑定，补原包对 UCA 授权输出的编码与冷加载校验；
+在原持久边界测试，不把尚未接通的原生准入或测试初始化称为已开放资产服务。
+实际创世、现有数据/授权变更及手机收费均不在此轮激活范围内。
+
 日期：2026-10-24。用户已授权先提交推送确认文档，再启动必要基础开发。
 本文件记录工作归属与依赖，不表示另一台电脑已读取、认领或完成任务。
 最新经济规则见[服务基线](../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)，签名边界见[首发签名契约](NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md)。

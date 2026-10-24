@@ -1,0 +1,218 @@
+//! Structural fixtures only: deliberately synthetic signatures cannot confer
+//! signature-checked or executed capabilities. Actual AOEM tests use the public
+//! PreparedCandidate::from_executed constructor with real verified signatures.
+use super::*;
+use crate::native_pipeline::business::nov_transfer_batch::{
+    balance_key, nonce_key, uca_program_id, uca_receipt_codec,
+};
+use novovm_adapter_api::uca_spend_policy::SpendPolicyError;
+use novovm_protocol::uca_spend::{
+    spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, MLDSA65_PUBLIC_KEY_BYTES,
+    MLDSA65_SIGNATURE_BYTES,
+};
+
+struct UcaFixture {
+    base: Fixture,
+    signed: Vec<SignedUcaSpendV1>,
+    outputs: Vec<SpendOutput>,
+}
+
+impl UcaFixture {
+    fn new() -> Self {
+        let mut base = Fixture::new(&[0, 0], 0, 1);
+        let key = vec![7; MLDSA65_PUBLIC_KEY_BYTES];
+        let mut signed = Vec::new();
+        let payer = Account::try_from(vec![7; 32]).unwrap();
+        let recipient = Account::try_from(vec![8; 32]).unwrap();
+        for index in 0..2 {
+            let intent = UcaSpendIntentV1 {
+                chain_id: 9,
+                genesis: [1; 32],
+                account_id: "alice".into(),
+                authorization_epoch: index + 1,
+                spend_key_ref: spend_key_ref_v1(&key).unwrap(),
+                recipient_uca: "bob".into(),
+                amount: 5,
+                max_fee: 1,
+                nonce: 0,
+                not_before_height: 0,
+                expires_at_height: 100,
+            };
+            let hash = Sha256::digest(intent.signing_bytes().unwrap()).into();
+            let identity = intent.nonce_identity().unwrap();
+            let receipt = &mut base.receipts[index as usize];
+            receipt.tx_hash = hash;
+            receipt.signer_identity = identity;
+            receipt.delta.tx_hash = hash;
+            receipt.delta.nonce_identity = identity_hex(&identity);
+            receipt.delta.payer.account = payer.clone();
+            receipt.delta.recipient.account = recipient.clone();
+            if index == 0 {
+                receipt.failure = Some(TransferFailure::Authorization("WrongEpoch".into()));
+                receipt.fee_failure = None;
+                receipt.delta.nonce_after = 0;
+            }
+            signed.push(SignedUcaSpendV1 {
+                intent,
+                public_key: key.clone(),
+                signature: vec![11; MLDSA65_SIGNATURE_BYTES],
+            });
+        }
+        let mut context = *base.plan.context();
+        context.business_program = uca_program_id();
+        context.receipt_codec = uca_receipt_codec();
+        context.semantic_version = 1;
+        let access = [
+            balance_key(&payer),
+            balance_key(&recipient),
+            nonce_key(&signed[0].intent.nonce_identity().unwrap()),
+        ]
+        .into_iter()
+        .map(|key| DeclaredAccess {
+            key,
+            may_put: true,
+            may_delete: false,
+        })
+        .collect();
+        base.plan = BatchPlan::new(
+            context,
+            signed.iter().map(|s| s.encode().unwrap()).collect(),
+            access,
+            PacketBudget::default().plan(),
+        )
+        .unwrap();
+        Self {
+            base,
+            signed,
+            outputs: vec![
+                SpendOutput {
+                    failure: Some(SpendPolicyError::WrongEpoch),
+                    remaining: 100,
+                },
+                SpendOutput {
+                    failure: None,
+                    remaining: 100,
+                },
+            ],
+        }
+    }
+    fn update_plan(&mut self) {
+        self.base.plan = BatchPlan::new(
+            *self.base.plan.context(),
+            self.signed.iter().map(|s| s.encode().unwrap()).collect(),
+            self.base.plan.declared_access().to_vec(),
+            PacketBudget::default().plan(),
+        )
+        .unwrap();
+    }
+    fn packet(&self) -> Result<PreparedCandidate> {
+        let receipts = self
+            .base
+            .receipts
+            .iter()
+            .map(|r| postcard::to_allocvec(r).unwrap())
+            .collect::<Vec<_>>();
+        let commitment = uca::receipt_hash_with_spend(
+            self.base.plan.context().receipt_codec,
+            &receipts,
+            Some(&self.outputs),
+        );
+        prepare_with_spend(
+            &self.base.plan,
+            self.base.root,
+            &receipts,
+            &self.base.nodes,
+            commitment,
+            statement_hash(self.base.plan.commitment(), self.base.root, commitment),
+            PacketBudget::default(),
+            Some(&self.outputs),
+        )
+    }
+}
+
+#[test]
+fn uca_packet_roundtrip_preserves_authorization_budget_and_unchanged_nonce() {
+    let f = UcaFixture::new();
+    let packet = f.packet().unwrap();
+    assert_eq!(&document(&packet)[..8], UCA_DOCUMENT_MAGIC);
+    let cold = load(&packet, packet.records(), PacketBudget::default())
+        .unwrap()
+        .unwrap();
+    assert!(packet.matches(&cold));
+    assert_eq!(cold.spend_outputs(), Some(f.outputs.as_slice()));
+    assert_eq!(cold.receipt_view(0).unwrap().nonce_after, 0);
+    assert_eq!(cold.receipt_view(1).unwrap().nonce_after, 1);
+    assert!(!cold.receipt_view(0).unwrap().success);
+    assert_eq!(cold.raw_transactions()[0], f.signed[0].encode().unwrap());
+}
+
+#[test]
+fn uca_packet_rejects_authorization_effects_and_budget_prefix_changes() {
+    let mut f = UcaFixture::new();
+    f.base.receipts[0].delta.nonce_after = 1;
+    assert!(f.packet().is_err());
+    let mut f = UcaFixture::new();
+    f.base.receipts[0].delta.fee_funding_delta = 1;
+    assert!(f.packet().is_err());
+    let mut f = UcaFixture::new();
+    f.outputs[1].remaining = 99;
+    assert!(f.packet().is_err());
+    let mut f = UcaFixture::new();
+    f.outputs[0].failure = Some(SpendPolicyError::Revoked);
+    assert!(f.packet().is_err());
+    let mut f = UcaFixture::new();
+    f.base.receipts[1].delta.nonce_before = 1;
+    f.base.receipts[1].delta.nonce_after = 2;
+    assert!(f.packet().is_err());
+}
+
+#[test]
+fn uca_packet_rejects_domain_relabel_old_document_and_missing_outputs() {
+    let mut f = UcaFixture::new();
+    f.signed[0].intent.genesis = [99; 32];
+    f.update_plan();
+    assert!(f.packet().is_err());
+    let f = UcaFixture::new();
+    let packet = f.packet().unwrap();
+    let mut bytes = document(&packet);
+    bytes[..8].copy_from_slice(DOCUMENT_MAGIC);
+    assert!(decode_document(&bytes, packet.candidate_id(), PacketBudget::default()).is_err());
+    let mut bytes = document(&packet);
+    bytes.truncate(bytes.len() - 1);
+    assert!(decode_document(&bytes, packet.candidate_id(), PacketBudget::default()).is_err());
+    let mut f = UcaFixture::new();
+    f.outputs.clear();
+    assert!(f.packet().is_err());
+}
+
+#[test]
+fn uca_packet_commitment_covers_effect_tail_and_rejects_unknown_codes() {
+    let f = UcaFixture::new();
+    let packet = f.packet().unwrap();
+    let mut bytes = document(&packet);
+    let n = bytes.len();
+    // Change BOTH unchanged budgets identically: prefix checks still hold, so
+    // this must fail specifically at the executed receipt commitment boundary.
+    bytes[n - 33] ^= 1;
+    bytes[n - 1] ^= 1;
+    let error = match decode_document(&bytes, packet.candidate_id(), PacketBudget::default()) {
+        Ok(_) => panic!("changed budget escaped receipt commitment"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("ordered receipt commitment"));
+    let mut bytes = document(&packet);
+    // Last row starts with its fixed u128 authorization code.
+    bytes[n - 32..n - 16].copy_from_slice(&999u128.to_be_bytes());
+    assert!(decode_document(&bytes, packet.candidate_id(), PacketBudget::default()).is_err());
+    let mut bytes = document(&packet);
+    bytes.extend_from_slice(&[0]);
+    assert!(decode_document(&bytes, packet.candidate_id(), PacketBudget::default()).is_err());
+}
+
+#[test]
+fn uca_packet_enforces_signed_reservation_even_when_actual_fee_is_zero() {
+    let mut f = UcaFixture::new();
+    f.outputs[0].remaining = 5;
+    f.outputs[1].remaining = 5;
+    assert!(f.packet().is_err()); // amount 5 + signed cap 1 needs reserve 6.
+}
