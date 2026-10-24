@@ -1,5 +1,13 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-25 CI Seal CLI 接续认领：** 输入 `2bd58907`，本地/远端一致、原树干净。
+根仅修原 `tests/native_seal_service_cli.rs` 的历史显式夹具、当前 owner 互斥及拒绝
+副作用断言，独占构建槽；分工只读复核。不恢复旧 Seal 生产接线、不改共识/经济/AOEM。
+失败 CI `40094423953` 的安全、格式和 Clippy 已通过；mainline 历史 gate 的夹具
+尚未进入 Seal loader 就被产品前置条件拒绝。本片已完成并释放认领：修前反例复现，
+修后CLI6、历史Seal217及写入清单1项通过；[证据](../artifacts/audit/seal-cli-preflight-20261025/README.md)
+保留失败和边界。完整CI另验；不将本片扩大为UCA入口已接通，也不继续扩展旧Seal产品。
+
 **2026-10-24 U3 启动/安全接续：** 输入 `de9e5270`，原服务已接管理批准初始化的
 签名域/初始根/最终承诺三项 pin，错误输入在开库前拒绝，Existing 只验不修。
 RustCrypto 依赖迁至上游修复版本，三 host 锁 audit 阻断项清零，无新增忽略；

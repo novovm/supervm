@@ -1,0 +1,19 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `release` profile [optimized] target(s) in 0.65s
+     Running tests\native_seal_service_cli.rs (target/runtime-rebuild\release\deps\native_seal_service_cli-85689a68749212f8.exe)
+
+running 6 tests
+test native_seal_service_cli_disabled_preserves_non_seal_entry ... ok
+test native_seal_service_cli_historical_loader_requires_fixture_opt_in ... ok
+test native_seal_service_cli_query_override_cannot_enable_signing ... ok
+test native_seal_service_cli_bad_config_fails_before_startup_recovery ... ok
+test native_seal_service_cli_product_owner_rejects_seal_before_config_loading ... ok
+test native_seal_service_cli_requires_explicit_enablement_and_native_overlay_mode ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+

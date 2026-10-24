@@ -1,5 +1,20 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-25 Seal CLI 历史夹具前置条件修复（不改生产接线）
+
+`2bd58907` 的 CI `40094423953` 已失败：安全、格式及严格 Clippy 通过，历史
+Mainline Gate 的坏 Seal 配置 CLI 用例尚未进入 loader，就被原产品前置条件拒绝。
+本机 Windows release 原样复现3通过/1失败；不是通过 config/CONFIG 大小写修复。
+
+当前原生配置有意禁止旧 Seal owner 共存，不能为测试恢复该入口。旧加载器反例
+改为显式历史夹具，分别精确核对缺文件和非法JSON；另保留无许可拒绝，并覆盖当前
+两个tick别名与两个旧seal变量的互斥。输入路径/字节前后不变，无新增目录及启动/
+恢复标记。生产实现、票数、时限、经济与AOEM均未改。
+
+修后CLI 6项、历史Seal库217项及写入清单1项通过；专项严格Clippy与workspace格式检查通过。全部失败与制品记录见
+[证据](../artifacts/audit/seal-cli-preflight-20261025/README.md)。完整CI由新提交重跑，
+不能把专项通过称为整仓全绿；NUAS原生入口、查询与追赶接线仍是下一项产品交付。
+
 ## 2026-10-24 U3 原启动三项 pin 与 crypto-bigint 安全迁移（入口仍关闭）
 
 输入 `de9e5270`，原树干净、本地远端一致。原 `ResidentConfig.uca_initialization`

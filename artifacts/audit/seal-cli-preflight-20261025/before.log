@@ -1,0 +1,31 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `release` profile [optimized] target(s) in 2m 54s
+     Running tests\native_seal_service_cli.rs (target/runtime-rebuild\release\deps\native_seal_service_cli-85689a68749212f8.exe)
+
+running 4 tests
+test native_seal_service_cli_bad_config_fails_before_startup_recovery ... FAILED
+test native_seal_service_cli_query_override_cannot_enable_signing ... ok
+test native_seal_service_cli_disabled_preserves_non_seal_entry ... ok
+test native_seal_service_cli_requires_explicit_enablement_and_native_overlay_mode ... ok
+
+failures:
+
+---- native_seal_service_cli_bad_config_fails_before_startup_recovery stdout ----
+
+thread 'native_seal_service_cli_bad_config_fails_before_startup_recovery' (19752) panicked at crates\novovm-node\tests\native_seal_service_cli.rs:41:9:
+expected config, got Error: native tick requires NOVOVM_NATIVE_EXECUTION_CONFIG; old raw/recovery wiring is historical-fixture only
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    native_seal_service_cli_bad_config_fails_before_startup_recovery
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `-p novovm-node --test native_seal_service_cli`
