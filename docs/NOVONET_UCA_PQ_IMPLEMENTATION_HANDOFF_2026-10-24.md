@@ -141,6 +141,23 @@ UCA/花费grant父状态读取、授权/额度原子消费、实际新交易入�
 
 ### SUPERVM 接续认领：独立锁文件门禁与 U3 接合核对
 
+#### NOVOCHAT 对 77ac4eec 的消费者接收回执
+
+本机 NOVOCHAT 已审阅并消费 `77ac4eec`，交付提交
+[`aeac688`](https://github.com/XujueKing/NOVOCHAT/commit/aeac68863e98b8711c49edceea5312ecbc7a8868)。
+隔离消费者 pin 已同步；同一 AOEM ML-DSA-65 签验探针新增 current_spend_epoch
+未知/零值/已推进而旧 grant 保留的三个负向供值检查，共享合同共8项拒绝通过。
+这些仅是明确的合成负向夹具，不是可信状态来源；asset_authorized 与
+transaction_submitted 仍为 false。16项隔离回归、格式和严格 Clippy 通过，
+Android 消费 ELF 构建通过；未取得/运行合格 Android AOEM 库，未替换手机 APK。
+可核对 [App 最新接入记录](../../NOVOCHAT/docs/implementation/UCA_ANDROID_PQ_INTEGRATION_V1.md)
+及其结构化证据。此回执只证明本机已消费上游，不声称另一台已读取本回执。
+
+本机同时完成会话草稿下附件入口与光标插入表情的组件修正，50项 Flutter 回归及
+静态分析通过；未改变 v108 手机、身份历史或启用收费。上游后续仍主责合法
+初始化/授权、原生入口、同批额度与nonce/余额/费用原子提交及移动运行库；App
+不另建节点状态捕获或花费授权路径。
+
 接续输入 `ec32c21c`（本地/远端一致、原树干净）：根代理认领原node
 `native_pipeline/business/uca_spend_state*`、模块接线、CI及本轮文档，唯一构建槽。
 权限分工仅认领 adapter-api 的 `uca_spend_policy*`，补独立现行花费代次；另一路
