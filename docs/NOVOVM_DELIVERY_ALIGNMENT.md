@@ -1,5 +1,125 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-25 Unified Node Deployment & End-to-End Acceptance v1
+
+**交付目标：NOVOVM / NOVONET Unified Node，统一安装、配置、启动、监控、升级和恢复。**
+用户已明确A/B/C/D都部署完整系统，不再把本轮目标限制为四个验证者。多个既有进程
+可以协作，通信、内容保管、资产支出和签票保持用途与数据隔离；这不是另建产品、
+第二账本或要求每台机器承担相同负载。各机可配置资源和服务角色，验证者身份/集合
+仍须按共同链配置批准，不能通过本地开关临时降低法定人数。
+
+本片为**真实入口和依赖清单＋实施顺序**，未改程序、安装器、服务配置或链数据。
+核查源码固定 `e8cec2e8799baaca27dd88206d466cf7bc8d45b7`；原包固定源码仍为
+`2b3f1509c3591f646323a0231c14a9e83b759998`。根负责集成/文档；三个并发只读核查
+分别覆盖通信内容、经济恢复、部署管理，无竞争实现/构建/性能任务。
+本节取代下方仅围绕validator部署的范围；原设备回执及测试仍保留其原来口径。
+
+### 1. 状态口径与当前设备
+
+每项只用三态：**已接通**＝在明确范围内有真实入口和运行证据；**部分接通**＝已有
+能力/局部装配，但本项目标的业务或部署闭环未完成；**未接通**＝目标入口尚无完整
+可调用链或仅设计/组件。状态后必须附证据范围，不能把单机、手机或旧版本通过扩成
+A–D联合验收。未发现接线不等于否定全部历史能力，新增实现前仍须按复用索引核对。
+
+| 设备 | 当前有据状态 | 下一责任与保护 |
+| --- | --- | --- |
+| A Windows | 本机本轮按NOVO/SUPERVM名称清点未见活动服务/任务/进程；已有主链本地测试与制品。不是全盘断言从未安装 | 共享主线/经济/装配唯一集成owner，采用已有Windows服务适配，不清测试库 |
+| B Ubuntu | 2026-10-25 13:36北京时间SSH只读复查：`novonet-mailbox.service`/`supervm-relay.service` active；实际二进制分别在`/opt/novonet-mailbox/releases/9216be74236950ff/novovm-rendezvous-service`及`/opt/supervm/bin/supervm-relay`。本轮未见主链安装/配置标准目录 | A负责B；接管既有owner而非重新provision，保留手机身份/密文/TTL；2核约3.5GiB先核共机余量，不作硬件极限样本 |
+| C Windows | 已提交的设备清点及手机工作见[原回执](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#validator-c-第一阶段回执)，本轮未远程复验 | C负责App、持钥与两手机验收；共享协议/经济不重复开发，不覆盖现有Rendezvous或ADB |
+| D Ubuntu | 原Linux包真实构建、脚本及归档校验通过；不是已启动统一节点 | D执行固定源码构建和本机安装验收；不取得B凭据、不代A部署B |
+
+**包交接已推进，不再等待移动盘：** A已读取 `D-LINUX-BUILD-2b3f1509`，从用户移动盘
+复制归档到本机仓库忽略目录，独立流式核对68个普通文件、65项manifest、两层校验和、
+大小及安全路径，无symlink/hardlink/越界条目。随后上传B，远端文件大小321534270字节、
+SHA256 `ed0a14c6fbc610342104c17b972eb6406e89881752fc088cec04ecb7d3e337d7`与D/本机一致。
+B落点`/home/ecs-user/novovm-incoming-2b3f1509/`；**尚未解压、安装、替换程序或重启服务**。
+移动盘原件、本机包、D的旧失败及新成功证据均保留。B的x86_64/glibc2.39/OpenSSL3基础
+条件已查，未实际加载新库；包哈希一致不是可信loader、联合运行或主网资格。
+
+### 2. 网络与内容：实际入口清单
+
+| 服务/能力 | 状态与证据范围 | 实际入口、依赖和剩余接线 |
+| --- | --- | --- |
+| 手机消息、信箱、原生重连 | 已接通：B在运行，历史两手机寄存/领取/后台回执有记录；本轮未新发消息 | [原通信bin/feature](../crates/novovm-relay/Cargo.toml)、[Linux入口](../crates/novovm-relay/src/linux_rendezvous.rs)、[self-owned owner](../crates/novovm-relay/src/rendezvous_self_owned_owner.rs)共用身份、MailboxStore、并发预算；[native监听](../crates/novovm-network/src/product_rendezvous_native.rs)复用原endpoint重连。不是经济daemon或共识旁路 |
+| UDP、V8/TLS、Iroh与服务声明 | 已接通：特定手机/公网场景；不是任意NAT验收 | 同owner的[载体装配](../crates/novovm-network/src/product_rendezvous_owned.rs)与签名service record。监听/advertised/TLS配置来自原owner，必须匹配真实端口与身份；现有外部载体依赖和已测恢复尾部保留，不改名冒充已消除 |
+| Overlay/发现/NAT/Relay的全栈路由 | 部分接通 | 复用[adaptive overlay](../crates/novovm-network/src/adaptive_overlay.rs)、[NAT](../crates/novovm-network/src/product_nat.rs)、[Relay selector](../crates/novovm-network/src/product_relay_launch.rs)；主链固定peer UDP没有自动获得手机全部选路能力。[node-overlay工具](../crates/novovm-node/src/bin/novovm-product-node-overlay.rs)只打印路由计划后退出，不是常驻节点 |
+| 加密对象上传、持久保管、领取、消费/撤销 | 已接通：有限附件/密文对象及真实手机离线取回 | [MailboxRequest](../crates/novovm-network/src/mailbox_rpc.rs)的PutBulk/FetchBulk/WatchFetchBulk/Consume，进入原[SQLite store](../crates/novovm-network/src/mailbox_store.rs)，保留capability、TTL、额度、幂等及耐久回执。当前bulk对象2MiB/TTL上限7天，不承诺无限或永久存储。StoreReceipt、DeviceReceipt、Consume分别记录 |
+| 通用内容发布/目录、跨内容节点复制与修复入口 | 未接通（本次活动入口范围） | 上述对象传输、哈希/权限与持久保管可复用；[副本选择器](../crates/novovm-network/src/mailbox_replicas.rs)不是实际副本已存在或自动修复证明。聊天附件分块及完整校验由原App owner提供，不能拿状态树content hash或服务日志当通用内容服务 |
+| 通信身份完整PQ迁接 | 部分接通 | 当前认证/用途隔离可用，但通信owner、bound session仍有Ed25519；不能由ML-DSA-65资产接口推断全通信已迁接。不得为“统一”清身份、降级或让服务钥匙取得资产根权限 |
+
+运行证据复用[复用索引](NOVONET_REUSE_INDEX.md)、[公网上线试验](NOVONET_AUTONOMOUS_PUBLIC_DEPLOYMENT_V1.md)
+与[当前台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md)的v108/v88/v89范围，旧失败保留。
+这些不替代本轮四机联合验收；通用内容缺口先核实际消费需求和旧能力，再薄适配，不新造存储协议。
+
+**当前端口事实不是协议常量：** B既有UDP43171/43173、TCP43172由rendezvous持有，
+Relay监听127.0.0.1:45172；TCP/UDP41000已由Docker占用，不能直接套主链包示例。
+41050仍只是候选，未证明公网可达。A/C/D按本机占用、原签名advertised及防火墙清点生成配置，
+不复制B地址、不擅自开放端口；权限准入不依赖官方许可或NOV余额，付费履约授权另行核对。
+
+### 3. NOV经济、执行与账本：同一个权威路径
+
+实际主线：原`novovm-node` tick/NovoRUDP → NUAPFL01准入 → 精确父状态 →
+`novovm-exec → aoem-bindings → AOEM`统一语义 → 原候选/journal耐久发布 → NVQUERY。
+**经济是原节点内部能力，不新建经济执行服务或第二账户库。**
+
+| 服务/能力 | 状态与证据范围 | 源码依据及剩余接线 |
+| --- | --- | --- |
+| NUAS提交与ML-DSA-65单签 | 已接通：原CLI+四独立进程测试链 | [原客户端](../crates/novovm-node/src/native_pipeline/service/client/operator.rs)、[exec验签](../crates/novovm-exec/src/uca_spend.rs)固定suite，无失败降级；四机实际部署仍待共同配置 |
+| UCA支出权限、额度/nonce/余额/费用原子效应 | 已接通：同批竞争、失败、自转与后继等既有证据 | [父状态读取](../crates/novovm-node/src/native_pipeline/business/uca_spend_state.rs)、[完整效应计划](../crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs)、[同候选写集](../crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs)。CPU和完整整数计划保留，不把旧预测描述当现状 |
+| 回执、余额、预算、nonce查询 | 已接通：原生操作客户端及进程证据 | [类型化query](../crates/novovm-protocol/src/native_query.rs)、[UCA读取](../crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca.rs)。目录名rpc不等于HTTP入口；认证节点观察不是独立状态证明或再次花费许可 |
+| 共识、journal、独立重连与归档追赶 | 已接通：同机真实进程 | [原service](../crates/novovm-node/src/native_pipeline/service.rs)、[native lifecycle](../crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs)、[恢复](../crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/recovery.rs)。三健康40高度、晚启动、追赶h1强杀后原库恢复、收款再消费到h41已有[证据](../artifacts/audit/nuas-native-process-recovery-20261025/README.md)；不是四机证据 |
+| 创世/批准初始化/正式供应锁定 | 部分接通 | [初始化三pin](../crates/novovm-node/src/native_pipeline/service/config/uca_genesis.rs)已在开库前核验；[GenesisConfig](../crates/novovm-node/src/native_pipeline/service/config.rs)当前分配求和只防溢出，不自动强制10^17总量或完整用途锁定/释放。1亿NOV/9位/不增发不销毁是已定契约，正式分配和激活未批准 |
+| 动态授权、撤销/轮换/恢复、KEY ONE分层权限 | 部分接通 | 支出可检查代次、撤销、期限、单笔限额/预算；动态管理交易与手机零钱/储蓄全链控制仍未完整接入，不能以字段或预检存在签收。复用[现有交接](NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md)和[分层授权](NOVONET_UCA_TIERED_SPENDING_AUTHORITY_V1.md) |
+| 入资→预留→服务履约→应付→指定UCA到账→再消费 | 未接通到当前完整主链闭环 | [现行计费契约](NOVOVM-ECONOMICS/NOVONET-SERVICE-BILLING-V1-2026-10-14.md)和[经济基线](../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)为准；旧token_runtime的服务池余额不是提供者到账，旧burn/mint-on-unlock不得启用，不因在线/存储/回执自动发NOV |
+| 全面ML-DSA共识/通信签名、业务ZK最终性 | 未接通到首发完整目标 | [round_bft wire](../crates/novovm-consensus/src/round_bft/wire.rs)和service签者仍有Ed25519；当前Finalized是耐久BFT，未声称完整业务证明。现AOEM密码/证明能力保留，不能把缺产品接线写成内核没有能力，不能另建证明服务 |
+
+经济采用最新2026-10-24基线：默认NOV预付按量、取消旧付费月最低5USD分账，旧文档
+残留“暂保留5USD”的历史段不能覆盖顶部新决定。本片不改费率/资金状态，也不激活收费。
+E1先用既有临时密文寄存/领取场景完成真实测试NOV闭环，含重启、重复核销、退款、迟到索赔
+和再次消费；不把任意内容服务需求打包为本轮已经实现，也不将每个通信包送链上结算。
+
+### 4. 安装、配置、监控、升级与恢复清单
+
+| 管理项 | 状态 | 复用位置与真实缺口 |
+| --- | --- | --- |
+| Linux制品/完整性 | 已接通：D真实包，A/B文件复核 | [原packager](../scripts/novovm-package-product-linux.ps1)固定Cargo产物/源码/AOEM/清单、stage与旧包保留；[D证据](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/HANDOFF.txt)。不是全栈包或安装成功 |
+| 统一全栈包 | 部分接通 | 现包为node/client及6个product网络工具；**缺实际通信bin `novovm-rendezvous-service`、`supervm-relay`、`novovmctl`及通信服务装配**。通信应从已有`novovm-relay` crate按实际iroh/tls feature构建，不再实现同类服务 |
+| Linux安装/服务 | 部分接通 | 包内node/product-relay两份systemd模板，尚需人工安装；[原mailbox首装器](../scripts/linux/install-owned-mailbox.sh)、[原unit/更新指引](../config/rendezvous-linux/README.md)、[已有relay unit](../config/relay/supervm-relay.service)可复用。首装器会provision和启服，**B已有owner禁止重跑首装** |
+| 默认Relay模板 | 部分接通：兼容项，不作统一默认 | 包模板的位置参数选择[legacy-json](../crates/novovm-network/src/product_relay_launch.rs)，不是native迁接完成。须按已验证的原生入口/配置版本明确选择，不能只改标签，也不能未经核查直接换B现有relay |
+| Windows服务 | 部分接通 | 复用[SCM安装器](../scripts/windows/install-novovm-rendezvous.ps1)和[用户任务](../scripts/windows/rendezvous-user-install.ps1)；前者有旧工程策略限制，后者已承接self-owned但依赖登录，非无人登录系统服务。原relay安装器不监督进程。统一主链/通信管理尚未装配，不复制托管钥匙或重置DPAPI |
+| 生命周期/升级/回退 | 部分接通 | 已有[novovmctl lifecycle](../crates/novovmctl/src/commands/lifecycle.rs)含release/upgrade/rollback，但仍接旧ops_wire_v1/managed ingress，health仅PID存活；应薄适配当前native配置和既有通信owner，不直接照旧“production”命令启动 |
+| 统一健康与联合恢复 | 未接通 | 原node progress/summary和native query、通信status/signed record及真实Mailbox请求可复用。进程active、文件存在或包previous目录不等于消息/到账/状态兼容；不得用HTTP健康旁路替原生验收 |
+
+下一装配必须统一记录但分权持有：版本/平台/feature/实际AOEM哈希；角色与原服务名；
+监听和advertised/路由；配置/数据/日志目录；各用途密钥引用（不收集私钥）；链域、
+三pin和验证者集合；预算/服务上限；依赖、原生健康探测、升级回退条件。没有共同配置
+就明确“未配置”，不填fixture、不创建第二身份、不把同一节点签票日志复制到其他设备。
+本地默认无聚合存储天花板；自选有限owner预算至少500MiB；已有托管和TTL不得因降额删除。
+核对磁盘/内存/CPU可用量后设服务资源策略，资源额度不改变协议容量或承诺奖励。
+
+### 5. 最小实施顺序与退出条件
+
+1. **本片清单交付。** A协调唯一版本；C保留手机消费端，D只做Linux构建/本机验证。
+   首份清单不要求各机继续手工拼长期产品；下面安装适配要把这些入口纳入一套管理。
+2. **原包补全及平台薄适配。** 先补真实通信bin/feature、原unit/安装资源和版本清单；
+   区分新装与采用已有owner。逐项适配原管理工具当前native配置、停止/重启/状态/升级，
+   不重新实现传输、执行、账本或另造replacement runtime。候选包先不启服。
+3. **单机安装与原库恢复。** A/B/C/D各自独立目录和身份；复核旧服务前后健康、端口、
+   权限、库加载、退出/重启和数据一致。新链须共同批准，正常START=existing；迁移与回退
+   必须检查状态/协议兼容，不能用旧程序强开新库、回退账本或清签票记录。现包明确不保证混版滚动。
+4. **双机通信/内容先行。** 实际消息、密文对象上传、发送者离线后领取、权限拒绝、断连重连；
+   同一服务异客户端取回与跨内容节点复制必须分开验，未实现的后者不能用前者替代。
+5. **经济与四机联合。** 双机可以作为提交/查询端，但四验证者集合至少满足原法定权重
+   才能确认；本轮等权3/4，不改成双票链。四台就绪后真实NUAS、到账再消费、费用/nonce/
+   预算一致；再接E1真实资金支持的履约付款。通信/内容/经济同时运行，一台离线健康三台
+   前进、晚启动、追赶中断和原库恢复；两台离线不得假最终确认。手机不计验证者。
+6. **负载/长跑单列。** 同条件65,536笔真实签名、首次等待和完整确认；TPS/P95/P99、内容
+   吞吐与可用性、队列/证明或结算积压、磁盘/资源增长、共机干扰及故障时间分别报告。
+   单机四进程继续作回归，不冒充跨机；不把NUAS与Ed25519、设备命令与整链数字混算。
+
+每步仅签自身证据；正式1亿NOV创世/分配、全面首发PQ、完整业务证明和公测转正式发布
+仍各自验收。不会为了让“一套系统”表面可启动而静默启用未接通的收费、身份降级或兼容旁路。
+
 ## 2026-10-24 D显式回执：D-LINUX-BUILD-2b3f1509
 
 D已接收并执行A修复 `2b3f1509c3591f646323a0231c14a9e83b759998` 顶部安排。

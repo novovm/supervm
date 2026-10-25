@@ -1,5 +1,30 @@
 # Agent Highest Law
 
+## 2026-10-25 unified full-stack node deployment
+
+The user requires A/B/C/D to deploy ONE NOVOVM/NOVONET system with unified
+installation, configuration, service management, monitoring, upgrade and recovery
+for communication, content, NOV economics and consensus. Multiple existing
+processes and purpose-isolated keys/data are allowed; do not make users assemble
+separate products or introduce another runtime, transport, account or ledger.
+Full installation does not force equal workloads or change validator membership.
+Resource policy remains per owner; the fixed four-validator acceptance set still
+requires its original quorum. Two-host connectivity is not two-vote finality.
+
+First audit actual entrypoints, dependencies and evidence as connected/partially
+connected/not connected; then extend the ORIGINAL packager and existing platform
+service/management adapters. See the current inventory and implementation order
+at the top of [delivery alignment](docs/NOVOVM_DELIVERY_ALIGNMENT.md).
+Reuse existing mailbox/object custody before extending content services; do not
+equate temporary encrypted mailbox storage with general content replication.
+NOV service payment must reach a specific authorized UCA from funded verified
+work; online status, delivery receipts or pool balances are not earned NOV.
+Keep ML-DSA-65 asset signing without downgrade; record remaining transport and
+consensus signature migration separately. Preserve current identities, custody,
+databases, signing journals and CPU/complete algebraic execution paths. B's
+existing mailbox/relay services and C's phone work must not be overwritten by a
+validator package. This is public-test deployment work, not launch authorization.
+
 ## 2026-10-25 confirmed tiered spending authority
 
 The user approved mobile small-balance spending plus KEY ONE control of savings/high-value assets. The phone cannot raise limits, extend/reissue its grant or replenish indefinitely. Identity/chat recovery cannot acquire asset management authority. Implement trusted caps/revocation/atomic effects in the existing SUPERVM UCA owner; NOVOCHAT owns Android custody and consumer integration. The normative decision and pending numeric/window parameters are in [tiered authority](docs/NOVONET_UCA_TIERED_SPENDING_AUTHORITY_V1.md), handoff `UCA-TIERED-2026-10-25`. No real charging or asset activation. A pushed notice is not a recipient acknowledgment.
