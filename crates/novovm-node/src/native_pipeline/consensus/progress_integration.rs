@@ -5,7 +5,7 @@ use super::*;
 use crate::native_pipeline::consensus::{
     collector::CollectorLimits,
     native::{
-        tests::{codec, Mesh},
+        tests::{codec, component_transport_key, Mesh},
         MessageDomain, PreparedMessage, ReceiveEvent,
     },
     pacemaker::TimeoutPolicy,
@@ -69,7 +69,7 @@ fn native_progress_algebraic_three_heights_with_unresolved_restart() -> Result<(
 
 struct Fixture {
     paths: Vec<PathBuf>,
-    keys: Vec<SigningKey>,
+    keys: Vec<novovm_consensus::round_bft::test_vectors::FixtureSigningKey>,
     ids: Vec<Hash>,
     set: Arc<ValidatorSet>,
     genesis: ConsensusContext,
@@ -90,13 +90,13 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
     let paths: Vec<_> = (0..4)
         .map(|i| directory.join(format!("node-{i}")))
         .collect();
-    let keys: Vec<_> = (0..4).map(validator_key).collect();
+    let keys: Vec<_> = (0..4).map(component_validator_key).collect();
     let members: Vec<_> = keys
         .iter()
         .map(|key| Validator::new(key.verifying_key().to_bytes(), 1))
         .collect::<Result<_>>()?;
     let ids: Vec<_> = members.iter().map(Validator::id).collect();
-    let set = Arc::new(ValidatorSet::new(CHAIN, 1, 1, members)?);
+    let set = Arc::new(ValidatorSet::new_for_test(CHAIN, 1, 1, members)?);
     let genesis = ConsensusContext {
         chain_id: CHAIN,
         genesis_config_commitment: GENESIS,
@@ -107,11 +107,10 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
         parent_block_hash: [0; 32],
         parent_decision_hash: [0; 32],
     };
-    let peer_ids: Vec<_> = keys
-        .iter()
-        .map(|key| {
+    let peer_ids: Vec<_> = (0..keys.len())
+        .map(|index| {
             novovm_network::product_overlay::peer_id_from_ed25519_public_key_v1(
-                &key.verifying_key().to_bytes(),
+                &component_transport_key(index).verifying_key().to_bytes(),
             )
         })
         .collect();

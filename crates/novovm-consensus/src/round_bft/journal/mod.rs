@@ -16,13 +16,13 @@ pub use self::backend::{
     JournalBackend, JournalRecord, JournalStatement, JournalTicket, ParentPoint,
 };
 use self::metadata::{MetaChange, MetaGuard, MetaKey, MetaOutcome, MetaTransition};
+use super::crypto::ConsensusSigner;
 use super::round::{LocalTimeout, PreparedStep, State, Step};
 use super::wire::{
     self, Context as ConsensusContext, Hash, Proposal, Quorum, Validator, ValidatorSet,
     VerifiedProposal, VerifiedQuorum, Vote,
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use std::sync::Arc;
 
 /// Durable protocol evidence. An acknowledged Decision also publishes the
@@ -147,7 +147,7 @@ struct Identity {
     context: ConsensusContext,
     parent: ParentPoint,
     set: Arc<ValidatorSet>,
-    key: SigningKey,
+    key: Arc<dyn ConsensusSigner>,
     validator: Hash,
 }
 
@@ -208,7 +208,7 @@ impl<B: JournalBackend> ValidatorJournal<B> {
         context: ConsensusContext,
         parent: ParentPoint,
         set: Arc<ValidatorSet>,
-        key: SigningKey,
+        key: impl ConsensusSigner + 'static,
     ) -> Result<JournalOpening<B>> {
         context.validate(&set)?;
         ensure!(
@@ -230,7 +230,15 @@ impl<B: JournalBackend> ValidatorJournal<B> {
                 && parent.receipt_batch_commitment != [0; 32],
             "signing parent does not bind configured context"
         );
-        let validator = Validator::new(key.verifying_key().to_bytes(), 1)?.id();
+        ensure!(
+            set.has_verifier(),
+            "signing journal requires the ML-DSA-65 verifier"
+        );
+        ensure!(
+            key.is_test_only() == set.is_test_only(),
+            "consensus signer/verifier fixture branding differs"
+        );
+        let validator = Validator::new(key.public_key(), 1)?.id();
         ensure!(
             set.member(&validator).is_some(),
             "local signer is not in validator set"
@@ -240,7 +248,7 @@ impl<B: JournalBackend> ValidatorJournal<B> {
             context,
             parent,
             set,
-            key,
+            key: Arc::new(key),
             validator,
         }))
     }

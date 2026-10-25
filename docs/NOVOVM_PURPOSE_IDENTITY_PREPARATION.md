@@ -1,6 +1,7 @@
 # 原节点用途身份准备（A–D，未启链）
 
-2026-10-25。输入基线 `424be495`；本片只接线和隔离回归，不生成真实部署密钥、
+2026-10-25。当前接续输入 `12c25e4c`，取代 `424be495` 的 Ed25519 测试签票准备规则；
+本轮只接线和隔离回归，不生成真实部署密钥、
 不安装/启停服务、不分配 NOV、不激活创世。B 原信箱、Relay、Web、通信身份均不动。
 旧链数据退役范围与回执仍以 [交付对齐](NOVOVM_DELIVERY_ALIGNMENT.md) 为准。
 
@@ -9,19 +10,20 @@
 原 `ResidentConfig.signing_key_file` 曾同时供原 journal 签票和 NovoRUDP 持钥认证。
 现在配置必须显式提供 `signing_key_file`、`transport_key_file`、`key_storage`。
 原 `GenesisValidator` 增加 `transport_public_key`，保留 `public_key` 为验证者签票公钥；
-两套公钥全集必须互异，绑定完整、一一对应。不是添加第二个验证者集合。
+签票公钥固定 ML-DSA-65 的1952字节，传输公钥仍为独立 Ed25519 的32字节，
+各用途集合内不得重复，绑定完整、一一对应。不是添加第二个验证者集合。
 
 原 [NativeChannel](../crates/novovm-node/src/native_pipeline/consensus/native.rs)
 通过 [薄绑定表](../crates/novovm-node/src/native_pipeline/consensus/native/bindings.rs)
 把握手已认证的 transport peer 映射为原 ValidatorSet 身份。
-原 [service](../crates/novovm-node/src/native_pipeline/service.rs) 在 AOEM/账本/journal 前
-检查本机两钥匙及完整远端配置；原 endpoint 仍负责握手、重连和密钥确认，journal 仍
+原 [service](../crates/novovm-node/src/native_pipeline/service.rs) 在开库/journal 前
+通过原 AOEM 核本机 ML-DSA 钥匙配对及初始化批准，传输/远端绑定先检查；原 endpoint 仍负责握手、重连和密钥确认，journal 仍
 用签票钥匙。提案来源必须匹配 proposer；可转发的投票/QC仍独立验证证据签名。
 仅持传输钥匙不能产生验证者签票。未改变 3/4 门槛、费用、nonce 或发布权限。
 
 映射摘要同时进入原普通创世承诺及
 [UcaGenesisManifestV1 规范批准字节](../crates/novovm-node/src/native_pipeline/service/config/uca_genesis.rs)。
-原 protocol pin 加入 `transport-binding-v1`；缺少映射/用途字段的旧未发布配置拒绝，
+原 protocol pin 包含 `round-bft-v2-mldsa65`、`transport-binding-v2` 和固定供应；旧未发布配置拒绝，
 不猜测、不默认同钥、不混跑旧包。网络端点是可核对的路由配置，不是身份凭证；
 现有 `native_peers.public_key` 仍填写验证者签票公钥，由共同映射解析传输身份。
 
@@ -31,9 +33,9 @@
 `generate` 是显式 create-new 操作；`inspect` 是只读校验，不能把两者都称只读。
 
 ```text
-novovmctl native-identity generate --chain-id <统一新测试域整数> --purpose validator --key-file <本机绝对路径/validator.sealed>
+novovmctl native-identity generate --chain-id <统一新测试域整数> --purpose validator --key-file <本机绝对路径/validator.sealed> --library <实际AOEM路径> --library-sha256 <批准哈希>
 novovmctl native-identity generate --chain-id <同一整数> --purpose transport --key-file <本机绝对路径/transport.sealed>
-novovmctl native-identity inspect --chain-id <同一整数> --purpose validator --key-file <同一路径/validator.sealed>
+novovmctl native-identity inspect --chain-id <同一整数> --purpose validator --key-file <同一路径/validator.sealed> --library <同一AOEM路径> --library-sha256 <批准哈希>
 novovmctl native-identity inspect --chain-id <同一整数> --purpose transport --key-file <同一路径/transport.sealed>
 ```
 
@@ -41,8 +43,9 @@ novovmctl native-identity inspect --chain-id <同一整数> --purpose transport 
 不自行复制别机材料或沿用已退役旧域。已有文件拒绝覆盖，损坏/用途错误/链域错误
 均拒绝，无明文回退。原保护层内增加有界用途信封，不另造密码或密钥管理服务。
 公开输出含用途、chain_id、公钥、算法及未启链标志，不输出私钥/助记词。
-此接口只准备当前 **Ed25519 测试节点签票/传输**，不是 UCA 管理或花费钥匙；
-UCA 资产仍采用 ML-DSA-65 单签，不能宣称全节点抗量子升级完成。
+用途信封升级为 `NVPK0002`：验证者只接受 ML-DSA-65，传输仍为 Ed25519。
+验证者生成/读取必须经实际 AOEM keygen/配对签验；没有库资格就拒绝，不回退。
+这不是 UCA 管理或花费钥匙，也不宣称所有网络安全边界已抗量子。
 
 Windows：复用当前用户 DPAPI，必须在最终节点运行账户下准备/inspect；另行核对私有
 目录 ACL。DPAPI 成功不证明部署 ACL 已验收，当前原文件帮助器不检查所有 ACL 策略。
@@ -58,7 +61,7 @@ Linux：复用原 XChaCha20-Poly1305 service custody 和 OS credential/文件所
 因此 `custody_verified=false`；最终 service 账户和同一 credential 下两次 inspect 的
 成功回执是独立前置项。模板接线不是 D 实机或 B 安装验收。
 
-`raw_development` 仅供既有隔离测试夹具；统一 managed 节点拒绝该模式。
+`raw_development` 已被原节点启动明确拒绝，真实进程回归也使用原受保护 custody。
 严禁受保护材料加载失败后切 raw、自动重置签票日志或沿用清空状态的旧链域。
 
 ## A 汇总的共同审核包（目前仍有待定项）

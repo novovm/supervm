@@ -3,12 +3,15 @@
 //! Fixture files and command output are retained, including failed commands.
 use ed25519_dalek::SigningKey;
 use novovm_node::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
+use novovm_node::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
 use novovm_node::native_pipeline::service::config::uca_genesis::{
     UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
-    UcaInitializationConfigV1, INITIALIZATION_CONTEXT_V1,
+    UcaInitializationConfigV1, INITIALIZATION_CONTEXT_V1, MAX_INITIAL_GRANTS_PER_ACCOUNT,
+    MAX_INITIAL_UCA_ACCOUNTS,
 };
 use novovm_node::native_pipeline::service::config::{
-    protocol_commitment, GenesisAllocation, GenesisConfig, GenesisValidator,
+    protocol_commitment, GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig,
+    NodeKeyStorage, ResidentConfig, MAX_STARTUP_DOCUMENT_BYTES,
 };
 use novovm_protocol::uca_spend::{spend_key_ref_v1, MLDSA65_PUBLIC_KEY_BYTES};
 use serde::Deserialize;
@@ -197,9 +200,9 @@ fn manifest() -> Result<UcaGenesisManifestV1, Box<dyn Error>> {
             timestamp_unix_ms: 123,
             validators: (1..=4)
                 .map(|seed| GenesisValidator {
-                    public_key: SigningKey::from_bytes(&[seed; 32])
-                        .verifying_key()
-                        .to_bytes(),
+                    // Structural prepare test only; no vote/key possession is
+                    // claimed. The actual runtime test replaces all four keys.
+                    public_key: vec![seed; MLDSA65_PUBLIC_KEY_BYTES],
                     transport_public_key: SigningKey::from_bytes(&[100 + seed; 32])
                         .verifying_key()
                         .to_bytes(),
@@ -209,7 +212,7 @@ fn manifest() -> Result<UcaGenesisManifestV1, Box<dyn Error>> {
             allocations: vec![
                 GenesisAllocation {
                     account_hex: "01".repeat(20),
-                    amount: LARGE_EXACT_AMOUNT.to_string(),
+                    amount: (NOV_FIXED_SUPPLY_BASE_UNITS - 2000).to_string(),
                 },
                 GenesisAllocation {
                     account_hex: "02".repeat(20),
@@ -262,6 +265,143 @@ fn assert_non_activation(value: &Value) {
 }
 
 #[test]
+fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound() -> TestResult {
+    let fixture = Fixture::new("maximum-pretty-shape")?;
+    let mut input = manifest()?;
+    // This fixture measures document shape, not full-width money. Its later
+    // explicit JSON Value assembly uses only exactly representable integers;
+    // the independent canonical/actual-runtime tests retain LARGE_EXACT_AMOUNT.
+    input.genesis.policy.clearing_daily_nov_hard_limit = 1_000_000;
+    let metadata_key = |purpose: u8, index: usize| {
+        let mut bytes = vec![255; MLDSA65_PUBLIC_KEY_BYTES];
+        bytes[0] = purpose;
+        bytes[1..9].copy_from_slice(&(index as u64).to_be_bytes());
+        bytes
+    };
+    // Public metadata only. No fabricated signature is treated as approval.
+    input.genesis.validators = (0..64)
+        .map(|index| GenesisValidator {
+            public_key: metadata_key(1, index),
+            transport_public_key: SigningKey::from_bytes(&[index as u8 + 100; 32])
+                .verifying_key()
+                .to_bytes(),
+            weight: 1,
+        })
+        .collect();
+    let template = input.accounts[0].clone();
+    input.accounts = (0..MAX_INITIAL_UCA_ACCOUNTS)
+        .map(|index| {
+            let mut account = template.clone();
+            account.uca_id = format!("uca:maximum-pretty-fixture-{index}");
+            account.asset_account = vec![index as u8 + 1; 20];
+            account.management_public_key = metadata_key(2, index);
+            account.grants = (0..MAX_INITIAL_GRANTS_PER_ACCOUNT)
+                .map(|grant_index| {
+                    let mut entry = template.grants[0].clone();
+                    entry.spend_public_key =
+                        metadata_key(3, index * MAX_INITIAL_GRANTS_PER_ACCOUNT + grant_index);
+                    entry.grant.account_id = account.uca_id.clone();
+                    entry.grant.key_ref = spend_key_ref_v1(&entry.spend_public_key).unwrap();
+                    entry.grant.max_debit_per_intent = 80;
+                    entry.grant.remaining_debit_budget = 1_000;
+                    entry
+                })
+                .collect();
+            account
+        })
+        .collect();
+    let canonical = input.canonical_bytes()?;
+    assert!(
+        canonical.len() <= 1024 * 1024,
+        "canonical contract remains bounded independently"
+    );
+    let pretty = serde_json::to_vec_pretty(&input)?;
+    assert!(pretty.len() > 1024 * 1024);
+    assert!(pretty.len() < MAX_STARTUP_DOCUMENT_BYTES);
+    fs::write(&fixture.manifest, &pretty)?;
+    let observed = data(&fixture.prepare("maximum-pretty")?)?;
+    assert_eq!(observed["signing_message_bytes"], canonical.len());
+    assert_eq!(observed["signing_message_hex"], hex(&canonical));
+    assert_non_activation(&observed);
+    let approvals: Vec<_> = input
+        .accounts
+        .iter()
+        .map(|account| UcaGenesisApprovalV1 {
+            uca_id: account.uca_id.clone(),
+            signature: vec![255; 3309],
+        })
+        .collect();
+    let initialization = UcaInitializationConfigV1 {
+        accounts: input.accounts.clone(),
+        approvals,
+        expected_signing_domain: [1; 32],
+        expected_initial_root: [2; 32],
+        expected_final_commitment: [3; 32],
+    };
+    let config = ResidentConfig {
+        profile: "native_execution_tick".into(),
+        library: fixture.root.join("not-loaded-aoem.dll"),
+        database: fixture.root.join("must-not-create.rocksdb"),
+        rpc_addr: None,
+        signing_key_file: fixture.root.join("not-created-validator.sealed"),
+        transport_key_file: fixture.root.join("not-created-transport.sealed"),
+        key_storage: NodeKeyStorage::ProtectedV1,
+        udp_addr: "127.0.0.1:41050".parse()?,
+        peers: input
+            .genesis
+            .validators
+            .iter()
+            .skip(1)
+            .enumerate()
+            .map(|(index, validator)| NativePeerConfig {
+                public_key: validator.public_key.clone(),
+                address: ([127, 0, 0, 1], 41051 + index as u16).into(),
+            })
+            .collect(),
+        native_client_limit: 1,
+        genesis: input.genesis.clone(),
+        uca_initialization: Some(initialization),
+        workers: 2,
+        execution_backend: Default::default(),
+        batch_size: 64,
+    };
+    // ResidentConfig deliberately exposes only deserialization. Assemble the
+    // actual document explicitly, then decode it through that production type;
+    // the fixture does not add a configuration export API to production.
+    let mut document = serde_json::json!({
+        "profile": config.profile, "library": config.library,
+        "database": config.database, "rpc_addr": config.rpc_addr,
+        "signing_key_file": config.signing_key_file,
+        "transport_key_file": config.transport_key_file,
+        "key_storage": config.key_storage, "udp_addr": config.udp_addr,
+        "peers": config.peers, "native_client_limit": config.native_client_limit,
+        "genesis": config.genesis, "uca_initialization": config.uca_initialization,
+        "workers": config.workers, "execution_backend": "cpu_callbacks",
+        "batch_size": config.batch_size,
+    });
+    let with_peers_and_initialization = serde_json::to_vec_pretty(&document)?;
+    let decoded: ResidentConfig = serde_json::from_slice(&with_peers_and_initialization)?;
+    assert_eq!(decoded.genesis.validators.len(), 64);
+    assert_eq!(decoded.peers.len(), 63);
+    assert_eq!(
+        decoded.uca_initialization.unwrap().accounts.len(),
+        MAX_INITIAL_UCA_ACCOUNTS
+    );
+    document["uca_initialization"] = Value::Null;
+    let with_peers = serde_json::to_vec_pretty(&document)?;
+    assert!(with_peers_and_initialization.len() < MAX_STARTUP_DOCUMENT_BYTES);
+    eprintln!("maximum MLDSA metadata: canonical={} manifest_pretty={} resident64_with_peers={} resident64_with_peers_and_32x8_initialization={}", canonical.len(), pretty.len(), with_peers.len(), with_peers_and_initialization.len());
+    // A larger text envelope never bypasses the explicit byte bound or creates a store.
+    fs::write(
+        &fixture.manifest,
+        vec![b' '; MAX_STARTUP_DOCUMENT_BYTES + 1],
+    )?;
+    rejected(&fixture.prepare("oversized-text")?, "at most");
+    assert!(!fixture.root.join("must-not-create.rocksdb").exists());
+    Ok(())
+}
+
+#[test]
 fn prepare_matches_original_canonical_domain_without_authorizing_or_writing() -> TestResult {
     let fixture = Fixture::new("prepare")?;
     let input = manifest()?;
@@ -281,6 +421,8 @@ fn prepare_matches_original_canonical_domain_without_authorizing_or_writing() ->
     );
     assert_eq!(observed["message_is_unframed"], true);
     assert_eq!(observed["signing_algorithm"], "ML-DSA-65");
+    assert_eq!(observed["consensus_signature_algorithm"], "ML-DSA-65");
+    assert_eq!(observed["transport_signature_algorithm"], "Ed25519");
     assert_eq!(observed["management_approvals_verified"], false);
     assert_eq!(observed["expected_domain_verified"], false);
     assert!(observed["review_only_startup_fragment"].is_null());
@@ -375,14 +517,14 @@ fn prepare_rejects_duplicate_top_level_and_grant_fields() -> TestResult {
 fn prepare_rejects_oversized_and_trailing_json() -> TestResult {
     let fixture = Fixture::new("document-bounds")?;
     let raw = serde_json::to_vec(&manifest()?)?;
-    let mut oversized = vec![b' '; 1024 * 1024 + 1];
+    let mut oversized = vec![b' '; MAX_STARTUP_DOCUMENT_BYTES + 1];
     oversized.extend_from_slice(&raw);
     fs::write(&fixture.manifest, oversized)?;
     let output = fixture.prepare("oversized")?;
     assert_eq!(output.status.code(), Some(3));
     rejected(
         &output,
-        "must be a nonempty regular file of at most 1048576 bytes",
+        &format!("must be a nonempty regular file of at most {MAX_STARTUP_DOCUMENT_BYTES} bytes"),
     );
     let mut trailing = raw;
     trailing.extend_from_slice(b"{}");
@@ -473,28 +615,28 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
         "key generation and CLI must use the same trusted library"
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
+    let signer = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let keys = (0..4)
-        .map(|_| {
-            aoem_bindings::mldsa_keygen_v1_auto(65)?
-                .ok_or_else(|| anyhow_error("ML-DSA-65 keygen unavailable"))
-        })
-        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+        .map(|_| signer.generate_keypair())
+        .collect::<Result<Vec<_>, _>>()?;
     let fixture = Fixture::new("actual-aoem")?;
     let mut input = manifest()?;
     for (index, account) in input.accounts.iter_mut().enumerate() {
-        account.management_public_key = keys[index].0.clone();
-        account.grants[0].spend_public_key = keys[index + 2].0.clone();
-        account.grants[0].grant.key_ref = spend_key_ref_v1(&keys[index + 2].0)?;
+        account.management_public_key = keys[index].public_key.clone();
+        account.grants[0].spend_public_key = keys[index + 2].public_key.clone();
+        account.grants[0].grant.key_ref = spend_key_ref_v1(&keys[index + 2].public_key)?;
     }
-    let signer = runtime.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
+    for validator in &mut input.genesis.validators {
+        validator.public_key = signer.generate_keypair()?.public_key;
+    }
     let canonical = input.canonical_bytes()?;
     let mut approvals = Vec::new();
     for (index, account) in input.accounts.iter().enumerate() {
         approvals.push(UcaGenesisApprovalV1 {
             uca_id: account.uca_id.clone(),
             signature: signer.sign(
-                &keys[index].0,
-                &keys[index].1,
+                &keys[index].public_key,
+                &keys[index].expanded_secret_key,
                 &canonical,
                 INITIALIZATION_CONTEXT_V1,
             )?,
@@ -527,7 +669,7 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
     );
     assert_eq!(
         fragment.genesis.allocations[0].amount,
-        LARGE_EXACT_AMOUNT.to_string()
+        (NOV_FIXED_SUPPLY_BASE_UNITS - 2000).to_string()
     );
     assert_eq!(
         fragment.uca_initialization.accounts[0].grants[0]
@@ -568,8 +710,8 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
     );
     let mut wrong = approvals.clone();
     wrong[0].signature = signer.sign(
-        &keys[1].0,
-        &keys[1].1,
+        &keys[1].public_key,
+        &keys[1].expanded_secret_key,
         &canonical,
         INITIALIZATION_CONTEXT_V1,
     )?;
@@ -600,8 +742,4 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
         "original genesis compiler",
     );
     Ok(())
-}
-
-fn anyhow_error(message: &str) -> Box<dyn Error> {
-    message.into()
 }

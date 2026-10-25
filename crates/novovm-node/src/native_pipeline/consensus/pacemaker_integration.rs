@@ -45,7 +45,7 @@ fn remote_vote(
         phase,
         value,
         set,
-        &validator_key(signer),
+        &component_validator_key(signer),
     )?;
     wire::decode_vote(&wire::encode_vote(&vote)?)
 }
@@ -162,8 +162,11 @@ fn leader_index(set: &ValidatorSet, round: u64) -> Result<usize> {
     let leader = set.leader(1, round)?;
     (0..4)
         .find(|index| {
-            Validator::new(validator_key(*index).verifying_key().to_bytes(), 1)
-                .is_ok_and(|validator| validator.id() == leader)
+            Validator::new(
+                component_validator_key(*index).verifying_key().to_bytes(),
+                1,
+            )
+            .is_ok_and(|validator| validator.id() == leader)
         })
         .context("fixture leader missing")
 }
@@ -179,12 +182,14 @@ fn real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery() -> Result
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
-    let set = Arc::new(ValidatorSet::new(
+    let set = Arc::new(ValidatorSet::new_for_test(
         CHAIN,
         1,
         1,
         (0..4)
-            .map(|index| Validator::new(validator_key(index).verifying_key().to_bytes(), 1))
+            .map(|index| {
+                Validator::new(component_validator_key(index).verifying_key().to_bytes(), 1)
+            })
             .collect::<Result<Vec<_>>>()?,
     )?);
     let context = ConsensusContext {
@@ -222,7 +227,7 @@ fn real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery() -> Result
                 context,
                 parent,
                 Arc::clone(&set),
-                validator_key(local),
+                component_validator_key(local),
             )?,
             pipeline,
         )?;
@@ -352,7 +357,7 @@ fn real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery() -> Result
                 context,
                 parent,
                 Arc::clone(&set),
-                validator_key(local),
+                component_validator_key(local),
             )?,
             pipeline,
         )?;
@@ -502,7 +507,7 @@ fn real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery() -> Result
                 context,
                 parent,
                 Arc::clone(&set),
-                validator_key(local),
+                component_validator_key(local),
             )?,
             pipeline,
         )?;
@@ -528,7 +533,7 @@ fn real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery() -> Result
             other_value,
             None,
             &set,
-            &validator_key(proposer),
+            &component_validator_key(proposer),
         )?
         .verify(&set)?;
         journal.accept_proposal(&remote_proposal, &other_candidate, None)?;

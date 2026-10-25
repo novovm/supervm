@@ -1,0 +1,132 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking aoem-bindings v0.1.0 (D:\WorksArea\SUPERVM\crates\aoem-bindings)
+    Checking crypto-bigint v0.7.6
+    Checking novovm-governance-observability v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-governance-observability)
+    Checking winapi-util v0.1.11
+    Checking regex-syntax v0.8.10
+    Checking is-terminal v0.4.17
+    Checking same-file v1.0.6
+    Checking walkdir v2.5.0
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking web30-core v0.1.0 (D:\WorksArea\SUPERVM\vendor\web30-core)
+    Checking regex-automata v0.4.14
+    Checking novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+    Checking elliptic-curve v0.14.1
+    Checking primefield v0.14.0
+    Checking rfc6979 v0.6.0
+    Checking wnaf v0.14.1
+    Checking primeorder v0.14.0
+    Checking ecdsa v0.17.0
+    Checking k256 v0.14.0
+    Checking regex v1.12.3
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+    Checking criterion v0.5.1
+    Checking novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+    Checking novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+    Checking novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Checking novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_aab.rs:487:37
+    |
+487 |         .map(|index| Validator::new(validator_key(*index).public_key().to_vec(), 1).map(|v| v.id()))
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*index).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+    = note: `-D clippy::unnecessary-to-owned` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_to_owned)]`
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_aab.rs:619:28
+    |
+619 |             Validator::new(validator_key(*index).public_key().to_vec(), 1)
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*index).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_aab.rs:704:45
+    |
+704 |                     let id = Validator::new(validator_key(*index).public_key().to_vec(), 1)?.id();
+    |                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*index).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_recovery.rs:265:32
+    |
+265 |                 Validator::new(validator_key(index).public_key().to_vec(), 1)?.id(),
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(index).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_queries.rs:424:28
+    |
+424 |             Validator::new(validator_key(*i).public_key().to_vec(), 1)
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_queries.rs:549:28
+    |
+549 |             Validator::new(validator_key(*i).public_key().to_vec(), 1)
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_client.rs:165:28
+    |
+165 |             Validator::new(validator_key(*i).public_key().to_vec(), 1)
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_load.rs:807:32
+    |
+807 |                 Validator::new(validator_key(*i).public_key().to_vec(), 1)
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_rpc.rs:605:28
+    |
+605 |             Validator::new(validator_key(*i).public_key().to_vec(), 1)
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_rpc.rs:707:28
+    |
+707 |             Validator::new(validator_key(*i).public_key().to_vec(), 1)
+    |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(*i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\uca_publication_integration.rs:336:37
+    |
+336 |             .map(|i| Validator::new(validator_key(i).public_key().to_vec(), 1))
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: unnecessary use of `to_vec`
+   --> crates\novovm-node\src\native_pipeline\consensus\uca_publication_integration.rs:532:32
+    |
+532 |                 Validator::new(validator_key(i).public_key().to_vec(), 1)
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: use: `validator_key(i).public_key()`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#unnecessary_to_owned
+
+error: could not compile `novovm-node` (lib test) due to 12 previous errors

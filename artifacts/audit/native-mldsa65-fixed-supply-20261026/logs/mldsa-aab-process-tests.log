@@ -1,0 +1,25 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.35s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_node-e8ab88ceea79732a.exe)
+
+running 1 test
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::aab::native_only_a_a_b_real_honest_signers_recover_and_restart ... FAILED
+
+failures:
+
+---- native_pipeline::consensus::tests::native_product_rpc::application::queries::aab::native_only_a_a_b_real_honest_signers_recover_and_restart stdout ----
+native actual AAB artifacts=D:\WorksArea\SUPERVM\target\native-product-rpc\native-aab-29764-1792943286691983100
+Error: unexpected AAB genesis account
+
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::application::queries::aab::native_only_a_a_b_real_honest_signers_recover_and_restart
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1641 filtered out; finished in 0.14s
+
+error: test failed, to rerun pass `-p novovm-node --lib`

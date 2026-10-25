@@ -2,13 +2,13 @@
 //! executed blocks, AOEM integration, or proof that replay grants authority.
 use super::*;
 use crate::native_pipeline::consensus::wire::{self, Validator};
-use ed25519_dalek::SigningKey;
+use novovm_consensus::round_bft::test_vectors::FixtureSigningKey;
 
-fn fixture() -> (ChainRecord, Arc<ValidatorSet>, SigningKey) {
-    let key = SigningKey::from_bytes(&[11; 32]);
+fn fixture() -> (ChainRecord, Arc<ValidatorSet>, FixtureSigningKey) {
+    let key = FixtureSigningKey::from_bytes(&[11; 32]);
     let member = Validator::new(key.verifying_key().to_bytes(), 1).unwrap();
     let validator = member.id();
-    let set = Arc::new(ValidatorSet::new(9, 3, 1, vec![member]).unwrap());
+    let set = Arc::new(ValidatorSet::new_for_test(9, 3, 1, vec![member]).unwrap());
     let context = ConsensusContext {
         chain_id: 9,
         genesis_config_commitment: [1; 32],
@@ -50,7 +50,7 @@ fn fixture() -> (ChainRecord, Arc<ValidatorSet>, SigningKey) {
 fn signed_evidence(
     record: &ChainRecord,
     set: &ValidatorSet,
-    key: &SigningKey,
+    key: &FixtureSigningKey,
     value: Hash,
     phase: Phase,
 ) -> (Proposal, Quorum) {
@@ -79,7 +79,7 @@ fn signed_evidence(
 // Test-only fixture for the existing immutable journal envelope. It deliberately
 // cannot produce a signer snapshot or a current-session DurableCandidate.
 fn outbox(revision: u64, proposal: &Proposal, quorum: &Quorum) -> Vec<u8> {
-    let mut bytes = b"NVOUT001".to_vec();
+    let mut bytes = b"NVOUT003".to_vec();
     bytes.extend_from_slice(&revision.to_be_bytes());
     bytes.extend_from_slice(&[0x91; 32]);
     bytes.push(3);
@@ -90,8 +90,11 @@ fn outbox(revision: u64, proposal: &Proposal, quorum: &Quorum) -> Vec<u8> {
         bytes.extend_from_slice(&(body.len() as u32).to_be_bytes());
         bytes.extend_from_slice(&body);
     }
+    // Current replay envelope carries an explicit evidence tag after the
+    // decision payload. A decision already owns its QC, so it must be None.
+    bytes.push(0);
     let mut digest = Sha256::new();
-    digest.update(b"novovm/replacement/signing-journal/v1\0");
+    digest.update(b"novovm/signing-journal/v3/mldsa65\0");
     digest.update(&bytes);
     bytes.extend_from_slice(&digest.finalize());
     bytes

@@ -2,8 +2,8 @@
 //! Migrated rules/tests; no production signing or publication is activated here.
 //!
 use super::*;
+use crate::round_bft::test_vectors::FixtureSigningKey as SigningKey;
 use crate::round_bft::wire::{Proposal, Quorum, Validator, ValidatorSet, Vote};
-use ed25519_dalek::SigningKey;
 
 const A: Hash = [31; 32];
 const B: Hash = [32; 32];
@@ -26,7 +26,7 @@ impl Fixture {
             .iter()
             .map(|key| Validator::new(key.verifying_key().to_bytes(), 1).unwrap())
             .collect();
-        let set = ValidatorSet::new(7, 1, 1, validators).unwrap();
+        let set = ValidatorSet::new_for_test(7, 1, 1, validators).unwrap();
         let context = Context {
             chain_id: 7,
             genesis_config_commitment: [3; 32],

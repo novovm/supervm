@@ -363,9 +363,11 @@ fn nuas_application_input_pins_domain_without_granting_spend_authority() -> Resu
     use crate::native_pipeline::consensus::{message_evidence, wire::ValidatorSet};
     let f = fixture()?;
     let keys = (101..105)
-        .map(|seed| ed25519_dalek::SigningKey::from_bytes(&[seed; 32]))
+        .map(|seed| {
+            novovm_consensus::round_bft::test_vectors::FixtureSigningKey::from_bytes(&[seed; 32])
+        })
         .collect::<Vec<_>>();
-    let validators = Arc::new(ValidatorSet::new(
+    let validators = Arc::new(ValidatorSet::new_for_test(
         f.context.chain_id,
         1,
         1,

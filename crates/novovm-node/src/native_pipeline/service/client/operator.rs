@@ -37,6 +37,12 @@ use std::{
 
 const MAX_BYTES: usize = 512 * 1024;
 const MAX_ROWS: usize = 64; // Local CLI budget, not a protocol capacity ceiling.
+const MAX_CLIENT_VALIDATORS: usize = 64;
+/// Local configuration budget shared with managed health inspection. A pretty
+/// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate 32-byte
+/// transport keys and the target identity fits with field/path headroom. This
+/// does not enlarge transaction input, network/output budgets or wire::MAX_VALIDATORS.
+pub const MAX_CLIENT_CONFIG_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +62,10 @@ pub struct ClientConfig {
 
 impl ClientConfig {
     fn domain(&self, key: &SigningKey) -> Result<MessageDomain> {
+        ensure!(
+            (1..=MAX_CLIENT_VALIDATORS).contains(&self.validators.len()),
+            "native client configuration supports 1..={MAX_CLIENT_VALIDATORS} validators; this is a local resource budget, not the protocol limit"
+        );
         ensure!(
             (1..=30_000).contains(&self.timeout_ms),
             "client deadline must be 1..=30000 ms"
@@ -89,14 +99,14 @@ impl ClientConfig {
             1,
             self.validators
                 .iter()
-                .map(|v| Validator::new(v.public_key, v.weight))
+                .map(|v| Validator::new(&v.public_key, v.weight))
                 .collect::<Result<Vec<_>>>()?,
         )?;
         ValidatorTransportBindings::new(
             &validators,
             self.validators
                 .iter()
-                .map(|v| (v.public_key, v.transport_public_key)),
+                .map(|v| (v.public_key.clone(), v.transport_public_key)),
         )?;
         Ok(MessageDomain {
             chain_id: self.chain_id,
@@ -182,6 +192,13 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
         .read_to_end(&mut bytes)?;
     ensure!(bytes.len() <= limit, "input exceeds {limit} bytes");
     Ok(bytes)
+}
+
+fn read_client_config(path: &Path) -> Result<ClientConfig> {
+    Ok(serde_json::from_slice(&read_bounded(
+        path,
+        MAX_CLIENT_CONFIG_BYTES,
+    )?)?)
 }
 
 enum Operation {
@@ -272,7 +289,7 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
 pub fn run(config_path: &Path, action: &str, input: Option<&Path>) -> Result<Value> {
     let operation = operation(action, input)?; // Reject malformed input before opening a socket.
     let config_path = config_path.canonicalize()?;
-    let config: ClientConfig = serde_json::from_slice(&read_bounded(&config_path, 64 * 1024)?)?;
+    let config = read_client_config(&config_path)?;
     let key_path = config_path
         .parent()
         .context("config directory")?
@@ -354,6 +371,75 @@ pub fn run(config_path: &Path, action: &str, input: Option<&Path>) -> Result<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn metadata_client_config(count: usize) -> ClientConfig {
+        let validators: Vec<_> = (0..count)
+            .map(|index| {
+                // Metadata-only fixture: no validator key generation/signing.
+                let mut public_key = vec![255; 1952];
+                public_key[..8].copy_from_slice(&(index as u64).to_be_bytes());
+                GenesisValidator {
+                    public_key,
+                    transport_public_key: SigningKey::from_bytes(&[(index + 16) as u8; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                    weight: 1,
+                }
+            })
+            .collect();
+        ClientConfig {
+            chain_id: 7,
+            genesis: [1; 32],
+            protocol: [2; 32],
+            validator_epoch: 1,
+            node: NativePeerConfig {
+                public_key: validators[0].public_key.clone(),
+                address: "127.0.0.1:9000".parse().unwrap(),
+            },
+            validators,
+            bind_addr: "127.0.0.1:0".parse().unwrap(),
+            transport_key_file: "client.key".into(),
+            timeout_ms: 5000,
+        }
+    }
+
+    #[test]
+    fn native_operator_mldsa_pretty_config_budget_roundtrip_and_rejection() -> Result<()> {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/operator-tests")
+            .join(format!("mldsa-config-{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join("client.json");
+        let client = SigningKey::from_bytes(&[2; 32]);
+        for count in [4, MAX_CLIENT_VALIDATORS] {
+            let config = metadata_client_config(count);
+            let bytes = serde_json::to_vec_pretty(&config)?;
+            assert!(
+                bytes.len() > 64 * 1024,
+                "must reproduce the former config failure"
+            );
+            assert!(bytes.len() < MAX_CLIENT_CONFIG_BYTES);
+            eprintln!(
+                "MLDSA client metadata: validators={count} pretty_bytes={}",
+                bytes.len()
+            );
+            std::fs::write(&path, &bytes)?;
+            let decoded = read_client_config(&path)?;
+            assert_eq!(decoded.validators.len(), count);
+            assert_eq!(serde_json::to_vec_pretty(&decoded)?, bytes);
+            assert!(decoded.domain(&client).is_ok());
+        }
+        assert!(metadata_client_config(MAX_CLIENT_VALIDATORS + 1)
+            .domain(&client)
+            .is_err());
+        std::fs::write(&path, vec![b' '; MAX_CLIENT_CONFIG_BYTES + 1])?;
+        assert!(read_client_config(&path).is_err());
+        // Original CLI refuses before any transport-key read or socket open.
+        let error = run(&path, "status", None).unwrap_err();
+        assert!(error.to_string().contains("input exceeds"));
+        assert!(!directory.join("client.key").exists());
+        Ok(())
+    }
     #[test]
     fn native_operator_full_width_money_is_decimal_text() {
         let text = u128::MAX.to_string();
@@ -427,22 +513,21 @@ mod tests {
     }
     #[test]
     fn native_operator_domain_rejects_foreign_target_and_validator_client() {
-        let validator = SigningKey::from_bytes(&[3; 32]);
         let transport = SigningKey::from_bytes(&[13; 32]);
         let client = SigningKey::from_bytes(&[4; 32]);
-        let public_key = validator.verifying_key().to_bytes();
+        let public_key = vec![3; 1952]; // Metadata-only client configuration.
         let mut config = ClientConfig {
             chain_id: 7,
             genesis: [1; 32],
             protocol: [2; 32],
             validator_epoch: 1,
             validators: vec![GenesisValidator {
-                public_key,
+                public_key: public_key.clone(),
                 transport_public_key: transport.verifying_key().to_bytes(),
                 weight: 1,
             }],
             node: NativePeerConfig {
-                public_key,
+                public_key: public_key.clone(),
                 address: "127.0.0.1:9000".parse().unwrap(),
             },
             bind_addr: "127.0.0.1:0".parse().unwrap(),
@@ -450,12 +535,11 @@ mod tests {
             timeout_ms: 5000,
         };
         assert!(config.domain(&client).is_ok());
-        assert!(config.domain(&validator).is_err());
         assert!(config.domain(&transport).is_err());
         config.timeout_ms = 30_001;
         assert!(config.domain(&client).is_err());
         config.timeout_ms = 5000;
-        config.node.public_key = client.verifying_key().to_bytes();
+        config.node.public_key = client.verifying_key().to_bytes().to_vec();
         assert!(config.domain(&client).is_err());
         config.node.public_key = public_key;
         config.genesis = [0; 32];

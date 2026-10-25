@@ -629,7 +629,8 @@ Packaging is not installation, startup, multi-host acceptance or mainnet launch.
    authorize genesis, start services or manufacture economic capabilities.
 3. Keep purpose-isolated identities, private key files, databases, signing
    journals and ciphertext under their ORIGINAL owner. Asset signing is
-   ML-DSA-65; transport/consensus still have Ed25519 and are not full-PQ signoff.
+   ML-DSA-65; consensus proposals/votes/QC also require ML-DSA-65. Transport
+   remains purpose-isolated Ed25519, not whole-node full-PQ signoff.
 4. systemd/novonet-mailbox.service is the existing self-owned owner unit with
    its ORIGINAL /opt/novonet-mailbox/current, /etc/novonet-mailbox, private data
    and systemd owner-key credential paths. resources/config/rendezvous-linux
@@ -653,10 +654,13 @@ Packaging is not installation, startup, multi-host acceptance or mainnet launch.
    Install a reviewed `native-node.json` and `novovm-node.env`. The config example
    is deliberately incomplete: replace `genesis: null` with the common verified
    GenesisConfig, pin its protocol/genesis commitments, populate every remote
-   validator public key/address and its committed transport_public_key. Prepare
+   ML-DSA-65 validator public key (1952 bytes)/address and its committed
+   Ed25519 transport_public_key (32 bytes). Prepare
    TWO independent protected purpose keys for this node (validator and transport)
    using novovmctl native-identity under the eventual service account. Configure
-   key_storage=protected_v1; raw_development is test tooling, not managed startup.
+   key_storage=protected_v1 with NVPK0002 envelopes; old NVPK0001/raw validator
+   material is rejected. Validator generate/inspect additionally requires the
+   approved AOEM --library path and independently pinned --library-sha256.
    The node unit requires its OWN encrypted systemd owner-key credential at
    /etc/novovm/credentials/node-owner-key.cred. Prepare it with the existing
    credential procedure under a node-specific owner; NEVER reuse mailbox/Relay

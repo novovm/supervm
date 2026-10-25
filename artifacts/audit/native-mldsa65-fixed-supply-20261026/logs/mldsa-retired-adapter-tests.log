@@ -1,0 +1,14 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_node-e8ab88ceea79732a.exe)
+
+running 2 tests
+test tx_ingress::tests::candidate_workspace_tests::round_bft_candidate_tests::round_bft_candidate_retired_refuses_before_config_or_workspace_access ... ok
+test tx_ingress::tests::candidate_workspace_tests::round_bft_candidate_tests::round_bft_candidate_retired_refuses_old_genesis_and_profile ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1643 filtered out; finished in 0.00s
+

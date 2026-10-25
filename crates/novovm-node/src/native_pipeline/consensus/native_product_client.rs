@@ -162,7 +162,7 @@ fn native_application_apfl_fees_failure_and_cold_restart_without_http_submission
     let (mut nodes, set) = setup_with_genesis(&directory, binary, genesis()?, 2)?;
     let ingress = (0..4)
         .find(|i| {
-            Validator::new(validator_key(*i).verifying_key().to_bytes(), 1)
+            Validator::new(validator_key(*i).public_key(), 1)
                 .unwrap()
                 .id()
                 != set.leader(1, 0).unwrap()

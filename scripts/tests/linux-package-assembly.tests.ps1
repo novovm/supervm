@@ -169,6 +169,14 @@ if ($nativeConfig.key_storage -ne 'protected_v1' -or
     $nativeConfig.transport_key_file -ne '/var/lib/novovm/keys/transport.sealed') {
   throw 'Native package must require independent protected validator and transport custody'
 }
+$packageReadme = Get-Content -LiteralPath (Join-Path $output 'README.md') -Raw
+if ($packageReadme -notmatch 'ML-DSA-65 validator public key \(1952 bytes\)' -or
+    $packageReadme -notmatch 'transport_public_key \(32 bytes\)' -or
+    $packageReadme -notmatch 'NVPK0002' -or
+    $packageReadme -notmatch '\-\-library-sha256' -or
+    $packageReadme -match 'transport/consensus still have Ed25519') {
+  throw 'Unified package must document the current ML-DSA-65 validator contract and refuse old custody'
+}
 if ($nodeUnit -notmatch '(?m)^StateDirectory=novovm novovm/state novovm/reports$' -or
     $relayUnit -notmatch '(?m)^StateDirectory=novovm-relay novovm-relay/reports$') {
   throw 'Active units must declare their persistent directories without execution hooks'

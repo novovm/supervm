@@ -129,10 +129,19 @@ fn success(output: Output) -> Result<Value, Box<dyn Error>> {
     ] {
         assert_eq!(data[field], false, "must not claim {field}");
     }
-    assert_eq!(data["identity"]["algorithm"], "Ed25519");
+    assert_eq!(data["identity"]["schema_version"], 2);
+    let validator = data["identity"]["purpose"] == "validator";
+    assert_eq!(
+        data["identity"]["algorithm"],
+        if validator { "ML-DSA-65" } else { "Ed25519" }
+    );
+    assert_eq!(
+        data["identity"]["public_key"].as_array().unwrap().len(),
+        if validator { 1952 } else { 32 }
+    );
     assert_eq!(
         data["identity"]["qualification"],
-        "test_node_purpose_only_not_full_node_mldsa"
+        "purpose_key_only_not_membership_launch_or_whole_node_pq"
     );
     assert!(data["identity"].get("secret").is_none());
     assert!(data["identity"].get("seed").is_none());
@@ -142,9 +151,9 @@ fn success(output: Output) -> Result<Value, Box<dyn Error>> {
 #[test]
 fn protected_keys_are_independent_and_inspect_is_nonmutating() -> TestResult {
     let fixture = Fixture::new()?;
-    let validator = fixture.root.join("validator.protected");
+    let validator = fixture.root.join("other-transport.protected");
     let transport = fixture.root.join("transport.protected");
-    let signer = success(fixture.run("generate", "validator", 19, &validator)?)?;
+    let signer = success(fixture.run("generate", "transport", 19, &validator)?)?;
     let peer = success(fixture.run("generate", "transport", 19, &transport)?)?;
     assert_ne!(
         signer["identity"]["public_key"],
@@ -152,7 +161,7 @@ fn protected_keys_are_independent_and_inspect_is_nonmutating() -> TestResult {
     );
     assert_eq!(signer["protected_key_created"], true);
     let before = snapshot(&fixture.root)?;
-    let inspected = success(fixture.run("inspect", "validator", 19, &validator)?)?;
+    let inspected = success(fixture.run("inspect", "transport", 19, &validator)?)?;
     assert_eq!(inspected["identity"], signer["identity"]);
     assert_eq!(inspected["protected_key_created"], false);
     assert_eq!(snapshot(&fixture.root)?, before);
@@ -170,14 +179,14 @@ fn protected_keys_are_independent_and_inspect_is_nonmutating() -> TestResult {
 #[test]
 fn overwrite_wrong_purpose_and_wrong_domain_fail_without_changes() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.root.join("validator.protected");
-    success(fixture.run("generate", "validator", 23, &path)?)?;
+    let path = fixture.root.join("transport.protected");
+    success(fixture.run("generate", "transport", 23, &path)?)?;
     let before = snapshot(&fixture.root)?;
     for (action, purpose, chain) in [
-        ("generate", "validator", 23),
-        ("inspect", "transport", 23),
-        ("inspect", "validator", 24),
-        ("inspect", "validator", 0),
+        ("generate", "transport", 23),
+        ("inspect", "validator", 23),
+        ("inspect", "transport", 24),
+        ("inspect", "transport", 0),
     ] {
         let output = fixture.run(action, purpose, chain, &path)?;
         assert!(!output.status.success());
@@ -189,27 +198,27 @@ fn overwrite_wrong_purpose_and_wrong_domain_fail_without_changes() -> TestResult
 #[test]
 fn missing_tampered_and_plain_raw_keys_never_fallback_or_create_files() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.root.join("validator.protected");
+    let path = fixture.root.join("transport.protected");
     let before = snapshot(&fixture.root)?;
     assert!(!fixture
-        .run("inspect", "validator", 29, &path)?
+        .run("inspect", "transport", 29, &path)?
         .status
         .success());
     assert_eq!(snapshot(&fixture.root)?, before);
-    success(fixture.run("generate", "validator", 29, &path)?)?;
+    success(fixture.run("generate", "transport", 29, &path)?)?;
     let mut bytes = std::fs::read(&path)?;
     let at = bytes.len() / 2;
     bytes[at] ^= 0x80;
     std::fs::write(&path, bytes)?;
     let damaged = snapshot(&fixture.root)?;
     assert!(!fixture
-        .run("inspect", "validator", 29, &path)?
+        .run("inspect", "transport", 29, &path)?
         .status
         .success());
     assert_eq!(snapshot(&fixture.root)?, damaged);
     std::fs::write(&path, [37; 32])?;
     assert!(!fixture
-        .run("inspect", "validator", 29, &path)?
+        .run("inspect", "transport", 29, &path)?
         .status
         .success());
     Ok(())
@@ -219,15 +228,110 @@ fn missing_tampered_and_plain_raw_keys_never_fallback_or_create_files() -> TestR
 fn relative_and_parent_traversal_targets_are_not_created() -> TestResult {
     let fixture = Fixture::new()?;
     let before = snapshot(&fixture.root)?;
-    let mut command = fixture.command("generate", "validator", 31, Path::new("relative.key"));
+    let mut command = fixture.command("generate", "transport", 31, Path::new("relative.key"));
     command.current_dir(&fixture.root);
     assert!(!command.output()?.status.success());
     let traversal = fixture.credentials.join("..").join("bad.key");
     assert!(!fixture
-        .run("generate", "validator", 31, &traversal)?
+        .run("generate", "transport", 31, &traversal)?
         .status
         .success());
     assert_eq!(snapshot(&fixture.root)?, before);
+    Ok(())
+}
+
+#[test]
+fn validator_requires_explicit_qualified_aoem_and_never_falls_back_to_ed25519() -> TestResult {
+    let fixture = Fixture::new()?;
+    let path = fixture.root.join("validator.protected");
+    let before = snapshot(&fixture.root)?;
+    for action in ["generate", "inspect"] {
+        let output = fixture.run(action, "validator", 43, &path)?;
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("--library"));
+        assert_eq!(snapshot(&fixture.root)?, before);
+    }
+    // A regular file with the wrong approved digest is rejected before loading
+    // or creating custody. This is not an executable or a fake runtime fallback.
+    let library = fixture.root.join("not-a-runtime.bin");
+    std::fs::write(&library, b"not an AOEM artifact")?;
+    let before = snapshot(&fixture.root)?;
+    let output = fixture
+        .command("generate", "validator", 43, &path)
+        .arg("--library")
+        .arg(&library)
+        .arg("--library-sha256")
+        .arg("00".repeat(32))
+        .output()?;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("SHA-256 mismatch before load"));
+    assert_eq!(snapshot(&fixture.root)?, before);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; actual shared AOEM/custody CLI"]
+fn actual_mldsa65_validator_generate_inspect_and_rejection_closure() -> TestResult {
+    use sha2::{Digest, Sha256};
+    let library = PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .ok_or("set NOVOVM_AOEM_TEST_LIBRARY to the approved platform AOEM artifact")?,
+    )
+    .canonicalize()?;
+    let digest = format!("{:x}", Sha256::digest(std::fs::read(&library)?));
+    let fixture = Fixture::new()?;
+    let validator = fixture.root.join("validator.protected");
+    let transport = fixture.root.join("transport.protected");
+    let run = |action, purpose, chain, path: &Path| -> Result<Output, Box<dyn Error>> {
+        Ok(fixture
+            .command(action, purpose, chain, path)
+            .arg("--library")
+            .arg(&library)
+            .arg("--library-sha256")
+            .arg(&digest)
+            .output()?)
+    };
+    let identity = success(run("generate", "validator", 47, &validator)?)?;
+    assert_eq!(identity["identity"]["algorithm"], "ML-DSA-65");
+    let peer = success(fixture.run("generate", "transport", 47, &transport)?)?;
+    assert_ne!(
+        identity["identity"]["public_key"],
+        peer["identity"]["public_key"]
+    );
+    let before = snapshot(&fixture.root)?;
+    let inspected = success(run("inspect", "validator", 47, &validator)?)?;
+    assert_eq!(inspected["identity"], identity["identity"]);
+    assert_eq!(inspected["protected_key_created"], false);
+    assert_eq!(snapshot(&fixture.root)?, before);
+    for (action, chain, path) in [
+        ("generate", 47, &validator),
+        ("inspect", 48, &validator),
+        ("inspect", 0, &validator),
+        ("inspect", 47, &transport),
+    ] {
+        assert!(!run(action, "validator", chain, path)?.status.success());
+        assert_eq!(snapshot(&fixture.root)?, before);
+    }
+    assert!(!fixture
+        .run("inspect", "transport", 47, &validator)?
+        .status
+        .success());
+    assert_eq!(snapshot(&fixture.root)?, before);
+    let mut ciphertext = std::fs::read(&validator)?;
+    let midpoint = ciphertext.len() / 2;
+    ciphertext[midpoint] ^= 1;
+    std::fs::write(&validator, ciphertext)?;
+    let damaged = snapshot(&fixture.root)?;
+    assert!(!run("inspect", "validator", 47, &validator)?
+        .status
+        .success());
+    assert_eq!(snapshot(&fixture.root)?, damaged);
+    std::fs::write(&validator, [29; 32])?;
+    assert!(!run("inspect", "validator", 47, &validator)?
+        .status
+        .success());
+    assert!(!fixture.root.join("database").exists());
+    assert!(!fixture.root.join("journal").exists());
     Ok(())
 }
 
@@ -235,18 +339,18 @@ fn relative_and_parent_traversal_targets_are_not_created() -> TestResult {
 #[test]
 fn linux_missing_credential_or_custody_lock_is_not_implicitly_repaired() -> TestResult {
     let fixture = Fixture::new()?;
-    let path = fixture.root.join("validator.protected");
+    let path = fixture.root.join("transport.protected");
     let before = snapshot(&fixture.root)?;
-    let mut command = fixture.command("generate", "validator", 37, &path);
+    let mut command = fixture.command("generate", "transport", 37, &path);
     command.env_remove("CREDENTIALS_DIRECTORY");
     assert!(!command.output()?.status.success());
     assert_eq!(snapshot(&fixture.root)?, before);
-    success(fixture.run("generate", "validator", 37, &path)?)?;
-    let lock = fixture.root.join("validator.protected.lock");
+    success(fixture.run("generate", "transport", 37, &path)?)?;
+    let lock = fixture.root.join("transport.protected.lock");
     std::fs::remove_file(&lock)?;
     let without_lock = snapshot(&fixture.root)?;
     assert!(!fixture
-        .run("inspect", "validator", 37, &path)?
+        .run("inspect", "transport", 37, &path)?
         .status
         .success());
     assert_eq!(snapshot(&fixture.root)?, without_lock);
@@ -259,22 +363,22 @@ fn linux_missing_credential_or_custody_lock_is_not_implicitly_repaired() -> Test
 fn linux_open_permissions_and_symlink_targets_fail_closed() -> TestResult {
     use std::os::unix::fs::{symlink, PermissionsExt};
     let fixture = Fixture::new()?;
-    let path = fixture.root.join("validator.protected");
-    success(fixture.run("generate", "validator", 41, &path)?)?;
+    let path = fixture.root.join("transport.protected");
+    success(fixture.run("generate", "transport", 41, &path)?)?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
     assert!(!fixture
-        .run("inspect", "validator", 41, &path)?
+        .run("inspect", "transport", 41, &path)?
         .status
         .success());
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     let alias = fixture.root.join("alias.protected");
     symlink(&path, &alias)?;
     assert!(!fixture
-        .run("inspect", "validator", 41, &alias)?
+        .run("inspect", "transport", 41, &alias)?
         .status
         .success());
     assert!(!fixture
-        .run("generate", "validator", 41, &alias)?
+        .run("generate", "transport", 41, &alias)?
         .status
         .success());
     Ok(())

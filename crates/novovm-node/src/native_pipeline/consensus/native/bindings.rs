@@ -12,21 +12,19 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug)]
 pub struct ValidatorTransportBindings {
     validator_set_hash: Hash,
-    transport_by_validator: BTreeMap<Hash, Hash>,
+    transport_by_validator: BTreeMap<Vec<u8>, Hash>,
     validator_by_peer: BTreeMap<String, Hash>,
-    #[cfg(test)]
-    historical_identity_fixture: bool,
 }
 
 impl ValidatorTransportBindings {
     pub fn new(
         validators: &ValidatorSet,
-        bindings: impl IntoIterator<Item = (Hash, Hash)>,
+        bindings: impl IntoIterator<Item = (Vec<u8>, Hash)>,
     ) -> Result<Self> {
         let signing_keys = validators
             .members()
             .iter()
-            .map(|v| (*v.public_key(), v.id()))
+            .map(|v| (v.public_key().to_vec(), v.id()))
             .collect::<BTreeMap<_, _>>();
         let mut transport_by_validator = BTreeMap::new();
         let mut validator_by_peer = BTreeMap::new();
@@ -38,10 +36,6 @@ impl ValidatorTransportBindings {
             let key = VerifyingKey::from_bytes(&transport)
                 .context("invalid validator transport public key")?;
             ensure!(!key.is_weak(), "weak validator transport public key");
-            ensure!(
-                !signing_keys.contains_key(&transport),
-                "validator signing and transport keys must be purpose-separated"
-            );
             ensure!(
                 transport_by_validator
                     .insert(validator, transport)
@@ -61,12 +55,10 @@ impl ValidatorTransportBindings {
             validator_set_hash: validators.hash(),
             transport_by_validator,
             validator_by_peer,
-            #[cfg(test)]
-            historical_identity_fixture: false,
         })
     }
 
-    pub fn transport_public_key(&self, validator_public_key: &Hash) -> Result<Hash> {
+    pub fn transport_public_key(&self, validator_public_key: &[u8]) -> Result<Hash> {
         self.transport_by_validator
             .get(validator_public_key)
             .copied()
@@ -84,7 +76,7 @@ impl ValidatorTransportBindings {
     /// remain committed by the original validator set and genesis envelope.
     pub fn canonical_commitment(&self) -> Hash {
         let mut hash = Sha256::new();
-        hash.update(b"NOVOVM/validator-transport-bindings/v1\0");
+        hash.update(b"NOVOVM/validator-transport-bindings/v2-mldsa65\0");
         hash.update((self.transport_by_validator.len() as u64).to_be_bytes());
         for (validator, transport) in &self.transport_by_validator {
             hash.update(validator);
@@ -99,34 +91,5 @@ impl ValidatorTransportBindings {
             "transport bindings belong to another validator set"
         );
         Ok(())
-    }
-
-    pub(super) fn require_production_binding(&self) -> Result<()> {
-        #[cfg(test)]
-        ensure!(
-            !self.historical_identity_fixture,
-            "historical identity fixture cannot enter original transport owner"
-        );
-        Ok(())
-    }
-
-    /// Old in-process regression fixtures alone retain their original key
-    /// layout. This is not deserializable or available to production callers.
-    #[cfg(test)]
-    pub(super) fn historical_identity_fixture(validators: &ValidatorSet) -> Self {
-        Self {
-            validator_set_hash: validators.hash(),
-            transport_by_validator: validators
-                .members()
-                .iter()
-                .map(|v| (*v.public_key(), *v.public_key()))
-                .collect(),
-            validator_by_peer: validators
-                .members()
-                .iter()
-                .map(|v| (peer_id_from_ed25519_public_key_v1(v.public_key()), v.id()))
-                .collect(),
-            historical_identity_fixture: true,
-        }
     }
 }

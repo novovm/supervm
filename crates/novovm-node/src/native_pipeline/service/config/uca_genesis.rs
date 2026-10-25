@@ -190,6 +190,12 @@ impl UcaGenesisManifestV1 {
         let mut owners = BTreeSet::new();
         let mut management_keys = BTreeSet::new();
         let mut spend_keys = BTreeSet::new();
+        let validator_keys: BTreeSet<_> = self
+            .genesis
+            .validators
+            .iter()
+            .map(|validator| &validator.public_key)
+            .collect();
         for account in &self.accounts {
             let id = &account.uca_id;
             ensure!(
@@ -230,6 +236,10 @@ impl UcaGenesisManifestV1 {
         ensure!(
             management_keys.is_disjoint(&spend_keys),
             "initial UCA management and spending keys must be purpose-separated"
+        );
+        ensure!(
+            validator_keys.is_disjoint(&management_keys) && validator_keys.is_disjoint(&spend_keys),
+            "validator signing keys must not authorize UCA management or spending"
         );
         let mut out = b"NOVOVM/UCA/initial-manifest/v1\0".to_vec();
         out.extend_from_slice(&self.genesis.chain_id.to_be_bytes());
@@ -500,15 +510,16 @@ mod tests {
                         )
                         .verifying_key()
                         .to_bytes(),
-                        public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
-                            .verifying_key()
-                            .to_bytes(),
+                        // Canonical-manifest fixture, not a signing backend.
+                        public_key: vec![seed; MLDSA65_PUBLIC_KEY_BYTES],
                         weight: 1,
                     })
                     .collect(),
                 allocations: vec![GenesisAllocation {
                     account_hex: "01".repeat(20),
-                    amount: "1000".into(),
+                    amount:
+                        crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
+                            .to_string(),
                 }],
                 policy: serde_json::from_value(serde_json::json!({
                     "quote_ttl_ms": 15000, "policy_version": 1,
@@ -545,7 +556,13 @@ mod tests {
                 0 => changed.genesis.chain_id += 1,
                 1 => changed.genesis.timestamp_unix_ms += 1,
                 2 => changed.genesis.validators[0].weight += 1,
-                3 => changed.genesis.allocations[0].amount = "1001".into(),
+                3 => {
+                    changed.genesis.allocations[0].amount = (crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS - 1).to_string();
+                    changed.genesis.allocations.push(GenesisAllocation {
+                        account_hex: "02".repeat(20),
+                        amount: "1".into(),
+                    });
+                }
                 4 => changed.accounts[0].grants[0].grant.remaining_debit_budget += 1,
                 5 => changed.accounts[0].grants[0].grant.max_debit_per_intent += 1,
                 6 => changed.accounts[0].asset_account[0] = 9,
@@ -607,5 +624,26 @@ mod tests {
             derive_primary_key_ref_from_binding_v1(UcaKeyAlgo::Mldsa65, &[7; 32]),
             derive_primary_key_ref_from_binding_v1(UcaKeyAlgo::Mldsa87, &[7; 32]),
         );
+    }
+
+    #[test]
+    fn validator_key_cannot_also_manage_or_spend_genesis_assets() {
+        let mut management = manifest();
+        management.accounts[0].management_public_key =
+            management.genesis.validators[0].public_key.clone();
+        assert!(management
+            .canonical_bytes()
+            .unwrap_err()
+            .to_string()
+            .contains("validator signing keys"));
+        let mut spending = manifest();
+        let key = spending.genesis.validators[0].public_key.clone();
+        spending.accounts[0].grants[0].grant.key_ref = spend_key_ref_v1(&key).unwrap();
+        spending.accounts[0].grants[0].spend_public_key = key;
+        assert!(spending
+            .canonical_bytes()
+            .unwrap_err()
+            .to_string()
+            .contains("validator signing keys"));
     }
 }

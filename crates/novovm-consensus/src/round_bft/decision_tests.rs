@@ -2,8 +2,7 @@
 //! permission, publication, or finalized-state capability is created here.
 
 use super::{wire, VerifiedDecision};
-use ed25519_dalek::{Signer, SigningKey};
-use sha2::{Digest, Sha256};
+use crate::round_bft::test_vectors::FixtureSigningKey as SigningKey;
 
 const VALUE: wire::Hash = [0x81; 32];
 
@@ -18,7 +17,7 @@ impl Fixture {
         let keys: Vec<_> = (41..45)
             .map(|seed| SigningKey::from_bytes(&[seed; 32]))
             .collect();
-        let set = wire::ValidatorSet::new(
+        let set = wire::ValidatorSet::new_for_test(
             52,
             1,
             1,
@@ -237,16 +236,14 @@ fn verified_decision_rejects_genuinely_signed_unscheduled_leader() {
     // Sign the declared wrong proposer's exact wire preimage. This is a real
     // signature by a set member, not merely a signature corrupted by mutation.
     let bytes = wire::encode_proposal(&proposal).unwrap();
-    let mut hash = Sha256::new();
-    hash.update(b"novovm-round-bft/v1/proposal\0");
-    hash.update(&bytes[11..bytes.len() - 64]);
-    let message = hash.finalize();
+    let mut message = b"novovm-round-bft/v2/mldsa65/proposal\0".to_vec();
+    message.extend_from_slice(&bytes[13..bytes.len() - super::crypto::MLDSA65_SIGNATURE_BYTES]);
     proposal.signature = wrong_key.sign(&message).to_bytes().to_vec();
     wrong_key
         .verifying_key()
         .verify_strict(
             &message,
-            &ed25519_dalek::Signature::from_slice(&proposal.signature).unwrap(),
+            &super::test_vectors::FixtureSignature::from_slice(&proposal.signature).unwrap(),
         )
         .unwrap();
     let error = fixture

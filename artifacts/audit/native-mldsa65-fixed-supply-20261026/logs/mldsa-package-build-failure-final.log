@@ -1,0 +1,1 @@
+PASS: build failure, absent artifact, missing TLS/Iroh features and wrong/missing identity reject; Cargo-reported paths consumed. Generated fixtures retained: D:\WorksArea\SUPERVM\artifacts\audit\linux-build-fixture-12b230eb6dc04875b4e634e455101c42

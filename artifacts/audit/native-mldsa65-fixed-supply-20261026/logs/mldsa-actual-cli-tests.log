@@ -1,0 +1,13 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running tests\native_identity_cli.rs (target/runtime-rebuild\debug\deps\native_identity_cli-fd075ab26e579757.exe)
+
+running 1 test
+test actual_mldsa65_validator_generate_inspect_and_rejection_closure ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.62s
+

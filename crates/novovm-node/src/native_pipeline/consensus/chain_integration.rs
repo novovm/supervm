@@ -293,12 +293,12 @@ fn reject_partial_rollback(
     set: Arc<ValidatorSet>,
     old: MetadataSnapshot,
 ) -> Result<()> {
-    let validator = Validator::new(validator_key(3).verifying_key().to_bytes(), 1)?.id();
+    let validator = Validator::new(component_validator_key(3).verifying_key().to_bytes(), 1)?.id();
     let keys = {
         let store = CandidateStore::open(store_config(path)?, OpenMode::Existing)?;
         vec![
-            store.scoped_key(b"m/consensus/v1/chain/head"),
-            store.scoped_key(&[b"m/consensus/v1/state/".as_slice(), &validator].concat()),
+            store.scoped_key(&MetaKey::ChainHead.relative_key()),
+            store.scoped_key(&MetaKey::ConsensusState(validator).relative_key()),
         ]
     };
     let correct = {
@@ -323,7 +323,7 @@ fn reject_partial_rollback(
     )?);
     let pipeline = &services.0[0];
     let result = open_journal(
-        ValidatorJournal::open(pipeline, genesis, anchor, set, validator_key(3))?,
+        ValidatorJournal::open(pipeline, genesis, anchor, set, component_validator_key(3))?,
         pipeline,
     );
     let error = match result {
@@ -388,12 +388,12 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
     let paths: Vec<_> = (0..4)
         .map(|i| directory.join(format!("validator-{i}")))
         .collect();
-    let set = Arc::new(ValidatorSet::new(
+    let set = Arc::new(ValidatorSet::new_for_test(
         CHAIN,
         1,
         1,
         (0..4)
-            .map(|i| Validator::new(validator_key(i).verifying_key().to_bytes(), 1))
+            .map(|i| Validator::new(component_validator_key(i).verifying_key().to_bytes(), 1))
             .collect::<Result<_>>()?,
     )?);
     let genesis = ConsensusContext {
@@ -409,7 +409,7 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
     let mut native = use_native
         .then(|| {
             Mesh::new(
-                &(0..4).map(validator_key).collect::<Vec<_>>(),
+                &(0..4).map(component_validator_key).collect::<Vec<_>>(),
                 MessageDomain {
                     chain_id: CHAIN,
                     genesis: GENESIS,
@@ -444,7 +444,13 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
     let mut journals = Vec::new();
     for (i, pipeline) in services.0.iter().enumerate() {
         journals.push(Some(open_journal(
-            ValidatorJournal::open(pipeline, genesis, anchor, set.clone(), validator_key(i))?,
+            ValidatorJournal::open(
+                pipeline,
+                genesis,
+                anchor,
+                set.clone(),
+                component_validator_key(i),
+            )?,
             pipeline,
         )?));
     }
@@ -456,7 +462,7 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
             genesis,
             anchor,
             set.clone(),
-            validator_key(1),
+            component_validator_key(1),
         )?,
         &services.0[0],
     )?;
@@ -485,7 +491,7 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
                     context,
                     parent,
                     set.clone(),
-                    validator_key(0)
+                    component_validator_key(0)
                 )
                 .is_err()
                     || height == 1,
@@ -506,7 +512,7 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
             BlockStatement::from_executed(candidates[0].packet(), context, &set, &parent)?.hash();
         let leader = (0..4)
             .find(|&i| {
-                Validator::new(validator_key(i).verifying_key().to_bytes(), 1)
+                Validator::new(component_validator_key(i).verifying_key().to_bytes(), 1)
                     .unwrap()
                     .id()
                     == set.leader(height, 0).unwrap()
@@ -641,7 +647,7 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
                         genesis,
                         anchor,
                         set.clone(),
-                        validator_key(i),
+                        component_validator_key(i),
                     )?,
                     &services.0[i],
                 )?);
@@ -727,7 +733,7 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
                             genesis,
                             anchor,
                             set.clone(),
-                            validator_key(i),
+                            component_validator_key(i),
                         )?,
                         &services.0[i],
                     )?);
@@ -745,7 +751,8 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
                 );
                 if height == 2 && i == 3 {
                     let validator =
-                        Validator::new(validator_key(i).verifying_key().to_bytes(), 1)?.id();
+                        Validator::new(component_validator_key(i).verifying_key().to_bytes(), 1)?
+                            .id();
                     rollback_snapshot = Some(read_metadata(
                         &services.0[i],
                         vec![MetaKey::ChainHead, MetaKey::ConsensusState(validator)],
@@ -801,7 +808,13 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
         )?);
         let pipeline = &services.0[i];
         let journal = open_journal(
-            ValidatorJournal::open(pipeline, genesis, anchor, set.clone(), validator_key(i))?,
+            ValidatorJournal::open(
+                pipeline,
+                genesis,
+                anchor,
+                set.clone(),
+                component_validator_key(i),
+            )?,
             pipeline,
         )?;
         ensure!(
@@ -859,25 +872,10 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
     // No repair, reset, history skipping or automatic replay is allowed.
     for (i, path) in paths.iter().enumerate() {
         let relative = match i {
-            0 => b"m/consensus/v1/chain/head".to_vec(),
-            1 => match records[i].outbox_key() {
-                MetaKey::ConsensusOutbox {
-                    validator,
-                    sequence,
-                } => [
-                    b"m/consensus/v1/outbox/".as_slice(),
-                    &validator,
-                    &sequence.to_be_bytes(),
-                ]
-                .concat(),
-                _ => unreachable!(),
-            },
+            0 => MetaKey::ChainHead.relative_key(),
+            1 => records[i].outbox_key().relative_key(),
             2 => marker_key(records[i].candidate_id()),
-            _ => [
-                b"m/consensus/v1/chain/block/".as_slice(),
-                &2u64.to_be_bytes(),
-            ]
-            .concat(),
+            _ => MetaKey::ChainBlock { height: 2 }.relative_key(),
         };
         let key = {
             let store = CandidateStore::open(store_config(path)?, OpenMode::Existing)?;
@@ -897,7 +895,13 @@ fn three_heights(use_native: bool, backend: ExecutionBackend) -> Result<()> {
         services.0.push(pipeline);
         let pipeline = &services.0[i];
         let result = open_journal(
-            ValidatorJournal::open(pipeline, genesis, anchor, set.clone(), validator_key(i))?,
+            ValidatorJournal::open(
+                pipeline,
+                genesis,
+                anchor,
+                set.clone(),
+                component_validator_key(i),
+            )?,
             pipeline,
         );
         let error = match result {

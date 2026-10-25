@@ -8,6 +8,7 @@
 // See docs/NOVOVM_JULY_MAIN_INTEGRATION_MAP.md for replacement/coverage limits.
 pub mod bodies;
 mod chain;
+pub mod crypto;
 mod journal;
 pub(crate) mod message_evidence;
 pub mod native;

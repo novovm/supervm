@@ -1,0 +1,102 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.07s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_consensus-bc52215712a2ca21.exe)
+
+running 89 tests
+test round_bft::collector::tests::every_context_field_is_pinned_and_context_advancement_rejects_old_votes ... ok
+test round_bft::collector::tests::forged_signatures_and_verified_votes_from_another_set_are_not_trusted ... ok
+test round_bft::collector::tests::future_phase_threshold_is_not_current_timer_eligibility ... ok
+test round_bft::collector::tests::duplicate_and_equivocation_never_add_weight_or_overwrite_the_first_vote ... ok
+test round_bft::collector::tests::future_reservation_rejects_small_configuration_and_does_not_consume_history_buckets ... ok
+test round_bft::collector::tests::future_tip_updates_cannot_revoke_an_already_formed_exact_round_witness ... ok
+test round_bft::collector::tests::failed_promotion_preserves_future_tips_and_pinned_witness_atomically ... ok
+test round_bft::collector::tests::high_round_catch_up_deduplicates_phases_and_rejects_cross_round_fragments ... ok
+test round_bft::collector::tests::budgets_fail_explicitly_without_overwrite_and_retirement_is_explicit ... ok
+test round_bft::collector::tests::mixed_values_only_qualify_phase_timeout_and_never_a_block_quorum ... ok
+test round_bft::collector::tests::one_validator_future_bucket_poison_cannot_block_honest_exact_round_catchup ... ok
+test round_bft::collector::tests::two_of_four_do_not_certify_three_same_value_do ... ok
+test round_bft::collector::tests::phases_and_rounds_never_combine_into_quorum_or_timeout_weight ... ok
+test round_bft::collector::tests::zero_overflowing_or_impossible_budgets_and_invalid_context_are_rejected ... ok
+test round_bft::collector::tests::weighted_thresholds_are_strict_and_count_weight_not_signer_count ... ok
+test round_bft::decision_tests::verified_decision_rejects_bad_proposal_and_vote_signatures ... ok
+test round_bft::collector::tests::advancing_a_full_current_round_requires_explicit_retirement_and_reserves_the_next ... ok
+test round_bft::decision_tests::verified_decision_rejects_genuinely_signed_unscheduled_leader ... ok
+test round_bft::collector::tests::maximum_round_does_not_overflow_future_admission_or_weight_arithmetic ... ok
+test round_bft::decision_tests::verified_decision_rejects_duplicate_and_mixed_authentic_votes ... ok
+test round_bft::collector::tests::unequal_weight_catch_up_may_have_one_heavy_signer_but_never_two_light_phases ... ok
+test round_bft::decision_tests::verified_decision_accepts_real_same_round_precommits_as_read_only_evidence ... ok
+test round_bft::decision_tests::verified_decision_rejects_insufficient_precommit_weight ... ok
+test round_bft::decision_tests::verified_decision_requires_the_independent_expected_context_and_value ... ok
+test round_bft::journal::codec::tests::current_round_lock_does_not_retroactively_restrict_original_prevote ... ok
+test round_bft::decision_tests::verified_decision_rejects_exactly_signed_foreign_context ... ok
+test round_bft::journal::codec::tests::journal_corrupt_truncated_noncanonical_parent_and_declared_lengths_fail ... ok
+test round_bft::journal::codec::tests::journal_snapshot_and_outbox_are_exactly_bound_and_validate_real_signature ... ok
+test round_bft::decision_tests::verified_decision_rejects_other_phase_round_value_and_nil_even_with_valid_quorum ... ok
+test round_bft::journal::codec::tests::late_quorum_replay_preserves_nil_votes_and_distinct_old_lock ... ok
+test round_bft::journal::codec::tests::nil_precommit_rejects_a_resealed_current_round_lock ... ok
+test round_bft::journal::codec::tests::original_proposal_justification_survives_newer_valid_witness ... ok
+test round_bft::journal::codec::tests::replay_roles_digest_domain_and_legacy_snapshot_are_fail_closed ... ok
+test round_bft::journal::codec::tests::restored_locked_state_requires_exact_valid_quorum_not_a_claimed_round ... ok
+test round_bft::journal::tests::backpressure_does_not_adopt_or_emit_and_wrong_owner_cannot_submit ... ok
+test round_bft::journal::codec::tests::state_only_certified_record_cannot_replace_lock_origin ... ok
+test round_bft::journal::codec::tests::retained_lock_accepts_same_value_or_newer_proposal_justification ... ok
+test round_bft::journal::tests::opening_rejects_missing_or_corrupt_outbox_and_foreign_domain ... ok
+test round_bft::journal::tests::exact_already_present_transition_is_replayed_but_stale_head_is_not ... ok
+test round_bft::journal::tests::lost_ack_reopen_recovers_exact_signed_outbox_without_resigning ... ok
+test round_bft::journal::tests::pending_signature_is_released_only_after_its_exact_ack_and_once ... ok
+test round_bft::journal::tests::stale_expected_state_freezes_without_releasing_a_signature ... ok
+test round_bft::journal::codec::tests::retained_old_lock_rejects_resealed_unjustified_other_prevote ... ok
+test round_bft::pacemaker::tests::no_phase_timeout_without_distinct_weight_threshold ... ok
+test round_bft::pacemaker::tests::precommit_wait_can_expire_before_local_body_or_prevote_arrives ... ok
+test round_bft::journal::tests::unknown_completion_freezes_even_when_write_really_happened ... ok
+test round_bft::journal::codec::tests::retained_lock_rejects_resealed_equal_round_conflicting_justification ... ok
+test round_bft::pacemaker::tests::qualification_starts_once_and_repeated_votes_do_not_extend_deadline ... ok
+test round_bft::pacemaker::tests::timeout_grows_by_round_and_new_height_restarts_schedule ... ok
+test round_bft::pacemaker::tests::zero_and_unrepresentable_timeout_are_rejected_without_wrapping ... ok
+test round_bft::round::tests::authenticated_round_change_preserves_lock_valid_and_never_invents_votes ... ok
+test round_bft::round::tests::current_quorum_can_be_processed_after_equivocating_proposal_but_not_without_execution ... ok
+test round_bft::round::tests::decision_can_arrive_for_older_round_without_old_vote_and_is_terminal ... ok
+test round_bft::round::tests::duplicate_and_old_round_quorums_cannot_create_more_votes ... ok
+test round_bft::round::tests::local_timeout_requires_exact_context_round_step_and_checked_increment ... ok
+test round_bft::round::tests::cross_context_evidence_is_rejected_even_when_signed_by_same_set ... ok
+test round_bft::round::tests::late_current_quorum_after_nil_precommit_updates_valid_without_second_vote ... ok
+test round_bft::round::tests::locked_value_rejects_unjustified_change_but_accepts_same_value ... ok
+test round_bft::round::tests::new_and_restore_reject_invalid_context_domain_and_parent_convention ... ok
+test round_bft::round::tests::justification_requires_exact_domain_round_phase_value_and_presence ... ok
+test round_bft::round::tests::nil_quorum_and_all_timeouts_preserve_existing_lock ... ok
+test round_bft::round::tests::preparing_transition_does_not_mutate_or_grant_durable_signing_authority ... ok
+test round_bft::round::tests::old_justification_cannot_override_newer_lock_or_invent_equal_round_value ... ok
+test round_bft::round::tests::proposal_local_value_mismatch_does_not_change_state ... ok
+test round_bft::round::tests::snapshot_rejects_invalid_checkpoint_pairs_and_early_locks ... ok
+test round_bft::round::tests::snapshot_roundtrip_preserves_locks_validity_steps_and_is_canonical_bounded ... ok
+test round_bft::round::tests::only_non_nil_precommit_certificate_and_exact_proposal_can_decide ... ok
+test round_bft::wire::tests::codec_bounds_counts_before_allocation_and_requires_canonical_tags ... ok
+test round_bft::round::tests::no_quorum_a_a_b_split_does_not_lock_and_can_converge_next_round ... ok
+test round_bft::round::tests::newer_verified_prevote_quorum_allows_lock_migration_only_when_current_qc_arrives ... ok
+test round_bft::wire::tests::context_requires_full_domain_and_exact_first_block_parent_convention ... ok
+test round_bft::wire::tests::leader_schedule_is_sorted_round_robin_and_checked ... ok
+test round_bft::wire::tests::independently_signed_foreign_set_epoch_and_chain_are_not_replayed ... ok
+test round_bft::wire::tests::metadata_only_validator_set_cannot_verify_or_sign ... ok
+test round_bft::wire::tests::proposal_signature_binds_all_fields_and_cannot_be_used_as_vote ... ok
+test round_bft::wire::tests::proposals_require_the_scheduled_leader_and_strict_valid_round ... ok
+test round_bft::collector::tests::malicious_future_fragments_cannot_starve_the_current_round_slots_or_votes ... ok
+test round_bft::wire::tests::transcript_adapter_receives_full_versioned_message_not_a_digest ... ok
+test round_bft::wire::tests::quorum_rejects_duplicate_unsorted_tampered_and_mixed_signed_evidence ... ok
+test round_bft::wire::tests::vote_signing_preimage_is_explicit_and_old_signatures_cannot_be_relabelled ... ok
+test round_bft::wire::tests::vote_signature_binds_every_context_field_round_phase_value_and_signer ... ok
+test round_bft::wire::tests::codec_rejects_unknown_old_formats_trailing_and_all_truncations ... ok
+test round_bft::wire::tests::fixed_mldsa65_wire_rejects_old_suite_widths_and_wrong_suite_tag ... ok
+test round_bft::wire::tests::quorum_is_three_of_four_only_for_equal_weight_and_exact_single_phase ... ok
+test round_bft::wire::tests::weighted_quorum_does_not_confuse_signature_count_with_weight ... ok
+test round_bft::wire::tests::real_votes_nil_and_value_roundtrip_but_do_not_grant_other_phase ... ok
+test round_bft::wire::tests::validator_sets_are_canonical_weighted_and_domain_bound ... ok
+test round_bft::wire::tests::invalid_keys_duplicates_counts_and_weight_overflow_are_rejected ... ok
+test round_bft::journal::codec::tests::maximum_validator_decision_transition_fits_derived_mldsa65_metadata_budgets ... ok
+
+test result: ok. 89 passed; 0 failed; 0 ignored; 0 measured; 91 filtered out; finished in 0.73s
+

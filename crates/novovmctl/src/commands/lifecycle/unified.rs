@@ -96,6 +96,18 @@ struct Captured {
     stdout: String,
 }
 
+/// Describes this implementation's required configuration, not an observation
+/// that a service has loaded keys, signed a vote, or completed PQ acceptance.
+fn signature_contract_report() -> serde_json::Value {
+    serde_json::json!({
+        "scope":"current_product_configuration_contract_not_runtime_acceptance",
+        "consensus_signature_contract":"ML-DSA-65/v2",
+        "transport_identity":"Ed25519",
+        "signature_runtime_verified":false,
+        "full_node_post_quantum":"unavailable"
+    })
+}
+
 trait Runner {
     fn run(&mut self, operation: &Operation) -> Result<Captured, CtlError>;
 }
@@ -290,6 +302,7 @@ fn run_with(args: &LifecycleArgs, runner: &mut impl Runner) -> Result<serde_json
         "full_stack_accepted":false,"service_settlement":"not_connected",
         "manager_mutates_data_directly":false,"credentials_provisioned":false,
         "custody_verified":false,
+        "signature_contract":signature_contract_report(),
         "note":"install only links reviewed units; no enable/start, key creation or genesis. Planning checks credential source metadata only; it does not read secrets or prove that the final runtime account can decrypt custody. Active process is not end-to-end health. Upgrade/rollback require a separately qualified compatibility transition."
     }))
 }
@@ -724,10 +737,12 @@ fn validate_native_config(
         .map_err(|e| bad(format!("original native configuration rejected: {e}")))?;
     same_library_binding(&parsed.library, env_library)?;
     if parsed.key_storage != novovm_node::native_pipeline::service::NodeKeyStorage::ProtectedV1 {
-        return Err(bad("managed node requires protected_v1 purpose custody; raw_development is test tooling only"));
+        return Err(bad(
+            "managed node requires protected_v1 purpose custody; raw validator keys are forbidden",
+        ));
     }
     if parsed.uca_initialization.is_none() {
-        return Err(bad("economic deployment requires approved UCA initialization; the Ed25519 reference config is not asset activation"));
+        return Err(bad("economic deployment requires approved ML-DSA-65 UCA initialization; a validator config alone does not activate assets"));
     }
     let native: serde_json::Value = read_json(path, MAX_MANIFEST)?;
     if native["profile"] != "native_execution_tick" || !native["rpc_addr"].is_null() {
@@ -1157,6 +1172,19 @@ mod tests {
     fn validates_original_package_and_external_owner() {
         let f = Fixture::new();
         assert!(validate_deployment(&f.deployment).is_ok());
+    }
+
+    #[test]
+    fn signature_contract_separates_consensus_from_transport_and_runtime_acceptance() {
+        let report = signature_contract_report();
+        assert_eq!(report["consensus_signature_contract"], "ML-DSA-65/v2");
+        assert_eq!(report["transport_identity"], "Ed25519");
+        assert_eq!(report["signature_runtime_verified"], false);
+        assert_eq!(report["full_node_post_quantum"], "unavailable");
+        assert_eq!(
+            report["scope"],
+            "current_product_configuration_contract_not_runtime_acceptance"
+        );
     }
     #[test]
     fn rejects_changed_artifact_even_with_same_filename() {

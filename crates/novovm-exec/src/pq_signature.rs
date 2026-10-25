@@ -6,7 +6,87 @@
 
 use aoem_bindings::AoemDyn;
 use serde::Deserialize;
-use std::fmt;
+use std::{fmt, sync::Arc};
+use zeroize::Zeroizing;
+
+/// Generated with the existing AOEM primitive, validated with this facade's
+/// qualified sign/verify path, and kept zeroizing across every error path.
+/// Intentionally not Debug, Clone or Serialize: consumers transfer custody.
+pub struct MldsaKeyPair {
+    pub public_key: Vec<u8>,
+    pub expanded_secret_key: Zeroizing<Vec<u8>>,
+}
+
+/// Long-lived qualified handle over the same loaded AOEM owner. Construction
+/// performs the KAT and capability checks once; sign/verify never rerun the KAT.
+/// Consumers select the parameter set and own message/domain policy.
+#[derive(Clone)]
+pub struct MldsaRuntime {
+    runtime: Arc<AoemDyn>,
+    parameters: AoemMldsaParameterSet,
+}
+
+impl MldsaRuntime {
+    pub fn parameters(&self) -> AoemMldsaParameterSet {
+        self.parameters
+    }
+
+    pub fn sign(
+        &self,
+        trusted_public_key: &[u8],
+        expanded_secret_key: &[u8],
+        message: &[u8],
+        context: &[u8],
+    ) -> Result<Vec<u8>, PqVerificationError> {
+        sign_with_backend(
+            self.runtime.as_ref(),
+            self.parameters,
+            trusted_public_key,
+            expanded_secret_key,
+            message,
+            context,
+        )
+    }
+
+    pub fn verify(
+        &self,
+        trusted_public_key: &[u8],
+        message: &[u8],
+        context: &[u8],
+        signature: &[u8],
+    ) -> Result<(), PqVerificationError> {
+        check_lengths(self.parameters, trusted_public_key, signature)?;
+        let framed = frame_pure_message(message, context)?;
+        verify_with_backend(
+            self.runtime.as_ref(),
+            self.parameters,
+            trusted_public_key,
+            &framed,
+            signature,
+        )
+    }
+
+    pub fn generate_keypair(&self) -> Result<MldsaKeyPair, PqVerificationError> {
+        if !self.runtime.supports_mldsa_keygen_v1() {
+            return Err(PqVerificationError::KeyGenerationUnavailable);
+        }
+        let (public_key, expanded_secret_key) = self
+            .runtime
+            .mldsa_keygen_v1(self.parameters.level())
+            .map_err(|_| PqVerificationError::KeyGenerationFailure)?;
+        let key = MldsaKeyPair {
+            public_key,
+            expanded_secret_key: Zeroizing::new(expanded_secret_key),
+        };
+        self.sign(
+            &key.public_key,
+            &key.expanded_secret_key,
+            &self.parameters.level().to_be_bytes(),
+            b"AOEM/shared-MLDSA/key-generation/v1",
+        )?;
+        Ok(key)
+    }
+}
 
 impl crate::AoemExecFacade {
     /// Borrow the already loaded runtime, retaining the existing suite and
@@ -23,6 +103,29 @@ impl crate::AoemExecFacade {
         parameters: AoemMldsaParameterSet,
     ) -> Result<MldsaSigner<'_>, PqVerificationError> {
         MldsaSigner::new(&self.dynlib, parameters)
+    }
+
+    /// Shares the already trusted loaded library without reopening it. KAT and
+    /// signing qualification occur once at this explicit owner creation point.
+    pub fn mldsa_runtime_v1(
+        &self,
+        parameters: AoemMldsaParameterSet,
+    ) -> Result<MldsaRuntime, PqVerificationError> {
+        ensure_compatible_backend(self.dynlib.as_ref(), parameters)?;
+        ensure_signing_backend(self.dynlib.as_ref(), parameters)?;
+        Ok(MldsaRuntime {
+            runtime: Arc::clone(&self.dynlib),
+            parameters,
+        })
+    }
+
+    /// Key generation is an offline caller-owned operation, not a chain action.
+    /// No alternative algorithm/parameter set is selected when unavailable.
+    pub fn mldsa_keygen_v1(
+        &self,
+        parameters: AoemMldsaParameterSet,
+    ) -> Result<MldsaKeyPair, PqVerificationError> {
+        self.mldsa_runtime_v1(parameters)?.generate_keypair()
     }
 }
 
@@ -89,9 +192,11 @@ pub enum PqVerificationError {
     InvalidSecretKeyLength,
     RuntimeUnavailable,
     SigningUnavailable,
+    KeyGenerationUnavailable,
     RuntimeContractMismatch,
     RuntimeFailure,
     SigningFailure,
+    KeyGenerationFailure,
     RuntimeIncompatible,
     InvalidContextLength,
     MessageTooLarge,
@@ -114,11 +219,13 @@ impl fmt::Display for PqVerificationError {
             }
             Self::RuntimeUnavailable => "AOEM ML-DSA verification capability unavailable",
             Self::SigningUnavailable => "AOEM ML-DSA signing capability unavailable",
+            Self::KeyGenerationUnavailable => "AOEM ML-DSA key generation capability unavailable",
             Self::RuntimeContractMismatch => {
                 "AOEM ML-DSA encoding sizes do not match host contract"
             }
             Self::RuntimeFailure => "AOEM ML-DSA verification call failed",
             Self::SigningFailure => "AOEM ML-DSA signing call failed",
+            Self::KeyGenerationFailure => "AOEM ML-DSA key generation call failed",
             Self::RuntimeIncompatible => {
                 "AOEM runtime failed ML-DSA known-answer compatibility check"
             }
@@ -469,3 +576,57 @@ fn check_lengths(
 #[cfg(test)]
 #[path = "pq_signature_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod owned_runtime_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; actual owned AOEM ML-DSA"]
+    fn actual_owned_mldsa_runtime_keygen_pair_and_lifetime() -> anyhow::Result<()> {
+        let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .ok_or_else(|| anyhow::anyhow!("explicit NOVOVM_AOEM_TEST_LIBRARY required"))?;
+        let facade = crate::AoemExecFacade::open(library, crate::AoemExecOpenOptions::default())?;
+        let runtime = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
+        let shared = runtime.clone();
+        let key = runtime.generate_keypair()?;
+        assert_eq!(key.public_key.len(), 1952);
+        assert_eq!(key.expanded_secret_key.len(), 4032);
+        drop(facade);
+        drop(runtime);
+        let context = b"test/owned-runtime-keypair";
+        let message = b"an isolated fixture, not a vote";
+        let mut signature =
+            shared.sign(&key.public_key, &key.expanded_secret_key, message, context)?;
+        assert_eq!(signature.len(), 3309);
+        shared.verify(&key.public_key, message, context, &signature)?;
+        assert!(shared
+            .verify(&key.public_key, b"changed", context, &signature)
+            .is_err());
+        assert!(shared
+            .verify(&key.public_key, message, b"other context", &signature)
+            .is_err());
+        signature[0] ^= 1;
+        assert!(shared
+            .verify(&key.public_key, message, context, &signature)
+            .is_err());
+        let other = shared.generate_keypair()?;
+        assert!(shared
+            .sign(
+                &key.public_key,
+                &other.expanded_secret_key,
+                message,
+                context
+            )
+            .is_err());
+        assert_eq!(
+            shared.sign(&[0; 32], &key.expanded_secret_key, message, context),
+            Err(PqVerificationError::InvalidPublicKeyLength)
+        );
+        assert_eq!(
+            shared.sign(&key.public_key, &[0; 32], message, context),
+            Err(PqVerificationError::InvalidSecretKeyLength)
+        );
+        Ok(())
+    }
+}

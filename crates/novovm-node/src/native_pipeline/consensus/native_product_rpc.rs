@@ -3,12 +3,16 @@
 //! the retained HTTP tests are not native-release acceptance evidence.
 //! Wallets supply signatures, never execution outputs, proposals or QCs.
 use super::*;
+use crate::native_pipeline::consensus::crypto::{AoemConsensusCrypto, AoemConsensusSigner};
 use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
 use crate::native_pipeline::service::config::{protocol_commitment, ORIGINAL_PROFILE, PROFILE};
 use crate::native_pipeline::service::{GenesisAllocation, GenesisConfig, GenesisValidator};
+use novovm_consensus::round_bft::crypto::ConsensusSigner;
+use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
 use serde_json::{json, Value};
 use std::net::{SocketAddr, TcpListener};
 use std::process::{Child, Command, Stdio};
+use std::sync::OnceLock;
 
 #[path = "native_product_client.rs"]
 mod application;
@@ -32,6 +36,11 @@ impl ProductNodes {
         // stdout/stderr evidence. Each fixture directory is already unique.
         let launch = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let mut command = Command::new(&self.binary);
+        #[cfg(target_os = "linux")]
+        command.env(
+            "CREDENTIALS_DIRECTORY",
+            &process_identities()?.credential_directory,
+        );
         command
             .env_remove("NOVOVM_NATIVE_RESIDENT_CONFIG")
             .env_remove("NOVOVM_NATIVE_RESIDENT_START")
@@ -319,9 +328,107 @@ fn hex(bytes: &[u8]) -> String {
     crate::native_pipeline::service::rpc::hex(bytes)
 }
 
-// Dedicated deterministic transport keys for tests; never deployment identities.
+// Ephemeral actual-AOEM identities, never deployment keys. Every original
+// child loads the same protected custody format as the product. This cache
+// replaces deterministic Ed25519 validator fixtures, not the product signer.
+struct ProcessIdentities {
+    crypto: Arc<AoemConsensusCrypto>,
+    signers: Vec<Arc<AoemConsensusSigner>>,
+    validator_paths: Vec<PathBuf>,
+    transports: Vec<SigningKey>,
+    transport_paths: Vec<PathBuf>,
+    #[cfg(target_os = "linux")]
+    credential_directory: PathBuf,
+}
+
+fn process_identities() -> Result<&'static ProcessIdentities> {
+    static IDENTITIES: OnceLock<std::result::Result<ProcessIdentities, String>> = OnceLock::new();
+    IDENTITIES
+        .get_or_init(|| prepare_process_identities().map_err(|e| format!("{e:#}")))
+        .as_ref()
+        .map_err(|e| anyhow::anyhow!(e.clone()))
+}
+
+fn prepare_process_identities() -> Result<ProcessIdentities> {
+    let directory = std::env::temp_dir().join(format!(
+        "novovm-mldsa-process-custody-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    fs::create_dir(&directory)?;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+    }
+    let directory =
+        crate::native_pipeline::service::config::native_path(&directory.canonicalize()?);
+    let _credential =
+        crate::native_pipeline::service::config::test_custody::TestCredentialGuard::new(
+            &directory,
+        )?;
+    #[cfg(target_os = "linux")]
+    let credential_directory = _credential.directory().to_path_buf();
+    let facade = AoemExecFacade::open(&library()?, AoemExecOpenOptions::default())?;
+    let crypto = Arc::new(AoemConsensusCrypto::new(&facade)?);
+    let mut signers = Vec::new();
+    let mut validator_paths = Vec::new();
+    let mut transports = Vec::new();
+    let mut transport_paths = Vec::new();
+    for index in 0..4 {
+        let keys = crate::native_pipeline::service::config::test_custody::generate_node_keys(
+            &directory, CHAIN, index, &crypto,
+        )?;
+        signers.push(keys.signer);
+        transports.push(keys.transport);
+        validator_paths.push(keys.validator_path);
+        transport_paths.push(keys.transport_path);
+    }
+    Ok(ProcessIdentities {
+        crypto,
+        signers,
+        validator_paths,
+        transports,
+        transport_paths,
+        #[cfg(target_os = "linux")]
+        credential_directory,
+    })
+}
+
+pub(super) fn validator_key(index: usize) -> Arc<AoemConsensusSigner> {
+    process_identities()
+        .expect("actual AOEM protected validator fixture preparation")
+        .signers[index]
+        .clone()
+}
+
+pub(super) fn process_crypto() -> Result<Arc<AoemConsensusCrypto>> {
+    Ok(process_identities()?.crypto.clone())
+}
+
 fn transport_key(index: usize) -> SigningKey {
-    SigningKey::from_bytes(&[151 + index as u8; 32])
+    process_identities()
+        .expect("actual protected transport fixture preparation")
+        .transports[index]
+        .clone()
+}
+
+pub(super) fn complete_test_supply(allocations: &mut Vec<GenesisAllocation>) -> Result<()> {
+    const TOTAL: u128 = crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
+    let allocated = allocations.iter().try_fold(0u128, |sum, allocation| {
+        sum.checked_add(allocation.amount.parse::<u128>()?)
+            .context("fixture supply overflow")
+    })?;
+    let reserve = TOTAL
+        .checked_sub(allocated)
+        .context("fixture exceeds fixed NOV supply")?;
+    if reserve != 0 {
+        allocations.push(GenesisAllocation {
+            account_hex: "fe".repeat(20),
+            amount: reserve.to_string(),
+        });
+    }
+    Ok(())
 }
 
 fn signed(seed: u8, nonce: u64, amount: u128) -> Result<Vec<u8>> {
@@ -363,7 +470,7 @@ fn genesis() -> Result<GenesisConfig> {
         timestamp_unix_ms: 1_900_000_000_000,
         validators: (0..4)
             .map(|index| GenesisValidator {
-                public_key: validator_key(index).verifying_key().to_bytes(),
+                public_key: validator_key(index).public_key().to_vec(),
                 transport_public_key: transport_key(index).verifying_key().to_bytes(),
                 weight: 1,
             })
@@ -377,6 +484,7 @@ fn genesis() -> Result<GenesisConfig> {
             .collect(),
         policy: policy(),
     };
+    complete_test_supply(&mut genesis.allocations)?;
     genesis.genesis_config_commitment = genesis.derive_commitment()?;
     genesis.validate()?;
     Ok(genesis)
@@ -393,15 +501,16 @@ fn setup_with_genesis(
         (1..=1024).contains(&batch_size),
         "invalid test RPC batch size"
     );
-    let set = Arc::new(ValidatorSet::new(
+    let set = Arc::new(ValidatorSet::new_with_verifier(
         CHAIN,
         1,
         1,
         genesis
             .validators
             .iter()
-            .map(|validator| Validator::new(validator.public_key, validator.weight))
+            .map(|validator| Validator::new(&validator.public_key, validator.weight))
             .collect::<Result<Vec<_>>>()?,
+        process_crypto()?,
     )?);
     let library = library()?;
     let execution_backend = test_execution_backend()?;
@@ -421,18 +530,16 @@ fn setup_with_genesis(
         .collect::<std::io::Result<Vec<_>>>()?;
     for (index, listener) in listeners.iter().enumerate() {
         let address: SocketAddr = listener.local_addr()?;
-        let key_path = directory.join(format!("test-only-validator-{index}.key"));
-        fs::write(&key_path, validator_key(index).to_bytes())?;
-        let transport_key_path = directory.join(format!("test-only-transport-{index}.key"));
-        fs::write(&transport_key_path, transport_key(index).to_bytes())?;
+        let key_path = &process_identities()?.validator_paths[index];
+        let transport_key_path = &process_identities()?.transport_paths[index];
         let config_path = directory.join(format!("node-{index}.json"));
         let config = json!({
             "profile":PROFILE,"library":library,"database":directory.join(format!("validator-{index}.rocksdb")),
             "rpc_addr":address,"signing_key_file":key_path,"genesis":genesis,"workers":4,"batch_size":batch_size,
-            "transport_key_file":transport_key_path,"key_storage":"raw_development",
+            "transport_key_file":transport_key_path,"key_storage":"protected_v1",
             "execution_backend":execution_backend,
             "udp_addr":udp[index], "peers": (0..4).filter(|peer| *peer != index).map(|peer|
-                json!({"public_key":validator_key(peer).verifying_key().to_bytes(),"address":udp[peer]})).collect::<Vec<_>>()
+                json!({"public_key":validator_key(peer).public_key(),"address":udp[peer]})).collect::<Vec<_>>()
         });
         fs::write(&config_path, serde_json::to_vec_pretty(&config)?)?;
         configs.push(config_path);
@@ -495,7 +602,7 @@ fn native_product_minority_cannot_publish_and_pending_signature_is_not_cached_by
     let leader = set.leader(1, 0)?;
     let proposer = (0..4)
         .find(|i| {
-            Validator::new(validator_key(*i).verifying_key().to_bytes(), 1)
+            Validator::new(validator_key(*i).public_key(), 1)
                 .unwrap()
                 .id()
                 == leader
@@ -597,7 +704,7 @@ fn native_product_single_rpc_fees_nonce_finality_and_cold_restart() -> Result<()
     let leader = set.leader(1, 0)?;
     let ingress = (0..4)
         .find(|i| {
-            Validator::new(validator_key(*i).verifying_key().to_bytes(), 1)
+            Validator::new(validator_key(*i).public_key(), 1)
                 .unwrap()
                 .id()
                 != leader

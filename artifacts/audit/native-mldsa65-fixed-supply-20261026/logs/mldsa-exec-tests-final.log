@@ -1,0 +1,26 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_exec-b16e698c1a2a5e59.exe)
+
+running 14 tests
+test pq_signature::owned_runtime_tests::actual_owned_mldsa_runtime_keygen_pair_and_lifetime ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; actual owned AOEM ML-DSA
+test pq_signature::tests::external_pure_mode_has_explicit_context_framing ... ok
+test pq_signature::tests::explicit_verifier_result_is_required_without_retry_or_fallback ... ok
+test pq_signature::tests::failed_or_malformed_signing_output_is_never_returned_or_retried ... ok
+test pq_signature::tests::malformed_keys_never_reach_crypto_backend ... ok
+test pq_signature::tests::only_explicit_canonical_parameter_sets_are_accepted ... ok
+test pq_signature::tests::malformed_signing_inputs_are_rejected_before_the_backend ... ok
+test pq_signature::tests::unavailable_or_incompatible_backend_fails_closed ... ok
+test pq_signature::tests::signing_borrows_the_secret_frames_once_and_requires_output_self_verification ... ok
+test pq_signature::tests::parameter_set_is_not_inferred_from_input_lengths ... ok
+test pq_signature::tests::malformed_signatures_never_reach_crypto_backend ... ok
+test pq_signature::tests::signing_capabilities_and_all_encoding_sizes_fail_closed ... ok
+test pq_signature::tests::bundled_vectors_have_exact_profile_and_encoding_sizes ... ok
+test pq_signature::tests::compatibility_gate_requires_both_positive_and_negative_sentinels ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 90 filtered out; finished in 0.01s
+

@@ -1,0 +1,108 @@
+{
+  "schema": "novovm-local-delivery-evidence/v1",
+  "date": "2026-10-26",
+  "source_base": "66e652d22d510e572bb10cddb205c3259549b0fb",
+  "implementation_source": "the Git commit containing this evidence file",
+  "scope": "original consensus ML-DSA-65, protected purpose keys, fixed NOV supply; not full network migration",
+  "environment": {
+    "os": "Windows x86_64",
+    "rustc": "1.94.0",
+    "cargo": "1.94.0",
+    "profile": "debug",
+    "real_machines": 1,
+    "actual_node_processes": 4,
+    "legacy_host_execution": false
+  },
+  "artifacts": {
+    "node": {
+      "path": "target/runtime-rebuild/debug/novovm-node.exe",
+      "sha256": "730c16538b4b104ef9e19876077b41889dd6ccae328d6b35ebdef1be8a9c781e"
+    },
+    "native_client": {
+      "path": "target/runtime-rebuild/debug/novovm-native-client.exe",
+      "sha256": "d1ba39a9aa79128ba4e16c4987214563ebecf7060cdb4547f59abf326b24ec81"
+    },
+    "aoem": {
+      "path": "aoem/windows/core/bin/aoem_ffi.dll",
+      "sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+      "changed_this_round": false
+    }
+  },
+  "final_build_checks": [
+    {"name": "node and native-client build --locked", "result": "passed", "log": "logs/mldsa-cleanup-build.log"},
+    {"name": "round_bft_candidate current downgrade contracts", "result": "passed", "passed": 2, "failed": 0, "log": "logs/mldsa-cleanup-contract-tests.log"},
+    {"name": "native_pipeline", "result": "passed", "passed": 440, "failed": 0, "ignored": 69, "log": "logs/mldsa-cleanup-pipeline.log"},
+    {"name": "strict six-crate all-target Clippy --locked -D warnings", "result": "passed", "log": "logs/mldsa-cleanup-clippy.log"},
+    {"name": "cargo fmt --all -- --check", "result": "passed", "exit_code": 0, "stdout": "", "log": null}
+  ],
+  "final_process_acceptance": {
+    "nuas_recovery": {
+      "result": "passed",
+      "report": "final-uca-recovery-report.json",
+      "report_sha256": "98fac02fb19559c9b1a22dcc2eb75df2e15ceebe40227d9528716f0bc146f2eb",
+      "log": "logs/mldsa-cleanup-uca-process-configured.log",
+      "fixed_quorum": 3,
+      "http_listeners": 0,
+      "healthy_offline_progress_height": 40,
+      "late_start_after_ms": 113484,
+      "crash_durable_height": 1,
+      "target_archive_absent_at_crash": true,
+      "final_height_all_four": 41,
+      "same_config_and_signing_outbox_preserved": true,
+      "credited_funds_respent": true,
+      "cold_reopen_verified": true,
+      "database_copy": false,
+      "wallet_replay_to_laggard": false,
+      "elapsed_ms": 142596,
+      "harness_seconds": 142.86,
+      "settlements": 41,
+      "fee_treasury_base_units": 1845,
+      "fee_buckets_base_units": [1271, 369, 205]
+    },
+    "a_a_b": {
+      "result": "passed",
+      "report": "final-native-aab-report.json",
+      "report_sha256": "c4bbbe56cd15db8ab554b39629a6f5a42d5f849bbc745fe73ffa6e1de5789e7e",
+      "log": "logs/mldsa-cleanup-aab-process.log",
+      "harness_seconds": 13.19,
+      "scope": "real ML-DSA-65 consensus with historical V3 business fixture, not NUAS acceptance"
+    }
+  },
+  "additional_local_checks": [
+    {"name": "round_bft components", "passed": 89, "log": "logs/mldsa-consensus-tests.log"},
+    {"name": "novovmctl unit and CLI", "passed": 84, "log": "logs/mldsa-ctl-tests-verified.log"},
+    {"name": "real AOEM genesis CLI", "passed": 1, "log": "logs/mldsa-genesis-cli-actual-final.log"},
+    {"name": "real AOEM protected purpose identity CLI", "passed": 1, "log": "logs/mldsa-actual-cli-tests.log"},
+    {"name": "startup pins and cold open", "passed": 2, "log": "logs/mldsa-startup-tests.log"},
+    {"name": "AOEM owned runtime", "passed": 1, "log": "logs/mldsa-owned-runtime-tests.log"},
+    {"name": "real UCA CPU and integer parity", "passed": 1, "log": "logs/mldsa-cpu-integer-tests.log"},
+    {"name": "four services and four stores", "passed": 1, "log": "logs/mldsa-service-tests.log"},
+    {"name": "bindings", "passed": 31, "ignored": 8, "log": "logs/mldsa-bindings-tests-final.log"},
+    {"name": "exec pq_signature", "passed": 13, "ignored": 1, "log": "logs/mldsa-exec-tests-final.log"},
+    {"name": "purpose custody", "passed": 2, "log": "logs/mldsa-custody-tests-final.log"},
+    {"name": "maximum genesis shape", "passed": 1, "log": "logs/mldsa-genesis-size-final.log"},
+    {"name": "Linux package safety fixtures run on Windows", "passed": 28, "log": "logs/mldsa-package-safety-final.log"},
+    {"name": "Linux package synthetic 11-program assembly run on Windows", "result": "passed", "log": "logs/mldsa-package-assembly-final.log"}
+  ],
+  "not_passed_or_not_executed": {
+    "unfiltered_node_lib": "not passed; historical mixed-mode failures and remaining tests stopped; only two individual failures attributed to existing historical opt-in",
+    "unfiltered_node_lib_log": "logs/mldsa-node-lib-complete.log",
+    "native_auth_windows": "blocked before tests at methods link: unresolved sys_alloc_aligned; not passed",
+    "native_auth_windows_log": "logs/mldsa-native-auth-tests.log",
+    "remote_ci": "not yet run for the implementation commit when recording local evidence",
+    "fresh_tps": "not executed; no performance claim",
+    "linux_install": "not executed",
+    "multi_host_acceptance": "not executed",
+    "android_ios_real_device": "not executed",
+    "complete_network_identity_migration": "not implemented; original transport/device/service receipt consumers still require migration",
+    "funded_service_settlement": "not implemented by this round",
+    "production_release": false
+  },
+  "safety": {
+    "new_deployment_genesis_activated": false,
+    "deployment_nov_allocated": false,
+    "b_existing_services_changed": false,
+    "runtime_data_or_private_keys_deleted": false,
+    "retired_source": "crates/novovm-node/src/native_round_bft.rs and its module export; current protocol downgrade tests retained; historical source remains recoverable in Git"
+  }
+}

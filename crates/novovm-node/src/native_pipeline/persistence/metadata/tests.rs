@@ -48,12 +48,13 @@ fn keys_are_closed_separated_and_sequence_is_fixed_width() {
     let encoded: BTreeSet<_> = keys.iter().map(MetaKey::relative_key).collect();
     assert_eq!(encoded.len(), keys.len());
     for key in &encoded {
-        assert!(key.starts_with(b"m/consensus/v1/"));
+        assert!(key.starts_with(b"m/consensus/v2-mldsa65/"));
+        assert!(!key.starts_with(b"m/consensus/v1/"));
         assert!(![b'n', b'd', b'c'].contains(&key[0]));
     }
     assert_eq!(
         state(1).relative_key(),
-        [b"m/consensus/v1/state/".as_slice(), &[1; 32]].concat()
+        [b"m/consensus/v2-mldsa65/state/".as_slice(), &[1; 32]].concat()
     );
     let one = outbox(1, 1).relative_key();
     assert_eq!(&one[one.len() - 8..], &1u64.to_be_bytes());
@@ -61,7 +62,7 @@ fn keys_are_closed_separated_and_sequence_is_fixed_width() {
     assert_eq!(
         one,
         [
-            b"m/consensus/v1/outbox/".as_slice(),
+            b"m/consensus/v2-mldsa65/outbox/".as_slice(),
             &[1; 32],
             &1u64.to_be_bytes()
         ]
@@ -69,13 +70,13 @@ fn keys_are_closed_separated_and_sequence_is_fixed_width() {
     );
     assert_eq!(
         MetaKey::ChainHead.relative_key(),
-        b"m/consensus/v1/chain/head"
+        b"m/consensus/v2-mldsa65/chain/head"
     );
     let block = MetaKey::ChainBlock { height: 1 }.relative_key();
     assert_eq!(
         block,
         [
-            b"m/consensus/v1/chain/block/".as_slice(),
+            b"m/consensus/v2-mldsa65/chain/block/".as_slice(),
             &1u64.to_be_bytes()
         ]
         .concat()
@@ -130,13 +131,19 @@ fn construction_bounds_expected_and_new_bytes_without_weakening_append_only_keys
     let too_big = vec![1; MAX_VALUE_BYTES + 1];
     assert!(MetaTransition::new(vec![change(state(1), None, &too_big)]).is_err());
     assert!(MetaTransition::new(vec![change(state(1), Some(&too_big), b"ok")]).is_err());
-    let exact = MetaTransition::new(vec![change(state(1), Some(&max), &max)]).unwrap();
+    // A current transition budgets old snapshot, new snapshot and one outbox.
+    let exact = MetaTransition::new(vec![
+        change(state(1), Some(&max), &max),
+        change(outbox(1, 1), None, &max),
+    ])
+    .unwrap();
     assert_eq!(
         exact.retained_bytes(),
-        MAX_TRANSITION_BYTES + state(1).relative_key().len()
+        MAX_TRANSITION_BYTES + state(1).relative_key().len() + outbox(1, 1).relative_key().len()
     );
     assert!(MetaTransition::new(vec![
         change(state(1), Some(&max), &max),
+        change(outbox(1, 1), None, &max),
         change(state(2), None, b"x")
     ])
     .is_err());
@@ -199,7 +206,7 @@ fn guards_share_total_bounds_and_cannot_overlap_mutations_or_each_other() {
     )
     .is_err());
     let exact = MetaTransition::with_guards(
-        vec![change(state(1), None, &max)],
+        vec![change(state(1), Some(&max), &max)],
         vec![guard(MetaKey::ChainHead, Some(&max))],
     )
     .unwrap();
@@ -210,12 +217,15 @@ fn guards_share_total_bounds_and_cannot_overlap_mutations_or_each_other() {
             + MetaKey::ChainHead.relative_key().len()
     );
     assert!(MetaTransition::with_guards(
-        vec![change(state(1), Some(b"x"), &max)],
+        vec![
+            change(state(1), Some(&max), &max),
+            change(state(2), None, b"x")
+        ],
         vec![guard(MetaKey::ChainHead, Some(&max))]
     )
     .is_err());
     assert!(MetaTransition::with_guards(
-        vec![change(state(1), None, &max)],
+        vec![change(state(1), Some(&max), &max)],
         vec![
             guard(MetaKey::ChainHead, Some(&max)),
             guard(state(2), Some(b"x"))

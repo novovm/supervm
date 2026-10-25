@@ -1,0 +1,401 @@
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\consensus\crypto.rs:1:
+ //! Thin original-node adapter to the existing qualified AOEM ML-DSA facade.
+ //! No cryptographic implementation, alternate signer journal or state owner.
+ use anyhow::{ensure, Result};
+-use novovm_consensus::round_bft::crypto::{
+-    ConsensusSigner, ConsensusVerifier, MLDSA65_CONTEXT,
+-};
++use novovm_consensus::round_bft::crypto::{ConsensusSigner, ConsensusVerifier, MLDSA65_CONTEXT};
+ use novovm_exec::{
+     pq_signature::{AoemMldsaParameterSet, MldsaRuntime},
+     AoemExecFacade,
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\consensus\crypto.rs:48:
+ 
+ impl ConsensusVerifier for AoemConsensusCrypto {
+     fn verify_mldsa65(&self, public: &[u8], message: &[u8], signature: &[u8]) -> Result<()> {
+-        self.runtime.verify(public, message, MLDSA65_CONTEXT, signature)?;
++        self.runtime
++            .verify(public, message, MLDSA65_CONTEXT, signature)?;
+         Ok(())
+     }
+ }
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\consensus\mod.rs:7:
+ // historical comparison, NOT compiled as a parallel product/signing owner.
+ // See docs/NOVOVM_JULY_MAIN_INTEGRATION_MAP.md for replacement/coverage limits.
+ pub mod bodies;
+-pub mod crypto;
+ mod chain;
++pub mod crypto;
+ mod journal;
+ pub(crate) mod message_evidence;
+ pub mod native;
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config\uca_genesis.rs:190:
+         let mut owners = BTreeSet::new();
+         let mut management_keys = BTreeSet::new();
+         let mut spend_keys = BTreeSet::new();
+-        let validator_keys: BTreeSet<_> = self.genesis.validators.iter()
+-            .map(|validator| &validator.public_key).collect();
++        let validator_keys: BTreeSet<_> = self
++            .genesis
++            .validators
++            .iter()
++            .map(|validator| &validator.public_key)
++            .collect();
+         for account in &self.accounts {
+             let id = &account.uca_id;
+             ensure!(
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config\uca_genesis.rs:233:
+             management_keys.is_disjoint(&spend_keys),
+             "initial UCA management and spending keys must be purpose-separated"
+         );
+-        ensure!(validator_keys.is_disjoint(&management_keys)
+-            && validator_keys.is_disjoint(&spend_keys),
+-            "validator signing keys must not authorize UCA management or spending");
++        ensure!(
++            validator_keys.is_disjoint(&management_keys) && validator_keys.is_disjoint(&spend_keys),
++            "validator signing keys must not authorize UCA management or spending"
++        );
+         let mut out = b"NOVOVM/UCA/initial-manifest/v1\0".to_vec();
+         out.extend_from_slice(&self.genesis.chain_id.to_be_bytes());
+         out.extend_from_slice(&self.genesis.validator_epoch.to_be_bytes());
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config\uca_genesis.rs:512:
+                     .collect(),
+                 allocations: vec![GenesisAllocation {
+                     account_hex: "01".repeat(20),
+-                    amount: crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS.to_string(),
++                    amount:
++                        crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
++                            .to_string(),
+                 }],
+                 policy: serde_json::from_value(serde_json::json!({
+                     "quote_ttl_ms": 15000, "policy_version": 1,
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config\uca_genesis.rs:552:
+                 3 => {
+                     changed.genesis.allocations[0].amount = (crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS - 1).to_string();
+                     changed.genesis.allocations.push(GenesisAllocation {
+-                        account_hex: "02".repeat(20), amount: "1".into(),
++                        account_hex: "02".repeat(20),
++                        amount: "1".into(),
+                     });
+                 }
+                 4 => changed.accounts[0].grants[0].grant.remaining_debit_budget += 1,
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config\uca_genesis.rs:621:
+     #[test]
+     fn validator_key_cannot_also_manage_or_spend_genesis_assets() {
+         let mut management = manifest();
+-        management.accounts[0].management_public_key = management.genesis.validators[0].public_key.clone();
+-        assert!(management.canonical_bytes().unwrap_err().to_string().contains("validator signing keys"));
++        management.accounts[0].management_public_key =
++            management.genesis.validators[0].public_key.clone();
++        assert!(management
++            .canonical_bytes()
++            .unwrap_err()
++            .to_string()
++            .contains("validator signing keys"));
+         let mut spending = manifest();
+         let key = spending.genesis.validators[0].public_key.clone();
+         spending.accounts[0].grants[0].grant.key_ref = spend_key_ref_v1(&key).unwrap();
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config\uca_genesis.rs:629:
+         spending.accounts[0].grants[0].spend_public_key = key;
+-        assert!(spending.canonical_bytes().unwrap_err().to_string().contains("validator signing keys"));
++        assert!(spending
++            .canonical_bytes()
++            .unwrap_err()
++            .to_string()
++            .contains("validator signing keys"));
+     }
+ }
+ 
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config.rs:17:
+ use std::path::{Path, PathBuf};
+ use std::sync::Arc;
+ 
+-pub mod uca_genesis;
+ #[cfg(test)]
+ pub(crate) mod test_custody;
++pub mod uca_genesis;
+ 
+ pub const PROFILE: &str = "native-resident-udp-v1";
+ /// Existing original node tick mode, not another bootstrap/runtime mode.
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config.rs:456:
+                 },
+                 GenesisAllocation {
+                     account_hex: "02".repeat(20),
+-                    amount: (crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS - 1000).to_string(),
++                    amount:
++                        (crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
++                            - 1000)
++                            .to_string(),
+                 },
+             ],
+         }
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\config.rs:670:
+         let root = root.canonicalize()?;
+         let _credential = test_custody::TestCredentialGuard::new(&root)?;
+         let runtime = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
+-        let crypto = runtime.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
++        let crypto =
++            runtime.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
+         let key_file = root.join("signer.sealed");
+-        let validator = novovm_relay::purpose_keys::generate_validator(&key_file, 71,
+-            || { let pair = crypto.generate_keypair()?;
+-                novovm_relay::purpose_keys::ValidatorKeyMaterialV2::new(pair.public_key, pair.expanded_secret_key) },
+-            |public, secret, message| crypto.sign(public, secret, message,
+-                novovm_relay::purpose_keys::VALIDATOR_PAIR_CONTEXT).map(|_| ()).map_err(Into::into))?;
++        let validator = novovm_relay::purpose_keys::generate_validator(
++            &key_file,
++            71,
++            || {
++                let pair = crypto.generate_keypair()?;
++                novovm_relay::purpose_keys::ValidatorKeyMaterialV2::new(
++                    pair.public_key,
++                    pair.expanded_secret_key,
++                )
++            },
++            |public, secret, message| {
++                crypto
++                    .sign(
++                        public,
++                        secret,
++                        message,
++                        novovm_relay::purpose_keys::VALIDATOR_PAIR_CONTEXT,
++                    )
++                    .map(|_| ())
++                    .map_err(Into::into)
++            },
++        )?;
+         let transport_file = root.join("test-only-transport.key");
+-        let transport = novovm_relay::purpose_keys::generate(&transport_file,
+-            novovm_relay::purpose_keys::PurposeV1::Transport, 71)?;
++        let transport = novovm_relay::purpose_keys::generate(
++            &transport_file,
++            novovm_relay::purpose_keys::PurposeV1::Transport,
++            71,
++        )?;
+         let mut genesis = genesis();
+         genesis.validators[0].public_key = validator.public_key;
+-        genesis.validators[0].transport_public_key = transport.public_key.try_into()
++        genesis.validators[0].transport_public_key = transport
++            .public_key
++            .try_into()
+             .map_err(|_| anyhow::anyhow!("transport fixture key shape"))?;
+         genesis.genesis_config_commitment = genesis.derive_commitment()?;
+         let config = ResidentConfig {
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\tests.rs:90:
+     }
+ }
+ 
+-fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket, config::test_custody::TestCredentialGuard)> {
++fn identity_rejection_fixture() -> Result<(
++    ResidentConfig,
++    std::net::UdpSocket,
++    config::test_custody::TestCredentialGuard,
++)> {
+     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+         .join("../../target/runtime-rebuild/config-tests/purpose-identity")
+         .join(format!(
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\tests.rs:113:
+     fixture.signing_key_file = directory.join("test-only-validator.key");
+     fixture.transport_key_file = directory.join("test-only-transport.key");
+     std::fs::write(&fixture.signing_key_file, [1u8; 32])?;
+-    let transport = purpose_keys::generate(&fixture.transport_key_file,
+-        PurposeV1::Transport, fixture.genesis.chain_id)?;
++    let transport = purpose_keys::generate(
++        &fixture.transport_key_file,
++        PurposeV1::Transport,
++        fixture.genesis.chain_id,
++    )?;
+     #[cfg(unix)]
+     {
+         use std::os::unix::fs::PermissionsExt;
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\tests.rs:131:
+             weight: 1,
+         })
+         .collect();
+-    fixture.genesis.validators[0].transport_public_key = transport.public_key.try_into()
++    fixture.genesis.validators[0].transport_public_key = transport
++        .public_key
++        .try_into()
+         .map_err(|_| anyhow::anyhow!("transport key shape"))?;
+     fixture.genesis.allocations = vec![GenesisAllocation {
+         account_hex: "01".repeat(20),
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\tests.rs:138:
+-        amount: crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS.to_string(),
++        amount: crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
++            .to_string(),
+     }];
+     fixture.genesis.genesis_config_commitment = fixture.genesis.derive_commitment()?;
+     fixture.peers = fixture
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\tests.rs:177:
+ #[test]
+ fn mismatched_transport_key_rejects_before_native_startup() -> Result<()> {
+     let (mut fixture, _occupied, _credentials) = identity_rejection_fixture()?;
+-    fixture.transport_key_file = fixture.transport_key_file.with_file_name("other-transport.sealed");
+-    purpose_keys::generate(&fixture.transport_key_file, PurposeV1::Transport, fixture.genesis.chain_id)?;
++    fixture.transport_key_file = fixture
++        .transport_key_file
++        .with_file_name("other-transport.sealed");
++    purpose_keys::generate(
++        &fixture.transport_key_file,
++        PurposeV1::Transport,
++        fixture.genesis.chain_id,
++    )?;
+     rejects_before_socket_library_and_store(
+         fixture,
+         "local transport key differs from committed validator binding",
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\tests.rs:190:
+ fn retired_ed25519_validator_rejects_before_native_startup() -> Result<()> {
+     let (mut fixture, _occupied, _credentials) = identity_rejection_fixture()?;
+     fixture.key_storage = config::NodeKeyStorage::RawDevelopment;
+-    rejects_before_socket_library_and_store(
+-        fixture,
+-        "raw development keys are retired",
+-    );
++    rejects_before_socket_library_and_store(fixture, "raw development keys are retired");
+     Ok(())
+ }
+ 
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service.rs:12:
+     uca_receipt_codec, SEMANTIC_VERSION,
+ };
+ use super::consensus::{
+-    crypto::{AoemConsensusCrypto, AoemConsensusSigner},
+     bodies::{BodyLimits, CandidateBodies},
+     collector::CollectorLimits,
++    crypto::{AoemConsensusCrypto, AoemConsensusSigner},
+     native::{LaneLimits, MessageDomain, NativeChannel, ValidatorTransportBindings},
+     native_lifecycle::{DeliveryLimits, NativeLifecycle},
+     pacemaker::TimeoutPolicy,
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service.rs:37:
+     ResidentConfig,
+ };
+ use ed25519_dalek::SigningKey;
+-use novovm_exec::resident::StorageConfig;
+ use novovm_consensus::round_bft::crypto::ConsensusSigner;
++use novovm_exec::resident::StorageConfig;
+ use novovm_network::novorudp::{
+     endpoint::NativePeer,
+     fragments::ReassemblyLimits,
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service.rs:99:
+         Self::start_prepared(config, mode, transport, prepared)
+     }
+ 
+-    fn start_prepared(config: ResidentConfig, mode: StartMode, transport: UdpTransport,
+-        prepared: StartupPreparation) -> Result<Self> {
+-        let StartupPreparation { validators, initial, identities } = prepared;
++    fn start_prepared(
++        config: ResidentConfig,
++        mode: StartMode,
++        transport: UdpTransport,
++        prepared: StartupPreparation,
++    ) -> Result<Self> {
++        let StartupPreparation {
++            validators,
++            initial,
++            identities,
++        } = prepared;
+         let pipeline_config = pipeline_config(&config);
+         {
+             let store = CandidateStore::open(
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service.rs:216:
+     let (metadata, reference_initial) = config.genesis.prepare()?;
+     // Authenticate the independent transport key and complete routing binding
+     // before loading AOEM. A credential error cannot start a socket or a store.
+-    let transport = read_key(&config.transport_key_file, config.key_storage,
+-        PurposeV1::Transport, config.genesis.chain_id)?;
++    let transport = read_key(
++        &config.transport_key_file,
++        config.key_storage,
++        PurposeV1::Transport,
++        config.genesis.chain_id,
++    )?;
+     let bindings = config.genesis.transport_bindings(&metadata)?;
+     let local_transport = transport.verifying_key().to_bytes();
+-    let public = config.genesis.validators.iter()
++    let public = config
++        .genesis
++        .validators
++        .iter()
+         .find(|v| v.transport_public_key == local_transport)
+         .context("local transport key differs from committed validator binding")?
+-        .public_key.as_slice();
+-    ensure!(config.peers.iter().all(|p| p.public_key != public)
+-        && metadata.members().iter().filter(|v| v.public_key() != public)
+-            .all(|v| config.peers.iter().any(|p| p.public_key == v.public_key())),
+-        "missing remote validator route or route targets local signer");
++        .public_key
++        .as_slice();
++    ensure!(
++        config.peers.iter().all(|p| p.public_key != public)
++            && metadata
++                .members()
++                .iter()
++                .filter(|v| v.public_key() != public)
++                .all(|v| config.peers.iter().any(|p| p.public_key == v.public_key())),
++        "missing remote validator route or route targets local signer"
++    );
+     // One qualified crypto owner; no per-vote load/KAT or Ed25519 fallback.
+     let runtime = novovm_exec::AoemExecFacade::open(
+-        &config.library, novovm_exec::AoemExecOpenOptions::default())?;
++        &config.library,
++        novovm_exec::AoemExecOpenOptions::default(),
++    )?;
+     let crypto = AoemConsensusCrypto::new(&runtime)?;
+     let validators = Arc::new((*metadata).clone().with_verifier(Arc::new(crypto.clone())));
+-    ensure!(validators.has_verifier() && !validators.is_test_only(),
+-        "original node requires qualified ML-DSA-65 consensus verification");
++    ensure!(
++        validators.has_verifier() && !validators.is_test_only(),
++        "original node requires qualified ML-DSA-65 consensus verification"
++    );
+     let identities = read_identities(config, &validators, &crypto, transport, bindings)?;
+     // All pins and management signatures precede opening the state owner.
+     let initial = if let Some(material) = &config.uca_initialization {
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service.rs:241:
+         material.verify(&config.genesis, &runtime)?.into_state()
+-    } else { reference_initial };
+-    Ok(StartupPreparation { validators, initial, identities })
++    } else {
++        reference_initial
++    };
++    Ok(StartupPreparation {
++        validators,
++        initial,
++        identities,
++    })
+ }
+ 
+-fn read_identities(config: &ResidentConfig, validators: &ValidatorSet, crypto: &AoemConsensusCrypto,
+-    transport: SigningKey, bindings: ValidatorTransportBindings) -> Result<NodeIdentities> {
++fn read_identities(
++    config: &ResidentConfig,
++    validators: &ValidatorSet,
++    crypto: &AoemConsensusCrypto,
++    transport: SigningKey,
++    bindings: ValidatorTransportBindings,
++) -> Result<NodeIdentities> {
+     ensure!(config.key_storage == NodeKeyStorage::ProtectedV1,
+         "ML-DSA-65 validator requires protected purpose custody; raw Ed25519 keys are not a fallback");
+-    let material = purpose_keys::load_validator(&config.signing_key_file,
++    let material = purpose_keys::load_validator(
++        &config.signing_key_file,
+         config.genesis.chain_id,
+-        |public, secret, challenge| crypto.check_key_pair(public, secret, challenge))?;
++        |public, secret, challenge| crypto.check_key_pair(public, secret, challenge),
++    )?;
+     let validator = crypto.signer(material)?;
+     let public = validator.public_key();
+     ensure!(
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service.rs:278:
+     purpose: PurposeV1,
+     chain_id: u64,
+ ) -> Result<SigningKey> {
+-    ensure!(storage == NodeKeyStorage::ProtectedV1,
+-        "node startup requires protected purpose custody; raw keys are retired");
++    ensure!(
++        storage == NodeKeyStorage::ProtectedV1,
++        "node startup requires protected purpose custody; raw keys are retired"
++    );
+     purpose_keys::load(path, purpose, chain_id).context("read protected node purpose custody")
+ }
+ 

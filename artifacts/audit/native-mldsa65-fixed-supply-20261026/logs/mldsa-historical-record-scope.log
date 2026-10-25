@@ -1,0 +1,26 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_node-e8ab88ceea79732a.exe)
+
+running 1 test
+
+thread 'transfer-candidate-integration' (17216) panicked at crates\novovm-node\src\native_record_candidate_tests.rs:437:17:
+legacy Host execution is disabled: isolated candidate Host Execute barrier; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'tx_ingress::tests::candidate_workspace_tests::candidate_workspace_record_profile_rejects_legacy_execute_outside_json_domain' (30244) panicked at crates\novovm-node\src\native_transfer_candidate_tests.rs:64:10:
+called `Result::unwrap()` on an `Err` value: Any { .. }
+test tx_ingress::tests::candidate_workspace_tests::candidate_workspace_record_profile_rejects_legacy_execute_outside_json_domain ... FAILED
+
+failures:
+
+failures:
+    tx_ingress::tests::candidate_workspace_tests::candidate_workspace_record_profile_rejects_legacy_execute_outside_json_domain
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1644 filtered out; finished in 0.56s
+
+error: test failed, to rerun pass `-p novovm-node --lib`

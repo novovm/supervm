@@ -32,7 +32,7 @@ fn quorum(
                     Phase::Prevote,
                     Some(value),
                     set,
-                    &validator_key(i),
+                    &component_validator_key(i),
                 )
             })
             .collect::<Result<Vec<_>>>()?,
@@ -53,12 +53,12 @@ fn real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_ca
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
     let root = initialize(&directory)?;
-    let set = Arc::new(ValidatorSet::new(
+    let set = Arc::new(ValidatorSet::new_for_test(
         CHAIN,
         1,
         1,
         (0..4)
-            .map(|i| Validator::new(validator_key(i).verifying_key().to_bytes(), 1))
+            .map(|i| Validator::new(component_validator_key(i).verifying_key().to_bytes(), 1))
             .collect::<Result<Vec<_>>>()?,
     )?);
     let context = ConsensusContext {
@@ -83,13 +83,14 @@ fn real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_ca
         let id = set.leader(1, round)?;
         (0..4)
             .find(|i| {
-                Validator::new(validator_key(*i).verifying_key().to_bytes(), 1)
+                Validator::new(component_validator_key(*i).verifying_key().to_bytes(), 1)
                     .is_ok_and(|v| v.id() == id)
             })
             .context("fixture leader missing")
     };
     let index = leader(1)?;
-    let validator = Validator::new(validator_key(index).verifying_key().to_bytes(), 1)?.id();
+    let validator =
+        Validator::new(component_validator_key(index).verifying_key().to_bytes(), 1)?.id();
     let mut services = Services(vec![CandidatePipeline::start(
         pipeline_config(&directory)?,
         OpenMode::Existing,
@@ -109,7 +110,13 @@ fn real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_ca
     };
     let value = BlockStatement::from_executed(candidate.packet(), context, &set, &parent)?.hash();
     let mut journal = open_journal(
-        ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(index))?,
+        ValidatorJournal::open(
+            pipeline,
+            context,
+            parent,
+            set.clone(),
+            component_validator_key(index),
+        )?,
         pipeline,
     )?;
     let p0 = novovm_consensus::round_bft::test_vectors::sign_proposal(
@@ -118,7 +125,7 @@ fn real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_ca
         value,
         None,
         &set,
-        &validator_key(leader(0)?),
+        &component_validator_key(leader(0)?),
     )?
     .verify(&set)?;
     journal.accept_proposal(&p0, &candidate, None)?;
@@ -170,7 +177,13 @@ fn real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_ca
     )?);
     let pipeline = &services.0[0];
     let mut recovered = open_journal(
-        ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(index))?,
+        ValidatorJournal::open(
+            pipeline,
+            context,
+            parent,
+            set.clone(),
+            component_validator_key(index),
+        )?,
         pipeline,
     )?;
     let replay = recovered.take_replay_records();
@@ -286,12 +299,11 @@ fn real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_ca
     let missing = {
         let store = CandidateStore::open(store_config(&directory)?, OpenMode::Existing)?;
         store.scoped_key(
-            &[
-                b"m/consensus/v1/outbox/".as_slice(),
-                &validator,
-                &4u64.to_be_bytes(),
-            ]
-            .concat(),
+            &MetaKey::ConsensusOutbox {
+                validator,
+                sequence: 4,
+            }
+            .relative_key(),
         )
     };
     {
@@ -307,7 +319,13 @@ fn real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_ca
         OpenMode::Existing,
     )?);
     let pipeline = &services.0[0];
-    let opening = ValidatorJournal::open(pipeline, context, parent, set, validator_key(index))?;
+    let opening = ValidatorJournal::open(
+        pipeline,
+        context,
+        parent,
+        set,
+        component_validator_key(index),
+    )?;
     ensure!(
         open_journal(opening, pipeline).is_err(),
         "missing historical replay event reopened as usable signer"

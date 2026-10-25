@@ -14,17 +14,17 @@ use novovm_protocol::uca_spend::spend_key_ref_v1;
 #[test]
 #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; actual fresh original service and reopen, not asset activation"]
 fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<()> {
-    actual_uca_startup_with_custody(false)
+    actual_uca_startup_with_custody()
 }
 
 #[cfg(windows)]
 #[test]
 #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; real Windows DPAPI purpose custody through original fresh/reopen service, not deployment"]
 fn actual_uca_startup_protected_windows_keys_and_cold_reopen() -> Result<()> {
-    actual_uca_startup_with_custody(true)
+    actual_uca_startup_with_custody()
 }
 
-fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
+fn actual_uca_startup_with_custody() -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
             .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY required")?,
@@ -35,9 +35,9 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
         "test key generation must use the actual startup library"
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
-    let management =
-        aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 keygen unavailable")?;
-    let spend = aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 keygen unavailable")?;
+    let signer = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
+    let management = signer.generate_keypair()?;
+    let spend = signer.generate_keypair()?;
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
@@ -46,22 +46,45 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
         .join(format!("{}-{unique}", std::process::id()));
     std::fs::create_dir_all(&root)?;
     let root = native_path(&root.canonicalize()?);
+    let _credential = super::test_custody::TestCredentialGuard::new(&root)?;
     let key = root.join("test-only-validator.key");
     let transport_key = root.join("test-only-transport.key");
     let mut genesis = super::tests::genesis();
-    let key_storage = if protected {
-        use novovm_relay::purpose_keys::{generate, PurposeV1};
-        let validator = generate(&key, PurposeV1::Validator, genesis.chain_id)?;
-        let transport = generate(&transport_key, PurposeV1::Transport, genesis.chain_id)?;
-        assert_ne!(validator.public_key, transport.public_key);
-        genesis.validators[0].public_key = validator.public_key;
-        genesis.validators[0].transport_public_key = transport.public_key;
-        NodeKeyStorage::ProtectedV1
-    } else {
-        std::fs::write(&key, [1_u8; 32])?;
-        std::fs::write(&transport_key, [101_u8; 32])?;
-        NodeKeyStorage::RawDevelopment
-    };
+    use novovm_relay::purpose_keys::{self, generate, PurposeV1, ValidatorKeyMaterialV2};
+    let validator = purpose_keys::generate_validator(
+        &key,
+        genesis.chain_id,
+        || {
+            let pair = signer.generate_keypair()?;
+            ValidatorKeyMaterialV2::new(pair.public_key, pair.expanded_secret_key)
+        },
+        |public, secret, challenge| {
+            signer
+                .sign(
+                    public,
+                    secret,
+                    challenge,
+                    purpose_keys::VALIDATOR_PAIR_CONTEXT,
+                )
+                .map(|_| ())
+                .map_err(Into::into)
+        },
+    )?;
+    let transport = generate(&transport_key, PurposeV1::Transport, genesis.chain_id)?;
+    genesis.validators[0].public_key = validator.public_key;
+    genesis.validators[0].transport_public_key = transport
+        .public_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("transport public key width"))?;
+    for validator in &mut genesis.validators[1..] {
+        validator.public_key = signer.generate_keypair()?.public_key;
+    }
+    genesis.allocations = vec![GenesisAllocation {
+        account_hex: "01".repeat(20),
+        amount: crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
+            .to_string(),
+    }];
+    let key_storage = NodeKeyStorage::ProtectedV1;
     let mut original_key_files = vec![
         (key.clone(), std::fs::read(&key)?),
         (transport_key.clone(), std::fs::read(&transport_key)?),
@@ -72,12 +95,12 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
         accounts: vec![UcaGenesisAccountV1 {
             uca_id: id.into(),
             asset_account: vec![1; 20],
-            management_public_key: management.0.clone(),
+            management_public_key: management.public_key.clone(),
             grants: vec![UcaGenesisGrantV1 {
-                spend_public_key: spend.0.clone(),
+                spend_public_key: spend.public_key.clone(),
                 grant: SuppliedSpendGrantV1 {
                     account_id: id.into(),
-                    key_ref: spend_key_ref_v1(&spend.0)?,
+                    key_ref: spend_key_ref_v1(&spend.public_key)?,
                     authorization_epoch: 1,
                     permits_nov_transfer: true,
                     revoked: false,
@@ -92,14 +115,12 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
     let domain = manifest.signing_domain()?;
     let approvals = vec![UcaGenesisApprovalV1 {
         uca_id: id.into(),
-        signature: runtime
-            .mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?
-            .sign(
-                &management.0,
-                &management.1,
-                &manifest.canonical_bytes()?,
-                INITIALIZATION_CONTEXT_V1,
-            )?,
+        signature: signer.sign(
+            &management.public_key,
+            &management.expanded_secret_key,
+            &manifest.canonical_bytes()?,
+            INITIALIZATION_CONTEXT_V1,
+        )?,
     }];
     let verified = manifest.compile(&runtime, domain, &approvals)?;
     let material = UcaInitializationConfigV1 {
@@ -126,7 +147,7 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
             .skip(1)
             .enumerate()
             .map(|(i, v)| NativePeerConfig {
-                public_key: v.public_key,
+                public_key: v.public_key.clone(),
                 address: SocketAddr::from(([127, 0, 0, 1], 32002 + i as u16)),
             })
             .collect(),
@@ -163,7 +184,7 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
     // Each rejection must precede CandidateStore::open: even its directory may
     // not appear. The same invalid materials also cannot repair an existing DB.
     let mut invalid = Vec::new();
-    for case in 0..7 {
+    for case in 0..8 {
         let mut bad = config.clone();
         let init = bad.uca_initialization.as_mut().unwrap();
         match case {
@@ -183,25 +204,21 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
             }
             6 => {
                 bad.transport_key_file = root.join("test-only-wrong-transport.key");
-                if protected {
-                    use novovm_relay::purpose_keys::{generate, PurposeV1};
-                    let wrong = generate(
-                        &bad.transport_key_file,
-                        PurposeV1::Transport,
-                        config.genesis.chain_id,
-                    )?;
-                    assert_ne!(
-                        wrong.public_key,
-                        config.genesis.validators[0].transport_public_key
-                    );
-                } else {
-                    std::fs::write(&bad.transport_key_file, [211u8; 32])?;
-                }
+                let wrong = generate(
+                    &bad.transport_key_file,
+                    PurposeV1::Transport,
+                    config.genesis.chain_id,
+                )?;
+                assert_ne!(
+                    wrong.public_key,
+                    config.genesis.validators[0].transport_public_key
+                );
                 original_key_files.push((
                     bad.transport_key_file.clone(),
                     std::fs::read(&bad.transport_key_file)?,
                 ));
             }
+            7 => bad.key_storage = NodeKeyStorage::RawDevelopment,
             _ => unreachable!(),
         }
         invalid.push(bad.clone());
@@ -243,7 +260,7 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
                 genesis: domain,
                 account_id: id.into(),
                 authorization_epoch: 1,
-                spend_key_ref: spend_key_ref_v1(&spend.0)?,
+                spend_key_ref: spend_key_ref_v1(&spend.public_key)?,
                 recipient_uca: id.into(),
                 amount: 1,
                 max_fee: 50,
@@ -251,8 +268,8 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
                 not_before_height: 1,
                 expires_at_height: 100,
             },
-            &spend.0,
-            &spend.1,
+            &spend.public_key,
+            &spend.expanded_secret_key,
         )?
         .encode()?;
     lifecycle.assert_uca_legacy_asset_rejection_for_test(signed)?;
@@ -273,9 +290,6 @@ fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
             original,
             "custody changed during startup/reopen or rejection"
         );
-    }
-    if !protected {
-        assert_eq!(std::fs::read(key)?, [1_u8; 32]);
     }
     println!("UCA startup: custody={key_storage:?}; real approvals + three pins before DB; fresh/reopen root retained; invalid fresh/Existing rejected; legacy Raw/APFL and HTTP asset carriers rejected");
     Ok(())

@@ -1,0 +1,23 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_node-e8ab88ceea79732a.exe)
+
+running 1 test
+
+thread 'mainline_query::tests::mainline_query_neth_to_nov_swap_executes_via_real_product_entry' (32040) panicked at crates\novovm-node\src\mainline_query.rs:12252:10:
+nov_swap should succeed through mainline query: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test mainline_query::tests::mainline_query_neth_to_nov_swap_executes_via_real_product_entry ... FAILED
+
+failures:
+
+failures:
+    mainline_query::tests::mainline_query_neth_to_nov_swap_executes_via_real_product_entry
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1644 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p novovm-node --lib`

@@ -8,13 +8,14 @@ use novovm_node::native_pipeline::service::config::uca_genesis::{
     UcaGenesisApprovalV1, UcaGenesisManifestV1, UcaInitializationConfigV1,
     INITIALIZATION_CONTEXT_V1,
 };
+use novovm_node::native_pipeline::service::config::MAX_STARTUP_DOCUMENT_BYTES;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
 
 const COMMAND: &str = "native-genesis";
-const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
+const MAX_DOCUMENT_BYTES: usize = MAX_STARTUP_DOCUMENT_BYTES;
 
 #[derive(Serialize)]
 struct Review {
@@ -80,7 +81,8 @@ fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
             "database_created": false,
             "activation_ready": false,
             "state_published": false,
-            "consensus_signature_algorithm": "Ed25519",
+            "consensus_signature_algorithm": "ML-DSA-65",
+            "transport_signature_algorithm": "Ed25519",
             "whole_node_post_quantum_qualified": false
         }),
         review_only_startup_fragment: None,
@@ -192,7 +194,7 @@ fn reject_ignored_grant_fields(
     Ok(())
 }
 
-fn parse_digest(value: &str) -> Result<[u8; 32], CtlError> {
+pub(super) fn parse_digest(value: &str) -> Result<[u8; 32], CtlError> {
     if value.len() != 64
         || !value
             .bytes()
@@ -220,7 +222,7 @@ fn hex(bytes: &[u8]) -> String {
     result
 }
 
-fn file_digest(path: &Path) -> Result<[u8; 32], CtlError> {
+pub(super) fn file_digest(path: &Path) -> Result<[u8; 32], CtlError> {
     let failed = |error| CtlError::FileReadFailed(format!("AOEM hash {}: {error}", path.display()));
     let mut file = File::open(path).map_err(failed)?;
     if !file.metadata().map_err(failed)?.is_file() {

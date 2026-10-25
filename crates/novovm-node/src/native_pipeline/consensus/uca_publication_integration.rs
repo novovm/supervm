@@ -1,6 +1,7 @@
 //! Actual AOEM, ML-DSA spending and four original resident pipelines/journals.
 //! In-process consensus message delivery, NOT native SDK/network activation.
 //! Reopening after an unobserved ACK is not physical power-cut injection.
+use super::native_product_rpc::{complete_test_supply, process_crypto, validator_key};
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::{quote_and_settle, TransferFeeRequest};
 use crate::native_pipeline::business::nov_transfer_batch::{
@@ -24,6 +25,7 @@ use crate::native_pipeline::service::config::{
 use crate::native_pipeline::state::frontier::OwnedStateInput;
 use crate::native_pipeline::state::tree::read_state_value;
 use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_consensus::round_bft::journal::JournalBackend;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
@@ -183,11 +185,11 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
     let runtime = &facade;
     let management_signer = facade.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
     let spender = facade.uca_spend_signer_v1()?;
+    let keygen = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let mut keys = Vec::new();
     for _ in 0..4 {
-        keys.push(
-            aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 keygen unavailable")?,
-        );
+        let pair = keygen.generate_keypair()?;
+        keys.push((pair.public_key, pair.expanded_secret_key));
     }
     let ids = ["uca:publication-alice", "uca:publication-bob"];
     let addresses = [
@@ -203,7 +205,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             timestamp_unix_ms: 172_800_500,
             validators: (0..4)
                 .map(|i| GenesisValidator {
-                    public_key: validator_key(i).verifying_key().to_bytes(),
+                    public_key: validator_key(i).public_key().to_vec(),
                     transport_public_key: SigningKey::from_bytes(&[151 + i as u8; 32])
                         .verifying_key()
                         .to_bytes(),
@@ -240,6 +242,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             })
             .collect::<Result<_>>()?,
     };
+    complete_test_supply(&mut manifest.genesis.allocations)?;
     let domain = manifest.signing_domain()?;
     let approvals = (0..2)
         .map(|i| {
@@ -325,13 +328,14 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
         directory.join("management-approvals.json"),
         serde_json::to_vec_pretty(&approvals)?,
     )?;
-    let set = Arc::new(ValidatorSet::new(
+    let set = Arc::new(ValidatorSet::new_with_verifier(
         CHAIN,
         1,
         1,
         (0..4)
-            .map(|i| Validator::new(validator_key(i).verifying_key().to_bytes(), 1))
+            .map(|i| Validator::new(validator_key(i).public_key(), 1))
             .collect::<Result<_>>()?,
+        process_crypto()?,
     )?);
     let genesis = ConsensusContext {
         chain_id: CHAIN,
@@ -525,7 +529,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             BlockStatement::from_executed(candidates[0].packet(), current, &set, &parent)?.hash();
         let leader = (0..4)
             .find(|&i| {
-                Validator::new(validator_key(i).verifying_key().to_bytes(), 1)
+                Validator::new(validator_key(i).public_key(), 1)
                     .unwrap()
                     .id()
                     == set.leader(height, 0).unwrap()

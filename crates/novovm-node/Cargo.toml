@@ -26,6 +26,7 @@ novovm-adapter-novovm = { path = "../novovm-adapter-novovm" }
 novovm-adapter-evm-core = { path = "../plugins/evm/core" }
 novovm-adapter-evm-plugin = { path = "../plugins/evm/plugin" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+zeroize = "1"
 k256 = { version = "0.14.0", features = ["ecdsa"] }
 rand = "0.8"
 rcgen = "0.12"

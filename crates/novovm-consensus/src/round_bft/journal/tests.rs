@@ -2,6 +2,7 @@
 //! candidates deliberately remain unavailable here; real candidate/chain I/O
 //! and process recovery are tested by the product adapter's existing suites.
 use super::*;
+use crate::round_bft::test_vectors::FixtureSigningKey as SigningKey;
 use backend::{JournalDomain, RecoveredChain};
 use metadata::MetadataSnapshot;
 use std::cell::{Cell, RefCell};
@@ -167,7 +168,7 @@ fn fixture() -> (
 ) {
     let key = SigningKey::from_bytes(&[7; 32]);
     let member = Validator::new(key.verifying_key().to_bytes(), 1).unwrap();
-    let set = Arc::new(ValidatorSet::new(71, 1, 1, vec![member]).unwrap());
+    let set = Arc::new(ValidatorSet::new_for_test(71, 1, 1, vec![member]).unwrap());
     let context = ConsensusContext {
         chain_id: 71,
         genesis_config_commitment: [1; 32],

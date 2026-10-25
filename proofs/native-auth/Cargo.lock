@@ -25,6 +25,7 @@ dependencies = [
  "libloading",
  "serde_json",
  "sha2",
+ "zeroize",
 ]
 
 [[package]]
@@ -588,6 +589,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sha3",
+ "zeroize",
 ]
 
 [[package]]

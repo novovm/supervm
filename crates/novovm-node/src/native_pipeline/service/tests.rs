@@ -68,7 +68,7 @@ fn config(size: usize) -> ResidentConfig {
         database: "not-opened-database".into(),
         signing_key_file: "not-read-test-key".into(),
         transport_key_file: "not-read-test-transport-key".into(),
-        key_storage: config::NodeKeyStorage::RawDevelopment,
+        key_storage: config::NodeKeyStorage::ProtectedV1,
         rpc_addr: None,
         udp_addr: "127.0.0.1:0".parse().unwrap(),
         peers: Vec::new(),
@@ -90,7 +90,11 @@ fn config(size: usize) -> ResidentConfig {
     }
 }
 
-fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket)> {
+fn identity_rejection_fixture() -> Result<(
+    ResidentConfig,
+    std::net::UdpSocket,
+    config::test_custody::TestCredentialGuard,
+)> {
     let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/runtime-rebuild/config-tests/purpose-identity")
         .join(format!(
@@ -100,6 +104,7 @@ fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket)>
         ));
     std::fs::create_dir_all(&directory)?;
     let directory = config::native_path(&directory.canonicalize()?);
+    let credentials = config::test_custody::TestCredentialGuard::new(&directory)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -112,7 +117,11 @@ fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket)>
     fixture.signing_key_file = directory.join("test-only-validator.key");
     fixture.transport_key_file = directory.join("test-only-transport.key");
     std::fs::write(&fixture.signing_key_file, [1u8; 32])?;
-    std::fs::write(&fixture.transport_key_file, [101u8; 32])?;
+    let transport = purpose_keys::generate(
+        &fixture.transport_key_file,
+        PurposeV1::Transport,
+        fixture.genesis.chain_id,
+    )?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -122,18 +131,21 @@ fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket)>
     }
     fixture.genesis.validators = (1..=4)
         .map(|seed| GenesisValidator {
-            public_key: SigningKey::from_bytes(&[seed; 32])
-                .verifying_key()
-                .to_bytes(),
+            public_key: vec![seed; 1952],
             transport_public_key: SigningKey::from_bytes(&[100 + seed; 32])
                 .verifying_key()
                 .to_bytes(),
             weight: 1,
         })
         .collect();
+    fixture.genesis.validators[0].transport_public_key = transport
+        .public_key
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("transport key shape"))?;
     fixture.genesis.allocations = vec![GenesisAllocation {
         account_hex: "01".repeat(20),
-        amount: "1000".into(),
+        amount: crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
+            .to_string(),
     }];
     fixture.genesis.genesis_config_commitment = fixture.genesis.derive_commitment()?;
     fixture.peers = fixture
@@ -143,7 +155,7 @@ fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket)>
         .skip(1)
         .enumerate()
         .map(|(index, validator)| NativePeerConfig {
-            public_key: validator.public_key,
+            public_key: validator.public_key.clone(),
             address: ([127, 0, 0, 1], 35000 + index as u16).into(),
         })
         .collect();
@@ -152,7 +164,7 @@ fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket)>
     let occupied = std::net::UdpSocket::bind("127.0.0.1:0")?;
     fixture.udp_addr = occupied.local_addr()?;
     fixture.validate()?;
-    Ok((fixture, occupied))
+    Ok((fixture, occupied, credentials))
 }
 
 fn rejects_before_socket_library_and_store(fixture: ResidentConfig, expected: &str) {
@@ -173,9 +185,72 @@ fn rejects_before_socket_library_and_store(fixture: ResidentConfig, expected: &s
 }
 
 #[test]
+fn resident_config_reads_large_mldsa_metadata_but_rejects_oversized_documents() -> Result<()> {
+    let (mut fixture, _occupied, _credentials) = identity_rejection_fixture()?;
+    fixture.genesis.validators = (1u8..=64)
+        .map(|seed| GenesisValidator {
+            public_key: vec![seed; 1952], // Metadata fixture; never used to sign.
+            transport_public_key: SigningKey::from_bytes(&[seed; 32])
+                .verifying_key()
+                .to_bytes(),
+            weight: 1,
+        })
+        .collect();
+    fixture.peers = fixture
+        .genesis
+        .validators
+        .iter()
+        .skip(1)
+        .enumerate()
+        .map(|(i, validator)| NativePeerConfig {
+            public_key: validator.public_key.clone(),
+            address: ([127, 0, 0, 1], 35000 + i as u16).into(),
+        })
+        .collect();
+    fixture.genesis.genesis_config_commitment = fixture.genesis.derive_commitment()?;
+    let encoded = serde_json::to_vec_pretty(&serde_json::json!({
+        "profile":fixture.profile, "library":fixture.library, "database":fixture.database,
+        "signing_key_file":fixture.signing_key_file, "transport_key_file":fixture.transport_key_file,
+        "key_storage":fixture.key_storage, "udp_addr":fixture.udp_addr, "peers":fixture.peers,
+        "native_client_limit":fixture.native_client_limit, "genesis":fixture.genesis,
+        "workers":fixture.workers, "batch_size":fixture.batch_size
+    }))?;
+    assert!(
+        encoded.len() > 1024 * 1024,
+        "must exercise the retired limit"
+    );
+    assert!(encoded.len() < config::MAX_STARTUP_DOCUMENT_BYTES);
+    let path = fixture
+        .library
+        .with_file_name("bounded-64-validator-config.json");
+    std::fs::write(&path, &encoded)?;
+    let loaded = ResidentConfig::load(&path)?;
+    assert_eq!(loaded.genesis.validators.len(), 64);
+    assert_eq!(loaded.peers.len(), 63);
+    assert!(
+        !fixture.database.exists(),
+        "configuration read must not open the store"
+    );
+    let oversized = fixture.library.with_file_name("oversized-config.json");
+    std::fs::File::create(&oversized)?.set_len((config::MAX_STARTUP_DOCUMENT_BYTES + 1) as u64)?;
+    assert!(ResidentConfig::load(&oversized)
+        .unwrap_err()
+        .to_string()
+        .contains("exceeds bounded startup document"));
+    Ok(())
+}
+
+#[test]
 fn mismatched_transport_key_rejects_before_native_startup() -> Result<()> {
-    let (fixture, _occupied) = identity_rejection_fixture()?;
-    std::fs::write(&fixture.transport_key_file, [211u8; 32])?;
+    let (mut fixture, _occupied, _credentials) = identity_rejection_fixture()?;
+    fixture.transport_key_file = fixture
+        .transport_key_file
+        .with_file_name("other-transport.sealed");
+    purpose_keys::generate(
+        &fixture.transport_key_file,
+        PurposeV1::Transport,
+        fixture.genesis.chain_id,
+    )?;
     rejects_before_socket_library_and_store(
         fixture,
         "local transport key differs from committed validator binding",
@@ -184,25 +259,23 @@ fn mismatched_transport_key_rejects_before_native_startup() -> Result<()> {
 }
 
 #[test]
-fn unapproved_local_validator_rejects_before_native_startup() -> Result<()> {
-    let (fixture, _occupied) = identity_rejection_fixture()?;
-    std::fs::write(&fixture.signing_key_file, [211u8; 32])?;
-    rejects_before_socket_library_and_store(
-        fixture,
-        "validator has no approved transport identity",
-    );
+fn retired_ed25519_validator_rejects_before_native_startup() -> Result<()> {
+    let (mut fixture, _occupied, _credentials) = identity_rejection_fixture()?;
+    fixture.key_storage = config::NodeKeyStorage::RawDevelopment;
+    rejects_before_socket_library_and_store(fixture, "raw development keys are retired");
     Ok(())
 }
 
 #[test]
 fn local_or_missing_peer_routes_reject_before_native_startup() -> Result<()> {
-    let (mut fixture, _occupied) = identity_rejection_fixture()?;
-    fixture.peers[0].public_key = fixture.genesis.validators[0].public_key;
+    let (mut fixture, _occupied, credentials) = identity_rejection_fixture()?;
+    fixture.peers[0].public_key = fixture.genesis.validators[0].public_key.clone();
     rejects_before_socket_library_and_store(
         fixture,
         "missing remote validator route or route targets local signer",
     );
-    let (mut fixture, _occupied) = identity_rejection_fixture()?;
+    drop(credentials);
+    let (mut fixture, _occupied, _credentials) = identity_rejection_fixture()?;
     fixture.peers.pop();
     rejects_before_socket_library_and_store(fixture, "every remote validator route required");
     Ok(())
@@ -210,8 +283,9 @@ fn local_or_missing_peer_routes_reject_before_native_startup() -> Result<()> {
 
 #[test]
 fn protected_custody_never_falls_back_to_raw_keys_before_native_startup() -> Result<()> {
-    let (mut fixture, _occupied) = identity_rejection_fixture()?;
+    let (mut fixture, _occupied, _credentials) = identity_rejection_fixture()?;
     fixture.key_storage = config::NodeKeyStorage::ProtectedV1;
+    std::fs::write(&fixture.transport_key_file, [101u8; 32])?;
     fixture.validate()?;
     rejects_before_socket_library_and_store(fixture, "read protected node purpose custody");
     Ok(())

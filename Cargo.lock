@@ -131,6 +131,7 @@ dependencies = [
  "libloading",
  "serde_json",
  "sha2 0.10.9",
+ "zeroize",
 ]
 
 [[package]]
@@ -2995,6 +2996,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sha3",
+ "zeroize",
 ]
 
 [[package]]
@@ -3092,6 +3094,7 @@ dependencies = [
  "tokio",
  "ureq",
  "url",
+ "zeroize",
 ]
 
 [[package]]

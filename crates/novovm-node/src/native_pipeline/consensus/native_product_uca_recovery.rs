@@ -70,7 +70,7 @@ fn operator_submit(nodes: &ProductNodes, index: usize, signed: &SignedUcaSpendV1
         validator_epoch: node.genesis.validator_epoch,
         validators: node.genesis.validators.clone(),
         node: crate::native_pipeline::service::NativePeerConfig {
-            public_key: validator_key(index).verifying_key().to_bytes(),
+            public_key: validator_key(index).public_key().to_vec(),
             address: node.udp_addr,
         },
         bind_addr: "127.0.0.1:0".parse()?,
@@ -271,14 +271,19 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         "keygen and node library differ"
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
+    let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let keys = (0..4)
-        .map(|_| aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 unavailable"))
+        .map(|_| {
+            let pair = keygen.generate_keypair()?;
+            Ok((pair.public_key, pair.expanded_secret_key))
+        })
         .collect::<Result<Vec<_>>>()?;
     let mut base = genesis()?;
     base.allocations = vec![GenesisAllocation {
         account_hex: hex(&ADDRESS[0]),
         amount: INITIAL.to_string(),
     }];
+    complete_test_supply(&mut base.allocations)?;
     base.genesis_config_commitment = base.derive_commitment()?;
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/native-product-rpc")
@@ -378,7 +383,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         .flatten()
         .collect::<Vec<_>>();
     let missing = (0..4)
-        .max_by_key(|index| validator_key(*index).verifying_key().to_bytes())
+        .max_by_key(|index| validator_key(*index).public_key().to_vec())
         .unwrap();
     let healthy = (0..4).filter(|i| *i != missing).collect::<Vec<_>>();
     let signer = runtime.uca_spend_signer_v1()?;

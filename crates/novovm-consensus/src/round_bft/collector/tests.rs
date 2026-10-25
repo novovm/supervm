@@ -2,8 +2,8 @@
 //! Migrated rules/tests; no production signing or publication is activated here.
 //!
 use super::*;
+use crate::round_bft::test_vectors::FixtureSigningKey as SigningKey;
 use crate::round_bft::wire::Validator;
-use ed25519_dalek::SigningKey;
 
 const A: Hash = [31; 32];
 const B: Hash = [32; 32];
@@ -24,7 +24,7 @@ impl Fixture {
             .zip(weights)
             .map(|(key, weight)| Validator::new(key.verifying_key().to_bytes(), *weight).unwrap())
             .collect();
-        let set = Arc::new(ValidatorSet::new(7, 1, 1, members).unwrap());
+        let set = Arc::new(ValidatorSet::new_for_test(7, 1, 1, members).unwrap());
         let context = Context {
             chain_id: 7,
             genesis_config_commitment: [3; 32],
@@ -311,7 +311,7 @@ fn forged_signatures_and_verified_votes_from_another_set_are_not_trusted() {
         "invalid round-bft vote signature",
     );
     fake_duplicate.signature.clear();
-    rejected(collector.insert(&fake_duplicate), "exactly 64 bytes");
+    rejected(collector.insert(&fake_duplicate), "exactly 3309 bytes");
     assert_eq!(collector.vote_count(), 1);
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::round_bft::test_vectors::FixtureSigningKey as SigningKey;
 
 fn replay(
     revision: u64,
@@ -43,7 +44,7 @@ fn identity() -> Identity {
     let key = SigningKey::from_bytes(&[7; 32]);
     let member = Validator::new(key.verifying_key().to_bytes(), 1).unwrap();
     let validator = member.id();
-    let set = Arc::new(ValidatorSet::new(71, 1, 1, vec![member]).unwrap());
+    let set = Arc::new(ValidatorSet::new_for_test(71, 1, 1, vec![member]).unwrap());
     let context = ConsensusContext {
         chain_id: 71,
         genesis_config_commitment: [1; 32],
@@ -66,7 +67,7 @@ fn identity() -> Identity {
             decision_hash: [0; 32],
         },
         set,
-        key,
+        key: Arc::new(key),
         validator,
     }
 }
@@ -740,7 +741,7 @@ fn current_round_lock_does_not_retroactively_restrict_original_prevote() {
         .map(|index| SigningKey::from_bytes(&[0x81 + index; 32]))
         .collect();
     identity.set = Arc::new(
-        ValidatorSet::new(
+        ValidatorSet::new_for_test(
             71,
             1,
             1,
@@ -758,14 +759,13 @@ fn current_round_lock_does_not_retroactively_restrict_original_prevote() {
             key.verifying_key().to_bytes() == *identity.set.member(&leader).unwrap().public_key()
         })
         .unwrap();
-    identity.key = keys
-        .iter()
-        .find(|key| key.verifying_key() != leader_key.verifying_key())
-        .unwrap()
-        .clone();
-    identity.validator = Validator::new(identity.key.verifying_key().to_bytes(), 1)
-        .unwrap()
-        .id();
+    identity.key = Arc::new(
+        keys.iter()
+            .find(|key| key.verifying_key() != leader_key.verifying_key())
+            .unwrap()
+            .clone(),
+    );
+    identity.validator = Validator::new(identity.key.public_key(), 1).unwrap().id();
     let proposal = |value| {
         Proposal::sign(identity.context, 0, value, None, &identity.set, leader_key).unwrap()
     };
@@ -781,7 +781,7 @@ fn current_round_lock_does_not_retroactively_restrict_original_prevote() {
     let certificate = Quorum::from_votes(
         &identity.set,
         keys.iter()
-            .filter(|key| key.verifying_key() != identity.key.verifying_key())
+            .filter(|key| key.public_key() != identity.key.public_key())
             .map(|key| {
                 Vote::sign(
                     identity.context,
@@ -989,7 +989,7 @@ fn replay_roles_digest_domain_and_legacy_snapshot_are_fail_closed() {
 }
 
 #[test]
-fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
+fn maximum_validator_decision_transition_fits_derived_mldsa65_metadata_budgets() {
     // Codec/budget coverage only: this synthetic value is not an executed block
     // or finality evidence. Retain every validator, not merely quorum weight.
     assert_eq!(wire::MAX_VALIDATORS, 1024);
@@ -1005,21 +1005,22 @@ fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
         .map(|key| Validator::new(key.verifying_key().to_bytes(), 1).unwrap())
         .collect();
     let mut identity = identity();
-    identity.set = Arc::new(ValidatorSet::new(71, 1, 1, members).unwrap());
+    identity.set = Arc::new(ValidatorSet::new_for_test(71, 1, 1, members).unwrap());
     identity.context.validator_set_hash = identity.set.hash();
     identity.validator = identity.set.leader(identity.context.height, 0).unwrap();
-    identity.key = keys
-        .iter()
-        .find(|key| {
-            key.verifying_key().to_bytes()
-                == *identity
-                    .set
-                    .member(&identity.validator)
-                    .unwrap()
-                    .public_key()
-        })
-        .unwrap()
-        .clone();
+    identity.key = Arc::new(
+        keys.iter()
+            .find(|key| {
+                key.verifying_key().to_bytes()
+                    == *identity
+                        .set
+                        .member(&identity.validator)
+                        .unwrap()
+                        .public_key()
+            })
+            .unwrap()
+            .clone(),
+    );
     let value = [0x79; 32];
     let proposal = Proposal::sign(
         identity.context,
@@ -1105,7 +1106,7 @@ fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
         context: identity.context,
         parent: identity.parent,
         set: identity.set.clone(),
-        key: proposer_key,
+        key: Arc::new(proposer_key),
         validator: proposer_id,
     };
     let proposed = Proposal::sign(
@@ -1175,7 +1176,7 @@ fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
         },
     ])
     .unwrap();
-    assert!(proposal_transition.retained_bytes() <= 1024 * 1024);
+    assert!(proposal_transition.retained_bytes() <= super::super::metadata::MAX_TRANSITION_BYTES);
     let decision = DurableMessage::Decision {
         proposal,
         certificate: precommit,
@@ -1185,12 +1186,9 @@ fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
     let (archived_proposal, archived_qc) =
         decode_archived_decision(&outbox, next.revision).unwrap();
     assert_eq!(archived_qc.votes.len(), wire::MAX_VALIDATORS);
-    let mut legacy = outbox[..outbox.len() - 33].to_vec();
-    legacy[..8].copy_from_slice(ARCHIVED_OUT);
-    let (old_proposal, old_qc) =
-        decode_archived_decision(&seal(legacy).unwrap(), next.revision).unwrap();
-    assert_eq!(old_proposal, archived_proposal);
-    assert_eq!(old_qc, archived_qc);
+    let mut legacy = outbox[..outbox.len() - 32].to_vec();
+    legacy[..8].copy_from_slice(b"NVOUT002");
+    assert!(decode_archived_decision(&seal(legacy).unwrap(), next.revision).is_err());
     let mut extra_qc = record.clone();
     extra_qc.evidence = certified(
         &identity,
@@ -1214,11 +1212,11 @@ fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
     let chain_record_bytes = 4096;
     let retained_values =
         old_saved.len() + next_saved.len() + outbox.len() + 3 * chain_record_bytes;
-    assert_eq!(MAX_RECORD, 512 * 1024);
+    assert_eq!(MAX_RECORD, wire::MAX_WIRE_BYTES + 16 * 1024);
     assert!([&old_saved, &next_saved, &outbox]
         .into_iter()
-        .all(|bytes| bytes.len() <= 512 * 1024));
-    assert!(retained_values <= 1024 * 1024);
+        .all(|bytes| bytes.len() <= MAX_RECORD));
+    assert!(retained_values <= super::super::metadata::MAX_TRANSITION_BYTES);
     let transition = MetaTransition::new(vec![
         MetaChange {
             key: MetaKey::ConsensusState(identity.validator),
@@ -1249,5 +1247,5 @@ fn maximum_validator_decision_transition_fits_unchanged_metadata_budgets() {
     .unwrap();
     // The owner also retains logical key bytes, not just the checked values.
     assert!(transition.retained_bytes() > retained_values);
-    assert!(transition.retained_bytes() <= 1024 * 1024);
+    assert!(transition.retained_bytes() <= super::super::metadata::MAX_TRANSITION_BYTES);
 }

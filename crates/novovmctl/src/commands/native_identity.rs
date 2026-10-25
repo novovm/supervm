@@ -1,6 +1,7 @@
 //! Offline, purpose-bound node identity preparation using the existing custody.
 use crate::{error::CtlError, output};
 use clap::{Args, Subcommand};
+use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
 use novovm_relay::purpose_keys::{self, PublicIdentityV1, PurposeV1};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -31,6 +32,12 @@ pub struct KeyArgs {
     /// Explicit independent test-chain domain; this is not genesis activation.
     #[arg(long)]
     pub chain_id: u64,
+    /// Explicit trusted AOEM library. Required for ML-DSA-65 validator generation/inspection.
+    #[arg(long, requires = "library_sha256")]
+    pub library: Option<PathBuf>,
+    /// Independently approved lowercase SHA-256; checked before and after AOEM use.
+    #[arg(long, requires = "library")]
+    pub library_sha256: Option<String>,
 }
 
 fn parse_purpose(value: &str) -> Result<PurposeV1, String> {
@@ -70,14 +77,21 @@ fn execute(args: NativeIdentityArgs) -> Result<Report, CtlError> {
         NativeIdentityCommand::Generate(args) => ("generate", args, true),
         NativeIdentityCommand::Inspect(args) => ("inspect", args, false),
     };
-    let identity = if create {
-        purpose_keys::generate(&args.key_file, args.purpose, args.chain_id)
+    let identity = if args.purpose == PurposeV1::Validator {
+        validator_identity(&args, create)?
     } else {
-        purpose_keys::inspect(&args.key_file, args.purpose, args.chain_id)
-    }
-    .map_err(|error| {
-        CtlError::IntegrationFailed(format!("protected purpose identity: {error:#}"))
-    })?;
+        if args.library.is_some() || args.library_sha256.is_some() {
+            return Err(CtlError::InvalidArgument("AOEM arguments are for validator ML-DSA-65 only; transport remains a separate purpose".into()));
+        }
+        if create {
+            purpose_keys::generate(&args.key_file, args.purpose, args.chain_id)
+        } else {
+            purpose_keys::inspect(&args.key_file, args.purpose, args.chain_id)
+        }
+        .map_err(|error| {
+            CtlError::IntegrationFailed(format!("protected purpose identity: {error:#}"))
+        })?
+    };
     Ok(Report {
         action,
         identity,
@@ -91,4 +105,67 @@ fn execute(args: NativeIdentityArgs) -> Result<Report, CtlError> {
         asset_authority_granted: false,
         whole_node_post_quantum_qualified: false,
     })
+}
+
+fn validator_identity(args: &KeyArgs, create: bool) -> Result<PublicIdentityV1, CtlError> {
+    let library = args.library.as_ref().ok_or_else(|| {
+        CtlError::InvalidArgument(
+            "validator ML-DSA-65 requires --library and --library-sha256; no Ed25519 fallback"
+                .into(),
+        )
+    })?;
+    let digest = args.library_sha256.as_deref().ok_or_else(|| {
+        CtlError::InvalidArgument(
+            "validator ML-DSA-65 requires independently approved --library-sha256".into(),
+        )
+    })?;
+    let expected = super::native_genesis::parse_digest(digest)?;
+    let library = library
+        .canonicalize()
+        .map_err(|error| CtlError::FileReadFailed(format!("explicit AOEM library: {error}")))?;
+    if super::native_genesis::file_digest(&library)? != expected {
+        return Err(CtlError::InvalidArgument(
+            "AOEM library SHA-256 mismatch before load".into(),
+        ));
+    }
+    let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())
+        .map_err(|error| CtlError::IntegrationFailed(format!("original AOEM loader: {error:#}")))?;
+    let signer = runtime
+        .mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)
+        .map_err(|error| {
+            CtlError::IntegrationFailed(format!("AOEM ML-DSA-65 qualification: {error}"))
+        })?;
+    let check = |public: &[u8], secret: &[u8], challenge: &[u8]| {
+        signer
+            .sign(
+                public,
+                secret,
+                challenge,
+                purpose_keys::VALIDATOR_PAIR_CONTEXT,
+            )
+            .map(|_| ())
+            .map_err(Into::into)
+    };
+    let identity = if create {
+        purpose_keys::generate_validator(
+            &args.key_file,
+            args.chain_id,
+            || {
+                let key = signer.generate_keypair()?;
+                purpose_keys::ValidatorKeyMaterialV2::new(key.public_key, key.expanded_secret_key)
+            },
+            check,
+        )
+    } else {
+        purpose_keys::inspect_validator(&args.key_file, args.chain_id, check)
+    }
+    .map_err(|error| {
+        CtlError::IntegrationFailed(format!("protected validator identity: {error:#}"))
+    })?;
+    if super::native_genesis::file_digest(&library)? != expected {
+        return Err(CtlError::IntegrationFailed(
+            "AOEM library changed during purpose identity operation".into(),
+        ));
+    }
+    Ok(identity)
 }

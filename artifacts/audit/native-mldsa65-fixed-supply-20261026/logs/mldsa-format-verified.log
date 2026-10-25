@@ -1,0 +1,11 @@
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovmctl\tests\native_genesis_cli.rs:524:
+     assert_eq!(output.status.code(), Some(3));
+     rejected(
+         &output,
+-        &format!(
+-            "must be a nonempty regular file of at most {MAX_STARTUP_DOCUMENT_BYTES} bytes"
+-        ),
++        &format!("must be a nonempty regular file of at most {MAX_STARTUP_DOCUMENT_BYTES} bytes"),
+     );
+     let mut trailing = raw;
+     trailing.extend_from_slice(b"{}");

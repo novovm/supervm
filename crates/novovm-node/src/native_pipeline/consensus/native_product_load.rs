@@ -51,15 +51,16 @@ fn inspect_copied_first_height_decision() -> Result<()> {
     let config: ResidentConfig =
         serde_json::from_slice(&fs::read(std::env::var("NOVOVM_AUDIT_ORIGINAL_CONFIG")?)?)?;
     let genesis = config.genesis;
-    let set = ValidatorSet::new(
+    let set = ValidatorSet::new_with_verifier(
         genesis.chain_id,
         genesis.validator_epoch,
         1,
         genesis
             .validators
             .iter()
-            .map(|v| Validator::new(v.public_key, v.weight))
+            .map(|v| Validator::new(&v.public_key, v.weight))
             .collect::<Result<Vec<_>>>()?,
+        process_crypto()?,
     )?;
     let store = CandidateStore::open(
         StoreConfig {
@@ -115,20 +116,21 @@ fn inspect_copied_first_height_decision() -> Result<()> {
     );
     // No public generic historical-outbox decoder exists: decode_replay is
     // private to the journal and requires its snapshot replay-reference pin.
-    // Inspect only the bounded NVOUT002 envelope + first signed message here,
+    // Inspect only the current bounded NVOUT003 envelope + first signed message,
     // then reuse the product wire decoders/signature verifiers. This does NOT
     // validate historical replay evidence, snapshot lineage or timing.
     let inspect = |bytes: &[u8], revision: u64| -> Result<Value> {
         ensure!(
-            (81..=512 * 1024).contains(&bytes.len()),
+            (81..=novovm_consensus::round_bft::journal::metadata::MAX_VALUE_BYTES)
+                .contains(&bytes.len()),
             "audit outbox size"
         );
         let (body, checksum) = bytes.split_at(bytes.len() - 32);
         let mut hash = Sha256::new();
-        hash.update(b"novovm/replacement/signing-journal/v1\0");
+        hash.update(b"novovm/signing-journal/v3/mldsa65\0");
         hash.update(body);
         ensure!(
-            body.starts_with(b"NVOUT002") && hash.finalize().as_slice() == checksum,
+            body.starts_with(b"NVOUT003") && hash.finalize().as_slice() == checksum,
             "audit outbox version/checksum"
         );
         ensure!(
@@ -790,6 +792,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
                 amount: funding.to_string(),
             })
             .collect();
+        complete_test_supply(&mut genesis.allocations)?;
         genesis.genesis_config_commitment = genesis.derive_commitment()?;
         let (mut nodes, set) = setup_with_genesis(&directory, binary.clone(), genesis, batch)?;
         for path in &nodes.configs {
@@ -801,7 +804,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         }
         let ingress = (0..4)
             .find(|i| {
-                Validator::new(validator_key(*i).verifying_key().to_bytes(), 1)
+                Validator::new(validator_key(*i).public_key(), 1)
                     .unwrap()
                     .id()
                     != set.leader(1, 0).unwrap()

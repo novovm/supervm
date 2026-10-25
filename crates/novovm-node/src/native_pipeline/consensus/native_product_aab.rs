@@ -75,7 +75,7 @@ impl FaultPeer {
                         .genesis
                         .validators
                         .iter()
-                        .map(|v| (v.public_key, v.transport_public_key)),
+                        .map(|v| (v.public_key.clone(), v.transport_public_key)),
                 )?;
                 let peers = config
                     .peers
@@ -193,7 +193,7 @@ impl FaultPeer {
                                     })
                                     .context("unknown honest source")?;
                                 let expected =
-                                    Validator::new(config.peers[peer].public_key, 1)?.id();
+                                    Validator::new(&config.peers[peer].public_key, 1)?.id();
                                 ensure!(
                                     vote.validator_id == expected,
                                     "native source differs from honest signer"
@@ -291,6 +291,91 @@ fn wall_ms() -> Result<u64> {
 /// resident_rpc_process/aab.rs. Same real AOEM business compiler, no signer/head.
 type EquivocationBodies = (ConsensusContext, ParentPoint, Vec<(Hash, Hash, Message)>);
 
+// The fixed-supply fixture issues its unused remainder to this inert account.
+// No fixture signing key or UCA spending grant exists for it. It must still be
+// present in every parent/result root; excluding it would change the candidate.
+fn fixture_reserve() -> Account {
+    Account::try_from(vec![0xfe; 20]).expect("fixed fixture reserve address")
+}
+
+fn fixture_reserve_amount() -> u128 {
+    crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS - 2_000_000
+}
+
+fn fixture_allocation_changes(allocations: &[GenesisAllocation]) -> Result<Vec<StateChange>> {
+    ensure!(allocations.len() == 3, "unexpected AAB allocation count");
+    let mut changes = Vec::with_capacity(3);
+    let mut seen = BTreeSet::new();
+    for allocation in allocations {
+        let (account, expected_amount) = if allocation.account_hex == hex(account(1).as_bytes()) {
+            (account(1), 1_000_000)
+        } else if allocation.account_hex == hex(account(3).as_bytes()) {
+            (account(3), 1_000_000)
+        } else {
+            ensure!(
+                // complete_test_supply writes the original config's bare hex
+                // representation, unlike rpc::hex's display-only 0x prefix.
+                allocation.account_hex == "fe".repeat(20),
+                "unexpected AAB genesis account"
+            );
+            (fixture_reserve(), fixture_reserve_amount())
+        };
+        let amount = allocation.amount.parse::<u128>()?;
+        ensure!(
+            seen.insert(account.clone()) && amount == expected_amount,
+            "AAB genesis account duplicated or allocation changed"
+        );
+        changes.push(StateChange::Put {
+            key: balance_key(&account),
+            value: amount.to_le_bytes().to_vec(),
+        });
+    }
+    Ok(changes)
+}
+
+#[test]
+fn aab_fixed_supply_oracle_accepts_original_reserve_field_and_rejects_tampering() -> Result<()> {
+    let mut allocations = [1, 3]
+        .into_iter()
+        .map(|seed| GenesisAllocation {
+            account_hex: hex(account(seed).as_bytes()),
+            amount: "1000000".into(),
+        })
+        .collect::<Vec<_>>();
+    complete_test_supply(&mut allocations)?;
+    assert_eq!(allocations[2].account_hex, "fe".repeat(20));
+    let changes = fixture_allocation_changes(&allocations)?;
+    let initial = stage_state_update(&Memory::default(), empty_root(), &changes)?;
+    let reader = Memory(initial.nodes().clone());
+    for (owner, amount) in [
+        (account(1), 1_000_000),
+        (account(3), 1_000_000),
+        (fixture_reserve(), fixture_reserve_amount()),
+    ] {
+        assert_eq!(
+            crate::native_pipeline::state::tree::read_state_value(
+                &reader,
+                initial.root(),
+                &balance_key(&owner)
+            )?,
+            Some(amount.to_le_bytes().to_vec())
+        );
+    }
+    for invalid in 0..4 {
+        let mut bad = allocations.clone();
+        match invalid {
+            0 => {
+                bad.pop();
+            }
+            1 => bad[2] = bad[0].clone(),
+            2 => bad[2].amount = (fixture_reserve_amount() - 1).to_string(),
+            _ => bad[2].account_hex = "fd".repeat(20),
+        }
+        assert!(fixture_allocation_changes(&bad).is_err());
+    }
+    Ok(())
+}
+
 fn candidates(
     directory: &Path,
     genesis: &GenesisConfig,
@@ -298,21 +383,7 @@ fn candidates(
 ) -> Result<EquivocationBodies> {
     fs::create_dir_all(directory)?;
     let mut changes = fee_record_changes(&genesis.policy, &FeeState::default())?;
-    for allocation in &genesis.allocations {
-        let account = if allocation.account_hex == hex(account(1).as_bytes()) {
-            account(1)
-        } else {
-            ensure!(
-                allocation.account_hex == hex(account(3).as_bytes()),
-                "unexpected AAB genesis account"
-            );
-            account(3)
-        };
-        changes.push(StateChange::Put {
-            key: balance_key(&account),
-            value: allocation.amount.parse::<u128>()?.to_le_bytes().to_vec(),
-        });
-    }
+    changes.extend(fixture_allocation_changes(&genesis.allocations)?);
     let initial = stage_state_update(&Memory::default(), empty_root(), &changes)?;
     let mut config = pipeline_config(directory)?;
     config.store.domain = StorageDomain {
@@ -413,9 +484,7 @@ fn audit_archive(
 ) -> Result<Value> {
     let allowed: BTreeSet<_> = honest
         .iter()
-        .map(|index| {
-            Validator::new(validator_key(*index).verifying_key().to_bytes(), 1).map(|v| v.id())
-        })
+        .map(|index| Validator::new(validator_key(*index).public_key(), 1).map(|v| v.id()))
         .collect::<Result<_>>()?;
     let mut reports = Vec::new();
     for index in honest {
@@ -465,6 +534,16 @@ fn audit_archive(
                     && stored.receipt_batch_commitment() == point.receipt_batch_commitment,
                 "AAB execution result mismatch"
             );
+            let reserve = crate::native_pipeline::state::tree::read_state_value(
+                &store,
+                point.state_root,
+                &balance_key(&fixture_reserve()),
+            )?
+            .context("AAB fixed-supply reserve missing from committed root")?;
+            ensure!(
+                reserve == fixture_reserve_amount().to_le_bytes(),
+                "AAB fixed-supply reserve was changed or spent"
+            );
             let outbox = record.outbox_key();
             let MetaKey::ConsensusOutbox { sequence, .. } = &outbox else {
                 anyhow::bail!("AAB archive outbox key");
@@ -500,7 +579,10 @@ fn audit_archive(
                 && parent.receipt_batch_commitment == final_head.receipt_batch_commitment,
             "AAB archived final head mismatch"
         );
-        reports.push(json!({"node":index,"blocks":blocks}));
+        reports.push(json!({"node":index,"blocks":blocks,
+            "fixture_reserve_balance":fixture_reserve_amount().to_string(),
+            "fixture_reserve_checked_at_every_root":true,
+            "fixture_reserve_has_spending_authority":false}));
     }
     Ok(json!(reports))
 }
@@ -534,7 +616,7 @@ fn native_only_a_a_b_real_honest_signers_recover_and_restart() -> Result<()> {
     }
     let faulty = (0..4)
         .find(|index| {
-            Validator::new(validator_key(*index).verifying_key().to_bytes(), 1)
+            Validator::new(validator_key(*index).public_key(), 1)
                 .is_ok_and(|v| v.id() == set.leader(1, 0).unwrap())
         })
         .context("round zero faulty leader missing")?;
@@ -619,8 +701,7 @@ fn native_only_a_a_b_real_honest_signers_recover_and_restart() -> Result<()> {
                 .collect();
             if prevotes.len() == 3 {
                 for (position, index) in honest.iter().enumerate() {
-                    let id =
-                        Validator::new(validator_key(*index).verifying_key().to_bytes(), 1)?.id();
+                    let id = Validator::new(validator_key(*index).public_key(), 1)?.id();
                     ensure!(
                         prevotes.iter().any(|v| v.validator_id == id
                             && v.value == Some(bodies[usize::from(position == 2)].0)),

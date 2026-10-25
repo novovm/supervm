@@ -1,16 +1,18 @@
 //! Local codec/identity tests only; synthetic records are not executed blocks.
 use super::*;
 use crate::native_pipeline::consensus::wire::Validator;
-use ed25519_dalek::SigningKey;
+use novovm_consensus::round_bft::test_vectors::FixtureSigningKey;
 
 fn record() -> ChainRecord {
     let member = Validator::new(
-        SigningKey::from_bytes(&[1; 32]).verifying_key().to_bytes(),
+        FixtureSigningKey::from_bytes(&[1; 32])
+            .verifying_key()
+            .to_bytes(),
         1,
     )
     .unwrap();
     let validator = member.id();
-    let set = ValidatorSet::new(1, 1, 1, vec![member]).unwrap();
+    let set = ValidatorSet::new_for_test(1, 1, 1, vec![member]).unwrap();
     let context = ConsensusContext {
         chain_id: 1,
         genesis_config_commitment: [1; 32],

@@ -8,6 +8,7 @@
 //! complete durable parent recovery remain the product adapter's responsibility.
 
 pub mod collector;
+pub mod crypto;
 pub mod journal;
 pub mod pacemaker;
 // Raw transitions and signing remain private to the consensus safety boundary.
@@ -17,7 +18,7 @@ pub mod wire;
 /// Independent peer/adversarial signatures for downstream test fixtures only.
 /// Never enable this feature on a normal product dependency or use these
 /// helpers as a durable local signer. They confer no execution/publication ACK.
-#[cfg(feature = "test-vectors")]
+#[cfg(any(test, feature = "test-vectors"))]
 pub mod test_vectors;
 
 use anyhow::{ensure, Result};

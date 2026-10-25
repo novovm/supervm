@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use zeroize::Zeroize;
 
 mod portable_receipt;
 pub mod resident;
@@ -648,6 +649,92 @@ thread_local! {
 }
 
 const MAX_AOEM_OWNED_BUFFER_BYTES: usize = 64 * 1024 * 1024;
+
+// The keygen ABI returns mutable, uniquely owned allocations via uint8_t**.
+// AOEM's move_vec_to_ffi_out transfers a boxed slice; only the original library's
+// aoem_free may release it. Keep both outputs guarded before inspecting either,
+// including when keygen reports a partial failure. This is not a defense against
+// an untrusted DLL returning invalid pointers/allocation metadata.
+struct OwnedKeygenBuffer {
+    ptr: *mut u8,
+    len: usize,
+    expected_len: usize,
+    secret: bool,
+    free: AoemFree,
+}
+
+impl OwnedKeygenBuffer {
+    fn copy_exact(&self, label: &str) -> Result<Vec<u8>> {
+        if self.ptr.is_null() || self.len != self.expected_len {
+            bail!(
+                "{label} returned invalid buffer width: {} != {}",
+                self.len,
+                self.expected_len
+            );
+        }
+        // expected_len was checked before invoking the trusted keygen ABI.
+        Ok(unsafe { std::slice::from_raw_parts(self.ptr, self.len) }.to_vec())
+    }
+}
+
+impl Drop for OwnedKeygenBuffer {
+    fn drop(&mut self) {
+        if self.ptr.is_null() {
+            return;
+        }
+        // Never manufacture a writable range from anomalous output metadata.
+        // Release such outputs through AOEM with the unchanged ABI ptr/len.
+        if self.secret && self.len == self.expected_len && self.len <= MAX_AOEM_OWNED_BUFFER_BYTES {
+            unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }.zeroize();
+        }
+        unsafe { (self.free)(self.ptr, self.len) };
+    }
+}
+
+fn call_mldsa_keygen_owned(
+    keygen: AoemMldsaKeygenV1,
+    free: AoemFree,
+    level: u32,
+    public_len: usize,
+    secret_len: usize,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    if public_len == 0
+        || secret_len == 0
+        || public_len > MAX_AOEM_OWNED_BUFFER_BYTES
+        || secret_len > MAX_AOEM_OWNED_BUFFER_BYTES
+    {
+        bail!("mldsa keygen size contract is invalid");
+    }
+    let mut public = OwnedKeygenBuffer {
+        ptr: ptr::null_mut(),
+        len: 0,
+        expected_len: public_len,
+        secret: false,
+        free,
+    };
+    let mut secret = OwnedKeygenBuffer {
+        ptr: ptr::null_mut(),
+        len: 0,
+        expected_len: secret_len,
+        secret: true,
+        free,
+    };
+    let rc = unsafe {
+        keygen(
+            level,
+            &mut public.ptr,
+            &mut public.len,
+            &mut secret.ptr,
+            &mut secret.len,
+        )
+    };
+    if rc != 0 {
+        bail!("aoem_mldsa_keygen_v1 failed: rc={rc}");
+    }
+    let public_key = public.copy_exact("mldsa keygen pubkey")?;
+    let secret_key = secret.copy_exact("mldsa keygen secret key")?;
+    Ok((public_key, secret_key))
+}
 
 impl<'a> Drop for AoemHandle<'a> {
     fn drop(&mut self) {
@@ -1545,26 +1632,12 @@ impl AoemDyn {
         let Some(keygen_fn) = self.mldsa_keygen_v1 else {
             bail!("aoem_mldsa_keygen_v1 not found in loaded DLL");
         };
-        let mut pubkey_ptr: *mut u8 = ptr::null_mut();
-        let mut pubkey_len = 0usize;
-        let mut secret_key_ptr: *mut u8 = ptr::null_mut();
-        let mut secret_key_len = 0usize;
-        let rc = unsafe {
-            keygen_fn(
-                level,
-                &mut pubkey_ptr as *mut *mut u8,
-                &mut pubkey_len as *mut usize,
-                &mut secret_key_ptr as *mut *mut u8,
-                &mut secret_key_len as *mut usize,
-            )
-        };
-        if rc != 0 {
-            bail!("aoem_mldsa_keygen_v1 failed: rc={rc}");
-        }
-        let pubkey = self.copy_aoem_owned_bytes(pubkey_ptr, pubkey_len, "mldsa keygen pubkey")?;
-        let secret_key =
-            self.copy_aoem_owned_bytes(secret_key_ptr, secret_key_len, "mldsa keygen secret key")?;
-        Ok((pubkey, secret_key))
+        let free = self
+            .free
+            .ok_or_else(|| anyhow!("aoem_free not found in loaded DLL"))?;
+        let public_len = self.mldsa_pubkey_size_v1(level)?;
+        let secret_len = self.mldsa_secret_key_size_v1(level)?;
+        call_mldsa_keygen_owned(keygen_fn, free, level, public_len, secret_len)
     }
 
     pub fn mldsa_sign_v1(&self, level: u32, secret_key: &[u8], message: &[u8]) -> Result<Vec<u8>> {
@@ -3762,6 +3835,90 @@ unsafe fn cstr_to_string(ptr: *const c_char) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        static KEYGEN_RELEASES: RefCell<Vec<(usize, bool)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    unsafe extern "C" fn recorded_keygen_free(ptr: *mut u8, len: usize) {
+        if !ptr.is_null() {
+            let bytes = unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) };
+            KEYGEN_RELEASES.with(|items| {
+                items
+                    .borrow_mut()
+                    .push((len, bytes.iter().all(|b| *b == 0)))
+            });
+        }
+    }
+
+    unsafe extern "C" fn fixture_keygen_outputs(
+        mode: u32,
+        public: *mut *mut u8,
+        public_len: *mut usize,
+        secret: *mut *mut u8,
+        secret_len: *mut usize,
+    ) -> i32 {
+        let public_bytes = vec![5u8; if mode == 2 { 3 } else { 4 }].into_boxed_slice();
+        unsafe {
+            *public_len = public_bytes.len();
+            *public = Box::into_raw(public_bytes) as *mut u8;
+        }
+        if mode == 4 {
+            unsafe {
+                *secret = ptr::null_mut();
+                *secret_len = 8;
+            }
+        } else {
+            let secret_bytes = vec![7u8; if mode == 3 { 7 } else { 8 }].into_boxed_slice();
+            unsafe {
+                *secret_len = secret_bytes.len();
+                *secret = Box::into_raw(secret_bytes) as *mut u8;
+            }
+        }
+        if mode == 1 {
+            -4
+        } else {
+            0
+        }
+    }
+
+    #[test]
+    fn keygen_owned_outputs_zero_secret_before_release_and_clean_failure_paths() {
+        for mode in 0..=4 {
+            KEYGEN_RELEASES.with(|items| items.borrow_mut().clear());
+            let result =
+                call_mldsa_keygen_owned(fixture_keygen_outputs, recorded_keygen_free, mode, 4, 8);
+            if mode == 0 {
+                assert_eq!(result.unwrap(), (vec![5; 4], vec![7; 8]));
+            } else {
+                assert!(result.is_err());
+            }
+            let releases = KEYGEN_RELEASES.with(|items| items.borrow().clone());
+            let expected_public_len = if mode == 2 { 3 } else { 4 };
+            if mode == 4 {
+                assert_eq!(releases, vec![(expected_public_len, false)]);
+            } else if mode == 3 {
+                // Bad-width output is returned to the allocator unchanged, not
+                // sliced/written using the expected secret-key size.
+                assert_eq!(releases, vec![(7, false), (expected_public_len, false)]);
+            } else {
+                assert_eq!(releases, vec![(8, true), (expected_public_len, false)]);
+            }
+        }
+        KEYGEN_RELEASES.with(|items| items.borrow_mut().clear());
+        assert!(
+            call_mldsa_keygen_owned(fixture_keygen_outputs, recorded_keygen_free, 0, 0, 8).is_err()
+        );
+        assert!(call_mldsa_keygen_owned(
+            fixture_keygen_outputs,
+            recorded_keygen_free,
+            0,
+            4,
+            MAX_AOEM_OWNED_BUFFER_BYTES + 1
+        )
+        .is_err());
+        assert!(KEYGEN_RELEASES.with(|items| items.borrow().is_empty()));
+    }
 
     fn temp_path(name: &str) -> PathBuf {
         let nonce = std::time::SystemTime::now()

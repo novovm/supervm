@@ -291,13 +291,14 @@ mod tests {
         use novovm_network::novorudp::{NovoRudpPacingProfile, NovoRudpWindowConfig};
         use std::net::UdpSocket;
         let now = Instant::now();
-        let identity = SigningKey::from_bytes(&[101; 32]);
+        let identity =
+            novovm_consensus::round_bft::test_vectors::FixtureSigningKey::from_bytes(&[101; 32]);
         let transport_identity = SigningKey::from_bytes(&[201; 32]);
         let domain = MessageDomain {
             chain_id: 292,
             genesis: [0x71; 32],
             protocol: [0x72; 32],
-            validators: Arc::new(ValidatorSet::new(
+            validators: Arc::new(ValidatorSet::new_for_test(
                 292,
                 1,
                 1,

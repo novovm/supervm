@@ -2,6 +2,7 @@
 //! The engine receives generic owned tasks, never NOV-specific ABI opcodes.
 
 pub mod direct_nov_fee;
+pub mod fixed_supply;
 pub mod nov_transfer_batch;
 pub mod quoted_transfer;
 mod record_pages;

@@ -14,6 +14,7 @@ use super::business::nov_transfer_batch::{
 use super::consensus::{
     bodies::{BodyLimits, CandidateBodies},
     collector::CollectorLimits,
+    crypto::{AoemConsensusCrypto, AoemConsensusSigner},
     native::{LaneLimits, MessageDomain, NativeChannel, ValidatorTransportBindings},
     native_lifecycle::{DeliveryLimits, NativeLifecycle},
     pacemaker::TimeoutPolicy,
@@ -36,6 +37,7 @@ pub use config::{
     ResidentConfig,
 };
 use ed25519_dalek::SigningKey;
+use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_exec::resident::StorageConfig;
 use novovm_network::novorudp::{
     endpoint::NativePeer,
@@ -72,18 +74,15 @@ impl ResidentNode {
     pub fn start(mut config: ResidentConfig, mode: StartMode) -> Result<Self> {
         config.normalize_native_paths();
         config.validate()?;
-        let (validators, _) = config.genesis.prepare()?;
-        let public = read_identities(&config, &validators)?
-            .transport
-            .verifying_key()
-            .to_bytes();
+        let prepared = prepare_startup(&config)?;
+        let public = prepared.identities.transport.verifying_key().to_bytes();
         let local_route = NodeId(u64::from_le_bytes(public[..8].try_into()?));
         let transport = UdpTransport::bind_for_chain(
             local_route,
             &config.udp_addr.to_string(),
             config.genesis.chain_id,
         )?;
-        Self::start_on_transport(config, mode, transport)
+        Self::start_prepared(config, mode, transport, prepared)
     }
 
     /// Blocking startup only. Existing mode verifies the complete pinned genesis
@@ -96,21 +95,21 @@ impl ResidentNode {
     ) -> Result<Self> {
         config.normalize_native_paths();
         config.validate()?;
-        let (validators, reference_initial) = config.genesis.prepare()?;
-        // Identity, purpose binding and full peer coverage fail BEFORE AOEM
-        // loading, opening a ledger or activating a durable consensus signer.
-        let identities = read_identities(&config, &validators)?;
-        // Verification and all three explicit pins precede opening the store.
-        // Existing mode never installs or repairs missing initialization state.
-        let initial = if let Some(material) = &config.uca_initialization {
-            let runtime = novovm_exec::AoemExecFacade::open(
-                &config.library,
-                novovm_exec::AoemExecOpenOptions::default(),
-            )?;
-            material.verify(&config.genesis, &runtime)?.into_state()
-        } else {
-            reference_initial
-        };
+        let prepared = prepare_startup(&config)?;
+        Self::start_prepared(config, mode, transport, prepared)
+    }
+
+    fn start_prepared(
+        config: ResidentConfig,
+        mode: StartMode,
+        transport: UdpTransport,
+        prepared: StartupPreparation,
+    ) -> Result<Self> {
+        let StartupPreparation {
+            validators,
+            initial,
+            identities,
+        } = prepared;
         let pipeline_config = pipeline_config(&config);
         {
             let store = CandidateStore::open(
@@ -210,28 +209,89 @@ impl ResidentNode {
 }
 
 struct NodeIdentities {
-    validator: SigningKey,
+    validator: Arc<AoemConsensusSigner>,
     transport: SigningKey,
     bindings: ValidatorTransportBindings,
 }
 
-fn read_identities(config: &ResidentConfig, validators: &ValidatorSet) -> Result<NodeIdentities> {
-    let validator = read_key(
-        &config.signing_key_file,
-        config.key_storage,
-        PurposeV1::Validator,
-        config.genesis.chain_id,
-    )?;
+struct StartupPreparation {
+    validators: Arc<ValidatorSet>,
+    initial: super::state::tree::StagedStateUpdate,
+    identities: NodeIdentities,
+}
+
+fn prepare_startup(config: &ResidentConfig) -> Result<StartupPreparation> {
+    let (metadata, reference_initial) = config.genesis.prepare()?;
+    // Authenticate the independent transport key and complete routing binding
+    // before loading AOEM. A credential error cannot start a socket or a store.
     let transport = read_key(
         &config.transport_key_file,
         config.key_storage,
         PurposeV1::Transport,
         config.genesis.chain_id,
     )?;
-    let public = validator.verifying_key().to_bytes();
-    let bindings = config.genesis.transport_bindings(validators)?;
+    let bindings = config.genesis.transport_bindings(&metadata)?;
+    let local_transport = transport.verifying_key().to_bytes();
+    let public = config
+        .genesis
+        .validators
+        .iter()
+        .find(|v| v.transport_public_key == local_transport)
+        .context("local transport key differs from committed validator binding")?
+        .public_key
+        .as_slice();
     ensure!(
-        bindings.transport_public_key(&public)? == transport.verifying_key().to_bytes(),
+        config.peers.iter().all(|p| p.public_key != public)
+            && metadata
+                .members()
+                .iter()
+                .filter(|v| v.public_key() != public)
+                .all(|v| config.peers.iter().any(|p| p.public_key == v.public_key())),
+        "missing remote validator route or route targets local signer"
+    );
+    // One qualified crypto owner; no per-vote load/KAT or Ed25519 fallback.
+    let runtime = novovm_exec::AoemExecFacade::open(
+        &config.library,
+        novovm_exec::AoemExecOpenOptions::default(),
+    )?;
+    let crypto = AoemConsensusCrypto::new(&runtime)?;
+    let validators = Arc::new((*metadata).clone().with_verifier(Arc::new(crypto.clone())));
+    ensure!(
+        validators.has_verifier() && !validators.is_test_only(),
+        "original node requires qualified ML-DSA-65 consensus verification"
+    );
+    let identities = read_identities(config, &validators, &crypto, transport, bindings)?;
+    // All pins and management signatures precede opening the state owner.
+    let initial = if let Some(material) = &config.uca_initialization {
+        material.verify(&config.genesis, &runtime)?.into_state()
+    } else {
+        reference_initial
+    };
+    Ok(StartupPreparation {
+        validators,
+        initial,
+        identities,
+    })
+}
+
+fn read_identities(
+    config: &ResidentConfig,
+    validators: &ValidatorSet,
+    crypto: &AoemConsensusCrypto,
+    transport: SigningKey,
+    bindings: ValidatorTransportBindings,
+) -> Result<NodeIdentities> {
+    ensure!(config.key_storage == NodeKeyStorage::ProtectedV1,
+        "ML-DSA-65 validator requires protected purpose custody; raw Ed25519 keys are not a fallback");
+    let material = purpose_keys::load_validator(
+        &config.signing_key_file,
+        config.genesis.chain_id,
+        |public, secret, challenge| crypto.check_key_pair(public, secret, challenge),
+    )?;
+    let validator = crypto.signer(material)?;
+    let public = validator.public_key();
+    ensure!(
+        bindings.transport_public_key(public)? == transport.verifying_key().to_bytes(),
         "local transport key differs from committed validator binding"
     );
     ensure!(
@@ -239,8 +299,8 @@ fn read_identities(config: &ResidentConfig, validators: &ValidatorSet) -> Result
             && validators
                 .members()
                 .iter()
-                .filter(|v| v.public_key() != &public)
-                .all(|v| config.peers.iter().any(|p| &p.public_key == v.public_key())),
+                .filter(|v| v.public_key() != public)
+                .all(|v| config.peers.iter().any(|p| p.public_key == v.public_key())),
         "missing remote validator route or route targets local signer"
     );
     Ok(NodeIdentities {
@@ -256,28 +316,11 @@ fn read_key(
     purpose: PurposeV1,
     chain_id: u64,
 ) -> Result<SigningKey> {
-    if storage == NodeKeyStorage::ProtectedV1 {
-        return purpose_keys::load(path, purpose, chain_id)
-            .context("read protected node purpose custody");
-    }
     ensure!(
-        std::fs::metadata(path)?.len() <= 128,
-        "signing-key file exceeds explicit key format"
+        storage == NodeKeyStorage::ProtectedV1,
+        "node startup requires protected purpose custody; raw keys are retired"
     );
-    let bytes = std::fs::read(path).context("read explicit development purpose-key file")?;
-    let decoded = if bytes.len() == 32 {
-        bytes
-    } else {
-        config::decode_hex(
-            std::str::from_utf8(&bytes)
-                .context("signing-key file must be 32 raw bytes or 64 hex digits")?
-                .trim(),
-        )?
-    };
-    let secret: [u8; 32] = decoded
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("signing-key file must contain exactly 32 bytes"))?;
-    Ok(SigningKey::from_bytes(&secret))
+    purpose_keys::load(path, purpose, chain_id).context("read protected node purpose custody")
 }
 
 fn body_byte_limit(batch_size: usize) -> usize {

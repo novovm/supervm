@@ -1,7 +1,7 @@
 //! Source: `runtime/novovm-host/src/consensus/wire.rs` at `2da3583c`.
 //! Migrated rules/tests; no production signing or publication is activated here.
 //!
-//! Strict, replacement-local `round-bft/v1` signed evidence.
+//! Strict `round-bft/v2/mldsa65` signed evidence.
 //!
 //! This is a NEW development format, not activation of a production consensus
 //! protocol or compatibility with the archived prepare/decision formats. A
@@ -15,41 +15,49 @@
 //! Certificate votes have one exact context/round/phase/value and strictly
 //! increasing signer IDs. No cross-round decision aggregation is supported.
 
+use super::crypto::{
+    ConsensusSigner, ConsensusVerifier, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
+    MLDSA65_SUITE,
+};
 use anyhow::{ensure, Context as _, Result};
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 pub type Hash = [u8; 32];
-pub const PROTOCOL: &str = "round-bft/v1";
+pub const PROTOCOL: &str = "round-bft/v2/mldsa65";
 /// Local format bound, not a selected production validator count.
 pub const MAX_VALIDATORS: usize = 1024;
-const MAGIC: &[u8; 8] = b"NOVRBFT1";
-const VERSION: u16 = 1;
-const PREFIX_BYTES: usize = 11;
+const MAGIC: &[u8; 8] = b"NOVRBFT2";
+const VERSION: u16 = 2;
+const PREFIX_BYTES: usize = 13;
 const CONTEXT_BYTES: usize = 184;
-const VOTE_BYTES: usize = CONTEXT_BYTES + 8 + 1 + 1 + 32 + 32 + 64;
-const PROPOSAL_BYTES: usize = CONTEXT_BYTES + 8 + 32 + 1 + 8 + 32 + 64;
+const VOTE_BYTES: usize = CONTEXT_BYTES + 8 + 1 + 1 + 32 + 32 + MLDSA65_SIGNATURE_BYTES;
+const PROPOSAL_BYTES: usize = CONTEXT_BYTES + 8 + 32 + 1 + 8 + 32 + MLDSA65_SIGNATURE_BYTES;
 pub const MAX_WIRE_BYTES: usize = PREFIX_BYTES + 4 + MAX_VALIDATORS * VOTE_BYTES;
-const VOTE_DOMAIN: &[u8] = b"novovm-round-bft/v1/vote\0";
-const PROPOSAL_DOMAIN: &[u8] = b"novovm-round-bft/v1/proposal\0";
+const VOTE_DOMAIN: &[u8] = b"novovm-round-bft/v2/mldsa65/vote\0";
+const PROPOSAL_DOMAIN: &[u8] = b"novovm-round-bft/v2/mldsa65/proposal\0";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Validator {
     id: Hash,
-    public_key: Hash,
+    public_key: Vec<u8>,
     weight: u64,
 }
 
 impl Validator {
-    pub fn new(public_key: Hash, weight: u64) -> Result<Self> {
+    pub fn new(public_key: impl AsRef<[u8]>, weight: u64) -> Result<Self> {
+        let public_key = public_key.as_ref();
         ensure!(weight != 0, "validator weight must be nonzero");
-        let key = VerifyingKey::from_bytes(&public_key).context("invalid validator public key")?;
-        ensure!(!key.is_weak(), "weak validator public key");
-        let id = digest(b"novovm-round-bft/v1/validator-id\0", &public_key);
+        ensure!(
+            public_key.len() == MLDSA65_PUBLIC_KEY_BYTES
+                && public_key.iter().any(|byte| *byte != 0),
+            "validator requires a nonzero ML-DSA-65 public key of exactly 1952 bytes"
+        );
+        let id = digest(b"novovm-round-bft/v2/mldsa65/validator-id\0", public_key);
         Ok(Self {
             id,
-            public_key,
+            public_key: public_key.to_vec(),
             weight,
         })
     }
@@ -57,7 +65,7 @@ impl Validator {
     pub fn id(&self) -> Hash {
         self.id
     }
-    pub fn public_key(&self) -> &Hash {
+    pub fn public_key(&self) -> &[u8] {
         &self.public_key
     }
     pub fn weight(&self) -> u64 {
@@ -67,7 +75,7 @@ impl Validator {
 
 /// Immutable, constructor-validated set. There is deliberately no public
 /// deserializer capable of attaching a claimed hash or quorum weight.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct ValidatorSet {
     chain_id: u64,
     epoch: u64,
@@ -76,7 +84,33 @@ pub struct ValidatorSet {
     total_weight: u64,
     quorum_weight: u64,
     hash: Hash,
+    verifier: Option<Arc<dyn ConsensusVerifier>>,
 }
+
+impl std::fmt::Debug for ValidatorSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ValidatorSet")
+            .field("chain_id", &self.chain_id)
+            .field("epoch", &self.epoch)
+            .field("activation_height", &self.activation_height)
+            .field("members", &self.members)
+            .field("hash", &self.hash)
+            .field("has_verifier", &self.has_verifier())
+            .field("test_only", &self.is_test_only())
+            .finish()
+    }
+}
+impl PartialEq for ValidatorSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+            && self.members == other.members
+            && self.chain_id == other.chain_id
+            && self.epoch == other.epoch
+            && self.activation_height == other.activation_height
+            && self.is_test_only() == other.is_test_only()
+    }
+}
+impl Eq for ValidatorSet {}
 
 impl ValidatorSet {
     pub fn new(
@@ -103,7 +137,8 @@ impl ValidatorSet {
                 .context("validator weight overflow")
         })?;
         let quorum_weight = ((u128::from(total_weight) * 2) / 3 + 1) as u64;
-        let mut bytes = Vec::with_capacity(48 + members.len() * 72);
+        let mut bytes = Vec::with_capacity(50 + members.len() * (40 + MLDSA65_PUBLIC_KEY_BYTES));
+        bytes.extend_from_slice(&MLDSA65_SUITE.to_be_bytes());
         for value in [
             chain_id,
             epoch,
@@ -119,7 +154,7 @@ impl ValidatorSet {
             bytes.extend_from_slice(&member.public_key);
             bytes.extend_from_slice(&member.weight.to_be_bytes());
         }
-        let hash = digest(b"novovm-round-bft/v1/validator-set\0", &bytes);
+        let hash = digest(b"novovm-round-bft/v2/mldsa65/validator-set\0", &bytes);
         Ok(Self {
             chain_id,
             epoch,
@@ -128,7 +163,51 @@ impl ValidatorSet {
             total_weight,
             quorum_weight,
             hash,
+            verifier: None,
         })
+    }
+
+    pub fn new_with_verifier(
+        chain_id: u64,
+        epoch: u64,
+        activation_height: u64,
+        members: Vec<Validator>,
+        verifier: Arc<dyn ConsensusVerifier>,
+    ) -> Result<Self> {
+        Ok(Self::new(chain_id, epoch, activation_height, members)?.with_verifier(verifier))
+    }
+    pub fn with_verifier(mut self, verifier: Arc<dyn ConsensusVerifier>) -> Self {
+        self.verifier = Some(verifier);
+        self
+    }
+    pub fn has_verifier(&self) -> bool {
+        self.verifier.is_some()
+    }
+    pub fn is_test_only(&self) -> bool {
+        self.verifier.as_ref().is_some_and(|v| v.is_test_only())
+    }
+    fn verify_signature(&self, public_key: &[u8], message: &[u8], signature: &[u8]) -> Result<()> {
+        self.verifier
+            .as_ref()
+            .context(
+                "ML-DSA-65 consensus verifier is unavailable; metadata-only set cannot verify",
+            )?
+            .verify_mldsa65(public_key, message, signature)
+    }
+    #[cfg(any(test, feature = "test-vectors"))]
+    pub fn new_for_test(
+        chain_id: u64,
+        epoch: u64,
+        activation_height: u64,
+        members: Vec<Validator>,
+    ) -> Result<Self> {
+        Self::new_with_verifier(
+            chain_id,
+            epoch,
+            activation_height,
+            members,
+            Arc::new(super::test_vectors::FixtureVerifier),
+        )
     }
 
     pub fn chain_id(&self) -> u64 {
@@ -260,8 +339,8 @@ impl Vote {
             "invalid vote signer/value"
         );
         ensure!(
-            self.signature.len() == 64,
-            "vote signature must be exactly 64 bytes"
+            self.signature.len() == MLDSA65_SIGNATURE_BYTES,
+            "vote ML-DSA-65 signature must be exactly 3309 bytes"
         );
         Ok(())
     }
@@ -277,8 +356,7 @@ impl Vote {
         let member = set
             .member(&self.validator_id)
             .context("vote signer is not a validator")?;
-        VerifyingKey::from_bytes(member.public_key())?
-            .verify_strict(&self.message(), &Signature::from_slice(&self.signature)?)
+        set.verify_signature(member.public_key(), &self.message(), &self.signature)
             .context("invalid round-bft vote signature")
     }
 
@@ -292,16 +370,20 @@ impl Vote {
         phase: Phase,
         value: Option<Hash>,
         set: &ValidatorSet,
-        key: &SigningKey,
+        key: &dyn ConsensusSigner,
     ) -> Result<Self> {
-        let member = Validator::new(key.verifying_key().to_bytes(), 1)?;
+        let member = Validator::new(key.public_key(), 1)?;
+        ensure!(
+            key.is_test_only() == set.is_test_only(),
+            "consensus signer/verifier fixture branding differs"
+        );
         let mut vote = Self {
             context,
             round,
             phase,
             value,
             validator_id: member.id,
-            signature: vec![0; 64],
+            signature: vec![0; MLDSA65_SIGNATURE_BYTES],
         };
         vote.validate_shape()?;
         vote.context.validate(set)?;
@@ -309,15 +391,17 @@ impl Vote {
             set.member(&vote.validator_id).is_some(),
             "vote signer is not a validator"
         );
-        vote.signature = key.sign(&vote.message()).to_bytes().to_vec();
+        vote.signature = key.sign_mldsa65(&vote.message())?;
         vote.verify_signature(set)?;
         Ok(vote)
     }
 
-    fn message(&self) -> Hash {
-        let mut bytes = Vec::with_capacity(VOTE_BYTES - 64);
+    fn message(&self) -> Vec<u8> {
+        let mut bytes =
+            Vec::with_capacity(VOTE_DOMAIN.len() + VOTE_BYTES - MLDSA65_SIGNATURE_BYTES);
+        bytes.extend_from_slice(VOTE_DOMAIN);
         append_vote_unsigned(&mut bytes, self);
-        digest(VOTE_DOMAIN, &bytes)
+        bytes
     }
 }
 
@@ -359,8 +443,8 @@ impl Proposal {
             "proposal valid_round must precede its round"
         );
         ensure!(
-            self.signature.len() == 64,
-            "proposal signature must be exactly 64 bytes"
+            self.signature.len() == MLDSA65_SIGNATURE_BYTES,
+            "proposal ML-DSA-65 signature must be exactly 3309 bytes"
         );
         Ok(())
     }
@@ -382,8 +466,7 @@ impl Proposal {
         let member = set
             .member(&self.proposer_id)
             .context("unknown proposal signer")?;
-        VerifyingKey::from_bytes(member.public_key())?
-            .verify_strict(&self.message(), &Signature::from_slice(&self.signature)?)
+        set.verify_signature(member.public_key(), &self.message(), &self.signature)
             .context("invalid round-bft proposal signature")
     }
 
@@ -397,16 +480,20 @@ impl Proposal {
         value: Hash,
         valid_round: Option<u64>,
         set: &ValidatorSet,
-        key: &SigningKey,
+        key: &dyn ConsensusSigner,
     ) -> Result<Self> {
-        let member = Validator::new(key.verifying_key().to_bytes(), 1)?;
+        let member = Validator::new(key.public_key(), 1)?;
+        ensure!(
+            key.is_test_only() == set.is_test_only(),
+            "consensus signer/verifier fixture branding differs"
+        );
         let mut proposal = Self {
             context,
             round,
             value,
             valid_round,
             proposer_id: member.id,
-            signature: vec![0; 64],
+            signature: vec![0; MLDSA65_SIGNATURE_BYTES],
         };
         proposal.validate_shape()?;
         proposal.context.validate(set)?;
@@ -414,15 +501,17 @@ impl Proposal {
             proposal.proposer_id == set.leader(context.height, round)?,
             "proposal signer is not the scheduled leader"
         );
-        proposal.signature = key.sign(&proposal.message()).to_bytes().to_vec();
+        proposal.signature = key.sign_mldsa65(&proposal.message())?;
         proposal.verify_signature(set)?;
         Ok(proposal)
     }
 
-    fn message(&self) -> Hash {
-        let mut bytes = Vec::with_capacity(PROPOSAL_BYTES - 64);
+    fn message(&self) -> Vec<u8> {
+        let mut bytes =
+            Vec::with_capacity(PROPOSAL_DOMAIN.len() + PROPOSAL_BYTES - MLDSA65_SIGNATURE_BYTES);
+        bytes.extend_from_slice(PROPOSAL_DOMAIN);
         append_proposal_unsigned(&mut bytes, self);
-        digest(PROPOSAL_DOMAIN, &bytes)
+        bytes
     }
 }
 
@@ -567,6 +656,7 @@ fn prefix(kind: u8, capacity: usize) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(capacity);
     bytes.extend_from_slice(MAGIC);
     bytes.extend_from_slice(&VERSION.to_be_bytes());
+    bytes.extend_from_slice(&MLDSA65_SUITE.to_be_bytes());
     bytes.push(kind);
     bytes
 }
@@ -606,7 +696,10 @@ impl<'a> Cursor<'a> {
             "invalid consensus wire length"
         );
         ensure!(
-            &bytes[..8] == MAGIC && bytes[8..10] == VERSION.to_be_bytes() && bytes[10] == kind,
+            &bytes[..8] == MAGIC
+                && bytes[8..10] == VERSION.to_be_bytes()
+                && bytes[10..12] == MLDSA65_SUITE.to_be_bytes()
+                && bytes[12] == kind,
             "unknown consensus wire format/version/kind"
         );
         Ok(Self {
@@ -657,7 +750,7 @@ impl<'a> Cursor<'a> {
             _ => anyhow::bail!("noncanonical consensus vote value"),
         };
         let validator_id = self.take()?;
-        let signature = self.take::<64>()?.to_vec();
+        let signature = self.take::<MLDSA65_SIGNATURE_BYTES>()?.to_vec();
         let vote = Vote {
             context,
             round,
@@ -698,7 +791,7 @@ pub fn decode_proposal(bytes: &[u8]) -> Result<Proposal> {
         _ => anyhow::bail!("noncanonical proposal valid_round"),
     };
     let proposer_id = cursor.take()?;
-    let signature = cursor.take::<64>()?.to_vec();
+    let signature = cursor.take::<MLDSA65_SIGNATURE_BYTES>()?.to_vec();
     ensure!(cursor.bytes.is_empty(), "trailing proposal bytes");
     let proposal = Proposal {
         context,

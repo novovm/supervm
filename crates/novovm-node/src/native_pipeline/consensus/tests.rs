@@ -1,6 +1,7 @@
 //! Same-process, four-independent-database integration. Real signed NOV batches
 //! use the resident AOEM pipeline; signed consensus messages are transported as
-//! encoded bytes by this fixture, not by a real network. Local head publication
+//! encoded bytes by this explicit non-cryptographic consensus fixture, not by
+//! a real network or production ML-DSA verifier. Local head publication
 //! is not an execution validity proof or mainnet TPS measurement.
 
 #[path = "chain_integration.rs"]
@@ -393,8 +394,12 @@ fn read_metadata(pipeline: &CandidatePipeline, keys: Vec<MetaKey>) -> Result<Met
     }
 }
 
-fn validator_key(index: usize) -> SigningKey {
-    SigningKey::from_bytes(&[101 + index as u8; 32])
+fn component_validator_key(
+    index: usize,
+) -> novovm_consensus::round_bft::test_vectors::FixtureSigningKey {
+    novovm_consensus::round_bft::test_vectors::FixtureSigningKey::from_bytes(
+        &[101 + index as u8; 32],
+    )
 }
 
 fn wire_vote(
@@ -432,9 +437,9 @@ fn real_four_validator_journals_persist_before_emit_recover_and_reject_stale() -
         .map(|index| directory.join(format!("validator-{index}")))
         .collect();
     let members = (0..4)
-        .map(|index| Validator::new(validator_key(index).verifying_key().to_bytes(), 1))
+        .map(|index| Validator::new(component_validator_key(index).verifying_key().to_bytes(), 1))
         .collect::<Result<Vec<_>>>()?;
-    let set = Arc::new(ValidatorSet::new(CHAIN, 1, 1, members)?);
+    let set = Arc::new(ValidatorSet::new_for_test(CHAIN, 1, 1, members)?);
     let context = ConsensusContext {
         chain_id: CHAIN,
         genesis_config_commitment: GENESIS,
@@ -518,14 +523,20 @@ fn real_four_validator_journals_persist_before_emit_recover_and_reject_stale() -
     let mut journals = Vec::new();
     for (index, pipeline) in services.0.iter().enumerate() {
         journals.push(open_journal(
-            ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(index))?,
+            ValidatorJournal::open(
+                pipeline,
+                context,
+                parent,
+                set.clone(),
+                component_validator_key(index),
+            )?,
             pipeline,
         )?);
     }
     let leader_id = set.leader(1, 0)?;
     let leader = (0..4)
         .find(|&index| {
-            Validator::new(validator_key(index).verifying_key().to_bytes(), 1)
+            Validator::new(component_validator_key(index).verifying_key().to_bytes(), 1)
                 .unwrap()
                 .id()
                 == leader_id
@@ -538,7 +549,7 @@ fn real_four_validator_journals_persist_before_emit_recover_and_reject_stale() -
             context,
             parent,
             set.clone(),
-            validator_key(stale_index),
+            component_validator_key(stale_index),
         )?,
         &services.0[stale_index],
     )?;
@@ -638,7 +649,13 @@ fn real_four_validator_journals_persist_before_emit_recover_and_reject_stale() -
         services.0.push(pipeline);
         let pipeline = &services.0[index];
         let mut journal = open_journal(
-            ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(index))?,
+            ValidatorJournal::open(
+                pipeline,
+                context,
+                parent,
+                set.clone(),
+                component_validator_key(index),
+            )?,
             pipeline,
         )?;
         ensure!(
@@ -678,7 +695,7 @@ fn real_four_validator_journals_persist_before_emit_recover_and_reject_stale() -
                 context,
                 changed_parent,
                 set.clone(),
-                validator_key(index),
+                component_validator_key(index),
             )?;
             let error = match open_journal(opening, pipeline) {
                 Err(error) => error,
@@ -707,7 +724,7 @@ fn real_four_validator_journals_persist_before_emit_recover_and_reject_stale() -
             context,
             parent,
             set.clone(),
-            validator_key(leader),
+            component_validator_key(leader),
         )?,
         pipeline,
     )?;
@@ -745,9 +762,9 @@ fn real_lost_signing_ack_recovers_exact_vote_without_second_prevote() -> Result<
         ));
     let root = initialize(&directory)?;
     let members = (0..4)
-        .map(|index| Validator::new(validator_key(index).verifying_key().to_bytes(), 1))
+        .map(|index| Validator::new(component_validator_key(index).verifying_key().to_bytes(), 1))
         .collect::<Result<Vec<_>>>()?;
-    let set = Arc::new(ValidatorSet::new(CHAIN, 1, 1, members)?);
+    let set = Arc::new(ValidatorSet::new_for_test(CHAIN, 1, 1, members)?);
     let context = ConsensusContext {
         chain_id: CHAIN,
         genesis_config_commitment: GENESIS,
@@ -766,7 +783,7 @@ fn real_lost_signing_ack_recovers_exact_vote_without_second_prevote() -> Result<
         state_version: 0,
         decision_hash: [0; 32],
     };
-    let validator = Validator::new(validator_key(0).verifying_key().to_bytes(), 1)?.id();
+    let validator = Validator::new(component_validator_key(0).verifying_key().to_bytes(), 1)?.id();
     let mut services = Services::default();
     services.0.push(CandidatePipeline::start(
         pipeline_config(&directory)?,
@@ -774,7 +791,13 @@ fn real_lost_signing_ack_recovers_exact_vote_without_second_prevote() -> Result<
     )?);
     let pipeline = &services.0[0];
     let mut journal = open_journal(
-        ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(0))?,
+        ValidatorJournal::open(
+            pipeline,
+            context,
+            parent,
+            set.clone(),
+            component_validator_key(0),
+        )?,
         pipeline,
     )?;
     journal.timeout(0, TimeoutStep::Propose)?;
@@ -822,7 +845,13 @@ fn real_lost_signing_ack_recovers_exact_vote_without_second_prevote() -> Result<
     )?);
     let pipeline = &services.0[0];
     let mut recovered = open_journal(
-        ValidatorJournal::open(pipeline, context, parent, set.clone(), validator_key(0))?,
+        ValidatorJournal::open(
+            pipeline,
+            context,
+            parent,
+            set.clone(),
+            component_validator_key(0),
+        )?,
         pipeline,
     )?;
     ensure!(
@@ -839,7 +868,7 @@ fn real_lost_signing_ack_recovers_exact_vote_without_second_prevote() -> Result<
         Phase::Prevote,
         None,
         &set,
-        &validator_key(0),
+        &component_validator_key(0),
     )?;
     ensure!(
         wire::encode_vote(vote)? == wire::encode_vote(&expected)?

@@ -421,7 +421,7 @@ fn native_only_minority_and_pending_signature_conflict_recover() -> Result<()> {
     }
     let proposer = (0..4)
         .find(|i| {
-            Validator::new(validator_key(*i).verifying_key().to_bytes(), 1)
+            Validator::new(validator_key(*i).public_key(), 1)
                 .unwrap()
                 .id()
                 == set.leader(1, 0).unwrap()
@@ -546,7 +546,7 @@ fn native_only_genesis_transactions_queries_and_cold_recovery() -> Result<()> {
     let (mut nodes, set) = setup_with_genesis(&directory, binary, genesis()?, 2)?;
     let ingress = (0..4)
         .find(|i| {
-            Validator::new(validator_key(*i).verifying_key().to_bytes(), 1)
+            Validator::new(validator_key(*i).public_key(), 1)
                 .unwrap()
                 .id()
                 != set.leader(1, 0).unwrap()

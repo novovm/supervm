@@ -1,11 +1,11 @@
 use super::*;
 use crate::native_pipeline::consensus::wire::Validator;
-use ed25519_dalek::SigningKey;
+use novovm_consensus::round_bft::test_vectors::FixtureSigningKey;
 
 fn authority() -> (ParentPoint, ConsensusContext, Arc<ValidatorSet>) {
-    let key = SigningKey::from_bytes(&[19; 32]);
+    let key = FixtureSigningKey::from_bytes(&[19; 32]);
     let member = Validator::new(key.verifying_key().to_bytes(), 1).unwrap();
-    let validators = Arc::new(ValidatorSet::new(71, 1, 1, vec![member]).unwrap());
+    let validators = Arc::new(ValidatorSet::new_for_test(71, 1, 1, vec![member]).unwrap());
     let ceiling = ParentPoint {
         height: 8,
         block_hash: [1; 32],

@@ -164,7 +164,6 @@ impl NativeChannel {
         let applications = client_slots > 0;
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         bindings.validate_for(&domain.validators)?;
-        bindings.require_production_binding()?;
         let local_peer = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
         let local_validator = bindings.validator_for_peer(&local_peer)?;
         let mut seen = BTreeSet::new();
@@ -216,6 +215,7 @@ impl NativeChannel {
     pub fn new(
         mut endpoint: NativeEndpoint,
         domain: MessageDomain,
+        bindings: ValidatorTransportBindings,
         codec: transport::DecodeLimits,
         lanes: [LaneLimits; 3],
         policy: NativeSendPolicy,
@@ -223,7 +223,7 @@ impl NativeChannel {
         endpoint.enable_configured_reconnect_v1()?;
         let applications = endpoint.accepts_clients();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
-        let bindings = ValidatorTransportBindings::historical_identity_fixture(&domain.validators);
+        bindings.validate_for(&domain.validators)?;
         bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(
             &endpoint.local_identity(),
         ))?;

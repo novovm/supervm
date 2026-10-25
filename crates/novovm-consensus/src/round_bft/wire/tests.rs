@@ -2,6 +2,7 @@
 //! Migrated rules/tests; no production signing or publication is activated here.
 //!
 use super::*;
+use crate::round_bft::test_vectors::FixtureSigningKey as SigningKey;
 
 fn fixture() -> (Vec<SigningKey>, ValidatorSet) {
     let keys: Vec<_> = (1u8..=4)
@@ -11,7 +12,103 @@ fn fixture() -> (Vec<SigningKey>, ValidatorSet) {
         .iter()
         .map(|key| Validator::new(key.verifying_key().to_bytes(), 1).unwrap())
         .collect();
-    (keys, ValidatorSet::new(91, 1, 1, members).unwrap())
+    (keys, ValidatorSet::new_for_test(91, 1, 1, members).unwrap())
+}
+
+#[test]
+fn metadata_only_validator_set_cannot_verify_or_sign() {
+    let (keys, set) = fixture();
+    let metadata = ValidatorSet::new(91, 1, 1, set.members().to_vec()).unwrap();
+    assert_eq!(metadata.hash(), set.hash());
+    assert!(!metadata.has_verifier());
+    assert!(!metadata.is_test_only());
+    assert!(set.is_test_only());
+    let vote = Vote::sign(
+        context(&set),
+        2,
+        Phase::Prevote,
+        Some([8; 32]),
+        &set,
+        &keys[0],
+    )
+    .unwrap();
+    let error = vote.verify(&metadata).unwrap_err();
+    assert!(format!("{error:#}").contains("verifier is unavailable"));
+    assert!(Vote::sign(
+        context(&metadata),
+        2,
+        Phase::Prevote,
+        Some([8; 32]),
+        &metadata,
+        &keys[0]
+    )
+    .is_err());
+}
+
+#[test]
+fn fixed_mldsa65_wire_rejects_old_suite_widths_and_wrong_suite_tag() {
+    let (keys, set) = fixture();
+    for length in [32, 1312, 1951, 1953, 2592] {
+        assert!(Validator::new(vec![1; length], 1).is_err());
+    }
+    let vote = Vote::sign(
+        context(&set),
+        2,
+        Phase::Prevote,
+        Some([8; 32]),
+        &set,
+        &keys[0],
+    )
+    .unwrap();
+    for length in [64, 2420, 3308, 3310, 4627] {
+        let mut bad = vote.clone();
+        bad.signature = vec![1; length];
+        assert!(bad.verify(&set).is_err());
+        assert!(encode_vote(&bad).is_err());
+    }
+    for suite in [0u16, 44, 87] {
+        let mut bad = encode_vote(&vote).unwrap();
+        bad[10..12].copy_from_slice(&suite.to_be_bytes());
+        assert!(decode_vote(&bad).is_err());
+    }
+    let mut old = encode_vote(&vote).unwrap();
+    old[..8].copy_from_slice(b"NOVRBFT1");
+    assert!(decode_vote(&old).is_err());
+}
+
+#[test]
+fn transcript_adapter_receives_full_versioned_message_not_a_digest() {
+    use std::sync::Mutex;
+    struct Observe(Mutex<Vec<u8>>);
+    impl ConsensusVerifier for Observe {
+        fn verify_mldsa65(&self, _: &[u8], message: &[u8], _: &[u8]) -> Result<()> {
+            *self.0.lock().unwrap() = message.to_vec();
+            anyhow::bail!("intentional observing adapter refusal")
+        }
+    }
+    let (keys, set) = fixture();
+    let vote = Vote::sign(
+        context(&set),
+        2,
+        Phase::Prevote,
+        Some([8; 32]),
+        &set,
+        &keys[0],
+    )
+    .unwrap();
+    let observer = Arc::new(Observe(Mutex::new(Vec::new())));
+    let checked =
+        ValidatorSet::new_with_verifier(91, 1, 1, set.members().to_vec(), observer.clone())
+            .unwrap();
+    assert!(vote.verify(&checked).is_err());
+    let message = observer.0.lock().unwrap();
+    assert_eq!(
+        message.len(),
+        VOTE_DOMAIN.len() + VOTE_BYTES - MLDSA65_SIGNATURE_BYTES
+    );
+    assert!(message.starts_with(VOTE_DOMAIN));
+    assert_eq!(&message[message.len() - 32..], vote.validator_id.as_slice());
+    assert_ne!(message.len(), 32);
 }
 
 fn context(set: &ValidatorSet) -> Context {
@@ -63,23 +160,23 @@ fn validator_sets_are_canonical_weighted_and_domain_bound() {
         .all(|pair| pair[0].id() < pair[1].id()));
     let mut reverse = set.members().to_vec();
     reverse.reverse();
-    assert_eq!(ValidatorSet::new(91, 1, 1, reverse).unwrap(), set);
+    assert_eq!(ValidatorSet::new_for_test(91, 1, 1, reverse).unwrap(), set);
     for (chain, epoch, activation) in [(92, 1, 1), (91, 2, 1), (91, 1, 2)] {
         assert_ne!(
-            ValidatorSet::new(chain, epoch, activation, set.members().to_vec())
+            ValidatorSet::new_for_test(chain, epoch, activation, set.members().to_vec())
                 .unwrap()
                 .hash(),
             set.hash()
         );
     }
     assert_ne!(
-        ValidatorSet::new(
+        ValidatorSet::new_for_test(
             91,
             1,
             1,
             set.members()
                 .iter()
-                .map(|member| Validator::new(*member.public_key(), member.weight() + 1).unwrap())
+                .map(|member| Validator::new(member.public_key(), member.weight() + 1).unwrap())
                 .collect()
         )
         .unwrap()
@@ -95,7 +192,7 @@ fn validator_sets_are_canonical_weighted_and_domain_bound() {
 #[test]
 fn invalid_keys_duplicates_counts_and_weight_overflow_are_rejected() {
     let (_, set) = fixture();
-    let pk = *set.members()[0].public_key();
+    let pk = set.members()[0].public_key();
     assert!(Validator::new(pk, 0).is_err());
     let mut identity = [0; 32];
     identity[0] = 1;
@@ -107,25 +204,32 @@ fn invalid_keys_duplicates_counts_and_weight_overflow_are_rejected() {
         Validator::new([0; 32], 1).is_err(),
         "small-order point must not be a validator"
     );
-    assert!(ValidatorSet::new(91, 1, 1, vec![]).is_err());
-    assert!(
-        ValidatorSet::new(91, 1, 1, vec![set.members()[0].clone(); MAX_VALIDATORS + 1]).is_err()
-    );
-    assert!(ValidatorSet::new(91, 1, 1, vec![set.members()[0].clone(); 2]).is_err());
+    assert!(ValidatorSet::new_for_test(91, 1, 1, vec![]).is_err());
+    assert!(ValidatorSet::new_for_test(
+        91,
+        1,
+        1,
+        vec![set.members()[0].clone(); MAX_VALIDATORS + 1]
+    )
+    .is_err());
+    assert!(ValidatorSet::new_for_test(91, 1, 1, vec![set.members()[0].clone(); 2]).is_err());
     for (chain, epoch, activation) in [(0, 1, 1), (91, 0, 1), (91, 1, 0)] {
-        assert!(ValidatorSet::new(chain, epoch, activation, set.members().to_vec()).is_err());
+        assert!(
+            ValidatorSet::new_for_test(chain, epoch, activation, set.members().to_vec()).is_err()
+        );
     }
-    assert!(ValidatorSet::new(
+    assert!(ValidatorSet::new_for_test(
         91,
         1,
         1,
         vec![
             Validator::new(pk, u64::MAX).unwrap(),
-            Validator::new(*set.members()[1].public_key(), 1).unwrap()
+            Validator::new(set.members()[1].public_key(), 1).unwrap()
         ]
     )
     .is_err());
-    let huge = ValidatorSet::new(91, 1, 1, vec![Validator::new(pk, u64::MAX).unwrap()]).unwrap();
+    let huge =
+        ValidatorSet::new_for_test(91, 1, 1, vec![Validator::new(pk, u64::MAX).unwrap()]).unwrap();
     assert_eq!(
         huge.quorum_weight(),
         ((u128::from(u64::MAX) * 2) / 3 + 1) as u64
@@ -161,7 +265,7 @@ fn context_requires_full_domain_and_exact_first_block_parent_convention() {
         }
         assert!(bad.validate(&set).is_err(), "zero field {field}");
     }
-    let future_set = ValidatorSet::new(91, 1, 3, set.members().to_vec()).unwrap();
+    let future_set = ValidatorSet::new_for_test(91, 1, 3, set.members().to_vec()).unwrap();
     let mut before_activation = ctx;
     before_activation.validator_set_hash = future_set.hash();
     assert!(before_activation.validate(&future_set).is_err());
@@ -277,21 +381,19 @@ fn vote_signing_preimage_is_explicit_and_old_signatures_cannot_be_relabelled() {
     let ctx = context(&set);
     let vote = Vote::sign(ctx, 2, Phase::Prevote, Some([8; 32]), &set, &keys[0]).unwrap();
     // Independent field-by-field oracle: do not call the production encoder.
-    let mut oracle = Sha256::new();
-    oracle.update(b"novovm-round-bft/v1/vote\0");
-    oracle.update(ctx.chain_id.to_be_bytes());
-    oracle.update(ctx.genesis_config_commitment);
-    oracle.update(ctx.protocol_commitment);
-    oracle.update(ctx.epoch.to_be_bytes());
-    oracle.update(ctx.validator_set_hash);
-    oracle.update(ctx.height.to_be_bytes());
-    oracle.update(ctx.parent_block_hash);
-    oracle.update(ctx.parent_decision_hash);
-    oracle.update(2u64.to_be_bytes());
-    oracle.update([0, 1]); // Prevote + Some value, no implicit enum codec.
-    oracle.update([8; 32]);
-    oracle.update(vote.validator_id);
-    let expected: Hash = oracle.finalize().into();
+    let mut expected = b"novovm-round-bft/v2/mldsa65/vote\0".to_vec();
+    expected.extend_from_slice(&ctx.chain_id.to_be_bytes());
+    expected.extend_from_slice(&ctx.genesis_config_commitment);
+    expected.extend_from_slice(&ctx.protocol_commitment);
+    expected.extend_from_slice(&ctx.epoch.to_be_bytes());
+    expected.extend_from_slice(&ctx.validator_set_hash);
+    expected.extend_from_slice(&ctx.height.to_be_bytes());
+    expected.extend_from_slice(&ctx.parent_block_hash);
+    expected.extend_from_slice(&ctx.parent_decision_hash);
+    expected.extend_from_slice(&2u64.to_be_bytes());
+    expected.extend_from_slice(&[0, 1]); // Prevote + Some value, no implicit enum codec.
+    expected.extend_from_slice(&[8; 32]);
+    expected.extend_from_slice(&vote.validator_id);
     assert_eq!(vote.signature, keys[0].sign(&expected).to_bytes());
     let mut legacy = Vec::from(&b"VOTE:"[..]);
     legacy.extend_from_slice(&[8; 32]);
@@ -445,7 +547,7 @@ fn quorum_rejects_duplicate_unsorted_tampered_and_mixed_signed_evidence() {
 #[test]
 fn weighted_quorum_does_not_confuse_signature_count_with_weight() {
     let (keys, _) = fixture();
-    let set = ValidatorSet::new(
+    let set = ValidatorSet::new_for_test(
         91,
         1,
         1,
@@ -488,7 +590,7 @@ fn codec_rejects_unknown_old_formats_trailing_and_all_truncations() {
     let mut tail = wire.clone();
     tail.push(0);
     assert!(decode_vote(&tail).is_err());
-    for offset in [0, 8, 9, 10] {
+    for offset in [0, 8, 9, 10, 11, 12] {
         let mut bad = wire.clone();
         bad[offset] ^= 0xff;
         assert!(decode_vote(&bad).is_err());
@@ -564,7 +666,8 @@ fn codec_bounds_counts_before_allocation_and_requires_canonical_tags() {
     let mut oversized = vec![0u8; MAX_WIRE_BYTES + 1];
     oversized[..8].copy_from_slice(MAGIC);
     oversized[8..10].copy_from_slice(&VERSION.to_be_bytes());
-    oversized[10] = 3;
+    oversized[10..12].copy_from_slice(&MLDSA65_SUITE.to_be_bytes());
+    oversized[12] = 3;
     assert!(decode_quorum(&oversized).is_err());
 }
 
@@ -581,7 +684,7 @@ fn independently_signed_foreign_set_epoch_and_chain_are_not_replayed() {
     )
     .unwrap();
     for (chain, epoch) in [(92, 1), (91, 2)] {
-        let other = ValidatorSet::new(chain, epoch, 1, set.members().to_vec()).unwrap();
+        let other = ValidatorSet::new_for_test(chain, epoch, 1, set.members().to_vec()).unwrap();
         assert!(vote.verify(&other).is_err());
         let mut relabelled = vote.clone();
         relabelled.context.chain_id = chain;

@@ -6,14 +6,15 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
-const SNAP: &[u8; 8] = b"NVSIGN02";
-const OUT: &[u8; 8] = b"NVOUT002";
-const ARCHIVED_OUT: &[u8; 8] = b"NVOUT001";
-const MAX_RECORD: usize = 512 * 1024;
+const SNAP: &[u8; 8] = b"NVSIGN03";
+const OUT: &[u8; 8] = b"NVOUT003";
+// One bounded QC and one proposal plus fixed replay/state framing. The full
+// transition independently budgets expected state, new state and outbox.
+const MAX_RECORD: usize = wire::MAX_WIRE_BYTES + 16 * 1024;
 
 fn digest(bytes: &[u8]) -> Hash {
     let mut hash = Sha256::new();
-    hash.update(b"novovm/replacement/signing-journal/v1\0");
+    hash.update(b"novovm/signing-journal/v3/mldsa65\0");
     hash.update(bytes);
     hash.finalize().into()
 }
@@ -795,8 +796,7 @@ pub(super) fn validate_replay_index(
 /// signer snapshot. The caller verifies the full QC/set, block statement and
 /// exact outbox digest/locator; this decoder alone grants no authority.
 pub fn decode_archived_decision(bytes: &[u8], revision: u64) -> Result<(Proposal, Quorum)> {
-    let legacy = bytes.starts_with(ARCHIVED_OUT);
-    let mut reader = Reader::open(bytes, if legacy { ARCHIVED_OUT } else { OUT })?;
+    let mut reader = Reader::open(bytes, OUT)?;
     ensure!(
         reader.u64()? == revision && revision != 0,
         "archived decision revision mismatch"
@@ -805,12 +805,10 @@ pub fn decode_archived_decision(bytes: &[u8], revision: u64) -> Result<(Proposal
     ensure!(reader.byte()? == 3, "archive is not a decision outbox");
     let proposal = wire::decode_proposal(reader.frame(wire::MAX_WIRE_BYTES)?)?;
     let certificate = wire::decode_quorum(reader.frame(wire::MAX_WIRE_BYTES)?)?;
-    if !legacy {
-        ensure!(
-            reader.byte()? == 0,
-            "archived decision has unexpected replay evidence"
-        );
-    }
+    ensure!(
+        reader.byte()? == 0,
+        "archived decision has unexpected replay evidence"
+    );
     reader.finish()?;
     Ok((proposal, certificate))
 }

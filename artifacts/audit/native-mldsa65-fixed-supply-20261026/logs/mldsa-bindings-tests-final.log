@@ -1,0 +1,51 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\aoem_bindings-f211b0ea66c4032f.exe)
+
+running 39 tests
+test resident::compute::tests::compute_real_aoem_parallel_order_panic_and_cancel ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; explicitly run for real worker acceptance
+test resident::compute::tests::compute_real_aoem_undrained_timeout_retains_owned_capture ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; deliberately retains one cancelled owner
+test portable_receipt::tests::portable_receipt_envelope_is_not_cryptographic_verification ... ok
+test resident::compute::tests::compute_session_host_unwind_retains_the_complete_flight ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; deliberately retains a Host-unwound live graph
+test resident::compute::tests::compute_session_reuses_graphs_and_preserves_poison_boundary ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; real session reuse acceptance
+test resident::compute::tests::compute_session_timeout_retains_the_complete_flight ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; deliberately retains an undrained cancelled owner
+test portable_receipt::tests::portable_receipt_input_bounds ... ok
+test resident::compute::tests::compute_rejects_invalid_descriptor_and_nulls ... ok
+test resident::library::tests::computation_rejects_ambient_persistence_without_mutating_environment ... ok
+test resident::compute::tests::compute_callbacks_execute_once_and_keep_input_order ... ok
+test resident::compute::tests::compute_completion_is_owned_and_single_delivery ... ok
+test resident::receipt::tests::receipt_verification_requires_backend_and_exact_independent_pins ... ok
+test resident::compute::tests::compute_result_budget_is_checked_before_retaining_an_output ... ok
+test resident::storage::tests::read_values_preserve_absence_empty_and_order_and_reject_any_bad_prefix ... ok
+test resident::receipt::tests::receipt_allocation_guard_releases_on_unwind_and_session_can_move_to_owner ... ok
+test resident::compute::tests::compute_callback_contains_panics_and_errors ... ok
+test resident::compute::tests::compute_catches_a_panic_payload_with_a_panicking_destructor ... ok
+test resident::receipt::tests::receipt_abi_check_precedes_initialization_and_requires_success ... ok
+test resident::abi::tests::resident_layouts_reuse_the_packaged_product_abi ... ok
+test resident::receipt::tests::receipt_limits_reject_invalid_policy_and_check_hard_abi_edges_without_allocating ... ok
+test resident::receipt::tests::receipt_policy_rejects_before_any_native_call ... ok
+test resident::receipt::tests::receipt_producer_errors_and_malformed_buffers_free_exactly_once ... ok
+test resident::receipt::tests::receipt_prove_forwards_inputs_copies_and_frees_without_claiming_verification ... ok
+test resident::compute::tests::compute_rejects_invalid_wave_before_loading_runtime ... ok
+test resident::receipt::tests::receipt_version_is_explicit_and_older_or_future_envelopes_never_reach_backend ... ok
+test resident::storage::tests::real_storage_atomic_batch_order_multiget_fresh_read_and_cold_reopen ... ignored, requires explicit packaged AOEM library; storage component, not chain durability acceptance
+test resident::storage::tests::real_storage_owner_threads_have_separate_databases_and_same_path_cannot_reopen ... ignored, requires explicit packaged AOEM library; native handle is created on its owner thread
+test resident::storage::tests::real_write_bad_ack_is_unknown_poisoned_freed_and_never_automatically_retried ... ignored, requires explicit packaged AOEM library; fault is injected only AFTER a genuine native write
+test resident::storage::tests::response_envelope_and_acknowledgement_are_exact_not_just_zero_return_code ... ok
+test resident::storage::tests::storage_open_wire_has_explicit_path_and_mandatory_sync_one ... ok
+test resident::storage::tests::storage_environment_requires_real_durability_without_changing_global_settings ... ok
+test resident::storage::tests::storage_wire_checks_counts_bytes_and_worst_case_read_response_before_admission ... ok
+test resident::storage::tests::write_wire_is_one_ordered_batch_including_empty_values_and_deletion ... ok
+test tests::aoem_state_roundtrip_smoke_is_opt_in ... ok
+test tests::aoem_persistence_capability_paths_are_detectable ... ok
+test tests::keygen_owned_outputs_zero_secret_before_release_and_clean_failure_paths ... ok
+test tests::aoem_state_surface_symbol_types_match_json_abi ... ok
+test tests::semantic_graph_v3_ffi_layout_matches_aoem_header ... ok
+test resident::compute::tests::compute_rejects_task_count_overflow_before_loading_a_library ... ok
+
+test result: ok. 31 passed; 0 failed; 8 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

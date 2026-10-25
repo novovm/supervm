@@ -4,11 +4,14 @@
 //! This is not four-process/machine, mainnet, full PQ consensus or TPS evidence.
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
+use crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
+use crate::native_pipeline::consensus::crypto::AoemConsensusCrypto;
 use config::uca_genesis::{
     UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
     UcaInitializationConfigV1, INITIALIZATION_CONTEXT_V1,
 };
 use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
 use novovm_network::novorudp::object_sender::ObjectSendState;
 use novovm_protocol::{
@@ -57,15 +60,6 @@ fn policy() -> DirectNovFeePolicy {
         mapped_asset_auto_heal_rollback_enabled: false,
         mapped_asset_reorg_response_policy: "report_only".into(),
     }
-}
-
-fn validator_key(index: usize) -> SigningKey {
-    SigningKey::from_bytes(&[31 + index as u8; 32])
-}
-
-// Deterministic material belongs only to this fixture, not deployment keys.
-fn transport_key(index: usize) -> SigningKey {
-    SigningKey::from_bytes(&[151 + index as u8; 32])
 }
 
 fn start(configs: &[ResidentConfig], mode: StartMode) -> Result<Vec<rpc::RpcLifecycle>> {
@@ -313,8 +307,26 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         "keygen/library mismatch"
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/consensus-tests/uca-native-services")
+        .join(format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    std::fs::create_dir_all(&directory)?;
+    let directory = config::native_path(&directory.canonicalize()?);
+    let _credential = config::test_custody::TestCredentialGuard::new(&directory)?;
+    let crypto = AoemConsensusCrypto::new(&runtime)?;
+    let node_keys = (0..4)
+        .map(|index| config::test_custody::generate_node_keys(&directory, 781, index, &crypto))
+        .collect::<Result<Vec<_>>>()?;
+    let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let keys = (0..4)
-        .map(|_| aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 keygen unavailable"))
+        .map(|_| {
+            let pair = keygen.generate_keypair()?;
+            Ok((pair.public_key, pair.expanded_secret_key))
+        })
         .collect::<Result<Vec<_>>>()?;
     let manifest = UcaGenesisManifestV1 {
         genesis: GenesisConfig {
@@ -325,15 +337,23 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
             timestamp_unix_ms: 172_800_500,
             validators: (0..4)
                 .map(|i| GenesisValidator {
-                    public_key: validator_key(i).verifying_key().to_bytes(),
-                    transport_public_key: transport_key(i).verifying_key().to_bytes(),
+                    public_key: node_keys[i].signer.public_key().to_vec(),
+                    transport_public_key: node_keys[i].transport.verifying_key().to_bytes(),
                     weight: 1,
                 })
                 .collect(),
-            allocations: vec![GenesisAllocation {
-                account_hex: "0b".repeat(20),
-                amount: "1000".into(),
-            }],
+            allocations: vec![
+                GenesisAllocation {
+                    account_hex: "0b".repeat(20),
+                    amount: "1000".into(),
+                },
+                // Explicit fixture reserve: issued, but no spend grant. This
+                // is not an approved deployment allocation.
+                GenesisAllocation {
+                    account_hex: "fe".repeat(20),
+                    amount: (NOV_FIXED_SUPPLY_BASE_UNITS - 1000).to_string(),
+                },
+            ],
             policy: policy(),
         },
         accounts: (0..2)
@@ -385,15 +405,6 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
     };
     let mut genesis = manifest.genesis;
     genesis.genesis_config_commitment = domain;
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/runtime-rebuild/consensus-tests/uca-native-services")
-        .join(format!(
-            "{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ));
-    std::fs::create_dir_all(&directory)?;
-    let directory = directory.canonicalize()?;
     println!(
         "UCA original native service evidence={}",
         directory.display()
@@ -407,23 +418,19 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         .collect::<std::io::Result<Vec<_>>>()?;
     let configs = (0..4)
         .map(|i| {
-            let key_file = directory.join(format!("test-validator-{i}.key"));
-            std::fs::write(&key_file, validator_key(i).to_bytes())?;
-            let transport_key_file = directory.join(format!("test-transport-{i}.key"));
-            std::fs::write(&transport_key_file, transport_key(i).to_bytes())?;
             Ok(ResidentConfig {
                 profile: config::ORIGINAL_PROFILE.into(),
                 library: library.clone(),
                 database: directory.join(format!("node-{i}.rocksdb")),
                 rpc_addr: None,
-                signing_key_file: key_file,
-                transport_key_file,
-                key_storage: config::NodeKeyStorage::RawDevelopment,
+                signing_key_file: node_keys[i].validator_path.clone(),
+                transport_key_file: node_keys[i].transport_path.clone(),
+                key_storage: config::NodeKeyStorage::ProtectedV1,
                 udp_addr: addresses[i],
                 peers: (0..4)
                     .filter(|j| *j != i)
                     .map(|j| NativePeerConfig {
-                        public_key: validator_key(j).verifying_key().to_bytes(),
+                        public_key: node_keys[j].signer.public_key().to_vec(),
                         address: addresses[j],
                     })
                     .collect(),

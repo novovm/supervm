@@ -4,7 +4,7 @@ use super::*;
 use crate::native_pipeline::consensus::wire::{
     Context as ConsensusContext, Phase, Validator, ValidatorSet,
 };
-use ed25519_dalek::SigningKey;
+use novovm_consensus::round_bft::test_vectors::FixtureSigningKey;
 use novovm_network::novorudp::fragments::{FragmentAdmission, Reassembler, ReassemblyLimits};
 use std::time::{Duration, Instant};
 
@@ -38,8 +38,8 @@ fn context() -> BatchContext {
 }
 
 fn specimens() -> Vec<Message> {
-    let key = SigningKey::from_bytes(&[7; 32]);
-    let set = ValidatorSet::new(
+    let key = FixtureSigningKey::from_bytes(&[7; 32]);
+    let set = ValidatorSet::new_for_test(
         77,
         1,
         1,

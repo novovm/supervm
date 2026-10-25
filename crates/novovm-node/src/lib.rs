@@ -21,7 +21,6 @@ pub mod native_fresh_rpc;
 pub mod native_fresh_timing;
 pub mod native_pipeline;
 pub mod native_root_codecs;
-pub mod native_round_bft;
 pub mod native_state_records;
 pub mod native_state_storage;
 pub mod native_state_tree;

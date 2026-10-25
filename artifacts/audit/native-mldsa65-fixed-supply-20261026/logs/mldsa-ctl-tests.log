@@ -1,0 +1,122 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling aoem-bindings v0.1.0 (D:\WorksArea\SUPERVM\crates\aoem-bindings)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+   Compiling novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+   Compiling novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+   Compiling web30-core v0.1.0 (D:\WorksArea\SUPERVM\vendor\web30-core)
+   Compiling novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+   Compiling novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+   Compiling novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+   Compiling novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 49.09s
+     Running unittests src\main.rs (target/runtime-rebuild\debug\deps\novovmctl-a2559d4d271fff81.exe)
+
+running 58 tests
+test commands::lifecycle::health::tests::failed_live_query_does_not_fall_back_to_cached_status ... ok
+test commands::lifecycle::health::tests::balances_keep_full_width_and_receipts_do_not_prove_state_reads ... ok
+test commands::evm_block_access_list_scan::tests::inner_run_latest_count_reports_summary ... ok
+test commands::evm_block_access_list_scan::tests::inner_run_from_to_window_works ... ok
+test commands::lifecycle::health::tests::invalid_probe_spec_never_spawns_commands ... ok
+test commands::evm_block_access_list::tests::inner_run_by_number_latest_works ... ok
+test cli::native_nonce_migration::tests::native_nonce_migration_verify_requires_independent_bundle_digest ... ok
+test commands::evm_block_access_list::tests::inner_run_by_hash_returns_payload_report ... ok
+test commands::evm_block_access_list_scan::tests::inner_run_only_problems_filters_healthy_blocks ... ok
+test commands::evm_block_access_list::tests::inner_run_require_complete_rejects_incomplete_payload ... ok
+test commands::evm_block_access_list_scan::tests::inner_run_require_complete_rejects_incomplete_blocks ... ok
+test commands::lifecycle::health::tests::linux_effective_uid_is_not_real_uid_and_mismatch_is_unavailable ... ok
+test commands::lifecycle::health::tests::no_probe_does_not_read_stale_status_or_create_identity ... ok
+test commands::lifecycle::health::tests::live_observations_are_not_full_stack_readiness ... ok
+test commands::lifecycle::health::tests::mailbox_context_mismatch_does_not_execute_as_root_or_hide_invalid_config ... ok
+test cli::native_nonce_migration::tests::native_nonce_migration_parser_requires_explicit_sources_and_pins ... ok
+test commands::lifecycle::health::tests::recovery_and_pending_reads_are_not_ready ... ok
+test commands::lifecycle::health::tests::reject_unpinned_domain_wrong_kind_or_identity ... ok
+test commands::lifecycle::unified::tests::apply_is_explicit_and_conflicts_with_dry_run ... ok
+test cli::native_nonce_migration::tests::native_nonce_upgrade_parser_requires_explicit_target_and_workspace ... ok
+test cli::native_nonce_migration::tests::native_nonce_upgrade_authorization_parser_requires_all_pins_and_documents ... ok
+test commands::lifecycle::unified::tests::no_shell_or_option_unit_injection ... ok
+test cli::native_nonce_migration::tests::native_nonce_source_qc_parser_requires_old_chain_pins_without_upgrade_authority ... ok
+test commands::lifecycle::unified::tests::legacy_force_does_not_override_native_contract ... ok
+test commands::lifecycle::unified::tests::checks_installed_fragment_and_loaded_arguments ... ok
+test commands::lifecycle::unified::tests::native_and_environment_library_must_match_even_if_both_are_pinned ... ok
+test commands::lifecycle::unified::tests::node_credential_rejects_missing_duplicate_and_override_sources ... ok
+test commands::lifecycle::unified::tests::all_targets_checked_before_any_start ... ok
+test commands::lifecycle::unified::tests::install_name_cannot_differ_from_linked_unit ... ok
+test commands::lifecycle::unified::tests::install_refuses_existing_service ... ok
+test commands::lifecycle::unified::tests::node_credential_plan_checks_metadata_not_decryption ... ok
+test commands::lifecycle::unified::tests::pins_aoem_root_plugin_and_variant_to_this_package ... ok
+test commands::lifecycle::unified::tests::rejects_old_package_scope ... ok
+test commands::lifecycle::unified::tests::requires_existing_native_state_and_no_duplicate_overrides ... ok
+test commands::native_nonce_migration::tests::native_nonce_migration_output_checks_windows_case_aliases ... ok
+test commands::lifecycle::unified::tests::credential_directive_changes_still_require_unit_hash_review ... ok
+test commands::lifecycle::unified::tests::refuses_unreviewed_dropins ... ok
+test output::tests::success_envelope_preserves_full_width_economic_integers ... ok
+test commands::native_nonce_migration::tests::native_nonce_migration_missing_inputs_fail_nonzero_without_creation ... ok
+test commands::native_nonce_migration::tests::native_nonce_migration_output_rejects_non_unicode_before_creation ... ok
+test commands::lifecycle::unified::tests::rejects_data_inside_release ... ok
+test commands::lifecycle::unified::tests::rejects_config_changed_after_review ... ok
+test commands::lifecycle::unified::tests::refuses_stale_unit_and_loaded_environment_overrides ... ok
+test commands::native_nonce_migration::tests::native_nonce_source_qc_document_is_regular_nonempty_and_bounded ... ok
+test commands::native_nonce_migration::tests::native_nonce_upgrade_target_mismatch_rejects_before_workspace_access ... ok
+test commands::lifecycle::unified::tests::node_credential_rejects_unowned_or_ambiguous_paths ... ok
+test commands::native_nonce_migration::tests::native_nonce_upgrade_authorization_target_mismatch_rejects_before_file_access ... ok
+test commands::lifecycle::unified::tests::rejects_traversal_even_with_pinned_manifest ... ok
+test commands::native_nonce_migration::tests::native_nonce_upgrade_authorization_documents_are_regular_nonempty_and_bounded ... ok
+test commands::lifecycle::unified::tests::rejects_changed_artifact_even_with_same_filename ... ok
+test runtime::paths::tests::relative_target_dir_is_repo_anchored_and_candidates_use_only_that_target ... ok
+test runtime::paths::tests::directories_never_shadow_real_binary_candidates ... ok
+test commands::lifecycle::unified::tests::rejects_hidden_provision_hooks ... ok
+test runtime::paths::tests::executable_ancestor_anchors_candidates_when_called_from_outside_repo ... ok
+test commands::native_nonce_migration::tests::native_nonce_migration_bundle_digest_rejects_before_decoding ... ok
+test commands::lifecycle::unified::tests::rejects_fresh_legacy_relay_but_preserves_explicit_existing_owner ... ok
+test commands::lifecycle::unified::tests::validates_original_package_and_external_owner ... ok
+test commands::native_nonce_migration::tests::native_nonce_migration_output_never_overwrites_or_enters_ledger ... ok
+
+test result: ok. 58 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests\native_genesis_cli.rs (target/runtime-rebuild\debug\deps\native_genesis_cli-0371335aaedd3857.exe)
+
+running 9 tests
+test actual_aoem_approvals_match_original_startup_and_reject_forgery ... ignored, requires trusted NOVOVM_AOEM_TEST_LIBRARY; uses real AOEM test keys only in memory, never activates a chain
+test prepare_rejects_unknown_nested_grant_field ... ok
+test wrong_domain_rejects_before_approvals_or_library_access ... ok
+test prepare_matches_original_canonical_domain_without_authorizing_or_writing ... ok
+test wrong_library_hash_rejects_before_loading_invalid_library ... ok
+test reordered_manifest_keeps_original_bytes_and_domain ... ok
+test prepare_rejects_oversized_and_trailing_json ... ok
+test prepare_rejects_duplicate_top_level_and_grant_fields ... ok
+test prepare_preserves_full_width_values_instead_of_rounding_through_json_value ... ok
+
+test result: ok. 8 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests\native_identity_cli.rs (target/runtime-rebuild\debug\deps\native_identity_cli-fd075ab26e579757.exe)
+
+running 6 tests
+test actual_mldsa65_validator_generate_inspect_and_rejection_closure ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; actual shared AOEM/custody CLI
+test relative_and_parent_traversal_targets_are_not_created ... ok
+test validator_requires_explicit_qualified_aoem_and_never_falls_back_to_ed25519 ... ok
+test protected_keys_are_independent_and_inspect_is_nonmutating ... ok
+test missing_tampered_and_plain_raw_keys_never_fallback_or_create_files ... ok
+test overwrite_wrong_purpose_and_wrong_domain_fail_without_changes ... ok
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests\native_nonce_checkpoint_cli.rs (target/runtime-rebuild\debug\deps\native_nonce_checkpoint_cli-e88c36da18897cda.exe)
+
+running 9 tests
+test native_nonce_checkpoint_cli_rejects_malformed_bundle_and_missing_arguments_as_json ... ok
+test target_protocol_checks_approved_pin_without_writes_or_activation ... ok
+test native_nonce_upgrade_authorization_cli_verifies_quorum_without_source_mutation_or_activation ... ok
+test native_nonce_checkpoint_cli_exports_and_verifies_without_sources_or_mutation ... ok
+test native_nonce_source_qc_cli_verifies_prepare_chain_read_only_without_sources_or_finality ... ok
+test native_nonce_upgrade_authorization_cli_rejects_forged_quorum_roots_domains_and_pins ... ok
+test native_nonce_upgrade_cli_inspects_partial_artifact_resumes_and_rejects_corruption ... ok
+test native_nonce_upgrade_cli_stages_pinned_proposal_without_source_mutation_or_activation ... ok
+test native_nonce_source_qc_cli_rejects_missing_heights_forged_votes_tampering_and_pins ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+

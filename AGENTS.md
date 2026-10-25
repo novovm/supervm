@@ -1,5 +1,51 @@
 # Agent Highest Law
 
+## 2026-10-26 unified ML-DSA-65 identity migration
+
+ML-DSA-65 single-signature is the first-release target for native consensus,
+native transport/device authentication, service declarations and mailbox/content
+receipts, as well as existing UCA asset authority. Purpose separation remains;
+transport possession never grants voting or spending authority. Reuse existing
+registration, authorization, custody, reconnect and AOEM signing owners. Do not
+retain Ed25519 as a production fallback or optional native authorization route.
+Foreign-chain verification and third-party carrier cryptography are different
+boundaries: inventory actual callers before removal and do not claim they have
+been migrated by renaming fields or wrapping an old carrier.
+
+Internal trial identities need not be preserved indefinitely. First verify new
+protected identities and all affected clients/services, then inventory and retire
+the exact unused identity/registration files and superseded implementations.
+B's running mailbox/Relay/Web identities require verified cutover and separate
+cleanup approval; this does not authorize deleting live services or chat data.
+Retain downgrade counterexamples and historical evidence, not dead production
+APIs. Signing migration does not establish post-quantum key agreement.
+See the current source/caller map in the first-release signature contract.
+
+## 2026-10-26 one complete implementation for rehearsal and formal genesis
+
+The user requires the full intended genesis, allocation/restriction, spending,
+funded-service settlement and recovery implementation BEFORE launch, not a
+reduced test economy followed by a different production product. Rehearse that
+SAME implementation and complete approved configuration for about one month;
+time elapsed alone does not replace economic, fault, privacy/proof and multi-host
+acceptance. Internally bounded commits are allowed, but isolated APIs are not
+the end-to-end exit condition. Consensus signing must use the same approved
+ML-DSA-65 single-signature owner now, not a later Ed25519-mainnet upgrade.
+
+Latest naming correction: use NOV in asset names, wallets and UI; do not require
+a "test NOV" label or create a different test token/economic implementation.
+The user currently uses the system privately and intends one reset at formal
+launch. Record unreleased/resettable deployment status internally, not as a
+different denomination. Formal irreversible issuance requires explicit launch
+approval, final allocation/beneficiary/governance
+parameters and a fresh chain/signing domain; do not sign again in a cleared old
+domain. This instruction does not activate A-D or authorize changes to B services.
+The economic inventory at `66e652d2` is a discussion draft to design on A, not
+approval of candidate allocation/split/lock numbers. Latest economics are
+pay-as-you-go; the old minimum USD 5 founder subscription share is cancelled.
+Keep the fixed 100 million NOV / 9 decimals / no later native mint-or-burn rule.
+See [complete rehearsal and funded-closure design](docs/NOVOVM-ECONOMICS/NOV-GENESIS-AND-FUNDED-SERVICE-CLOSURE-DESIGN-2026-10-25.md).
+
 ## 2026-10-25 explicitly retire old main-chain test state
 
 The user now authorizes deletion, without keeping backups, of obsolete main-chain

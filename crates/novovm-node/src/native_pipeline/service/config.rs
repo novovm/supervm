@@ -13,15 +13,25 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
+use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+pub(crate) mod test_custody;
 pub mod uca_genesis;
 
 pub const PROFILE: &str = "native-resident-udp-v1";
 /// Existing original node tick mode, not another bootstrap/runtime mode.
 pub const ORIGINAL_PROFILE: &str = "native_execution_tick";
+
+/// Bounded local JSON document, not canonical wire or an economic capacity
+/// limit. Includes 64 ML-DSA validator keys, their routes, and the existing
+/// bounded 32-account/8-grant UCA initialization plus management approvals.
+/// Pretty JSON arrays expand these binary keys; canonical manifest limits and
+/// all member/authorization bounds remain independently enforced.
+pub const MAX_STARTUP_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Local deployment settings do not enter the genesis commitment.
 #[derive(Clone, Debug, Deserialize)]
@@ -73,7 +83,8 @@ pub enum NodeKeyStorage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativePeerConfig {
-    pub public_key: Hash,
+    /// ML-DSA-65 validator identity, not the independent UDP transport key.
+    pub public_key: Vec<u8>,
     pub address: SocketAddr,
 }
 
@@ -93,7 +104,7 @@ pub struct GenesisConfig {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenesisValidator {
-    pub public_key: Hash,
+    pub public_key: Vec<u8>,
     pub transport_public_key: Hash,
     pub weight: u64,
 }
@@ -111,7 +122,7 @@ pub struct GenesisAllocation {
 pub fn protocol_commitment() -> Hash {
     let mut hash = Sha256::new();
     hash.update(
-        b"novovm/native-resident-v1/round-bft-v1/candidate-store-v1/transport-binding-v1\0",
+        b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v2/fixed-nov-1e17\0",
     );
     hash.update(program_id());
     hash.update(SEMANTIC_VERSION.to_be_bytes());
@@ -129,12 +140,16 @@ impl ResidentConfig {
         let path = path
             .canonicalize()
             .context("resolve resident configuration")?;
+        let mut bytes = Vec::new();
+        std::fs::File::open(&path)?
+            .take((MAX_STARTUP_DOCUMENT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)?;
         ensure!(
-            std::fs::metadata(&path)?.len() <= 1024 * 1024,
-            "resident configuration exceeds 1 MiB"
+            bytes.len() <= MAX_STARTUP_DOCUMENT_BYTES,
+            "resident configuration exceeds bounded startup document size"
         );
-        let mut config: Self = serde_json::from_slice(&std::fs::read(&path)?)
-            .context("decode resident configuration")?;
+        let mut config: Self =
+            serde_json::from_slice(&bytes).context("decode resident configuration")?;
         let base = path.parent().context("configuration has no directory")?;
         for target in [
             &mut config.library,
@@ -161,6 +176,8 @@ impl ResidentConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(self.key_storage == NodeKeyStorage::ProtectedV1,
+            "ML-DSA-65 node startup requires protected purpose custody; raw development keys are retired");
         ensure!(
             self.profile == ORIGINAL_PROFILE || self.profile == PROFILE,
             "configuration must select native_execution_tick or the historical native-resident-udp-v1 profile"
@@ -213,7 +230,7 @@ impl ResidentConfig {
                 "invalid native remote address"
             );
             ensure!(
-                addresses.insert(peer.address) && keys.insert(peer.public_key),
+                addresses.insert(peer.address) && keys.insert(peer.public_key.clone()),
                 "duplicate native peer route"
             );
             ensure!(
@@ -316,7 +333,7 @@ impl GenesisConfig {
             set,
             self.validators
                 .iter()
-                .map(|v| (v.public_key, v.transport_public_key)),
+                .map(|v| (v.public_key.clone(), v.transport_public_key)),
         )
     }
 
@@ -341,7 +358,7 @@ impl GenesisConfig {
             1,
             self.validators
                 .iter()
-                .map(|v| Validator::new(v.public_key, v.weight))
+                .map(|v| Validator::new(&v.public_key, v.weight))
                 .collect::<Result<Vec<_>>>()?,
         )?);
         self.transport_bindings(&set)?;
@@ -371,6 +388,7 @@ impl GenesisConfig {
                 value: amount.to_le_bytes().to_vec(),
             });
         }
+        crate::native_pipeline::business::fixed_supply::validate_genesis_supply([supply])?;
         let state = stage_state_update(&Empty, empty_root(), &changes)?;
         Ok((set, state))
     }
@@ -438,9 +456,8 @@ mod tests {
                     transport_public_key: ed25519_dalek::SigningKey::from_bytes(&[100 + seed; 32])
                         .verifying_key()
                         .to_bytes(),
-                    public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
-                        .verifying_key()
-                        .to_bytes(),
+                    // Encoding-only fixture; this is never a qualified signer.
+                    public_key: vec![seed; 1952],
                     weight: 1,
                 })
                 .collect(),
@@ -451,7 +468,10 @@ mod tests {
                 },
                 GenesisAllocation {
                     account_hex: "02".repeat(20),
-                    amount: "2000".into(),
+                    amount:
+                        (crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
+                            - 1000)
+                            .to_string(),
                 },
             ],
         }
@@ -578,8 +598,9 @@ mod tests {
             "old approved pin must reject swapped bindings"
         );
         let mut bad = base.clone();
-        bad.validators[0].transport_public_key = base.validators[1].public_key;
+        bad.validators[0].public_key = base.validators[1].transport_public_key.to_vec();
         assert!(bad.derive_commitment().is_err());
+        bad = base.clone();
         bad.validators[0].transport_public_key = base.validators[1].transport_public_key;
         assert!(bad.derive_commitment().is_err());
         let mut encoded = serde_json::to_value(base).unwrap();
@@ -662,11 +683,45 @@ mod tests {
             .join(format!("{}-{unique}", std::process::id()));
         std::fs::create_dir_all(&root)?;
         let root = root.canonicalize()?;
-        let key_file = root.join("signer.key");
-        std::fs::write(&key_file, [1_u8; 32])?; // Test-only signer, never a profile default.
+        let _credential = test_custody::TestCredentialGuard::new(&root)?;
+        let runtime = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
+        let crypto =
+            runtime.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
+        let key_file = root.join("signer.sealed");
+        let validator = novovm_relay::purpose_keys::generate_validator(
+            &key_file,
+            71,
+            || {
+                let pair = crypto.generate_keypair()?;
+                novovm_relay::purpose_keys::ValidatorKeyMaterialV2::new(
+                    pair.public_key,
+                    pair.expanded_secret_key,
+                )
+            },
+            |public, secret, message| {
+                crypto
+                    .sign(
+                        public,
+                        secret,
+                        message,
+                        novovm_relay::purpose_keys::VALIDATOR_PAIR_CONTEXT,
+                    )
+                    .map(|_| ())
+                    .map_err(Into::into)
+            },
+        )?;
         let transport_file = root.join("test-only-transport.key");
-        std::fs::write(&transport_file, [101_u8; 32])?;
+        let transport = novovm_relay::purpose_keys::generate(
+            &transport_file,
+            novovm_relay::purpose_keys::PurposeV1::Transport,
+            71,
+        )?;
         let mut genesis = genesis();
+        genesis.validators[0].public_key = validator.public_key;
+        genesis.validators[0].transport_public_key = transport
+            .public_key
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("transport fixture key shape"))?;
         genesis.genesis_config_commitment = genesis.derive_commitment()?;
         let config = ResidentConfig {
             native_client_limit: 0,
@@ -676,7 +731,7 @@ mod tests {
             rpc_addr: Some("127.0.0.1:0".parse()?),
             signing_key_file: key_file,
             transport_key_file: transport_file,
-            key_storage: NodeKeyStorage::RawDevelopment,
+            key_storage: NodeKeyStorage::ProtectedV1,
             udp_addr: "127.0.0.1:0".parse()?,
             peers: genesis
                 .validators
@@ -684,7 +739,7 @@ mod tests {
                 .skip(1)
                 .enumerate()
                 .map(|(i, v)| NativePeerConfig {
-                    public_key: v.public_key,
+                    public_key: v.public_key.clone(),
                     address: std::net::SocketAddr::from(([127, 0, 0, 1], 31002 + i as u16)),
                 })
                 .collect(),

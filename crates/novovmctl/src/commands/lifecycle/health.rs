@@ -1,6 +1,9 @@
 //! Read-only observations through existing product entrypoints. A configuration
 //! check, TCP accept, or saved status file is never authenticated service health.
 //! This module does not provision keys, send transactions, or write custody.
+use novovm_exec::pq_signature::AoemMldsaParameterSet;
+use novovm_node::native_pipeline::service::client::operator::MAX_CLIENT_CONFIG_BYTES;
+use novovm_node::native_pipeline::service::config::NativePeerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -170,14 +173,20 @@ struct ClientIdentity {
     chain_id: u64,
     genesis: [u8; 32],
     protocol: [u8; 32],
-    node: PeerIdentity,
+    node: NativePeerConfig,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-struct PeerIdentity {
-    public_key: [u8; 32],
-    address: SocketAddr,
+impl ClientIdentity {
+    fn validate_validator_identity(&self) -> Result<(), ProbeFailure> {
+        // Exactly the original client's validator identity, not its independent
+        // 32-byte transport key. The original client/config owns that binding.
+        if self.node.public_key.len() != AoemMldsaParameterSet::MlDsa65.public_key_bytes()
+            || self.node.public_key.iter().all(|byte| *byte == 0)
+        {
+            return Err(ProbeFailure::Failed);
+        }
+        Ok(())
+    }
 }
 
 struct ProductProbes;
@@ -271,13 +280,16 @@ impl ProbeRunner for ProductProbes {
         let mut bytes = Vec::new();
         File::open(config)
             .map_err(|_| ProbeFailure::Failed)?
-            .take((MAX_OUTPUT_BYTES + 1) as u64)
+            .take((MAX_CLIENT_CONFIG_BYTES + 1) as u64)
             .read_to_end(&mut bytes)
             .map_err(|_| ProbeFailure::Failed)?;
-        if bytes.len() > MAX_OUTPUT_BYTES {
+        if bytes.len() > MAX_CLIENT_CONFIG_BYTES {
             return Err(ProbeFailure::OutputBound);
         }
-        serde_json::from_slice(&bytes).map_err(|_| ProbeFailure::Failed)
+        let identity: ClientIdentity =
+            serde_json::from_slice(&bytes).map_err(|_| ProbeFailure::Failed)?;
+        identity.validate_validator_identity()?;
+        Ok(identity)
     }
 
     fn rendezvous_context(&mut self, config: &Path) -> OwnerContext {
@@ -551,13 +563,16 @@ fn parse_answer(bytes: &[u8], expected: &ClientIdentity) -> Result<Value, ProbeF
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ProbeFailure::Failed)?;
     let identity: ClientIdentity =
         serde_json::from_value(value.clone()).map_err(|_| ProbeFailure::Failed)?;
+    identity.validate_validator_identity()?;
+    expected.validate_validator_identity()?;
     if value["scope"] != "native_sdk_operator_v1"
         || value["result"]["kind"] != "node_observation"
         || value["result"]["independently_verified_finality"] != false
         || identity.chain_id != expected.chain_id
         || identity.genesis != expected.genesis
         || identity.protocol != expected.protocol
-        || identity.node != expected.node
+        || identity.node.public_key != expected.node.public_key
+        || identity.node.address != expected.node.address
         || expected.genesis == [0; 32]
         || expected.protocol == [0; 32]
     {
@@ -671,8 +686,8 @@ mod tests {
             chain_id: 9,
             genesis: [1; 32],
             protocol: [2; 32],
-            node: PeerIdentity {
-                public_key: [3; 32],
+            node: NativePeerConfig {
+                public_key: vec![3; 1952],
                 address: "127.0.0.1:41050".parse().unwrap(),
             },
         }
@@ -825,6 +840,84 @@ mod tests {
             *field = replacement;
             assert!(parse_answer(&serde_json::to_vec(&changed).unwrap(), &identity()).is_err());
         }
+    }
+
+    #[test]
+    fn native_health_uses_current_mldsa_validator_identity_not_transport_key() {
+        let original: Value = serde_json::from_slice(&envelope(status(false))).unwrap();
+        assert!(parse_answer(&serde_json::to_vec(&original).unwrap(), &identity()).is_ok());
+        for key in [vec![3; 32], vec![3; 1951], vec![3; 1953], vec![0; 1952]] {
+            let mut changed = original.clone();
+            changed["node"]["public_key"] = json!(key);
+            let invalid: ClientIdentity = serde_json::from_value(changed.clone()).unwrap();
+            assert!(invalid.validate_validator_identity().is_err());
+            // Matching two invalid identities must not turn a transport key or
+            // wrong-width validator into an accepted observation.
+            assert!(parse_answer(&serde_json::to_vec(&changed).unwrap(), &invalid).is_err());
+            assert!(parse_answer(&serde_json::to_vec(&changed).unwrap(), &identity()).is_err());
+        }
+    }
+
+    #[test]
+    fn native_health_reads_pretty_mldsa_configs_with_shared_budget_not_output_budget() {
+        use novovm_node::native_pipeline::service::{
+            client::operator::ClientConfig, GenesisValidator,
+        };
+        let root = std::env::temp_dir().join(format!(
+            "novovm-health-client-budget-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("client.json");
+        let mut probes = ProductProbes;
+        for count in [4, 64] {
+            let validators: Vec<_> = (0..count)
+                .map(|index| {
+                    // Only public metadata is needed to exercise file parsing.
+                    let mut public_key = vec![255; 1952];
+                    public_key[..8].copy_from_slice(&(index as u64).to_be_bytes());
+                    GenesisValidator {
+                        public_key,
+                        transport_public_key: [index as u8 + 1; 32],
+                        weight: 1,
+                    }
+                })
+                .collect();
+            let config = ClientConfig {
+                chain_id: 9,
+                genesis: [1; 32],
+                protocol: [2; 32],
+                validator_epoch: 1,
+                node: NativePeerConfig {
+                    public_key: validators[0].public_key.clone(),
+                    address: "127.0.0.1:41050".parse().unwrap(),
+                },
+                validators,
+                bind_addr: "127.0.0.1:0".parse().unwrap(),
+                transport_key_file: "not-read.key".into(),
+                timeout_ms: 1000,
+            };
+            let bytes = serde_json::to_vec_pretty(&config).unwrap();
+            assert!(bytes.len() > MAX_OUTPUT_BYTES);
+            assert!(bytes.len() < MAX_CLIENT_CONFIG_BYTES);
+            std::fs::write(&path, &bytes).unwrap();
+            let observed = probes.client_identity(&path).unwrap();
+            assert_eq!(observed.node.public_key, config.node.public_key);
+            assert_eq!(observed.node.address, config.node.address);
+            assert_eq!(observed.chain_id, config.chain_id);
+            assert!(!root.join("not-read.key").exists());
+        }
+        std::fs::write(&path, vec![b' '; MAX_CLIENT_CONFIG_BYTES + 1]).unwrap();
+        assert!(matches!(
+            probes.client_identity(&path),
+            Err(ProbeFailure::OutputBound)
+        ));
+        // Configuration capacity must not enlarge child-output acceptance.
+        assert!(parse_answer(&vec![b' '; MAX_OUTPUT_BYTES + 1], &identity()).is_err());
     }
 
     #[test]

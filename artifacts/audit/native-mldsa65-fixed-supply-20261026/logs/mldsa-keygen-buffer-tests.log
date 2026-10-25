@@ -1,0 +1,31 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling serde_core v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling aoem-bindings v0.1.0 (D:\WorksArea\SUPERVM\crates\aoem-bindings)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.72s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\aoem_bindings-f211b0ea66c4032f.exe)
+
+running 1 test
+test tests::keygen_owned_outputs_zero_secret_before_release_and_clean_failure_paths ... FAILED
+
+failures:
+
+---- tests::keygen_owned_outputs_zero_secret_before_release_and_clean_failure_paths stdout ----
+
+thread 'tests::keygen_owned_outputs_zero_secret_before_release_and_clean_failure_paths' (19256) panicked at crates\aoem-bindings\src\lib.rs:3892:17:
+assertion `left == right` failed
+  left: ([5, 0, 0, 0], [7, 0, 0, 0, 7, 0, 0, 0])
+ right: ([5, 5, 5, 5], [7, 7, 7, 7, 7, 7, 7, 7])
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::keygen_owned_outputs_zero_secret_before_release_and_clean_failure_paths
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p aoem-bindings --lib`

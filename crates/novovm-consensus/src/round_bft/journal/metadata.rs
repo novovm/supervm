@@ -9,11 +9,11 @@ use std::collections::BTreeSet;
 
 pub const MAX_KEYS: usize = 8;
 const MAX_GUARDS: usize = 2;
-// Accommodates the bounded 1024-validator certificate/outbox profile while
-// retaining the independent 1 MiB total expected-plus-new transition budget.
-pub const MAX_VALUE_BYTES: usize = 512 * 1024;
-pub const MAX_TRANSITION_BYTES: usize = 1024 * 1024;
-const PREFIX: &[u8] = b"m/consensus/v1/";
+// Derived from the fixed 1024-validator ML-DSA-65 wire bound; not an
+// unbounded allocation or a relaxation of per-key/transition accounting.
+pub const MAX_VALUE_BYTES: usize = super::super::wire::MAX_WIRE_BYTES + 16 * 1024;
+pub const MAX_TRANSITION_BYTES: usize = 3 * MAX_VALUE_BYTES;
+const PREFIX: &[u8] = b"m/consensus/v2-mldsa65/";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MetaKey {

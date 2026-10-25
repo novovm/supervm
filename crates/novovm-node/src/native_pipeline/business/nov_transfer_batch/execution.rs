@@ -518,6 +518,18 @@ pub(super) fn stage_results(
     spend_outputs: Option<Vec<SpendOutput>>,
 ) -> Result<ExecutedNovBatch> {
     fees.validate()?;
+    // One invariant boundary for CPU, integer composition and proof-side
+    // evaluation. Check final output against the exact captured parent before
+    // staging any balance, budget, nonce or fee leaf; never repair a result.
+    crate::native_pipeline::business::fixed_supply::validate_candidate_conservation(
+        &prepared.balances,
+        &balances,
+        &prepared.fees,
+        &fees,
+        receipts
+            .iter()
+            .filter_map(|receipt| receipt.journal.as_ref().map(|entry| entry.settled_nov)),
+    )?;
     let mut changes =
         record_pages::record_changes(FEE_PREFIX, &postcard::to_allocvec(&fees)?, FEE_BYTES)?;
     ensure!(

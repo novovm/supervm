@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::native_pipeline::consensus::wire::{Phase, Validator, ValidatorSet};
-use ed25519_dalek::SigningKey;
+use novovm_consensus::round_bft::test_vectors::FixtureSigningKey;
 
 fn limits() -> DecodeLimits {
     DecodeLimits {
@@ -420,8 +420,8 @@ fn both_new_payloads_reject_every_truncation_trailing_data_and_unknown_versions(
 }
 
 fn legacy_specimens() -> Vec<Message> {
-    let key = SigningKey::from_bytes(&[7; 32]);
-    let set = ValidatorSet::new(
+    let key = FixtureSigningKey::from_bytes(&[7; 32]);
+    let set = ValidatorSet::new_for_test(
         77,
         3,
         1,
