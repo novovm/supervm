@@ -12,6 +12,10 @@ sha2 = "0.10.9"
 thiserror = "1"
 novovm-governance-observability = { path = "../novovm-governance-observability" }
 novovm-node = { path = "../novovm-node" }
+novovm-exec = { path = "../novovm-exec" }
 
 [dev-dependencies]
+aoem-bindings = { path = "../aoem-bindings" }
+ed25519-dalek = "2"
+novovm-protocol = { path = "../novovm-protocol" }
 rocksdb = { version = "0.22", default-features = false }

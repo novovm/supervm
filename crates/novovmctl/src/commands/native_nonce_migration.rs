@@ -255,7 +255,11 @@ fn decode_authority_v1(bytes: &[u8]) -> Result<NovNativeSealEpochAuthorityV1, Ct
     Ok(authority)
 }
 
-fn read_bounded_document_v1(path: &Path, maximum: usize, label: &str) -> Result<Vec<u8>, CtlError> {
+pub(super) fn read_bounded_document_v1(
+    path: &Path,
+    maximum: usize,
+    label: &str,
+) -> Result<Vec<u8>, CtlError> {
     let failed = |error| CtlError::FileReadFailed(format!("{label} {}: {error}", path.display()));
     let metadata = fs::metadata(path).map_err(failed)?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > maximum as u64 {

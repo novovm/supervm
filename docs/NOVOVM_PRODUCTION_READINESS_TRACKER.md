@@ -1,5 +1,17 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-25 D包后续：原初始化编译器只读操作接线
+
+D固定ec7b069e统一包真实构建通过、26bb8593回执提交CI成功；仍未安装运行。
+A在原novovmctl接入 `native-genesis prepare / verify-approvals`，复用原节点规范字节、
+ML-DSA-65管理批准和状态树编译，不新增初始化引擎。显式域/库hash，完整u128输出，
+未知授权字段拒绝；派生三pin和配置片段仅供独立审核，不授权启动或新创世。
+Windows本机54单元＋17CLI、另1项真实AOEM签验、严格Clippy与fmt通过。
+[实施及失败记录](NOVOVM_DELIVERY_ALIGNMENT.md#2026-10-25-a-接续-d只读创世准备接线工具通过未激活链)，
+[D后续交接](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#a后续接线原创世编译器的只读操作入口)。
+新公测域/共同配置仍需明确选择；未生成部署密钥、创建数据库或改B原服务。
+验证者签票仍Ed25519，不将ML-DSA-65资产路径签成全节点抗量子；正式发布未授权。
+
 ## 2026-10-25 统一包v3与原生命周期管理适配（未部署）
 
 输入 `0d8a69c1`。原Linux打包器纳入11个原程序，新增实际信箱owner、Relay与novovmctl，

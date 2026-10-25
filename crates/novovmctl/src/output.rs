@@ -18,18 +18,29 @@ pub fn host_name() -> String {
 }
 
 pub fn print_success_json<T: Serialize>(command: &str, data: &T) -> Result<(), CtlError> {
-    let envelope = json!({
-        "ok": true,
-        "command": command,
-        "timestamp_unix_ms": now_unix_ms(),
-        "host": host_name(),
-        "data": data,
-    });
-
-    let rendered = serde_json::to_string_pretty(&envelope)
-        .map_err(|e| CtlError::FileWriteFailed(format!("serialize success json: {e}")))?;
+    let rendered = render_success_json(command, data)?;
     println!("{rendered}");
     Ok(())
+}
+
+fn render_success_json<T: Serialize>(command: &str, data: &T) -> Result<String, CtlError> {
+    // Preserve typed u128 economics instead of constructing a Value in json!.
+    #[derive(Serialize)]
+    struct Envelope<'a, T> {
+        ok: bool,
+        command: &'a str,
+        timestamp_unix_ms: u64,
+        host: String,
+        data: &'a T,
+    }
+    serde_json::to_string_pretty(&Envelope {
+        ok: true,
+        command,
+        timestamp_unix_ms: now_unix_ms(),
+        host: host_name(),
+        data,
+    })
+    .map_err(|e| CtlError::FileWriteFailed(format!("serialize success json: {e}")))
 }
 
 pub fn print_error_json(command: &str, err: &CtlError) {
@@ -245,5 +256,27 @@ fn error_kind(err: &CtlError) -> &'static str {
         CtlError::BinaryNotFound(_) => "BinaryNotFound",
         CtlError::ProcessLaunchFailed(_) => "ProcessLaunchFailed",
         CtlError::IntegrationFailed(_) => "IntegrationFailed",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn success_envelope_preserves_full_width_economic_integers() {
+        #[derive(Serialize, serde::Deserialize)]
+        struct Amount {
+            value: u128,
+        }
+        #[derive(serde::Deserialize)]
+        struct ResultEnvelope {
+            ok: bool,
+            data: Amount,
+        }
+        let text = render_success_json("test-only", &Amount { value: u128::MAX }).unwrap();
+        assert!(text.contains(&u128::MAX.to_string()));
+        let decoded: ResultEnvelope = serde_json::from_str(&text).unwrap();
+        assert!(decoded.ok);
+        assert_eq!(decoded.data.value, u128::MAX);
     }
 }

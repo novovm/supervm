@@ -3178,9 +3178,13 @@ dependencies = [
 name = "novovmctl"
 version = "0.1.0"
 dependencies = [
+ "aoem-bindings",
  "clap",
+ "ed25519-dalek 2.2.0",
+ "novovm-exec",
  "novovm-governance-observability",
  "novovm-node",
+ "novovm-protocol",
  "rocksdb",
  "serde",
  "serde_json",

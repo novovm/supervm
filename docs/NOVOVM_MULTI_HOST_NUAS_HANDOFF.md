@@ -6,6 +6,57 @@
 
 ## 2026-10-25 统一包v3交接给D
 
+### A后续接线：原创世编译器的只读操作入口
+
+`26bb8593` 的 CI [40176301431](https://github.com/novovm/supervm/actions/runs/40176301431)
+已 completed/success；这是该固定提交的检查结果，不是本节后续改动或部署验收。
+当前阻断不是要求 D 重编全部程序：D 没有获批共同链配置和本轮原库。
+管理器的 `plan` 仅检查数据库目录存在，不验证账本；建空目录来满足它仍会在
+`START=existing` 启动失败。不得用 fixture 或空库冒充恢复。
+
+原能力复用位置：
+
+- [原 UCA 初始化编译器](../crates/novovm-node/src/native_pipeline/service/config/uca_genesis.rs)：
+  `canonical_bytes/signing_domain/compile`，批准签名、初始状态和最终承诺。
+- [原服务启动](../crates/novovm-node/src/native_pipeline/service.rs)：
+  `CreateNew` 在三 pin 校验后安装初始状态；`Existing` 只校验，不自动补建。
+- [新增原管理工具消费者](../crates/novovmctl/src/commands/native_genesis.rs)：
+  只读准备、签名验证及派生配置片段；不是新初始化服务。
+
+以下命令**需要包含本节改动的新 novovmctl**；D 的固定 ec7b069e 包没有这些子命令。
+可先在新固定源码构建 `cargo build -p novovmctl --release --locked`，将管理程序作为
+单独审核工具记录源码及哈希；不覆盖已封存包，不修改旧 manifest，也不把新管理程序
+称作旧包制品。其余节点二进制和 AOEM 本片不变。
+
+```text
+novovmctl native-genesis prepare --manifest <公开清单.json>
+novovmctl native-genesis verify-approvals --manifest <同一公开清单.json> --approvals <管理签名数组.json> --expected-domain <独立审核的64位hex域> --library <固定AOEM核心库> --library-sha256 <包记录的64位hex哈希>
+```
+
+清单直接使用原 `UcaGenesisManifestV1`，不提供默认身份、资金、费率或批准值。
+`prepare` 输出原规范消息 hex、独立 context hex 和观测域；**签完整消息，不签域摘要**。
+消息未加 framing；原 `AoemExecFacade::mldsa_signer_v1(MlDsa65).sign` 添加一次 context framing，
+调用方不得再次添加。各管理钥匙持有人沿共享接口签同一清单，私钥不进入此工具、不上传。
+1 MiB文件边界先于解析；拒绝未知授权字段、重复字段及尾随JSON；金额保留u128类型，
+不能由通用JavaScript浮点JSON读写器改写大整数。JSON仅为离线操作文件，不改变原生wire。
+
+`verify-approvals` 在加载前核对显式库哈希，再复用原exec/loader/编译器；库须位于操作员
+控制的不可变可信发布目录，路径解析和前后哈希不构成抵御恶意本机替换者的硬件证明。
+输出 `review_only_startup_fragment` 中的 genesis 和 uca_initialization 可供审核，
+不含数据库、签票私钥路径或 START=create。派生根和最终承诺仍须独立核对并分发。
+两个命令均不创建文件/密钥/数据库，不启动服务；`activation_ready`、`state_published`、
+`operator_launch_authorized`、`existing_uca_authority_verified` 始终为 false。
+管理签名正确不能自行证明这是旧链可信UCA或操作员已批准新域。
+
+剩余顺序：A确认沿用原域还是新隔离公测域 → 各机本地保管用途身份并交换公钥/可达地址
+→ 独立审核测试分配、费用与全体管理批准 → 同一原编译器核对三pin
+→ 显式批准原节点 CreateNew 或既有库恢复 → 正常服务 START=existing 和统一plan。
+不得由 install 偷偷创世。当前验证者签票仍为Ed25519，资产管理/花费采用ML-DSA-65；
+本工具不将局部升级冒充全节点抗量子或正式上线。
+
+原信箱安全首装仍由 `scripts/linux/install-owned-mailbox.sh` 实现；它会创建身份并启动，
+不是此只读准备的隐式步骤。B已有信箱不能重跑；其 current 链接安全接管缺口仍保留。
+
 **D显式回执 `D-UNIFIED-LINUX-ec7b069e` 已完成构建阶段：** 固定源码
 `ec7b069e7e0728005941e91de8fcd867012d987c`，11程序真实Linux构建、全部前置测试、
 归档及85文件解包核验通过。归档SHA-256：
