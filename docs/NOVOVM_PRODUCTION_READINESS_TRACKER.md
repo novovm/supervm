@@ -1,5 +1,26 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-25 原节点签票/传输用途分离（本机通过，四机仍准备）
+
+输入`424be495`；原GenesisValidator增加完整独立传输映射，摘要进入原普通创世承诺和
+UcaGenesisManifest规范批准字节。原NativeChannel/lifecycle按认证传输身份映射验证者，
+原journal仍用独立签票钥匙；不增加网络、共识、账本或发布权威。旧同钥配置显式拒绝。
+原novovmctl增离线generate/inspect，复用Windows DPAPI/Linux原受保护credential与加密
+文件owner；generate只create-new，inspect不创建缺失文件。原打包器/管理器要求独立用途
+文件与节点专用credential。Windows ACL和Linux真实运行账户资格仍须部署前核验。
+
+Windows最终流水线428通过/69忽略，ctl 58单元＋21 CLI、原service真实AOEM两种custody
+启动/恢复2项、原文件owner7项、relay用途2项通过。最终原节点四进程NUAS与A/A/B通过；
+NUAS健康3节点推进40高度，135.423秒后启动缺席端，追赶h1强杀后原库恢复，到账再次消费，
+最终四方h41、根/回执/费用/nonce/预算一致。单机debug172.862秒，不是TPS或四机成绩。
+Clippy/fmt及原Linux包合成/拒绝夹具通过；Linux真实构建、安装和远端CI分别记录，未冒充通过。
+
+A–D真实公钥、共同新域与批准分配尚待汇总，三pin由原编译器派生，不填fixture或假根。
+未启动新链、未生成实际部署私钥、未分配NOV，B信箱/Relay/Web不动。节点签票与传输
+仍为Ed25519测试限制；UCA花费ML-DSA-65不变，不宣称全节点抗量子完成。
+[实现与原始证据](../artifacts/audit/native-purpose-identities-20261025/README.md)，
+[各机准备说明](NOVOVM_PURPOSE_IDENTITY_PREPARATION.md)。
+
 ## 2026-10-25 D包后续：原初始化编译器只读操作接线
 
 D固定ec7b069e统一包真实构建通过、26bb8593回执提交CI成功；仍未安装运行。

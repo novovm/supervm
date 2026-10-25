@@ -1,5 +1,35 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-25 A交付：原节点用途身份与准备入口（本机验证，未启链）
+
+输入 `424be495`，用户明确A统一实现，C/D各机清点、退役旧测试链并验证准备，B原服务不动。
+root负责原 `service/config.rs`、UCA创世编码、`service.rs`、operator及部署接线；
+identity_binding_review负责原NativeChannel/lifecycle可信路由；purpose_key_preparation负责
+复用原relay平台custody及原novovmctl准备入口；split_identity_fixtures仅负责原回归夹具。
+同main、文件互斥、root单槽构建，无新runtime/握手/账本/密码算法。
+
+替换边界：输入版本一个signing_key同时供journal和NovoRUDP，远端又从transport peerid猜validator。
+本片已改为在原GenesisValidator内显式给出签票公钥与独立传输公钥，一一对应且两集合不交叠；
+规范映射摘要同时进入原普通创世承诺及UcaGenesisManifest规范批准字节，更新原协议pin。
+端点属于本机路由配置，不充当身份凭证；原握手验证传输持钥，原共识仍验证签票与QC。
+提案来源必须匹配绑定，合法转发的签票/QC仍按原证据规则处理。先查绑定和本机钥匙再开库。
+不保留未发布旧节点的同钥默认回退；测试夹具显式生成分开的测试用途材料。
+
+准备复用原Windows账户DPAPI、Linux受保护credential及文件所有权原语，不调用信箱owner.run。
+生成动作只create-new用途密钥；inspect校验用途/公钥/域，只输出公开材料，不签票、监听或开库。
+Windows最终运行账户与准备账户须一致；Linuxcredential预先合法配置，不借用B服务密钥。
+当前验证者/传输仍为Ed25519测试限制，UCA花费ML-DSA-65不变，不能称全节点PQ已完成。
+共同配置缺少真实公钥、分配批准时明确pending，不用fixture伪造最终根，不激活新链。
+
+最终Windows源码回归428通过、69明确忽略；ctl 58单元与21 CLI通过；原service真实AOEM
+raw/protected启动与冷恢复2通过，原文件owner7通过，原A/A/B进程1通过。最终重建node
+`6cadfaf5…a05a5a07`的四进程NUAS通过：健康3节点h40、135.423秒晚启动、追赶h1强杀、
+原库追平及收款再消费后四方h41；总172.862秒，非TPS。原打包夹具、严格Clippy/fmt通过。
+通用文件owner仅从Iroh条件编译解耦，保留原服务重导出与原持久协议，不启用另一网络。
+Linux credential/运行账户、真实包安装、A–D跨机仍待验收；未生成实际部署密钥，B未操作。
+[实现、两次制品与失败记录](../artifacts/audit/native-purpose-identities-20261025/README.md)，
+[C/D准备及共同配置待定项](NOVOVM_PURPOSE_IDENTITY_PREPARATION.md)。
+
 ## 2026-10-25 用户确认：退役旧测试链，只准备新隔离公测链
 
 最新授权仅包含**旧主链测试账本、创世/运行配置、余额与nonce、签票日志及专用测试密钥**，
@@ -18,7 +48,8 @@ A负责本机逐路径清理及协调；B/C/D按本机清单和执行回执分�
 派生，材料缺失时标待生成，不填零根或fixture。这覆盖较早交接的“禁止清库/必须提供原库”，
 不取消新链启动后真实重启、追赶和故障验收。
 
-准备期源码核对（8b97762c）：原 `ResidentConfig.signing_key_file` 同时供 `ValidatorJournal`
+以下为本片前准备期源码核对（8b97762c），已由上节用途接线取代，不再作为当前待开发项：
+原 `ResidentConfig.signing_key_file` 同时供 `ValidatorJournal`
 和 `NativeChannel` 使用，验证者与其主链传输身份**尚未分钥**。客户端独立 transport_key_file
 不证明验证者已分钥；不得填虚构字段或借用B通信owner钥匙来宣称完成。原owner的密钥保护可复用，
 主链用途绑定及只准备不启动的工具仍待原入口适配。Windows信箱 `--provision-self-owned` 会运行服务；

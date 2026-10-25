@@ -1,4 +1,5 @@
-//! Configuration/compiler regression only: no native execution or TPS claim.
+//! Configuration/compiler and pre-open startup rejection regressions only.
+//! No native execution or TPS claim.
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::nov_transfer_batch::NovTransferBody;
@@ -66,6 +67,8 @@ fn config(size: usize) -> ResidentConfig {
         library: "not-opened-library".into(),
         database: "not-opened-database".into(),
         signing_key_file: "not-read-test-key".into(),
+        transport_key_file: "not-read-test-transport-key".into(),
+        key_storage: config::NodeKeyStorage::RawDevelopment,
         rpc_addr: None,
         udp_addr: "127.0.0.1:0".parse().unwrap(),
         peers: Vec::new(),
@@ -85,6 +88,133 @@ fn config(size: usize) -> ResidentConfig {
             policy,
         },
     }
+}
+
+fn identity_rejection_fixture() -> Result<(ResidentConfig, std::net::UdpSocket)> {
+    let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/config-tests/purpose-identity")
+        .join(format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    std::fs::create_dir_all(&directory)?;
+    let directory = config::native_path(&directory.canonicalize()?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let mut fixture = config(2);
+    fixture.library = directory.join("not-an-aoem-library");
+    std::fs::write(&fixture.library, b"must never load this fixture")?;
+    fixture.database = directory.join("must-not-open.rocksdb");
+    fixture.signing_key_file = directory.join("test-only-validator.key");
+    fixture.transport_key_file = directory.join("test-only-transport.key");
+    std::fs::write(&fixture.signing_key_file, [1u8; 32])?;
+    std::fs::write(&fixture.transport_key_file, [101u8; 32])?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&fixture.signing_key_file, &fixture.transport_key_file] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    fixture.genesis.validators = (1..=4)
+        .map(|seed| GenesisValidator {
+            public_key: SigningKey::from_bytes(&[seed; 32])
+                .verifying_key()
+                .to_bytes(),
+            transport_public_key: SigningKey::from_bytes(&[100 + seed; 32])
+                .verifying_key()
+                .to_bytes(),
+            weight: 1,
+        })
+        .collect();
+    fixture.genesis.allocations = vec![GenesisAllocation {
+        account_hex: "01".repeat(20),
+        amount: "1000".into(),
+    }];
+    fixture.genesis.genesis_config_commitment = fixture.genesis.derive_commitment()?;
+    fixture.peers = fixture
+        .genesis
+        .validators
+        .iter()
+        .skip(1)
+        .enumerate()
+        .map(|(index, validator)| NativePeerConfig {
+            public_key: validator.public_key,
+            address: ([127, 0, 0, 1], 35000 + index as u16).into(),
+        })
+        .collect();
+    // Binding is deliberately unavailable. A valid identity rejection must
+    // precede this socket boundary as well as loading AOEM/opening a store.
+    let occupied = std::net::UdpSocket::bind("127.0.0.1:0")?;
+    fixture.udp_addr = occupied.local_addr()?;
+    fixture.validate()?;
+    Ok((fixture, occupied))
+}
+
+fn rejects_before_socket_library_and_store(fixture: ResidentConfig, expected: &str) {
+    let database = fixture.database.clone();
+    let library = fixture.library.clone();
+    let error = ResidentNode::start(fixture, StartMode::CreateNew)
+        .err()
+        .expect("invalid purpose identity must reject before startup");
+    assert!(
+        format!("{error:#}").contains(expected),
+        "unexpected boundary: {error:#}"
+    );
+    assert!(!database.exists(), "rejection opened a chain store");
+    assert_eq!(
+        std::fs::read(library).unwrap(),
+        b"must never load this fixture"
+    );
+}
+
+#[test]
+fn mismatched_transport_key_rejects_before_native_startup() -> Result<()> {
+    let (fixture, _occupied) = identity_rejection_fixture()?;
+    std::fs::write(&fixture.transport_key_file, [211u8; 32])?;
+    rejects_before_socket_library_and_store(
+        fixture,
+        "local transport key differs from committed validator binding",
+    );
+    Ok(())
+}
+
+#[test]
+fn unapproved_local_validator_rejects_before_native_startup() -> Result<()> {
+    let (fixture, _occupied) = identity_rejection_fixture()?;
+    std::fs::write(&fixture.signing_key_file, [211u8; 32])?;
+    rejects_before_socket_library_and_store(
+        fixture,
+        "validator has no approved transport identity",
+    );
+    Ok(())
+}
+
+#[test]
+fn local_or_missing_peer_routes_reject_before_native_startup() -> Result<()> {
+    let (mut fixture, _occupied) = identity_rejection_fixture()?;
+    fixture.peers[0].public_key = fixture.genesis.validators[0].public_key;
+    rejects_before_socket_library_and_store(
+        fixture,
+        "missing remote validator route or route targets local signer",
+    );
+    let (mut fixture, _occupied) = identity_rejection_fixture()?;
+    fixture.peers.pop();
+    rejects_before_socket_library_and_store(fixture, "every remote validator route required");
+    Ok(())
+}
+
+#[test]
+fn protected_custody_never_falls_back_to_raw_keys_before_native_startup() -> Result<()> {
+    let (mut fixture, _occupied) = identity_rejection_fixture()?;
+    fixture.key_storage = config::NodeKeyStorage::ProtectedV1;
+    fixture.validate()?;
+    rejects_before_socket_library_and_store(fixture, "read protected node purpose custody");
+    Ok(())
 }
 
 #[test]

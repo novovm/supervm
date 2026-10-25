@@ -50,6 +50,7 @@ pub mod product_relay_launch;
 pub mod product_rendezvous_daemon;
 #[cfg(feature = "iroh-transport")]
 pub mod product_rendezvous_owned;
+pub mod product_service_file;
 #[cfg(feature = "iroh-transport")]
 pub mod product_service_lease;
 pub mod reachability;

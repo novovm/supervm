@@ -204,6 +204,9 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             validators: (0..4)
                 .map(|i| GenesisValidator {
                     public_key: validator_key(i).verifying_key().to_bytes(),
+                    transport_public_key: SigningKey::from_bytes(&[151 + i as u8; 32])
+                        .verifying_key()
+                        .to_bytes(),
                     weight: 1,
                 })
                 .collect(),

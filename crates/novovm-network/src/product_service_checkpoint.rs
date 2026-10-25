@@ -3,14 +3,6 @@
 //! An older complete valid backup still needs an external freshness anchor.
 use super::*;
 
-pub const MAX_SERVICE_CHECKPOINT_BYTES: usize = 128 * 1024;
-
-pub trait ServiceLeasePersistenceV1: Send + Sync {
-    /// Must durably compare the exact prior plaintext before publishing `next`.
-    /// Any ambiguous outcome is an error and permanently stops this book.
-    fn commit(&self, expected: &[u8], next: &[u8]) -> Result<()>;
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Checkpoint {

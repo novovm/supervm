@@ -229,6 +229,7 @@ try {
   $packageDocs = @(
     "NOVOVM_NATIVE_OPERATOR_CLIENT.md",
     "NOVOVM_MULTI_HOST_NUAS_HANDOFF.md",
+    "NOVOVM_PURPOSE_IDENTITY_PREPARATION.md",
     "NOVOVM_DELIVERY_ALIGNMENT.md",
     "NOVONET_TRANSPORT_POLICY_V1.md",
     "NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
@@ -412,7 +413,9 @@ try {
   "profile": "native_execution_tick",
   "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
   "database": "/var/lib/novovm/state/validator.rocksdb",
-  "signing_key_file": "/etc/novovm/validator-ed25519.hex",
+  "signing_key_file": "/var/lib/novovm/keys/validator.sealed",
+  "transport_key_file": "/var/lib/novovm/keys/transport.sealed",
+  "key_storage": "protected_v1",
   "udp_addr": "0.0.0.0:41000",
   "peers": [],
   "native_client_limit": 16,
@@ -584,6 +587,7 @@ Type=simple
 User=novovm
 Group=novovm
 EnvironmentFile=/etc/novovm/novovm-node.env
+LoadCredentialEncrypted=owner-key:/etc/novovm/credentials/node-owner-key.cred
 WorkingDirectory=/var/lib/novovm
 StateDirectory=novovm novovm/state novovm/reports
 StateDirectoryMode=0700
@@ -649,7 +653,18 @@ Packaging is not installation, startup, multi-host acceptance or mainnet launch.
    Install a reviewed `native-node.json` and `novovm-node.env`. The config example
    is deliberately incomplete: replace `genesis: null` with the common verified
    GenesisConfig, pin its protocol/genesis commitments, populate every remote
-   validator public key/address, and provide only this validator's secret file.
+   validator public key/address and its committed transport_public_key. Prepare
+   TWO independent protected purpose keys for this node (validator and transport)
+   using novovmctl native-identity under the eventual service account. Configure
+   key_storage=protected_v1; raw_development is test tooling, not managed startup.
+   The node unit requires its OWN encrypted systemd owner-key credential at
+   /etc/novovm/credentials/node-owner-key.cred. Prepare it with the existing
+   credential procedure under a node-specific owner; NEVER reuse mailbox/Relay
+   credentials. Include that source directory in the node protected_paths.
+   Before activation, run both native-identity inspect commands with the SAME
+   service account and credential. Lifecycle plan validates paths and pins but
+   reports custody_verified=false: it does not decrypt or generate private keys.
+   See docs/NOVOVM_PURPOSE_IDENTITY_PREPARATION.md for the offline handoff.
    Do not use fixture keys, invent allocation values, or copy another node's DB.
    There is no HTTP/JSON-RPC listener. JSON here is deployment configuration only;
    native transaction/query traffic uses NovoRUDP/APFL.

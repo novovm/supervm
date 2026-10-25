@@ -1,0 +1,74 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking windows-sys v0.61.2
+    Checking der v0.8.2
+    Checking crypto-common v0.2.2
+    Checking crypto-bigint v0.7.6
+    Checking polyval v0.6.2
+    Checking serdect v0.4.3
+   Compiling rustls v0.23.46
+    Checking rustls-webpki v0.103.16
+   Compiling blake3 v1.8.7
+    Checking ghash v0.5.1
+    Checking aes-gcm v0.10.3
+    Checking rusqlite v0.40.2
+    Checking ed25519-dalek v2.2.0
+    Checking novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+    Checking rcgen v0.12.1
+    Checking digest v0.11.3
+    Checking signature v3.0.0
+    Checking hmac v0.13.0
+    Checking sha2 v0.11.0
+    Checking curve25519-dalek v5.0.0
+    Checking spki v0.8.1
+    Checking sec1 v0.8.1
+    Checking hkdf v0.13.0
+    Checking pkcs8 v0.11.0
+    Checking ed25519 v3.0.0
+    Checking primefield v0.14.0
+    Checking elliptic-curve v0.14.1
+    Checking rfc6979 v0.6.0
+    Checking wnaf v0.14.1
+    Checking ed25519-dalek v3.0.0
+    Checking primeorder v0.14.0
+    Checking ecdsa v0.17.0
+    Checking iroh-base v1.3.0
+    Checking k256 v0.14.0
+    Checking noq-proto v1.3.0
+    Checking socket2 v0.6.3
+    Checking mio v1.2.0
+    Checking rustls-platform-verifier v0.7.1
+    Checking netdev v0.45.1 (D:\WorksArea\SUPERVM\vendor\netdev)
+    Checking schannel v0.1.29
+    Checking tempfile v3.27.0
+    Checking windows-service v0.8.1
+    Checking ipconfig v0.3.4
+    Checking noq-udp v1.3.0
+    Checking atomicwrites v0.4.4
+    Checking rustls-native-certs v0.8.4
+    Checking tokio v1.51.6
+    Checking tokio-util v0.7.19
+    Checking tokio-rustls v0.26.6
+    Checking hyper v1.12.0
+    Checking tower v0.5.3
+    Checking backon v1.6.0
+    Checking tower-http v0.6.11
+    Checking n0-future v0.3.2
+    Checking tokio-stream v0.1.19
+    Checking tokio-websockets v0.13.3
+    Checking hyper-util v0.1.21
+    Checking n0-watcher v1.0.0
+    Checking netwatch v0.19.3
+    Checking noq v1.3.0
+    Checking hyper-rustls v0.27.10
+    Checking reqwest v0.13.5
+    Checking n0-dns-resolver v0.1.0
+    Checking iroh-dns v1.3.0
+    Checking iroh-relay v1.3.0
+    Checking iroh v1.3.0 (D:\WorksArea\SUPERVM\vendor\iroh)
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.91s

@@ -4,6 +4,7 @@ pub mod evm_block_access_list_scan;
 pub mod governance_stats;
 pub mod lifecycle;
 pub mod native_genesis;
+pub mod native_identity;
 pub mod native_nonce_migration;
 pub mod rollout;
 pub mod rollout_control;

@@ -237,6 +237,12 @@ impl UcaGenesisManifestV1 {
         out.extend_from_slice(&self.genesis.timestamp_unix_ms.to_be_bytes());
         out.extend_from_slice(&self.genesis.protocol_commitment);
         out.extend_from_slice(&validators.hash());
+        out.extend_from_slice(
+            &self
+                .genesis
+                .transport_bindings(&validators)?
+                .canonical_commitment(),
+        );
         // Explicit new candidate semantics, not a relabelled old V3 plan.
         out.extend_from_slice(&uca_program_id());
         out.extend_from_slice(&uca_receipt_codec());
@@ -489,6 +495,11 @@ mod tests {
                 timestamp_unix_ms: 123,
                 validators: (1..=4)
                     .map(|seed| GenesisValidator {
+                        transport_public_key: ed25519_dalek::SigningKey::from_bytes(
+                            &[100 + seed; 32],
+                        )
+                        .verifying_key()
+                        .to_bytes(),
                         public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
                             .verifying_key()
                             .to_bytes(),
@@ -528,7 +539,7 @@ mod tests {
         reordered.accounts.reverse();
         reordered.genesis.validators.reverse();
         assert_eq!(domain, reordered.signing_domain().unwrap());
-        for field in 0..8 {
+        for field in 0..9 {
             let mut changed = base.clone();
             match field {
                 0 => changed.genesis.chain_id += 1,
@@ -539,6 +550,12 @@ mod tests {
                 5 => changed.accounts[0].grants[0].grant.max_debit_per_intent += 1,
                 6 => changed.accounts[0].asset_account[0] = 9,
                 7 => changed.genesis.policy.quote_ttl_ms += 1,
+                8 => {
+                    let first = changed.genesis.validators[0].transport_public_key;
+                    changed.genesis.validators[0].transport_public_key =
+                        changed.genesis.validators[1].transport_public_key;
+                    changed.genesis.validators[1].transport_public_key = first;
+                }
                 _ => unreachable!(),
             }
             assert_ne!(domain, changed.signing_domain().unwrap(), "field {field}");

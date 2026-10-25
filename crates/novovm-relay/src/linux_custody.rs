@@ -2,7 +2,7 @@
 //! This does not define a cipher or a parallel persistence format.
 use crate::linux_owner_files::{check_path, check_private_file, check_private_root, read_bounded};
 use anyhow::{ensure, Context, Result};
-use novovm_network::product_service_lease::{ServiceLeaseFileV1, ServiceLeasePersistenceV1};
+use novovm_network::product_service_file::{ServiceLeaseFileV1, ServiceLeasePersistenceV1};
 use std::{
     fs::{File, OpenOptions},
     mem::MaybeUninit,
@@ -129,6 +129,15 @@ pub fn create_custody(path: &Path, data: &[u8]) -> Result<()> {
 pub fn read_custody(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
     validate_path(path, true)?;
     let (_, data) = ServiceLeaseFileV1::open(path, credential()?)?;
+    Ok(Zeroizing::new(data))
+}
+/// Offline purpose-key inspection never provisions a missing owner lock.
+/// The same source module is also compiled into service binaries, which retain
+/// their existing read_custody behavior rather than using this library entry.
+#[allow(dead_code)]
+pub fn read_existing_custody(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
+    validate_path(path, true)?;
+    let (_, data) = ServiceLeaseFileV1::open_existing(path, credential()?)?;
     Ok(Zeroizing::new(data))
 }
 pub fn save_custody(path: &Path, data: &[u8]) -> Result<()> {

@@ -5,13 +5,14 @@
 use super::*;
 use crate::native_pipeline::consensus::{
     chain::ChainRecord,
-    native::{NativeChannel, PreparedMessage, ReceiveEvent},
+    native::{NativeChannel, PreparedMessage, ReceiveEvent, ValidatorTransportBindings},
     transport::{self, DecodeLimits, Message},
     wire::Vote,
 };
 use crate::native_pipeline::ingress::apfl::{ApflLimits, ApflTransferBatch};
 use novovm_consensus::round_bft::{journal::codec::decode_archived_decision, VerifiedDecision};
-use novovm_network::novorudp::endpoint::{NativeEndpoint, NativeHandshakeBudget};
+use novovm_network::UdpTransport;
+use novovm_protocol::NodeId;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{
@@ -58,28 +59,46 @@ impl FaultPeer {
         let (command, receiver) = mpsc::sync_channel::<(usize, Message)>(32);
         let state = observed.clone();
         let stopping = stop.clone();
-        // Transport-only test peer, using the same existing endpoint/object
-        // owner as native::tests::Mesh. The honest nodes are NOT test workers.
+        // Transport-only test peer, using the original production UDP owner
+        // with a separate transport key. Honest nodes are NOT test workers.
         let thread = std::thread::spawn(move || {
             let run = (|| -> Result<()> {
+                let domain = MessageDomain {
+                    chain_id: CHAIN,
+                    genesis: config.genesis.genesis_config_commitment,
+                    protocol: config.genesis.protocol_commitment,
+                    validators: set.clone(),
+                };
+                let bindings = ValidatorTransportBindings::new(
+                    &set,
+                    config
+                        .genesis
+                        .validators
+                        .iter()
+                        .map(|v| (v.public_key, v.transport_public_key)),
+                )?;
                 let peers = config
                     .peers
                     .iter()
-                    .map(|peer| NativePeer {
-                        key: peer.public_key,
-                        address: peer.address,
+                    .map(|peer| {
+                        let binding = config
+                            .genesis
+                            .validators
+                            .iter()
+                            .find(|v| v.public_key == peer.public_key)
+                            .context("fault fixture peer binding missing")?;
+                        Ok(NativePeer {
+                            key: binding.transport_public_key,
+                            address: peer.address,
+                        })
                     })
-                    .collect();
-                let endpoint = NativeEndpoint::bind(
-                    UdpSocket::bind(config.udp_addr)?,
-                    validator_key(faulty),
-                    peers,
-                    NativeHandshakeBudget {
-                        lifetime: Duration::from_secs(30),
-                        retry: Duration::from_millis(50),
-                    },
-                    wall_ms()?,
-                    Instant::now(),
+                    .collect::<Result<Vec<_>>>()?;
+                let identity = transport_key(faulty);
+                let public = identity.verifying_key().to_bytes();
+                let transport = UdpTransport::bind_for_chain(
+                    NodeId(u64::from_le_bytes(public[..8].try_into()?)),
+                    &config.udp_addr.to_string(),
+                    CHAIN,
                 )?;
                 let lanes = std::array::from_fn(|_| LaneLimits {
                     receive: ReassemblyLimits {
@@ -97,14 +116,13 @@ impl FaultPeer {
                         peer_bytes: 2 * 1024 * 1024,
                     },
                 });
-                let mut channel = NativeChannel::new(
-                    endpoint,
-                    MessageDomain {
-                        chain_id: CHAIN,
-                        genesis: config.genesis.genesis_config_commitment,
-                        protocol: config.genesis.protocol_commitment,
-                        validators: set.clone(),
-                    },
+                let mut channel = NativeChannel::from_transport(
+                    transport,
+                    identity,
+                    bindings,
+                    peers,
+                    0,
+                    domain,
                     codec(),
                     lanes,
                     NativeSendPolicy {

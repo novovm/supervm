@@ -362,12 +362,21 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         .iter()
         .map(|path| {
             let config: ResidentConfig = serde_json::from_slice(&fs::read(path)?)?;
-            Ok((
-                config.signing_key_file.clone(),
-                fs::read(&config.signing_key_file)?,
-            ))
+            Ok([
+                (
+                    config.signing_key_file.clone(),
+                    fs::read(&config.signing_key_file)?,
+                ),
+                (
+                    config.transport_key_file.clone(),
+                    fs::read(&config.transport_key_file)?,
+                ),
+            ])
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     let missing = (0..4)
         .max_by_key(|index| validator_key(*index).verifying_key().to_bytes())
         .unwrap();
@@ -606,7 +615,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         for (path, original) in &key_files {
             ensure!(
                 fs::read(path)? == *original,
-                "validator key changed during recovery"
+                "validator or transport key changed during recovery"
             );
         }
         nodes.stop_all()?;

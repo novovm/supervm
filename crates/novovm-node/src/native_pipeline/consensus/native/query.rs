@@ -292,6 +292,7 @@ mod tests {
         use std::net::UdpSocket;
         let now = Instant::now();
         let identity = SigningKey::from_bytes(&[101; 32]);
+        let transport_identity = SigningKey::from_bytes(&[201; 32]);
         let domain = MessageDomain {
             chain_id: 292,
             genesis: [0x71; 32],
@@ -334,9 +335,17 @@ mod tests {
         let transport =
             UdpTransport::bind_for_chain(novovm_protocol::NodeId(1), "127.0.0.1:0", 292)?;
         let address = transport.local_addr()?;
+        let bindings = ValidatorTransportBindings::new(
+            &domain.validators,
+            [(
+                identity.verifying_key().to_bytes(),
+                transport_identity.verifying_key().to_bytes(),
+            )],
+        )?;
         let mut node = NativeChannel::from_transport(
             transport,
-            identity.clone(),
+            transport_identity.clone(),
+            bindings,
             vec![],
             2,
             domain.clone(),
@@ -349,7 +358,7 @@ mod tests {
             UdpSocket::bind("127.0.0.1:0")?,
             SigningKey::from_bytes(&[202; 32]),
             NativePeer {
-                key: identity.verifying_key().to_bytes(),
+                key: transport_identity.verifying_key().to_bytes(),
                 address,
             },
             domain,

@@ -14,6 +14,17 @@ use novovm_protocol::uca_spend::spend_key_ref_v1;
 #[test]
 #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; actual fresh original service and reopen, not asset activation"]
 fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<()> {
+    actual_uca_startup_with_custody(false)
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; real Windows DPAPI purpose custody through original fresh/reopen service, not deployment"]
+fn actual_uca_startup_protected_windows_keys_and_cold_reopen() -> Result<()> {
+    actual_uca_startup_with_custody(true)
+}
+
+fn actual_uca_startup_with_custody(protected: bool) -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
             .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY required")?,
@@ -27,9 +38,37 @@ fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<(
     let management =
         aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 keygen unavailable")?;
     let spend = aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 keygen unavailable")?;
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/consensus-tests/uca-startup")
+        .join(format!("{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&root)?;
+    let root = native_path(&root.canonicalize()?);
+    let key = root.join("test-only-validator.key");
+    let transport_key = root.join("test-only-transport.key");
+    let mut genesis = super::tests::genesis();
+    let key_storage = if protected {
+        use novovm_relay::purpose_keys::{generate, PurposeV1};
+        let validator = generate(&key, PurposeV1::Validator, genesis.chain_id)?;
+        let transport = generate(&transport_key, PurposeV1::Transport, genesis.chain_id)?;
+        assert_ne!(validator.public_key, transport.public_key);
+        genesis.validators[0].public_key = validator.public_key;
+        genesis.validators[0].transport_public_key = transport.public_key;
+        NodeKeyStorage::ProtectedV1
+    } else {
+        std::fs::write(&key, [1_u8; 32])?;
+        std::fs::write(&transport_key, [101_u8; 32])?;
+        NodeKeyStorage::RawDevelopment
+    };
+    let mut original_key_files = vec![
+        (key.clone(), std::fs::read(&key)?),
+        (transport_key.clone(), std::fs::read(&transport_key)?),
+    ];
     let id = "uca:startup-owner";
     let manifest = UcaGenesisManifestV1 {
-        genesis: super::tests::genesis(),
+        genesis,
         accounts: vec![UcaGenesisAccountV1 {
             uca_id: id.into(),
             asset_account: vec![1; 20],
@@ -70,16 +109,6 @@ fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<(
         expected_initial_root: verified.state().root(),
         expected_final_commitment: verified.final_commitment(),
     };
-    let unique = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_nanos();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/runtime-rebuild/consensus-tests/uca-startup")
-        .join(format!("{}-{unique}", std::process::id()));
-    std::fs::create_dir_all(&root)?;
-    let root = root.canonicalize()?;
-    let key = root.join("test-only-validator.key");
-    std::fs::write(&key, [1_u8; 32])?;
     let mut genesis = manifest.genesis.clone();
     genesis.genesis_config_commitment = domain;
     let config = ResidentConfig {
@@ -88,6 +117,8 @@ fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<(
         database: root.join("state.rocksdb"),
         rpc_addr: None,
         signing_key_file: key.clone(),
+        transport_key_file: transport_key,
+        key_storage,
         udp_addr: "127.0.0.1:0".parse()?,
         peers: genesis
             .validators
@@ -111,6 +142,7 @@ fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<(
         "profile": config.profile, "library": config.library,
         "database": config.database, "rpc_addr": config.rpc_addr,
         "signing_key_file": config.signing_key_file, "udp_addr": config.udp_addr,
+        "transport_key_file": config.transport_key_file, "key_storage": config.key_storage,
         "peers": config.peers, "native_client_limit": config.native_client_limit,
         "genesis": config.genesis, "uca_initialization": config.uca_initialization,
         "workers": config.workers, "batch_size": config.batch_size,
@@ -131,7 +163,7 @@ fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<(
     // Each rejection must precede CandidateStore::open: even its directory may
     // not appear. The same invalid materials also cannot repair an existing DB.
     let mut invalid = Vec::new();
-    for case in 0..5 {
+    for case in 0..7 {
         let mut bad = config.clone();
         let init = bad.uca_initialization.as_mut().unwrap();
         match case {
@@ -143,15 +175,53 @@ fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<(
             2 => init.expected_final_commitment[0] ^= 1,
             3 => init.accounts[0].grants[0].grant.remaining_debit_budget += 1,
             4 => init.approvals[0].signature[0] ^= 1,
+            5 => {
+                let first = bad.genesis.validators[1].transport_public_key;
+                bad.genesis.validators[1].transport_public_key =
+                    bad.genesis.validators[2].transport_public_key;
+                bad.genesis.validators[2].transport_public_key = first;
+            }
+            6 => {
+                bad.transport_key_file = root.join("test-only-wrong-transport.key");
+                if protected {
+                    use novovm_relay::purpose_keys::{generate, PurposeV1};
+                    let wrong = generate(
+                        &bad.transport_key_file,
+                        PurposeV1::Transport,
+                        config.genesis.chain_id,
+                    )?;
+                    assert_ne!(
+                        wrong.public_key,
+                        config.genesis.validators[0].transport_public_key
+                    );
+                } else {
+                    std::fs::write(&bad.transport_key_file, [211u8; 32])?;
+                }
+                original_key_files.push((
+                    bad.transport_key_file.clone(),
+                    std::fs::read(&bad.transport_key_file)?,
+                ));
+            }
             _ => unreachable!(),
         }
         invalid.push(bad.clone());
         bad.database = root.join(format!("must-not-exist-{case}.rocksdb"));
         let path = bad.database.clone();
-        assert!(
-            ResidentNode::start(bad, StartMode::CreateNew).is_err(),
-            "case {case}"
-        );
+        let error = ResidentNode::start(bad, StartMode::CreateNew)
+            .err()
+            .expect("invalid startup material must be rejected");
+        if case == 5 {
+            assert!(
+                format!("{error:#}").contains("UCA initialization manifest/domain mismatch"),
+                "case {case}: {error:#}"
+            );
+        } else if case == 6 {
+            assert!(
+                format!("{error:#}")
+                    .contains("local transport key differs from committed validator binding"),
+                "case {case}: {error:#}"
+            );
+        }
         assert!(!path.exists(), "rejected initializer opened a DB: {case}");
     }
     let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;
@@ -197,7 +267,16 @@ fn actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection() -> Result<(
     assert!(reopened.controller.head().is_none());
     assert_eq!(reopened.controller.context().height, 1);
     reopened.shutdown()?;
-    assert_eq!(std::fs::read(key)?, [1_u8; 32]);
-    println!("UCA startup: real approvals + three pins before DB; fresh/reopen root retained; invalid fresh/Existing rejected; legacy Raw/APFL and HTTP asset carriers rejected");
+    for (path, original) in original_key_files {
+        assert_eq!(
+            std::fs::read(path)?,
+            original,
+            "custody changed during startup/reopen or rejection"
+        );
+    }
+    if !protected {
+        assert_eq!(std::fs::read(key)?, [1_u8; 32]);
+    }
+    println!("UCA startup: custody={key_storage:?}; real approvals + three pins before DB; fresh/reopen root retained; invalid fresh/Existing rejected; legacy Raw/APFL and HTTP asset carriers rejected");
     Ok(())
 }

@@ -1,0 +1,18 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling ed25519-dalek v2.2.0
+   Compiling rustls-native-certs v0.8.4
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.33s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_relay-98cc2f70bd1e21fd.exe)
+
+running 2 tests
+test purpose_keys::tests::envelope_binds_exact_version_purpose_domain_and_public_material ... ok
+test windows_custody::tests::actual_windows_custody_roundtrip_rejects_tampering ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -260,7 +260,7 @@ fn run_recovery(highest_identity: bool) -> Result<()> {
         .map(|index| {
             Ok((
                 novovm_network::product_overlay::peer_id_from_ed25519_public_key_v1(
-                    &validator_key(index).verifying_key().to_bytes(),
+                    &transport_key(index).verifying_key().to_bytes(),
                 ),
                 Validator::new(validator_key(index).verifying_key().to_bytes(), 1)?.id(),
                 index,
@@ -275,6 +275,7 @@ fn run_recovery(highest_identity: bool) -> Result<()> {
     let config: crate::native_pipeline::service::ResidentConfig =
         serde_json::from_slice(&fs::read(&nodes.configs[missing])?)?;
     let key_bytes = fs::read(&config.signing_key_file)?;
+    let transport_key_bytes = fs::read(&config.transport_key_file)?;
     let configs = nodes
         .configs
         .iter()
@@ -298,6 +299,7 @@ fn run_recovery(highest_identity: bool) -> Result<()> {
         "library_path":config.library,
         "library_sha256":hex(&Sha256::digest(fs::read(&config.library)?)),
         "validator_key_sha256":hex(&Sha256::digest(&key_bytes)),
+        "transport_key_sha256":hex(&Sha256::digest(&transport_key_bytes)),
         "offline_progress":[],"catchup_progress":[]
     });
     let started = Instant::now();
@@ -531,13 +533,14 @@ fn run_recovery(highest_identity: bool) -> Result<()> {
         );
         ensure!(
             fs::read(&config.signing_key_file)? == key_bytes
+                && fs::read(&config.transport_key_file)? == transport_key_bytes
                 && nodes
                     .configs
                     .iter()
                     .map(fs::read)
                     .collect::<std::io::Result<Vec<_>>>()?
                     == configs,
-            "recovery replaced validator identity, configuration or genesis"
+            "recovery replaced validator/transport identity, configuration or genesis"
         );
         evidence["same_key_config_and_old_signing_outbox_preserved"] = json!(true);
         evidence["completed"] = json!(true);

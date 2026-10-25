@@ -4,7 +4,7 @@
 use super::NativeApplicationClient;
 use crate::native_pipeline::{
     consensus::{
-        native::{LaneLimits, MessageDomain},
+        native::{LaneLimits, MessageDomain, ValidatorTransportBindings},
         transport::DecodeLimits,
         wire::{Validator, ValidatorSet},
     },
@@ -79,8 +79,9 @@ impl ClientConfig {
         ensure!(
             self.validators
                 .iter()
-                .all(|v| v.public_key != key.verifying_key().to_bytes()),
-            "client must not use a validator signing key"
+                .all(|v| v.public_key != key.verifying_key().to_bytes()
+                    && v.transport_public_key != key.verifying_key().to_bytes()),
+            "client must not use a validator signing or transport key"
         );
         let validators = ValidatorSet::new(
             self.chain_id,
@@ -90,6 +91,12 @@ impl ClientConfig {
                 .iter()
                 .map(|v| Validator::new(v.public_key, v.weight))
                 .collect::<Result<Vec<_>>>()?,
+        )?;
+        ValidatorTransportBindings::new(
+            &validators,
+            self.validators
+                .iter()
+                .map(|v| (v.public_key, v.transport_public_key)),
         )?;
         Ok(MessageDomain {
             chain_id: self.chain_id,
@@ -105,7 +112,12 @@ impl ClientConfig {
             UdpSocket::bind(self.bind_addr)?,
             key,
             NativePeer {
-                key: self.node.public_key,
+                key: self
+                    .validators
+                    .iter()
+                    .find(|v| v.public_key == self.node.public_key)
+                    .context("target node lacks approved transport binding")?
+                    .transport_public_key,
                 address: self.node.address,
             },
             domain,
@@ -416,6 +428,7 @@ mod tests {
     #[test]
     fn native_operator_domain_rejects_foreign_target_and_validator_client() {
         let validator = SigningKey::from_bytes(&[3; 32]);
+        let transport = SigningKey::from_bytes(&[13; 32]);
         let client = SigningKey::from_bytes(&[4; 32]);
         let public_key = validator.verifying_key().to_bytes();
         let mut config = ClientConfig {
@@ -425,6 +438,7 @@ mod tests {
             validator_epoch: 1,
             validators: vec![GenesisValidator {
                 public_key,
+                transport_public_key: transport.verifying_key().to_bytes(),
                 weight: 1,
             }],
             node: NativePeerConfig {
@@ -437,6 +451,7 @@ mod tests {
         };
         assert!(config.domain(&client).is_ok());
         assert!(config.domain(&validator).is_err());
+        assert!(config.domain(&transport).is_err());
         config.timeout_ms = 30_001;
         assert!(config.domain(&client).is_err());
         config.timeout_ms = 5000;

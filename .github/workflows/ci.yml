@@ -299,6 +299,17 @@ jobs:
       - name: Reject legacy Host writes by default during product restoration
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib restoration_host_guard --locked -- --test-threads=1
 
+      - name: Offline node purpose custody and managed configuration
+        # Existing owners only; isolated fixtures, no deployed credentials/service.
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p novovm-network --lib existing_owner_read --locked -- --list > "$RUNNER_TEMP/node-custody-tests.txt"
+          grep -q 'existing_owner_read_never_creates_missing_lock_or_changes_checkpoint: test' "$RUNNER_TEMP/node-custody-tests.txt"
+          cargo test -p novovm-network --lib product_service_file::tests --locked -- --test-threads=1
+          cargo test -p novovm-relay --lib --locked
+          cargo test -p novovmctl --locked
+
       - name: Integrated original tick and native SDK closure
         # This functional gate is not a throughput/GPU/ZK or multi-machine claim.
         # Long load fixtures remain explicit, ignored tests with retained reports.

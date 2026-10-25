@@ -1,0 +1,18 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+   Compiling novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 46.02s
+     Running tests\native_genesis_cli.rs (target/runtime-rebuild\debug\deps\native_genesis_cli-18428f4060346318.exe)
+
+running 1 test
+test actual_aoem_approvals_match_original_startup_and_reject_forgery ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.69s
+

@@ -1,0 +1,20 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling web30-core v0.1.0 (D:\WorksArea\SUPERVM\vendor\web30-core)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+   Compiling novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+   Compiling novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+   Compiling novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.18s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_node-6290802c6fa38ab3.exe)
+
+running 1 test
+NUAS process recovery evidence=D:\WorksArea\SUPERVM\target\native-product-rpc\uca-recovery-16884-1792933746372963400
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::uca_recovery::native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1630 filtered out; finished in 173.30s
+

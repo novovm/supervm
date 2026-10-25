@@ -14,13 +14,13 @@ use super::business::nov_transfer_batch::{
 use super::consensus::{
     bodies::{BodyLimits, CandidateBodies},
     collector::CollectorLimits,
-    native::{LaneLimits, MessageDomain, NativeChannel},
+    native::{LaneLimits, MessageDomain, NativeChannel, ValidatorTransportBindings},
     native_lifecycle::{DeliveryLimits, NativeLifecycle},
     pacemaker::TimeoutPolicy,
     progress::{ProgressLimits, RoundProgress},
     statement::ParentPoint,
     transport::DecodeLimits,
-    wire::{Context as ConsensusContext, Validator, ValidatorSet},
+    wire::{Context as ConsensusContext, ValidatorSet},
     ValidatorJournal,
 };
 use super::execution::plan::{BatchContext, PlanBudget};
@@ -32,7 +32,8 @@ use super::state::frontier::CaptureBudget;
 use super::state::tree::{empty_root, StateNodeReader};
 use anyhow::{ensure, Context, Result};
 pub use config::{
-    GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, ResidentConfig,
+    GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, NodeKeyStorage,
+    ResidentConfig,
 };
 use ed25519_dalek::SigningKey;
 use novovm_exec::resident::StorageConfig;
@@ -44,6 +45,7 @@ use novovm_network::novorudp::{
 };
 use novovm_network::UdpTransport;
 use novovm_protocol::NodeId;
+use novovm_relay::purpose_keys::{self, PurposeV1};
 use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -70,7 +72,11 @@ impl ResidentNode {
     pub fn start(mut config: ResidentConfig, mode: StartMode) -> Result<Self> {
         config.normalize_native_paths();
         config.validate()?;
-        let public = read_signer(&config)?.verifying_key().to_bytes();
+        let (validators, _) = config.genesis.prepare()?;
+        let public = read_identities(&config, &validators)?
+            .transport
+            .verifying_key()
+            .to_bytes();
         let local_route = NodeId(u64::from_le_bytes(public[..8].try_into()?));
         let transport = UdpTransport::bind_for_chain(
             local_route,
@@ -91,6 +97,9 @@ impl ResidentNode {
         config.normalize_native_paths();
         config.validate()?;
         let (validators, reference_initial) = config.genesis.prepare()?;
+        // Identity, purpose binding and full peer coverage fail BEFORE AOEM
+        // loading, opening a ledger or activating a durable consensus signer.
+        let identities = read_identities(&config, &validators)?;
         // Verification and all three explicit pins precede opening the store.
         // Existing mode never installs or repairs missing initialization state.
         let initial = if let Some(material) = &config.uca_initialization {
@@ -102,12 +111,6 @@ impl ResidentNode {
         } else {
             reference_initial
         };
-        let key = read_signer(&config)?;
-        let local = Validator::new(key.verifying_key().to_bytes(), 1)?.id();
-        ensure!(
-            validators.member(&local).is_some(),
-            "local signer is absent from configured validators"
-        );
         let pipeline_config = pipeline_config(&config);
         {
             let store = CandidateStore::open(
@@ -162,8 +165,7 @@ impl ResidentNode {
             &pipeline,
             template,
             validators.clone(),
-            key,
-            local,
+            identities,
             transport,
         );
         match result {
@@ -207,13 +209,62 @@ impl ResidentNode {
     }
 }
 
-fn read_signer(config: &ResidentConfig) -> Result<SigningKey> {
+struct NodeIdentities {
+    validator: SigningKey,
+    transport: SigningKey,
+    bindings: ValidatorTransportBindings,
+}
+
+fn read_identities(config: &ResidentConfig, validators: &ValidatorSet) -> Result<NodeIdentities> {
+    let validator = read_key(
+        &config.signing_key_file,
+        config.key_storage,
+        PurposeV1::Validator,
+        config.genesis.chain_id,
+    )?;
+    let transport = read_key(
+        &config.transport_key_file,
+        config.key_storage,
+        PurposeV1::Transport,
+        config.genesis.chain_id,
+    )?;
+    let public = validator.verifying_key().to_bytes();
+    let bindings = config.genesis.transport_bindings(validators)?;
     ensure!(
-        std::fs::metadata(&config.signing_key_file)?.len() <= 128,
+        bindings.transport_public_key(&public)? == transport.verifying_key().to_bytes(),
+        "local transport key differs from committed validator binding"
+    );
+    ensure!(
+        config.peers.iter().all(|p| p.public_key != public)
+            && validators
+                .members()
+                .iter()
+                .filter(|v| v.public_key() != &public)
+                .all(|v| config.peers.iter().any(|p| &p.public_key == v.public_key())),
+        "missing remote validator route or route targets local signer"
+    );
+    Ok(NodeIdentities {
+        validator,
+        transport,
+        bindings,
+    })
+}
+
+fn read_key(
+    path: &std::path::Path,
+    storage: NodeKeyStorage,
+    purpose: PurposeV1,
+    chain_id: u64,
+) -> Result<SigningKey> {
+    if storage == NodeKeyStorage::ProtectedV1 {
+        return purpose_keys::load(path, purpose, chain_id)
+            .context("read protected node purpose custody");
+    }
+    ensure!(
+        std::fs::metadata(path)?.len() <= 128,
         "signing-key file exceeds explicit key format"
     );
-    let bytes =
-        std::fs::read(&config.signing_key_file).context("read explicit local signing-key file")?;
+    let bytes = std::fs::read(path).context("read explicit development purpose-key file")?;
     let decoded = if bytes.len() == 32 {
         bytes
     } else {
@@ -302,8 +353,7 @@ fn start_native(
     pipeline: &CandidatePipeline,
     template: BatchContext,
     validators: Arc<ValidatorSet>,
-    key: SigningKey,
-    local: [u8; 32],
+    identities: NodeIdentities,
     transport: UdpTransport,
 ) -> Result<NativeLifecycle> {
     let context = ConsensusContext {
@@ -324,8 +374,13 @@ fn start_native(
         state_version: 0,
         decision_hash: [0; 32],
     };
-    let mut opening =
-        ValidatorJournal::open(pipeline, context, parent, validators.clone(), key.clone())?;
+    let mut opening = ValidatorJournal::open(
+        pipeline,
+        context,
+        parent,
+        validators.clone(),
+        identities.validator,
+    )?;
     let deadline = Instant::now() + Duration::from_secs(60);
     let journal = loop {
         if let Some(journal) = opening.poll(pipeline)? {
@@ -338,21 +393,6 @@ fn start_native(
         std::thread::sleep(Duration::from_millis(1));
     };
 
-    ensure!(
-        config
-            .peers
-            .iter()
-            .all(|p| p.public_key != key.verifying_key().to_bytes()),
-        "remote route contains local signer"
-    );
-    ensure!(
-        validators
-            .members()
-            .iter()
-            .filter(|v| v.id() != local)
-            .all(|v| config.peers.iter().any(|p| &p.public_key == v.public_key())),
-        "missing pinned validator route"
-    );
     let codec = DecodeLimits {
         transactions: config.batch_size,
         transaction_bytes: if config.uca_initialization.is_some() {
@@ -400,15 +440,18 @@ fn start_native(
     )?;
     let channel = NativeChannel::from_transport(
         transport,
-        key,
+        identities.transport,
+        identities.bindings.clone(),
         config
             .peers
             .iter()
-            .map(|p| NativePeer {
-                key: p.public_key,
-                address: p.address,
+            .map(|p| {
+                Ok(NativePeer {
+                    key: identities.bindings.transport_public_key(&p.public_key)?,
+                    address: p.address,
+                })
             })
-            .collect(),
+            .collect::<Result<Vec<_>>>()?,
         config.native_client_limit,
         MessageDomain {
             chain_id: template.chain_id,

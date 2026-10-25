@@ -63,6 +63,11 @@ fn validator_key(index: usize) -> SigningKey {
     SigningKey::from_bytes(&[31 + index as u8; 32])
 }
 
+// Deterministic material belongs only to this fixture, not deployment keys.
+fn transport_key(index: usize) -> SigningKey {
+    SigningKey::from_bytes(&[151 + index as u8; 32])
+}
+
 fn start(configs: &[ResidentConfig], mode: StartMode) -> Result<Vec<rpc::RpcLifecycle>> {
     configs
         .iter()
@@ -81,18 +86,25 @@ fn connect(
 ) -> Result<client::NativeApplicationClient> {
     let key = SigningKey::from_bytes(&[201; 32]);
     ensure!(
-        config
-            .genesis
-            .validators
-            .iter()
-            .all(|v| v.public_key != key.verifying_key().to_bytes()),
+        config.genesis.validators.iter().all(|v| {
+            v.public_key != key.verifying_key().to_bytes()
+                && v.transport_public_key != key.verifying_key().to_bytes()
+        }),
         "client is validator"
     );
+    let transport_public = read_key(
+        &config.transport_key_file,
+        config.key_storage,
+        PurposeV1::Transport,
+        config.genesis.chain_id,
+    )?
+    .verifying_key()
+    .to_bytes();
     client::NativeApplicationClient::connect(
         UdpSocket::bind("127.0.0.1:0")?,
         key,
         NativePeer {
-            key: read_signer(config)?.verifying_key().to_bytes(),
+            key: transport_public,
             address: config.udp_addr,
         },
         MessageDomain {
@@ -314,6 +326,7 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
             validators: (0..4)
                 .map(|i| GenesisValidator {
                     public_key: validator_key(i).verifying_key().to_bytes(),
+                    transport_public_key: transport_key(i).verifying_key().to_bytes(),
                     weight: 1,
                 })
                 .collect(),
@@ -396,12 +409,16 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         .map(|i| {
             let key_file = directory.join(format!("test-validator-{i}.key"));
             std::fs::write(&key_file, validator_key(i).to_bytes())?;
+            let transport_key_file = directory.join(format!("test-transport-{i}.key"));
+            std::fs::write(&transport_key_file, transport_key(i).to_bytes())?;
             Ok(ResidentConfig {
                 profile: config::ORIGINAL_PROFILE.into(),
                 library: library.clone(),
                 database: directory.join(format!("node-{i}.rocksdb")),
                 rpc_addr: None,
                 signing_key_file: key_file,
+                transport_key_file,
+                key_storage: config::NodeKeyStorage::RawDevelopment,
                 udp_addr: addresses[i],
                 peers: (0..4)
                     .filter(|j| *j != i)

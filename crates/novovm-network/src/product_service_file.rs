@@ -2,7 +2,7 @@
 //! No keys are generated or stored here. The install owner supplies a private,
 //! backup-excluded directory and a separate protected storage key. Missing or
 //! torn journals are errors, never an invitation to reset signing history.
-use super::*;
+use anyhow::{ensure, Context, Result};
 use chacha20poly1305::{
     aead::{Aead, Payload},
     KeyInit, XChaCha20Poly1305, XNonce,
@@ -13,8 +13,18 @@ use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use zeroize::Zeroizing;
+
+pub const MAX_SERVICE_CHECKPOINT_BYTES: usize = 128 * 1024;
+
+/// Generic opaque checkpoint persistence, independent of any network carrier.
+pub trait ServiceLeasePersistenceV1: Send + Sync {
+    /// Must durably compare the exact prior plaintext before publishing `next`.
+    /// Any ambiguous outcome is an error and permanently stops this book.
+    fn commit(&self, expected: &[u8], next: &[u8]) -> Result<()>;
+}
 
 const LEGACY_MAGIC: &[u8; 8] = b"NVLSJ001";
 const MAGIC: &[u8; 8] = b"NVLSJ002";
@@ -102,8 +112,26 @@ impl ServiceLeaseFileV1 {
     }
 
     pub fn open(path: &Path, material: Zeroizing<[u8; 32]>) -> Result<(Arc<Self>, Vec<u8>)> {
+        Self::open_with_owner_mode(path, material, false)
+    }
+
+    /// Open existing custody without creating even its stable owner lock.
+    /// Read-only consumers must drop the returned owner without calling commit;
+    /// the checkpoint format, exclusive locking and verification are unchanged.
+    pub fn open_existing(
+        path: &Path,
+        material: Zeroizing<[u8; 32]>,
+    ) -> Result<(Arc<Self>, Vec<u8>)> {
+        Self::open_with_owner_mode(path, material, true)
+    }
+
+    fn open_with_owner_mode(
+        path: &Path,
+        material: Zeroizing<[u8; 32]>,
+        require_existing_owner: bool,
+    ) -> Result<(Arc<Self>, Vec<u8>)> {
         let path = absolute_path(path)?;
-        let owner = lock_owner(&path)?;
+        let owner = lock_owner_with_mode(&path, require_existing_owner)?;
         check_file(&path)?;
         let mut file = private_options().open(&path)?;
         lock_file(&file)?;
@@ -226,11 +254,18 @@ fn private_options() -> OpenOptions {
 }
 
 fn lock_owner(path: &Path) -> Result<File> {
+    lock_owner_with_mode(path, false)
+}
+
+fn lock_owner_with_mode(path: &Path, require_existing: bool) -> Result<File> {
     let path = sibling(path, ".lock");
-    if path.try_exists()? {
+    if require_existing || path.try_exists()? {
         check_file(&path)?;
     }
-    let file = private_options().create(true).truncate(false).open(&path)?;
+    let file = private_options()
+        .create(!require_existing)
+        .truncate(false)
+        .open(&path)?;
     lock_file(&file)?;
     check_file(&path)?;
     Ok(file)

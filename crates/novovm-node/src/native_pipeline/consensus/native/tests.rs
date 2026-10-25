@@ -82,6 +82,7 @@ fn io_hint_wrap_is_a_change_token_not_a_permit_counter() {
 pub(crate) struct Mesh {
     pub channels: Vec<NativeChannel>,
     start: Instant,
+    wall_base: u64,
 }
 pub(crate) fn codec() -> transport::DecodeLimits {
     transport::DecodeLimits {
@@ -164,7 +165,17 @@ impl Mesh {
                 },
             )?);
         }
-        let mut mesh = Self { channels, start };
+        Self {
+            channels,
+            start,
+            wall_base: 1000,
+        }
+        .establish()
+    }
+
+    fn establish(self) -> Result<Self> {
+        let mut mesh = self;
+        let start = mesh.start;
         // Configured responders retain a provisional transcript until ordinary
         // AEAD traffic proves the fresh secret. Production uses RequestDecision;
         // this transport-only fixture exchanges/drains an existing exact request.
@@ -220,7 +231,7 @@ impl Mesh {
         let mut finished = 0;
         for c in &mut self.channels {
             let r = c.poll_io(
-                1000 + self.start.elapsed().as_millis() as u64,
+                self.wall_base + self.start.elapsed().as_millis() as u64,
                 Instant::now(),
                 64,
             )?;
@@ -290,6 +301,362 @@ impl Mesh {
         }
         Ok(result.into_iter().map(Option::unwrap).collect())
     }
+}
+
+type SeparatedMaterial = (Vec<SigningKey>, Vec<SigningKey>, MessageDomain, VoteContext);
+
+fn separated_material() -> Result<SeparatedMaterial> {
+    let signing = (101..105)
+        .map(|seed| SigningKey::from_bytes(&[seed; 32]))
+        .collect::<Vec<_>>();
+    let transport = (151..155)
+        .map(|seed| SigningKey::from_bytes(&[seed; 32]))
+        .collect::<Vec<_>>();
+    let validators = Arc::new(ValidatorSet::new(
+        292,
+        1,
+        1,
+        signing
+            .iter()
+            .map(|key| Validator::new(key.verifying_key().to_bytes(), 1))
+            .collect::<Result<Vec<_>>>()?,
+    )?);
+    let context = VoteContext {
+        chain_id: 292,
+        genesis_config_commitment: [0x71; 32],
+        protocol_commitment: [0x72; 32],
+        epoch: 1,
+        validator_set_hash: validators.hash(),
+        height: 1,
+        parent_block_hash: [0; 32],
+        parent_decision_hash: [0; 32],
+    };
+    Ok((
+        signing,
+        transport,
+        MessageDomain {
+            chain_id: 292,
+            genesis: context.genesis_config_commitment,
+            protocol: context.protocol_commitment,
+            validators,
+        },
+        context,
+    ))
+}
+
+fn split_bindings(
+    domain: &MessageDomain,
+    signing: &[SigningKey],
+    transport: &[SigningKey],
+) -> Result<ValidatorTransportBindings> {
+    ValidatorTransportBindings::new(
+        &domain.validators,
+        signing.iter().zip(transport).map(|(signing, transport)| {
+            (
+                signing.verifying_key().to_bytes(),
+                transport.verifying_key().to_bytes(),
+            )
+        }),
+    )
+}
+
+fn split_lanes() -> [LaneLimits; 3] {
+    std::array::from_fn(|_| LaneLimits {
+        receive: ReassemblyLimits {
+            max_message_bytes: codec().message_bytes,
+            messages: 12,
+            bytes: 12 * codec().message_bytes,
+            peer_messages: 4,
+            peer_bytes: 4 * codec().message_bytes,
+            ttl: Duration::from_secs(30),
+        },
+        send: NativeSendLimits {
+            messages: 12,
+            bytes: 12 * codec().message_bytes,
+            peer_messages: 4,
+            peer_bytes: 4 * codec().message_bytes,
+        },
+    })
+}
+
+fn split_policy() -> NativeSendPolicy {
+    NativeSendPolicy {
+        window: NovoRudpWindowConfig::default(),
+        pacing: NovoRudpPacingProfile {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 16,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+        },
+        ttl: Duration::from_secs(30),
+    }
+}
+
+#[test]
+fn validator_transport_bindings_are_bijective_separated_and_canonical() -> Result<()> {
+    let (signing, transport, domain, _) = separated_material()?;
+    let pairs = signing
+        .iter()
+        .zip(&transport)
+        .map(|(s, t)| (s.verifying_key().to_bytes(), t.verifying_key().to_bytes()))
+        .collect::<Vec<_>>();
+    let bindings = ValidatorTransportBindings::new(&domain.validators, pairs.clone())?;
+    let reversed =
+        ValidatorTransportBindings::new(&domain.validators, pairs.iter().rev().copied())?;
+    assert_eq!(
+        bindings.canonical_commitment(),
+        reversed.canonical_commitment()
+    );
+    for (validator, transport) in &pairs {
+        assert_eq!(bindings.transport_public_key(validator)?, *transport);
+        assert_eq!(
+            bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(transport))?,
+            Validator::new(*validator, 1)?.id()
+        );
+        assert!(bindings
+            .validator_for_peer(&peer_id_from_ed25519_public_key_v1(validator))
+            .is_err());
+    }
+    let mut swapped = pairs.clone();
+    swapped[0].1 = pairs[1].1;
+    swapped[1].1 = pairs[0].1;
+    assert_ne!(
+        bindings.canonical_commitment(),
+        ValidatorTransportBindings::new(&domain.validators, swapped)?.canonical_commitment()
+    );
+    assert!(
+        ValidatorTransportBindings::new(&domain.validators, pairs[..3].iter().copied()).is_err()
+    );
+    for variant in 0..6 {
+        let mut bad = pairs.clone();
+        match variant {
+            0 => bad[1].0 = bad[0].0,
+            1 => bad[1].1 = bad[0].1,
+            2 => bad[0].1 = bad[0].0,
+            3 => bad[0].1 = bad[1].0,
+            4 => {
+                bad[0].0 = SigningKey::from_bytes(&[200; 32])
+                    .verifying_key()
+                    .to_bytes()
+            }
+            _ => bad[0].1 = [0; 32],
+        }
+        assert!(
+            ValidatorTransportBindings::new(&domain.validators, bad).is_err(),
+            "variant {variant}"
+        );
+    }
+    let another_epoch = ValidatorSet::new(292, 2, 1, domain.validators.members().to_vec())?;
+    assert!(bindings.validate_for(&another_epoch).is_err());
+    assert!(bindings.transport_public_key(&[0; 32]).is_err());
+    Ok(())
+}
+
+#[test]
+fn original_transport_rejects_unbound_local_remote_and_fixture_identities() -> Result<()> {
+    let (signing, transport, domain, _) = separated_material()?;
+    let foreign = SigningKey::from_bytes(&[200; 32]);
+    let bindings = split_bindings(&domain, &signing, &transport)?;
+    for variant in 0..5 {
+        let socket = UdpTransport::bind_for_chain(
+            novovm_protocol::NodeId(1),
+            "127.0.0.1:0",
+            domain.chain_id,
+        )?;
+        let identity = if variant == 0 {
+            foreign.clone()
+        } else {
+            transport[0].clone()
+        };
+        let peers = match variant {
+            0 | 4 => Vec::new(),
+            1 => vec![NativePeer {
+                key: foreign.verifying_key().to_bytes(),
+                address: "127.0.0.1:19001".parse()?,
+            }],
+            2 => vec![NativePeer {
+                key: transport[0].verifying_key().to_bytes(),
+                address: "127.0.0.1:19001".parse()?,
+            }],
+            _ => vec![
+                NativePeer {
+                    key: transport[1].verifying_key().to_bytes(),
+                    address: "127.0.0.1:19001".parse()?,
+                },
+                NativePeer {
+                    key: transport[1].verifying_key().to_bytes(),
+                    address: "127.0.0.1:19002".parse()?,
+                },
+            ],
+        };
+        let selected = if variant == 4 {
+            ValidatorTransportBindings::historical_identity_fixture(&domain.validators)
+        } else {
+            bindings.clone()
+        };
+        assert!(
+            NativeChannel::from_transport(
+                socket,
+                identity,
+                selected,
+                peers,
+                0,
+                domain.clone(),
+                codec(),
+                split_lanes(),
+                split_policy(),
+            )
+            .is_err(),
+            "variant {variant}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery() -> Result<()> {
+    use ed25519_dalek::Signer;
+    let (signing, transport_keys, domain, context) = separated_material()?;
+    let bindings = split_bindings(&domain, &signing, &transport_keys)?;
+    let transports = (0..signing.len())
+        .map(|i| {
+            UdpTransport::bind_for_chain(
+                novovm_protocol::NodeId(i as u64 + 1),
+                "127.0.0.1:0",
+                domain.chain_id,
+            )
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let addresses = transports
+        .iter()
+        .map(UdpTransport::local_addr)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let start = Instant::now();
+    let wall_base = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+    let channels = transports
+        .into_iter()
+        .enumerate()
+        .map(|(i, transport)| {
+            NativeChannel::from_transport(
+                transport,
+                transport_keys[i].clone(),
+                bindings.clone(),
+                (0..signing.len())
+                    .filter(|&j| i != j)
+                    .map(|j| NativePeer {
+                        key: transport_keys[j].verifying_key().to_bytes(),
+                        address: addresses[j],
+                    })
+                    .collect(),
+                0,
+                domain.clone(),
+                codec(),
+                split_lanes(),
+                split_policy(),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut mesh = Mesh {
+        channels,
+        start,
+        wall_base,
+    }
+    .establish()?;
+    for (local, channel) in mesh.channels.iter().enumerate() {
+        for (peer, remote) in (0..signing.len()).filter(|&i| i != local).enumerate() {
+            assert_eq!(
+                channel.peer_id(peer)?,
+                peer_id_from_ed25519_public_key_v1(
+                    &transport_keys[remote].verifying_key().to_bytes()
+                )
+            );
+            assert_eq!(
+                channel.validator_for_peer(peer)?,
+                Validator::new(signing[remote].verifying_key().to_bytes(), 1)?.id()
+            );
+        }
+    }
+    let vote = test_vectors::sign_vote(
+        context,
+        0,
+        Phase::Prevote,
+        Some([7; 32]),
+        &domain.validators,
+        &signing[0],
+    )?;
+    mesh.broadcast(0, &transport::Message::Vote(vote.clone()))?;
+    // A valid vote can be relayed by a different configured transport owner;
+    // the original validator's signature, not the forwarding key, authorizes it.
+    let relayed = test_vectors::sign_vote(
+        context,
+        1,
+        Phase::Prevote,
+        Some([7; 32]),
+        &domain.validators,
+        &signing[0],
+    )?;
+    mesh.broadcast(1, &transport::Message::Vote(relayed))?;
+    let mut forged = vote.clone();
+    assert!(
+        test_vectors::sign_vote(
+            context,
+            0,
+            Phase::Prevote,
+            Some([7; 32]),
+            &domain.validators,
+            &transport_keys[0]
+        )
+        .is_err(),
+        "transport key must not acquire validator signing membership"
+    );
+    forged.signature = transport_keys[0]
+        .sign(b"transport possession is not a vote")
+        .to_bytes()
+        .to_vec();
+    assert!(mesh.channels[0]
+        .prepare(&transport::Message::Vote(forged.clone()))
+        .is_err());
+    // Authenticated hostile peer bypasses local preparation only. Remote
+    // qualification must still reject, and then keep the valid session usable.
+    let object = Arc::new(OutgoingMessage::with_profile(
+        transport::fragment_domain(
+            context.chain_id,
+            context.genesis_config_commitment,
+            context.protocol_commitment,
+        ),
+        transport::encode(&transport::Message::Vote(forged), codec())?,
+        codec().message_bytes,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    assert!(mesh.channels[0]
+        .link
+        .try_send(0, STREAMS[0], &object, Instant::now())?);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut rejected = false;
+    let mut completed = 0;
+    while !rejected || completed == 0 {
+        ensure!(
+            Instant::now() < deadline,
+            "split-key hostile object deadline"
+        );
+        completed += mesh.pump()?;
+        if let Some(event) = mesh.channels[1].poll_receive_lane(0, Instant::now(), 64)? {
+            assert!(matches!(event, ReceiveEvent::Rejected { .. }));
+            rejected = true;
+        }
+    }
+    let after_rejection = test_vectors::sign_vote(
+        context,
+        2,
+        Phase::Prevote,
+        Some([7; 32]),
+        &domain.validators,
+        &signing[0],
+    )?;
+    mesh.broadcast(0, &transport::Message::Vote(after_rejection))?;
+    Ok(())
 }
 
 fn setup() -> Result<(Mesh, Vec<SigningKey>, VoteContext)> {

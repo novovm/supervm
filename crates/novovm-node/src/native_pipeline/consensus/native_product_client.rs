@@ -36,18 +36,17 @@ fn connect(
     // This device key is NOT in genesis and is never added to a node allowlist.
     let key = SigningKey::from_bytes(&[201; 32]);
     ensure!(
-        config
-            .genesis
-            .validators
-            .iter()
-            .all(|v| v.public_key != key.verifying_key().to_bytes()),
+        config.genesis.validators.iter().all(|v| {
+            v.public_key != key.verifying_key().to_bytes()
+                && v.transport_public_key != key.verifying_key().to_bytes()
+        }),
         "fixture client is a validator"
     );
     NativeApplicationClient::connect(
         UdpSocket::bind("127.0.0.1:0")?,
         key,
         NativePeer {
-            key: validator_key(ingress).verifying_key().to_bytes(),
+            key: transport_key(ingress).verifying_key().to_bytes(),
             address: config.udp_addr,
         },
         MessageDomain {

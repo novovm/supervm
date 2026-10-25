@@ -289,7 +289,8 @@ fn run_with(args: &LifecycleArgs, runner: &mut impl Runner) -> Result<serde_json
         "results":applied,"service_observations":observations,"health":health_reports,
         "full_stack_accepted":false,"service_settlement":"not_connected",
         "manager_mutates_data_directly":false,"credentials_provisioned":false,
-        "note":"install only links reviewed units; no enable/start, key creation or genesis. Active process is not end-to-end health. Upgrade/rollback require a separately qualified compatibility transition."
+        "custody_verified":false,
+        "note":"install only links reviewed units; no enable/start, key creation or genesis. Planning checks credential source metadata only; it does not read secrets or prove that the final runtime account can decrypt custody. Active process is not end-to-end health. Upgrade/rollback require a separately qualified compatibility transition."
     }))
 }
 
@@ -481,6 +482,7 @@ fn validate_unit(
     }
     match service.role {
         Role::Node => {
+            validate_node_credential(service, &entries)?;
             let envfiles = entries
                 .get("EnvironmentFile")
                 .ok_or_else(|| bad("node requires one pinned actual EnvironmentFile"))?;
@@ -544,6 +546,60 @@ fn validate_unit(
     Ok(())
 }
 
+/// Only inspect the reviewed source path and its metadata. The original
+/// systemd/custody owner, under the final service account, must decrypt it.
+/// Neither a valid plan nor a pinned unit constitutes custody qualification.
+fn validate_node_credential(
+    service: &Service,
+    entries: &BTreeMap<String, Vec<String>>,
+) -> Result<(), CtlError> {
+    if [
+        "LoadCredential",
+        "SetCredential",
+        "SetCredentialEncrypted",
+        "ImportCredential",
+    ]
+    .iter()
+    .any(|key| entries.contains_key(*key))
+    {
+        return Err(bad(
+            "node permits only one encrypted owner-key source, without plaintext, inline or imported credential overrides",
+        ));
+    }
+    let sources = entries
+        .get("LoadCredentialEncrypted")
+        .ok_or_else(|| bad("node requires LoadCredentialEncrypted=owner-key:absolute-source"))?;
+    if sources.len() != 1 {
+        return Err(bad("node requires exactly one encrypted owner-key source"));
+    }
+    let source = sources[0]
+        .strip_prefix("owner-key:")
+        .filter(|source| {
+            !source.is_empty()
+                && !source.chars().any(|c| {
+                    c.is_whitespace()
+                        || c.is_control()
+                        || matches!(c, '%' | '\'' | '"')
+                        || (cfg!(unix) && c == '\\')
+                })
+        })
+        .ok_or_else(|| {
+            bad("encrypted node credential must be an explicit owner-key path without systemd expansion or quoting")
+        })?;
+    let source = Path::new(source);
+    plain_path(source, false)?;
+    if !service
+        .protected_paths
+        .iter()
+        .any(|protected| source.starts_with(protected))
+    {
+        return Err(bad(
+            "encrypted node credential source is outside the node's protected owner directories",
+        ));
+    }
+    Ok(())
+}
+
 fn unit_values(unit: &str) -> Result<BTreeMap<String, Vec<String>>, CtlError> {
     let mut values: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut service = false;
@@ -565,9 +621,9 @@ fn unit_values(unit: &str) -> Result<BTreeMap<String, Vec<String>>, CtlError> {
             .split_once('=')
             .ok_or_else(|| bad("invalid unit directive"))?;
         values
-            .entry(key.to_owned())
+            .entry(key.trim().to_owned())
             .or_default()
-            .push(value.to_owned());
+            .push(value.trim().to_owned());
     }
     Ok(values)
 }
@@ -667,6 +723,9 @@ fn validate_native_config(
     let parsed = novovm_node::native_pipeline::service::ResidentConfig::load(path)
         .map_err(|e| bad(format!("original native configuration rejected: {e}")))?;
     same_library_binding(&parsed.library, env_library)?;
+    if parsed.key_storage != novovm_node::native_pipeline::service::NodeKeyStorage::ProtectedV1 {
+        return Err(bad("managed node requires protected_v1 purpose custody; raw_development is test tooling only"));
+    }
     if parsed.uca_initialization.is_none() {
         return Err(bad("economic deployment requires approved UCA initialization; the Ed25519 reference config is not asset activation"));
     }
@@ -679,7 +738,7 @@ fn validate_native_config(
     let base = path
         .parent()
         .ok_or_else(|| bad("native config has no parent"))?;
-    for key in ["database", "signing_key_file"] {
+    for key in ["database", "signing_key_file", "transport_key_file"] {
         let configured = native[key]
             .as_str()
             .ok_or_else(|| bad("native config lacks protected data/key path"))?;
@@ -1164,6 +1223,113 @@ mod tests {
         fs::write(&p, text).unwrap();
         f.deployment.services[0].unit_sha256 = hash(&p);
         assert!(validate_deployment(&f.deployment).is_err());
+    }
+    fn credential_entries(source: &Path, extra: &str) -> BTreeMap<String, Vec<String>> {
+        unit_values(&format!(
+            "[Service]\nLoadCredentialEncrypted=owner-key:{}\n{extra}",
+            source.display()
+        ))
+        .unwrap()
+    }
+    #[test]
+    fn node_credential_plan_checks_metadata_not_decryption() {
+        let mut f = Fixture::new();
+        f.deployment.services[0].role = Role::Node;
+        let source = f.root.join("data/owner-key.credential");
+        // Deliberately NOT a valid encrypted credential. Metadata preflight
+        // must neither decrypt it nor falsely qualify final-account custody.
+        fs::write(&source, []).unwrap();
+        assert!(validate_node_credential(f.service(), &credential_entries(&source, "")).is_ok());
+        assert_eq!(fs::metadata(&source).unwrap().len(), 0);
+        assert_eq!(fs::read_dir(f.root.join("data")).unwrap().count(), 1);
+    }
+    #[test]
+    fn node_credential_rejects_missing_duplicate_and_override_sources() {
+        let mut f = Fixture::new();
+        f.deployment.services[0].role = Role::Node;
+        let source = f.root.join("data/owner-key.credential");
+        fs::write(&source, b"not a real credential").unwrap();
+        assert!(validate_node_credential(f.service(), &BTreeMap::new()).is_err());
+        for extra in [
+            format!("LoadCredentialEncrypted=owner-key:{}\n", source.display()),
+            "LoadCredentialEncrypted=\n".into(),
+            "LoadCredentialEncrypted=another-key:/unreviewed\n".into(),
+            "LoadCredential=owner-key:/unreviewed\n".into(),
+            "LoadCredential = owner-key:/unreviewed\n".into(),
+            "LoadCredential=\n".into(),
+            "SetCredential=owner-key:unreviewed\n".into(),
+            "SetCredentialEncrypted=owner-key:unreviewed\n".into(),
+            "ImportCredential=owner-*\n".into(),
+        ] {
+            assert!(
+                validate_node_credential(f.service(), &credential_entries(&source, &extra))
+                    .is_err(),
+                "accepted ambiguous credential directive: {extra}"
+            );
+        }
+    }
+    #[test]
+    fn node_credential_rejects_unowned_or_ambiguous_paths() {
+        let mut f = Fixture::new();
+        f.deployment.services[0].role = Role::Node;
+        let source = f.root.join("data/owner-key.credential");
+        fs::write(&source, b"not a real credential").unwrap();
+        for path in [
+            PathBuf::from("relative.credential"),
+            f.root.join("data/missing.credential"),
+            f.root.join("data"),
+            f.root.join("data/../data/owner-key.credential"),
+            f.service().config_files[0].path.clone(),
+        ] {
+            assert!(
+                validate_node_credential(f.service(), &credential_entries(&path, "")).is_err(),
+                "accepted unowned or invalid source: {}",
+                path.display()
+            );
+        }
+        for value in [
+            format!("another-key:{}", source.display()),
+            format!("owner-key:\"{}\"", source.display()),
+            format!("owner-key:{}%i", source.display()),
+            "owner-key".into(),
+            "owner-key:".into(),
+        ] {
+            let entries = BTreeMap::from([("LoadCredentialEncrypted".into(), vec![value])]);
+            assert!(validate_node_credential(f.service(), &entries).is_err());
+        }
+    }
+    #[test]
+    fn credential_directive_changes_still_require_unit_hash_review() {
+        let f = Fixture::new();
+        let p = &f.service().unit_file;
+        fs::write(
+            p,
+            format!(
+                "{}LoadCredentialEncrypted=owner-key:/unreviewed\n",
+                fs::read_to_string(p).unwrap()
+            ),
+        )
+        .unwrap();
+        assert!(validate_deployment(&f.deployment).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn node_credential_rejects_symlink_source_and_ancestor() {
+        use std::os::unix::fs::symlink;
+        let mut f = Fixture::new();
+        f.deployment.services[0].role = Role::Node;
+        let source = f.root.join("data/owner-key.credential");
+        fs::write(&source, b"not a real credential").unwrap();
+        let alias = f.root.join("data/alias.credential");
+        symlink(&source, &alias).unwrap();
+        assert!(validate_node_credential(f.service(), &credential_entries(&alias, "")).is_err());
+        let directory = f.root.join("data/alias-directory");
+        symlink(f.root.join("data"), &directory).unwrap();
+        assert!(validate_node_credential(
+            f.service(),
+            &credential_entries(&directory.join("owner-key.credential"), "")
+        )
+        .is_err());
     }
     #[test]
     fn checks_installed_fragment_and_loaded_arguments() {

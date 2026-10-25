@@ -1,0 +1,20 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.94s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_network-dee8326c03be5048.exe)
+
+running 7 tests
+test product_service_file::tests::compaction_child ... ok
+test product_service_file::tests::existing_owner_read_never_creates_missing_lock_or_changes_checkpoint ... ok
+test product_service_file::tests::failed_compaction_stops_owner_without_releasing_next_state ... ok
+test product_service_file::tests::legacy_compaction_keeps_exact_checkpoint_and_cas_across_reopen ... ok
+test product_service_file::tests::process_crashes_at_every_publication_boundary_preserve_exact_head ... ok
+test product_service_file::tests::repeated_compactions_stay_bounded_and_keep_every_acknowledged_head ... ok
+test product_service_file::tests::staged_copy_never_repairs_missing_or_corrupt_authoritative_history ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 868 filtered out; finished in 5.45s
+

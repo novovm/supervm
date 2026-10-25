@@ -4,6 +4,47 @@ fn material() -> Zeroizing<[u8; 32]> {
     Zeroizing::new([91; 32])
 }
 
+#[test]
+fn existing_owner_read_never_creates_missing_lock_or_changes_checkpoint() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("purpose.custody");
+    let lock = sibling(&path, ".lock");
+    assert!(ServiceLeaseFileV1::open_existing(&path, material()).is_err());
+    assert!(!path.exists() && !lock.exists());
+
+    drop(ServiceLeaseFileV1::create(
+        &path,
+        material(),
+        b"opaque protected purpose fixture",
+    )?);
+    let before = std::fs::read(&path)?;
+    let (owner, payload) = ServiceLeaseFileV1::open_existing(&path, material())?;
+    assert_eq!(payload, b"opaque protected purpose fixture");
+    assert!(ServiceLeaseFileV1::open_existing(&path, material()).is_err());
+    drop(owner);
+    assert_eq!(std::fs::read(&path)?, before);
+    assert!(ServiceLeaseFileV1::open_existing(&path, Zeroizing::new([92; 32])).is_err());
+    assert_eq!(std::fs::read(&path)?, before);
+
+    // Model deletion after an outer caller's successful existence precheck.
+    assert!(lock.is_file());
+    std::fs::remove_file(&lock)?;
+    assert!(ServiceLeaseFileV1::open_existing(&path, material()).is_err());
+    assert!(
+        !lock.exists(),
+        "existing-only read must not repair the stable lock"
+    );
+    assert_eq!(std::fs::read(&path)?, before);
+
+    // Existing service/legacy open keeps its prior behavior; no migration of
+    // live service custody is hidden in the new inspection adapter.
+    let (_, payload) = ServiceLeaseFileV1::open(&path, material())?;
+    assert_eq!(payload, b"opaque protected purpose fixture");
+    assert!(lock.is_file());
+    assert_eq!(std::fs::read(&path)?, before);
+    Ok(())
+}
+
 // Deliberately legacy encrypted fixtures, never installed node data.
 fn legacy(path: &Path, checkpoint: &[u8], count: usize) -> Result<()> {
     let mut file = private_options().create_new(true).open(path)?;
@@ -128,10 +169,7 @@ fn compaction_child() -> Result<()> {
 fn child(path: &Path, point: u8) -> Result<std::process::ExitStatus> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
     command
-        .args([
-            "--exact",
-            "product_service_lease::file::tests::compaction_child",
-        ])
+        .args(["--exact", "product_service_file::tests::compaction_child"])
         .env("NOVOVM_TEST_COMPACTION_PATH", path)
         .env("NOVOVM_TEST_COMPACTION_POINT", point.to_string())
         .stdin(std::process::Stdio::null())

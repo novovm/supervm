@@ -160,6 +160,15 @@ foreach ($unit in Get-ChildItem -LiteralPath (Join-Path $output 'systemd') -File
   }
 }
 $nodeUnit = Get-Content -LiteralPath (Join-Path $output 'systemd/novovm-node.service') -Raw
+if ($nodeUnit -notmatch '(?m)^LoadCredentialEncrypted=owner-key:/etc/novovm/credentials/node-owner-key\.cred$') {
+  throw 'Node must bind its own encrypted owner credential, not borrow the mailbox owner'
+}
+$nativeConfig = Get-Content -LiteralPath (Join-Path $output 'config/native-node.json.example') -Raw | ConvertFrom-Json
+if ($nativeConfig.key_storage -ne 'protected_v1' -or
+    $nativeConfig.signing_key_file -eq $nativeConfig.transport_key_file -or
+    $nativeConfig.transport_key_file -ne '/var/lib/novovm/keys/transport.sealed') {
+  throw 'Native package must require independent protected validator and transport custody'
+}
 if ($nodeUnit -notmatch '(?m)^StateDirectory=novovm novovm/state novovm/reports$' -or
     $relayUnit -notmatch '(?m)^StateDirectory=novovm-relay novovm-relay/reports$') {
   throw 'Active units must declare their persistent directories without execution hooks'

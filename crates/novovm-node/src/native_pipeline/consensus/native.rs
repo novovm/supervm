@@ -24,7 +24,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+mod bindings;
 mod query;
+pub use bindings::ValidatorTransportBindings;
 pub(crate) use query::lane as query_lane;
 use query::{QueryDelivery, QueryInbox};
 
@@ -131,6 +133,7 @@ type ChannelLink = AuthenticatedUdpIngressV1;
 pub struct NativeChannel {
     link: ChannelLink,
     domain: MessageDomain,
+    bindings: ValidatorTransportBindings,
     codec: transport::DecodeLimits,
     owner: Arc<()>,
     receive_turn: usize,
@@ -146,6 +149,7 @@ impl NativeChannel {
     pub fn from_transport(
         transport: UdpTransport,
         identity: SigningKey,
+        bindings: ValidatorTransportBindings,
         peers: Vec<NativePeer>,
         client_slots: usize,
         domain: MessageDomain,
@@ -159,19 +163,19 @@ impl NativeChannel {
         );
         let applications = client_slots > 0;
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
-        let known = Self::validator_peers(&domain);
-        ensure!(
-            known.contains(&peer_id_from_ed25519_public_key_v1(
-                &identity.verifying_key().to_bytes()
-            )),
-            "native local identity is outside pinned validator set"
-        );
-        ensure!(
-            peers
-                .iter()
-                .all(|peer| known.contains(&peer_id_from_ed25519_public_key_v1(&peer.key))),
-            "native peer is outside pinned validator set"
-        );
+        bindings.validate_for(&domain.validators)?;
+        bindings.require_production_binding()?;
+        let local_peer = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+        let local_validator = bindings.validator_for_peer(&local_peer)?;
+        let mut seen = BTreeSet::new();
+        for peer in &peers {
+            let remote =
+                bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(&peer.key))?;
+            ensure!(
+                remote != local_validator && seen.insert(remote),
+                "duplicate or local native validator route"
+            );
+        }
         let wall_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)?
             .as_millis()
@@ -205,7 +209,7 @@ impl NativeChannel {
         }
         #[cfg(test)]
         let link = ChannelLink::Original(link);
-        Ok(Self::with_link(link, domain, codec, applications))
+        Ok(Self::with_link(link, domain, bindings, codec, applications))
     }
 
     #[cfg(test)]
@@ -219,28 +223,20 @@ impl NativeChannel {
         endpoint.enable_configured_reconnect_v1()?;
         let applications = endpoint.accepts_clients();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
-        let known = Self::validator_peers(&domain);
+        let bindings = ValidatorTransportBindings::historical_identity_fixture(&domain.validators);
+        bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(
+            &endpoint.local_identity(),
+        ))?;
         for peer in 0..endpoint.peer_count() {
-            ensure!(
-                known.contains(endpoint.peer_id(peer)?),
-                "native peer is outside pinned validator set"
-            );
+            bindings.validator_for_peer(endpoint.peer_id(peer)?)?;
         }
         Ok(Self::with_link(
             ChannelLink::HistoricalFixture(NativeObjectLink::new(endpoint, configs, policy)?),
             domain,
+            bindings,
             codec,
             applications,
         ))
-    }
-
-    fn validator_peers(domain: &MessageDomain) -> BTreeSet<String> {
-        domain
-            .validators
-            .members()
-            .iter()
-            .map(|v| peer_id_from_ed25519_public_key_v1(v.public_key()))
-            .collect()
     }
 
     fn lane_configs(
@@ -290,12 +286,14 @@ impl NativeChannel {
     fn with_link(
         link: ChannelLink,
         domain: MessageDomain,
+        bindings: ValidatorTransportBindings,
         codec: transport::DecodeLimits,
         applications: bool,
     ) -> Self {
         Self {
             link,
             domain,
+            bindings,
             codec,
             owner: Arc::new(()),
             receive_turn: 0,
@@ -317,6 +315,9 @@ impl NativeChannel {
     }
     pub fn peer_id(&self, peer: usize) -> Result<&str> {
         self.link.peer_id(peer)
+    }
+    pub fn validator_for_peer(&self, peer: usize) -> Result<super::wire::Hash> {
+        self.bindings.validator_for_peer(self.link.peer_id(peer)?)
     }
     pub fn session_id(&self, peer: usize) -> Option<[u8; 16]> {
         self.link.session_id(peer)

@@ -610,7 +610,11 @@ mod tests;
 
 #[path = "product_service_checkpoint.rs"]
 mod checkpoint;
-pub use checkpoint::{ServiceLeasePersistenceV1, MAX_SERVICE_CHECKPOINT_BYTES};
+// Keep the existing service-facing imports while the one opaque file owner is
+// also available to offline custody without enabling an Iroh transport stack.
+pub use crate::product_service_file::{
+    ServiceLeaseFileV1, ServiceLeasePersistenceV1, MAX_SERVICE_CHECKPOINT_BYTES,
+};
 
 #[path = "product_service_host.rs"]
 mod host;
@@ -628,10 +632,6 @@ pub use host::{
     request_mailbox_offer_v1, request_mailbox_offer_v2, request_mailbox_offer_v3,
     serve_node_offer_selected_v1, NodeServiceV1,
 };
-#[path = "product_service_file.rs"]
-mod file;
-pub use file::ServiceLeaseFileV1;
-
 #[path = "product_service_self_owned.rs"]
 mod self_owned;
 pub use self_owned::{SelfOwnedTrustV1, ServiceBootstrapCandidateV1};

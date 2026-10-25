@@ -14,9 +14,7 @@ use crate::native_pipeline::{
     pipeline::CandidatePipeline,
 };
 use anyhow::{ensure, Context, Result};
-use novovm_network::{
-    novorudp::object_sender::ObjectSendState, product_overlay::peer_id_from_ed25519_public_key_v1,
-};
+use novovm_network::novorudp::object_sender::ObjectSendState;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
@@ -156,10 +154,9 @@ impl NativeLifecycle {
         let mut peer_names = BTreeMap::new();
         for peer in 0..channel.peer_count() {
             let name = channel.peer_id(peer)?;
+            let validator = channel.validator_for_peer(peer)?;
             let member = validators
-                .members()
-                .iter()
-                .find(|v| peer_id_from_ed25519_public_key_v1(v.public_key()) == name)
+                .member(&validator)
                 .context("unknown native validator route")?;
             ensure!(
                 member.id() != progress.local_validator(),

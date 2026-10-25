@@ -4,6 +4,7 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     balance_key, fee_record_changes, program_id, receipt_codec, SEMANTIC_VERSION,
 };
 use crate::native_pipeline::business::quoted_transfer::Account;
+use crate::native_pipeline::consensus::native::ValidatorTransportBindings;
 use crate::native_pipeline::consensus::wire::{Hash, Validator, ValidatorSet};
 use crate::native_pipeline::state::tree::{
     empty_root, stage_state_update, StagedStateUpdate, StateChange, StateNodeReader,
@@ -33,6 +34,8 @@ pub struct ResidentConfig {
     #[serde(default)]
     pub rpc_addr: Option<SocketAddr>,
     pub signing_key_file: PathBuf,
+    pub transport_key_file: PathBuf,
+    pub key_storage: NodeKeyStorage,
     pub udp_addr: SocketAddr,
     pub peers: Vec<NativePeerConfig>,
     /// Explicit bounded key-possession admission, never a client allowlist.
@@ -53,6 +56,16 @@ pub struct ResidentConfig {
     #[serde(default)]
     pub execution_backend: crate::native_pipeline::pipeline::ExecutionBackend,
     pub batch_size: usize,
+}
+
+/// Explicit key custody, never a fallback after protected-key failure. Raw
+/// material is retained only for existing development/test tooling; managed
+/// deployment requires ProtectedV1 under its actual runtime account.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeKeyStorage {
+    RawDevelopment,
+    ProtectedV1,
 }
 
 /// Local pinned validator routes for this development profile, not a global
@@ -81,6 +94,7 @@ pub struct GenesisConfig {
 #[serde(deny_unknown_fields)]
 pub struct GenesisValidator {
     pub public_key: Hash,
+    pub transport_public_key: Hash,
     pub weight: u64,
 }
 
@@ -96,7 +110,9 @@ pub struct GenesisAllocation {
 /// re-labelled old V3 certificate or an arbitrary supplied commitment.
 pub fn protocol_commitment() -> Hash {
     let mut hash = Sha256::new();
-    hash.update(b"novovm/native-resident-v1/round-bft-v1/candidate-store-v1\0");
+    hash.update(
+        b"novovm/native-resident-v1/round-bft-v1/candidate-store-v1/transport-binding-v1\0",
+    );
     hash.update(program_id());
     hash.update(SEMANTIC_VERSION.to_be_bytes());
     hash.update(receipt_codec());
@@ -124,6 +140,7 @@ impl ResidentConfig {
             &mut config.library,
             &mut config.database,
             &mut config.signing_key_file,
+            &mut config.transport_key_file,
         ] {
             resolve_relative(base, target);
         }
@@ -137,6 +154,7 @@ impl ResidentConfig {
             &mut self.library,
             &mut self.database,
             &mut self.signing_key_file,
+            &mut self.transport_key_file,
         ] {
             *target = native_path(target);
         }
@@ -157,14 +175,21 @@ impl ResidentConfig {
             "resident worker/batch limits out of range"
         );
         ensure!(
-            self.library.is_file() && self.signing_key_file.is_file(),
-            "explicit AOEM library or signing-key file missing"
+            self.library.is_file()
+                && self.signing_key_file.is_file()
+                && self.transport_key_file.is_file(),
+            "explicit AOEM library or purpose-key file missing"
         );
         ensure!(
             self.database.is_absolute()
                 && self.library.is_absolute()
-                && self.signing_key_file.is_absolute(),
+                && self.signing_key_file.is_absolute()
+                && self.transport_key_file.is_absolute(),
             "load resident paths relative to their configuration file first"
+        );
+        ensure!(
+            self.signing_key_file != self.transport_key_file,
+            "validator and transport custody paths must be distinct"
         );
         ensure!(
             !self.udp_addr.ip().is_multicast(),
@@ -262,7 +287,7 @@ impl GenesisConfig {
     /// own derivation; validator weights, policy and every allocation are bound.
     pub fn derive_commitment(&self) -> Result<Hash> {
         let (set, state) = self.prepare()?;
-        Ok(self.commitment(&set, &state))
+        self.commitment(&set, &state)
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -273,7 +298,7 @@ impl GenesisConfig {
         Ok(())
     }
 
-    fn commitment(&self, set: &ValidatorSet, state: &StagedStateUpdate) -> Hash {
+    fn commitment(&self, set: &ValidatorSet, state: &StagedStateUpdate) -> Result<Hash> {
         let mut hash = Sha256::new();
         hash.update(b"novovm/native-resident-v1/genesis\0");
         hash.update(self.chain_id.to_be_bytes());
@@ -281,8 +306,18 @@ impl GenesisConfig {
         hash.update(self.protocol_commitment);
         hash.update(self.timestamp_unix_ms.to_be_bytes());
         hash.update(set.hash());
+        hash.update(self.transport_bindings(set)?.canonical_commitment());
         hash.update(state.root());
-        hash.finalize().into()
+        Ok(hash.finalize().into())
+    }
+
+    pub fn transport_bindings(&self, set: &ValidatorSet) -> Result<ValidatorTransportBindings> {
+        ValidatorTransportBindings::new(
+            set,
+            self.validators
+                .iter()
+                .map(|v| (v.public_key, v.transport_public_key)),
+        )
     }
 
     pub(super) fn prepare(&self) -> Result<(Arc<ValidatorSet>, StagedStateUpdate)> {
@@ -309,6 +344,7 @@ impl GenesisConfig {
                 .map(|v| Validator::new(v.public_key, v.weight))
                 .collect::<Result<Vec<_>>>()?,
         )?);
+        self.transport_bindings(&set)?;
         let mut changes = fee_record_changes(&self.policy, &FeeState::default())?;
         let mut accounts = BTreeSet::new();
         let mut supply = 0u128;
@@ -399,6 +435,9 @@ mod tests {
             policy,
             validators: (1..=4)
                 .map(|seed| GenesisValidator {
+                    transport_public_key: ed25519_dalek::SigningKey::from_bytes(&[100 + seed; 32])
+                        .verifying_key()
+                        .to_bytes(),
                     public_key: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
                         .verifying_key()
                         .to_bytes(),
@@ -426,6 +465,8 @@ mod tests {
             "database": "not-opened-database",
             "rpc_addr": "127.0.0.1:0",
             "signing_key_file": "not-read-key",
+            "transport_key_file": "not-read-transport-key",
+            "key_storage": "raw_development",
             "udp_addr": "127.0.0.1:0",
             "peers": [],
             "genesis": genesis(),
@@ -519,6 +560,38 @@ mod tests {
         config.validators[1] = config.validators[0].clone();
         assert!(config.derive_commitment().is_err());
     }
+
+    #[test]
+    fn genesis_commits_transport_binding_and_rejects_same_key_or_partial_mapping() {
+        let mut base = genesis();
+        base.genesis_config_commitment = base.derive_commitment().unwrap();
+        let mut changed = base.clone();
+        let first = changed.validators[0].transport_public_key;
+        changed.validators[0].transport_public_key = changed.validators[1].transport_public_key;
+        changed.validators[1].transport_public_key = first;
+        assert_ne!(
+            base.derive_commitment().unwrap(),
+            changed.derive_commitment().unwrap()
+        );
+        assert!(
+            changed.validate().is_err(),
+            "old approved pin must reject swapped bindings"
+        );
+        let mut bad = base.clone();
+        bad.validators[0].transport_public_key = base.validators[1].public_key;
+        assert!(bad.derive_commitment().is_err());
+        bad.validators[0].transport_public_key = base.validators[1].transport_public_key;
+        assert!(bad.derive_commitment().is_err());
+        let mut encoded = serde_json::to_value(base).unwrap();
+        encoded["validators"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("transport_public_key");
+        assert!(
+            serde_json::from_value::<GenesisConfig>(encoded).is_err(),
+            "no same-key default for retired configurations"
+        );
+    }
     #[test]
     fn relative_paths_follow_configuration_directory() {
         let base = Path::new("task-config-root");
@@ -591,6 +664,8 @@ mod tests {
         let root = root.canonicalize()?;
         let key_file = root.join("signer.key");
         std::fs::write(&key_file, [1_u8; 32])?; // Test-only signer, never a profile default.
+        let transport_file = root.join("test-only-transport.key");
+        std::fs::write(&transport_file, [101_u8; 32])?;
         let mut genesis = genesis();
         genesis.genesis_config_commitment = genesis.derive_commitment()?;
         let config = ResidentConfig {
@@ -600,6 +675,8 @@ mod tests {
             database: root.join("state.rocksdb"),
             rpc_addr: Some("127.0.0.1:0".parse()?),
             signing_key_file: key_file,
+            transport_key_file: transport_file,
+            key_storage: NodeKeyStorage::RawDevelopment,
             udp_addr: "127.0.0.1:0".parse()?,
             peers: genesis
                 .validators

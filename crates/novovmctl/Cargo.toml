@@ -12,6 +12,7 @@ sha2 = "0.10.9"
 thiserror = "1"
 novovm-governance-observability = { path = "../novovm-governance-observability" }
 novovm-node = { path = "../novovm-node" }
+novovm-relay = { path = "../novovm-relay" }
 novovm-exec = { path = "../novovm-exec" }
 
 [dev-dependencies]

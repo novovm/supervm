@@ -200,6 +200,9 @@ fn manifest() -> Result<UcaGenesisManifestV1, Box<dyn Error>> {
                     public_key: SigningKey::from_bytes(&[seed; 32])
                         .verifying_key()
                         .to_bytes(),
+                    transport_public_key: SigningKey::from_bytes(&[100 + seed; 32])
+                        .verifying_key()
+                        .to_bytes(),
                     weight: 1,
                 })
                 .collect(),

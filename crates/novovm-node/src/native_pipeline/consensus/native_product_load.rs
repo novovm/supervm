@@ -251,7 +251,7 @@ fn client(
         UdpSocket::bind("127.0.0.1:0")?,
         SigningKey::from_bytes(&[201; 32]),
         NativePeer {
-            key: validator_key(index).verifying_key().to_bytes(),
+            key: transport_key(index).verifying_key().to_bytes(),
             address: config.udp_addr,
         },
         MessageDomain {

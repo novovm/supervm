@@ -321,6 +321,9 @@ fn genesis() -> Result<GenesisConfig> {
         validators: (0..4)
             .map(|index| GenesisValidator {
                 public_key: validator_key(index).verifying_key().to_bytes(),
+                transport_public_key: SigningKey::from_bytes(&[151 + index as u8; 32])
+                    .verifying_key()
+                    .to_bytes(),
                 weight: 1,
             })
             .collect(),
@@ -382,10 +385,13 @@ fn setup_with_genesis(
         let address: SocketAddr = listener.local_addr()?;
         let key_path = directory.join(format!("test-only-validator-{index}.key"));
         fs::write(&key_path, validator_key(index).to_bytes())?;
+        let transport_key_path = directory.join(format!("test-only-transport-{index}.key"));
+        fs::write(&transport_key_path, [151 + index as u8; 32])?;
         let config_path = directory.join(format!("node-{index}.json"));
         let config = json!({
             "profile":PROFILE,"library":library,"database":directory.join(format!("validator-{index}.rocksdb")),
             "rpc_addr":address,"signing_key_file":key_path,"genesis":genesis,"workers":4,"batch_size":batch_size,
+            "transport_key_file":transport_key_path,"key_storage":"raw_development",
             "execution_backend":execution_backend,
             "relay":{"endpoint":relay.endpoint,"expected_relay_peer_id":peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes()),
                 "connect_timeout_ms":2000,"read_timeout_ms":10,"tls_trust":{"explicit_ca":{"certificate_path":relay.certificate}}}
