@@ -1,5 +1,29 @@
 # Agent Highest Law
 
+## 2026-10-25 explicitly retire old main-chain test state
+
+The user now authorizes deletion, without keeping backups, of obsolete main-chain
+test ledgers, genesis/run configurations, balances/nonces, signing journals and
+dedicated test-chain keys on A-D. This narrowly supersedes earlier preservation
+requirements for that state; it is not blanket permission to erase pre-release
+files. Inventory exact resolved targets and active users first; do not delete
+mixed parent directories, follow links, or delete unknown-purpose stores.
+Preserve source/drafts, audit reports and test evidence, verified build artifacts,
+private knowledge, communications/custody, service/device/UCA identities and
+NOVOCHAT history. B mailbox/Relay/Web and C phones remain outside cleanup scope.
+Delete a chain-only key only after proving it is not a retained service identity.
+Retired chain domains must never resume signing with cleared journals. This is
+logical filesystem deletion, not a certified physical secure erase.
+
+Preparation of a NEW isolated A-D public-test chain and local purpose identities
+is authorized. It does not yet authorize genesis activation, starting validators,
+test NOV allocation, asset grants/spending or changing B services/network policy.
+Do not require recovery of discarded old test balances as a preparation input;
+continue to test restart/catch-up on the new chain after its separate activation.
+Record each host's actual cleanup result; A completion is not B/C/D completion.
+This supersedes the older blanket no-cleanup/original-database prerequisites in
+the multi-host handoff. See the latest [delivery alignment](docs/NOVOVM_DELIVERY_ALIGNMENT.md).
+
 ## 2026-10-25 unified full-stack node deployment
 
 The user requires A/B/C/D to deploy ONE NOVOVM/NOVONET system with unified
