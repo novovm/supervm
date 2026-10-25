@@ -364,7 +364,7 @@ fn run_recovery(highest_identity: bool) -> Result<()> {
         let deadline = catchup_started + Duration::from_secs(90);
         let interrupted = loop {
             nodes.alive()?;
-            let value = status(&mut late_client)?;
+            let value = recovery_status(&mut nodes, &mut late_client, deadline)?;
             evidence["catchup_last_status"] = json!(value);
             if value.height > 0 {
                 evidence["catchup_progress"]
@@ -491,9 +491,16 @@ fn run_recovery(highest_identity: bool) -> Result<()> {
             "restore_third_then_fourth_without_pending_replay",
             started,
         )?;
+        let restore_deadline = Instant::now() + Duration::from_secs(90);
         nodes.start(healthy[1], "existing")?;
         minority.push(connect(&nodes, healthy[1], set.clone())?);
-        let pending_done = receipts(&mut nodes, &mut minority, &pending_ids)?;
+        // This is a new process/session, not a ready query endpoint merely
+        // because spawn() returned. Preserve the original receipt deadline.
+        let restored_status =
+            recovery_status(&mut nodes, minority.last_mut().unwrap(), restore_deadline)?;
+        evidence["restored_third_ready_status"] = json!(restored_status);
+        let pending_done =
+            receipts_until(&mut nodes, &mut minority, &pending_ids, restore_deadline)?;
         ensure!(pending_done.iter().all(|value| matches!(value,
             ReceiptState::Finalized { success: true, nonce_after, .. } if *nonce_after == pending_nonce+1)),
             "restored quorum did not finish original pending input");

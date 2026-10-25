@@ -220,7 +220,22 @@ fn receipts(
     clients: &mut [NativeApplicationClient],
     hashes: &[[u8; 32]],
 ) -> Result<Vec<ReceiptState>> {
-    let deadline = Instant::now() + Duration::from_secs(90);
+    receipts_until(
+        nodes,
+        clients,
+        hashes,
+        Instant::now() + Duration::from_secs(90),
+    )
+}
+
+// A restarted child's readiness and receipt observation share ONE caller budget.
+// Only readiness retries typed timeouts; asset/receipt failures remain strict.
+fn receipts_until(
+    nodes: &mut ProductNodes,
+    clients: &mut [NativeApplicationClient],
+    hashes: &[[u8; 32]],
+    deadline: Instant,
+) -> Result<Vec<ReceiptState>> {
     loop {
         nodes.alive()?;
         let mut all = Vec::new();
@@ -230,8 +245,12 @@ fn receipts(
                 if let Answer::Receipt {
                     state: state @ ReceiptState::Finalized { .. },
                     ..
-                } = query(client, Query::Receipt { hash: *hash })?
-                {
+                } = query_until(
+                    client,
+                    Query::Receipt { hash: *hash },
+                    deadline.min(Instant::now() + Duration::from_secs(5)),
+                    || nodes.alive(),
+                )? {
                     rows.push(state);
                 }
             }
@@ -254,11 +273,13 @@ fn receipts(
                 .chain(std::iter::once(ReceiptState::NotRecent))
                 .collect();
             for client in clients.iter_mut() {
-                let Answer::Receipts { states, .. } = query(
+                let Answer::Receipts { states, .. } = query_until(
                     client,
                     Query::Receipts {
                         hashes: selectors.clone().try_into().map_err(anyhow::Error::msg)?,
                     },
+                    deadline.min(Instant::now() + Duration::from_secs(5)),
+                    || nodes.alive(),
                 )?
                 else {
                     anyhow::bail!("native batch receipt missing");

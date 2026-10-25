@@ -1,0 +1,24 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running unittests src\lib.rs (target/runtime-rebuild\debug\deps\novovm_node-e8ab88ceea79732a.exe)
+
+running 6 tests
+native actual AAB artifacts=D:\WorksArea\SUPERVM\target\native-product-rpc\native-aab-21324-1792953349153239000
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::aab::native_only_a_a_b_real_honest_signers_recover_and_restart ... ok
+native-only artifacts=\\?\D:\WorksArea\SUPERVM\target\native-product-rpc\native-only-21324-1792953370050363100
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_genesis_transactions_queries_and_cold_recovery ... ok
+native minority artifacts=\\?\D:\WorksArea\SUPERVM\target\native-product-rpc\native-minority-21324-1792953373739644700
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_minority_and_pending_signature_conflict_recover ... ok
+native readiness delayed-start passed: attempts=2 elapsed_ms=5779 artifacts=\\?\D:\WorksArea\SUPERVM\target\native-product-rpc\native-readiness-21324-1792953376110470500
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_status_readiness_survives_first_query_timeout ... ok
+native recovery artifacts=D:\WorksArea\SUPERVM\target\native-product-rpc\native-recovery-highest-21324-1792953381922112800
+native recovery artifacts=D:\WorksArea\SUPERVM\target\native-product-rpc\native-recovery-lowest-21324-1792953542177415300
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::recovery::native_only_recovery_late_highest_validator_original_database_and_minority ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::recovery::native_only_recovery_late_lowest_validator_original_database_and_minority ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 1639 filtered out; finished in 356.80s
+

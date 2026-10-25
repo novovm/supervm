@@ -1,0 +1,88 @@
+{
+  "schema": "novovm-native-ci-recovery-evidence/v1",
+  "source_base": "78324b6c4fbb1d4eaebeeaa5457abe296a2dabed",
+  "implementation_source": "the commit containing this evidence",
+  "scope": "test-only original-process readiness and A/A/B injection; production code unchanged",
+  "original_ci": {
+    "run": 40213389839,
+    "rust_job": 121229299836,
+    "status": "completed",
+    "conclusion": "failure",
+    "native_only_passed": 3,
+    "native_only_failed": 3,
+    "reports": ["ci-failed-aab.json", "ci-failed-highest.json", "ci-failed-lowest.json"],
+    "log": "logs/ci-40213389839-rust.log",
+    "independent_host_rules_run": 40213389856,
+    "independent_host_rules_conclusion": "success"
+  },
+  "environment": {
+    "os": "Windows x86_64",
+    "profile": "debug",
+    "real_machines": 1,
+    "legacy_host_execution": false,
+    "http_listeners": 0,
+    "production_code_modified": false,
+    "aoem_library_modified": false
+  },
+  "process_artifacts": {
+    "node_sha256": "730c16538b4b104ef9e19876077b41889dd6ccae328d6b35ebdef1be8a9c781e",
+    "native_client_sha256": "d1ba39a9aa79128ba4e16c4987214563ebecf7060cdb4547f59abf326b24ec81",
+    "aoem_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+    "final_aab_test_harness_sha256": "09608eb11d8bcfb551c49ea07b9bf43beb6503042ea450fcf492e4509d8e2151"
+  },
+  "checks": [
+    {"name": "native_status_readiness unit boundaries", "passed": 3, "failed": 0, "log": "logs/readiness-unit-tests.log"},
+    {"name": "native_only_ --ignored --test-threads=1", "passed": 6, "failed": 0, "ignored": 0, "seconds": 356.80, "log": "logs/windows-six-process-tests.log", "aab_checkpoint": "windows-checkpoint-aab.json"},
+    {"name": "final AAB shared deadline and phase evidence", "passed": 1, "failed": 0, "seconds": 21.00, "log": "logs/windows-final-aab.log", "report": "windows-final-aab.json"},
+    {"name": "cargo clippy -p novovm-node --all-targets --locked -- -D warnings", "exit_code": 0, "log": "logs/final-clippy.log"},
+    {"name": "cargo fmt --all -- --check", "exit_code": 0, "stdout": ""}
+  ],
+  "test_version_boundary": "Six-process suite uses final recovery/queries. AAB alone subsequently shares one startup deadline and adds evidence, then is rebuilt and rerun. Do not equate the checkpoint AAB with the final harness.",
+  "recovery": [
+    {
+      "direction": "late_highest_transport_peer_identity",
+      "report": "windows-final-highest.json",
+      "sha256": "37a446c38520c61ea9603a1676963e4b85155370043710ba386db1bd70404476",
+      "late_start_ms": 106794,
+      "elapsed_ms": 160126,
+      "minority_no_publication_ms": 12032,
+      "final_heights": [46, 46, 46, 46]
+    },
+    {
+      "direction": "late_lowest_transport_peer_identity",
+      "report": "windows-final-lowest.json",
+      "sha256": "274b1a1bd81dae63fc805dbca4606405470083aecb0281d6d2a70d550bd71654",
+      "late_start_ms": 106669,
+      "elapsed_ms": 163651,
+      "minority_no_publication_ms": 12033,
+      "final_heights": [46, 46, 46, 46]
+    }
+  ],
+  "shared_recovery_assertions": {
+    "healthy_offline_height": 40,
+    "crash_durable_height": 1,
+    "target_archive_absent_at_crash": true,
+    "quorum": 3,
+    "same_keys_config_and_old_signing_outbox_preserved": true,
+    "balances_nonce_fees_receipts_consistent": true,
+    "database_copy": false,
+    "wallet_resubmission_to_laggard": false
+  },
+  "final_aab": {
+    "report_sha256": "d0b858a3874ba298d30b08cca9fec2e32738f2824f8e584aec76def85506134a",
+    "only_first_validator_delay_ms": 6000,
+    "only_first_height": 0,
+    "only_first_round": 0,
+    "actual_prevote_observed_from_spawn_ms": [988, 826, 1095],
+    "injection_queue_to_observation_ms": [27, 28, 26],
+    "clock_scope": "test observer, not node signing event or device time"
+  },
+  "not_claimed": [
+    "Linux initial response delay root cause",
+    "new commit remote CI success",
+    "ML-DSA transport handshake implementation",
+    "full device and service signature migration",
+    "new finalized TPS",
+    "multi-host deployment or mainnet activation"
+  ]
+}

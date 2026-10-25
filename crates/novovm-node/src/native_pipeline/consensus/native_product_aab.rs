@@ -657,39 +657,90 @@ fn native_only_a_a_b_real_honest_signers_recover_and_restart() -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
     let mut evidence = json!({"source":"current_original_native_execution_tick","transport":"native_novorudp_apfl","http_listeners":0,"honest_processes":3,"real_machines":1,"faulty_validator":faulty,"faulty_votes_signed":0,"externally_constructed_qcs":0,"throughput_acceptance":false,"completed":false,"assignment":"A/A/B in honest configuration index order","signed_fault_proposal_wire":signed_wire,"phase":"start"});
+    evidence["per_peer_injection"] = json!([]);
     let result = (|| -> Result<()> {
-        for index in &honest {
+        let mut clients = Vec::new();
+        let startup_deadline = Instant::now() + Duration::from_secs(90);
+        // Do not spend an already running node's proposal deadline waiting for
+        // other processes to load AOEM/custody. Each original wallet still
+        // supplies B before that peer receives its assigned A/B proposal.
+        for (peer, index) in honest.iter().enumerate() {
+            let started = Instant::now();
             nodes.start(*index, "create")?;
-        }
-        let mut clients = honest
-            .iter()
-            .map(|index| connect(&nodes, *index, set.clone()))
-            .collect::<Result<Vec<_>>>()?;
-        ready(&mut nodes, &mut clients)?;
-        // Same historical counterexample: all honest local wallets prepare B;
-        // the faulty proposer supplies A to two, B to one. These are original
-        // signed transactions; no honest node receives an execution result.
-        for client in &mut clients {
-            send(client, &[signed(1, 0, 100)?, signed(3, 0, 50)?])?;
-        }
-        let handshake_deadline = Instant::now() + Duration::from_secs(4);
-        while fault.snapshot()?.sessions != 3 {
+            let mut client = connect(&nodes, *index, set.clone())?;
+            let before = recovery_status(&mut nodes, &mut client, startup_deadline)?;
+            let ready_ms = started.elapsed().as_millis();
             ensure!(
-                Instant::now() < handshake_deadline,
-                "native Byzantine peer handshake timeout"
+                before.height == 0 && before.round == 0 && !before.recovering,
+                "AAB peer {index} startup missed original round zero: {before:?}"
             );
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        let before = clients.iter_mut().map(status).collect::<Result<Vec<_>>>()?;
-        ensure!(
-            before.iter().all(|s| s.height == 0 && s.round == 0),
-            "AAB injection missed original round zero: {before:?}"
-        );
-        evidence["phase"] = json!("inject_original_round_zero_equivocation");
-        for (peer, _) in honest.iter().enumerate() {
+            send(&mut client, &[signed(1, 0, 100)?, signed(3, 0, 50)?])?;
+            let wallet_delivered_ms = started.elapsed().as_millis();
+            let id = Validator::new(validator_key(*index).public_key(), 1)?.id();
+            ensure!(
+                !fault
+                    .snapshot()?
+                    .votes
+                    .values()
+                    .any(|v| v.context == context
+                        && v.round == 0
+                        && v.phase == Phase::Prevote
+                        && v.validator_id == id),
+                "AAB peer {index} already prevoted before fault injection"
+            );
+            evidence["phase"] = json!("inject_original_round_zero_equivocation");
             let selected = usize::from(peer == 2);
             fault.send(peer, &bodies[selected].2)?;
             fault.send(peer, &proposals[selected])?;
+            let injection_queued_ms = started.elapsed().as_millis();
+            let deadline = Instant::now() + Duration::from_secs(4);
+            loop {
+                nodes.alive()?;
+                let observed = fault.snapshot()?;
+                if let Some(vote) = observed.votes.values().find(|v| {
+                    v.context == context
+                        && v.round == 0
+                        && v.phase == Phase::Prevote
+                        && v.validator_id == id
+                }) {
+                    ensure!(
+                        vote.value == Some(bodies[selected].0),
+                        "AAB peer {index} did not vote for its assigned proposal: {vote:?}"
+                    );
+                    evidence["per_peer_injection"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({
+                            "node":index,"peer":peer,"before":before,
+                            "ready_from_spawn_ms":ready_ms,
+                            "wallet_delivered_from_spawn_ms":wallet_delivered_ms,
+                            "injection_queued_from_spawn_ms":injection_queued_ms,
+                            "elapsed_from_spawn_ms":started.elapsed().as_millis(),
+                            "wallet_b_supplied_before_proposal":true,"prevote":vote
+                        }));
+                    break;
+                }
+                ensure!(
+                    Instant::now() < deadline,
+                    "AAB peer {index} assigned prevote missing after injection"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            clients.push(client);
+            if peer == 0 {
+                // Regression for CI's slow sequential startup: exceed the
+                // unchanged five-second proposal window AFTER the first real
+                // vote, without delaying its proposal behind another startup.
+                // One vote must neither form a QC nor fabricate finality.
+                std::thread::sleep(Duration::from_secs(6));
+                let only = status(&mut clients[0])?;
+                ensure!(
+                    only.height == 0 && only.round == 0,
+                    "one real prevote advanced finality or the round: {only:?}"
+                );
+                evidence["delayed_next_start_ms"] = json!(6000);
+                evidence["only_first_validator_after_delay"] = json!(only);
+            }
         }
         let deadline = Instant::now() + Duration::from_secs(4);
         loop {

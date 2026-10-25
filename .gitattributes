@@ -8,6 +8,9 @@ aoem/**/*.dll filter=lfs diff=lfs merge=lfs -text
 aoem/**/*.so filter=lfs diff=lfs merge=lfs -text
 aoem/**/*.dylib filter=lfs diff=lfs merge=lfs -text
 # Preserve measured evidence bytes/hashes across Windows and Linux checkouts.
+artifacts/audit/native-mldsa65-ci-recovery-20261026/*.json -text
+# Retain original CI/test output, including intentional formatting diffs/blank lines.
+artifacts/audit/native-mldsa65-ci-recovery-20261026/logs/*.log -text -whitespace
 artifacts/audit/native-tps-forward-progress-20261024/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 artifacts/audit/native-tps-forward-progress-20261024/*.log whitespace=-blank-at-eof,cr-at-eol
 artifacts/audit/native-validator-recovery-20261020/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
