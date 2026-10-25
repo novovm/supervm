@@ -1,0 +1,158 @@
+{
+  "source_commit": "ec7b069e7e0728005941e91de8fcd867012d987c",
+  "scope": "novovm_unified_linux_release_v3",
+  "target": "x86_64-unknown-linux-gnu",
+  "build_contracts": [
+    {
+      "package": "novovm-node",
+      "binary": "novovm-node",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "5e442a1b57021f25c14cbaa28418cab0d74878c5e7c0f4d1892ab3fb36ad514c"
+    },
+    {
+      "package": "novovm-node",
+      "binary": "novovm-native-client",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "ccd591e83af299e259b177e0a0d9deb99a67d956ea2244f837e8db0bbd8ca60c"
+    },
+    {
+      "package": "novovm-node",
+      "binary": "novovm-product-relay",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "b5f791c56a19bea826d890b7b642d884e94ff4bb535f3872ee5a3d206c4a6a8c"
+    },
+    {
+      "package": "novovm-node",
+      "binary": "novovm-product-node-overlay",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "7c8afb4be9c41de0ae0f68864c666bfce5e86240ba782c8022dead4ed48c19bc"
+    },
+    {
+      "package": "novovm-node",
+      "binary": "novovm-product-nat",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "5d13f9e94b0a1d86793a02cc66e9082d4f742552ea1f7e7993bf40ffa36cd28e"
+    },
+    {
+      "package": "novovm-node",
+      "binary": "novovm-product-peer",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "997f4dd7f067503c849e7324d29f2f35ba37c2149907454111c83df7aa2bf8bf"
+    },
+    {
+      "package": "novovm-node",
+      "binary": "novovm-product-topology",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "f1f6313a6a350a5f43dec3b2e9f264fc48432ba19d8362df9a22a61f4c76757f"
+    },
+    {
+      "package": "novovm-node",
+      "binary": "novovm-product-evidence",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-node#0.1.0",
+      "cargo_features": [
+        "default"
+      ],
+      "sha256": "eaa3424e177ab1e9d989a5448405c2dd8ea3f597da89b6381e5ebdc1ee8a2a8e"
+    },
+    {
+      "package": "novovm-relay",
+      "binary": "novovm-rendezvous-service",
+      "features": [
+        "iroh-transport",
+        "tls-transport"
+      ],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-relay#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-relay#0.1.0",
+      "cargo_features": [
+        "default",
+        "iroh-transport",
+        "tls-transport"
+      ],
+      "sha256": "0c5e0f91171a3de70b80e8333ab6d1359524f332c714bb07cc4c7a6d56ba4b10"
+    },
+    {
+      "package": "novovm-relay",
+      "binary": "supervm-relay",
+      "features": [
+        "iroh-transport",
+        "tls-transport"
+      ],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-relay#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovm-relay#0.1.0",
+      "cargo_features": [
+        "default",
+        "iroh-transport",
+        "tls-transport"
+      ],
+      "sha256": "093dfe3f1644bbeff5f6a6501aceddefddf849cff505225377d53f3d1570d684"
+    },
+    {
+      "package": "novovmctl",
+      "binary": "novovmctl",
+      "features": [],
+      "default_features": true,
+      "expected_cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovmctl#0.1.0",
+      "cargo_package_id": "path+file:///home/aoem-a3/WorksArea/SUPERVM/crates/novovmctl#0.1.0",
+      "cargo_features": [],
+      "sha256": "80065afacd3c8699900e540ee630da2bb4de7aa551bf6b7efacd843f91b05d3f"
+    }
+  ],
+  "package_file_count": 85,
+  "manifest_entries_verified": 82,
+  "package_logical_bytes": 767497364,
+  "aoem_sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
+  "release_manifest_sha256": "d4832e0372d02b6bb8f531e151479c5689bee2ef61e75df0802e1dfe8ea07121",
+  "checksums_sha256": "5d8aaa5ea25a9196ddf93fac7c0dc6f69627bbabdd682b5cdf9823df2b0fcffb",
+  "all_contracts_and_hashes_passed": true,
+  "source_worktree_clean_after_build": true,
+  "resource_copies_and_service_templates_verified": true,
+  "services_configured": false,
+  "installed_or_started": false
+}

@@ -1,0 +1,2 @@
+Unified Linux artifacts assembled, not installed or started: /home/aoem-a3/WorksArea/SUPERVM/artifacts/audit/linux-package-assembly-2b3210e585d64730b9cc57c83b680658/artifacts/product-overlay/linux-x86_64
+PASS: original unified assembly (11 binary contracts), manifest, checksums, original resources, unconfigured management, explicit duplex default and changed-hardlink rejection. Synthetic artifacts only; retained: /home/aoem-a3/WorksArea/SUPERVM/artifacts/audit/linux-package-assembly-2b3210e585d64730b9cc57c83b680658

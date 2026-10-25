@@ -1,0 +1,8 @@
+CARGO_BUILD_JOBS=4 nice -n 10 cargo test -p novovmctl --locked
+novovmctl_test_exit=0
+pwsh -NoProfile -File scripts/tests/linux-package-safety.tests.ps1
+linux-package-safety_exit=0
+pwsh -NoProfile -File scripts/tests/linux-package-build-failure.tests.ps1
+linux-package-build-failure_exit=0
+pwsh -NoProfile -File scripts/tests/linux-package-assembly.tests.ps1
+linux-package-assembly_exit=0

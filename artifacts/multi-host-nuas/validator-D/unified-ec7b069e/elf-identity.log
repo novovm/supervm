@@ -1,0 +1,20 @@
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-native-client:           ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=ea20332a9b9882760954658fae5298c86a215556, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-node:                    ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=b880e441f7f0657596c7af01e934abc9ddd55219, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-product-evidence:        ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=8be407fc33a3e474bed0fe684112e7e91fcdd4bc, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-product-nat:             ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=02c99a73e30e23a4d9e492e15be878a1fdcce899, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-product-node-overlay:    ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=012103ae283d957da125170b96276620457cf3b2, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-product-peer:            ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=17fa30bee98eddae383fd760dcc6c8c7964a5e38, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-product-relay:           ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=4a8a61ba11568394f71ed3bae7b94bbe669f7fcd, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-product-topology:        ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=4afcef28623ceebb8dc16e00c62274b79bbdb926, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovm-rendezvous-service:      ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=bca409806f07ce8c50ba1a222f119c7321740255, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/novovmctl:                      ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=3fe075ec62879ef861a8ed1da6eb6f38a258ce60, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/bin/supervm-relay:                  ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=d7cedcfb5949b292b40a368e09d173c8585a1bbe, not stripped
+artifacts/product-overlay/unified-d-ec7b069e/aoem/linux/core/bin/libaoem_ffi.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, BuildID[sha1]=30efd8177803151514bd8eebb4a184a31bd1c8fc, not stripped
+	linux-vdso.so.1 (0x00007f295595b000)
+	libssl.so.3 => /lib/x86_64-linux-gnu/libssl.so.3 (0x00007f295589a000)
+	libcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007f294cc00000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007f294c800000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f295586c000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f294d117000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f294c400000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f295595d000)

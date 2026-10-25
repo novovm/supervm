@@ -1,0 +1,65 @@
+D explicit receipt: D-UNIFIED-LINUX-ec7b069e
+Fixed build source: ec7b069e7e0728005941e91de8fcd867012d987c
+Receipt date: 2026-10-25 UTC (2026-10-24 America/Adak)
+Source main/worktree and origin/main matched before build and before receipt publication.
+
+BUILD AND ARTIFACT VALIDATION: PASS
+Ubuntu 24.04.5 LTS, Linux 7.0.0-38-generic x86_64.
+rustc 1.94.0; cargo 1.94.0; PowerShell 7.5.4; target x86_64-unknown-linux-gnu.
+Commands, executed in repository root, in order:
+  CARGO_BUILD_JOBS=4 nice -n 10 cargo test -p novovmctl --locked
+  pwsh -NoProfile -File scripts/tests/linux-package-safety.tests.ps1
+  pwsh -NoProfile -File scripts/tests/linux-package-build-failure.tests.ps1
+  pwsh -NoProfile -File scripts/tests/linux-package-assembly.tests.ps1
+  CARGO_BUILD_JOBS=4 nice -n 10 pwsh -NoProfile -File scripts/novovm-package-product-linux.ps1 -Target x86_64-unknown-linux-gnu -PackageDir artifacts/product-overlay/unified-d-ec7b069e
+All commands exit 0. novovmctl: 54 unit + 9 CLI tests passed.
+Packaging safety: 29 assertions; failure and synthetic assembly fixtures passed.
+The real packager invoked locked Cargo builds for all 11 programs. Cargo legitimately
+reused current cache where fresh; no old package binaries substituted for failed builds.
+Both novovm-relay programs retain iroh-transport,tls-transport.
+Individual binary identities, Cargo package IDs/features and SHA-256 are recorded in
+package-validation.json and the original release-manifest.json.
+AOEM was copied unchanged from the pinned source, not rebuilt or replaced.
+AOEM SHA-256: 4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309
+release-manifest SHA-256: d4832e0372d02b6bb8f531e151479c5689bee2ef61e75df0802e1dfe8ea07121
+
+ARCHIVE (local only; not uploaded to Git or transferred to B):
+  artifacts/product-overlay/unified-d-ec7b069e.tar.gz
+  artifacts/product-overlay/unified-d-ec7b069e.tar.gz.sha256
+Bytes: 349636499
+SHA-256: 09713540526aefdf3785e2c595759f876de771a806bf9e8023686f900e4fc4e3
+Creation command:
+  tar --sort=name --owner=0 --group=0 --numeric-owner -C artifacts/product-overlay -cf - unified-d-ec7b069e | gzip -n > artifacts/product-overlay/unified-d-ec7b069e.tar.gz
+Safe extraction into a new empty D directory:
+  artifacts/multi-host-nuas/validator-D/unified-ec7b069e-extracted/unified-d-ec7b069e
+Archive member paths/types were checked before Python tarfile data-filter extraction.
+85 files matched source hashes; all 11 programs retain execute bits. Root and nested
+AOEM checksums passed. Config/service resources matched the pinned source.
+First verifier error preserved: strict mode equality rejected CHECKSUMS.sha256
+(0664 -> 0644). Python safe extraction strips group/other write. Reverification of
+all file bytes and safe-filter modes passed; no package content changed to hide it.
+See extraction-validation.json. No build/test failure occurred.
+
+CONFIGURATION PRECHECK: BLOCKED / NOT ACCEPTED
+Existing services/ports and standard data paths were inventoried read-only.
+No unified novovm/novonet/supervm service was found. Standard /opt/novovm,
+/etc/novovm, /var/lib/novovm, /opt/novonet-mailbox and /var/lib/novonet were absent.
+Existing unrelated services and historical artifacts were left intact.
+No reviewed D unit/env, common native configuration, original ledger/signing identity
+or approved service-role manifest was supplied. No replacement identity or DB created.
+HOST.json remains LOCAL DRAFT, not a human-approved executable deployment manifest.
+It pins the extracted package and actual manifest hash but retains services: [].
+Command (no --apply):
+  artifacts/multi-host-nuas/validator-D/unified-ec7b069e-extracted/unified-d-ec7b069e/bin/novovmctl lifecycle --deployment-manifest artifacts/multi-host-nuas/validator-D/unified-ec7b069e/HOST.json --action plan
+Exit: 2; ok=false; InvalidArgument:
+  invalid argument: deployment must describe one to three existing service roles
+plan.stderr.log contains the complete JSON rejection; plan.stdout.json is empty.
+The first schema rejection does not prove downstream configuration checks passed.
+Next: A/operator reviews package identities and provides approved D services, unit/env,
+common configuration and original-state recovery inputs; then rerun plan before install.
+
+INSTALL / START / ORIGINAL-STATE RECOVERY: NOT RUN
+No service registration, enable/start/stop, new chain/genesis, asset authorization,
+database deletion, firewall change or B access. No cross-host health/production claim.
+Remote CI final status not checked by this local build receipt.
+Receipt publication does not prove A has acknowledged it.

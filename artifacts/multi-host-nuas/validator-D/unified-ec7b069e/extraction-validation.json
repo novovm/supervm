@@ -1,0 +1,436 @@
+{
+  "archive_sha256": "09713540526aefdf3785e2c595759f876de771a806bf9e8023686f900e4fc4e3",
+  "archive_bytes": 349636499,
+  "verified_files": 85,
+  "all_extracted_hashes_match": true,
+  "all_11_binaries_executable": true,
+  "extraction_directory": "/home/aoem-a3/WorksArea/SUPERVM/artifacts/multi-host-nuas/validator-D/unified-ec7b069e-extracted/unified-d-ec7b069e",
+  "safe_filter_removed_group_other_write": [
+    {
+      "path": "CHECKSUMS.sha256",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "README.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/INSTALL-INFO.txt",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/README.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/RELEASE-NOTES.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/RUNTIME-BASELINE.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/aoem-sdk-manifest.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/config/aoem-runtime-profile.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/CHECKSUMS.sha256",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/ai-sgm-infer-wire-v1-capability.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/config/aoem-runtime-profile.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/bin/libaoem_ffi.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_crypto_hsm.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_crypto_kms.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_crypto_mldsa.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_hsm.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_kms.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_mldsa.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_persist.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_persist_rocksdb.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_runtime_wasm_wasmtime.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_wasm.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_zkvm.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_ffi_zkvm_executor.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_hsm_plugin.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/core/plugins/libaoem_kms_plugin.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/include/aoem.h",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_crypto_hsm.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_crypto_kms.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_hsm.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_ffi_kms.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_hsm_plugin.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/kms-hsm-plugin/libaoem_kms_plugin.so",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/linux/manifest.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "aoem/manifest/aoem-manifest.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "bin/novovm-native-client",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-node",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-product-evidence",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-product-nat",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-product-node-overlay",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-product-peer",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-product-relay",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-product-topology",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovm-rendezvous-service",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/novovmctl",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "bin/supervm-relay",
+      "source_mode": "0o775",
+      "extracted_mode": "0o755"
+    },
+    {
+      "path": "compatibility/novovm-product-relay.service",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/mailbox-native.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/mailbox-node.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/mailbox-tls.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/native-node.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/node-mainline-overlay.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/novovm-node.env.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/peer-receiver.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/peer-sender.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/relay.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/topology-plan.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "config/unified-node.json.example",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVONET_TRANSPORT_POLICY_V1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_DELIVERY_ALIGNMENT.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_MULTI_HOST_NUAS_HANDOFF.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_NATIVE_OPERATOR_CLIENT.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/novovm-product-evidence-v1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/novovm-product-nat-runtime-v1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/novovm-product-node-overlay-v1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/novovm-product-peer-runtime-v1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/novovm-product-relay-client-v1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/novovm-product-relay-daemon-v1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "docs/novovm-product-topology-preflight-v1.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "release-manifest.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "resources/config/relay/nginx-location.conf",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "resources/config/relay/relay.example.json",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "resources/config/relay/supervm-relay.service",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "resources/config/rendezvous-linux/README.md",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "resources/config/rendezvous-linux/novonet-mailbox.service",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "resources/scripts/linux/install-owned-mailbox.sh",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "systemd/novonet-mailbox.service",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "systemd/novovm-node.service",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    },
+    {
+      "path": "systemd/supervm-relay.service",
+      "source_mode": "0o664",
+      "extracted_mode": "0o644"
+    }
+  ],
+  "first_validation_error": "Strict mode equality assertion on CHECKSUMS.sha256: original 0664, extracted 0644. Python tar data filter intentionally removes group/other write; content hashes unchanged. Rechecked all files against safe-filter modes; no package or extracted content modified."
+}

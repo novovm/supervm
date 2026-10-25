@@ -1,5 +1,22 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-25 D统一Linux包v3显式回执（构建通过，配置仍阻断）
+
+回执 `D-UNIFIED-LINUX-ec7b069e`：固定源码
+`ec7b069e7e0728005941e91de8fcd867012d987c`，D真实Linux原打包器11程序构建与
+制品/解包哈希核验通过；54项unit＋9项CLI及三项打包测试通过。TLS/Iroh保留，
+AOEM未替换。[完整回执、命令及证据索引](../artifacts/multi-host-nuas/validator-D/unified-ec7b069e/HANDOFF.txt)。
+
+归档 `unified-d-ec7b069e.tar.gz`，349636499 bytes，SHA-256
+`09713540526aefdf3785e2c595759f876de771a806bf9e8023686f900e4fc4e3`。
+制品只在D本地，Git仅回传小型证据。源码SHA与后续回执提交SHA不同，不能混用。
+
+**配置预检未通过，安装运行未执行。** D没有经过人工审核的服务清单、共同配置及
+原库/身份恢复输入；本地HOST草案保持 `services: []`，实际解包程序 `plan` 返回2，
+`deployment must describe one to three existing service roles`。这不是完整配置验收，
+不得造fixture、身份或创世来绕过。A/操作员需审核并补齐D配置后重新plan。
+未改服务、防火墙、数据库，未访问B。发布本回执不等于A已确认收到。
+
 ## 2026-10-25 统一制品与生命周期适配（程序交付，非安装验收）
 
 输入 `0d8a69c1`，原 Linux 打包器及原 `novovmctl lifecycle` 已扩展；没有新增

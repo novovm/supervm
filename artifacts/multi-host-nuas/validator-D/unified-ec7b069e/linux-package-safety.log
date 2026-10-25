@@ -1,0 +1,2 @@
+Previous package retained for rollback: /home/aoem-a3/WorksArea/SUPERVM/artifacts/audit/linux-package-safety-c15c4847954645b4a0416aa8414c983e/artifacts/product-overlay/linux-x86_64.previous.64752401ba1740b2aaa644834eda0ab0
+PASS: 29 package safety/artifact/template assertions; no builds or deletes. Fixtures retained: /home/aoem-a3/WorksArea/SUPERVM/artifacts/audit/linux-package-safety-c15c4847954645b4a0416aa8414c983e

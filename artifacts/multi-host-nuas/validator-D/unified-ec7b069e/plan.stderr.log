@@ -1,0 +1,10 @@
+{
+  "ok": false,
+  "command": "lifecycle-unified-v1",
+  "timestamp_unix_ms": 1792910053782,
+  "host": "unknown-host",
+  "error": {
+    "kind": "InvalidArgument",
+    "message": "invalid argument: deployment must describe one to three existing service roles"
+  }
+}
