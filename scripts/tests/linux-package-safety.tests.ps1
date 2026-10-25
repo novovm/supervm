@@ -77,6 +77,26 @@ if ([IO.File]::ReadAllText((Join-Path $linkTarget 'protected.txt')) -ne 'outside
 }
 $checks++
 
+# Cargo's plain hardlinked file is permitted only at its reported leaf, never
+# as a general relaxation of output/ancestor redirect checks.
+$elf = Join-Path $linkTarget 'cargo-elf'
+[IO.File]::WriteAllBytes($elf, [byte[]]@(0x7f, 0x45, 0x4c, 0x46))
+$hardLink = Join-Path $linkTarget 'cargo-elf-hardlink'
+New-Item -ItemType HardLink -Path $hardLink -Target $elf | Out-Null
+Expect-Rejection { Assert-PlainPackagePath $hardLink } '*links/reparse points*'
+Assert-PlainPackagePath $hardLink -AllowFileHardLink
+$messages = @(@{reason='compiler-artifact';target=@{name='fixture';kind=@('bin')};executable=$hardLink} | ConvertTo-Json -Compress)
+if ((Get-CargoExecutable $messages 'fixture') -ne $hardLink) { throw 'Cargo hardlink rejected or replaced' }
+$checks++
+Expect-Rejection { Assert-PlainPackagePath (Join-Path $link 'cargo-elf-hardlink') -AllowFileHardLink } '*links/reparse points*'
+# Directory links are covered above on both platforms; file symlinks require
+# elevation on some Windows runners, so exercise the actual file case on Linux.
+if ([IO.Path]::DirectorySeparatorChar -eq '/') {
+  $symbolic = Join-Path $linkTarget 'cargo-elf-symlink'
+  New-Item -ItemType SymbolicLink -Path $symbolic -Target $elf | Out-Null
+  Expect-Rejection { Assert-PlainPackagePath $symbolic -AllowFileHardLink } '*links/reparse points*'
+}
+
 # Check the actual emitted template AST, without running the packager.
 $strings = @($ast.FindAll({ param($node)
   $node -is [System.Management.Automation.Language.StringConstantExpressionAst]

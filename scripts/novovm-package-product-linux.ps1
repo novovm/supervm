@@ -6,10 +6,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Assert-PlainPackagePath([string]$Path, [switch]$Tree) {
+function Assert-PlainPackagePath([string]$Path, [switch]$Tree, [switch]$AllowFileHardLink) {
   # Reject redirects before traversing them, including the output directory's
   # ancestors. Do not use recursive enumeration, which can follow links.
-  $cursor = [IO.Path]::GetFullPath($Path)
+  $leaf = [IO.Path]::GetFullPath($Path)
+  $cursor = $leaf
   $ancestors = [Collections.Generic.Stack[string]]::new()
   while ($cursor) {
     $ancestors.Push($cursor)
@@ -23,7 +24,12 @@ function Assert-PlainPackagePath([string]$Path, [switch]$Tree) {
     try { $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop }
     catch [System.Management.Automation.ItemNotFoundException] { }
     if ($item) {
-      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.LinkType) {
+      # Cargo may hardlink its reported ELF to release/deps. Only that explicit
+      # file leaf may share an inode; ancestors and package trees stay strict.
+      $allowedHardLink = $AllowFileHardLink -and $cursor -eq $leaf -and
+        !$item.PSIsContainer -and $item.LinkType -eq 'HardLink'
+      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+          ($item.LinkType -and !$allowedHardLink)) {
         throw "Package paths cannot traverse links/reparse points: $cursor"
       }
     }
@@ -70,7 +76,7 @@ function Get-CargoExecutable([object[]]$Messages, [string]$Binary) {
   if ($artifacts.Count -ne 1) { throw "Cargo did not identify exactly one executable for '$Binary'." }
   $executable = [IO.Path]::GetFullPath($artifacts[0])
   if (!(Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Cargo executable missing: $executable" }
-  Assert-PlainPackagePath $executable
+  Assert-PlainPackagePath $executable -AllowFileHardLink
   $stream = [IO.File]::OpenRead($executable)
   try {
     $magic = [byte[]]::new(4)
@@ -148,6 +154,7 @@ try {
     "novovm-product-evidence"
   )
   $executables = @{}
+  $executableHashes = @{}
   foreach ($bin in $bins) {
     $buildMessages = @(cargo build --locked -p novovm-node --release --target $Target --bin $bin --message-format=json-render-diagnostics)
     if ($LASTEXITCODE -ne 0) {
@@ -156,6 +163,7 @@ try {
     # Cargo reports the actual artifact, including .cargo/config.toml and any
     # CARGO_TARGET_DIR override. Never guess a path or accept an old namesake.
     $executables[$bin] = Get-CargoExecutable $buildMessages $bin
+    $executableHashes[$bin] = (Get-FileHash -LiteralPath $executables[$bin] -Algorithm SHA256).Hash
   }
 
   $aoemRoot = Join-Path $repo "aoem"
@@ -211,7 +219,13 @@ try {
   }
   $packageRoot = $packagePath
   foreach ($bin in $bins) {
-    Copy-Item -LiteralPath $executables[$bin] -Destination (Join-Path $packagePath "bin/$bin")
+    Assert-PlainPackagePath $executables[$bin] -AllowFileHardLink
+    $copiedExecutable = Join-Path $packagePath "bin/$bin"
+    Copy-Item -LiteralPath $executables[$bin] -Destination $copiedExecutable
+    Assert-PlainPackagePath $copiedExecutable
+    if ((Get-FileHash -LiteralPath $copiedExecutable -Algorithm SHA256).Hash -ne $executableHashes[$bin]) {
+      throw "Cargo executable changed before/during copying: $bin; existing package remains untouched."
+    }
   }
   Copy-Item -LiteralPath $aoemLinux -Destination (Join-Path $packagePath "aoem") -Recurse
   Copy-Item -LiteralPath (Join-Path $aoemRoot "manifest") -Destination (Join-Path $packagePath "aoem") -Recurse

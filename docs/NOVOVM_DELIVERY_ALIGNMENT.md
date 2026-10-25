@@ -1,5 +1,38 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-25 A接收D打包阻断并修复原打包器
+
+A已快进接收 `71e4316e`，阅读 `D-LINUX-BUILD-7e07fab4` 的结构化回执、
+首个异常和ELF身份。阻断不是Rust编译或AOEM缺失：原打包器把Cargo普通文件
+`HardLink` 当作路径重定向拒绝。本机通过真实文件硬链接、原完整打包脚本复现。
+
+本节所在修复提交是**下一次D构建的固定源码点**，A推送后提供完整SHA；D先核对
+main干净且HEAD等于该SHA。没有更换节点/客户端/AOEM/协议，也不另建打包器：
+
+- 原 `Assert-PlainPackagePath` 仅为Cargo报告的普通文件叶子显式允许HardLink；
+  祖先目录、输出树仍严格拒绝链接，symlink/junction/reparse仍拒绝。
+- 构建后记录每个实际制品SHA，复制为独立包内文件后再核对；别名写入导致内容
+  变化则拒绝发布，保留失败stage和已有包，不通过删除或解除原硬链接绕过。
+- 新完整组包夹具只stub外部Git/Cargo/rustup，实际执行原脚本的复制、模板、
+  清单、校验和及发布。假ELF仅为脚本夹具，绝不是可交付Linux程序。
+- A Windows本地：28项安全/模板检查、原构建失败夹具、完整硬链接组包及变更拒绝
+  均通过；同套检查加入现有Linux/Windows CI job。**Linux本轮复验及真实包仍待D**，
+  不把Windows夹具成功记作Linux安装、多机交易、性能或正式发布通过。
+
+D收到固定SHA后，先顺序执行下列轻量检查，每项非零即停并回报首个错误：
+
+```sh
+pwsh -NoProfile -File scripts/tests/linux-package-safety.tests.ps1
+pwsh -NoProfile -File scripts/tests/linux-package-build-failure.tests.ps1
+pwsh -NoProfile -File scripts/tests/linux-package-assembly.tests.ps1
+```
+
+通过后用原 `scripts/novovm-package-product-linux.ps1`、显式
+`x86_64-unknown-linux-gnu` 和带新SHA的尚不存在的PackageDir重打包；不使用Force，
+不清Cargo缓存，原缓存由Cargo复用。回传实际命令、日志、源码SHA、清单、node/client/
+SO哈希及最终归档哈希。旧 `7e07fab4` 制品身份和失败证据保留，不直接重标新SHA。
+A验证新包后继续B隔离部署；D不接收B私钥、不代部署B，不生成或启动共同创世。
+
 ## 2026-10-24 D显式回执：D-LINUX-BUILD-7e07fab4
 
 本机时区America/Adak，对应A的2026-10-25安排。**D已实际读取并接收 `7e07fab4`

@@ -24,6 +24,7 @@ $executable = Join-Path $fixture 'reported-linux-binary'
 [IO.File]::WriteAllBytes($executable, [byte[]]@(0x7f, 0x45, 0x4c, 0x46))
 $bins = @('first', 'second')
 $executables = @{}
+$executableHashes = @{}
 $Target = 'x86_64-unknown-linux-gnu'
 $script:buildExit = 1
 $script:calls = 0
@@ -48,6 +49,10 @@ $script:calls = 0
 if ($script:calls -ne 2) { throw 'Each successful binary must be built' }
 if ($executables['first'] -ne $executable -or $executables['second'] -ne $executable) {
   throw 'The actual Cargo-reported executable, not a guessed target path, must be consumed'
+}
+$expectedHash = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
+if ($executableHashes['first'] -ne $expectedHash -or $executableHashes['second'] -ne $expectedHash) {
+  throw 'Each Cargo-reported executable must pin its content before staging'
 }
 # A successful exit with no artifact cannot silently accept a stale namesake.
 function cargo { $global:LASTEXITCODE = 0; '{"reason":"build-finished","success":true}' }

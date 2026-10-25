@@ -44,6 +44,7 @@ jobs:
         run: |
           ./scripts/tests/linux-package-safety.tests.ps1
           ./scripts/tests/linux-package-build-failure.tests.ps1
+          ./scripts/tests/linux-package-assembly.tests.ps1
 
   governance_pr_gate_observability:
     name: Governance PR Gate observability
