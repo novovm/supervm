@@ -1,5 +1,14 @@
 # NOVOVM 产品目标与交付主线
 
+**2026-10-24 validator-D 同步与清点认领（America/Adak）：** 用户将本台Linux AI主机
+指定为D，不沿用历史开发设备B或光学A/B身份。输入main `2e4e64a7`；仅认领
+本段及[多机交接的D回执](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#validator-d-第一阶段回执)，
+不认领原生执行、签名、App或AOEM实现，不占构建/性能槽。
+
+| 范围 | 唯一所有者 | 状态 |
+| --- | --- | --- |
+| validator-D本机角色登记、Git同步及只读资源/随包库清点 | D当前会话 | 完成并释放文档认领；JSON/身份/随包校验及diff检查通过。等待A固定全组验收SHA与共同配置，不启动服务 |
+
 **2026-10-25 多机原生客户端接续认领：** 输入 `c82bbdc5`，fetch后远端一致、树干净。
 根拥有既有NativeApplicationClient的命令行消费适配、测试、打包及文档/唯一构建槽。
 复用prepare_uca、原类型化query和NovoRUDP，不创建执行器或授权。当前只有测试夹具
