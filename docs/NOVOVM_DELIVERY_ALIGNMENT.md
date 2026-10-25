@@ -1,5 +1,45 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-25 A已接管B连接；D负责Linux制品，不接管B凭据
+
+A已同步并实际阅读 `fd6313bb`，接收C/D清点、`B-ACCESS-2026-10-25`、
+`C-REPORT-2026-10-25`与KEY ONE初始化/钱包计划。用户通过移动盘交付B连接资料后，
+A将所需四份文件复制到本机仓库外的 `.ssh`，逐文件校验一致，仅当前用户可访问。
+未将私钥放入Git、报告或云端，未改默认SSH/GitHub配置，移动盘原件保留。
+
+A独立SSH实连B成功：严格主机指纹与交接一致，ecs-user公钥认证及sudo -n通过。
+实查Ubuntu24.04.4、2 vCPU、3499MiB内存、约1385MiB可用、swap已用1815MiB，
+根盘约20GiB可用、NTP同步。Mailbox/Relay/nginx/Docker均active；保留原服务。
+41050只是不在当前监听列表，未证明公网UDP可达；标准novovm安装/配置/数据目录
+尚不存在，PATH无cargo/pwsh。尚未安装/启动验证者、修改防火墙或生成共同创世。
+
+### C/D现在执行：构建准备不再等角色确认
+
+本回执提交为此次共同构建固定点（A推送后给出确切SHA）；运行源码继承 `c4ae4f6c`，
+至 `fd6313bb` 的增量仅交接文档。各机在main同步后先核对固定SHA和干净树，再构建；
+若已前进到不同提交，回传差异，由A确认后继续，不reset用户修改、不另建分叉。
+
+- **D：Linux构建/打包执行端。** 复用现有root Cargo与
+  `scripts/novovm-package-product-linux.ps1`，不在AOEM兄弟仓重造或替换运行库。
+  先构建 `cargo build --locked --release -p novovm-node --bin novovm-node --bin novovm-native-client`。
+  通过Cargo metadata取实际target_directory，记录源码SHA及node/client/SO哈希。
+  原打包器若需要pwsh或其他依赖，报告首个缺项；不另写打包器、不删功能绕过。
+  可用后以一个尚不存在的专用PackageDir运行原脚本，不用Force覆盖旧包。
+  包须含同平台随包AOEM、清单、校验和、原服务模板及操作文档；不含任何设备私钥、
+  运行数据库或实际资产配置。回传包路径、大小、校验和和构建日志，不把大型包塞进Git。
+- **C：Windows构建与本机准备。** 同命令构建node/client，回传制品身份；保留ADB、
+  手机/KEY ONE与Rendezvous服务。时钟及TUN/UDP问题仍是启动前检查，不自行创世。
+- **A：集成与B部署owner。** 核验D的Linux包后由A通过现有SSH上传并隔离安装B；
+  不把B私钥交给D、不在B编译、不覆盖B既有服务。D只管理本机D节点，不代部署B。
+
+共同批准的链域/根、初始化、四节点公钥权重/地址仍须A汇总后下发；构建与服务安装
+不等于允许启动新链。B资源有限，运行预算与余量须实际核验，不用其成绩代表硬件上限。
+本轮SSH检查不证明原生UDP、NUAS交易、追赶、多机TPS或正式发布已经通过。
+
+CI实查：`c4ae4f6c`的40155281468已取消；`fd6313bb`的40158972294仍在运行，
+两者都不能提前记全绿。本回执只改既有prose-only文档，按原CI范围选择走轻量检查，
+不删测试、不取消运行中的完整检查，不把文档绿灯代替产品验证。
+
 **2026-10-24 validator-D 同步与清点认领（America/Adak）：** 用户将本台Linux AI主机
 指定为D，不沿用历史开发设备B或光学A/B身份。输入main `2e4e64a7`；仅认领
 本段及[多机交接的D回执](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#validator-d-第一阶段回执)，
