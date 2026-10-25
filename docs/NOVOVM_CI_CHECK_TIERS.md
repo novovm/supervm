@@ -3,6 +3,79 @@
 2026-10-25. Source baseline: `91a9a587`. This is CI scheduling, not a change to
 NOVOVM execution, economic rules, signatures, quorum or release authorization.
 
+## 2026-10-26 user-approved batch development
+
+Use the single integration branch `dev/mldsa65-identity-closure`, based on
+`384afc4e`, for the unified ML-DSA-65 identity batch. This is the user's explicit
+exception to the earlier main-only development instruction; it does not permit
+an architectural fork. Intermediate commits remain reviewable and are pushed
+promptly for C/D coordination, but do not open a PR for each internal slice.
+
+| Boundary | Required evidence |
+| --- | --- |
+| Each code change | Local formatting, affected compilation and targeted tests. Signature, authorization, quorum and durable-state changes need their own positive and adversarial tests immediately. |
+| A coherent feature boundary | Relevant regression groups, strict Clippy and cross-module integration; retain failures and fix causes, not assertions or production timeouts. |
+| Final candidate | One planned full candidate CI on a frozen SHA, required independent workflows, Windows/Linux original-node recovery, matching artifacts and separately recorded installation/multi-host evidence. |
+
+The batch comprises bounded pre-authentication ML-DSA handshake carriage;
+transport/device/service/receipt producer and consumer migration; purpose
+separation and downgrade rejection; compatible platform artifacts and offline
+A-D shared-configuration validation. Existing UCA, consensus, registration,
+custody, NovoRUDP/APFL and AOEM owners remain the only implementation path.
+Do not claim individual codec/interface commits close the whole batch.
+
+Actual trigger audit of all three workflows:
+
+- `ci.yml`: push is limited to `main`; all PRs can trigger it. Ordinary batch
+  branch pushes alone do not run it. Manual `profile=full` already exists.
+- `native-auth-relation.yml`: push is limited to `main` plus its path filters;
+  matching PRs and manual dispatch also run it.
+- `mainline-nightly-soak.yml`: schedule/manual only, on its existing historical
+  comparison owner; not product mainchain acceptance.
+- Scheduled runs still exist on the default branch. Do not imply batching
+  disables them or makes unvalidated branch commits eligible for deployment.
+
+At freeze, fetch and incorporate current main without overwriting other work,
+finish local validation, and record the exact candidate SHA. For the existing
+workflow, the integration owner runs:
+
+```powershell
+gh workflow run ci.yml --repo novovm/supervm --ref dev/mldsa65-identity-closure -f profile=full
+```
+
+Verify the run's actual `headSha` equals the frozen candidate; do not identify a
+run only by a moving branch name. Run the independent host-rules workflow when
+its contract/dependencies were affected; its success is not a business ZK proof.
+Do not run these commands for every checkpoint. If CI fails, inspect the actual
+failure and rerun the necessary corrected candidate; "once" is a planning goal,
+not a prohibition on required verification after a fix.
+
+After all required results pass, integrate only the reviewed candidate into
+main, preferably fast-forward if shared history permits. A concurrent change
+that changes the candidate must be integrated and revalidated, not force-pushed.
+Current main protection was read-only checked: no required status checks or PR
+review were configured; this does not waive the above delivery gate, and no
+protection settings were changed.
+
+**Main's automatic checks remain enabled.** A manual candidate run followed by
+a main push can still produce a second run. This change removes repeated
+intermediate runs; it does not promise exactly one cloud run, bypass main's
+checks with skip markers, or introduce an unreviewed result-reuse controller.
+
+### Baseline run observation, not whole-run signoff
+
+On 2026-10-26 (Asia/Shanghai), run `40222837834` for `384afc4e` was still running.
+The Linux `Integrated original tick and native SDK closure` and `NUAS
+original-node process recovery and credited NOV respend` steps both succeeded.
+Security and the Linux preserved-component job succeeded. The Windows
+preserved-component job `121257995233` was cancelled with the explicit annotation
+`The job has exceeded the maximum execution time of 15m0s`; ordinary tests had
+passed, and the later release/include-ignored step was interrupted. This is not
+an assertion failure or a passed job. It must be addressed before final batch
+qualification; do not silently increase product protocol deadlines to fix a CI
+job wall-clock budget. The current run is not cancelled/restarted by this branch
+preparation, and neither the new branch nor D's package is deployment-qualified.
+
 ## Reused checks, conservative selection
 
 The existing `.github/workflows/ci.yml` still owns all existing test commands.

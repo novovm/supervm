@@ -1,5 +1,29 @@
 # Agent Highest Law
 
+## 2026-10-26 authorized batch branch and staged validation
+
+The user authorizes ONE temporary integration branch for this development batch:
+`dev/mldsa65-identity-closure`, starting at `384afc4e`. This is an explicit
+exception to the main-only rule below, not permission for another runtime,
+network, account authority or product mode. A owns integration; C consumes the
+shared contract and D builds a fixed accepted candidate. Keep local commits and
+push coherent checkpoints to this branch, without opening incremental PRs.
+Do not advance shared main or deploy incomplete/mixed signature formats.
+
+Run format, affected builds and targeted security/authorization/consensus/
+durability tests with each change. Run related regressions and strict Clippy at
+feature boundaries. Freeze the final candidate SHA after incorporating shared
+main updates, then run the existing full CI and applicable independent checks.
+Any later code/dependency/contract change requires renewed affected validation;
+old green results do not qualify another SHA. Required checks must succeed before
+integration to main. Preserve the current main CI; do not cancel or mark it passed.
+
+Ordinary branch pushes currently do not trigger either push workflow; PRs do.
+Manual full candidate CI does not suppress main's later automatic CI. Do not
+remove checks, use skip markers, ignore advisories, weaken production limits or
+change repository protection merely to promise exactly one run. Multi-host and
+platform artifact acceptance remain separate. See `docs/NOVOVM_CI_CHECK_TIERS.md`.
+
 ## 2026-10-26 unified ML-DSA-65 identity migration
 
 ML-DSA-65 single-signature is the first-release target for native consensus,
@@ -478,7 +502,8 @@ Shared product and multi-device development contract:
   effects and checked preconditions; failed transactions may still consume
   nonce and fees. BFT certificates and local execution readback are not business
   execution validity proofs. Component benchmarks do not sign off mainchain TPS.
-- Work on `main`; do not create branches without explicit user authorization.
+- Work on `main` unless covered by the explicit 2026-10-26 batch-branch
+  authorization above; do not create other branches without user authorization.
   Coordinate overlapping work through the delivery document's lightweight
   claim table. Preserve uncommitted work and other machines' commits; never
   force-push shared history. Push completed authorized changes promptly.
