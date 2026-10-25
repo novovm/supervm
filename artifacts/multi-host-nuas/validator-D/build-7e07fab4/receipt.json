@@ -1,0 +1,61 @@
+{
+  "host_label": "D",
+  "source_commit": "7e07fab49094732ace1b43c3986f9dcf17bf776a",
+  "branch": "main",
+  "source_worktree_clean": true,
+  "build_status": "PASS",
+  "explicit_linux_target_build_status": "PASS",
+  "package_status": "BLOCKED_BY_CARGO_HARDLINK_PATH_GUARD",
+  "package_exit_code": 1,
+  "packager": "scripts/novovm-package-product-linux.ps1",
+  "packager_sha256": "ee782cafeff9c9b6646d07059b1182ac16fa07881634b80ac58eaf712a796d15",
+  "intended_package_directory": "artifacts/product-overlay/validator-d-linux-7e07fab4",
+  "published_package_directory": null,
+  "package_size_bytes": null,
+  "archive_path": null,
+  "archive_sha256": null,
+  "target_directory": "target/runtime-rebuild",
+  "target": "x86_64-unknown-linux-gnu",
+  "rustc_version": "1.94.0",
+  "cargo_version": "1.94.0",
+  "powershell_version": "7.5.4",
+  "build_jobs": 4,
+  "nice": 10,
+  "artifacts": [
+    {
+      "name": "novovm-node",
+      "path": "target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node",
+      "bytes": 44534376,
+      "sha256": "5e442a1b57021f25c14cbaa28418cab0d74878c5e7c0f4d1892ab3fb36ad514c"
+    },
+    {
+      "name": "novovm-native-client",
+      "path": "target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-native-client",
+      "bytes": 8132080,
+      "sha256": "ccd591e83af299e259b177e0a0d9deb99a67d956ea2244f837e8db0bbd8ca60c"
+    },
+    {
+      "name": "libaoem_ffi.so",
+      "path": "aoem/linux/core/bin/libaoem_ffi.so",
+      "bytes": 153339776,
+      "sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309"
+    }
+  ],
+  "package_blocker": {
+    "location": "scripts/novovm-package-product-linux.ps1:26-27",
+    "actual_artifact_type": "regular_file",
+    "actual_artifact_link_count": 2,
+    "powershell_link_type": "HardLink",
+    "reparse_point": false,
+    "original_guard_rejection_reproduced": true,
+    "guard_bypassed": false
+  },
+  "linux_bundle_checksums_passed": true,
+  "highest_required_so_glibc_symbol_version": "2.39",
+  "node_or_chain_started": false,
+  "remote_B_accessed": false,
+  "deployment_attempted": false,
+  "source_modified": false,
+  "sibling_aoem_modified": false,
+  "next_step": "A coordinates original packager hardlink fix and approves next shared SHA; D reruns packaging without bypasses"
+}

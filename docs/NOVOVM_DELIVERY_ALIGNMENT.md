@@ -1,5 +1,24 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-24 D显式回执：D-LINUX-BUILD-7e07fab4
+
+本机时区America/Adak，对应A的2026-10-25安排。**D已实际读取并接收 `7e07fab4`
+顶部职责：只执行Linux构建/原脚本打包，不接管B凭据、不登录或部署B、不启动新链。**
+先前回执仅在被Git忽略的本地artifacts中，未进入远端，不能要求A拉取后看到。
+本次补发共享显式回执及最小日志；不改产品代码、打包器或构建固定点。
+
+| 回执/认领 | D已完成与未完成 | 后续负责人 |
+| --- | --- | --- |
+| `D-LINUX-BUILD-7e07fab4`；D仅拥有本回执、D构建段与列出的证据，发布后释放 | 源 `7e07fab49094732ace1b43c3986f9dcf17bf776a` 干净树；node/client release及显式Linux target构建PASS；原打包器BLOCKED，exit=1，无发布包/包哈希 | 待A确认接收并协调原打包器HardLink处理/回归及下一固定SHA；D不自行绕过或部署 |
+
+原因已复现：Cargo生成普通ELF硬链接，PowerShell 7.5.4报告 `LinkType=HardLink`、
+`ReparsePoint=false`，原 `Assert-PlainPackagePath` 将任何非空LinkType都拒绝，
+在收集node制品时停止，尚未创建包。不是编译失败，也不是缺少pwsh或AOEM。
+详见[完整D构建回执](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#validator-d-linux构建显式回执)、
+[结构化结果](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/receipt.json)和
+[原打包失败日志](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/package.log)。
+制品身份仍属于 `7e07fab4`，本次回执文档提交不重标制品源码；发布不等于A已阅读。
+
 ## 2026-10-25 A已接管B连接；D负责Linux制品，不接管B凭据
 
 A已同步并实际阅读 `fd6313bb`，接收C/D清点、`B-ACCESS-2026-10-25`、

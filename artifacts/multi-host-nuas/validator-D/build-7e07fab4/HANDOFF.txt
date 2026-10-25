@@ -1,0 +1,85 @@
+Validator-D Linux build and packaging receipt
+Date: 2026-10-24 America/Adak
+
+Source: 7e07fab49094732ace1b43c3986f9dcf17bf776a
+Branch: main
+Tracked worktree: clean before build and after packaging attempt
+Assignment: docs/NOVOVM_DELIVERY_ALIGNMENT.md, top section at this source commit
+Scope: local Linux build/package only; no login/deployment to B; no chain startup
+
+RESULT
+Node/client release build: PASS
+Explicit x86_64-unknown-linux-gnu node/client release build: PASS
+Original Linux packager: BLOCKED, exit 1, no package published
+Archive path / archive size / archive SHA256: unavailable, no archive created
+
+ENVIRONMENT
+Ubuntu 24.04.5 LTS, x86_64, Linux 7.0.0-38-generic
+rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0
+PowerShell 7.5.4
+Actual Cargo target_directory: /home/aoem-a3/WorksArea/SUPERVM/target/runtime-rebuild
+CARGO_BUILD_JOBS=4, nice=10; no RUSTFLAGS, target-dir or compiler-wrapper override
+
+COMMANDS AND OUTCOMES
+1. cargo build --locked --release -p novovm-node --bin novovm-node --bin novovm-native-client
+   PASS, 4m 27s; log: build.log
+2. pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/novovm-package-product-linux.ps1 -Target x86_64-unknown-linux-gnu -PackageDir artifacts/product-overlay/validator-d-linux-7e07fab4
+   No -Force. Destination did not previously exist.
+   Explicit-target node compilation passed in 4m 22s; path safety check then refused the Cargo artifact.
+   FAIL, exit 1; log: package.log
+3. cargo build --locked --release --target x86_64-unknown-linux-gnu -p novovm-node --bin novovm-node --bin novovm-native-client
+   PASS; completes both explicit-target identities without changing the packager.
+   Log: explicit-linux-target-build.log
+
+EXPLICIT LINUX TARGET ARTIFACTS (NOT A PUBLISHED PACKAGE)
+Node: target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node
+Bytes: 44534376
+SHA256: 5e442a1b57021f25c14cbaa28418cab0d74878c5e7c0f4d1892ab3fb36ad514c
+
+Client: target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-native-client
+Bytes: 8132080
+SHA256: ccd591e83af299e259b177e0a0d9deb99a67d956ea2244f837e8db0bbd8ca60c
+
+AOEM: aoem/linux/core/bin/libaoem_ffi.so
+Bytes: 153339776
+SHA256: 4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309
+Bundled manifest source: 1377cd1e7c1d43a4bf81cb16a169319772cf3e84
+All aoem/linux/CHECKSUMS.sha256 entries pass. No sibling AOEM build or replacement.
+Local ldd resolves the listed dependencies. Bundled SO requires GLIBC_2.39 and OpenSSL 3;
+remote compatibility and node trusted-loader qualification have NOT been tested.
+
+The initial no-explicit-target binaries have different identities and are not substituted:
+target/runtime-rebuild/release/novovm-node
+  98ecc8ce6585a83a876c665d53d2671bc1aaa9676ed9ae316de364768d769acf
+target/runtime-rebuild/release/novovm-native-client
+  775a6b454c5494f8ab0545698f4424210ae2d7423bc165478e832d087bb17dea
+
+FIRST PACKAGING BLOCKER
+scripts/novovm-package-product-linux.ps1:26-27 rejects any truthy LinkType.
+Get-CargoExecutable calls that guard on Cargo's actual executable at line 73.
+Cargo produced a regular ELF with two hard links, including its release/deps alias.
+PowerShell reports Attributes=Normal, LinkType=HardLink, ReparsePoint=false, Target=null.
+The original guard rejects it as "Package paths cannot traverse links/reparse points".
+The existing helper was reproduced independently without modifying source or bypassing it.
+Evidence: package-blocker.json and linux-artifact-identity.log.
+Packager source SHA256: ee782cafeff9c9b6646d07059b1182ac16fa07881634b80ac58eaf712a796d15
+
+NEXT HANDOFF TO A
+Coordinate the original packager's Cargo hardlink handling and a Linux regression test,
+retaining redirect/reparse-point rejection and verified artifact identity. Then approve
+the next shared source SHA for D to rerun the original packager. This receipt does not
+authorize a different package implementation, guard bypass or deployment.
+
+BOUNDARIES
+No node/service/client network operation, chain initialization, asset grant, database
+change, credential access, firewall change, B login, B upload or B deployment occurred.
+No original source changes, commits, pushes or large binary additions to Git.
+No Linux installation, real multi-host transactions/recovery, performance or production signoff.
+The requested package directory was not created; do not treat build PASS as package PASS.
+
+EVIDENCE
+preflight.log, cargo-metadata.json, aoem-checksums.log, build.log, build-result.log,
+initial-build-sha256.txt, initial-elf-dependencies.log, package.log, package-blocker.json,
+explicit-linux-target-build.log, explicit-linux-target-build-result.log,
+linux-artifact-identity.log, SHA256SUMS, receipt.json.
+SHA256SUMS uses repository-relative paths; verify it from the SUPERVM repository root.

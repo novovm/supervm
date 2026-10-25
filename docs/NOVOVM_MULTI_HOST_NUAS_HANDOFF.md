@@ -126,6 +126,9 @@ C继续负责Android持钥与App消费端，不占共享协议开发。等待共
 
 ## validator-D 第一阶段回执
 
+以下保留首次清点快照；后续固定SHA构建与当前阻断见本文件的
+[Linux构建显式回执](#validator-d-linux构建显式回执)，不再以此快照的等待状态覆盖后续结果。
+
 2026-10-24（本机时区America/Adak；与上游2026-10-25交接对应），用户明确将
 本机指定为D：Linux AI主机、第四验证机候选。只登记本轮验证主机角色，不改历史
 设备A/B标签、手机身份、操作系统主机名或实际节点配置。当前状态为
@@ -155,3 +158,63 @@ C继续负责Android持钥与App消费端，不占共享协议开发。等待共
 原生UDP路由的影响、真实跨机可达性和平台契约，然后构建并记录node/client/实际加载
 AOEM身份。未启动验证者、生成密钥/授权/创世、修改防火墙/路由或触碰MEV；本回执
 推送不等于A已阅读或批准配置，也不签Linux部署、多机NUAS、全链PQ或性能验收。
+
+## validator-D Linux构建显式回执
+
+回执ID：`D-LINUX-BUILD-7e07fab4`。2026-10-24 America/Adak。
+D已实际读取并执行A在 `7e07fab4` 交付对齐文档顶部的构建安排；B连接、凭据、上传
+和部署仍全部属于A。先前只写入忽略目录，A无法通过Git取得；本节及下列最小证据
+现在进入共享Git。其余完整本机日志继续保留，不上传大型制品、设备私钥或数据库。
+
+### 实际源码、环境和结果
+
+- 构建源码：`7e07fab49094732ace1b43c3986f9dcf17bf776a`，main，构建前后树干净。
+  本回执发布提交不替换该制品源码SHA，也不表示已批准另一轮构建。
+- Ubuntu24.04.5 LTS / x86_64，rustc/cargo1.94.0，PowerShell7.5.4；
+  `CARGO_BUILD_JOBS=4`、nice10，无RUSTFLAGS、target-dir或compiler-wrapper覆盖。
+- 原root Cargo命令 `cargo build --locked --release -p novovm-node --bin novovm-node --bin novovm-native-client`
+  PASS（4m27s）。metadata实际target_directory为 `target/runtime-rebuild`。
+- 原脚本 `pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/novovm-package-product-linux.ps1 -Target x86_64-unknown-linux-gnu -PackageDir artifacts/product-overlay/validator-d-linux-7e07fab4`
+  未使用Force，目标原先不存在。node显式target编译PASS（4m22s），随后原路径检查失败、exit1；**打包BLOCKED，没有发布目录、归档、大小或归档SHA256**。
+- 之后按同一源码执行带 `--target x86_64-unknown-linux-gnu` 的原node/client构建，
+  两者PASS；只补齐显式target身份，没有改脚本或制造替代包。
+
+下表采用显式Linux target制品，不能与首次无显式target的另一组哈希混用：
+
+| 制品（仓库相对路径） | 字节数 | SHA256 |
+| --- | --- | --- |
+| `target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node` | 44534376 | `5e442a1b57021f25c14cbaa28418cab0d74878c5e7c0f4d1892ab3fb36ad514c` |
+| `target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-native-client` | 8132080 | `ccd591e83af299e259b177e0a0d9deb99a67d956ea2244f837e8db0bbd8ca60c` |
+| `aoem/linux/core/bin/libaoem_ffi.so` | 153339776 | `4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309` |
+
+AOEM仍是随包Linux manifest源 `1377cd1e7c1d43a4bf81cb16a169319772cf3e84`，
+Linux清单校验全部通过，未从兄弟仓重造/换库。ELF依赖检查看到SO要求GLIBC_2.39、
+OpenSSL3，本机ldd能解析依赖；不代表B已核验，也未运行node可信加载或新链。
+
+### 原打包器阻断和待A确认项
+
+`scripts/novovm-package-product-linux.ps1:26-27` 对所有非空LinkType拒绝，
+`Get-CargoExecutable` 在73行对Cargo实际输出调用该检查。Linux的node是普通ELF，
+与 `release/deps/novovm_node-4edb3c5671c8a4b9` 同inode、link count=2；
+PowerShell返回 `Attributes=Normal / LinkType=HardLink / ReparsePoint=false / Target=null`。
+原辅助函数独立复现同一拒绝，未改源、未改硬链接、未绕过安全门禁。
+
+请A显式回复已接收 `D-LINUX-BUILD-7e07fab4`，协调原打包器对Cargo硬链接的准确处理
+及Linux回归，保留symlink/junction/reparse拒绝与制品身份校验，再给D下一固定SHA。
+D当前只发布此回执，不认领打包器修复、不自行扩展部署范围。
+没有登录/部署B、读取凭据、启用服务、生成创世/资产授权、修改防火墙或数据库；
+构建PASS不替代包、Linux安装、多机NUAS/追赶/TPS或生产验收。A接收状态仍待确认。
+
+### A拉取后可直接读取的最小证据
+
+- [完整文字回执](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/HANDOFF.txt)
+- [结构化结果](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/receipt.json)
+- [三个显式target制品哈希](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/SHA256SUMS)
+- [初次release构建日志](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/build.log)
+- [原打包器失败日志](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/package.log)
+- [显式target双bin构建日志](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/explicit-linux-target-build.log)
+- [原路径检查复现](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/package-blocker.json)
+- [实际ELF/大小/哈希/依赖](../artifacts/multi-host-nuas/validator-D/build-7e07fab4/linux-artifact-identity.log)
+
+这里只纳入上述小文件，`artifacts/` 默认忽略规则不放开。文字回执列出的其他详细
+本机日志仍仅在D本地；A拉取本次提交即可取得上述证据，无需登录D或取得二进制包。

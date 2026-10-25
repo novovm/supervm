@@ -1,0 +1,29 @@
+target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=b880e441f7f0657596c7af01e934abc9ddd55219, not stripped
+target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node size=44534376 permissions=775 links=2
+5e442a1b57021f25c14cbaa28418cab0d74878c5e7c0f4d1892ab3fb36ad514c  target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node
+	linux-vdso.so.1 (0x00007a7db6e31000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007a7db4600000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007a7db6dec000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007a7db4917000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007a7db4200000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007a7db6e33000)
+target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-native-client: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=ea20332a9b9882760954658fae5298c86a215556, not stripped
+target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-native-client size=8132080 permissions=775 links=2
+ccd591e83af299e259b177e0a0d9deb99a67d956ea2244f837e8db0bbd8ca60c  target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-native-client
+	linux-vdso.so.1 (0x0000768964820000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000768963e00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007689647db000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000768964117000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000768963a00000)
+	/lib64/ld-linux-x86-64.so.2 (0x0000768964822000)
+aoem/linux/core/bin/libaoem_ffi.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, BuildID[sha1]=30efd8177803151514bd8eebb4a184a31bd1c8fc, not stripped
+aoem/linux/core/bin/libaoem_ffi.so size=153339776 permissions=664 links=1
+4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309  aoem/linux/core/bin/libaoem_ffi.so
+	linux-vdso.so.1 (0x000070147bef7000)
+	libssl.so.3 => /lib/x86_64-linux-gnu/libssl.so.3 (0x000070147be36000)
+	libcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x0000701473200000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000701472e00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000070147be08000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000701473717000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000701472a00000)
+	/lib64/ld-linux-x86-64.so.2 (0x000070147bef9000)

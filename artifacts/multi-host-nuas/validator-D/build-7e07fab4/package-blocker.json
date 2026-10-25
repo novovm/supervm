@@ -1,0 +1,12 @@
+{
+  "original_helper": "scripts/novovm-package-product-linux.ps1:9-43",
+  "binary": "/home/aoem-a3/WorksArea/SUPERVM/target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node",
+  "attributes": "Normal",
+  "link_type": "HardLink",
+  "reparse_point": false,
+  "target": null,
+  "refusal": "Package paths cannot traverse links/reparse points: /home/aoem-a3/WorksArea/SUPERVM/target/runtime-rebuild/x86_64-unknown-linux-gnu/release/novovm-node",
+  "blocker_reproduced": true,
+  "source_modified": false,
+  "guard_bypassed": false
+}
