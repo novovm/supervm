@@ -143,7 +143,7 @@ try {
     throw "Rust target '$Target' is not installed. Install it with: rustup target add $Target. A Linux package was not generated."
   }
 
-  $bins = @(
+  $nodeBins = @(
     "novovm-node",
     "novovm-native-client",
     "novovm-product-relay",
@@ -153,10 +153,32 @@ try {
     "novovm-product-topology",
     "novovm-product-evidence"
   )
+  # One original package, using the real crate/feature contracts. These are
+  # service adapters, not another network, account or execution implementation.
+  $buildContracts = @($nodeBins | ForEach-Object {
+    [PSCustomObject]@{ package = 'novovm-node'; binary = $_; features = @(); default_features = $true }
+  }) + @(
+    [PSCustomObject]@{ package = 'novovm-relay'; binary = 'novovm-rendezvous-service'; features = @('iroh-transport', 'tls-transport'); default_features = $true },
+    [PSCustomObject]@{ package = 'novovm-relay'; binary = 'supervm-relay'; features = @('iroh-transport', 'tls-transport'); default_features = $true },
+    [PSCustomObject]@{ package = 'novovmctl'; binary = 'novovmctl'; features = @(); default_features = $true }
+  )
+  $bins = @($buildContracts | ForEach-Object binary)
+  $metadataOutput = @(cargo metadata --locked --no-deps --format-version 1)
+  if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed; package identities cannot be verified.' }
+  $workspaceMetadata = ($metadataOutput -join "`n") | ConvertFrom-Json
+  foreach ($contract in $buildContracts) {
+    $packages = @($workspaceMetadata.packages | Where-Object name -eq $contract.package)
+    if ($packages.Count -ne 1 -or [string]::IsNullOrWhiteSpace($packages[0].id)) {
+      throw "Cargo metadata must identify exactly one package '$($contract.package)'."
+    }
+    $contract | Add-Member -NotePropertyName expected_cargo_package_id -NotePropertyValue $packages[0].id
+  }
   $executables = @{}
   $executableHashes = @{}
-  foreach ($bin in $bins) {
-    $buildMessages = @(cargo build --locked -p novovm-node --release --target $Target --bin $bin --message-format=json-render-diagnostics)
+  foreach ($contract in $buildContracts) {
+    $bin = $contract.binary
+    $featureArgs = if ($contract.features.Count) { @('--features', ($contract.features -join ',')) } else { @() }
+    $buildMessages = @(cargo build --locked -p $contract.package --release --target $Target --bin $bin @featureArgs --message-format=json-render-diagnostics)
     if ($LASTEXITCODE -ne 0) {
       throw "Linux build failed for '$bin'; refusing to package possibly stale binaries."
     }
@@ -164,6 +186,18 @@ try {
     # CARGO_TARGET_DIR override. Never guess a path or accept an old namesake.
     $executables[$bin] = Get-CargoExecutable $buildMessages $bin
     $executableHashes[$bin] = (Get-FileHash -LiteralPath $executables[$bin] -Algorithm SHA256).Hash
+    $artifact = @($buildMessages | ForEach-Object { $_ | ConvertFrom-Json } |
+      Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq $bin -and $_.executable })[-1]
+    if ([string]::IsNullOrWhiteSpace($artifact.package_id)) { throw "Cargo package identity missing for '$bin'." }
+    if ($artifact.package_id -cne $contract.expected_cargo_package_id) {
+      throw "Cargo artifact package identity mismatch for '$bin'."
+    }
+    foreach ($feature in $contract.features) {
+      if (@($artifact.features) -notcontains $feature) { throw "Cargo did not enable required feature '$feature' for '$bin'." }
+    }
+    $contract | Add-Member -NotePropertyName cargo_package_id -NotePropertyValue $artifact.package_id -Force
+    $contract | Add-Member -NotePropertyName cargo_features -NotePropertyValue @($artifact.features) -Force
+    $contract | Add-Member -NotePropertyName sha256 -NotePropertyValue $executableHashes[$bin].ToLowerInvariant() -Force
   }
 
   $aoemRoot = Join-Path $repo "aoem"
@@ -195,6 +229,8 @@ try {
   $packageDocs = @(
     "NOVOVM_NATIVE_OPERATOR_CLIENT.md",
     "NOVOVM_MULTI_HOST_NUAS_HANDOFF.md",
+    "NOVOVM_DELIVERY_ALIGNMENT.md",
+    "NOVONET_TRANSPORT_POLICY_V1.md",
     "NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
     "NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
     "NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md",
@@ -205,16 +241,28 @@ try {
     "novovm-product-relay-client-v1.md", "NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md",
     "NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md"
   )
+  # Existing platform resources are copied without executing or reprovisioning
+  # them. In particular B's owner/credential/SQLite identity must remain intact.
+  $platformResources = @(
+    'config/rendezvous-linux/novonet-mailbox.service',
+    'config/rendezvous-linux/README.md',
+    'scripts/linux/install-owned-mailbox.sh',
+    'config/relay/supervm-relay.service',
+    'config/relay/relay.example.json',
+    'config/relay/nginx-location.conf'
+  )
   foreach ($inputPath in @($metadataFiles | ForEach-Object { Join-Path $aoemRoot $_ }) +
-      @($packageDocs | ForEach-Object { Join-Path $repo "docs/$_" })) {
+      @($packageDocs | ForEach-Object { Join-Path $repo "docs/$_" }) +
+      @($platformResources | ForEach-Object { Join-Path $repo $_ })) {
     if (!(Test-Path -LiteralPath $inputPath -PathType Leaf)) { throw "Package input missing: $inputPath" }
+    Assert-PlainPackagePath $inputPath
   }
 
   # All builds and runtime inputs validated. Generate a separate complete bundle
   # before any existing package is moved. Failed stages are retained, not erased.
   $packagePath = Resolve-PackageDestination $repo ($destination + '.staging.' + [Guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $packagePath | Out-Null
-  foreach ($directory in @('bin', 'config', 'reports', 'systemd', 'docs', 'aoem')) {
+  foreach ($directory in @('bin', 'config', 'reports', 'systemd', 'docs', 'aoem', 'compatibility', 'resources')) {
     New-Item -ItemType Directory -Path (Join-Path $packagePath $directory) | Out-Null
   }
   $packageRoot = $packagePath
@@ -233,14 +281,19 @@ try {
   foreach ($metadata in $metadataFiles) {
     Copy-Item -LiteralPath (Join-Path $aoemRoot $metadata) -Destination (Join-Path $packagePath "aoem\$metadata")
   }
+  foreach ($resource in $platformResources) {
+    $copiedResource = Join-Path $packagePath "resources/$resource"
+    New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($copiedResource)) -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repo $resource) -Destination $copiedResource
+  }
 
   @'
 {
-  "bind_addr": "0.0.0.0:443",
+  "bind_addr": "127.0.0.1:45172",
   "tls_cert_path": "/etc/novovm/tls/fullchain.pem",
   "tls_key_path": "/etc/novovm/tls/privkey.pem",
   "relay_identity_key_path": "/etc/novovm/relay-ed25519.hex",
-  "report_path": "/var/lib/novovm/reports/relay.json",
+  "report_path": "/var/lib/novovm-relay/reports/relay.json",
   "report_interval_ms": 5000,
   "max_connections": 512,
   "handshake_timeout_ms": 5000,
@@ -443,7 +496,82 @@ ReadWritePaths=/var/lib/novovm
 
 [Install]
 WantedBy=multi-user.target
-'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "systemd\novovm-product-relay.service")
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "compatibility\novovm-product-relay.service")
+
+  # Native binary duplex relay is explicit. The positional legacy-json unit
+  # above is retained only as a labelled compatibility resource, never default.
+  @'
+[Unit]
+Description=NOVOVM NOVONET binary duplex relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=novovm
+Group=novovm
+WorkingDirectory=/var/lib/novovm-relay
+StateDirectory=novovm-relay novovm-relay/reports
+StateDirectoryMode=0700
+ExecStart=/opt/novovm/bin/supervm-relay --runtime duplex-v2 /etc/novovm/relay.json
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/novovm-relay
+
+[Install]
+WantedBy=multi-user.target
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "systemd\supervm-relay.service")
+
+  Copy-Item -LiteralPath (Join-Path $repo 'config/rendezvous-linux/novonet-mailbox.service') `
+    -Destination (Join-Path $packagePath 'systemd/novonet-mailbox.service')
+
+  # Public configuration shapes only. They fail closed until the operator
+  # supplies approved trust/listener information; no fake key or public host.
+  @'
+{
+  "version": 2,
+  "root": "/var/lib/novonet-mailbox",
+  "allowed_clients": [],
+  "relays": [],
+  "nameserver": "REVIEW_LOCAL_DNS_ADDRESS",
+  "bind_address": "0.0.0.0:43173",
+  "relay_only": false,
+  "record_id": "REVIEW_HOST_RECORD_ID"
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/mailbox-node.json.example')
+  @'
+{
+  "version": 1,
+  "listen": "0.0.0.0:43171",
+  "advertised": "REVIEW_REACHABLE_HOST:43171",
+  "max_connections": 16,
+  "max_bytes_per_minute": 67108864
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/mailbox-native.json.example')
+  @'
+{
+  "version": 1,
+  "listen": "0.0.0.0:43172",
+  "advertised": "REVIEW_REACHABLE_HOST:43172",
+  "max_connections": 4,
+  "native_mailbox_v8": true
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/mailbox-tls.json.example')
+
+  @'
+{
+  "schema_version": 1,
+  "host_id": "REVIEW_HOST_LABEL",
+  "package_root": "/opt/novovm/REVIEW_FIXED_RELEASE",
+  "expected_release_manifest_sha256": "REVIEW_RELEASE_MANIFEST_SHA256",
+  "services": []
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/unified-node.json.example')
 
   @'
 [Unit]
@@ -457,8 +585,8 @@ User=novovm
 Group=novovm
 EnvironmentFile=/etc/novovm/novovm-node.env
 WorkingDirectory=/var/lib/novovm
-StateDirectory=novovm
-ExecStartPre=/usr/bin/mkdir -p /var/lib/novovm/state /var/lib/novovm/reports
+StateDirectory=novovm novovm/state novovm/reports
+StateDirectoryMode=0700
 ExecStart=/opt/novovm/bin/novovm-node
 Restart=always
 RestartSec=5
@@ -477,15 +605,46 @@ WantedBy=multi-user.target
   }
 
   @'
-# NOVOVM Native Validator and Compatible Network Tools Linux Package
+# NOVOVM / NOVONET Unified Node Linux Package
 
-This package is a headless runtime bundle. It contains no Rust toolchain, IDE,
-Codex installation, or source workspace.
+This is one headless bundle of the existing node, native client, communication
+mailbox owner, relay and novovmctl management adapters. It contains no Rust
+toolchain, IDE, Codex installation, genesis, private key or runtime database.
+Packaging is not installation, startup, multi-host acceptance or mainnet launch.
 
-1. Verify `CHECKSUMS.sha256` before deployment.
-2. Install the binaries under `/opt/novovm/bin` and configure `/etc/novovm`.
-3. Keep relay/node Ed25519 secret files readable only by the service account.
-4. For a relay, use the included relay systemd unit after reviewing paths and user.
+1. Verify `CHECKSUMS.sha256` and the externally pinned release-manifest.json hash
+   before deployment. build_contracts records Cargo crate, features and binary
+   hashes. Keep each fixed release immutable; do not overwrite an active binary.
+2. Review config/unified-node.json.example for:
+   novovmctl lifecycle --deployment-manifest HOST.json --action status
+   Its empty services and placeholders are intentionally unusable. Enumerate
+   only reviewed role/manager/unit/binary/config pins and original protected data
+   paths. Use --action plan for no service-manager calls; --apply is explicit.
+   Default status performs read-only service observation. Install only
+   registers reviewed platform units; it does not create accounts, credentials,
+   authorize genesis, start services or manufacture economic capabilities.
+3. Keep purpose-isolated identities, private key files, databases, signing
+   journals and ciphertext under their ORIGINAL owner. Asset signing is
+   ML-DSA-65; transport/consensus still have Ed25519 and are not full-PQ signoff.
+4. systemd/novonet-mailbox.service is the existing self-owned owner unit with
+   its ORIGINAL /opt/novonet-mailbox/current, /etc/novonet-mailbox, private data
+   and systemd owner-key credential paths. resources/config/rendezvous-linux
+   documents these requirements. Mailbox templates are intentionally incomplete;
+   allowed_clients=[] does not mean open admission and missing state is not a
+   request to create a replacement identity.
+   resources/scripts/linux/install-owned-mailbox.sh is FIRST INSTALL ONLY; it
+   provisions and starts that one service. The unified adapter does NOT invoke
+   it. NEVER run it to adopt or upgrade B's existing owner. Existing deployments
+   require exact existing unit/config/binary pins with existing=true. Admission,
+   native-v8 carrier and protected policy are not silently changed by packaging.
+   Current unified path validation rejects symlink/reparse ancestors, including
+   B's /opt/novonet-mailbox/current alias. Do not rewrite B's unit or move its data
+   to bypass this: reviewed alias-to-release adoption is still NOT IMPLEMENTED.
+   systemd/supervm-relay.service explicitly selects --runtime duplex-v2. Its
+   loopback example is not proof of public reachability. Existing B relay is not
+   converted by this template: resources/config/relay preserves its original
+   resources for reviewed adoption. compatibility/novovm-product-relay.service
+   is historical positional legacy-json, NOT a unified default or fallback.
 5. Read `docs/NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt` before signing or genesis.
    Install a reviewed `native-node.json` and `novovm-node.env`. The config example
    is deliberately incomplete: replace `genesis: null` with the common verified
@@ -501,24 +660,41 @@ Codex installation, or source workspace.
    run the node once in the foreground with START=create. Stop it normally
    before enabling the existing-mode service. Retain the original database and
    signing journal across every restart; create is not a recovery command.
-8. Relay/peer/topology tools and `node-mainline-overlay.json.example` are retained
+8. Product relay/peer/topology tools and `node-mainline-overlay.json.example` are retained
    for their explicit communication/compatibility callers. They are NOT the
    native validator owner and must not be enabled beside native CONFIG. Their
    preflight/evidence does not qualify native finality or automatic NAT routing.
-9. Generate a signed post-run evidence manifest with `novovm-product-evidence`.
+9. Check actual native query responses, AOEM-backed ledger readability, peer and
+   recovery state, mailbox signed readiness and real communication separately.
+   PID or listener status alone is not healthy delivery. A mailbox health check
+   does not fabricate traffic, consume ciphertext or settle funds. Missing
+   configuration is NOT_CONFIGURED; service settlement and general content
+   replication remain unavailable. Generate signed post-run evidence with the
+   existing `novovm-product-evidence` after actual acceptance.
 10. Record source commit, executable and actual loaded AOEM hashes on each host.
     This package's checksums are not production, multi-host TPS, GPU or ZK signoff.
     Do not reuse a different DLL/SO's benchmark as this bundle's qualification.
     Rolling mixed-version operation is not claimed by this package.
+    Windows SCM/task apply is NOT IMPLEMENTED by this Linux management adapter.
+    Unified upgrade/rollback remain fail-closed until data/protocol compatibility
+    is established; no --force override, clearing state or rollback of journals.
+    An old package retained by -Force is not a safe service/data rollback by itself.
+
+New installation and adoption are separate operations. Full installation does
+not enroll validators or give equal workloads to all machines; the original
+four-validator set still needs 3/4. Content custody/TTL is not generic replicated
+storage. Funded service obligations are not rewards for being online; the test
+NOV custody/retrieval -> specific UCA payout -> respend integration is NOT enabled.
+This package must not change B's mailbox/relay/phone identities or C's App work.
 
 The packager accepts only named directories under artifacts/product-overlay.
 It stages validated artifacts first; -Force renames the old package to a unique
 .previous directory instead of deleting it. Failed staging directories and old
 packages remain recoverable and require separate intentional housekeeping.
 
-The native validator uses its authenticated NovoRUDP owner. TLS/WSS belongs
-only to the separately configured compatible communication tools; a CA is not
-the NOVOVM trust root.
+The native validator uses its authenticated NovoRUDP owner; the communication
+owner reuses native UDP/V8TLS and supported carriers. Neither TLS nor a CA is
+the NOVOVM asset authority. No HTTP/JSON-RPC transaction listener is installed.
 
 AOEM is a bundled third-party, domain-neutral execution engine. NOVOVM
 authentication, transaction semantics, overlay routing, and product policy
@@ -528,8 +704,10 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
   # Windows source checkouts may have CRLF. Linux env/unit files must not carry
   # a trailing CR into configuration values or a manually sourced START mode.
   foreach ($template in @(
-      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'config') -File) +
-      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'systemd') -File) +
+      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'config') -File -Recurse) +
+      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'systemd') -File -Recurse) +
+      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'resources') -File -Recurse) +
+      @(Get-ChildItem -LiteralPath (Join-Path $packagePath 'compatibility') -File -Recurse) +
       @(Get-Item -LiteralPath (Join-Path $packagePath 'README.md')))) {
     $content = [IO.File]::ReadAllText($template.FullName).Replace("`r`n", "`n")
     [IO.File]::WriteAllText($template.FullName, $content, [Text.UTF8Encoding]::new($false))
@@ -567,12 +745,34 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
     throw "Release manifest journal schema does not match the delivery-journal source."
   }
   [PSCustomObject]@{
-    scope = "novovm_native_linux_release_v2"
+    scope = "novovm_unified_linux_release_v3"
     target = $Target
     git_commit = $commit
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
     node_entry = "native_execution_tick/NOVOVM_NATIVE_EXECUTION_CONFIG"
     native_release_http_listener = $false
+    build_contracts = $buildContracts
+    deployment = [PSCustomObject]@{
+      schema_version = 1
+      manifest_template = 'config/unified-node.json.example'
+      manager = 'novovmctl lifecycle --deployment-manifest'
+      services_configured = $false
+      auto_start = $false
+      new_chain_created = $false
+      existing_services_modified = $false
+      cross_version_upgrade_qualified = $false
+      mailbox_owner_provisioned = $false
+    }
+    capabilities = [PSCustomObject]@{
+      native_node_and_uca_spend = 'included_requires_approved_configuration_and_runtime_acceptance'
+      mailbox_encrypted_object_custody = 'included_requires_existing_or_explicitly_provisioned_owner'
+      relay_duplex_v2 = 'included_explicit_selection_no_legacy_fallback'
+      full_stack_runtime_acceptance = 'not_performed_by_packaging'
+      service_settlement_to_provider_uca = 'unavailable'
+      general_content_replication_and_repair = 'unavailable'
+      full_transport_and_consensus_mldsa = 'unavailable'
+      business_proof_finality = 'unavailable'
+    }
     aoem_runtime = [PSCustomObject]@{
       path = "aoem/linux/core/bin/libaoem_ffi.so"
       sha256 = $actualAoemSha
@@ -588,9 +788,9 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
     signed_evidence_included = $false
     note = "Generate signed runtime evidence after deployment; this build manifest is checksum-only."
     artifacts = $entries
-  } | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 (Join-Path $packagePath "release-manifest.json")
+  } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $packagePath "release-manifest.json")
   Publish-LinuxPackage $repo $packagePath $destination -Replace:$Force
-  Write-Host "Linux native validator and compatible network tools package created: $destination"
+  Write-Host "Unified Linux artifacts assembled, not installed or started: $destination"
 }
 finally {
   Pop-Location

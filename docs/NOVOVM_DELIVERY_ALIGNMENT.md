@@ -1,5 +1,76 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-25 统一制品与生命周期适配（程序交付，非安装验收）
+
+输入 `0d8a69c1`，原 Linux 打包器及原 `novovmctl lifecycle` 已扩展；没有新增
+runtime、协议、账户库或执行器。下方入口清单保留为固定旧源码的历史审查，本节更新
+制品和管理接线状态，不把其中仍未完成的通信、经济和证明能力自动改成已接通。
+root 统一集成/构建；打包、管理、只读健康各自独立文件所有权，没有并行重型构建或发压。
+
+### 本片实际变化
+
+| 交付 | 当前实现与边界 |
+| --- | --- |
+| 原 Linux 打包器 | [同一脚本](../scripts/novovm-package-product-linux.ps1)从原8个程序扩为11个，加入 `novovm-rendezvous-service`、`supervm-relay`、`novovmctl`；通信沿原 crate，固定 `iroh-transport,tls-transport`。Cargo package ID、实际产物/feature、源码、AOEM与文件哈希写入 `novovm_unified_linux_release_v3` 清单 |
+| 配置与服务资源 | 原信箱和 Relay 资源随包；新 Relay 明确 `--runtime duplex-v2`，旧 positional JSON unit 移到标明用途的 compatibility 资源。节点和 Relay 数据目录分开，未修改 B 的原路径或服务。示例仍需审核配置，不能自行创世 |
+| 原管理命令 | [lifecycle 下的适配](../crates/novovmctl/src/commands/lifecycle/unified.rs)提供 plan/install/adopt/start/stop/status/logs/health，复用 systemd；install **只注册已经准备好的审核 unit**，不创建用户/密钥/数据库，不 enable 或自动启动。不是一键完成首装 |
+| 安全预检 | 包/二进制/配置/unit固定哈希，所有目标先检查再变更；拒绝越界、链接、数据目录交叠、非原生入口、START=create、隐藏钩子和 drop-in。实际已加载 unit/参数/环境必须一致，拒绝旧 systemd 缓存；原 `ResidentConfig::load` 检查共同创世及 UCA 初始化，不打开账本 |
+| 只读健康接线 | [health 模块](../crates/novovmctl/src/commands/lifecycle/health.rs)调用原 native-client 的认证 status/NVQUERY，观察账本可读与恢复投影；原 rendezvous --check 仅是配置检查，TCP accept 仅是监听观察。固定命令、有界输出/总等待，不使用旧状态文件伪造成功，不发送转账或写信箱 |
+
+**未完成项不能签收：** Windows SCM/任务管理尚未接入此统一适配；跨版本升级/回退
+没有兼容性验收，明确拒绝；B 的 `/opt/novonet-mailbox/current` 是链接，当前严格路径
+校验不支持它的安全接管。不能为了通过而移动 B 数据、改其 unit 或重新 provision。
+管理器未提供真实信箱认证往返、运行中 AOEM 身份、验证者连接及内容取回的完整探针；
+这些逐项 `unavailable`，health 输出 `ready=false`、`ok=false` 并退出6，不冒充健康。
+服务结算仍未接通，未增加收费或奖励。全栈安装/升级产品目标因此**尚未整体完成**。
+
+### 使用契约（D构建后，本机审核清单）
+
+统一命令是 `novovmctl lifecycle --deployment-manifest HOST.json --action plan`。
+`plan` 不调用服务管理器；默认 action 是 `status`，会做只读观察。install/start/stop
+必须显式 `--apply` 才改变服务；adopt 只核对原 owner，不重新安装、生成身份或改数据。
+status/logs/health/adopt 需要 Linux 实机，不在 Windows 上模拟安装成功。
+
+清单 schema_version=1，固定 `host_id`、绝对 `package_root`、外部审核的
+`expected_release_manifest_sha256`，以及1–3个服务对象。每个服务至少包含：
+
+| 字段 | 含义 |
+| --- | --- |
+| role / manager / name | node、mailbox、relay；本片 systemd；准确 `.service` 名，必须等于 unit 文件名 |
+| unit_file / unit_sha256 | 已准备且审核的实际 unit；不能指向另一份模板冒充已安装定义 |
+| binary / binary_sha256 | 原程序；新服务必须是包内制品。existing=true允许保留明确固定的原程序，不宣称其已升级 |
+| config_files | `{path,sha256}` 列表，包含真实 EnvironmentFile、原生配置及所有探针输入；不包含私钥内容 |
+| protected_paths | 原数据/身份目录；与发布目录、其他服务 owner 分开，路径必须存在且不经过链接 |
+| enabled / existing | 本次管理是否选中、是否是既有服务；不是是否自动具备验证者或资产权限 |
+| health | 可选 native_client `{binary,config,ledger_query}`、rendezvous `{binary,config}`、tcp_listeners、timeout_ms；探针必须对应本服务及已固定输入 |
+
+原生节点要求原库及签票身份已经合法存在，采用 `START=existing`；创世是原节点
+经批准的独立操作，不由安装器悄悄执行。AOEM配置和环境的库路径必须一致且对应包内
+制品。包清单哈希是操作员的外部信任 pin，不是硬件证明或独立发布者签名。
+信箱目录归属用户与管理进程UID不匹配时只报不可验证，不冒充配置损坏或自动切换身份。
+
+旧无 deployment-manifest 的 lifecycle 仍为 `scripts/novovm-node-lifecycle.ps1`
+等现有 release/ops-wire 调用者保留兼容；本轮统一部署不调用它，不会在新入口失败后
+回退。须在这些调用者的平台和数据迁移验收后再移除，不能靠删除仍用接口“清理”源码。
+
+### 本机验证与后续交接
+
+Windows：`cargo test -p novovmctl --locked` **53项单元＋9项CLI通过**，其中新管理20项、
+健康9项；Linux专用symlink用例未在本机运行。严格Clippy与workspace fmt通过。
+原打包安全28项、编译失败/缺feature/错误package ID拒绝、11程序完整装配/校验和/
+原资源/显式duplex/源文件变更反例均通过。装配夹具用的是**合成ELF**，不是Linux真实
+11程序构建、systemd安装或运行验收。实际新编译novovmctl对包内未配置示例执行install
+--apply在调用服务管理器前退出2，未做系统变更。既有CI会运行原novovmctl及打包脚本测试，无需新建
+重复全量工作流；本机通过不代表本提交远端CI通过。
+
+原始失败也保留：首轮 Rust 编译发现4处测试 json! 表达式错误，修复后通过；严格Clippy
+发现一次多余引用，修复后通过。未删除断言、放宽生产限制或隐藏失败。
+
+下一步由 D 按[更新交接](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#2026-10-25-统一包v3交接给d)
+构建本片固定提交并回传制品身份和首个真实安装阻断。A继续补齐上述平台/接管缺口；
+B本轮未连接、未解压旧包、未修改或重启服务，C手机与账本/身份数据不动。
+不等待D构建就宣称“一套系统已安装完成”是错误的。
+
 ## 2026-10-25 Unified Node Deployment & End-to-End Acceptance v1
 
 **交付目标：NOVOVM / NOVONET Unified Node，统一安装、配置、启动、监控、升级和恢复。**

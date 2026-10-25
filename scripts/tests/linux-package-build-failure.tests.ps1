@@ -22,7 +22,10 @@ New-Item -ItemType Directory -Path $fixture | Out-Null
 $fixture = (Resolve-Path $fixture).Path
 $executable = Join-Path $fixture 'reported-linux-binary'
 [IO.File]::WriteAllBytes($executable, [byte[]]@(0x7f, 0x45, 0x4c, 0x46))
-$bins = @('first', 'second')
+$buildContracts = @(
+  [PSCustomObject]@{package='fixture-one';binary='first';features=@();expected_cargo_package_id='fixture#fixture-one@1.0'},
+  [PSCustomObject]@{package='fixture-two';binary='second';features=@('tls-transport');expected_cargo_package_id='fixture#fixture-two@1.0'}
+)
 $executables = @{}
 $executableHashes = @{}
 $Target = 'x86_64-unknown-linux-gnu'
@@ -32,7 +35,7 @@ function cargo {
   $script:calls++
   $global:LASTEXITCODE = $script:buildExit
   if ($script:buildExit -eq 0) {
-    [PSCustomObject]@{reason='compiler-artifact';target=@{name=$bin;kind=@('bin')};executable=$executable} | ConvertTo-Json -Compress
+    [PSCustomObject]@{reason='compiler-artifact';package_id="fixture#$($contract.package)@1.0";features=@($contract.features);target=@{name=$bin;kind=@('bin')};executable=$executable} | ConvertTo-Json -Compress
   }
 }
 $rejected = $false
@@ -62,5 +65,42 @@ try { & $build } catch {
   $rejected = $true
 }
 if (!$rejected) { throw 'Successful cargo without a reported executable must fail' }
-Write-Output "PASS: build failure and absent artifact reject; Cargo-reported paths consumed. Generated fixtures retained: $fixture"
+function cargo {
+  $global:LASTEXITCODE = 0
+  [PSCustomObject]@{reason='compiler-artifact';package_id=$contract.expected_cargo_package_id;features=@();target=@{name=$bin;kind=@('bin')};executable=$executable} | ConvertTo-Json -Compress
+}
+$rejected = $false
+try { & $build } catch {
+  if ($_.Exception.Message -notlike "*required feature 'tls-transport'*") { throw }
+  $rejected = $true
+}
+if (!$rejected) { throw 'A reported artifact missing the required feature must fail' }
+$buildContracts[1].features = @('iroh-transport')
+$rejected = $false
+try { & $build } catch {
+  if ($_.Exception.Message -notlike "*required feature 'iroh-transport'*") { throw }
+  $rejected = $true
+}
+if (!$rejected) { throw 'Missing Iroh owner feature must also fail' }
+function cargo {
+  $global:LASTEXITCODE = 0
+  [PSCustomObject]@{reason='compiler-artifact';package_id='fixture#different-package@1.0';features=@($contract.features);target=@{name=$bin;kind=@('bin')};executable=$executable} | ConvertTo-Json -Compress
+}
+$rejected = $false
+try { & $build } catch {
+  if ($_.Exception.Message -notlike '*Cargo artifact package identity mismatch*') { throw }
+  $rejected = $true
+}
+if (!$rejected) { throw 'A same-named binary from a different package must fail' }
+function cargo {
+  $global:LASTEXITCODE = 0
+  [PSCustomObject]@{reason='compiler-artifact';features=@();target=@{name=$bin;kind=@('bin')};executable=$executable} | ConvertTo-Json -Compress
+}
+$rejected = $false
+try { & $build } catch {
+  if ($_.Exception.Message -notlike '*Cargo package identity missing*') { throw }
+  $rejected = $true
+}
+if (!$rejected) { throw 'Missing Cargo package identity must fail' }
+Write-Output "PASS: build failure, absent artifact, missing TLS/Iroh features and wrong/missing identity reject; Cargo-reported paths consumed. Generated fixtures retained: $fixture"
 exit 0

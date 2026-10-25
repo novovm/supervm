@@ -1,5 +1,24 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-10-25 统一包v3与原生命周期管理适配（未部署）
+
+输入 `0d8a69c1`。原Linux打包器纳入11个原程序，新增实际信箱owner、Relay与novovmctl，
+记录原crate/features、Cargo产物、源码/AOEM/文件校验和；保留原服务资源和受控旧包。
+原 `novovmctl lifecycle --deployment-manifest` 接入 Linux systemd 计划/注册/身份核对/
+启停/状态/日志/只读健康，非新runtime。真实服务unit、参数和环境一致性在变更前检查，
+不创建账户/密钥/创世/数据库，不自动开机启用，不回退历史ops-wire入口。
+
+Windows本机53项单元＋9项CLI、严格Clippy、fmt通过；原打包安全28项、缺产物/feature/
+错误crate拒绝与合成11程序装配夹具通过。初始测试宏语法和Clippy错误已修正后复跑；
+无真实Linux包构建/安装、无A–D部署、无新交易/TPS或故障验收。
+
+只读健康通过原native-client查询状态/账本，配置检查与TCP监听分别报告；未接入的
+运行中AOEM身份、验证者连接、信箱认证往返和服务结算仍明确unavailable，ready=false。
+Windows统一服务、跨版本升级/回退、B现有current链接安全接管尚未实现，不能把拒绝
+执行称作这些功能已经交付。B原服务/密钥/数据库未动，C手机不受影响。
+详细[程序与边界](NOVOVM_DELIVERY_ALIGNMENT.md#2026-10-25-统一制品与生命周期适配程序交付非安装验收)，
+[D固定构建交接](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#2026-10-25-统一包v3交接给d)。
+
 ## 2026-10-25 统一全栈节点入口清点（非部署验收）
 
 用户将A–D目标明确为统一安装管理的NOVOVM/NOVONET全栈节点。固定源码`e8cec2e8`

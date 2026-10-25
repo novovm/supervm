@@ -2,6 +2,14 @@ use clap::Args;
 
 #[derive(Debug, Args)]
 pub struct LifecycleArgs {
+    /// Versioned native full-stack deployment; never uses legacy up/ops_wire wiring.
+    #[arg(long)]
+    pub deployment_manifest: Option<String>,
+
+    /// Apply a selected native mutation; status/logs/health/adopt remain read-only.
+    #[arg(long, default_value_t = false, conflicts_with = "dry_run")]
+    pub apply: bool,
+
     #[arg(long, default_value = "status")]
     pub action: String,
 

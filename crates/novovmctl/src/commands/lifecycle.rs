@@ -13,6 +13,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod health;
+mod unified;
+
 const DEFAULT_RELEASE_ROOT: &str = "artifacts/runtime/releases";
 const DEFAULT_RUNTIME_STATE_FILE: &str = "artifacts/runtime/lifecycle/state.json";
 const DEFAULT_RUNTIME_PID_FILE: &str = "artifacts/runtime/lifecycle/novovm-up.pid";
@@ -26,6 +29,20 @@ struct StartLifecycleResult {
 }
 
 pub fn run(args: LifecycleArgs) -> Result<(), CtlError> {
+    if args.deployment_manifest.is_some() {
+        return unified::run(&args);
+    }
+    if args.apply {
+        return Err(CtlError::InvalidArgument(
+            "--apply requires --deployment-manifest; legacy lifecycle is not unified deployment"
+                .into(),
+        ));
+    }
+    // Compatibility only: scripts/novovm-node-lifecycle.ps1 and existing
+    // lifecycle release/ops-wire callers still use this branch. It is not the
+    // unified native deployment default. Retire after those callers migrate
+    // with their platform/data contracts; never silently fall back from a
+    // rejected deployment manifest into this historical manager.
     let command_name = "lifecycle";
     let audit_path = env::resolve_audit_file(args.audit_file.as_deref());
     let result = inner_run(args);

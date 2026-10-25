@@ -4,6 +4,33 @@
 所有当前链仍是公测链，采用生产级配置与服务管理；禁止清库、重用清空的签票日志，
 禁止把现有公测余额带入未来正式创世。当前阶段先清点、同步、构建，不自动启用服务。
 
+## 2026-10-25 统一包v3交接给D
+
+本片由原打包器扩展，**新的固定源码SHA由A提交推送后给出**；旧 `2b3f1509` 的真实
+包/回执保留，不能把它当成11程序统一包。以下不是B部署命令，不使用B凭据。
+
+给D的执行范围：
+
+1. 保留工作区，读取本节及交付对齐文档最新段，fetch并确认A给出的**完整SHA**已在
+   干净main上；有并发新提交或本机修改先回传，不reset、不自动改用移动main构建。
+2. 沿原环境执行 `cargo test -p novovmctl --locked` 和三个
+   `scripts/tests/linux-package-*.tests.ps1`，保存首个错误；这些是组件/夹具，不是安装成功。
+3. 用原打包器，新的专用目录，例如：
+   `pwsh -NoProfile -File scripts/novovm-package-product-linux.ps1 -Target x86_64-unknown-linux-gnu -PackageDir artifacts/product-overlay/unified-d-<固定SHA前8位>`。
+   不加Force，不覆盖旧包。编译失败立即保存错误，不复制旧bin补洞、关闭TLS/Iroh或换AOEM。
+4. 回传实际源码、工具链、11个build_contracts、AOEM和包清单/归档SHA、完整首个失败。
+   manifest scope应为 `novovm_unified_linux_release_v3`，实际新包身份以本次输出为准。
+5. 在D专用空发布目录解包校验，复核原服务/端口/目录；准备人工审核的unit/env及
+   HOST.json，然后先运行 `bin/novovmctl lifecycle --deployment-manifest HOST.json --action plan`。
+   当前模板没有用户、密钥、原库和共同创世；缺少时如实回传，不能用fixture或清库绕过。
+   有完整批准配置后才推进D实际服务注册/启停/原库恢复；保留原AI任务和其他服务。
+
+该管理适配当前不支持Windows apply、跨版本升级/回退或B的current链接接管；不使用
+旧“首装脚本”接管B，不移动B身份或数据库来满足校验。健康输出的unavailable/exit6
+是尚未完整接通的明确边界，不改成0冒充联合验收。D只提交脱敏回执/日志，私钥、完整
+配置、数据库和大二进制不进Git；归档继续用已约定本地文件交接。A收到后复核并协调
+B，C只负责原App和双手机验收，不能把D构建成功当成B升级授权或四机成功。
+
 ## 设备分工
 
 | 标签 | 用户指定设备 | 本轮职责与保护边界 |
