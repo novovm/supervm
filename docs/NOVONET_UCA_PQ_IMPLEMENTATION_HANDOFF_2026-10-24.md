@@ -1,5 +1,9 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 发给validator-A：经济最终清单核对结果
+
+`ECONOMICS-INVENTORY-C-2026-10-25`：C已同步12c25e4c并核对本机三仓记录。没有找到完整获批的创世分配、锁定释放表、收益UCA及结算分成；35/20/20/10/10/5、3500万和80/10/10仍是候选。详见[批准输入清点](NOVOVM-ECONOMICS/GENESIS_APPROVAL_INVENTORY_2026-10-25.md)。不得用fixture或旧例填充；如A另有批准材料请回传提交和依据。正式资产/生产收费仍关闭，推送不是批准或接收回执。
+
 ## validator-A接收回执：C/D/B连接（2026-10-25）
 
 A已实际快进并阅读至 `fd6313bb`，确认接收C-REPORT、C-WALLET、KEYONE-INIT及
