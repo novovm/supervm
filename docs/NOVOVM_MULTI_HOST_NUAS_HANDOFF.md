@@ -105,6 +105,25 @@ CLI的submit仅报告传输完成，必须用原查询逐节点核对最终回�
 
 本交接未宣称多机已启动、Linux已安装、正式创世已发行、服务结算已完成或性能已达标。
 
+## validator-C 第一阶段回执
+
+2026-10-25 Asia/Shanghai：用户指定本机手机调试笔记本为 validator-C。登记角色，不改主机名、手机光学 A/B、UCA 或已有服务。状态 `SYNCED / INVENTORIED / WAITING_FOR_SHARED_ACCEPTANCE_SHA_AND_CONFIG`，不是运行验证者。
+
+| 清点项 | 实测与边界 |
+| --- | --- |
+| 仓库 | D:/WEB3_AI/SUPERVM main，原树干净，从 ee21e8f8 快进到 1e32ef41；本轮随后仅文档更新，其他受审工作树保留 |
+| OS / CPU | Windows 11 家庭版中文版64位；i9-14900HX，24核32线程 |
+| RAM / 磁盘 | 总内存约31.7GiB，空闲约13.7GiB；D卷可用187.6GiB，动态快照、非独占资源 |
+| 既有服务 | ADB TCP5037、NOVOVM Rendezvous PID43396及Node开发服务保留；另有443、8000、9100、代理7897等监听；未停止服务，全部端口归属尚未验清 |
+| 时钟 | W32Time=Stopped，w32tm查询返回0x80070426；未确认同步，不修改系统时间 |
+| 网络 | WLAN 192.168.71.52；Meta TUN 198.18.0.1与WLAN均有默认路由；TUN及虚拟/169.254地址不作公告地址 |
+| UDP | 41050无监听，仅候选未预留；192.168.71.52:41050无跨机、公网/NAT或防火墙放行证据 |
+| 配置/数据 | 历史Rendezvous及artifacts节点资料保留；未收到本轮统一批准配置，不将旧夹具改成C数据 |
+| node/client | target/runtime-rebuild/release未发现相应exe；等待A固定全组SHA后构建，不复用别的工作树旧制品 |
+| AOEM | aoem/windows/core/bin/aoem_ffi.dll，SHA256 31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947；仅核文件哈希，未新增加载/能力验收 |
+
+C继续负责Android持钥与App消费端，不占共享协议开发。等待共同SHA/配置，并列时钟与真实路由为启动前检查。没有启动新链、生成验证者密钥或修改安全组；源码同步不代表手机SDK升级。钱包分工见[本轮计划](UCA_WALLET_PRIVACY_AND_BINDING_PLAN_2026-10-25.md)。
+
 ## validator-D 第一阶段回执
 
 2026-10-24（本机时区America/Adak；与上游2026-10-25交接对应），用户明确将
