@@ -1,0 +1,2 @@
+Linux native validator and compatible network tools package created: /home/aoem-a3/WorksArea/SUPERVM/artifacts/audit/linux-package-assembly-c791b2aa4b2c487e9a93a58f8a48a3e7/artifacts/product-overlay/linux-x86_64
+PASS: original full assembly, manifest, checksums, Linux templates and changed-hardlink rejection. Synthetic artifacts only; retained: /home/aoem-a3/WorksArea/SUPERVM/artifacts/audit/linux-package-assembly-c791b2aa4b2c487e9a93a58f8a48a3e7

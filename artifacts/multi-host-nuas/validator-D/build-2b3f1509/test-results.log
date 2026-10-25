@@ -1,0 +1,9 @@
+
+RUN pwsh -NoProfile -File scripts/tests/linux-package-safety.tests.ps1
+linux-package-safety exit=0
+
+RUN pwsh -NoProfile -File scripts/tests/linux-package-build-failure.tests.ps1
+linux-package-build-failure exit=0
+
+RUN pwsh -NoProfile -File scripts/tests/linux-package-assembly.tests.ps1
+linux-package-assembly exit=0

@@ -159,6 +159,87 @@ C继续负责Android持钥与App消费端，不占共享协议开发。等待共
 AOEM身份。未启动验证者、生成密钥/授权/创世、修改防火墙/路由或触碰MEV；本回执
 推送不等于A已阅读或批准配置，也不签Linux部署、多机NUAS、全链PQ或性能验收。
 
+## validator-D Linux打包修复复验回执
+
+回执ID：`D-LINUX-BUILD-2b3f1509`。2026-10-24 America/Adak（对应A的2026-10-25）。
+D已接收A的HardLink修复，按顶部顺序完成Linux复验。**状态：LINUX BUILD / PACKAGE
+PASS；READY FOR A ARTIFACT VERIFICATION。未传输包、未安装或启动验证者。**
+本节接续下方原阻断回执，不删除或改写旧失败证据。
+
+### 固定源码与实际命令
+
+- 源码 `2b3f1509c3591f646323a0231c14a9e83b759998`，main，构建前后均干净。
+  本回执发布SHA与制品源码SHA分开；包内清单保留固定源码，不跟随之后文档提交。
+- Ubuntu24.04.5 LTS / x86_64，rustc/cargo1.94.0，pwsh7.5.4，实际Cargo目录
+  `target/runtime-rebuild`；没有改target-dir、RUSTFLAGS或compiler wrapper。
+- 顺序执行 `pwsh -NoProfile -File scripts/tests/linux-package-safety.tests.ps1`、
+  `scripts/tests/linux-package-build-failure.tests.ps1`、
+  `scripts/tests/linux-package-assembly.tests.ps1`，三项exit0。
+  Linux实际为29项安全/模板断言；后两项涵盖构建失败/缺失制品拒绝、Cargo路径消费、
+  原完整脚本HardLink组包与别名篡改拒绝。合成ELF只在夹具中，不进入交付包。
+
+```sh
+CARGO_BUILD_JOBS=4 nice -n 10 pwsh -NoProfile -ExecutionPolicy Bypass \
+  -File scripts/novovm-package-product-linux.ps1 \
+  -Target x86_64-unknown-linux-gnu \
+  -PackageDir artifacts/product-overlay/validator-d-linux-2b3f1509
+```
+
+原打包器exit0，未用Force；目标原先不存在。8个bin均实际调用原Cargo构建。
+node/client缓存有效且哈希与旧显式target构建相同，未清缓存、未解除Cargo硬链接。
+从Cargo实际制品复制到包内后，8个ELF均link count=1，权限可执行且SHA一致。
+包内随包AOEM28个受跟踪文件逐项与源码一致，未读取/修改兄弟AOEM或MEV仓。
+
+### 包与归档身份
+
+- D本地包：`artifacts/product-overlay/validator-d-linux-2b3f1509`；68文件，
+  逻辑文件总量689902357 bytes。原清单65项、嵌套AOEM校验均PASS；清单/校验文件
+  不自包含其自身哈希，最终归档验证覆盖全部68文件。
+- 原包完成后只用系统tar/gzip归档，不另建组包器、不改包内任何字节：
+  `tar --sort=name --owner=0 --group=0 --numeric-owner -C artifacts/product-overlay -cf - validator-d-linux-2b3f1509 | gzip -n`
+  输出到新的 `.tar.gz.partial` 后无覆盖改名；`gzip -t`及流式逐文件SHA/大小/权限验证PASS。
+- 最终包：`artifacts/product-overlay/validator-d-linux-2b3f1509.tar.gz`，321534270 bytes。
+- 归档SHA256：`ed0a14c6fbc610342104c17b972eb6406e89881752fc088cec04ecb7d3e337d7`。
+  旁置 `.tar.gz.sha256`；归档仅相对路径、普通文件/目录，无硬链接/符号链接。
+
+| 包内制品 | 字节数 | SHA256 |
+| --- | --- | --- |
+| `bin/novovm-node` | 44534376 | `5e442a1b57021f25c14cbaa28418cab0d74878c5e7c0f4d1892ab3fb36ad514c` |
+| `bin/novovm-native-client` | 8132080 | `ccd591e83af299e259b177e0a0d9deb99a67d956ea2244f837e8db0bbd8ca60c` |
+| `aoem/linux/core/bin/libaoem_ffi.so` | 153339776 | `4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309` |
+| `release-manifest.json` | 见原文件 | `c113000f7755f17c1f891a1a5c730e5b6774ca2aaac10a9b0751134a07baf6ad` |
+| `CHECKSUMS.sha256` | 见原文件 | `91d07d369a96d9c1cf6d8582c5d413e02226bc27510565eedc5d34e8591f49df` |
+
+AOEM manifest源仍是 `1377cd1e7c1d43a4bf81cb16a169319772cf3e84`，FULLMAX。
+本机ELF/ldd检查依赖可解析：node/client最高GLIBC_2.38，SO最高GLIBC_2.39，
+AOEM依赖OpenSSL3、libstdc++等；**A在B安装前仍需实查兼容性**，本机检查不代签B。
+配置只含原`.example`，native genesis=null、peers=[]；原正常服务START=existing。
+保留原systemd模板与操作文档，不含设备密钥、运行数据库或实际分配授权。
+
+### A可拉取的显式回执与交付边界
+
+- [文字交接/实际命令](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/HANDOFF.txt)、
+  [结构化回执](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/receipt.json)、
+  [SHA256SUMS](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/SHA256SUMS)。
+- [三项测试结果](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/test-results.log)、
+  [安全测试](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/linux-package-safety.log)、
+  [失败测试](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/linux-package-build-failure.log)、
+  [完整组包夹具](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/linux-package-assembly.log)。
+- [原打包日志](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/package.log)、
+  [命令/退出码](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/package-result.log)、
+  [原清单副本](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/release-manifest.json)、
+  [原校验和副本](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/package-CHECKSUMS.sha256)。
+- [包核验结果](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/package-validation.json)、
+  [归档核验](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/archive-validation.json)、
+  [归档命令/哈希](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/archive.log)、
+  [ELF身份/依赖](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/linux-artifact-identity.log)。
+
+共享Git只加入上述小型证据和环境/校验日志，默认忽略规则不放开。大包及完整原包
+保留D本地，**A拉取文档不等于已取得或接收二进制包**。请A确认本回执ID，再安排
+批准的制品传递方式并核验归档SHA；D不获取B密钥、不登录/上传/部署B。
+本轮未启动node/新链、未生成共同创世/实际资产配置或改动既有服务/数据库/防火墙。
+包构建PASS不等于Linux安装、多机NUAS/追赶/性能或正式发行PASS。
+
 ## validator-D Linux构建显式回执
 
 回执ID：`D-LINUX-BUILD-7e07fab4`。2026-10-24 America/Adak。

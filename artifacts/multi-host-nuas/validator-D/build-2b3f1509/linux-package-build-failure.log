@@ -1,0 +1,1 @@
+PASS: build failure and absent artifact reject; Cargo-reported paths consumed. Generated fixtures retained: /home/aoem-a3/WorksArea/SUPERVM/artifacts/audit/linux-build-fixture-c89d348136b84658a56b8fb36406eb21

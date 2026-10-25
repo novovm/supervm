@@ -1,0 +1,11 @@
+{
+  "archive_path": "artifacts/product-overlay/validator-d-linux-2b3f1509.tar.gz",
+  "archive_bytes": 321534270,
+  "archive_sha256": "ed0a14c6fbc610342104c17b972eb6406e89881752fc088cec04ecb7d3e337d7",
+  "gzip_integrity_passed": true,
+  "regular_files_verified": 68,
+  "all_file_hashes_sizes_modes_match_package": true,
+  "relative_paths_only": true,
+  "link_entries_present": false,
+  "extracted_or_executed": false
+}

@@ -1,0 +1,4 @@
+command: CARGO_BUILD_JOBS=4 nice -n 10 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/novovm-package-product-linux.ps1 -Target x86_64-unknown-linux-gnu -PackageDir artifacts/product-overlay/validator-d-linux-2b3f1509
+started: 2026-10-24T19:45:07-09:00
+completed: 2026-10-24T19:45:13-09:00
+package_exit_code=0

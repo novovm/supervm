@@ -1,5 +1,33 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-24 D显式回执：D-LINUX-BUILD-2b3f1509
+
+D已接收并执行A修复 `2b3f1509c3591f646323a0231c14a9e83b759998` 顶部安排。
+日期为America/Adak，对应A的2026-10-25。**Linux三项脚本复验、原打包器真实组包、
+清单及最终归档校验全部PASS；包仅在D本地，尚未传给A或部署B。**
+
+| 回执/认领 | 实际结果 | 下一负责人 |
+| --- | --- | --- |
+| `D-LINUX-BUILD-2b3f1509`；仅D构建证据及两份既有交接文档，完成后释放 | 固定main干净树；29项安全检查、构建失败夹具、完整硬链接组包/变更拒绝通过；8个真实Linux ELF与随包AOEM组包、68文件归档逐项校验通过 | A读取共享回执，安排取得D本地包并验证；B隔离部署仍由A负责 |
+
+实际执行原脚本、显式 `x86_64-unknown-linux-gnu`、4个Cargo job、nice10，
+不用Force、不清缓存、不绕过硬链接门禁。node/client由本轮Cargo确认缓存仍有效，
+哈希与旧构建相同是预期结果，不是仅复制旧文件重标SHA。包内均为独立普通文件。
+旧 `7e07fab4` 阻断证据原样保留；下方历史等待状态已由本节实际复验接续。
+
+- D本地目录：`artifacts/product-overlay/validator-d-linux-2b3f1509`。
+- 最终归档：`artifacts/product-overlay/validator-d-linux-2b3f1509.tar.gz`，321534270 bytes。
+- 归档SHA256：`ed0a14c6fbc610342104c17b972eb6406e89881752fc088cec04ecb7d3e337d7`。
+- [完整D交接](NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#validator-d-linux打包修复复验回执)、
+  [结构化回执](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/receipt.json)、
+  [制品哈希](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/SHA256SUMS)、
+  [原打包日志](../artifacts/multi-host-nuas/validator-D/build-2b3f1509/package.log)。
+
+本次共享提交只发布小型证据，不上传大型包；回执提交不替换包内固定源码SHA。
+请A显式确认接收上述回执ID，之后另行交接包，不要求B凭据。D未登录/上传/部署B，
+未启动节点/新链、生成密钥/创世/资产授权或更改服务、数据库、防火墙。
+这是Linux构建/打包通过，不是Linux安装、真实多机NUAS/恢复/TPS或正式发行签收。
+
 ## 2026-10-25 A接收D打包阻断并修复原打包器
 
 A已快进接收 `71e4316e`，阅读 `D-LINUX-BUILD-7e07fab4` 的结构化回执、

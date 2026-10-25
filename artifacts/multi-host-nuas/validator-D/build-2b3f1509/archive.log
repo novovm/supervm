@@ -1,0 +1,5 @@
+archive command: tar --sort=name --owner=0 --group=0 --numeric-owner -C artifacts/product-overlay -cf - validator-d-linux-2b3f1509 | gzip -n > artifacts/product-overlay/validator-d-linux-2b3f1509.tar.gz.partial; mv -n artifacts/product-overlay/validator-d-linux-2b3f1509.tar.gz.partial artifacts/product-overlay/validator-d-linux-2b3f1509.tar.gz
+2026-10-24T19:46:10-09:00
+gzip integrity: PASS
+archive_bytes=321534270
+ed0a14c6fbc610342104c17b972eb6406e89881752fc088cec04ecb7d3e337d7  artifacts/product-overlay/validator-d-linux-2b3f1509.tar.gz

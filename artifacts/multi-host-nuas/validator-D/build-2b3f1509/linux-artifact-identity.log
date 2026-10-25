@@ -1,0 +1,137 @@
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-native-client
+bytes=8132080 links=1 mode=775
+ccd591e83af299e259b177e0a0d9deb99a67d956ea2244f837e8db0bbd8ca60c  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-native-client
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x00007a267996c000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007a2678e00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007a2679927000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007a267983e000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007a2678a00000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007a267996e000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-node
+bytes=44534376 links=1 mode=775
+5e442a1b57021f25c14cbaa28418cab0d74878c5e7c0f4d1892ab3fb36ad514c  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-node
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x000071b7c6838000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000071b7c4000000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000071b7c67f3000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000071b7c4317000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000071b7c3c00000)
+	/lib64/ld-linux-x86-64.so.2 (0x000071b7c683a000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-evidence
+bytes=7300192 links=1 mode=775
+eaa3424e177ab1e9d989a5448405c2dd8ea3f597da89b6381e5ebdc1ee8a2a8e  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-evidence
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x00007e545668a000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007e5455c00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007e5456645000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007e545655c000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007e5455800000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007e545668c000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-nat
+bytes=7223104 links=1 mode=775
+5d13f9e94b0a1d86793a02cc66e9082d4f742552ea1f7e7993bf40ffa36cd28e  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-nat
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x00007229f009d000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007229ef600000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007229f0058000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007229eff6f000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007229ef200000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007229f009f000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-node-overlay
+bytes=7415312 links=1 mode=775
+7c8afb4be9c41de0ae0f68864c666bfce5e86240ba782c8022dead4ed48c19bc  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-node-overlay
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x00007c12ce3f1000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007c12cda00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007c12ce3ac000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007c12cdd17000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007c12cd600000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007c12ce3f3000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-peer
+bytes=11871720 links=1 mode=775
+997f4dd7f067503c849e7324d29f2f35ba37c2149907454111c83df7aa2bf8bf  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-peer
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x00007d76a6a5f000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007d76a5c00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007d76a6a1a000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007d76a6931000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007d76a5800000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007d76a6a61000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-relay
+bytes=13244072 links=1 mode=775
+b5f791c56a19bea826d890b7b642d884e94ff4bb535f3872ee5a3d206c4a6a8c  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-relay
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x0000744eb932b000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000744eb8400000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000744eb92e6000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000744eb91fd000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000744eb8000000)
+	/lib64/ld-linux-x86-64.so.2 (0x0000744eb932d000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-topology
+bytes=7060040 links=1 mode=775
+f1f6313a6a350a5f43dec3b2e9f264fc48432ba19d8362df9a22a61f4c76757f  artifacts/product-overlay/validator-d-linux-2b3f1509/bin/novovm-product-topology
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Position-Independent Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x00007e10bf37b000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007e10bea00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007e10bf336000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007e10bed17000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007e10be600000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007e10bf37d000)
+maximum_required_glibc_symbol=GLIBC_2.38
+
+ARTIFACT artifacts/product-overlay/validator-d-linux-2b3f1509/aoem/linux/core/bin/libaoem_ffi.so
+bytes=153339776 links=1 mode=664
+4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309  artifacts/product-overlay/validator-d-linux-2b3f1509/aoem/linux/core/bin/libaoem_ffi.so
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              DYN (Shared object file)
+  Machine:                           Advanced Micro Devices X86-64
+	linux-vdso.so.1 (0x000079af2b281000)
+	libssl.so.3 => /lib/x86_64-linux-gnu/libssl.so.3 (0x000079af22b56000)
+	libcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x000079af22600000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000079af22200000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000079af2b23c000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000079af22517000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000079af21e00000)
+	/lib64/ld-linux-x86-64.so.2 (0x000079af2b283000)
+maximum_required_glibc_symbol=GLIBC_2.39
