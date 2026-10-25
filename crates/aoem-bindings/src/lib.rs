@@ -626,6 +626,70 @@ pub struct AoemMldsaVerifyItemRef<'a> {
     pub signature: &'a [u8],
 }
 
+/// Keep the original AOEM allocator as the sole owner of its result buffer,
+/// including malformed/error responses. No Rust container crosses the ABI.
+struct OwnedMldsaBatchResults {
+    ptr: *mut u8,
+    len: usize,
+    free: AoemFree,
+}
+
+impl Drop for OwnedMldsaBatchResults {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { (self.free)(self.ptr, self.len) };
+        }
+    }
+}
+
+fn validate_mldsa_batch_count(count: usize) -> Result<()> {
+    if count > MAX_AOEM_OWNED_BUFFER_BYTES || u32::try_from(count).is_err() {
+        bail!("mldsa batch results exceed the bounded ABI contract");
+    }
+    Ok(())
+}
+
+fn call_mldsa_verify_batch_owned(
+    batch_fn: AoemMldsaVerifyBatchV1,
+    free: AoemFree,
+    items: &[AoemMldsaVerifyItemV1],
+) -> Result<Vec<bool>> {
+    if items.is_empty() {
+        return Ok(Vec::new());
+    }
+    validate_mldsa_batch_count(items.len())?;
+    let mut output = OwnedMldsaBatchResults {
+        ptr: ptr::null_mut(),
+        len: 0,
+        free,
+    };
+    let mut valid_count = 0u32;
+    let rc = unsafe {
+        batch_fn(
+            items.as_ptr(),
+            items.len(),
+            &mut output.ptr,
+            &mut output.len,
+            &mut valid_count,
+        )
+    };
+    if rc != 0 {
+        bail!("aoem_mldsa_verify_batch_v1 failed: rc={rc}");
+    }
+    // Check the exact caller-known extent before making a slice or allocating.
+    if output.len != items.len() || output.ptr.is_null() {
+        bail!("mldsa batch results extent mismatch");
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(output.ptr, output.len) };
+    if bytes.iter().any(|byte| *byte > 1) {
+        bail!("mldsa batch results contain a non-boolean status");
+    }
+    if bytes.iter().filter(|byte| **byte == 1).count() != valid_count as usize {
+        bail!("mldsa batch valid count mismatch");
+    }
+    Ok(bytes.iter().map(|byte| *byte == 1).collect())
+}
+
 struct GlobalLaneScheduler {
     budget: AtomicUsize,
     inflight: AtomicUsize,
@@ -1741,6 +1805,11 @@ impl AoemDyn {
         if items.is_empty() {
             return Ok(Vec::new());
         }
+        // Reject the known row count before allocating the ABI descriptor list.
+        validate_mldsa_batch_count(items.len())?;
+        let free = self
+            .free
+            .ok_or_else(|| anyhow!("aoem_free not found in loaded DLL"))?;
         let mut raw_items = Vec::with_capacity(items.len());
         for item in items {
             if item.pubkey.is_empty() {
@@ -1759,31 +1828,7 @@ impl AoemDyn {
                 signature_len: item.signature.len(),
             });
         }
-        let mut out_results_ptr: *mut u8 = ptr::null_mut();
-        let mut out_results_len = 0usize;
-        let mut out_valid_count = 0u32;
-        let rc = unsafe {
-            batch_fn(
-                raw_items.as_ptr(),
-                raw_items.len(),
-                &mut out_results_ptr as *mut *mut u8,
-                &mut out_results_len as *mut usize,
-                &mut out_valid_count as *mut u32,
-            )
-        };
-        if rc != 0 {
-            bail!("aoem_mldsa_verify_batch_v1 failed: rc={rc}");
-        }
-        let out_results =
-            self.copy_aoem_owned_bytes(out_results_ptr, out_results_len, "mldsa batch results")?;
-        if out_results.len() != items.len() {
-            bail!(
-                "mldsa batch results length mismatch: expected {}, got {}",
-                items.len(),
-                out_results.len()
-            );
-        }
-        Ok(out_results.into_iter().map(|v| v != 0).collect())
+        call_mldsa_verify_batch_owned(batch_fn, free, &raw_items)
     }
 
     pub fn sha256_v1(&self, data: &[u8]) -> Result<[u8; 32]> {
@@ -3835,6 +3880,106 @@ unsafe fn cstr_to_string(ptr: *const c_char) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    thread_local! {
+        static MLDSA_BATCH_MODE: RefCell<u8> = const { RefCell::new(0) };
+        static MLDSA_BATCH_RELEASES: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    }
+
+    unsafe extern "C" fn recorded_mldsa_batch_free(ptr: *mut u8, len: usize) {
+        assert!(!ptr.is_null());
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len)) });
+        MLDSA_BATCH_RELEASES.with(|releases| releases.borrow_mut().push(len));
+    }
+
+    unsafe extern "C" fn fixture_mldsa_batch_output(
+        _items: *const AoemMldsaVerifyItemV1,
+        count: usize,
+        output: *mut *mut u8,
+        output_len: *mut usize,
+        valid_count: *mut u32,
+    ) -> i32 {
+        assert_eq!(count, 3);
+        let mode = MLDSA_BATCH_MODE.with(|value| *value.borrow());
+        if mode == 5 {
+            unsafe {
+                *output = ptr::null_mut();
+                *output_len = 3;
+                *valid_count = 2;
+            }
+            return 0;
+        }
+        let bytes: Box<[u8]> = match mode {
+            1 => vec![1, 0],
+            2 => vec![1, 2, 0],
+            6 => vec![1, 0, 1, 0],
+            // An empty Box<[u8]> has a non-null aligned pointer; return and free
+            // it with its actual zero-length layout, never a forged extent.
+            7 => vec![],
+            _ => vec![1, 0, 1],
+        }
+        .into_boxed_slice();
+        unsafe {
+            *output_len = bytes.len();
+            *output = Box::into_raw(bytes) as *mut u8;
+            *valid_count = if mode == 3 { 3 } else { 2 };
+        }
+        if mode == 4 {
+            -4
+        } else {
+            0
+        }
+    }
+
+    #[test]
+    fn mldsa_batch_owned_results_require_exact_boolean_count_and_release_on_error() {
+        let item = AoemMldsaVerifyItemV1 {
+            level: 65,
+            pubkey_ptr: ptr::null(),
+            pubkey_len: 0,
+            message_ptr: ptr::null(),
+            message_len: 0,
+            signature_ptr: ptr::null(),
+            signature_len: 0,
+        };
+        // The fake export never reads inputs; this tests only the ABI result
+        // contract, not cryptography or the public input validation wrapper.
+        let items = [item; 3];
+        for mode in 0..=7 {
+            MLDSA_BATCH_MODE.with(|value| *value.borrow_mut() = mode);
+            MLDSA_BATCH_RELEASES.with(|releases| releases.borrow_mut().clear());
+            let result = call_mldsa_verify_batch_owned(
+                fixture_mldsa_batch_output,
+                recorded_mldsa_batch_free,
+                &items,
+            );
+            if mode == 0 {
+                assert_eq!(result.unwrap(), [true, false, true]);
+            } else {
+                assert!(result.is_err(), "malformed batch mode {mode}");
+            }
+            assert_eq!(
+                MLDSA_BATCH_RELEASES.with(|releases| releases.borrow().clone()),
+                match mode {
+                    1 => vec![2],
+                    5 => vec![],
+                    6 => vec![4],
+                    7 => vec![0],
+                    _ => vec![3],
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn mldsa_batch_count_guard_rejects_oversized_work_before_allocation() {
+        for count in [0, 1, 1024, MAX_AOEM_OWNED_BUFFER_BYTES] {
+            assert!(validate_mldsa_batch_count(count).is_ok());
+        }
+        for count in [MAX_AOEM_OWNED_BUFFER_BYTES + 1, usize::MAX] {
+            assert!(validate_mldsa_batch_count(count).is_err());
+        }
+    }
 
     thread_local! {
         static KEYGEN_RELEASES: RefCell<Vec<(usize, bool)>> = const { RefCell::new(Vec::new()) };

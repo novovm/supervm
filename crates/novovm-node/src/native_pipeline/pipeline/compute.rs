@@ -468,7 +468,7 @@ fn domain_matches(domain: StorageDomain, context: &BatchContext) -> Result<()> {
 
 fn prepare(
     session: &mut ComputeSession,
-    uca_facade: &mut Option<novovm_exec::AoemExecFacade>,
+    uca_facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
     config: &ComputeConfig,
     request: PrepareRequest,
 ) -> Result<NovTransferPlan> {
@@ -487,7 +487,7 @@ fn prepare(
 
 fn authenticate(
     session: &mut ComputeSession,
-    uca_facade: &mut Option<novovm_exec::AoemExecFacade>,
+    uca_facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
     config: &ComputeConfig,
     request: AuthenticateRequest,
 ) -> Result<NovTransferBody> {
@@ -506,12 +506,9 @@ fn authenticate(
                 "UCA authentication input budget"
             );
             ensure_uca_facade(uca_facade, config)?;
-            // One qualified existing verifier per bounded batch, never one
-            // compatibility self-test/session per row. No Ed25519 fallback.
-            let verifier = uca_facade
-                .as_ref()
-                .context("UCA facade unavailable")?
-                .uca_spend_verifier_v1()?;
+            // The resident owner's qualified verifier retains the same loaded
+            // AOEM. Qualification is not repeated per row or per candidate.
+            let verifier = uca_facade.as_ref().context("UCA verifier unavailable")?;
             ensure!(
                 !matches!(source, BatchSource::Apfl(_)),
                 "UCA input cannot use V3 APFL projection"
@@ -533,12 +530,20 @@ fn authenticate(
                         && tx.intent.genesis == config.domain.genesis_config_commitment,
                     "UCA authentication domain mismatch"
                 );
-                signed.push(verifier.verify(tx)?);
-                config
-                    .signatures
-                    .strict_verified
-                    .fetch_add(1, Ordering::Relaxed);
+                signed.push(tx);
             }
+            let count = signed.len();
+            config
+                .signatures
+                .uca_batch_calls
+                .fetch_add(1, Ordering::Relaxed);
+            let signed = verifier.verify_batch(signed)?;
+            ensure!(signed.len() == count, "UCA batch verification result count");
+            config.signatures.strict_verified.fetch_add(
+                signed.iter().filter(|row| row.is_ok()).count() as u64,
+                Ordering::Relaxed,
+            );
+            let signed = signed.into_iter().collect::<Result<Vec<_>>>()?;
             return NovTransferBody::prepare_uca(signed, hints, request.policy, config.plan);
         }
         CandidateInput::Unverified(source) => authenticate_source_batch_observed(
@@ -550,19 +555,56 @@ fn authenticate(
             Some(config.signatures.strict_verified.clone()),
         )?,
         CandidateInput::Admitted(batch) => {
-            let checked = batch.into_checked(config.domain.chain_id, config.authentication)?;
-            config
-                .signatures
-                .reused
-                .fetch_add(checked.transactions().len() as u64, Ordering::Relaxed);
-            checked
+            match batch.into_checked(
+                config.domain.chain_id,
+                config.domain.genesis_config_commitment,
+                config.authentication,
+            )? {
+                super::admission::AdmittedSignatures::V3(checked) => {
+                    config
+                        .signatures
+                        .reused
+                        .fetch_add(checked.transactions().len() as u64, Ordering::Relaxed);
+                    checked
+                }
+                super::admission::AdmittedSignatures::Uca {
+                    source: BatchSource::Uca(source),
+                    transactions,
+                } => {
+                    let hints = (0..source.len())
+                        .map(|index| {
+                            let (payer, recipient) = source.account_hints(index)?;
+                            Ok((
+                                payer.try_into().map_err(anyhow::Error::msg)?,
+                                recipient.try_into().map_err(anyhow::Error::msg)?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    config
+                        .signatures
+                        .reused
+                        .fetch_add(transactions.len() as u64, Ordering::Relaxed);
+                    // Only signatures are reused. This original body compiler
+                    // still captures the new exact parent and checks its UCA
+                    // revocation, nonce, budget, balance and fee effects.
+                    return NovTransferBody::prepare_uca(
+                        transactions,
+                        hints,
+                        request.policy,
+                        config.plan,
+                    );
+                }
+                super::admission::AdmittedSignatures::Uca { .. } => {
+                    anyhow::bail!("admitted UCA source contract mismatch")
+                }
+            }
         }
     };
     NovTransferBody::prepare(batch, request.policy, config.plan)
 }
 
 fn ensure_uca_facade(
-    facade: &mut Option<novovm_exec::AoemExecFacade>,
+    facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
     config: &ComputeConfig,
 ) -> Result<()> {
     if facade.is_none() {
@@ -572,7 +614,9 @@ fn ensure_uca_facade(
                 ingress_workers: Some(config.workers),
             },
         )?;
-        *facade = Some(selection.open_wire_facade()?);
+        // Owned verification-only qualification retains this exact library;
+        // neither a second loader nor signing/key-generation authority is used.
+        *facade = Some(selection.open_wire_facade()?.uca_spend_verifier_v1()?);
     }
     Ok(())
 }
@@ -580,7 +624,7 @@ fn ensure_uca_facade(
 /// Reuses the candidate verifier on this resident owner. A bad external row is
 /// a row rejection, never an execution/session failure or an asset permission.
 fn admit_uca_rows(
-    facade: &mut Option<novovm_exec::AoemExecFacade>,
+    facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
     config: &ComputeConfig,
     inputs: Vec<AdmissionInput>,
 ) -> Result<AdmissionRows> {
@@ -600,14 +644,14 @@ fn admit_uca_rows(
         "mixed UCA and V3 signature admission is forbidden"
     );
     ensure_uca_facade(facade, config)?;
-    let verifier = facade
-        .as_ref()
-        .context("UCA facade unavailable")?
-        .uca_spend_verifier_v1()?;
-    let mut rows = std::collections::VecDeque::with_capacity(inputs.len());
-    for input in inputs {
-        let result = (|| {
-            let AdmissionInput::Uca { batch, index } = &input else {
+    let verifier = facade.as_ref().context("UCA verifier unavailable")?;
+    // Decode/domain failures stay at their original row. Only eligible rows go
+    // through one bounded AOEM batch; no bad-row scalar retry or fallback.
+    let mut errors = Vec::with_capacity(inputs.len());
+    let mut signed = Vec::with_capacity(inputs.len());
+    for input in &inputs {
+        let decoded: Result<_> = (|| {
+            let AdmissionInput::Uca { batch, index } = input else {
                 unreachable!("checked contract");
             };
             let signed = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(
@@ -618,19 +662,57 @@ fn admit_uca_rows(
                     && signed.intent.genesis == config.domain.genesis_config_commitment,
                 "UCA authentication domain mismatch"
             );
-            let checked = verifier.verify(signed)?;
-            config
-                .signatures
-                .strict_verified
-                .fetch_add(1, Ordering::Relaxed);
-            Ok(CheckedAdmission::Uca {
-                checked,
-                batch: batch.clone(),
-                index: *index,
-            })
+            Ok(signed)
         })();
+        match decoded {
+            Ok(value) => {
+                signed.push(value);
+                errors.push(None);
+            }
+            Err(error) => errors.push(Some(error)),
+        }
+    }
+    let count = signed.len();
+    let verified = if count == 0 {
+        Vec::new()
+    } else {
+        config
+            .signatures
+            .uca_batch_calls
+            .fetch_add(1, Ordering::Relaxed);
+        verifier.verify_batch(signed)?
+    };
+    ensure!(
+        verified.len() == count,
+        "UCA batch verification result count"
+    );
+    let mut verified = verified.into_iter();
+    let mut rows = std::collections::VecDeque::with_capacity(inputs.len());
+    for (input, error) in inputs.into_iter().zip(errors) {
+        let result = if let Some(error) = error {
+            Err(error)
+        } else {
+            verified
+                .next()
+                .context("UCA verification row missing")?
+                .map(|checked| {
+                    let AdmissionInput::Uca { batch, index } = &input else {
+                        unreachable!("checked contract");
+                    };
+                    config
+                        .signatures
+                        .strict_verified
+                        .fetch_add(1, Ordering::Relaxed);
+                    CheckedAdmission::Uca {
+                        checked,
+                        batch: batch.clone(),
+                        index: *index,
+                    }
+                })
+        };
         rows.push_back(AdmissionRow { input, result });
     }
+    ensure!(verified.next().is_none(), "extra UCA verification row");
     Ok(AdmissionRows {
         rows,
         peak_callbacks: 0,
@@ -676,8 +758,8 @@ fn run_owner(
     notification: &Notification,
     failed: &AtomicBool,
 ) {
-    // The original unified facade lives on this existing compute owner; it
-    // owns no database and cannot publish state. Reference-only runs open none.
+    // The qualified original unified verifier lives on this compute owner; it
+    // owns no database or permissions. Reference-only runs open none.
     let mut uca_facade = None;
     while let Ok(queued) = receiver.recv() {
         let command = queued.into_command();

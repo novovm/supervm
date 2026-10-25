@@ -1,5 +1,27 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-10-26 NUAS 批验签与候选复用：实现接通，性能未签收
+
+本片接续 `a2684aa2`，仍在 `dev/mldsa65-identity-closure`。原 `NativeApplicationClient`
+→ NovoRUDP/APFL → 原准入/候选 → exec → bindings → 同一 AOEM；未改算法政策、
+经济规则、CPU 快路径、原 journal 或 quorum。复用真实 ML-DSA-65 批验签导出，
+不是把普通批执行冒充批验签；外部 pure framing、逐行错误和整批 ABI 失败均严格验证。
+
+入池返回的私有不可变签名事实绑定完整规范对象、公钥、域、locator、顺序与 pipeline owner。
+候选在完整匹配后复用，不接受外部凭证、不凭 intent hash 跳过签名；新的精确父状态仍重读
+撤销/授权代次、nonce、预算、余额及费用。原池和候选预算明确计入保留副本，不新增全局缓存。
+
+实负载还修复两项实际接线：选批漏算 payer/recipient locator，导致正文在下一阶段超过
+同一 384 KiB 上限；压测客户端只关闭 pacing 的退避而漏设 window，同一原 sender 按 OR
+判定后放弃短期背压对象。前者按实际字节计入，后者仅对齐正式节点已有配置；不扩大 1024
+行/384 KiB 上限、队列或 30 秒 TTL，不改 NovoRUDP 协议。
+
+本片定向验证和四原进程负载结果见[本机证据](../artifacts/audit/nuas-auth-batching-20261026/evidence.json)
+及[当前台账](NOVOVM_PRODUCTION_READINESS_TRACKER.md#2026-10-26-nuas-批验签与凭证复用本机检查点)。
+CPU 两轮方向相反，整数两轮回退，不能签稳定提速；默认 AOEM 小批次 NTT 预处理开销需继续
+独立归因。未改变生产默认，不开放 Ed25519 支付，不以 1024 笔/16 付款账户负载代替
+65,536 笔正式资格或多机成绩。阶段分支可审查，不合 main、不更新 D 部署包、不激活新链。
+
 ## 2026-10-26 阶段分支与批量验收（用户明确授权）
 
 本批唯一共享开发分支 `dev/mldsa65-identity-closure`，从 `384afc4e` 开始。

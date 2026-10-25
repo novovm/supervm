@@ -181,3 +181,84 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
         original.intent.nonce_identity().unwrap()
     );
 }
+
+#[test]
+#[ignore = "requires the trusted packaged AOEM runtime; run explicitly, no silent skip"]
+fn packaged_uca_batch_matches_scalar_mixed_rows_and_preserves_qualified_owner() {
+    let facade = AoemExecFacade::open(packaged_library(), AoemExecOpenOptions::default()).unwrap();
+    let runtime = facade
+        .mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)
+        .unwrap();
+    let key = runtime.generate_keypair().unwrap();
+    let signer = facade.uca_spend_signer_v1().unwrap();
+    let signed = signer
+        .sign(
+            intent(&key.public_key),
+            &key.public_key,
+            &key.expanded_secret_key,
+        )
+        .unwrap();
+    let mut next = signed.intent.clone();
+    next.nonce += 1;
+    let second = signer
+        .sign(next, &key.public_key, &key.expanded_secret_key)
+        .unwrap();
+    let mut wrong_context = signed.clone();
+    wrong_context.signature = runtime
+        .sign(
+            &key.public_key,
+            &key.expanded_secret_key,
+            &signed.intent.signing_bytes().unwrap(),
+            b"not-a-spend-context",
+        )
+        .unwrap();
+    drop(runtime);
+    let verifier = facade.uca_spend_verifier_v1().unwrap();
+    // Repeated signed values intentionally test crypto only, not nonce or spend
+    // permission. Enough well-shaped rows exercise AOEM's existing bulk path.
+    let rows: Vec<_> = (0..320)
+        .map(|index| {
+            let mut row = if index % 11 == 7 {
+                second.clone()
+            } else {
+                signed.clone()
+            };
+            match index % 11 {
+                0 => row.public_key.truncate(32),
+                1 => row.signature[0] ^= 1,
+                2 => row.intent.amount += 1,
+                3 => row = wrong_context.clone(),
+                4 => row.intent.spend_key_ref[0] ^= 1,
+                5 => row.signature.truncate(64),
+                6 => row.intent.expires_at_height = row.intent.not_before_height,
+                _ => {}
+            }
+            row
+        })
+        .collect();
+    let expected: Vec<_> = rows
+        .iter()
+        .map(|row| verifier.verify(row.clone()).is_ok())
+        .collect();
+    let shared = verifier.clone();
+    drop(verifier);
+    drop(facade);
+    let actual = shared
+        .verify_batch(rows.clone())
+        .expect("actual batch execution, no scalar fallback");
+    assert_eq!(actual.len(), rows.len());
+    for (index, result) in actual.into_iter().enumerate() {
+        assert_eq!(
+            result.is_ok(),
+            expected[index],
+            "original batch row {index}"
+        );
+        if let Ok(checked) = result {
+            assert!(checked.signed() == &rows[index]);
+            assert!(checked.clone().signed() == checked.signed());
+            assert!(checked.check_supplied_state(None, &[0; 32], 101).is_err());
+        }
+    }
+    assert!(shared.verify_batch(vec![signed; 1025]).is_err());
+    assert!(shared.verify_batch(vec![]).unwrap().is_empty());
+}

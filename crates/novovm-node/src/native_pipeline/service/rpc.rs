@@ -67,6 +67,8 @@ mod gossip;
 mod history;
 mod native_query;
 mod nonce_cache;
+#[cfg(test)]
+mod selection_budget_tests;
 mod uca;
 use nonce_cache::NonceCache;
 use novovm_protocol::native_query::{Balance, ReceiptState};
@@ -92,6 +94,21 @@ struct Pending {
 }
 
 impl Pending {
+    /// Match the original pipeline's expanded-input budget. NUAS locator hints
+    /// are outside its signed canonical bytes but remain part of the candidate
+    /// input; column compression cannot make them free. Invalid metadata cannot
+    /// be selected or advance the local nonce prefix.
+    fn selection_input_bytes(&self) -> Option<usize> {
+        let hints = match &self.input {
+            AdmissionInput::Uca { batch, index } => {
+                let (payer, recipient) = batch.account_hints(*index).ok()?;
+                payer.len().checked_add(recipient.len())?
+            }
+            AdmissionInput::Raw(_) | AdmissionInput::Apfl { .. } => 0,
+        };
+        self.canonical_len.checked_add(hints)
+    }
+
     fn retained_metadata_bytes(&self) -> usize {
         self.admitted
             .as_ref()
@@ -898,7 +915,8 @@ impl RpcLifecycle {
         status["pending_retained_total_bytes"] = json!(self.pending_retention.bytes);
         status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
         status["signature_work"] = json!({"strict_verified_rows":strict_verified_rows,
-            "reused_rows":reused_rows,"scope":"local graph-success strict rows and prepare-consumed reused rows; later stages may fail; not unique transactions, nonce admission or finality"});
+            "reused_rows":reused_rows,"uca_batch_calls":self.node.pipeline.signature_batch_calls(),
+            "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
         let [auth, started, before_parent, promoted, discarded] = core.successor_metrics();
         status["successor"] = json!({"authentication_started":auth,"execution_started":started,
@@ -1112,6 +1130,40 @@ fn admitted_for_body<'a>(
     message: &Message,
     pending: &'a BTreeMap<Hash, Pending>,
 ) -> Result<Option<Vec<&'a AdmittedTransfer>>> {
+    if let Message::UcaBody { batch, .. } = message {
+        let mut admitted = Vec::with_capacity(batch.len());
+        for index in 0..batch.len() {
+            let raw = batch.raw_transaction(index)?;
+            let signed = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(&raw)?;
+            let hash = uca::hash(&signed)?;
+            let Some(entry) = pending.get(&hash) else {
+                return Ok(None);
+            };
+            let AdmissionInput::Uca {
+                batch: original,
+                index: original_index,
+            } = &entry.input
+            else {
+                return Ok(None);
+            };
+            let Some(checked) = entry.admitted.as_ref() else {
+                return Ok(None);
+            };
+            // Intent hashes deliberately omit signatures. Match complete
+            // signed bytes and locator pairs before reusing this pool fact.
+            if original.raw_transaction(*original_index)? != raw
+                || original.account_hints(*original_index)? != batch.account_hints(index)?
+                || !checked.matches_uca_source(original, *original_index)
+                || checked
+                    .checked_uca()
+                    .is_none_or(|value| value.signed() != &signed)
+            {
+                return Ok(None);
+            }
+            admitted.push(checked);
+        }
+        return Ok(Some(admitted));
+    }
     let Message::ApflBody { batch, .. } = message else {
         return Ok(None);
     };
@@ -1128,7 +1180,10 @@ fn admitted_for_body<'a>(
         let Some(checked) = entry.admitted.as_ref() else {
             return Ok(None);
         };
-        if checked.checked().transfer() != row || checked.checked().tx_hash() != hash {
+        if checked.is_uca()
+            || checked.checked().transfer() != row
+            || checked.checked().tx_hash() != hash
+        {
             return Ok(None);
         }
         admitted.push(checked);
@@ -1239,10 +1294,13 @@ fn select_pending_batch(
             }
         };
         if entry.nonce == *expected {
-            if raw_bytes + entry.canonical_len > body_limit {
+            let Some(row_bytes) = entry.selection_input_bytes() else {
+                break;
+            };
+            if row_bytes > body_limit.saturating_sub(raw_bytes) {
                 break;
             }
-            raw_bytes += entry.canonical_len;
+            raw_bytes += row_bytes;
             selected.push(*hash);
             *expected += 1;
             if selected.len() == batch_size {

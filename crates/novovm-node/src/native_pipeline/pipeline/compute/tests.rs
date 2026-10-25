@@ -20,6 +20,8 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
+mod uca_reuse;
+
 pub(crate) fn policy() -> DirectNovFeePolicy {
     DirectNovFeePolicy {
         quote_ttl_ms: 15_000,

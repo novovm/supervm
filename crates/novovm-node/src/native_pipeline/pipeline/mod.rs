@@ -16,7 +16,7 @@ mod driver;
 mod seed;
 pub use crate::native_pipeline::ingress::batch::{AdmissionInput, AdmissionRow};
 #[cfg(test)]
-pub(crate) use admission::admitted_apfl_for_test;
+pub(crate) use admission::{admitted_apfl_for_test, admitted_uca_for_test};
 pub use admission::{
     AdmittedBatch, AdmittedRow, AdmittedTransfer, RejectedSignatureAdmissionSubmission,
     SignatureAdmissionOutput, SignatureAdmissionRequest, SignatureAdmissionSubmission,
@@ -233,6 +233,10 @@ impl BatchRequest {
                     .and_then(|n| n.checked_add(recipient.as_bytes().len()))
                     .context("UCA input/hint byte budget overflow")?;
             }
+        } else if let compute::CandidateInput::Admitted(batch) = &raw_transactions {
+            body_bytes = body_bytes
+                .checked_add(batch.uca_hint_bytes()?)
+                .context("admitted UCA input/hint byte budget overflow")?;
         }
         let transaction_count = raw_transactions.source().len();
         Ok(Self {
@@ -480,6 +484,7 @@ enum DriverMessage {
 pub(crate) struct SignatureWork {
     strict_verified: Arc<AtomicU64>,
     reused: AtomicU64,
+    uca_batch_calls: AtomicU64,
 }
 
 pub struct CandidatePipeline {
@@ -502,6 +507,11 @@ impl CandidatePipeline {
             self.signatures.strict_verified.load(Ordering::Relaxed),
             self.signatures.reused.load(Ordering::Relaxed),
         )
+    }
+    /// Business verification calls only, excluding capability qualification/KAT.
+    /// A failed call is counted; this is neither successful rows nor finality.
+    pub fn signature_batch_calls(&self) -> u64 {
+        self.signatures.uca_batch_calls.load(Ordering::Relaxed)
     }
     pub fn execution_backend(&self) -> ExecutionBackend {
         self.config.execution_backend

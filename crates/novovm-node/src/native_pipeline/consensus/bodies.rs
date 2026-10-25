@@ -217,10 +217,6 @@ impl CandidateBodies {
         // Structured NUAS retains a dictionary plus expanded locator pairs in
         // the request. Charge canonical input as well; compression is not quota.
         if let Message::UcaBody { batch, .. } = message.as_ref() {
-            ensure!(
-                admitted.is_none(),
-                "V3 admission capability cannot authorize NUAS"
-            );
             charge = charge
                 .checked_add(batch.canonical_bytes())
                 .and_then(|n| batch.len().checked_mul(64).and_then(|h| n.checked_add(h)))
@@ -245,7 +241,16 @@ impl CandidateBodies {
                 }
                 None => BatchRequest::from_apfl(batch.clone(), *context, self.policy.clone())?,
             },
-            Message::UcaBody { .. } => transport::candidate_request(message, &self.policy)?,
+            Message::UcaBody { batch, .. } => match admitted {
+                Some((pipeline, rows)) => {
+                    let checked = pipeline.rebind_admitted_uca(batch.clone(), rows)?;
+                    charge = charge
+                        .checked_add(checked.retained_metadata_bytes())
+                        .context("admitted UCA body charge overflow")?;
+                    BatchRequest::from_authenticated(checked, *context, self.policy.clone())?
+                }
+                None => transport::candidate_request(message, &self.policy)?,
+            },
             _ => unreachable!(),
         };
         if charge > self.limits.bytes.saturating_sub(self.bytes) {

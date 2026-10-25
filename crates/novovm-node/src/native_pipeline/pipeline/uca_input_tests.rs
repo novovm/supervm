@@ -55,6 +55,151 @@ fn uca_request_rejects_missing_hints_and_oversized_wire_before_acceptance() {
 }
 
 #[test]
+#[ignore = "actual packaged AOEM; exact NUAS signature reuse, not asset authority"]
+fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<()> {
+    use novovm_protocol::uca_spend::{
+        spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES,
+    };
+    use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+    let library = std::path::PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .context("explicit trusted AOEM test library required")?,
+    )
+    .canonicalize()?;
+    ensure!(
+        aoem_bindings::default_host_dll_path().canonicalize()? == library,
+        "same packaged AOEM required"
+    );
+    let facade = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
+    let keys =
+        facade.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
+    let keypair = keys.generate_keypair()?;
+    let pk = &keypair.public_key;
+    let signer = facade.uca_spend_signer_v1()?;
+    let mut signed = Vec::new();
+    for nonce in 0..2 {
+        signed.push(signer.sign(
+            UcaSpendIntentV1 {
+                chain_id: 717,
+                genesis: [1; 32],
+                account_id: "uca:reuse-alice".into(),
+                authorization_epoch: 1,
+                spend_key_ref: spend_key_ref_v1(pk)?,
+                recipient_uca: "uca:reuse-bob".into(),
+                amount: 30,
+                max_fee: 50,
+                nonce,
+                not_before_height: 1,
+                expires_at_height: 50,
+            },
+            pk,
+            &keypair.expanded_secret_key,
+        )?);
+    }
+    let limits = UcaSpendBatchLimits {
+        transactions: 16,
+        transaction_bytes: MAX_SIGNED_SPEND_BYTES,
+        body_bytes: 65536,
+    };
+    let hints = vec![(vec![1; 20], vec![2; 20]); 2];
+    let make = |rows: &[SignedUcaSpendV1], hints: &[(Vec<u8>, Vec<u8>)]| -> Result<_> {
+        Ok(Arc::new(UcaSpendBatch::from_raw(
+            &rows
+                .iter()
+                .map(SignedUcaSpendV1::encode)
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            hints,
+            limits,
+        )?))
+    };
+    let source = make(&signed, &hints)?;
+    let weak = Arc::downgrade(&source);
+    let mut config = tests::config("unused-uca-rebind".into());
+    config.authentication.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
+    config.plan.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
+    let (pipeline, _receiver) = tests::inert_pipeline(config.clone());
+    let (foreign, _foreign_receiver) = tests::inert_pipeline(config);
+    let first = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 0)?;
+    let second = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 1)?;
+    assert!(foreign
+        .rebind_admitted_uca(make(&signed, &hints)?, &[&first, &second])
+        .is_err());
+    assert!(pipeline
+        .rebind_admitted_uca(make(&signed, &hints)?, &[&second, &first])
+        .is_err());
+    let reversed = vec![signed[1].clone(), signed[0].clone()];
+    assert!(pipeline
+        .rebind_admitted_uca(make(&reversed, &hints)?, &[&second, &first])
+        .is_ok());
+    assert!(pipeline
+        .rebind_admitted_uca(
+            make(&[signed[0].clone(), signed[0].clone()], &hints)?,
+            &[&first, &first]
+        )
+        .is_err());
+    for change in 0..6 {
+        let mut altered = signed.clone();
+        match change {
+            0 => altered[0].signature[0] ^= 1,
+            1 => {
+                altered[0].public_key[0] ^= 1;
+                altered[0].intent.spend_key_ref = spend_key_ref_v1(&altered[0].public_key)?;
+            }
+            2 => altered[0].intent.genesis[0] ^= 1,
+            3 => altered[0].intent.chain_id += 1,
+            4 => altered[0].intent.amount += 1,
+            _ => altered[0].intent.authorization_epoch += 1,
+        }
+        assert!(
+            pipeline
+                .rebind_admitted_uca(make(&altered, &hints)?, &[&first, &second])
+                .is_err(),
+            "mutation {change}"
+        );
+    }
+    let mut changed_hints = hints.clone();
+    changed_hints[0].0[0] ^= 1;
+    assert!(pipeline
+        .rebind_admitted_uca(make(&signed, &changed_hints)?, &[&first, &second])
+        .is_err());
+    let mut wrong_suite = signed[0].encode()?;
+    wrong_suite[5] = 87;
+    assert!(SignedUcaSpendV1::decode(&wrong_suite).is_err());
+    let selected = make(&signed, &hints)?;
+    let bytes = selected.canonical_bytes() + 80;
+    let candidate = pipeline.rebind_admitted_uca(selected, &[&first, &second])?;
+    let reference = tests::request(empty_root());
+    let request = BatchRequest::from_authenticated(
+        candidate,
+        reference.request.context,
+        reference.request.policy,
+    )?;
+    assert_eq!(request.body_bytes, bytes);
+    assert!(request
+        .request
+        .raw_transactions
+        .ensure_owner(&foreign.identity)
+        .is_err());
+    request
+        .request
+        .raw_transactions
+        .ensure_owner(&pipeline.identity)?;
+    drop(source);
+    drop(first);
+    drop(second);
+    assert!(
+        weak.upgrade().is_none(),
+        "candidate cannot pin the retired pool dictionary"
+    );
+    assert_eq!(
+        pipeline.signature_counts(),
+        (0, 0),
+        "rebinding alone never runs business or verifier"
+    );
+    Ok(())
+}
+
+#[test]
 #[ignore = "actual packaged AOEM ML-DSA admission; not spend authority or finality"]
 fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Result<()> {
     use novovm_protocol::uca_spend::{spend_key_ref_v1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES};
@@ -187,6 +332,7 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
     assert!(output.is_empty());
     drop(output);
     assert_eq!(pipeline.signature_counts(), (2, 0));
+    assert_eq!(pipeline.signature_batch_calls(), 1);
     assert_eq!(pipeline.usage.lock().unwrap().ingress, 0);
     // A bad external signature has not latched failure on the resident owner.
     let SignatureAdmissionSubmission::Accepted(mut again) = pipeline
@@ -206,6 +352,7 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
         }
         std::thread::yield_now();
     }
+    assert_eq!(pipeline.signature_batch_calls(), 2);
     pipeline.shutdown()?;
     Ok(())
 }

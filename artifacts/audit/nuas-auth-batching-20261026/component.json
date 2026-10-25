@@ -1,0 +1,233 @@
+{
+  "backend": "existing AOEM FFI; not a GPU execution claim",
+  "cases": [
+    {
+      "batch_size": 1,
+      "batch_us": [
+        616952.7000000001,
+        573882.8,
+        567244.1,
+        564136.5,
+        607675.7999999999,
+        523410.4000000001,
+        544452.9,
+        542248.3999999999,
+        545963.8999999999,
+        537220.6000000001,
+        554444.9
+      ],
+      "note": "last chunk may be shorter; input cloning and signature generation excluded; canonical framing/result validation included",
+      "scalar_us": [
+        34526.0,
+        33641.200000000004,
+        33396.4,
+        33329.6,
+        32932.200000000004,
+        33295.7,
+        33013.2,
+        33098.4,
+        33115.8,
+        32930.5,
+        32950.5
+      ],
+      "verified_rows_per_sample": 1024
+    },
+    {
+      "batch_size": 8,
+      "batch_us": [
+        100411.79999999999,
+        96627.2,
+        96214.40000000001,
+        98874.1,
+        95586.90000000001,
+        96041.7,
+        94957.70000000001,
+        108517.9,
+        101986.8,
+        123795.8,
+        135570.0
+      ],
+      "note": "last chunk may be shorter; input cloning and signature generation excluded; canonical framing/result validation included",
+      "scalar_us": [
+        32974.5,
+        32964.4,
+        32775.8,
+        32690.700000000004,
+        32911.5,
+        33088.0,
+        32988.1,
+        32859.2,
+        33623.6,
+        33224.6,
+        33314.700000000004
+      ],
+      "verified_rows_per_sample": 1024
+    },
+    {
+      "batch_size": 32,
+      "batch_us": [
+        53082.200000000004,
+        51267.9,
+        52105.4,
+        56371.9,
+        51876.1,
+        50806.6,
+        51332.200000000004,
+        50296.8,
+        50132.4,
+        54570.100000000006,
+        51484.5
+      ],
+      "note": "last chunk may be shorter; input cloning and signature generation excluded; canonical framing/result validation included",
+      "scalar_us": [
+        32967.0,
+        32892.4,
+        32969.0,
+        33038.9,
+        33037.700000000004,
+        32796.6,
+        32708.1,
+        32823.5,
+        32912.0,
+        33306.4,
+        32728.0
+      ],
+      "verified_rows_per_sample": 1024
+    },
+    {
+      "batch_size": 64,
+      "batch_us": [
+        43597.6,
+        44074.200000000004,
+        44410.7,
+        44955.5,
+        43874.5,
+        44061.799999999996,
+        42699.1,
+        43202.1,
+        42654.9,
+        45339.9,
+        43086.399999999994
+      ],
+      "note": "last chunk may be shorter; input cloning and signature generation excluded; canonical framing/result validation included",
+      "scalar_us": [
+        34976.2,
+        33601.399999999994,
+        33638.3,
+        33343.3,
+        33251.1,
+        33105.200000000004,
+        32804.5,
+        33049.9,
+        33110.3,
+        32733.100000000002,
+        33465.3
+      ],
+      "verified_rows_per_sample": 1024
+    },
+    {
+      "batch_size": 72,
+      "batch_us": [
+        39325.3,
+        41562.4,
+        39360.5,
+        42377.9,
+        40948.1,
+        39905.0,
+        41746.5,
+        44587.3,
+        41488.700000000004,
+        42623.0,
+        41968.4
+      ],
+      "note": "last chunk may be shorter; input cloning and signature generation excluded; canonical framing/result validation included",
+      "scalar_us": [
+        32784.8,
+        32725.3,
+        32927.2,
+        32749.100000000002,
+        33150.7,
+        33379.0,
+        32953.6,
+        32921.2,
+        32922.8,
+        32714.7,
+        33282.3
+      ],
+      "verified_rows_per_sample": 1024
+    },
+    {
+      "batch_size": 128,
+      "batch_us": [
+        25224.4,
+        25799.0,
+        25150.2,
+        26020.2,
+        24738.300000000003,
+        26073.1,
+        24479.7,
+        26722.2,
+        25182.199999999997,
+        25710.4,
+        25286.5
+      ],
+      "note": "last chunk may be shorter; input cloning and signature generation excluded; canonical framing/result validation included",
+      "scalar_us": [
+        32775.3,
+        32619.299999999996,
+        33161.700000000004,
+        33446.9,
+        32924.299999999996,
+        32870.9,
+        32951.5,
+        32698.199999999997,
+        32875.0,
+        32793.4,
+        32823.6
+      ],
+      "verified_rows_per_sample": 1024
+    },
+    {
+      "batch_size": 1024,
+      "batch_us": [
+        8158.7,
+        11374.4,
+        8273.900000000001,
+        10107.6,
+        8820.7,
+        8151.099999999999,
+        8585.5,
+        9195.800000000001,
+        14360.1,
+        11296.199999999999,
+        7860.499999999999
+      ],
+      "note": "last chunk may be shorter; input cloning and signature generation excluded; canonical framing/result validation included",
+      "scalar_us": [
+        32879.1,
+        33080.5,
+        33000.9,
+        32822.200000000004,
+        32720.199999999997,
+        32751.1,
+        32854.0,
+        32745.999999999996,
+        32904.6,
+        32724.499999999996,
+        32871.1
+      ],
+      "verified_rows_per_sample": 1024
+    }
+  ],
+  "independent_intents": 1024,
+  "independent_public_keys": 64,
+  "invalid_row_localization_pass": true,
+  "library": "\\\\?\\D:\\WorksArea\\SUPERVM\\target\\nuas-auth-candidate-source\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "library_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+  "parameter_set": "ML-DSA-65",
+  "qualification_us": 3280035.1,
+  "same_inputs_for_scalar_and_batch": true,
+  "scope": "NUAS signature verification component only; NOT transaction TPS",
+  "signature_context": "original SPEND_CONTEXT_V1",
+  "signed_input_sha256": "de3df6a7ec011874053e21eea0041b03cd84fb024b96bac46bae29509b42536e"
+}

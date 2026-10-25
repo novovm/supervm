@@ -33,6 +33,9 @@ const MAX_MESSAGE: usize = 512 * 1024;
 // Existing endpoint/object sender/reassembly contracts all cap a turn at 64.
 const IO_QUANTUM: usize = 64;
 
+#[path = "native_product_load/uca.rs"]
+mod uca;
+
 /// Diagnostic only. The ABI opens databases read/write even for reads: callers
 /// must supply an offline COPY, never the measured store or a running signer.
 /// Reuses the product archive codec and signature verifier; creates no votes.
@@ -249,6 +252,7 @@ fn client(
     batch: usize,
 ) -> Result<NativeApplicationClient> {
     let config: ResidentConfig = serde_json::from_slice(&fs::read(&nodes.configs[index])?)?;
+    let uca = config.uca_initialization.is_some();
     NativeApplicationClient::connect(
         UdpSocket::bind("127.0.0.1:0")?,
         SigningKey::from_bytes(&[201; 32]),
@@ -264,8 +268,16 @@ fn client(
         },
         DecodeLimits {
             transactions: batch,
-            transaction_bytes: 1024,
-            body_bytes: body_budget(batch),
+            transaction_bytes: if uca {
+                novovm_protocol::uca_spend::MAX_SIGNED_SPEND_BYTES
+            } else {
+                1024
+            },
+            body_bytes: if uca {
+                (batch * 8192).min(384 * 1024)
+            } else {
+                body_budget(batch)
+            },
             message_bytes: MAX_MESSAGE,
         },
         LaneLimits {
@@ -291,6 +303,11 @@ fn client(
                 batch_size: 32,
                 batch_pause_ms: 0,
                 ack_wait_ms: 10,
+                // Match the original node's bounded retry policy in BOTH
+                // layers: the sender combines window/pacing flags with OR.
+                // Keep probing temporary receiver backpressure until the
+                // unchanged object TTL, rather than abandoning after 8 polls.
+                no_progress_backoff: false,
                 ..Default::default()
             },
             pacing: NovoRudpPacingProfile {

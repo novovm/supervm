@@ -72,17 +72,65 @@ pub struct AdmittedRow {
 /// A checked, regrouped batch branded for the pipeline which admitted every
 /// signed row. Only the NEW structured dictionary is retained, not pool tokens.
 pub struct AdmittedBatch {
-    checked: SignatureCheckedBatch,
+    checked: AdmittedSignatures,
     owner: Arc<()>,
+}
+
+/// Signature facts only. Neither variant contains a parent-state permit.
+/// The UCA variant retains the newly selected dictionary, not the old pool's
+/// source owners. Only this module can create it after full-row rebinding.
+pub(super) enum AdmittedSignatures {
+    V3(SignatureCheckedBatch),
+    Uca {
+        source: BatchSource,
+        transactions: Vec<novovm_exec::uca_spend::SignatureCheckedUcaSpendV1>,
+    },
 }
 
 impl AdmittedBatch {
     pub fn retained_metadata_bytes(&self) -> usize {
-        self.checked.retained_metadata_bytes() + std::mem::size_of::<Arc<()>>()
+        let bytes = match &self.checked {
+            AdmittedSignatures::V3(checked) => checked.retained_metadata_bytes(),
+            AdmittedSignatures::Uca { transactions, .. } => {
+                transactions.capacity()
+                    * std::mem::size_of::<novovm_exec::uca_spend::SignatureCheckedUcaSpendV1>()
+                    + transactions
+                        .iter()
+                        .map(|checked| {
+                            let signed = checked.signed();
+                            signed.public_key.capacity()
+                                + signed.signature.capacity()
+                                + signed.intent.account_id.capacity()
+                                + signed.intent.recipient_uca.capacity()
+                        })
+                        .sum::<usize>()
+            }
+        };
+        bytes + std::mem::size_of::<Self>()
     }
 
     pub(super) fn source(&self) -> &BatchSource {
-        self.checked.source()
+        match &self.checked {
+            AdmittedSignatures::V3(checked) => checked.source(),
+            AdmittedSignatures::Uca { source, .. } => source,
+        }
+    }
+
+    pub(super) fn uca_hint_bytes(&self) -> Result<usize> {
+        let AdmittedSignatures::Uca {
+            source: BatchSource::Uca(batch),
+            ..
+        } = &self.checked
+        else {
+            return Ok(0);
+        };
+        (0..batch.len()).try_fold(0usize, |bytes, index| {
+            let (payer, recipient) = batch.account_hints(index)?;
+            bytes
+                .checked_add(payer.len())
+                .and_then(|bytes| bytes.checked_add(recipient.len()))
+                .context("admitted UCA locator budget overflow")
+        })
     }
 
     pub(super) fn ensure_owner(&self, owner: &Arc<()>) -> Result<()> {
@@ -96,9 +144,30 @@ impl AdmittedBatch {
     pub(super) fn into_checked(
         self,
         chain: u64,
+        genesis: NodeHash,
         budget: AuthenticationBudget,
-    ) -> Result<SignatureCheckedBatch> {
-        self.checked.validate_source(chain, budget)?;
+    ) -> Result<AdmittedSignatures> {
+        match &self.checked {
+            AdmittedSignatures::V3(checked) => checked.validate_source(chain, budget)?,
+            AdmittedSignatures::Uca {
+                source,
+                transactions,
+            } => {
+                let (bytes, max) = source.sizes()?;
+                ensure!(
+                    !source.is_empty()
+                        && source.len() == transactions.len()
+                        && source.len() <= budget.transactions
+                        && max <= budget.transaction_bytes
+                        && bytes <= budget.body_bytes
+                        && transactions.iter().all(|checked| {
+                            checked.intent().chain_id == chain
+                                && checked.intent().genesis == genesis
+                        }),
+                    "admitted UCA domain or input budget mismatch"
+                );
+            }
+        }
         Ok(self.checked)
     }
 }
@@ -134,6 +203,28 @@ pub(crate) fn admitted_for_test(
         batch,
         index,
     )
+}
+
+/// Test-only bridge still invokes the actual existing AOEM verifier. It cannot
+/// construct signature evidence from a supplied digest or unchecked fields.
+#[cfg(test)]
+pub(crate) fn admitted_uca_for_test(
+    owner: Arc<()>,
+    facade: &novovm_exec::AoemExecFacade,
+    batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+    index: usize,
+) -> Result<AdmittedTransfer> {
+    let signed =
+        novovm_protocol::uca_spend::SignedUcaSpendV1::decode(&batch.raw_transaction(index)?)?;
+    let checked = facade.uca_spend_verifier_v1()?.verify(signed)?;
+    Ok(AdmittedTransfer {
+        checked: Arc::new(CheckedAdmission::Uca {
+            checked,
+            batch,
+            index,
+        }),
+        owner,
+    })
 }
 
 pub struct SignatureAdmissionRequest {
@@ -342,12 +433,63 @@ impl CandidatePipeline {
         }
         let checked = admitted.iter().map(|row| row.checked()).collect::<Vec<_>>();
         Ok(AdmittedBatch {
-            checked: SignatureCheckedBatch::rebind_apfl(
+            checked: AdmittedSignatures::V3(SignatureCheckedBatch::rebind_apfl(
                 self.config.store.domain.chain_id,
                 batch,
                 &checked,
                 self.config.authentication,
-            )?,
+            )?),
+            owner: self.identity.clone(),
+        })
+    }
+
+    /// Regroup immutable NUAS signature facts on the original pipeline owner.
+    /// The complete signed object (including public key, signature and domain)
+    /// and locator pair must match in the selected order. This caches no UCA
+    /// authority: the candidate still captures and checks its actual parent.
+    pub fn rebind_admitted_uca(
+        &self,
+        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        admitted: &[&AdmittedTransfer],
+    ) -> Result<AdmittedBatch> {
+        let budget = self.config.authentication;
+        ensure!(
+            !batch.is_empty()
+                && batch.len() == admitted.len()
+                && batch.len() <= budget.transactions
+                && batch.max_transaction_bytes() <= budget.transaction_bytes
+                && batch.canonical_bytes() <= budget.body_bytes,
+            "admitted UCA row count or input budget mismatch"
+        );
+        let mut transactions = Vec::with_capacity(batch.len());
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, row) in admitted.iter().enumerate() {
+            ensure!(self.owns_admitted(row), "foreign UCA verifier owner");
+            let CheckedAdmission::Uca {
+                checked,
+                batch: original,
+                index: original_index,
+            } = row.checked.as_ref()
+            else {
+                anyhow::bail!("V3 admission cannot authorize a UCA body");
+            };
+            let raw = batch.raw_transaction(index)?;
+            ensure!(
+                checked.intent().chain_id == self.config.store.domain.chain_id
+                    && checked.intent().genesis
+                        == self.config.store.domain.genesis_config_commitment
+                    && checked.signed().encode()? == raw
+                    && original.account_hints(*original_index)? == batch.account_hints(index)?
+                    && seen.insert(checked.intent().signing_bytes()?),
+                "admitted UCA signed row, order, locator or domain mismatch"
+            );
+            transactions.push(checked.clone());
+        }
+        Ok(AdmittedBatch {
+            checked: AdmittedSignatures::Uca {
+                source: BatchSource::Uca(batch),
+                transactions,
+            },
             owner: self.identity.clone(),
         })
     }

@@ -1,6 +1,9 @@
 //! The shared spend-signature consumer of the existing AOEM crypto capability.
 //! A checked signature is NOT a trusted UCA state proof or permission to publish.
-use crate::pq_signature::{AoemMldsaParameterSet, MldsaSigner, MldsaVerifier};
+use crate::pq_signature::{
+    AoemMldsaParameterSet, MldsaSigner, MldsaVerifyInput, OwnedMldsaVerifier,
+    MLDSA_VERIFY_BATCH_MAX_ITEMS,
+};
 use crate::AoemExecFacade;
 use anyhow::{ensure, Result};
 use novovm_protocol::uca_spend::{
@@ -9,6 +12,7 @@ use novovm_protocol::uca_spend::{
 
 /// Cannot be deserialized or constructed by a caller. Does not certify the
 /// key's current authority, sufficient funds, nonce eligibility or finality.
+#[derive(Clone)]
 pub struct SignatureCheckedUcaSpendV1 {
     signed: SignedUcaSpendV1,
 }
@@ -39,22 +43,74 @@ impl SignatureCheckedUcaSpendV1 {
     }
 }
 
-/// Reuse one qualified verifier for a batch/session; don't re-run compatibility
-/// vectors for every transaction. Its lifetime is bounded by the loaded facade.
-pub struct UcaSpendVerifierV1<'a> {
-    verifier: MldsaVerifier<'a>,
+/// Reuse this qualified verification-only owner across admission batches. Clones
+/// retain the same already-loaded AOEM and do not re-run compatibility vectors.
+#[derive(Clone)]
+pub struct UcaSpendVerifierV1 {
+    verifier: OwnedMldsaVerifier,
 }
 
-impl UcaSpendVerifierV1<'_> {
+impl UcaSpendVerifierV1 {
     pub fn verify(&self, signed: SignedUcaSpendV1) -> Result<SignatureCheckedUcaSpendV1> {
         signed.validate()?;
-        self.verifier.verify(
-            &signed.public_key,
-            &signed.intent.signing_bytes()?,
-            SPEND_CONTEXT_V1,
-            &signed.signature,
-        )?;
+        self.verifier.verify(MldsaVerifyInput {
+            public_key: &signed.public_key,
+            message: &signed.intent.signing_bytes()?,
+            context: SPEND_CONTEXT_V1,
+            signature: &signed.signature,
+        })?;
         Ok(SignatureCheckedUcaSpendV1 { signed })
+    }
+
+    /// Verifies one bounded admission unit through the qualified AOEM batch
+    /// export. Per-row failures preserve input order; an outer failure invalidates
+    /// the whole call, without scalar retries. A checked signature remains only
+    /// cryptographic evidence, never a trusted parent/nonce/budget permission.
+    pub fn verify_batch(
+        &self,
+        signed: Vec<SignedUcaSpendV1>,
+    ) -> Result<Vec<Result<SignatureCheckedUcaSpendV1>>> {
+        ensure!(
+            signed.len() <= MLDSA_VERIFY_BATCH_MAX_ITEMS,
+            "UCA signature batch exceeds limit"
+        );
+        let mut outcomes: Vec<Option<Result<SignatureCheckedUcaSpendV1>>> =
+            std::iter::repeat_with(|| None).take(signed.len()).collect();
+        let mut prepared = Vec::with_capacity(signed.len());
+        for (index, signed) in signed.into_iter().enumerate() {
+            match signed
+                .validate()
+                .and_then(|()| signed.intent.signing_bytes())
+            {
+                Ok(message) => prepared.push((index, signed, message)),
+                Err(error) => outcomes[index] = Some(Err(error.into())),
+            }
+        }
+        let inputs: Vec<_> = prepared
+            .iter()
+            .map(|(_, signed, message)| MldsaVerifyInput {
+                public_key: &signed.public_key,
+                message,
+                context: SPEND_CONTEXT_V1,
+                signature: &signed.signature,
+            })
+            .collect();
+        let verified = self.verifier.verify_batch(&inputs)?;
+        ensure!(
+            verified.len() == prepared.len(),
+            "UCA batch result count mismatch"
+        );
+        for ((index, signed, _), result) in prepared.into_iter().zip(verified) {
+            outcomes[index] = Some(
+                result
+                    .map(|()| SignatureCheckedUcaSpendV1 { signed })
+                    .map_err(Into::into),
+            );
+        }
+        outcomes
+            .into_iter()
+            .map(|result| result.ok_or_else(|| anyhow::anyhow!("UCA batch result missing")))
+            .collect()
     }
 }
 
@@ -94,10 +150,12 @@ impl UcaSpendSignerV1<'_> {
 impl AoemExecFacade {
     /// Requires the existing positive/tampered known-answer checks and explicit
     /// 65 sizes. No negotiation or fallback to another suite or algorithm.
-    pub fn uca_spend_verifier_v1(&self) -> Result<UcaSpendVerifierV1<'_>> {
-        Ok(UcaSpendVerifierV1 {
-            verifier: MldsaVerifier::new(&self.dynlib, AoemMldsaParameterSet::MlDsa65)?,
-        })
+    pub fn uca_spend_verifier_v1(&self) -> Result<UcaSpendVerifierV1> {
+        let verifier = OwnedMldsaVerifier::new(
+            std::sync::Arc::clone(&self.dynlib),
+            AoemMldsaParameterSet::MlDsa65,
+        )?;
+        Ok(UcaSpendVerifierV1 { verifier })
     }
 
     pub fn uca_spend_signer_v1(&self) -> Result<UcaSpendSignerV1<'_>> {

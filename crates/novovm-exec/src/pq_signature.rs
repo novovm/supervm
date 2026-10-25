@@ -4,7 +4,7 @@
 //! external-pure framing, runtime compatibility or sign-then-verify contracts.
 //! Protocol consumers select their suite and canonical transcript separately.
 
-use aoem_bindings::AoemDyn;
+use aoem_bindings::{AoemDyn, AoemMldsaVerifyItemRef};
 use serde::Deserialize;
 use std::{fmt, sync::Arc};
 use zeroize::Zeroizing;
@@ -191,6 +191,8 @@ pub enum PqVerificationError {
     InvalidSignatureLength,
     InvalidSecretKeyLength,
     RuntimeUnavailable,
+    BatchUnavailable,
+    BatchTooLarge,
     SigningUnavailable,
     KeyGenerationUnavailable,
     RuntimeContractMismatch,
@@ -218,6 +220,8 @@ impl fmt::Display for PqVerificationError {
                 "expanded secret key length does not match expected parameter set"
             }
             Self::RuntimeUnavailable => "AOEM ML-DSA verification capability unavailable",
+            Self::BatchUnavailable => "AOEM ML-DSA batch verification capability unavailable",
+            Self::BatchTooLarge => "ML-DSA verification batch exceeds the bounded facade contract",
             Self::SigningUnavailable => "AOEM ML-DSA signing capability unavailable",
             Self::KeyGenerationUnavailable => "AOEM ML-DSA key generation capability unavailable",
             Self::RuntimeContractMismatch => {
@@ -242,6 +246,63 @@ impl std::error::Error for PqVerificationError {}
 pub struct MldsaVerifier<'runtime> {
     runtime: &'runtime AoemDyn,
     parameters: AoemMldsaParameterSet,
+}
+
+/// A bounded work unit, not a chain transaction or consensus capacity limit.
+/// Callers with larger streams must retain their original bounded batching.
+pub const MLDSA_VERIFY_BATCH_MAX_ITEMS: usize = 1024;
+const MLDSA_VERIFY_BATCH_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+
+/// Unframed canonical inputs. The facade applies external-pure framing once,
+/// just as scalar verification does; neither lengths nor failures select suites.
+#[derive(Clone, Copy)]
+pub(crate) struct MldsaVerifyInput<'a> {
+    pub public_key: &'a [u8],
+    pub message: &'a [u8],
+    pub context: &'a [u8],
+    pub signature: &'a [u8],
+}
+
+/// Verification-only qualified view of the existing loaded owner. Unlike the
+/// signing runtime this does not require sign/keygen capabilities. Construction
+/// qualifies both scalar and batch once; clones neither load nor re-qualify it.
+#[derive(Clone)]
+pub(crate) struct OwnedMldsaVerifier {
+    runtime: Arc<AoemDyn>,
+    parameters: AoemMldsaParameterSet,
+}
+
+impl OwnedMldsaVerifier {
+    pub(crate) fn new(
+        runtime: Arc<AoemDyn>,
+        parameters: AoemMldsaParameterSet,
+    ) -> Result<Self, PqVerificationError> {
+        ensure_compatible_backend(runtime.as_ref(), parameters)?;
+        ensure_batch_compatible_backend(runtime.as_ref(), parameters)?;
+        Ok(Self {
+            runtime,
+            parameters,
+        })
+    }
+
+    pub(crate) fn verify(&self, item: MldsaVerifyInput<'_>) -> Result<(), PqVerificationError> {
+        check_lengths(self.parameters, item.public_key, item.signature)?;
+        let message = frame_pure_message(item.message, item.context)?;
+        verify_with_backend(
+            self.runtime.as_ref(),
+            self.parameters,
+            item.public_key,
+            &message,
+            item.signature,
+        )
+    }
+
+    pub(crate) fn verify_batch(
+        &self,
+        items: &[MldsaVerifyInput<'_>],
+    ) -> Result<Vec<Result<(), PqVerificationError>>, PqVerificationError> {
+        verify_batch_with_backend(self.runtime.as_ref(), self.parameters, items)
+    }
 }
 
 impl<'runtime> MldsaVerifier<'runtime> {
@@ -454,6 +515,153 @@ impl MldsaBackend for AoemDyn {
         self.mldsa_verify_v1(level, public_key, message, signature)
             .map_err(|_| PqVerificationError::RuntimeFailure)
     }
+}
+
+trait MldsaBatchBackend: MldsaBackend {
+    fn batch_available(&self) -> bool;
+    fn verify_batch(
+        &self,
+        items: &[AoemMldsaVerifyItemRef<'_>],
+    ) -> Result<Vec<bool>, PqVerificationError>;
+}
+
+impl MldsaBatchBackend for AoemDyn {
+    fn batch_available(&self) -> bool {
+        self.supports_mldsa_verify_batch_v1()
+    }
+
+    fn verify_batch(
+        &self,
+        items: &[AoemMldsaVerifyItemRef<'_>],
+    ) -> Result<Vec<bool>, PqVerificationError> {
+        self.mldsa_verify_batch_v1(items)
+            .map_err(|_| PqVerificationError::RuntimeFailure)
+    }
+}
+
+fn ensure_batch_compatible_backend(
+    runtime: &impl MldsaBatchBackend,
+    parameters: AoemMldsaParameterSet,
+) -> Result<(), PqVerificationError> {
+    if !runtime.available() {
+        return Err(PqVerificationError::RuntimeUnavailable);
+    }
+    if !runtime.batch_available() {
+        return Err(PqVerificationError::BatchUnavailable);
+    }
+    if runtime.sizes(parameters.level())?
+        != (parameters.public_key_bytes(), parameters.signature_bytes())
+    {
+        return Err(PqVerificationError::RuntimeContractMismatch);
+    }
+    let vector = compatibility_vector(parameters)?;
+    let public_key = vector_bytes(&vector.public_key)?;
+    let signature = vector_bytes(&vector.signature)?;
+    check_lengths(parameters, &public_key, &signature)?;
+    let message = vector_bytes(&vector.message)?;
+    let context = vector_bytes(&vector.context)?;
+    let mut bad_signature = signature.clone();
+    bad_signature[0] ^= 1;
+    let mut bad_message = message.clone();
+    bad_message.push(1);
+    let good = MldsaVerifyInput {
+        public_key: &public_key,
+        message: &message,
+        context: &context,
+        signature: &signature,
+    };
+    let results = verify_batch_with_backend(
+        runtime,
+        parameters,
+        &[
+            good,
+            MldsaVerifyInput {
+                signature: &bad_signature,
+                ..good
+            },
+            good,
+            MldsaVerifyInput {
+                message: &bad_message,
+                ..good
+            },
+        ],
+    )?;
+    if results
+        != [
+            Ok(()),
+            Err(PqVerificationError::InvalidSignature),
+            Ok(()),
+            Err(PqVerificationError::InvalidSignature),
+        ]
+    {
+        return Err(PqVerificationError::RuntimeIncompatible);
+    }
+    Ok(())
+}
+
+fn verify_batch_with_backend(
+    runtime: &impl MldsaBatchBackend,
+    parameters: AoemMldsaParameterSet,
+    items: &[MldsaVerifyInput<'_>],
+) -> Result<Vec<Result<(), PqVerificationError>>, PqVerificationError> {
+    if items.len() > MLDSA_VERIFY_BATCH_MAX_ITEMS {
+        return Err(PqVerificationError::BatchTooLarge);
+    }
+    let mut results = vec![Ok(()); items.len()];
+    let mut framed = Vec::with_capacity(items.len());
+    let mut bytes = 0usize;
+    for (index, item) in items.iter().enumerate() {
+        let shape = check_lengths(parameters, item.public_key, item.signature).and({
+            if item.context.len() > u8::MAX as usize {
+                Err(PqVerificationError::InvalidContextLength)
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(error) = shape {
+            results[index] = Err(error);
+            framed.push(None);
+            continue;
+        }
+        bytes = bytes
+            .checked_add(item.message.len())
+            .and_then(|size| size.checked_add(item.context.len() + 2))
+            .filter(|size| *size <= MLDSA_VERIFY_BATCH_MAX_MESSAGE_BYTES)
+            .ok_or(PqVerificationError::BatchTooLarge)?;
+        framed.push(Some(frame_pure_message(item.message, item.context)?));
+    }
+    let rows: Vec<_> = items
+        .iter()
+        .zip(&framed)
+        .filter_map(|(item, message)| {
+            message.as_ref().map(|message| AoemMldsaVerifyItemRef {
+                level: parameters.level(),
+                pubkey: item.public_key,
+                message,
+                signature: item.signature,
+            })
+        })
+        .collect();
+    if rows.is_empty() {
+        return Ok(results);
+    }
+    // Capability and encoding widths were qualified once, not re-queried for
+    // every row. AOEM owns its existing internal parallel chunk scheduling.
+    let verified = runtime.verify_batch(&rows)?;
+    if verified.len() != rows.len() {
+        return Err(PqVerificationError::RuntimeContractMismatch);
+    }
+    let mut verified = verified.into_iter();
+    for (index, message) in framed.iter().enumerate() {
+        if message.is_some() {
+            results[index] = if verified.next() == Some(true) {
+                Ok(())
+            } else {
+                Err(PqVerificationError::InvalidSignature)
+            };
+        }
+    }
+    Ok(results)
 }
 
 trait MldsaSigningBackend: MldsaBackend {

@@ -41,7 +41,12 @@ impl AuthenticationRequest {
             "empty pipeline request"
         );
         policy.validate()?;
-        let (body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
+        let (mut body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
+        if let compute::CandidateInput::Admitted(batch) = &raw_transactions {
+            body_bytes = body_bytes
+                .checked_add(batch.uca_hint_bytes()?)
+                .context("admitted UCA authentication locator budget overflow")?;
+        }
         Ok(Self {
             max_transaction_bytes,
             transaction_count: raw_transactions.source().len(),

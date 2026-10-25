@@ -237,14 +237,14 @@ fn admitted_regrouping_uses_exact_signatures_and_releases_old_dictionaries() -> 
     assert!(
         checked.retained_metadata_bytes() > 2 * std::mem::size_of::<SignatureCheckedTransfer>()
     );
+    let AdmittedSignatures::V3(rows) = &checked.checked else {
+        panic!("V3 admission contract changed");
+    };
     assert_eq!(
-        checked.checked.transactions()[0].transfer().signature,
+        rows.transactions()[0].transfer().signature,
         first.checked().transfer().signature
     );
-    assert_eq!(
-        checked.checked.transactions()[1].tx_hash(),
-        second.checked().tx_hash()
-    );
+    assert_eq!(rows.transactions()[1].tx_hash(), second.checked().tx_hash());
     drop((original, first, second));
     assert!(
         old.upgrade().is_none(),
