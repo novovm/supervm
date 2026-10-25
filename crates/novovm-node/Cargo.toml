@@ -57,6 +57,10 @@ name = "novovm-node"
 path = "src/bin/novovm-node.rs"
 
 [[bin]]
+name = "novovm-native-client"
+path = "src/bin/novovm-native-client.rs"
+
+[[bin]]
 name = "novovm-product-relay"
 path = "src/bin/novovm-product-relay.rs"
 

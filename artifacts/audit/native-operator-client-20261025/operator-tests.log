@@ -1,0 +1,9 @@
+
+running 4 tests
+test native_pipeline::service::client::operator::tests::native_operator_domain_rejects_foreign_target_and_validator_client ... ok
+test native_pipeline::service::client::operator::tests::native_operator_files_are_bounded_and_wrong_wire_is_rejected ... ok
+test native_pipeline::service::client::operator::tests::native_operator_full_width_money_is_decimal_text ... ok
+test native_pipeline::service::client::operator::tests::native_operator_requires_explicit_operation_and_input ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1619 filtered out; finished in 0.01s
+

@@ -1,0 +1,15 @@
+...........
+Change scope unavailable; selecting full checks.
+{"full": "true", "has_node": "false", "has_python": "false", "has_rust": "true", "node_package_json": "", "rust_manifest": "Cargo.toml", "scope": "full", "security": "true"}
+Change scope unavailable; selecting full checks.
+{"full": "true", "has_node": "false", "has_python": "false", "has_rust": "true", "node_package_json": "", "rust_manifest": "Cargo.toml", "scope": "full", "security": "true"}
+Change scope unavailable; selecting full checks.
+{"full": "true", "has_node": "false", "has_python": "false", "has_rust": "true", "node_package_json": "", "rust_manifest": "Cargo.toml", "scope": "full", "security": "true"}
+Change scope unavailable; selecting full checks.
+{"full": "true", "has_node": "false", "has_python": "false", "has_rust": "true", "node_package_json": "", "rust_manifest": "Cargo.toml", "scope": "full", "security": "true"}
+Change scope unavailable; selecting full checks.
+{"full": "true", "has_node": "false", "has_python": "false", "has_rust": "true", "node_package_json": "", "rust_manifest": "Cargo.toml", "scope": "full", "security": "true"}
+----------------------------------------------------------------------
+Ran 11 tests in 0.538s
+
+OK

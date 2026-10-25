@@ -2,6 +2,7 @@
 //! No HTTP/JSON, validator secret, mempool, business execution or consensus.
 //! Transport completion means custody only. The application retains signed
 //! transactions until it verifies their final receipts; queries are separate.
+pub mod operator;
 use crate::native_pipeline::{
     consensus::{
         message_evidence,

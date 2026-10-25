@@ -19,6 +19,130 @@ const ADDRESS: [[u8; 20]; 2] = [[11; 20], [12; 20]];
 const OFFLINE_HEIGHTS: u64 = 40;
 const INITIAL: u128 = 1_000_000;
 
+fn operator_call(
+    nodes: &ProductNodes,
+    config: &Path,
+    action: &str,
+    input: Option<&Path>,
+) -> Result<Value> {
+    let binary = nodes
+        .binary
+        .parent()
+        .context("node binary directory")?
+        .join(format!(
+            "novovm-native-client{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+    ensure!(
+        binary.is_file(),
+        "build novovm-native-client beside the explicit node binary"
+    );
+    let mut command = std::process::Command::new(binary);
+    command.arg(config).arg(action);
+    if let Some(input) = input {
+        command.arg(input);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    let output = command.output()?;
+    ensure!(
+        output.status.success(),
+        "operator CLI failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+// Exercise the operator consumer against actual child nodes, not a mock SDK.
+fn operator_submit(nodes: &ProductNodes, index: usize, signed: &SignedUcaSpendV1) -> Result<Value> {
+    use crate::native_pipeline::service::{client::operator, ResidentConfig};
+    let node = ResidentConfig::load(&nodes.configs[index])?;
+    let config_path = nodes.directory.join("operator-client.json");
+    let transport_key_file = nodes.directory.join("test-only-operator-transport.key");
+    fs::write(&transport_key_file, [202u8; 32])?;
+    let config = operator::ClientConfig {
+        chain_id: node.genesis.chain_id,
+        genesis: node.genesis.genesis_config_commitment,
+        protocol: node.genesis.protocol_commitment,
+        validator_epoch: node.genesis.validator_epoch,
+        validators: node.genesis.validators.clone(),
+        node: crate::native_pipeline::service::NativePeerConfig {
+            public_key: validator_key(index).verifying_key().to_bytes(),
+            address: node.udp_addr,
+        },
+        bind_addr: "127.0.0.1:0".parse()?,
+        transport_key_file,
+        timeout_ms: 15_000,
+    };
+    fs::write(&config_path, serde_json::to_vec_pretty(&config)?)?;
+    let status = operator_call(nodes, &config_path, "status", None)?;
+    ensure!(
+        status["result"]["answer"]["Status"]["height"] == 0,
+        "operator initial status"
+    );
+    let query_path = nodes.directory.join("operator-uca-state.nvquery");
+    fs::write(
+        &query_path,
+        novovm_protocol::native_query::encode(novovm_protocol::native_query::Frame::Request(
+            novovm_protocol::native_query::Request {
+                session: [9; 32],
+                sequence: 7,
+                query: Query::UcaSpendState {
+                    intent: UcaReadIntent::new(&signed.intent).map_err(anyhow::Error::msg)?,
+                    payer_hint: AccountId::Bytes20(ADDRESS[0]),
+                    recipient_hint: AccountId::Bytes20(ADDRESS[1]),
+                },
+            },
+        ))
+        .map_err(anyhow::Error::msg)?,
+    )?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let query = loop {
+        ensure!(
+            Instant::now() < deadline,
+            "operator UCA state remained pending"
+        );
+        let observed = operator_call(nodes, &config_path, "query", Some(&query_path))?;
+        if observed["result"]["answer"]["UcaSpendState"] != "Pending" {
+            break observed;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    ensure!(
+        query["result"]["answer"]["UcaSpendState"]["Present"]["payer_balance"]
+            == INITIAL.to_string()
+            && query["result"]["answer"]["UcaSpendState"]["Present"]["remaining_debit_budget"]
+                == INITIAL.to_string(),
+        "binary UCA query amount/budget parity"
+    );
+    let batch = UcaSpendBatch::from_raw(
+        &[signed.encode()?],
+        &[(ADDRESS[0].to_vec(), ADDRESS[1].to_vec())],
+        UcaSpendBatchLimits {
+            transactions: 2,
+            transaction_bytes: MAX_SIGNED_SPEND_BYTES,
+            body_bytes: 2 * MAX_SIGNED_SPEND_BYTES,
+        },
+    )?;
+    let batch_path = nodes.directory.join("operator-signed.nuapfl");
+    let bytes = batch.encode()?;
+    fs::write(&batch_path, &bytes)?;
+    let submitted = operator_call(nodes, &config_path, "submit", Some(&batch_path))?;
+    ensure!(
+        submitted["result"]["finalized"] == false
+            && submitted["result"]["kind"] == "transport_delivery_only",
+        "delivery is not finality"
+    );
+    ensure!(
+        fs::read(batch_path)? == bytes,
+        "operator altered signed input"
+    );
+    Ok(json!({"status":status,"binary_query":query,"submission":submitted}))
+}
+
 fn send_uca(
     client: &mut NativeApplicationClient,
     signed: &SignedUcaSpendV1,
@@ -295,7 +419,11 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         for nonce in 0..OFFLINE_HEIGHTS {
             let signed = signer.sign(intent(0, nonce, 100)?, &keys[2].0, &keys[2].1)?;
             let hash = Sha256::digest(signed.intent.signing_bytes()?).into();
-            send_uca(&mut clients[0], &signed, 0)?;
+            if nonce == 0 {
+                evidence["operator_client"] = operator_submit(&nodes, healthy[0], &signed)?;
+            } else {
+                send_uca(&mut clients[0], &signed, 0)?;
+            }
             let batch = receipts(&mut nodes, &mut clients, &[hash])?;
             alice_fees += checked_fee(
                 &batch[0],

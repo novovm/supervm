@@ -139,6 +139,7 @@ try {
 
   $bins = @(
     "novovm-node",
+    "novovm-native-client",
     "novovm-product-relay",
     "novovm-product-node-overlay",
     "novovm-product-nat",
@@ -184,6 +185,8 @@ try {
     "RELEASE-NOTES.md", "RUNTIME-BASELINE.md"
   )
   $packageDocs = @(
+    "NOVOVM_NATIVE_OPERATOR_CLIENT.md",
+    "NOVOVM_MULTI_HOST_NUAS_HANDOFF.md",
     "NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
     "NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
     "NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md",

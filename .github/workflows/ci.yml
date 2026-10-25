@@ -333,7 +333,7 @@ jobs:
           # Retained test-only opaque attachment durability. This does not enable
           # the retired backend-specific product proof service or prove ZK/GPU.
           cargo test -p novovm-node --lib real_proof_storage_multichunk_reopen_immutable_and_corruption_rejection --locked -- --ignored --test-threads=1
-          cargo build -p novovm-node --bin novovm-node --locked
+          cargo build -p novovm-node --bin novovm-node --bin novovm-native-client --locked
           target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
           export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
           # Fail instead of silently passing a filter matching zero tests.
