@@ -30,7 +30,12 @@ struct Delivery {
     prepared: PreparedMessage,
     admitted: bool,
     retiring: bool,
+    // Independent obligations share ONE immutable payload and send handle.
+    realtime: bool,
     archive: bool,
+    // Sticky resource class until this handle actually returns. Clearing an
+    // obligation cannot prematurely free an auxiliary reservation.
+    auxiliary: bool,
     height: u64,
 }
 struct Fanout {
@@ -54,6 +59,8 @@ pub struct NativeLifecycle {
     peers: Vec<Hash>,
     peer_names: BTreeMap<String, usize>,
     limits: DeliveryLimits,
+    control_reserve_messages: usize,
+    control_reserve_bytes: usize,
     deliveries: Vec<VecDeque<Delivery>>,
     bytes: Vec<usize>,
     send_turn: usize,
@@ -140,9 +147,35 @@ impl NativeLifecycle {
         policy: DirectNovFeePolicy,
         codec: DecodeLimits,
     ) -> Result<Self> {
+        let send = channel.control_send_limits();
+        let draining = send.messages.min(send.peer_messages);
+        let control_bytes =
+            super::transport::durable_control_bound(validators.members().len(), codec)?;
+        let control_reserve_messages = 4usize
+            .checked_add(draining)
+            .context("control slot reserve overflow")?;
+        let drain_bytes = draining
+            .checked_mul(control_bytes)
+            .context("control drain reserve overflow")?
+            .min(send.bytes)
+            .min(send.peer_bytes);
+        let control_reserve_bytes = control_bytes
+            .checked_mul(4)
+            .and_then(|n| n.checked_add(drain_bytes))
+            .context("control byte reserve overflow")?
+            .max(
+                codec
+                    .message_bytes
+                    .checked_mul(4)
+                    .context("control byte reserve overflow")?,
+            );
         ensure!(
             (8..=4096).contains(&limits.messages_per_peer)
-                && limits.bytes_per_peer >= codec.message_bytes.saturating_mul(5),
+                && limits.messages_per_peer > control_reserve_messages
+                && limits.bytes_per_peer
+                    >= control_reserve_bytes
+                        .checked_add(codec.message_bytes)
+                        .context("delivery byte reserve overflow")?,
             "invalid native delivery budget"
         );
         progress.context().validate(validators)?;
@@ -179,6 +212,8 @@ impl NativeLifecycle {
             peers,
             peer_names,
             limits,
+            control_reserve_messages,
+            control_reserve_bytes,
             deliveries: (0..count).map(|_| VecDeque::new()).collect(),
             bytes: vec![0; count],
             send_turn: 0,
@@ -282,12 +317,40 @@ impl NativeLifecycle {
             if queue[index].retiring {
                 let done = queue.remove(index).expect("retired delivery");
                 self.bytes[completed.peer] -= done.prepared.byte_len();
+                crate::native_pipeline::profile::delivery_event(
+                    match completed.state {
+                        ObjectSendState::Delivered => "retired_drained_delivered",
+                        ObjectSendState::Expired => "retired_drained_expired",
+                        ObjectSendState::SessionReplaced => "retired_session_replaced",
+                        ObjectSendState::Cancelled => "retired_cancelled",
+                        ObjectSendState::Sending => {
+                            anyhow::bail!("nonterminal retirement completion")
+                        }
+                    },
+                    done.prepared.height().unwrap_or(0),
+                    self.peers[completed.peer],
+                    done.prepared.fragment_id(),
+                    0,
+                );
                 continue;
             }
             match completed.state {
                 ObjectSendState::Delivered => {
                     let done = queue.remove(index).expect("completed delivery");
                     self.bytes[completed.peer] -= done.prepared.byte_len();
+                    crate::native_pipeline::profile::delivery_event(
+                        "delivered",
+                        done.prepared.height().unwrap_or(0),
+                        self.peers[completed.peer],
+                        done.prepared.fragment_id(),
+                        u8::from(done.realtime) | (u8::from(done.archive) << 1),
+                    );
+                    if done.archive {
+                        self.archive_delivery_completed(
+                            completed.peer,
+                            done.prepared.fragment_id(),
+                        );
+                    }
                 }
                 ObjectSendState::Expired => {
                     // Retry the SAME immutable bytes. This is not a transaction
@@ -329,6 +392,13 @@ impl NativeLifecycle {
                 attempted[lane] = true;
                 if self.channel.try_send(peer, &delivery.prepared, now)? {
                     delivery.admitted = true;
+                    crate::native_pipeline::profile::delivery_event(
+                        "admitted",
+                        delivery.prepared.height().unwrap_or(0),
+                        self.peers[peer],
+                        delivery.prepared.fragment_id(),
+                        u8::from(delivery.realtime) | (u8::from(delivery.archive) << 1),
+                    );
                 }
                 if attempted.iter().all(|attempt| *attempt) {
                     break;
@@ -339,17 +409,17 @@ impl NativeLifecycle {
     }
 
     fn fits(&self, peer: usize, prepared: &PreparedMessage, archive: bool) -> bool {
-        if self.deliveries[peer]
+        if let Some(existing) = self.deliveries[peer]
             .iter()
-            .any(|d| d.retiring && d.prepared.fragment_id() == prepared.fragment_id())
+            .find(|d| d.prepared.fragment_id() == prepared.fragment_id())
         {
-            return false;
-        }
-        if self.deliveries[peer]
-            .iter()
-            .any(|d| d.prepared.fragment_id() == prepared.fragment_id())
-        {
-            return true;
+            if existing.retiring {
+                return false;
+            }
+            // An existing body already consumes auxiliary capacity. Only a
+            // realtime durable control newly acquiring archive responsibility
+            // moves out of the reserved control class. Check BEFORE mutation.
+            return !archive || existing.auxiliary || self.fits_auxiliary(peer, prepared);
         }
         if self.deliveries[peer].len() >= self.limits.messages_per_peer
             || prepared.byte_len() > self.limits.bytes_per_peer.saturating_sub(self.bytes[peer])
@@ -359,25 +429,30 @@ impl NativeLifecycle {
         if !archive && prepared.is_durable_control() {
             return true;
         }
-        // Preserve four durable control slots (current proposal/prevote/
-        // precommit plus an immediately preceding decision) inside the existing
-        // peer budget. Requests, input,
-        // body/archive replies cannot saturate the journal's publication path.
-        // Superseded controls are locally cancelled/drained on durable advance.
+        self.fits_auxiliary(peer, prepared)
+    }
+
+    fn fits_auxiliary(&self, peer: usize, prepared: &PreparedMessage) -> bool {
+        // Preserve the current proposal/prevote/precommit/decision PLUS all
+        // possible old admitted control handles draining on the original lane.
+        // Multiple advances cannot grow that drain beyond the lane admission
+        // bound; unsent obsolete controls are removed immediately. Do not free
+        // bytes early, enlarge the peer budget, or let archive traffic consume
+        // the space required to fan out a new durable outbox to healthy peers.
         let mut auxiliary_count = 0;
         let mut auxiliary_bytes = 0usize;
         for delivery in &self.deliveries[peer] {
-            if delivery.archive || !delivery.prepared.is_durable_control() {
+            if delivery.auxiliary {
                 auxiliary_count += 1;
                 auxiliary_bytes += delivery.prepared.byte_len();
             }
         }
-        auxiliary_count < self.limits.messages_per_peer - 4
+        auxiliary_count < self.limits.messages_per_peer - self.control_reserve_messages
             && prepared.byte_len()
                 <= self
                     .limits
                     .bytes_per_peer
-                    .saturating_sub(self.codec.message_bytes.saturating_mul(4))
+                    .saturating_sub(self.control_reserve_bytes)
                     .saturating_sub(auxiliary_bytes)
     }
     fn enqueue(&mut self, peer: usize, prepared: PreparedMessage) -> bool {
@@ -385,21 +460,53 @@ impl NativeLifecycle {
     }
     fn enqueue_kind(&mut self, peer: usize, prepared: PreparedMessage, archive: bool) -> bool {
         if !self.fits(peer, &prepared, archive) {
+            if archive {
+                crate::native_pipeline::profile::delivery_event(
+                    "recovery_backpressure",
+                    prepared.height().unwrap_or(0),
+                    self.peers[peer],
+                    prepared.fragment_id(),
+                    2,
+                );
+            }
             return false;
         }
-        if !self.deliveries[peer]
-            .iter()
-            .any(|d| d.prepared.fragment_id() == prepared.fragment_id())
+        let id = prepared.fragment_id();
+        let height = prepared.height().unwrap_or(0);
+        let purposes;
+        if let Some(existing) = self.deliveries[peer]
+            .iter_mut()
+            .find(|d| d.prepared.fragment_id() == prepared.fragment_id())
         {
+            existing.archive |= archive;
+            existing.realtime |= !archive;
+            existing.auxiliary |= archive;
+            purposes = u8::from(existing.realtime) | (u8::from(existing.archive) << 1);
+        } else {
             self.bytes[peer] += prepared.byte_len();
+            let auxiliary = archive || !prepared.is_durable_control();
             self.deliveries[peer].push_back(Delivery {
                 prepared,
                 admitted: false,
                 retiring: false,
+                realtime: !archive,
                 archive,
+                auxiliary,
                 height: self.progress.context().height,
             });
+            purposes = if archive { 2 } else { 1 };
         }
+        crate::native_pipeline::profile::delivery_event(
+            if archive {
+                "recovery_owned"
+            } else {
+                "realtime_owned"
+            },
+            height,
+            self.peers[peer],
+            id,
+            purposes,
+        );
         true
     }
 
@@ -461,6 +568,23 @@ impl NativeLifecycle {
                                 .peer_names
                                 .get(&message.peer)
                                 .context("unmapped authenticated peer")?;
+                            let height = match &message.message {
+                                Message::Proposal { proposal, .. }
+                                | Message::Decision { proposal, .. } => proposal.context.height,
+                                Message::Vote(vote) => vote.context.height,
+                                Message::RequestDecision { context } => context.height,
+                                Message::Body { context, .. }
+                                | Message::ApflBody { context, .. }
+                                | Message::UcaBody { context, .. } => context.height,
+                                _ => 0,
+                            };
+                            crate::native_pipeline::profile::delivery_event(
+                                "received",
+                                height,
+                                self.peers[peer],
+                                message.fragment_id,
+                                0,
+                            );
                             self.pending[lane] = Some(Incoming {
                                 peer,
                                 message: Arc::new(message.message),
@@ -590,3 +714,6 @@ mod ingress;
 mod recovery;
 mod successor;
 pub use successor::SuccessorSelection;
+
+#[cfg(test)]
+mod archive_delivery_tests;

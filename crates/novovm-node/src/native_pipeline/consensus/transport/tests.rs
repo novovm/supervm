@@ -8,7 +8,7 @@ use novovm_consensus::round_bft::test_vectors::FixtureSigningKey;
 use novovm_network::novorudp::fragments::{FragmentAdmission, Reassembler, ReassemblyLimits};
 use std::time::{Duration, Instant};
 
-fn limits() -> DecodeLimits {
+pub(super) fn limits() -> DecodeLimits {
     DecodeLimits {
         transactions: 1024,
         transaction_bytes: 512 * 1024,
@@ -17,7 +17,7 @@ fn limits() -> DecodeLimits {
     }
 }
 
-fn context() -> BatchContext {
+pub(super) fn context() -> BatchContext {
     BatchContext {
         chain_id: 77,
         genesis_config_commitment: [1; 32],
@@ -37,7 +37,7 @@ fn context() -> BatchContext {
     }
 }
 
-fn specimens() -> Vec<Message> {
+pub(super) fn specimens() -> Vec<Message> {
     let key = FixtureSigningKey::from_bytes(&[7; 32]);
     let set = ValidatorSet::new_for_test(
         77,

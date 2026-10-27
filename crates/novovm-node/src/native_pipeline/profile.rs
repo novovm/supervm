@@ -82,6 +82,14 @@ impl CriticalBuffer {
         }
         self.records.push_back(record);
     }
+
+    fn push_latest(&mut self, record: CriticalRecord) {
+        if self.records.len() == CRITICAL_EVENTS {
+            self.records.pop_front();
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        self.push(record);
+    }
 }
 
 fn wall_unix_us() -> u64 {
@@ -93,6 +101,45 @@ fn wall_unix_us() -> u64 {
 
 static CRITICAL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
 static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
+// Reuse the same bounded record/clock implementation; keep delivery diagnostics
+// from evicting the execution/consensus timeline. No payload or signing data.
+static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+
+fn delivery_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("NOVOVM_PROFILE_NATIVE_DELIVERY")
+            .ok()
+            .as_deref()
+            == Some("1")
+    })
+}
+
+pub(crate) fn delivery_event(
+    event: &'static str,
+    height: u64,
+    peer: [u8; 32],
+    fragment: [u8; 32],
+    purposes: u8,
+) {
+    if !delivery_enabled() {
+        return;
+    }
+    let started = CRITICAL_START.get_or_init(Instant::now);
+    if let Ok(mut buffer) = DELIVERY.lock() {
+        // Retain the latest window for a late stall, with explicit loss count.
+        buffer.push_latest(CriticalRecord {
+            seq: 0,
+            elapsed_ns: started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+            wall_unix_us: wall_unix_us(),
+            event,
+            height,
+            round: Some(u64::from(purposes)),
+            value: Some(peer),
+            body: Some(fragment),
+        });
+    }
+}
 
 fn critical_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -381,7 +428,21 @@ pub(crate) fn snapshot() -> Value {
     } else {
         json!({"enabled":false,"capacity":CRITICAL_EVENTS,"dropped":0,"events":[]})
     };
-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical})
+    let delivery = if delivery_enabled() {
+        DELIVERY.lock().ok().map(|buffer| json!({
+            "enabled":true, "capacity":CRITICAL_EVENTS, "evicted":buffer.dropped,
+            "scope":"bounded latest local ownership/transport events; purpose bits 1=realtime 2=recovery; height 0=not carried; transport DONE is not finality",
+            "events":buffer.records.iter().map(|record| json!({
+                "seq":record.seq, "elapsed_ns":record.elapsed_ns,
+                "wall_unix_us":record.wall_unix_us, "event":record.event,
+                "height":record.height, "purposes":record.round,
+                "peer":hash(record.value), "fragment":hash(record.body)
+            })).collect::<Vec<_>>()
+        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
+    } else {
+        json!({"enabled":false,"capacity":CRITICAL_EVENTS,"events":[]})
+    };
+    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery})
 }
 
 #[cfg(test)]
@@ -419,5 +480,29 @@ mod tests {
         }
         assert_eq!(buffer.records.len(), CRITICAL_EVENTS);
         assert_eq!(buffer.dropped, 1);
+    }
+
+    #[test]
+    fn delivery_buffer_retains_latest_window_and_counts_evictions() {
+        let mut buffer = CriticalBuffer::new();
+        for elapsed_ns in 0..(CRITICAL_EVENTS + 3) as u64 {
+            buffer.push_latest(CriticalRecord {
+                seq: 0,
+                elapsed_ns,
+                wall_unix_us: 0,
+                event: "test",
+                height: 1,
+                round: Some(2),
+                value: None,
+                body: None,
+            });
+        }
+        assert_eq!(buffer.records.len(), CRITICAL_EVENTS);
+        assert_eq!(buffer.dropped, 3);
+        assert_eq!(buffer.records.front().unwrap().seq, 3);
+        assert_eq!(
+            buffer.records.back().unwrap().seq,
+            CRITICAL_EVENTS as u64 + 2
+        );
     }
 }

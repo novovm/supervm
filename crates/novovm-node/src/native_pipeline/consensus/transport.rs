@@ -133,6 +133,16 @@ impl DecodeLimits {
     }
 }
 
+/// Largest verified Proposal/Vote/Decision envelope. Derive from the original
+/// evidence codec, including a full-set QC, not from a historical signature size.
+pub(super) fn durable_control_bound(validators: usize, limits: DecodeLimits) -> Result<usize> {
+    let (vote, proposal, quorum) = wire::evidence_wire_bounds(validators)?;
+    let proposal_with_qc = PREFIX_BYTES + 4 + proposal + 1 + 4 + quorum + 32;
+    Ok(proposal_with_qc
+        .max(PREFIX_BYTES + 4 + vote)
+        .min(limits.message_bytes))
+}
+
 /// Derive once from the locally pinned chain, never from an incoming message.
 pub fn fragment_domain(chain_id: u64, genesis: Hash, protocol: Hash) -> Hash {
     let mut digest = Sha256::new();
@@ -276,6 +286,24 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Solicited recovery has its own transport-completion identity. A realtime
+/// object may have been consumed while outside the bounded consensus window;
+/// that DONE must not suppress the later reply to an exact current request.
+/// Tags 16--19 preserve every signed/body payload byte and the existing lanes.
+/// This is NOT a new candidate identity or permission to execute/publish.
+pub(crate) fn encode_recovery_reply(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
+    let tag = match message {
+        Message::Decision { .. } => 16,
+        Message::Body { .. } => 17,
+        Message::ApflBody { .. } => 18,
+        Message::UcaBody { .. } => 19,
+        _ => anyhow::bail!("recovery reply requires exact decision or body"),
+    };
+    let mut bytes = encode(message, limits)?;
+    bytes[10] = tag;
+    Ok(bytes)
+}
+
 /// Allocation-free lane classification for the ingress owner's reservation.
 /// This checks only the wire prefix; it grants no decode or signing authority.
 #[cfg(test)]
@@ -291,8 +319,8 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
         "host network protocol/version mismatch"
     );
     match bytes[10] {
-        1 | 7 | 11 | 12 | 14 => Ok(1),
-        2..=6 | 8 | 10 => Ok(0),
+        1 | 7 | 11 | 12 | 14 | 17..=19 => Ok(1),
+        2..=6 | 8 | 10 | 16 => Ok(0),
         9 | 13 | 15 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
@@ -309,7 +337,17 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         reader.take(8)? == MAGIC && reader.take(2)? == 1u16.to_be_bytes(),
         "host network protocol/version mismatch"
     );
-    let message = match reader.byte()? {
+    // Reply envelopes differ only in delivery purpose. Reuse all original
+    // payload preflights/readers; canonical business/evidence identity does not
+    // include this transport namespace. Unknown kinds still fail closed.
+    let kind = match reader.byte()? {
+        16 => 4,
+        17 => 1,
+        18 => 11,
+        19 => 14,
+        kind => kind,
+    };
+    let message = match kind {
         1 => {
             let context = read_context(&mut reader)?;
             let count = reader.u32()? as usize;
@@ -528,3 +566,7 @@ mod tests;
 #[cfg(test)]
 #[path = "transport/early_tests.rs"]
 mod early_tests;
+
+#[cfg(test)]
+#[path = "transport/recovery_tests.rs"]
+mod recovery_tests;

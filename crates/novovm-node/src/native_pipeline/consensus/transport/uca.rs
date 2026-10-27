@@ -227,4 +227,4 @@ pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Res
 
 #[cfg(test)]
 #[path = "uca_tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -97,6 +97,17 @@ fn fixture() -> Result<Fixture> {
     })
 }
 
+pub(in super::super) fn recovery_specimen() -> Result<(Message, DecodeLimits)> {
+    let f = fixture()?;
+    Ok((
+        Message::UcaBody {
+            context: f.context,
+            batch: f.batch,
+        },
+        f.limits,
+    ))
+}
+
 #[test]
 fn nuas_body_uses_explicit_tag_and_existing_bounded_body_lane() -> Result<()> {
     let f = fixture()?;

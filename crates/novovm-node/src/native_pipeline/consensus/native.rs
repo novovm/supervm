@@ -73,6 +73,9 @@ impl PreparedMessage {
     pub fn fragment_id(&self) -> [u8; 32] {
         self.object.id()
     }
+    pub(super) fn height(&self) -> Option<u64> {
+        self.window.map(|(height, _)| height)
+    }
     pub(crate) fn lane(&self) -> usize {
         STREAMS
             .iter()
@@ -135,6 +138,7 @@ pub struct NativeChannel {
     domain: MessageDomain,
     bindings: ValidatorTransportBindings,
     codec: transport::DecodeLimits,
+    control_send: NativeSendLimits,
     owner: Arc<()>,
     receive_turn: usize,
     applications: bool,
@@ -162,6 +166,7 @@ impl NativeChannel {
             "UDP transport chain differs from pinned native domain"
         );
         let applications = client_slots > 0;
+        let control_send = lanes[0].send.clone();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         bindings.validate_for(&domain.validators)?;
         let local_peer = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
@@ -208,7 +213,14 @@ impl NativeChannel {
         }
         #[cfg(test)]
         let link = ChannelLink::Original(link);
-        Ok(Self::with_link(link, domain, bindings, codec, applications))
+        Ok(Self::with_link(
+            link,
+            domain,
+            bindings,
+            codec,
+            applications,
+            control_send,
+        ))
     }
 
     #[cfg(test)]
@@ -222,6 +234,7 @@ impl NativeChannel {
     ) -> Result<Self> {
         endpoint.enable_configured_reconnect_v1()?;
         let applications = endpoint.accepts_clients();
+        let control_send = lanes[0].send.clone();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         bindings.validate_for(&domain.validators)?;
         bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(
@@ -236,6 +249,7 @@ impl NativeChannel {
             bindings,
             codec,
             applications,
+            control_send,
         ))
     }
 
@@ -289,12 +303,14 @@ impl NativeChannel {
         bindings: ValidatorTransportBindings,
         codec: transport::DecodeLimits,
         applications: bool,
+        control_send: NativeSendLimits,
     ) -> Self {
         Self {
             link,
             domain,
             bindings,
             codec,
+            control_send,
             owner: Arc::new(()),
             receive_turn: 0,
             applications,
@@ -306,6 +322,9 @@ impl NativeChannel {
     }
     pub fn ingress_observation(&self) -> NativeIngressObservation {
         self.ingress_observation
+    }
+    pub(super) fn control_send_limits(&self) -> &NativeSendLimits {
+        &self.control_send
     }
     pub fn io_progress_generation(&self) -> u64 {
         self.io_progress.0
@@ -326,8 +345,29 @@ impl NativeChannel {
     /// Full-body work, not the consensus tick. Reuses the reviewed canonical
     /// message and evidence contracts; only the fragment profile is native.
     pub fn prepare(&self, message: &transport::Message) -> Result<PreparedMessage> {
+        self.prepare_kind(message, false)
+    }
+
+    /// Only solicited decision/body replies may use the recovery completion
+    /// namespace. Evidence, execution identity and resource limits are unchanged.
+    pub(super) fn prepare_recovery_reply(
+        &self,
+        message: &transport::Message,
+    ) -> Result<PreparedMessage> {
+        self.prepare_kind(message, true)
+    }
+
+    fn prepare_kind(
+        &self,
+        message: &transport::Message,
+        recovery_reply: bool,
+    ) -> Result<PreparedMessage> {
         message_evidence::verify(message, &self.domain)?;
-        let bytes = transport::encode(message, self.codec)?;
+        let bytes = if recovery_reply {
+            transport::encode_recovery_reply(message, self.codec)?
+        } else {
+            transport::encode(message, self.codec)?
+        };
         let stream = STREAMS[transport::message_lane(&bytes)?];
         let object = Arc::new(OutgoingMessage::with_profile(
             transport::fragment_domain(
@@ -366,6 +406,7 @@ impl NativeChannel {
             ),
         })
     }
+
     /// False is backpressure/handshake pending, not acceptance or loss.
     pub fn try_send(
         &mut self,
@@ -379,13 +420,6 @@ impl NativeChannel {
         );
         self.link
             .try_send(peer, message.stream, &message.object, now)
-    }
-    pub(super) fn cancel_send(&mut self, peer: usize, message: &PreparedMessage) -> Result<bool> {
-        ensure!(
-            Arc::ptr_eq(&message.owner, &self.owner),
-            "foreign cancellation owner"
-        );
-        Ok(self.link.cancel_send(peer, message.stream, &message.object))
     }
     pub fn poll_io(
         &mut self,
@@ -514,12 +548,6 @@ enum ChannelLink {
 }
 #[cfg(test)]
 impl ChannelLink {
-    fn cancel_send(&mut self, peer: usize, stream: u64, body: &Arc<OutgoingMessage>) -> bool {
-        match self {
-            Self::Original(link) => link.cancel_send(peer, stream, body),
-            Self::HistoricalFixture(link) => link.cancel_send(peer, stream, body),
-        }
-    }
     fn peer_count(&self) -> usize {
         match self {
             Self::Original(link) => link.peer_count(),

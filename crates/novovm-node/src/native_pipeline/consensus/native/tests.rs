@@ -14,6 +14,9 @@ use novovm_network::novorudp::{
 };
 use std::{net::UdpSocket, time::Duration};
 
+#[path = "../native_recovery_namespace_tests.rs"]
+mod recovery_namespace;
+
 #[test]
 fn io_hint_ignores_duplicate_rejected_and_stalled_io() {
     let mut hint = IoProgressHint::default();

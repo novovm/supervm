@@ -1,0 +1,186 @@
+{
+  "date": "2026-10-27",
+  "branch": "dev/mldsa65-identity-closure",
+  "source_parent": "9175869dded808234b619e58eb684bf17b296653",
+  "status": "DELIVERED: original delivery/recovery concurrency repairs locally validated; TPS restoration NOT achieved; candidate full CI/Linux/multi-host NOT executed",
+  "main_changed": false,
+  "cloud_ci_triggered": false,
+  "deployment_performed": false,
+  "evidence": {
+    "raw_archive":"raw-evidence.tar.gz",
+    "raw_archive_sha256":"d5ce758bc54d74137233b9600a2c4b53e413fc33e8a975e3af2dc55e049ab42f",
+    "contents":"Explicit audit-folder *report.json, .log and source.patch only, including all negative/intermediate/final runs. No node configs, operator keys, databases or private knowledge. Reports include original paths to locally retained fixtures.",
+    "source":"source.patch INSIDE raw archive against source_parent; same staged runtime/CI sources as measured final node and client, docs/evidence added after validation",
+    "reproduction":"Measured with original uca-overlap-20261027 local runner; run-local.ps1 now includes those SAME environment/command settings without relying on that ignored script. Windows5090 qualification inputs are explicit and overridable. Candidate DLL/manifest and node hashes pinned below; binary artifacts remain local, not redistributed as qualified SDK."
+  },
+  "reuse": {
+    "owner": "original NativeLifecycle / NativeChannel / NovoRUDP object custody / RoundProgress / CandidatePipeline / ValidatorJournal",
+    "ownership_change": "independent realtime and recovery obligations on one retained handle; sticky auxiliary accounting until original completion; requested live-body response keeps recovery purpose; exact cached decision Delivered continues cached body under existing budgets",
+    "namespace_assessment": "Realtime object completion proves transport custody, not retained consensus evidence. A decision received beyond the bounded future-height window can be dropped by application yet remain in transport completion history. Solicited recovery replies need a distinct delivery-purpose object identity, not a new consensus identity or a larger future cache.",
+    "namespace_design": "Explicit wire tags 16=decision reply,17=raw-body reply,18=APFL-body reply,19=UCA-body reply; same payload, evidence verification, canonical candidate body identity, lanes, byte limits and original decode/admission. Old development decoders reject new tags; no mixed deployment authorized.",
+    "unchanged": ["ML-DSA-65", "quorum", "economic and UCA checks", "production timeouts", "completion TTL", "384 KiB body budget", "AOEM library", "Auto", "UCA successor guard", "shipped SDK"]
+  },
+  "identities": {
+    "before_node_sha256": "79291cc87e796b29d964cbdb08ccedfd211109a73890bda3ab86e13d4c826055",
+    "ownership_only_node_sha256": "10fa8dbff751934cda6837fad66ac40cb7ea0bc44435193e41d2be1070b4a0c3",
+    "ownership_measured_client_sha256": "c971c14a7b5e63939eef68bf587524bd7535a6aaeabae85bab0fb6ce28058d2c",
+    "ownership_final_client_sha256": "f9d27518c1be88a367b117070ebcb927ecb50b5da87f041492e3dee13d0fe066",
+    "namespace_only_node_sha256": "11bc047a9470c63291cd443471c8f6df29764242ed60b899ccf54d9e00d36fa3",
+    "namespace_only_client_sha256": "96a83a83bfeea1541097962047eee1a38c2b549b483b784684b44f5fc2b108d3",
+    "drain_before_reservation_node_sha256": "eca68a5425b1e794d9e79bd2676c10f86b8e2b78839c6d42a2c501b4defc5f4e",
+    "drain_before_reservation_client_sha256": "2bafebafd0425d73f29f9760b79f8efcb90af202fb6cea5bb185bb9f2a33f419",
+    "integrated_node_sha256": "63d83f1a70df59c136371a3097c909e8e3f91b827385dd9cc6516697b80081c9",
+    "integrated_client_sha256": "c42c612c15f670dedf5ccb6999c0b8ea23205c2c8ed365d576057b8ee1052881",
+    "integrated_source_patch_sha256": "10b9110c27be965fd9436b76caf7d84e99273a6757a89126f40eb2e14e7b199e",
+    "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+    "aoem_scope": "same explicit isolated candidate; shipped runtime not replaced"
+  },
+  "integrated_validation": {
+    "native_pipeline_default": {"passed":466,"failed":0,"ignored":100,"log":"native-integrated-regressions.log"},
+    "consensus_round_bft": {"passed":89,"failed":0,"log":"consensus-final-tests.log"},
+    "archive_ownership_continuation_request_order": {"passed":18,"failed":0,"log":"archive-integrated-tests.log"},
+    "retirement_deadline_partial_udp_and_full_auxiliary": {"passed":4,"failed":0,"log":"drain-integrated-tests.log"},
+    "original_progress": {"passed":6,"failed":0,"log":"progress-integrated-tests.log"},
+    "original_lifecycle": {"passed":6,"failed":0,"log":"lifecycle-integrated-tests.log"},
+    "strict_clippy": "PASS: novovm-node and novovm-consensus release all-targets --locked --offline --no-deps -D warnings;39.26s",
+    "format": "PASS cargo fmt --all -- --check",
+    "gpu_required_process_recovery": {"passed":true,"duration_seconds":131.43,"late_start_after_ms":106277,"offline_heights":40,"interrupted_durable_height":1,"target_archive_absent_at_crash":true,"qc_signatures":3,"final_heights":[41,41,41,41],"credited_respend_and_cold_reopen":true,"same_config_and_signing_outbox_preserved":true,"report":"integrated-process-recovery-report.json"},
+    "ci_wiring": "Added18 archive and4 retirement cases to ORIGINAL Integrated original tick and native SDK closure step, with named enumeration guards. Workflow YAML parsed10jobs; no checks removed; no branch full CI triggered.",
+    "counterexample_provenance": "Old-runtime runs retained: ownership5FAIL/2PASS; recovery namespace2FAIL; partial-retirement2FAIL/1PASS. Resource/request-order cases are final regression coverage and source-reviewed old failures, not claimed as separately executed old binaries."
+  },
+  "integrated_performance": {
+    "diagnostics_enabled":false,
+    "series_one_report":"integrated-paired-4096-report.json",
+    "series_one":[
+      {"label":"before_cpu","tps":1249.9546067510366,"p95_us":1087947,"p99_us":1105290},
+      {"label":"after_cpu","tps":1164.999943115237,"p95_us":1138561,"p99_us":1161039},
+      {"label":"before_gpu","tps":594.7153098102326,"p95_us":3762703,"p99_us":3994316},
+      {"label":"after_gpu","tps":914.3698036515859,"p95_us":1593909,"p99_us":1739178},
+      {"label":"before_cpu_repeat","tps":996.8299056759437,"p95_us":2342907,"p99_us":2358919}
+    ],
+    "series_two_report":"integrated-paired-4096-repeat-report.json",
+    "series_two":[
+      {"label":"before_cpu","tps":114.69027591383524,"p95_us":33939945,"p99_us":33954403},
+      {"label":"after_cpu","tps":1053.912676541952,"p95_us":1506598,"p99_us":1532540},
+      {"label":"before_gpu","tps":574.5424665573782,"p95_us":3817214,"p99_us":4480437},
+      {"label":"after_gpu","tps":846.0993600753887,"p95_us":1938682,"p99_us":1972206},
+      {"label":"before_cpu_repeat","tps":1170.9698952673775,"p95_us":1487133,"p99_us":1506544}
+    ],
+    "all_ten_rounds_exact_economics_and_cold_reopen":"PASS",
+    "conclusion":"Correctness/concurrency closure, NOT stable CPU throughput recovery. CPU candidate1054..1165 TPS remains below fast baseline samples and historical12K. GPU candidate846..914 vs same-series baseline575..595 observed improvement, not statistically general qualification. Four final candidate rounds had no20..30s stall, but finite samples do not prove long-tail elimination; original baseline repeated bothfast and35.7s slow runs.",
+    "not_qualified":["12K restoration","100K objective","65,536 transactions","Linux/multi-host runtime","full candidate CI","all undecided body-request retry windows","UCA successor/prefetch performance"]
+  },
+  "additional_closure": {
+    "resource_reservation": "Original host cap32 objects/4MiB unchanged. Reserve4 current durable controls plus K=min(control send global messages,peer messages) possible admitted old controls. Four validators: K4,aux24,aux byte cap2MiB unchanged. Control maximum17924 bytes derives from original codec+full pinned-set QC. Byte reservation=max(old4*codec,4*C+min(K*C,send bytes,send peer bytes)); inadequate configurations rejected.",
+    "resource_tests": "4 retirement tests PASS, including real partial UDP drain and24aux+4old+4current under32; exact codec bound PASS. Earlier16 archive tests had15PASS/1fixture failure after reserve change: remaining old8-slot artificial fixture corrected without changing assertions; final18 archive tests PASS.",
+    "request_ordering": "Only current per-peer RequestDecision hint is monotonic by height. Delayed lower-height application delivery cannot overwrite newer retained recovery responsibility; same-height different parent still requires ArchiveRead. No new permanent/session watermark or chain-head authority. Original-database journal context is durable before request emission.",
+    "remaining_request_boundary": "RequestBody remains a bounded replaceable hint. Automatic body continuation covers matching decided archive replies; this is NOT a proof that all undecided proposal-body retries are delay-free.",
+    "drain_pre_reservation_report": "drain-pre-reserve-paired-4096-report.json",
+    "drain_pre_reservation_tps": [310.19,1120.38,584.61,944.62,1190.21],
+    "drain_pre_reservation_order": ["before_cpu","after_cpu","before_gpu","after_gpu","before_cpu_repeat"],
+    "drain_pre_reservation_conclusion": "Do not attribute310->1120 as stable gain: unchanged baseline repeat1190. All exact-economic/cold checks passed; final reservation/request-order candidate needs independent qualification."
+  },
+  "ownership_validation": {
+    "old_runtime_new_tests": {"passed":2,"failed":5,"log":"before-tests.log"},
+    "fixed_delivery_and_continuation": {"passed":16,"failed":0,"log":"archive-final-tests.log"},
+    "original_progress": {"passed":6,"failed":0},
+    "original_lifecycle": {"passed":6,"failed":0,"initial_failure_retained":true},
+    "native_pipeline_default": {"passed":460,"failed":0,"ignored":94},
+    "strict_clippy": "PASS: release all targets --locked --offline --no-deps -D warnings, 36.11 s",
+    "deadline_fixture": {"original_blob":"5467c931377c09e8c063d3776c265f1470ce2f04","introduced":"d21a0e27","issue":"old one-fragment assumption incompatible with current ML-DSA proposal","repair":"wait for all unique real socket fragments within unchanged receive quantum; preserve invalid-first/control-before-timeout/absent-nil assertions"},
+    "gpu_required_process_recovery": {"passed":true,"duration_seconds":117.68,"late_start_after_ms":102732,"offline_heights":40,"interrupted_durable_height":1,"target_archive_absent_at_crash":true,"final_height":41,"credited_respend_and_cold_reopen":true,"report":"process-recovery-report.json"}
+  },
+  "measurement_contract": {
+    "transactions":4096,"real_machines":1,"real_processes":4,
+    "asset_signature":"ML-DSA-65","business_backend":"cpu_callbacks",
+    "frame_rows":32,"query_batch":32,"workers":24,"deadline_seconds":90,
+    "stopwatch":"first submission attempt including first-height wait through all-four unique receipt-query observations; not internal durable finality timestamp",
+    "not_timed":"startup, signing, post-load economics and cold reopen",
+    "same_bytes_within_each_series":true,"new_corpus_between_series":true,
+    "physical_wire_bytes_and_peak_memory":"NOT_MEASURED",
+    "full_65536":"NOT_EXECUTED: existing static intent fixture cap4096"
+  },
+  "ownership_only_performance": {
+    "diagnostics_enabled":false,
+    "series_one_report":"paired-4096-report.json",
+    "series_one":[
+      {"label":"before_cpu","tps":1195.8827299176517,"p95_us":1201436,"p99_us":1237812},
+      {"label":"after_cpu","tps":1062.4908562493451,"p95_us":1846702,"p99_us":1930714},
+      {"label":"before_gpu","tps":149.0838368734557,"p95_us":22557734,"p99_us":22616501},
+      {"label":"after_gpu","tps":832.13757574514,"p95_us":2140977,"p99_us":2166555},
+      {"label":"before_cpu_repeat","tps":1188.2707005981388,"p95_us":1356753,"p99_us":1377485}
+    ],
+    "series_two_report":"paired-4096-repeat-report.json",
+    "series_two":[
+      {"label":"before_cpu","tps":1174.8949951940026,"p95_us":1358127,"p99_us":1376692},
+      {"label":"after_cpu","tps":1133.1962025754208,"p95_us":1323417,"p99_us":1341374},
+      {"label":"before_gpu","tps":607.3674742261774,"p95_us":3888340,"p99_us":4030994},
+      {"label":"after_gpu","tps":875.2331248386715,"p95_us":1682057,"p99_us":1763155},
+      {"label":"before_cpu_repeat","tps":1127.6064543356551,"p95_us":1416451,"p99_us":1427577}
+    ],
+    "all_economic_and_cold_checks":"PASS",
+    "conclusion":"GPU samples improved, CPU not stable improvement; no 12K restoration. Subsequent diagnostic slow round proves receiver closure still missing."
+  },
+  "namespace_validation": {
+    "old_namespace_real_udp_counterexamples": {"passed":0,"failed":2,"log":"namespace-before-tests.log"},
+    "new_namespace_real_udp": {"passed":2,"failed":0,"log":"namespace-after-tests.log"},
+    "codec_payload_identity_lane_and_limits": {"passed":3,"failed":0},
+    "archive_ownership_and_continuation": {"passed":16,"failed":0},
+    "native_pipeline_default": {"passed":465,"failed":0,"ignored":94},
+    "original_progress": {"passed":6,"failed":0},
+    "original_lifecycle": {"passed":6,"failed":0},
+    "strict_clippy": "PASS: release all targets --locked --offline --no-deps -D warnings, 36.18 s"
+  },
+  "namespace_only_performance": {
+    "diagnostics_enabled":false,
+    "series_one_report":"namespace-paired-4096-report.json",
+    "series_one":[
+      {"label":"before_cpu","tps":1167.1627203211979,"p95_us":1325153,"p99_us":1339386},
+      {"label":"after_cpu","tps":1225.0862734706013,"p95_us":1132273,"p99_us":1154309},
+      {"label":"before_gpu","tps":585.498338276811,"p95_us":4036769,"p99_us":4175885},
+      {"label":"after_gpu","tps":939.8330190231288,"p95_us":1613026,"p99_us":1735606},
+      {"label":"before_cpu_repeat","tps":1205.4145952281945,"p95_us":1091029,"p99_us":1118225}
+    ],
+    "series_two_report":"namespace-paired-4096-repeat-report.json",
+    "series_two":[
+      {"label":"before_cpu","tps":1139.4844722985092,"p95_us":1369351,"p99_us":1382866},
+      {"label":"after_cpu","tps":121.7973301347261,"p95_us":31511551,"p99_us":31529236},
+      {"label":"before_gpu","tps":825.0090537492592,"p95_us":2084306,"p99_us":2103609},
+      {"label":"after_gpu","tps":800.5470926322499,"p95_us":2833171,"p99_us":3024480},
+      {"label":"before_cpu_repeat","tps":1088.78690372237,"p95_us":1661581,"p99_us":1685493}
+    ],
+    "conclusion":"NOT stable throughput qualification: first series improved; second candidate CPU still stalled31s and GPU regressed. All economic/cold checks passed."
+  },
+  "namespace_only_diagnostic": {
+    "report":"namespace-diagnostic-4096-report.json",
+    "order":["cpu","gpu_required","cpu"],
+    "tps":[208.0988453257575,774.9207200859981,811.6014624677915],
+    "p99_us":[2552244,2294528,2433845],
+    "slow_height":70,"slow_round":0,"all_node_round_wait_ms":15040,
+    "candidate_execution_after_previous_ack_ms":[19.080,16.165,17.250,17.490],
+    "missing_delivery_directions":["node1 to node2 proposal986df3 and prevote3871fd; last DONE at h59","node3 to node1 prevote8ecd11 and precommit513581; last DONE at h69"],
+    "diagnosis":"This window differs: no application receive or transport DONE for affected proposals/votes; only two precommits, then r1 finality. Source permits local cancellation to orphan remote partial reassembly (4 per-peer slots,30sTTL). Original trace lacks admission/slot evidence; deterministic partial-UDP counterexample added, not claimed as exclusive historical cause.",
+    "retirement_old_code_counterexamples":{"passed":1,"failed":2,"log":"drain-before-tests.log"},
+    "retirement_design":"Unadmitted obsolete work removed immediately; admitted work marked retiring, same immutable original sender repairs until original Delivered/Expired/SessionReplaced. Budget charged until actual return; no retry past original deadline, no archive continuation for retired work, no global change to network cancel API."
+  },
+  "ownership_only_diagnostic": {
+    "report":"diagnostic-4096-report.json",
+    "order":["cpu","gpu_required","cpu"],
+    "tps":[115.16906810762964,518.5467827691563,918.7308952871078],
+    "p99_us":[33177134,4823641,2412481],
+    "all_economic_and_cold_checks":"PASS",
+    "slow_node":2,"slow_height":34,"durable_ack_gap_ms":28520.3675,
+    "decision_fragment":"56d82e62f880a629143c72fa73b2f05064eec51ca5117a7b5a36075b287f51a1",
+    "wall_unix_us":{
+      "early_decision_from_node3":1793091426202763,"early_decision_from_node1":1793091426214170,
+      "node2_h32_ack":1793091426324458,"node2_h33_ack":1793091426618474,
+      "node2_h34_execution_done":1793091426636586,
+      "node1_recovery_decision_delivered":1793091426879111,"node3_recovery_decision_delivered":1793091426886118,
+      "node2_decision_first_received_from_node0":1793091455111906,
+      "node2_candidate_registered":1793091455125846,"node2_h34_ack":1793091455138842
+    },
+    "diagnosis":"Decision arrived two heights early and was not retained. Later same-peer recovery sends received transport DONE but no application delivery. Body continuation did run. Same decision first application delivery from another peer unblocked registration and ACK within27ms.",
+    "coverage":"all critical dropped=0; node2 delivery window seq1098..1915 retained despite1012 earlier evictions",
+    "not_combined_with_non_diagnostic_scores":true
+  }
+}

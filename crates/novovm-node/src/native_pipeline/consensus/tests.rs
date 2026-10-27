@@ -21,7 +21,7 @@ mod native_product_rpc;
 #[path = "pacemaker_integration.rs"]
 mod pacemaker_integration;
 #[path = "progress_integration.rs"]
-mod progress_integration;
+pub(crate) mod progress_integration;
 #[path = "uca_publication_integration.rs"]
 mod uca_publication_integration;
 

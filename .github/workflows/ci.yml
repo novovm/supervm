@@ -334,6 +334,16 @@ jobs:
           cargo test -p novovm-network --lib udp_ingress_ --locked -- --test-threads=1
           cargo test -p novovm-protocol --lib native_query --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_pipeline --locked -- --test-threads=1
+          # Original delivery owner: purpose takeover, bounded drain and request
+          # ordering must remain active regressions, not merely ignored files.
+          cargo test -p novovm-node --lib native_archive_ --locked -- --ignored --list > target/native-archive-test-list.txt
+          grep -q 'native_archive_delivery_inflight_takeover_retains_original_handle: test' target/native-archive-test-list.txt
+          grep -q 'native_archive_request_older_completion_cannot_replace_newer_responsibility: test' target/native-archive-test-list.txt
+          cargo test -p novovm-node --lib native_archive_ --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib native_realtime_retirement_ --locked -- --ignored --list > target/native-retirement-test-list.txt
+          grep -q 'native_realtime_retirement_partial_remote_object_drains_to_real_done: test' target/native-retirement-test-list.txt
+          grep -q 'native_realtime_retirement_auxiliary_full_preserves_four_current_controls: test' target/native-retirement-test-list.txt
+          cargo test -p novovm-node --lib native_realtime_retirement_ --locked -- --ignored --test-threads=1
           # Same native lifecycle / real AOEM: optional successor may compute,
           # never publish before exact durable parent ACK; stale tickets drain.
           cargo test -p novovm-node --lib native_successor_ --locked -- --ignored --list > target/native-successor-test-list.txt

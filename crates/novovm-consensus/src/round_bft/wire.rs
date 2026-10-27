@@ -35,6 +35,19 @@ const CONTEXT_BYTES: usize = 184;
 const VOTE_BYTES: usize = CONTEXT_BYTES + 8 + 1 + 1 + 32 + 32 + MLDSA65_SIGNATURE_BYTES;
 const PROPOSAL_BYTES: usize = CONTEXT_BYTES + 8 + 32 + 1 + 8 + 32 + MLDSA65_SIGNATURE_BYTES;
 pub const MAX_WIRE_BYTES: usize = PREFIX_BYTES + 4 + MAX_VALIDATORS * VOTE_BYTES;
+/// Encoded evidence bounds from this codec, for owner-side resource admission.
+/// The caller supplies its pinned validator count, never an incoming claim.
+pub fn evidence_wire_bounds(validators: usize) -> Result<(usize, usize, usize)> {
+    ensure!(
+        (1..=MAX_VALIDATORS).contains(&validators),
+        "invalid evidence validator bound"
+    );
+    Ok((
+        PREFIX_BYTES + VOTE_BYTES,
+        PREFIX_BYTES + PROPOSAL_BYTES,
+        PREFIX_BYTES + 4 + validators * VOTE_BYTES,
+    ))
+}
 const VOTE_DOMAIN: &[u8] = b"novovm-round-bft/v2/mldsa65/vote\0";
 const PROPOSAL_DOMAIN: &[u8] = b"novovm-round-bft/v2/mldsa65/proposal\0";
 
