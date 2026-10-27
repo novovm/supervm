@@ -73,9 +73,11 @@ pub struct RoundProgress {
     published: Option<PublishedCandidate>,
     offers: BTreeMap<(Hash, bool), Offered>,
     // Native object completion is acknowledged once. An authenticated future
-    // proposal must survive a pending local round ACK, not rely on repeating
-    // the same completed transport object. One tip per proposer; never votes.
-    future_offers: BTreeMap<Hash, Offered>,
+    // control must survive a pending local round/height ACK, not rely on
+    // repeating a completed transport object. Only current/next height,
+    // one proposal and one decision per authenticated peer/height; never votes.
+    // These are evidence hints, not another execution or publication owner.
+    future_offers: BTreeMap<(u64, Hash, bool), Offered>,
     proposed_round: Option<u64>,
     recovery_roots: BTreeMap<Hash, CandidateLocator>,
     recovery_offers: Vec<ReplayOffer>,
@@ -367,21 +369,29 @@ impl RoundProgress {
                         p.round - self.round() <= self.limits.votes.max_future_round_span,
                         "future proposal exceeds retained-round span"
                     );
-                    if self
-                        .future_offers
-                        .get(&peer)
-                        .is_none_or(|old| old.proposal.proposal().round <= p.round)
-                    {
-                        self.future_offers.insert(
-                            peer,
-                            Offered {
-                                proposal,
-                                valid: valid_quorum,
-                                decision: None,
-                                body_id: *body_id,
-                            },
-                        );
-                    }
+                    self.retain_future_offer(
+                        peer,
+                        Offered {
+                            proposal,
+                            valid: valid_quorum,
+                            decision: None,
+                            body_id: *body_id,
+                        },
+                    );
+                } else if self.context().height.checked_add(1) == Some(p.context.height) {
+                    ensure!(
+                        p.round <= self.limits.votes.max_future_round_span,
+                        "next-height proposal exceeds retained-round span"
+                    );
+                    self.retain_future_offer(
+                        peer,
+                        Offered {
+                            proposal,
+                            valid: valid_quorum,
+                            decision: None,
+                            body_id: *body_id,
+                        },
+                    );
                 }
             }
             (
@@ -401,6 +411,18 @@ impl RoundProgress {
                             body_id: *body_id,
                         },
                     );
+                } else if self.context().height.checked_add(1)
+                    == Some(proposal.proposal().context.height)
+                {
+                    self.retain_future_offer(
+                        peer,
+                        Offered {
+                            proposal,
+                            valid: None,
+                            decision: Some(certificate),
+                            body_id: *body_id,
+                        },
+                    );
                 }
             }
             _ => {
@@ -408,6 +430,38 @@ impl RoundProgress {
             }
         }
         Ok(())
+    }
+
+    fn retain_future_offer(&mut self, peer: Hash, offer: Offered) {
+        let proposal = offer.proposal.proposal();
+        let key = (proposal.context.height, peer, offer.decision.is_some());
+        if self
+            .future_offers
+            .get(&key)
+            .is_none_or(|old| old.proposal.proposal().round <= proposal.round)
+        {
+            self.future_offers.insert(key, offer);
+        }
+    }
+
+    // Called only after the ORIGINAL journal acknowledges a local transition.
+    // A matching height is insufficient: parent block/decision and the entire
+    // domain must match the newly authoritative context before any body demand.
+    fn promote_future_offers(&mut self) {
+        let context = self.context();
+        let round = self.round();
+        for (key, offer) in std::mem::take(&mut self.future_offers) {
+            let proposal = offer.proposal.proposal();
+            if proposal.context == context {
+                if offer.decision.is_some() || proposal.round == round {
+                    self.offers.insert((key.1, key.2), offer);
+                } else if proposal.round > round {
+                    self.future_offers.insert(key, offer);
+                }
+            } else if context.height.checked_add(1) == Some(proposal.context.height) {
+                self.future_offers.insert(key, offer);
+            }
+        }
     }
 
     /// Never blocks on transport or AOEM completion. A local persistence error
@@ -519,7 +573,7 @@ impl RoundProgress {
                 });
                 self.candidate_bytes = 0;
                 self.offers.clear();
-                self.future_offers.clear();
+                self.promote_future_offers();
                 self.proposed_round = None;
             } else if self.round() != round {
                 self.collector
@@ -531,17 +585,7 @@ impl RoundProgress {
                 // Promote only after the same durable journal acknowledges
                 // this round. Retaining a proposal does not grant catch-up,
                 // an execution capability, a lock change or signing authority.
-                for (peer, offer) in std::mem::take(&mut self.future_offers) {
-                    match offer.proposal.proposal().round.cmp(&current) {
-                        std::cmp::Ordering::Equal => {
-                            self.offers.insert((peer, false), offer);
-                        }
-                        std::cmp::Ordering::Greater => {
-                            self.future_offers.insert(peer, offer);
-                        }
-                        std::cmp::Ordering::Less => {}
-                    }
-                }
+                self.promote_future_offers();
                 let valid = self
                     .journal
                     .verified_valid_certificate()

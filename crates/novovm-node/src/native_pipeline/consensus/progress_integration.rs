@@ -19,6 +19,8 @@ use std::collections::VecDeque;
 
 #[path = "native_deadline_integration.rs"]
 mod deadline;
+#[path = "native_early_height_integration.rs"]
+mod early_height;
 #[path = "native_lifecycle_integration.rs"]
 mod lifecycle;
 #[path = "published_projection_integration.rs"]
