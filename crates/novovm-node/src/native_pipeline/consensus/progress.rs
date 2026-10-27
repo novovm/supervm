@@ -297,6 +297,13 @@ impl RoundProgress {
         );
         self.candidate_bytes += bytes;
         self.recovery_roots.remove(&value);
+        crate::native_pipeline::profile::critical_event(
+            crate::native_pipeline::profile::CriticalEvent::CandidateRegistered,
+            self.context().height,
+            self.round(),
+            Some(value),
+            Some(body_id),
+        );
         Ok(true)
     }
 
@@ -317,6 +324,13 @@ impl RoundProgress {
             (Message::Vote(vote), VerifiedEvidence::Vote(_)) => {
                 if vote.context == self.context() {
                     self.collector.insert(vote)?;
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::VoteReceived,
+                        vote.context.height,
+                        vote.round,
+                        vote.value,
+                        None,
+                    );
                 }
             }
             (
@@ -332,6 +346,13 @@ impl RoundProgress {
                     "proposal body hint is not from proposer"
                 );
                 if p.context == self.context() && p.round == self.round() {
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::ProposalReceived,
+                        p.context.height,
+                        p.round,
+                        Some(p.value),
+                        Some(*body_id),
+                    );
                     self.offers.insert(
                         (peer, false),
                         Offered {
@@ -459,6 +480,28 @@ impl RoundProgress {
         // Capture it before that ACK retires the old collector buckets.
         self.pin_decisions()?;
         if let Some(message) = self.journal.poll(pipeline)? {
+            match &message {
+                Some(DurableMessage::Vote(vote)) => {
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::LocalVoteDurable,
+                        vote.context.height,
+                        vote.round,
+                        vote.value,
+                        None,
+                    );
+                }
+                Some(DurableMessage::Decision { proposal, .. }) => {
+                    let body = self.candidate(proposal.value).map(|candidate| candidate.0);
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::DecisionDurableAck,
+                        proposal.context.height,
+                        proposal.round,
+                        Some(proposal.value),
+                        body,
+                    );
+                }
+                Some(DurableMessage::Proposal(_)) | None => {}
+            }
             if let Some(DurableMessage::Decision { proposal, .. }) = &message {
                 self.retain_published(proposal, context, parent)?;
             }
@@ -826,8 +869,22 @@ impl RoundProgress {
                     .quorum(p.round, Phase::Precommit, Some(p.value))?,
             };
             if let Some(qc) = decision {
+                crate::native_pipeline::profile::critical_event(
+                    crate::native_pipeline::profile::CriticalEvent::PrecommitQcAvailable,
+                    p.context.height,
+                    p.round,
+                    Some(p.value),
+                    Some(offer.body_id),
+                );
                 self.journal
                     .observe_decision(&offer.proposal, &candidate, &qc)?;
+                crate::native_pipeline::profile::critical_event(
+                    crate::native_pipeline::profile::CriticalEvent::DecisionStaged,
+                    p.context.height,
+                    p.round,
+                    Some(p.value),
+                    Some(offer.body_id),
+                );
 
                 return Ok(());
             }
@@ -879,6 +936,13 @@ impl RoundProgress {
                         continue;
                     };
                     if let Some(qc) = self.collector.quorum(round, Phase::Prevote, Some(value))? {
+                        crate::native_pipeline::profile::critical_event(
+                            crate::native_pipeline::profile::CriticalEvent::PrevoteQcAvailable,
+                            offer.proposal.proposal().context.height,
+                            round,
+                            Some(value),
+                            Some(offer.body_id),
+                        );
                         self.journal
                             .observe_prevotes(&qc, Some((&offer.proposal, &candidate)))?;
 

@@ -1,10 +1,166 @@
 //! Opt-in, bounded process-local stage timing. Never changes protocol decisions.
 //! Durations are inclusive wall time: nested and concurrent phases must NOT be
-//! added as a critical path or called CPU utilization. No per-transaction log.
+//! added as a critical path or called CPU utilization. The separately enabled
+//! critical timeline retains only bounded stage identifiers, never transaction
+//! bodies, signatures, keys or protocol authority.
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+const CRITICAL_EVENTS: usize = 2048;
+
+#[derive(Clone, Copy)]
+pub(crate) enum CriticalEvent {
+    SignatureBatchDone,
+    AuthorityAdmissionDone,
+    CandidateExecutionDone,
+    CandidateRegistered,
+    ProposalReceived,
+    VoteReceived,
+    LocalVoteDurable,
+    PrevoteQcAvailable,
+    PrecommitQcAvailable,
+    DecisionStaged,
+    DecisionDurableAck,
+    ReceiptProjectionVisible,
+}
+
+impl CriticalEvent {
+    fn name(self) -> &'static str {
+        match self {
+            Self::SignatureBatchDone => "signature_batch_done",
+            Self::AuthorityAdmissionDone => "authority_admission_done",
+            Self::CandidateExecutionDone => "candidate_execution_done",
+            Self::CandidateRegistered => "candidate_registered",
+            Self::ProposalReceived => "proposal_received",
+            Self::VoteReceived => "vote_received",
+            Self::LocalVoteDurable => "local_vote_durable",
+            Self::PrevoteQcAvailable => "prevote_qc_available",
+            Self::PrecommitQcAvailable => "precommit_qc_available",
+            Self::DecisionStaged => "decision_staged",
+            Self::DecisionDurableAck => "decision_durable_ack",
+            Self::ReceiptProjectionVisible => "receipt_projection_visible",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CriticalRecord {
+    seq: u64,
+    elapsed_ns: u64,
+    wall_unix_us: u64,
+    event: &'static str,
+    height: u64,
+    round: Option<u64>,
+    value: Option<[u8; 32]>,
+    body: Option<[u8; 32]>,
+}
+
+struct CriticalBuffer {
+    records: VecDeque<CriticalRecord>,
+    dropped: u64,
+    next_seq: u64,
+}
+
+impl CriticalBuffer {
+    const fn new() -> Self {
+        Self {
+            records: VecDeque::new(),
+            dropped: 0,
+            next_seq: 0,
+        }
+    }
+
+    fn push(&mut self, mut record: CriticalRecord) {
+        record.seq = self.next_seq;
+        self.next_seq = self.next_seq.saturating_add(1);
+        if self.records.len() == CRITICAL_EVENTS {
+            self.dropped = self.dropped.saturating_add(1);
+            return;
+        }
+        self.records.push_back(record);
+    }
+}
+
+fn wall_unix_us() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+static CRITICAL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
+
+fn critical_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("NOVOVM_PROFILE_CRITICAL_PATH")
+            .ok()
+            .as_deref()
+            == Some("1")
+    })
+}
+
+pub(crate) fn critical_event(
+    event: CriticalEvent,
+    height: u64,
+    round: u64,
+    value: Option<[u8; 32]>,
+    body: Option<[u8; 32]>,
+) {
+    if !critical_enabled() {
+        return;
+    }
+    let started = CRITICAL_START.get_or_init(Instant::now);
+    let elapsed_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+    if let Ok(mut buffer) = CRITICAL.lock() {
+        buffer.push(CriticalRecord {
+            seq: 0,
+            elapsed_ns,
+            wall_unix_us: wall_unix_us(),
+            event: event.name(),
+            height,
+            round: Some(round),
+            value,
+            body,
+        });
+    }
+}
+
+pub(crate) fn critical_projection_visible(height: u64, value: [u8; 32]) {
+    if !critical_enabled() {
+        return;
+    }
+    let started = CRITICAL_START.get_or_init(Instant::now);
+    let elapsed_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+    if let Ok(mut buffer) = CRITICAL.lock() {
+        let source = buffer
+            .records
+            .iter()
+            .rev()
+            .find(|record| record.value == Some(value) && record.event == "decision_durable_ack")
+            .cloned();
+        buffer.push(CriticalRecord {
+            seq: 0,
+            elapsed_ns,
+            wall_unix_us: wall_unix_us(),
+            event: CriticalEvent::ReceiptProjectionVisible.name(),
+            height,
+            round: source.as_ref().and_then(|record| record.round),
+            value: Some(value),
+            body: source.and_then(|record| record.body),
+        });
+    }
+}
+
+fn hash(value: Option<[u8; 32]>) -> Value {
+    value.map_or(Value::Null, |bytes| {
+        Value::String(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    })
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum Phase {
@@ -202,7 +358,30 @@ pub(crate) fn snapshot() -> Value {
     } else {
         None
     };
-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer})
+    let critical = if critical_enabled() {
+        CRITICAL.lock().ok().map(|buffer| {
+            json!({
+                "enabled":true,
+                "process_id":std::process::id(),
+                "capacity":CRITICAL_EVENTS,
+                "dropped":buffer.dropped,
+                "clock":"process-local monotonic elapsed_ns; wall_unix_us is cross-process alignment assistance and not an ordering authority",
+                "events":buffer.records.iter().map(|record| json!({
+                    "seq":record.seq,
+                    "elapsed_ns":record.elapsed_ns,
+                    "wall_unix_us":record.wall_unix_us,
+                    "event":record.event,
+                    "height":record.height,
+                    "round":record.round,
+                    "value":hash(record.value),
+                    "body":hash(record.body),
+                })).collect::<Vec<_>>()
+            })
+        }).unwrap_or_else(|| json!({"enabled":true,"capacity":CRITICAL_EVENTS,"unavailable":"lock poisoned"}))
+    } else {
+        json!({"enabled":false,"capacity":CRITICAL_EVENTS,"dropped":0,"events":[]})
+    };
+    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical})
 }
 
 #[cfg(test)]
@@ -221,5 +400,24 @@ mod tests {
         assert_eq!(counter.ns.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(counter.max_ns.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(Phase::NativeSelection as usize + 1, NAMES.len());
+    }
+
+    #[test]
+    fn critical_buffer_is_fixed_capacity_and_counts_drops() {
+        let mut buffer = CriticalBuffer::new();
+        for elapsed_ns in 0..=CRITICAL_EVENTS as u64 {
+            buffer.push(CriticalRecord {
+                seq: 0,
+                elapsed_ns,
+                wall_unix_us: 0,
+                event: "test",
+                height: 1,
+                round: Some(0),
+                value: None,
+                body: None,
+            });
+        }
+        assert_eq!(buffer.records.len(), CRITICAL_EVENTS);
+        assert_eq!(buffer.dropped, 1);
     }
 }

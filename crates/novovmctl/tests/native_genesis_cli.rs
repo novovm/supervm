@@ -363,6 +363,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
         uca_initialization: Some(initialization),
         workers: 2,
         execution_backend: Default::default(),
+        signature_backend: Default::default(),
         batch_size: 64,
     };
     // ResidentConfig deliberately exposes only deserialization. Assemble the

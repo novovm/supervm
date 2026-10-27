@@ -65,7 +65,22 @@ pub struct ResidentConfig {
     /// Local explicit backend; old configurations preserve the measured CPU path.
     #[serde(default)]
     pub execution_backend: crate::native_pipeline::pipeline::ExecutionBackend,
+    /// Signature execution policy, independent of business execution. Auto
+    /// keeps AOEM's qualified default; explicit GPU is required, never fallback.
+    #[serde(default)]
+    pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
     pub batch_size: usize,
+}
+
+/// Test-driver input only; the running node reads the typed configuration,
+/// never this environment variable. Does not select an algorithm or bypass.
+#[cfg(test)]
+pub(crate) fn test_signature_backend(
+) -> Result<novovm_exec::pq_signature::MldsaVerificationBackendV1> {
+    let value =
+        std::env::var("NOVOVM_RESIDENT_TEST_SIGNATURE_BACKEND").unwrap_or_else(|_| "auto".into());
+    serde_json::from_value(serde_json::Value::String(value))
+        .context("invalid explicit resident test signature backend")
 }
 
 /// Explicit key custody, never a fallback after protected-key failure. Raw
@@ -667,6 +682,41 @@ mod tests {
     }
 
     #[test]
+    fn signature_backend_is_independent_explicit_and_defaults_to_auto() {
+        use novovm_exec::pq_signature::MldsaVerificationBackendV1 as Backend;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Selection {
+            #[serde(default)]
+            signature_backend: Backend,
+        }
+        let default: Selection = serde_json::from_str("{}").unwrap();
+        assert_eq!(default.signature_backend, Backend::Auto);
+        for (name, expected) in [
+            ("auto", Backend::Auto),
+            ("cpu", Backend::Cpu),
+            ("gpu_required", Backend::GpuRequired),
+        ] {
+            let actual: Selection =
+                serde_json::from_value(serde_json::json!({"signature_backend": name})).unwrap();
+            assert_eq!(actual.signature_backend, expected);
+        }
+        for value in [
+            "gpu",
+            "ed25519",
+            "cpu_callbacks",
+            "fallback",
+            "GPU_REQUIRED",
+        ] {
+            assert!(serde_json::from_value::<Selection>(
+                serde_json::json!({"signature_backend": value}),
+            )
+            .is_err());
+        }
+        assert!(serde_json::from_str::<Selection>(r#"{"signatures_backend":"cpu"}"#).is_err());
+    }
+
+    #[test]
     #[ignore = "requires explicit trusted NOVOVM_AOEM_TEST_LIBRARY; opens a real fresh AOEM database"]
     fn real_resident_startup_reopen_preserves_genesis_and_refuses_recreate() -> Result<()> {
         use super::super::{ResidentNode, StartMode};
@@ -747,6 +797,7 @@ mod tests {
             uca_initialization: None,
             workers: 2,
             execution_backend: Default::default(),
+            signature_backend: Default::default(),
             batch_size: 2,
         };
         let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;

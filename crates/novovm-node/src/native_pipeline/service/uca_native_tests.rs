@@ -1,7 +1,10 @@
 //! Four original services/four independent databases, in ONE process, actual
-//! localhost NovoRUDP application and validator sockets. No direct transaction
-//! injection, HTTP observer, synthetic vote or alternate execution authority.
+//! localhost NovoRUDP application and validator sockets. The UDP closure has no
+//! direct transaction injection, HTTP observer, synthetic vote or alternate execution authority.
 //! This is not four-process/machine, mainnet, full PQ consensus or TPS evidence.
+//! The explicitly labelled admission-boundary subcase injects real signed
+//! batches into the original consumer without a network/consensus tick, then
+//! reopens the same genesis databases before the unchanged UDP closure below.
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
@@ -439,6 +442,7 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
                 uca_initialization: Some(material.clone()),
                 workers: 2,
                 execution_backend: Default::default(),
+                signature_backend: config::test_signature_backend()?,
                 batch_size: 2,
             })
         })
@@ -449,7 +453,7 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
     let ingress = (0..4)
         .find(|i| !nodes[*i].node.controller.is_local_leader().unwrap())
         .context("nonleader ingress missing")?;
-    let mut clients = configs
+    let clients = configs
         .iter()
         .map(|config| connect(config, validators.clone()))
         .collect::<Result<Vec<_>>>()?;
@@ -471,6 +475,46 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         };
     let signer = runtime.uca_spend_signer_v1()?;
     let transfer = signer.sign(intent(0, 1, 100, 1)?, &keys[2].0, &keys[2].1)?;
+    let make_batch = |spends: &[SignedUcaSpendV1]| -> Result<Arc<UcaSpendBatch>> {
+        let raws = spends
+            .iter()
+            .map(|spend| spend.encode().map_err(anyhow::Error::msg))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Arc::new(UcaSpendBatch::from_raw(
+            &raws,
+            &vec![(ADDRESSES[0].to_vec(), ADDRESSES[1].to_vec()); spends.len()],
+            UcaSpendBatchLimits {
+                transactions: 3,
+                transaction_bytes: MAX_SIGNED_SPEND_BYTES,
+                body_bytes: 3 * MAX_SIGNED_SPEND_BYTES,
+            },
+        )?))
+    };
+    let mut prefix = Vec::new();
+    for nonce in 1..=1 {
+        let mut next = intent(0, 1, 1, 1)?;
+        next.nonce = nonce;
+        prefix.push(signer.sign(next, &keys[2].0, &keys[2].1)?);
+    }
+    prefix.push(transfer.clone()); // Entire final chunk is an exact cache hit.
+    let mut bad = signer.sign(intent(0, 1, 1, 1)?, &keys[2].0, &keys[2].1)?;
+    bad.signature[0] ^= 1;
+    println!("UCA admission-only overlap/cached-tail/next-body counterexample");
+    nodes[ingress].assert_uca_overlap_body_boundaries_for_test(
+        make_batch(std::slice::from_ref(&transfer))?,
+        make_batch(&prefix)?,
+        make_batch(&[bad.clone(), bad])?,
+    )?;
+    // Admission is volatile: no controller tick, candidate publication, reset,
+    // deletion or fabricated authorization. Reopen the SAME original genesis
+    // databases before the existing real UDP/respend/recovery acceptance.
+    drop(clients);
+    drop(nodes);
+    let mut nodes = start(&configs, StartMode::Existing)?;
+    let mut clients = configs
+        .iter()
+        .map(|config| connect(config, validators.clone()))
+        .collect::<Result<Vec<_>>>()?;
     let mut tampered = transfer.clone();
     tampered.signature[0] ^= 1;
     let stale = signer.sign(intent(0, 1, 100, 2)?, &keys[2].0, &keys[2].1)?;

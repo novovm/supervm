@@ -22,6 +22,61 @@ fn usage(pipeline: &CandidatePipeline) -> (usize, usize, usize, usize) {
     (used.batches, used.bytes, used.background, used.ingress)
 }
 
+fn all_usage(pipeline: &CandidatePipeline) -> (usize, usize, usize, usize, usize) {
+    let used = pipeline.usage.lock().unwrap();
+    (
+        used.batches,
+        used.bytes,
+        used.background,
+        used.ingress,
+        used.authority,
+    )
+}
+
+fn rejected_output(
+    pipeline: &CandidatePipeline,
+    command: AdmissionCommand,
+) -> (
+    SignatureAdmissionOutput,
+    mpsc::Sender<Result<SignatureAdmissionOutput>>,
+) {
+    let AdmissionCommand {
+        request,
+        reply,
+        permit,
+    } = command;
+    // Channel/accounting fixture only: never manufactures signature evidence.
+    let rows = request
+        .inputs
+        .into_iter()
+        .map(|input| AdmissionRow {
+            input,
+            result: Err(anyhow::anyhow!("fixture rejection")),
+        })
+        .collect();
+    (
+        SignatureAdmissionOutput {
+            rows: AdmissionRows {
+                rows,
+                peak_callbacks: 0,
+            },
+            _permit: permit,
+            owner: pipeline.identity.clone(),
+        },
+        reply,
+    )
+}
+
+fn completed(
+    pipeline: &CandidatePipeline,
+    receiver: &mpsc::Receiver<DriverMessage>,
+) -> SignatureAdmissionOutput {
+    let mut ticket = admitted(pipeline);
+    let (output, reply) = rejected_output(pipeline, next(receiver));
+    assert!(reply.send(Ok(output)).is_ok());
+    ticket.try_take().unwrap().unwrap()
+}
+
 fn admitted(pipeline: &CandidatePipeline) -> SignatureAdmissionTicket {
     let SignatureAdmissionSubmission::Accepted(ticket) =
         pipeline.try_admit_signatures_owned(input()).unwrap()
@@ -131,6 +186,113 @@ fn unconsumed_output_keeps_ingress_permit_until_consumed_or_dropped() {
     assert_eq!(usage(&pipeline).3, 1);
     drop(output);
     assert_eq!(usage(&pipeline), (0, 0, 0, 0));
+}
+
+#[test]
+fn authority_parking_hands_off_only_one_slot_and_retains_bytes_through_last_arc() {
+    let mut config = cfg();
+    let bytes = input().reservation(&config).unwrap();
+    let reserve = BatchRequest::retained_reservation(
+        config.authentication.body_bytes.min(config.plan.body_bytes),
+        &config,
+    )
+    .unwrap();
+    config.max_retained_bytes = 2 * bytes + reserve;
+    let (pipeline, receiver) = inert_pipeline(config);
+    let mut first = completed(&pipeline, &receiver);
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 1, 0));
+    // A result held by its caller still occupies active ingress until the
+    // explicit stage handoff, even though resident compute has completed.
+    assert!(matches!(
+        pipeline.try_admit_signatures_owned(input()).unwrap(),
+        SignatureAdmissionSubmission::Backpressured(_)
+    ));
+    let retained = first._permit.clone();
+    first.park_for_authority().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
+    let mut second = completed(&pipeline, &receiver);
+    assert_eq!(all_usage(&pipeline), (0, 2 * bytes, 0, 1, 1));
+    let before = all_usage(&pipeline);
+    assert!(first.park_for_authority().is_err());
+    assert!(second.park_for_authority().is_err());
+    assert_eq!(all_usage(&pipeline), before);
+    assert!(matches!(
+        pipeline.try_admit_signatures_owned(input()).unwrap(),
+        SignatureAdmissionSubmission::Backpressured(_)
+    ));
+    let Submission::Accepted(candidate) = pipeline.try_submit_owned(request(empty_root())).unwrap()
+    else {
+        panic!("overlapping admissions consumed the reserved candidate quota")
+    };
+    let command = receiver.try_recv().unwrap();
+    let candidate_bytes = all_usage(&pipeline).1 - 2 * bytes;
+    assert_eq!(
+        all_usage(&pipeline),
+        (1, 2 * bytes + candidate_bytes, 0, 1, 1)
+    );
+    drop(first);
+    assert!(second.park_for_authority().is_err());
+    assert_eq!(all_usage(&pipeline).4, 1);
+    // The final Arc, not output/ticket consumption, retires the byte and role
+    // charge. Moving to authority must never drop an active signature charge.
+    drop(retained);
+    assert_eq!(all_usage(&pipeline), (1, bytes + candidate_bytes, 0, 1, 0));
+    second.park_for_authority().unwrap();
+    assert_eq!(all_usage(&pipeline), (1, bytes + candidate_bytes, 0, 0, 1));
+    drop((second, candidate, command));
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
+fn parked_source_charge_still_reserves_the_maximum_candidate_bytes() {
+    let mut config = cfg();
+    let bytes = input().reservation(&config).unwrap();
+    let reserve = BatchRequest::retained_reservation(
+        config.authentication.body_bytes.min(config.plan.body_bytes),
+        &config,
+    )
+    .unwrap();
+    config.max_retained_bytes = 2 * bytes + reserve - 1;
+    let (pipeline, receiver) = inert_pipeline(config);
+    let mut output = completed(&pipeline, &receiver);
+    output.park_for_authority().unwrap();
+    assert!(matches!(
+        pipeline.try_admit_signatures_owned(input()).unwrap(),
+        SignatureAdmissionSubmission::Backpressured(_)
+    ));
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
+    let Submission::Accepted(candidate) = pipeline.try_submit_owned(request(empty_root())).unwrap()
+    else {
+        panic!("parked bytes prevented the reserved candidate")
+    };
+    drop((output, candidate, receiver.try_recv().unwrap()));
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
+fn parked_reply_abandonment_releases_its_original_owner_only() {
+    let (pipeline, receiver) = inert_pipeline(cfg());
+    let (other, _) = inert_pipeline(cfg());
+    let ticket = admitted(&pipeline);
+    let (mut output, reply) = rejected_output(&pipeline, next(&receiver));
+    output.park_for_authority().unwrap();
+    assert_eq!(all_usage(&pipeline).4, 1);
+    assert_eq!(all_usage(&other), (0, 0, 0, 0, 0));
+    assert!(reply.send(Ok(output)).is_ok());
+    drop(ticket);
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+    assert_eq!(all_usage(&other), (0, 0, 0, 0, 0));
+}
+
+#[test]
+fn authority_handoff_rejects_non_ingress_role_without_changing_accounting() {
+    let (pipeline, _) = inert_pipeline(cfg());
+    let permit = pipeline.reserve(23, false).unwrap().unwrap();
+    assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
+    assert!(permit.park_for_authority().is_err());
+    assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
+    drop(permit);
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
 }
 
 #[test]

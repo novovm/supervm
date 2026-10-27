@@ -149,14 +149,21 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
     } else {
         ("linux", "libaoem_ffi.so")
     };
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../aoem")
-        .join(platform)
-        .join("core/bin")
-        .join(name);
+    // Preserve packaged-library coverage by default. Isolated candidate gates
+    // can name one explicit library, but fixture key generation and execution
+    // must still load that SAME owner through normal manifest/capability checks.
+    let path = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../aoem")
+                .join(platform)
+                .join("core/bin")
+                .join(name)
+        });
     ensure!(
         aoem_bindings::default_host_dll_path().canonicalize()? == path.canonicalize()?,
-        "fixture generator and execution must use the same packaged AOEM"
+        "fixture generator and execution must use the same qualified AOEM"
     );
     let facade = AoemExecFacade::open(&path, AoemExecOpenOptions::default())?;
     let signer = facade.uca_spend_signer_v1()?;

@@ -361,7 +361,10 @@ impl RpcLifecycle {
         // rather than turning every 32-signature service quantum into a block.
         // Every completed body grants a proposal turn even if the next body
         // has begun, so a continuous inbound stream cannot starve selection.
-        if self.incoming.is_some() && !self.ingress_batch_boundary {
+        if (self.incoming.is_some()
+            || self.is_uca() && self.admission.has_pending_native_admission())
+            && !self.ingress_batch_boundary
+        {
             // Strict admission gates selection, not completion of a previously
             // prepared window's read-only I/O. Otherwise every eight nonce
             // reads wait for another whole body to finish authentication.
@@ -614,6 +617,10 @@ impl RpcLifecycle {
         // Conflicting same-nonce input is not reported as an executed failure.
         self.retire_stale_pending();
         self.indexed_height = point.height;
+        crate::native_pipeline::profile::critical_projection_visible(
+            point.height,
+            point.block_hash,
+        );
         if warm {
             self.warm_projection_blocks = self.warm_projection_blocks.saturating_add(1);
         } else {

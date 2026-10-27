@@ -366,6 +366,14 @@ pub struct SignatureAdmissionOutput {
 }
 
 impl SignatureAdmissionOutput {
+    /// Hand this result to the single bounded authority-capture stage, making
+    /// the existing signature slot available without releasing any source byte
+    /// charge. This is scheduling credit only, never asset authorization. The
+    /// private permit always updates its original pipeline's accounting owner.
+    pub(crate) fn park_for_authority(&mut self) -> Result<()> {
+        self._permit.park_for_authority()
+    }
+
     pub fn len(&self) -> usize {
         self.rows.rows.len()
     }
@@ -580,6 +588,7 @@ impl CandidatePipeline {
             bytes,
             background: false,
             ingress: true,
+            authority_parked: AtomicBool::new(false),
         })))
     }
 }

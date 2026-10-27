@@ -16,10 +16,12 @@ fn job(marker: u8, background: bool) -> Job {
                 bytes: 0,
                 background: usize::from(background),
                 ingress: 0,
+                authority: 0,
             })),
             bytes: 0,
             background,
             ingress: false,
+            authority_parked: AtomicBool::new(false),
         }),
         background,
     }
@@ -128,6 +130,7 @@ fn bound_job(marker: u8, background: bool) -> (Job, Arc<Mutex<Usage>>) {
         bytes,
         background: 1,
         ingress: 0,
+        authority: 0,
     }));
     // Authentication ALWAYS owns the optional permit. Bind scheduling priority
     // must come from the command, not from changing or inspecting this flag.
@@ -136,6 +139,7 @@ fn bound_job(marker: u8, background: bool) -> (Job, Arc<Mutex<Usage>>) {
         bytes,
         background: true,
         ingress: false,
+        authority_parked: AtomicBool::new(false),
     });
     let original = Arc::as_ptr(&permit);
     let (reply, _) = mpsc::channel();

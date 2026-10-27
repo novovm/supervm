@@ -514,6 +514,8 @@ pub type AoemStateReadV1 = AoemStateJsonV1;
 pub type AoemStateSnapshotV1 = AoemStateJsonV1;
 pub type AoemIntegerResultTakeV1 =
     unsafe extern "C" fn(*mut c_void, u64, u64, *mut *mut u8, *mut usize) -> i32;
+pub type AoemComputeResultTakeV1 =
+    unsafe extern "C" fn(*mut c_void, *const u8, usize, u64, *mut *mut u8, *mut usize) -> i32;
 pub type AoemLastError = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 
 pub struct AoemDyn {
@@ -583,6 +585,7 @@ pub struct AoemDyn {
     state_write_v1: Option<AoemStateWriteV1>,
     state_read_v1: Option<AoemStateReadV1>,
     integer_result_take_v1: Option<AoemIntegerResultTakeV1>,
+    compute_result_take_v1: Option<AoemComputeResultTakeV1>,
     state_snapshot_v1: Option<AoemStateSnapshotV1>,
     last_error: AoemLastError,
 }
@@ -1065,6 +1068,10 @@ impl AoemDyn {
             .get::<AoemIntegerResultTakeV1>(b"aoem_integer_result_take_v1")
             .ok()
             .map(|f| *f);
+        let compute_result_take_v1 = lib
+            .get::<AoemComputeResultTakeV1>(b"aoem_compute_result_take_v1")
+            .ok()
+            .map(|f| *f);
         let last_error: AoemLastError = *lib.get::<AoemLastError>(b"aoem_last_error")?;
 
         let dynlib = Self {
@@ -1134,6 +1141,7 @@ impl AoemDyn {
             state_write_v1,
             state_read_v1,
             integer_result_take_v1,
+            compute_result_take_v1,
             state_snapshot_v1,
             last_error,
         };
@@ -1430,6 +1438,10 @@ impl AoemDyn {
 
     pub fn supports_integer_result_take_v1(&self) -> bool {
         self.integer_result_take_v1.is_some() && self.free.is_some()
+    }
+
+    pub fn supports_compute_result_take_v1(&self) -> bool {
+        self.compute_result_take_v1.is_some() && self.free.is_some()
     }
 
     pub fn state_snapshot_v1(&self, request: &[u8]) -> Result<Vec<u8>> {
@@ -3611,6 +3623,58 @@ impl<'a> AoemHandle<'a> {
 }
 
 impl AoemSharedHandle {
+    /// Consume a context/identity/sequence-bound compute result exactly once.
+    /// This lifecycle call is not an alternative computation entrypoint.
+    pub fn compute_result_take_v1(
+        &self,
+        request_id: &str,
+        sequence: u64,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>> {
+        let call = self
+            .dynlib
+            .compute_result_take_v1
+            .context("AOEM compute result unsupported")?;
+        let free = self
+            .dynlib
+            .free
+            .context("AOEM compute result/free contract missing")?;
+        if request_id.is_empty()
+            || request_id.len() > 128
+            || sequence == 0
+            || !request_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || max_bytes == 0
+            || max_bytes > 32 * 1024 * 1024
+        {
+            bail!("AOEM compute result identity or bound differs");
+        }
+        let mut output = ptr::null_mut();
+        let mut len = 0;
+        let rc = unsafe {
+            call(
+                self.raw,
+                request_id.as_ptr(),
+                request_id.len(),
+                sequence,
+                &mut output,
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            bail!("AOEM compute result take failed: rc={rc}");
+        }
+        if len > max_bytes {
+            if !output.is_null() {
+                unsafe { free(output, len) };
+            }
+            bail!("AOEM compute result exceeds caller bound");
+        }
+        self.dynlib
+            .copy_aoem_owned_bytes(output, len, "AOEM compute result")
+    }
+
     /// Consume a completed context-owned result; never a compute bypass.
     pub fn integer_result_take_v1(&self, resource: u64, sequence: u64) -> Result<Vec<u8>> {
         let call = self

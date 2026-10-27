@@ -128,6 +128,7 @@ fn seed_byte_lease_inclusive_bound_preserves_live_batch_accounting() -> Result<(
         bytes: occupied,
         background: 1,
         ingress: 0,
+        authority: 0,
     }));
     let cache = SeedCache::try_install(seed, &packet, &config, &accounting)?
         .context("inclusive byte boundary unexpectedly refused cache")?;

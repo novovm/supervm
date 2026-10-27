@@ -28,6 +28,21 @@ const SENDERS: usize = 16;
 const FUNDING: u128 = 1_000_000;
 const CANONICAL_BODY_BYTES: usize = 384 * 1024;
 
+// Isolated acceptance replay only. These are synthetic process-fixture keys,
+// never operator/deployment custody. The three runs retain separate original
+// databases and signing journals; nothing is cleared or restored for reuse.
+// Keeping generated signatures here makes input equality real, rather than
+// merely regenerating logically equivalent randomized signatures each round.
+type CorpusKeyPair = (Vec<u8>, zeroize::Zeroizing<Vec<u8>>);
+
+#[derive(Default)]
+struct PairedCorpus {
+    keys: Option<Vec<CorpusKeyPair>>,
+    approvals: Option<Vec<UcaGenesisApprovalV1>>,
+    signed: Option<Vec<Vec<u8>>>,
+    identity: Option<(Hash, Hash, Hash)>,
+}
+
 fn account_bytes(index: usize) -> [u8; 20] {
     let mut value = [0x6b; 20];
     value[12..].copy_from_slice(&(index as u64).to_be_bytes());
@@ -266,6 +281,14 @@ fn audit_fee_pages(
 #[test]
 #[ignore = "real four original nodes; bounded ML-DSA-65 NUAS load, all receipts and cold economics; run alone"]
 fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
+    run_native_uca_load(None, &mut PairedCorpus::default(), None).map(|_| ())
+}
+
+fn run_native_uca_load(
+    signature_override: Option<novovm_exec::pq_signature::MldsaVerificationBackendV1>,
+    corpus: &mut PairedCorpus,
+    binary_override: Option<&Path>,
+) -> Result<Value> {
     let count = env_count("NOVOVM_NATIVE_UCA_LOAD_TRANSACTIONS", 1024, 4096)?;
     let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, 64)?;
     ensure!(
@@ -275,10 +298,13 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
     let rounds = count / SENDERS;
     let timeout =
         Duration::from_secs(env_count("NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS", 600, 3600)? as u64);
-    let binary = fs::canonicalize(
-        std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
-            .context("explicit original node binary required")?,
-    )?;
+    let binary = match binary_override {
+        Some(path) => fs::canonicalize(path)?,
+        None => fs::canonicalize(
+            std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
+                .context("explicit original node binary required")?,
+        )?,
+    };
     let library = library()?.canonicalize()?;
     ensure!(
         aoem_bindings::default_host_dll_path().canonicalize()? == library,
@@ -302,9 +328,11 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         "AOEM_SEMANTIC_GRAPH_V2_WORKERS",
         "RAYON_NUM_THREADS",
         "NOVOVM_PROFILE_STAGES",
+        "NOVOVM_PROFILE_CRITICAL_PATH",
         "NOVOVM_NATIVE_LOAD_DIAGNOSTICS",
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
         "NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND",
+        "NOVOVM_RESIDENT_TEST_SIGNATURE_BACKEND",
     ]
     .into_iter()
     .map(|name| (name, std::env::var(name).ok()))
@@ -314,12 +342,16 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         "senders":SENDERS,"window":WINDOW,"sdk_io_quantum":IO_QUANTUM,"canonical_body_budget":CANONICAL_BODY_BYTES,
         "wire_message_budget":MAX_MESSAGE,"query_batch":env_count("NOVOVM_NATIVE_QUERY_BATCH",1,MAX_RECEIPTS)?,
         "backend":test_execution_backend()?,"binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
+        "signature_backend":signature_override.unwrap_or(crate::native_pipeline::service::config::test_signature_backend()?),
         "aoem_sha256":hex(&Sha256::digest(fs::read(&library)?)),"real_processes":4,"real_machines":1,
         "asset_signature":"ML-DSA-65","transport":"native_novorudp_apfl","http_listeners":0,
         "full_65536_workload":false,"static_intent_window":[1,257],"rolling_signature_65536":"NOT_EXECUTED",
-        "input_identity":"fresh generated per invocation; same logical workload is not byte-identical input",
+        "input_identity":if signature_override.is_some() {"one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU"} else {"fresh generated per invocation; same logical workload is not byte-identical input"},
+        "laboratory_replay_only":signature_override.is_some(),
+        "deployment_replay_authorized":false,
         "signature_generation_timed":false,"system_capacity_claim":false,"business_proof_verified":false,
         "diagnostics_enabled":std::env::var("NOVOVM_PROFILE_STAGES").as_deref()==Ok("1"),
+        "critical_path_diagnostics_enabled":std::env::var("NOVOVM_PROFILE_CRITICAL_PATH").as_deref()==Ok("1"),
         "progress_reports_enabled":std::env::var("NOVOVM_NATIVE_LOAD_DIAGNOSTICS").as_deref()==Ok("1"),
         "environment":environment,
         "environment_scope":"explicit inherited settings; null means unset, not an effective AOEM default or device identity",
@@ -336,12 +368,19 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
     let result = (|| -> Result<()> {
         let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
         let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
-        let keys = (0..2 * (SENDERS + 1))
-            .map(|_| {
-                let pair = keygen.generate_keypair()?;
-                Ok((pair.public_key, pair.expanded_secret_key))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let keys = match &corpus.keys {
+            Some(keys) => keys.clone(),
+            None => {
+                let keys = (0..2 * (SENDERS + 1))
+                    .map(|_| {
+                        let pair = keygen.generate_keypair()?;
+                        Ok((pair.public_key, pair.expanded_secret_key))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                corpus.keys = Some(keys.clone());
+                keys
+            }
+        };
         let mut genesis = genesis()?;
         genesis.allocations = (0..SENDERS)
             .map(|i| GenesisAllocation {
@@ -387,19 +426,26 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         let domain = manifest.signing_domain()?;
         let manager = runtime.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
         let canonical = manifest.canonical_bytes()?;
-        let approvals = (0..=SENDERS)
-            .map(|i| {
-                Ok(UcaGenesisApprovalV1 {
-                    uca_id: account_name(i),
-                    signature: manager.sign(
-                        &keys[i].0,
-                        &keys[i].1,
-                        &canonical,
-                        INITIALIZATION_CONTEXT_V1,
-                    )?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let approvals = match &corpus.approvals {
+            Some(approvals) => approvals.clone(),
+            None => {
+                let approvals = (0..=SENDERS)
+                    .map(|i| {
+                        Ok(UcaGenesisApprovalV1 {
+                            uca_id: account_name(i),
+                            signature: manager.sign(
+                                &keys[i].0,
+                                &keys[i].1,
+                                &canonical,
+                                INITIALIZATION_CONTEXT_V1,
+                            )?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                corpus.approvals = Some(approvals.clone());
+                approvals
+            }
+        };
         let initial = manifest.compile(&runtime, domain, &approvals)?;
         let material = UcaInitializationConfigV1 {
             accounts: manifest.accounts.clone(),
@@ -417,6 +463,9 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
             config["native_client_limit"] = json!(2);
             config["genesis"] = serde_json::to_value(&genesis)?;
             config["uca_initialization"] = serde_json::to_value(&material)?;
+            if let Some(backend) = signature_override {
+                config["signature_backend"] = serde_json::to_value(backend)?;
+            }
             fs::write(path, serde_json::to_vec_pretty(&config)?)?;
         }
         evidence["signing_domain"] = json!(hex(&domain));
@@ -454,13 +503,24 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         )??
         .nov_amount;
         let debit = fee.checked_add(1).context("NUAS fee overflow")?;
+        ensure!(
+            corpus.signed.as_ref().is_none_or(|raw| raw.len() == count),
+            "paired corpus transaction count changed"
+        );
         let mut raw = Vec::with_capacity(count);
         let mut workload_hash = Sha256::new();
         workload_hash.update(b"novovm/nuas-load/ordered-signed-inputs/v1\0");
         for nonce in 0..rounds {
             for payer in 0..SENDERS {
                 let key = &keys[SENDERS + 1 + payer];
-                let signed = signer.sign(make_intent(payer, nonce as u64)?, &key.0, &key.1)?;
+                let signed = match &corpus.signed {
+                    Some(raw) => SignedUcaSpendV1::decode(&raw[nonce * SENDERS + payer])?,
+                    None => signer.sign(make_intent(payer, nonce as u64)?, &key.0, &key.1)?,
+                };
+                ensure!(
+                    signed.intent == make_intent(payer, nonce as u64)?,
+                    "paired corpus intent changed"
+                );
                 let hash = Sha256::digest(signed.intent.signing_bytes()?).into();
                 let bytes = signed.encode()?;
                 workload_hash.update((bytes.len() as u64).to_be_bytes());
@@ -468,7 +528,7 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
                 observations.push(Observation {
                     hash,
                     first_submit_us: None,
-                    finalized_us: [None; 4],
+                    receipt_query_observed_us: [None; 4],
                     receipt: None,
                     expected_nonce: nonce as u64 + 1,
                     expected_fee: fee,
@@ -476,7 +536,18 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
                 raw.push(bytes);
             }
         }
-        evidence["signed_workload_sha256"] = json!(hex(&workload_hash.finalize()));
+        let workload_hash: Hash = workload_hash.finalize().into();
+        let identity = (domain, material.expected_initial_root, workload_hash);
+        if let Some(expected) = corpus.identity {
+            ensure!(
+                identity == expected,
+                "paired genesis/root/signed bytes changed"
+            );
+        } else {
+            corpus.identity = Some(identity);
+            corpus.signed = Some(raw.clone());
+        }
+        evidence["signed_workload_sha256"] = json!(hex(&workload_hash));
         evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
         let ingress = (0..4)
             .find(|i| {
@@ -646,7 +717,7 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         same_head(&recovered, before[0])?;
         let mut cold = observations.clone();
         for row in &mut cold {
-            row.finalized_us = [None; 4];
+            row.receipt_query_observed_us = [None; 4];
         }
         let mut cold_counts = Counts::default();
         let elapsed = drive(
@@ -690,7 +761,7 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         .iter()
         .filter(|row| row.complete())
         .map(|row| {
-            row.finalized_us
+            row.receipt_query_observed_us
                 .iter()
                 .flatten()
                 .copied()
@@ -709,17 +780,17 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         json!(measured.map(|d| counts.successful_transactions as f64 / d.as_secs_f64()));
     evidence["incomplete_timed_attempt_seconds"] =
         json!(timed_attempt.map(|s| s.elapsed().as_secs_f64()));
-    evidence["transactions_not_confirmed_on_all_four"] =
+    evidence["transactions_not_receipt_query_observed_on_all_four"] =
         json!(observations.iter().filter(|r| !r.complete()).count());
-    evidence["first_height_all_receipts_observed_us"] = json!(observations
+    evidence["first_height_all_receipt_queries_observed_us"] = json!(observations
         .iter()
         .filter(|r| matches!(r.receipt, Some(ReceiptState::Finalized { height: 1, .. })))
-        .flat_map(|r| r.finalized_us.iter().flatten())
+        .flat_map(|r| r.receipt_query_observed_us.iter().flatten())
         .max());
     evidence["latency_us"] = json!({"p50":percentile(&latency,50),"p95":percentile(&latency,95),
         "p99":percentile(&latency,99),"sample_count":latency.len(),
-        "definition":"first native wire-frame submission attempt to slowest of four final receipt replies; includes initial execution/consensus wait and bounded observer"});
-    evidence["timing"] = json!("same native load drive: first SDK submission attempt through every unique four-node final receipt; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded");
+        "definition":"first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"});
+    evidence["timing"] = json!("same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded");
     fs::write(
         directory.join("observations.json"),
         serde_json::to_vec(&observations)?,
@@ -728,5 +799,195 @@ fn native_uca_load_final_receipts_and_cold_economics() -> Result<()> {
         directory.join("report.json"),
         serde_json::to_vec_pretty(&evidence)?,
     )?;
-    result
+    result?;
+    Ok(evidence)
+}
+
+#[test]
+#[ignore = "isolated laboratory CPU/GPU/CPU replay of one NUAS corpus on four original processes; never deployment keys; run alone"]
+fn native_uca_same_corpus_signature_cpu_gpu_cpu() -> Result<()> {
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
+    let mut corpus = PairedCorpus::default();
+    let mut reports = Vec::new();
+    for backend in [Cpu, GpuRequired, Cpu] {
+        reports.push(run_native_uca_load(Some(backend), &mut corpus, None)?);
+    }
+    ensure!(reports.len() == 3, "paired run count");
+    for report in &reports {
+        ensure!(
+            report["signed_workload_sha256"] == reports[0]["signed_workload_sha256"]
+                && report["signing_domain"] == reports[0]["signing_domain"]
+                && report["genesis_commitment"] == reports[0]["genesis_commitment"]
+                && report["initial_root"] == reports[0]["initial_root"]
+                && report["binary_sha256"] == reports[0]["binary_sha256"]
+                && report["aoem_sha256"] == reports[0]["aoem_sha256"]
+                && report["backend"] == reports[0]["backend"]
+                && report["transactions"] == reports[0]["transactions"]
+                && report["query_batch"] == reports[0]["query_batch"]
+                && report["cold_recovery_pass"] == true
+                && report["full_fee_state_audited"] == true,
+            "paired fixture/software/validation conditions changed"
+        );
+        ensure!(
+            authority_economics(report)? == authority_economics(&reports[0])?,
+            "paired committed balances/authorization/nonce differ"
+        );
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/native-product-load")
+        .join(format!(
+            "paired-{}-{}.json",
+            std::process::id(),
+            clock_ms()?
+        ));
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&json!({
+            "scope":"one-host four-process isolated laboratory acceptance replay, not a deployment reset recipe",
+            "same_signed_corpus_and_initial_state":true,
+            "signature_backend_order":["cpu","gpu_required","cpu"],
+            "business_backend_unchanged":true,
+            "committed_economics_equal_excluding_height_and_root":true,
+            "all_round_databases_and_journals_retained":true,
+            "fresh_fixture_stores_same_synthetic_domain":true,
+            "deployment_custody_used":false,
+            "full_65536_workload":"NOT_EXECUTED: retained bounded intent window and 4096 cap",
+            "confirmation_time":"client all-four receipt observations, not internal durable timestamp",
+            "rounds":reports
+        }))?,
+    )?;
+    eprintln!("NUAS paired report={}", path.display());
+    Ok(())
+}
+
+fn authority_economics(report: &Value) -> Result<Value> {
+    let mut authority = report["authority"]
+        .as_array()
+        .context("paired authority missing")?
+        .clone();
+    ensure!(authority.len() == SENDERS + 1, "paired authority coverage");
+    for state in &mut authority {
+        let state = state.as_object_mut().context("paired authority shape")?;
+        // Independent schedules can commit the same funded effects at different
+        // heights/roots. These remain fully checked within every four-node run;
+        // only the cross-run economic comparison omits these two metadata fields.
+        ensure!(
+            state.remove("height").is_some() && state.remove("state_root").is_some(),
+            "paired authority metadata missing"
+        );
+    }
+    Ok(json!({
+        "authority":authority,
+        "oracle_balances":report.pointer("/durable_economics/oracle_sender_balances"),
+        "oracle_nonces":report.pointer("/durable_economics/oracle_sender_nonces"),
+        "archived_transactions":report.pointer("/durable_economics/archived_transactions")
+    }))
+}
+
+#[test]
+#[ignore = "isolated same-corpus before/after original-node authority capture; retains all journals; run alone"]
+fn native_uca_same_corpus_bulk_authority_before_after() -> Result<()> {
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
+    let baseline = fs::canonicalize(
+        std::env::var_os("NOVOVM_NATIVE_UCA_BASELINE_NODE_BINARY")
+            .context("explicit pre-change original node binary required")?,
+    )?;
+    let candidate = fs::canonicalize(
+        std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
+            .context("explicit candidate original node binary required")?,
+    )?;
+    ensure!(
+        baseline != candidate,
+        "before/after binary paths must differ"
+    );
+    let mut corpus = PairedCorpus::default();
+    let mut rounds = Vec::new();
+    for (label, binary, backend) in [
+        ("before_cpu", &baseline, Cpu),
+        ("after_cpu", &candidate, Cpu),
+        ("before_gpu", &baseline, GpuRequired),
+        ("after_gpu", &candidate, GpuRequired),
+        ("before_cpu_repeat", &baseline, Cpu),
+    ] {
+        let report = run_native_uca_load(Some(backend), &mut corpus, Some(binary))?;
+        if let Some((_, first)) = rounds.first() {
+            let first: &Value = first;
+            for field in [
+                "signed_workload_sha256",
+                "signing_domain",
+                "genesis_commitment",
+                "initial_root",
+                "aoem_sha256",
+                "backend",
+                "transactions",
+                "wire_frame_rows",
+                "query_batch",
+                "canonical_body_budget",
+            ] {
+                ensure!(
+                    report[field] == first[field],
+                    "before/after {field} differs"
+                );
+            }
+            ensure!(
+                authority_economics(&report)? == authority_economics(first)?,
+                "before/after committed economics differ"
+            );
+        }
+        ensure!(
+            report["passed"] == true
+                && report["cold_recovery_pass"] == true
+                && report["full_fee_state_audited"] == true,
+            "before/after validation incomplete"
+        );
+        rounds.push((label, report));
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/native-product-load")
+        .join(format!(
+            "bulk-authority-paired-{}-{}.json",
+            std::process::id(),
+            clock_ms()?
+        ));
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&json!({
+            "scope":"one-host four-process laboratory before/after; no deployed identity or journal reset",
+            "same_signed_corpus_and_initial_state":true,
+            "all_round_databases_and_journals_retained":true,
+            "business_backend_unchanged":true,
+            "full_65536":"NOT_EXECUTED: bounded static intent fixture",
+            "rounds":rounds.into_iter().map(|(label,report)|json!({"label":label,"report":report})).collect::<Vec<_>>()
+        }))?,
+    )?;
+    eprintln!("NUAS bulk authority paired report={}", path.display());
+    Ok(())
+}
+
+#[test]
+fn paired_authority_comparison_excludes_only_schedule_metadata() -> Result<()> {
+    let mut first = json!({
+        "authority":(0..=SENDERS).map(|_| json!({
+            "height":1,"state_root":vec![1u8;32],"next_nonce":64,
+            "remaining_debit_budget":999_000,"payer_balance":999_000,
+            "recipient_balance":1024,"revoked":false,"grant_epoch":1
+        })).collect::<Vec<_>>(),
+        "durable_economics":{"oracle_sender_balances":[999_000],
+            "oracle_sender_nonces":[64],"archived_transactions":1024}
+    });
+    let expected = authority_economics(&first)?;
+    first["authority"][0]["height"] = json!(9);
+    first["authority"][0]["state_root"] = json!(vec![9u8; 32]);
+    assert_eq!(expected, authority_economics(&first)?);
+    first["authority"][0]["next_nonce"] = json!(65);
+    assert_ne!(expected, authority_economics(&first)?);
+    first["authority"][0]["next_nonce"] = json!(64);
+    first["authority"][0]["revoked"] = json!(true);
+    assert_ne!(expected, authority_economics(&first)?);
+    first["authority"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("height");
+    assert!(authority_economics(&first).is_err());
+    Ok(())
 }

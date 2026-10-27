@@ -9,6 +9,7 @@ pub mod diagnostics;
 pub mod endpoint;
 pub mod fragments;
 pub mod handshake;
+mod handshake_continuation;
 pub mod object_ack;
 pub mod object_link;
 pub mod object_receiver;

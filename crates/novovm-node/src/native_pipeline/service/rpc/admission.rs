@@ -30,6 +30,9 @@ enum Target {
     },
     Gossip {
         complete_body: bool,
+        // A full UCA source is owned by this work, not the mutable next-source
+        // cursor. Completing it must never clear a newer incoming body.
+        detached_body: bool,
         broadcast: bool,
     },
 }
@@ -37,6 +40,7 @@ enum Target {
 enum Phase {
     Queued(SignatureAdmissionRequest),
     Checking(SignatureAdmissionTicket),
+    Completed(Result<crate::native_pipeline::pipeline::SignatureAdmissionOutput>),
 }
 
 struct Work {
@@ -55,6 +59,10 @@ pub(super) struct AdmissionState {
     prefer_client: bool,
     work: Option<Work>,
     uca: Option<UcaWork>,
+    cached_body_boundary_waiting: bool,
+    next_signature_submitted_while_capture: u64,
+    signature_completed_while_capture: u64,
+    max_retained_stage_slots: usize,
     submitted_batches: u64,
     completed_batches: u64,
     checked_rows: u64,
@@ -62,29 +70,107 @@ pub(super) struct AdmissionState {
     cancelled_http: u64,
     control_polls_while_checking: u64,
     backpressured_polls: u64,
+    uca_capture: UcaCaptureTotals,
 }
 
 // Retain the original compute output/permit while authority I/O is pending.
-// One bounded batch, not a second pool or execution owner.
+// Popped rows stay in ONE batch protected by that same original byte permit,
+// parked in the sole authority slot after signature completion. This is never
+// an independently admitted queue or another execution owner.
 struct UcaWork {
-    output: crate::native_pipeline::pipeline::SignatureAdmissionOutput,
-    current: Option<(AdmissionInput, AdmittedTransfer)>,
-    read: Option<native_query::UcaStateRead>,
+    _output: crate::native_pipeline::pipeline::SignatureAdmissionOutput,
+    rows: Vec<(AdmissionInput, AdmittedTransfer)>,
+    read: Option<native_query::UcaBatchStateRead>,
     parent: Option<ParentPoint>,
+    capture_started: Option<Instant>,
     complete_body: bool,
+    detached_body: bool,
     broadcast: bool,
 }
 
+#[derive(Default)]
+struct UcaCaptureTotals {
+    batches: u64,
+    declaration_keys: u64,
+    unique_keys: u64,
+    io_requests: u64,
+    io_nodes: u64,
+    parent_restarts: u64,
+    elapsed_us: u64,
+    max_elapsed_us: u64,
+}
+
+impl UcaCaptureTotals {
+    fn record(&mut self, read: &native_query::UcaBatchStateRead, started: Option<Instant>) {
+        self.record_stats(read.stats(), started);
+    }
+
+    fn record_stats(&mut self, stats: native_query::UcaCaptureStats, started: Option<Instant>) {
+        self.batches = self.batches.saturating_add(1);
+        self.declaration_keys = self
+            .declaration_keys
+            .saturating_add(stats.declaration_keys as u64);
+        self.unique_keys = self.unique_keys.saturating_add(stats.unique_keys as u64);
+        self.io_requests = self.io_requests.saturating_add(stats.io_requests as u64);
+        self.io_nodes = self.io_nodes.saturating_add(stats.io_nodes as u64);
+        if let Some(started) = started {
+            let elapsed = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+            self.elapsed_us = self.elapsed_us.saturating_add(elapsed);
+            self.max_elapsed_us = self.max_elapsed_us.max(elapsed);
+        }
+    }
+}
+
 impl AdmissionState {
+    pub(super) fn has_pending_native_admission(&self) -> bool {
+        self.work.is_some() || self.uca.is_some()
+    }
+
+    fn record_retained_stages(&mut self) {
+        self.max_retained_stage_slots = self
+            .max_retained_stage_slots
+            .max(usize::from(self.work.is_some()) + usize::from(self.uca.is_some()));
+    }
+
+    fn cached_body_completed(&mut self) -> bool {
+        if self.has_pending_native_admission() {
+            self.cached_body_boundary_waiting = true;
+            false
+        } else {
+            true
+        }
+    }
+
+    fn authority_body_completed(&mut self, complete_body: bool) -> bool {
+        let cached_boundary = std::mem::take(&mut self.cached_body_boundary_waiting);
+        complete_body || cached_boundary
+    }
+
     pub(super) fn status(&self) -> Value {
         json!({"owner":"same_resident_aoem_compute_session",
             "http_waiting":self.http.len(),"signature_batch_pending":self.work.is_some(),
             "uca_authority_pending":self.uca.is_some(),
+            "signature_completed_waiting_for_authority":self.work.as_ref().is_some_and(|work| matches!(work.phase, Phase::Completed(_))),
+            "next_signature_submitted_while_capture":self.next_signature_submitted_while_capture,
+            "signature_completed_while_capture":self.signature_completed_while_capture,
+            "max_retained_stage_slots":self.max_retained_stage_slots,
             "submitted_batches":self.submitted_batches,"completed_batches":self.completed_batches,
             "checked_rows":self.checked_rows,"rejected_rows":self.rejected_rows,
             "cancelled_http":self.cancelled_http,
             "control_polls_while_checking":self.control_polls_while_checking,
             "backpressured_polls":self.backpressured_polls,
+            "uca_state_capture":{
+                "batches":self.uca_capture.batches,
+                "declared_keys":self.uca_capture.declaration_keys,
+                "unique_keys":self.uca_capture.unique_keys,
+                "io_requests":self.uca_capture.io_requests,
+                "io_nodes":self.uca_capture.io_nodes,
+                "parent_restarts":self.uca_capture.parent_restarts,
+                "elapsed_us":self.uca_capture.elapsed_us,
+                "max_elapsed_us":self.uca_capture.max_elapsed_us,
+                "timing_enabled":crate::native_pipeline::profile::enabled(),
+                "scope":"completed, failed or parent-restarted capture attempts; active attempt excluded; clock only with PROFILE_STAGES; not authorization consumption or disk-operation count"
+            },
             "scope":"local signature checks, not unique transactions or finality"})
     }
 }
@@ -177,6 +263,131 @@ fn response(id: Value, result: Result<Value>) -> Value {
 }
 
 impl RpcLifecycle {
+    /// Admission-only counterexample on a real original service and real signed
+    /// NUAS bytes. Does not poll consensus/network or publish a candidate.
+    #[cfg(test)]
+    pub(crate) fn assert_uca_overlap_body_boundaries_for_test(
+        &mut self,
+        cached: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        partial: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        newer_bad: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+    ) -> Result<()> {
+        use crate::native_pipeline::consensus::transport::TransactionsScope;
+        ensure!(self.is_uca(), "UCA fixture required");
+        // Reduce only this control-side service quantum. Keep the original
+        // pipeline/native source and retained-byte budgets unchanged: a two-row
+        // source can now exercise a partial body without exceeding those caps.
+        let original_batch_size = self.batch_size;
+        self.batch_size = 1;
+        ensure!(partial.len() > self.batch_size && newer_bad.len() > self.batch_size);
+        let expected_pending = partial.len(); // cached row plus uncached prefix
+        let bad_rows = newer_bad.len() as u64;
+        let parent = self.node.controller.parent();
+        let head = self.node.controller.head();
+        let executed = self.node.controller.executed();
+        let position = (
+            self.node.controller.context().height,
+            self.node.controller.round(),
+        );
+        let scope = TransactionsScope {
+            chain_id: self.node.template.chain_id,
+            genesis: self.node.template.genesis_config_commitment,
+            protocol: self.node.template.protocol_commitment,
+            epoch: 1,
+            validator_set_hash: self.node.validators.hash(),
+            session: [8; 32],
+            sequence: 1,
+        };
+        let message = |batch| Arc::new(Message::UcaTransactions { scope, batch });
+        let deadline = Instant::now() + Duration::from_secs(30);
+        self.incoming_from_client = false;
+        self.incoming = Some((message(cached), 0));
+        while self.incoming.is_some() || self.admission.has_pending_native_admission() {
+            ensure!(
+                Instant::now() < deadline,
+                "cached prefix admission timed out"
+            );
+            self.poll_admission()?;
+            std::thread::yield_now();
+        }
+        ensure!(self.pending.len() == 1, "real cached row not admitted");
+
+        self.incoming = Some((message(partial), 0));
+        while self.admission.uca.is_none() {
+            ensure!(
+                Instant::now() < deadline,
+                "partial body signature timed out: {}",
+                self.admission.status()
+            );
+            self.poll_admission()?;
+            std::thread::yield_now();
+        }
+        ensure!(self.admission.cached_body_boundary_waiting);
+        ensure!(
+            !self.ingress_batch_boundary,
+            "cached tail released unfinished prefix"
+        );
+        ensure!(self.incoming.is_none(), "cached final chunk not consumed");
+        let newer = message(newer_bad);
+        self.incoming = Some((newer.clone(), 0));
+        self.admission.work = self.prepare_gossip_admission()?;
+        ensure!(self.admission.work.is_some(), "next signature work missing");
+        self.admission.record_retained_stages();
+        // First bulk capture poll submits its read and yields. The original
+        // next Work is then submitted through its ordinary compute owner.
+        self.poll_admission()?;
+        ensure!(self.admission.next_signature_submitted_while_capture > 0);
+        while self.admission.uca.is_some() {
+            ensure!(Instant::now() < deadline, "old authority prefix timed out");
+            self.poll_uca_admission()?;
+            std::thread::yield_now();
+        }
+        let (remaining, index) = self
+            .incoming
+            .as_ref()
+            .context("older completion lost next body")?;
+        ensure!(Arc::ptr_eq(remaining, &newer) && *index == self.batch_size);
+        ensure!(self.ingress_batch_boundary && !self.admission.cached_body_boundary_waiting);
+        ensure!(self.admission.work.is_some(), "next output lost its slot");
+        let rejected_before = self.gossip_rejected;
+        while self.incoming.is_some() || self.admission.has_pending_native_admission() {
+            ensure!(
+                Instant::now() < deadline,
+                "bad next body admission timed out"
+            );
+            self.poll_admission()?;
+            std::thread::yield_now();
+        }
+        ensure!(
+            self.pending.len() == expected_pending,
+            "bad signature admitted or old rows lost"
+        );
+        ensure!(self.gossip_rejected >= rejected_before + bad_rows);
+        ensure!(self.admission.max_retained_stage_slots == 2);
+        ensure!(!self.admission.cached_body_boundary_waiting);
+        ensure!(
+            self.node.controller.parent() == parent,
+            "admission published state"
+        );
+        self.batch_size = original_batch_size;
+        ensure!(
+            self.node.controller.head() == head,
+            "admission changed durable head"
+        );
+        ensure!(
+            self.node.controller.executed() == executed,
+            "admission executed a candidate"
+        );
+        ensure!(
+            (
+                self.node.controller.context().height,
+                self.node.controller.round()
+            ) == position,
+            "admission advanced consensus position"
+        );
+        Ok(())
+    }
+
     /// Unit-level injection at the existing bounded consumer, not a claim of
     /// native wire delivery. Called with a real initialized original service.
     #[cfg(test)]
@@ -296,7 +507,6 @@ impl RpcLifecycle {
         self.ingress_batch_boundary = false;
         if self.admission.uca.is_some() {
             self.poll_uca_admission()?;
-            return Ok(());
         }
         if let Some(mut work) = self.admission.work.take() {
             match work.phase {
@@ -305,6 +515,12 @@ impl RpcLifecycle {
                         Ok(SignatureAdmissionSubmission::Accepted(ticket)) => {
                             self.admission.made_progress = true;
                             self.admission.submitted_batches += 1;
+                            if self.admission.uca.is_some() {
+                                self.admission.next_signature_submitted_while_capture = self
+                                    .admission
+                                    .next_signature_submitted_while_capture
+                                    .saturating_add(1);
+                            }
                             work.phase = Phase::Checking(ticket);
                             self.admission.work = Some(work);
                         }
@@ -315,7 +531,8 @@ impl RpcLifecycle {
                         }
                         Err(rejected) => {
                             self.admission.made_progress = true;
-                            self.finish_admission(work.target, work.rows, Err(rejected.error))?
+                            work.phase = Phase::Completed(Err(rejected.error));
+                            self.admission.work = Some(work);
                         }
                     }
                 }
@@ -328,12 +545,51 @@ impl RpcLifecycle {
                     output => {
                         self.admission.made_progress = true;
                         self.admission.completed_batches += 1;
-                        self.finish_admission(work.target, work.rows, output.map(Option::unwrap))?;
+                        if self.admission.uca.is_some() {
+                            self.admission.signature_completed_while_capture = self
+                                .admission
+                                .signature_completed_while_capture
+                                .saturating_add(1);
+                        }
+                        crate::native_pipeline::profile::critical_event(
+                            crate::native_pipeline::profile::CriticalEvent::SignatureBatchDone,
+                            self.node.controller.context().height,
+                            self.node.controller.round(),
+                            None,
+                            None,
+                        );
+                        work.phase = Phase::Completed(output.map(Option::unwrap));
+                        self.admission.work = Some(work);
                     }
                 },
+                Phase::Completed(output) => {
+                    work.phase = Phase::Completed(output);
+                    self.admission.work = Some(work);
+                }
             }
         }
-        if self.admission.work.is_some() || self.admission.uca.is_some() {
+        // Only the oldest output can enter authority capture. The one next
+        // signature job may finish meanwhile, but retains its original active
+        // ingress credit/bytes until this FIFO handoff is possible.
+        if self.admission.uca.is_none()
+            && self
+                .admission
+                .work
+                .as_ref()
+                .is_some_and(|work| matches!(work.phase, Phase::Completed(_)))
+        {
+            let work = self.admission.work.take().expect("completed admission");
+            let Phase::Completed(output) = work.phase else {
+                unreachable!("completed phase checked")
+            };
+            self.finish_admission(work.target, work.rows, output)?;
+        }
+        if self.admission.work.is_some() {
+            return Ok(());
+        }
+        // Historical V3 remains single-stage. UCA alone may overlap its one
+        // authority capture with one next job in the SAME compute/I/O owners.
+        if self.admission.uca.is_some() && !self.is_uca() {
             return Ok(());
         }
         // Alternate bounded sources; a continuous HTTP or peer stream cannot
@@ -354,6 +610,7 @@ impl RpcLifecycle {
             self.admission.made_progress = true;
             self.admission.prefer_gossip = matches!(work.target, Target::Http { .. });
             self.admission.work = Some(work);
+            self.admission.record_retained_stages();
         }
         Ok(())
     }
@@ -511,13 +768,25 @@ impl RpcLifecycle {
             }
         }
         let complete_body = index == count;
+        let detached_body = self.is_uca() && complete_body;
         // Retain the body marker until the whole verified prefix is admitted;
-        // a partially checked body must not cause tiny proposal fragments.
-        self.incoming = Some((message, index));
+        // a partially checked body must not cause tiny proposal fragments. A
+        // full UCA source moves to its work; the admission-state selection gate
+        // retains its boundary while the next source can begin verification.
+        if !detached_body {
+            self.incoming = Some((message, index));
+        }
         if inputs.is_empty() {
             if complete_body {
                 self.incoming = None;
-                self.ingress_batch_boundary = true;
+                if self.is_uca() {
+                    // This can be the cached-only final chunk of a body larger
+                    // than batch_size. Its earlier authority prefix must finish
+                    // before this boundary becomes eligible for selection.
+                    self.ingress_batch_boundary |= self.admission.cached_body_completed();
+                } else {
+                    self.ingress_batch_boundary = true;
+                }
             }
             return Ok(None);
         }
@@ -525,6 +794,7 @@ impl RpcLifecycle {
         Ok(Some(Work {
             target: Target::Gossip {
                 complete_body,
+                detached_body,
                 broadcast: self.incoming_from_client,
             },
             phase: Phase::Queued(SignatureAdmissionRequest::new(inputs)?),
@@ -549,18 +819,41 @@ impl RpcLifecycle {
                 true,
                 Target::Gossip {
                     complete_body,
+                    detached_body,
                     broadcast,
                 },
-                Ok(output),
+                Ok(mut output),
             ) => {
+                ensure!(rows <= self.batch_size, "UCA admission batch limit");
+                ensure!(self.admission.uca.is_none(), "UCA authority slot occupied");
+                output.park_for_authority()?;
+                let mut checked_rows = Vec::with_capacity(rows);
+                while let Some(row) = output.pop_admitted() {
+                    self.admission.checked_rows += 1;
+                    // Reject malformed rows locally. Valid rows preserve their
+                    // original relative order and the same output permit.
+                    match row.result.and_then(|checked| {
+                        uca_capture_input(&row.input, &checked)?;
+                        Ok(checked)
+                    }) {
+                        Ok(checked) => checked_rows.push((row.input, checked)),
+                        Err(_) => {
+                            self.admission.rejected_rows += 1;
+                            self.gossip_rejected += 1;
+                        }
+                    }
+                }
                 self.admission.uca = Some(UcaWork {
-                    output,
-                    current: None,
+                    _output: output,
+                    rows: checked_rows,
                     read: None,
                     parent: None,
+                    capture_started: None,
                     complete_body: *complete_body,
+                    detached_body: *detached_body,
                     broadcast: *broadcast,
                 });
+                self.admission.record_retained_stages();
                 return Ok(());
             }
             (_, _, output) => output,
@@ -605,6 +898,7 @@ impl RpcLifecycle {
             }
             Target::Gossip {
                 complete_body,
+                detached_body,
                 broadcast,
             } => {
                 for result in results {
@@ -616,7 +910,9 @@ impl RpcLifecycle {
                     }
                 }
                 if complete_body {
-                    self.incoming = None;
+                    if !detached_body {
+                        self.incoming = None;
+                    }
                     self.ingress_batch_boundary = true;
                 }
             }
@@ -626,76 +922,233 @@ impl RpcLifecycle {
 
     fn poll_uca_admission(&mut self) -> Result<()> {
         let mut work = self.admission.uca.take().expect("pending UCA work");
-        if work.current.is_none() {
-            let Some(row) = work.output.pop_admitted() else {
-                if work.complete_body {
-                    self.incoming = None;
-                    self.ingress_batch_boundary = true;
-                }
-                self.admission.made_progress = true;
-                return Ok(());
-            };
-            self.admission.checked_rows += 1;
-            match row.result {
-                Ok(checked) => work.current = Some((row.input, checked)),
-                Err(_) => {
-                    self.admission.rejected_rows += 1;
-                    self.gossip_rejected += 1;
-                    self.admission.uca = Some(work);
-                    return Ok(());
-                }
-            }
+        if work.rows.is_empty() {
+            self.finish_uca_admission(work);
+            return Ok(());
         }
         let parent = self.node.controller.parent();
         if work.parent != Some(parent) {
-            work.read = None;
+            if let Some(read) = work.read.take() {
+                self.admission
+                    .uca_capture
+                    .record(&read, work.capture_started.take());
+                self.admission.uca_capture.parent_restarts =
+                    self.admission.uca_capture.parent_restarts.saturating_add(1);
+            }
             work.parent = Some(parent);
         }
         let result = (|| {
             if work.read.is_none() {
-                let (input, checked) = work.current.as_ref().expect("UCA row");
-                let intent = checked
-                    .checked_uca()
-                    .context("UCA signature type")?
-                    .intent();
-                let AdmissionInput::Uca { batch, index } = input else {
-                    anyhow::bail!("UCA source type");
-                };
-                let (payer, recipient) = batch.account_hints(*index)?;
-                work.read = Some(native_query::UcaStateRead::new(
+                work.capture_started = crate::native_pipeline::profile::mark();
+                let inputs = work
+                    .rows
+                    .iter()
+                    .map(|(input, checked)| uca_capture_input(input, checked))
+                    .collect::<Result<Vec<_>>>()?;
+                work.read = Some(native_query::UcaBatchStateRead::new(
                     parent.state_root,
-                    intent.clone(),
-                    Account::try_from(payer).map_err(anyhow::Error::msg)?,
-                    Account::try_from(recipient).map_err(anyhow::Error::msg)?,
+                    inputs,
+                    self.node.pipeline.capture_budget(),
                 )?);
             }
             work.read
                 .as_mut()
-                .expect("UCA read")
+                .expect("UCA batch capture")
                 .poll(&self.node.pipeline)
         })();
-        match result {
-            Ok(None) => {}
-            ready => {
-                let (input, checked) = work.current.take().expect("UCA row");
-                let admitted = match ready {
-                    Ok(Some(native_query::UcaReadResult::Present(state))) => {
-                        self.admit_uca_checked(input, checked, &state, work.broadcast)
-                    }
-                    _ => Err(anyhow::anyhow!("UCA authoritative input unavailable")),
-                };
-                if admitted.is_ok() {
-                    self.gossip_verified += 1;
-                } else {
-                    self.gossip_rejected += 1;
-                    self.admission.rejected_rows += 1;
+        self.admission.made_progress |= work.read.as_ref().is_some_and(|read| read.made_progress());
+        let states = match result {
+            Ok(None) => {
+                self.admission.uca = Some(work);
+                return Ok(());
+            }
+            Ok(Some(states)) if states.len() == work.rows.len() => Some(states),
+            // Missing/corrupt I/O or an invalid result shape rejects this
+            // entire snapshot, never fabricates absent accounts or a prefix.
+            _ => None,
+        };
+        if let Some(read) = work.read.take() {
+            self.admission
+                .uca_capture
+                .record(&read, work.capture_started.take());
+        }
+        // The control-owned parent cannot change during this bounded in-memory
+        // loop. No I/O or state consumption occurs here. Original nonce/pool
+        // reservations are applied in input order by the unchanged checker;
+        // final grant/balance/fee consumption remains the candidate plan's job.
+        let mut states = states.map(Vec::into_iter);
+        for (input, checked) in work.rows.drain(..) {
+            let state = states.as_mut().and_then(Iterator::next);
+            let admitted = match state {
+                Some(Ok(native_query::UcaReadResult::Present(state))) => {
+                    self.admit_uca_checked(input, checked, &state, work.broadcast)
                 }
-                self.admission.made_progress = true;
-                work.read = None;
-                work.parent = None;
+                _ => Err(anyhow::anyhow!("UCA authoritative input unavailable")),
+            };
+            if admitted.is_ok() {
+                self.gossip_verified += 1;
+            } else {
+                self.gossip_rejected += 1;
+                self.admission.rejected_rows += 1;
             }
         }
-        self.admission.uca = Some(work);
+        self.finish_uca_admission(work);
         Ok(())
+    }
+
+    fn finish_uca_admission(&mut self, work: UcaWork) {
+        if self.admission.authority_body_completed(work.complete_body) {
+            if !work.detached_body && work.complete_body {
+                self.incoming = None;
+            }
+            self.ingress_batch_boundary = true;
+        }
+        crate::native_pipeline::profile::critical_event(
+            crate::native_pipeline::profile::CriticalEvent::AuthorityAdmissionDone,
+            self.node.controller.context().height,
+            self.node.controller.round(),
+            None,
+            None,
+        );
+        self.admission.made_progress = true;
+    }
+}
+
+fn uca_capture_input(
+    input: &AdmissionInput,
+    checked: &AdmittedTransfer,
+) -> Result<(
+    novovm_protocol::uca_spend::UcaSpendIntentV1,
+    Account,
+    Account,
+)> {
+    let intent = checked
+        .checked_uca()
+        .context("UCA signature type")?
+        .intent()
+        .clone();
+    let AdmissionInput::Uca { batch, index } = input else {
+        anyhow::bail!("UCA source type");
+    };
+    ensure!(
+        checked.matches_uca_source(batch, *index),
+        "UCA source capability mismatch"
+    );
+    let (payer, recipient) = batch.account_hints(*index)?;
+    let payer = Account::try_from(payer).map_err(anyhow::Error::msg)?;
+    let recipient = Account::try_from(recipient).map_err(anyhow::Error::msg)?;
+    Ok((intent, payer, recipient))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn completed_failure() -> Work {
+        Work {
+            target: Target::Gossip {
+                complete_body: true,
+                detached_body: true,
+                broadcast: false,
+            },
+            phase: Phase::Completed(Err(anyhow::anyhow!("injected signature owner error"))),
+            rows: 1,
+        }
+    }
+
+    #[test]
+    fn completed_signature_error_retains_the_existing_work_slot_and_selection_gate() {
+        let mut state = AdmissionState {
+            work: Some(completed_failure()),
+            ..AdmissionState::default()
+        };
+        state.record_retained_stages();
+        assert!(state.has_pending_native_admission());
+        assert_eq!(
+            state.status()["signature_completed_waiting_for_authority"],
+            true
+        );
+        assert_eq!(state.status()["max_retained_stage_slots"], 1);
+        assert_eq!(state.status()["next_signature_submitted_while_capture"], 0);
+        assert_eq!(state.status()["signature_completed_while_capture"], 0);
+        let work = state.work.take().unwrap();
+        assert!(matches!(work.phase, Phase::Completed(Err(_))));
+        assert!(!state.has_pending_native_admission());
+    }
+
+    #[test]
+    fn cached_final_chunk_does_not_release_an_older_unfinished_authority_prefix() {
+        let mut state = AdmissionState {
+            work: Some(completed_failure()),
+            ..AdmissionState::default()
+        };
+        // Model an older pending stage without fabricating a checked signature
+        // or permission. The boundary rule depends on stage ownership only.
+        assert!(!state.cached_body_completed());
+        assert!(state.cached_body_boundary_waiting);
+        assert!(!state.cached_body_completed());
+        drop(state.work.take());
+        // An authority prefix whose final chunk was entirely cached now closes
+        // the same finite source body, exactly once.
+        assert!(state.authority_body_completed(false));
+        assert!(!state.authority_body_completed(false));
+        assert!(state.cached_body_completed());
+        assert!(state.authority_body_completed(true));
+    }
+
+    #[test]
+    fn uca_capture_counters_accumulate_and_saturate_without_clock_samples() {
+        let stats = native_query::UcaCaptureStats {
+            declaration_keys: 74,
+            unique_keys: 37,
+            io_requests: 2,
+            io_nodes: 64,
+        };
+        let mut totals = UcaCaptureTotals::default();
+        totals.record_stats(stats, None);
+        totals.record_stats(stats, None);
+        assert_eq!(totals.batches, 2);
+        assert_eq!(totals.declaration_keys, 148);
+        assert_eq!(totals.unique_keys, 74);
+        assert_eq!(totals.io_requests, 4);
+        assert_eq!(totals.io_nodes, 128);
+        assert_eq!(totals.elapsed_us, 0);
+        assert_eq!(totals.max_elapsed_us, 0);
+
+        totals.batches = u64::MAX;
+        totals.declaration_keys = u64::MAX;
+        totals.unique_keys = u64::MAX;
+        totals.io_requests = u64::MAX;
+        totals.io_nodes = u64::MAX;
+        totals.record_stats(stats, None);
+        assert_eq!(totals.batches, u64::MAX);
+        assert_eq!(totals.declaration_keys, u64::MAX);
+        assert_eq!(totals.unique_keys, u64::MAX);
+        assert_eq!(totals.io_requests, u64::MAX);
+        assert_eq!(totals.io_nodes, u64::MAX);
+    }
+
+    #[test]
+    fn uca_capture_status_starts_empty_and_reports_diagnostic_clock_policy() {
+        let state = AdmissionState::default();
+        let status = state.status();
+        let capture = &status["uca_state_capture"];
+        for name in [
+            "batches",
+            "declared_keys",
+            "unique_keys",
+            "io_requests",
+            "io_nodes",
+            "parent_restarts",
+            "elapsed_us",
+            "max_elapsed_us",
+        ] {
+            assert_eq!(capture[name], 0, "unexpected initial {name}");
+        }
+        assert_eq!(
+            capture["timing_enabled"],
+            crate::native_pipeline::profile::enabled()
+        );
+        assert_eq!(status["uca_authority_pending"], false);
     }
 }

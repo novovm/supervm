@@ -34,6 +34,7 @@ pub(super) fn start(
                 library: config.store.library.clone(),
                 workers: config.workers,
                 execution_backend: config.execution_backend,
+                signature_backend: config.signature_backend,
                 queue_capacity: config.max_batches,
                 authentication: config.authentication,
                 plan: config.plan,

@@ -292,6 +292,7 @@ fn real_integer_lane_does_not_block_authentication_and_drains_accepted_work() ->
             .into(),
         workers: cfg.workers,
         execution_backend: super::super::ExecutionBackend::AoemIntegerV7,
+        signature_backend: Default::default(),
         queue_capacity: 2,
         authentication: cfg.authentication,
         plan: cfg.plan,
@@ -413,6 +414,7 @@ fn real_resident_owner_authenticates_and_executes_repeated_owned_captures() -> R
             .into(),
         workers: 2,
         execution_backend: Default::default(),
+        signature_backend: Default::default(),
         queue_capacity: 2,
         authentication: AuthenticationBudget {
             transactions: 16,
@@ -493,6 +495,7 @@ fn real_compute_owner_gpu_selection_rejects_old_library_without_cpu_fallback() -
             .into(),
         workers: cfg.workers,
         execution_backend: crate::native_pipeline::pipeline::ExecutionBackend::AoemIntegerV7,
+        signature_backend: Default::default(),
         queue_capacity: cfg.max_batches,
         authentication: cfg.authentication,
         plan: cfg.plan,

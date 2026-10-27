@@ -156,6 +156,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
         uca_initialization: Some(material),
         workers: 2,
         execution_backend: Default::default(),
+        signature_backend: Default::default(),
         batch_size: 2,
     };
     let public_config_path = root.join("public-initialization.json");

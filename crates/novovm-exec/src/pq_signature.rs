@@ -9,6 +9,10 @@ use serde::Deserialize;
 use std::{fmt, sync::Arc};
 use zeroize::Zeroizing;
 
+#[path = "pq_signature_semantic.rs"]
+mod semantic;
+pub use semantic::{MldsaVerificationBackendV1, MldsaVerificationExecutionV1};
+
 /// Generated with the existing AOEM primitive, validated with this facade's
 /// qualified sign/verify path, and kept zeroizing across every error path.
 /// Intentionally not Debug, Clone or Serialize: consumers transfer custody.
@@ -268,7 +272,7 @@ pub(crate) struct MldsaVerifyInput<'a> {
 /// qualifies both scalar and batch once; clones neither load nor re-qualify it.
 #[derive(Clone)]
 pub(crate) struct OwnedMldsaVerifier {
-    runtime: Arc<AoemDyn>,
+    runtime: Arc<semantic::SemanticMldsaBackend>,
     parameters: AoemMldsaParameterSet,
 }
 
@@ -277,12 +281,25 @@ impl OwnedMldsaVerifier {
         runtime: Arc<AoemDyn>,
         parameters: AoemMldsaParameterSet,
     ) -> Result<Self, PqVerificationError> {
+        Self::new_with_backend(runtime, parameters, MldsaVerificationBackendV1::Auto)
+    }
+
+    pub(crate) fn new_with_backend(
+        runtime: Arc<AoemDyn>,
+        parameters: AoemMldsaParameterSet,
+        backend: MldsaVerificationBackendV1,
+    ) -> Result<Self, PqVerificationError> {
+        let runtime = Arc::new(semantic::SemanticMldsaBackend::new(runtime, backend)?);
         ensure_compatible_backend(runtime.as_ref(), parameters)?;
         ensure_batch_compatible_backend(runtime.as_ref(), parameters)?;
         Ok(Self {
             runtime,
             parameters,
         })
+    }
+
+    pub(crate) fn last_execution_v1(&self) -> Option<MldsaVerificationExecutionV1> {
+        self.runtime.last_execution_v1()
     }
 
     pub(crate) fn verify(&self, item: MldsaVerifyInput<'_>) -> Result<(), PqVerificationError> {
@@ -523,20 +540,6 @@ trait MldsaBatchBackend: MldsaBackend {
         &self,
         items: &[AoemMldsaVerifyItemRef<'_>],
     ) -> Result<Vec<bool>, PqVerificationError>;
-}
-
-impl MldsaBatchBackend for AoemDyn {
-    fn batch_available(&self) -> bool {
-        self.supports_mldsa_verify_batch_v1()
-    }
-
-    fn verify_batch(
-        &self,
-        items: &[AoemMldsaVerifyItemRef<'_>],
-    ) -> Result<Vec<bool>, PqVerificationError> {
-        self.mldsa_verify_batch_v1(items)
-            .map_err(|_| PqVerificationError::RuntimeFailure)
-    }
 }
 
 fn ensure_batch_compatible_backend(

@@ -364,6 +364,7 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
         },
         workers: config.workers,
         execution_backend: config.execution_backend,
+        signature_backend: config.signature_backend,
         max_batches: 2,
         max_retained_bytes: 256 * 1024 * 1024,
         authentication: AuthenticationBudget {

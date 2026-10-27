@@ -375,14 +375,14 @@ fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> R
 struct Observation {
     hash: Hash,
     first_submit_us: Option<u64>,
-    finalized_us: [Option<u64>; 4],
+    receipt_query_observed_us: [Option<u64>; 4],
     receipt: Option<ReceiptState>,
     expected_nonce: u64,
     expected_fee: u128,
 }
 impl Observation {
     fn complete(&self) -> bool {
-        self.finalized_us.iter().all(Option::is_some)
+        self.receipt_query_observed_us.iter().all(Option::is_some)
     }
 }
 #[derive(Default, Serialize)]
@@ -391,9 +391,13 @@ struct Counts {
     application_batches_transport_delivered: usize,
     transport_failures: usize,
     observation_requests: usize,
+    receipt_query_requests_by_node: [usize; 4],
     observation_rows_received: usize,
+    receipt_query_rows_received_by_node: [usize; 4],
     observation_not_final: usize,
+    receipt_query_not_final_by_node: [usize; 4],
     observation_service_busy: usize,
+    receipt_query_service_busy_by_node: [usize; 4],
     successful_transactions: usize,
     business_failed_transactions: usize,
     rejected_nonce: usize,
@@ -442,10 +446,10 @@ fn observe_receipt(
                 "receipt economics/nonce mismatch at {index}"
             );
             row.receipt = Some(value);
-            if row.finalized_us[node].is_some() {
+            if row.receipt_query_observed_us[node].is_some() {
                 return Ok(false);
             }
-            row.finalized_us[node] = Some(elapsed_us);
+            row.receipt_query_observed_us[node] = Some(elapsed_us);
             if row.complete() {
                 if success {
                     counts.successful_transactions += 1;
@@ -461,7 +465,7 @@ fn observe_receipt(
         }
         _ => {
             ensure!(
-                row.finalized_us[node].is_none(),
+                row.receipt_query_observed_us[node].is_none(),
                 "finalized receipt regressed at {index}"
             );
             counts.observation_not_final += 1;
@@ -568,6 +572,7 @@ fn drive(
                     deadline: now + Duration::from_secs(5),
                 });
                 counts.observation_requests += 1;
+                counts.receipt_query_requests_by_node[node] += 1;
             }
             let Some(read) = reads[node].as_mut() else {
                 continue;
@@ -594,13 +599,21 @@ fn drive(
                 Answer::Receipts { states, .. } if query_batch > 1 => states.into_vec(),
                 Answer::Error(_) => {
                     counts.observation_service_busy += 1;
+                    counts.receipt_query_service_busy_by_node[node] += 1;
                     continue;
                 }
                 other => bail!("unexpected receipt answer: {other:?}"),
             };
             ensure!(states.len() == count, "native receipt batch shape mismatch");
+            counts.receipt_query_rows_received_by_node[node] += states.len();
             let elapsed_us = start.elapsed().as_micros() as u64;
             for (offset, state) in states.into_iter().enumerate() {
+                if !matches!(
+                    state,
+                    ReceiptState::Finalized { .. } | ReceiptState::RejectedNonce
+                ) {
+                    counts.receipt_query_not_final_by_node[node] += 1;
+                }
                 complete += usize::from(observe_receipt(
                     &mut observations[index + offset],
                     node,
@@ -611,7 +624,7 @@ fn drive(
                 )?);
             }
             while cursors[node] < dispatched
-                && observations[cursors[node]].finalized_us[node].is_some()
+                && observations[cursors[node]].receipt_query_observed_us[node].is_some()
             {
                 cursors[node] += 1;
             }
@@ -620,7 +633,7 @@ fn drive(
     }
     let completed_us = observations
         .iter()
-        .flat_map(|row| row.finalized_us.iter().flatten().copied())
+        .flat_map(|row| row.receipt_query_observed_us.iter().flatten().copied())
         .max()
         .context("no finalized receipt observation")?;
     let first_submit_us = if cold {
@@ -793,7 +806,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
                 observations.push(Observation {
                     hash: checked.tx_hash(),
                     first_submit_us: None,
-                    finalized_us: [None; 4],
+                    receipt_query_observed_us: [None; 4],
                     receipt: None,
                     expected_nonce: nonce as u64 + 1,
                     expected_fee: fee,
@@ -915,7 +928,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         same_head(&recovered, before[0])?;
         let mut cold = observations.clone();
         for row in &mut cold {
-            row.finalized_us = [None; 4];
+            row.receipt_query_observed_us = [None; 4];
         }
         let mut cold_counts = Counts::default();
         let cold_elapsed = drive(
@@ -947,7 +960,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         .iter()
         .filter(|r| r.complete())
         .map(|r| {
-            r.finalized_us
+            r.receipt_query_observed_us
                 .iter()
                 .flatten()
                 .copied()
@@ -957,10 +970,10 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         })
         .collect();
     latency.sort_unstable();
-    evidence["first_height_all_receipts_observed_us"] = json!(observations
+    evidence["first_height_all_receipt_queries_observed_us"] = json!(observations
         .iter()
         .filter(|row| matches!(row.receipt, Some(ReceiptState::Finalized { height: 1, .. })))
-        .flat_map(|row| row.finalized_us.iter().flatten())
+        .flat_map(|row| row.receipt_query_observed_us.iter().flatten())
         .max());
     evidence["phase"] = json!(phase);
     evidence["passed"] = json!(result.is_ok());
@@ -968,7 +981,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
     evidence["counts"] = json!(counts);
     evidence["incomplete_timed_attempt_seconds"] =
         json!(timed_attempt.map(|start| start.elapsed().as_secs_f64()));
-    evidence["transactions_not_confirmed_on_all_four"] =
+    evidence["transactions_not_receipt_query_observed_on_all_four"] =
         json!(observations.iter().filter(|row| !row.complete()).count());
     evidence["elapsed_seconds"] = json!(measured.map(|d| d.as_secs_f64()));
     evidence["successful_tps"] =
@@ -976,8 +989,8 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
     evidence["business_failed_tps"] =
         json!(measured.map(|d| counts.business_failed_transactions as f64 / d.as_secs_f64()));
     evidence["latency_us"] = json!({"p95":percentile(&latency,95),"p99":percentile(&latency,99),"sample_count":latency.len(),
-        "definition":"nearest-rank first native batch submission attempt to slowest of four final receipt replies; includes bounded one-query-per-session observer and submission-window scheduling"});
-    evidence["timing"]=json!("first native SDK submission attempt through all unique four-node finalized receipt responses; signatures, startup, APFL preparation, post-run economics and cold restart excluded");
+        "definition":"nearest-rank first native batch submission attempt to slowest of four receipt-query observations; includes bounded one-query-per-session observer and submission-window scheduling; not an internal finality timestamp"});
+    evidence["timing"]=json!("first native SDK submission attempt through all unique four-node receipt-query observations; signatures, startup, APFL preparation, post-run economics and cold restart excluded");
     fs::write(
         directory.join("observations.json"),
         serde_json::to_vec(&observations)?,
@@ -1007,7 +1020,7 @@ fn native_load_batch_observer_requires_every_node_and_does_not_count_retries() -
     let mut row = Observation {
         hash: [1; 32],
         first_submit_us: Some(0),
-        finalized_us: [None; 4],
+        receipt_query_observed_us: [None; 4],
         receipt: None,
         expected_nonce: 7,
         expected_fee: 45,
@@ -1036,7 +1049,10 @@ fn native_load_batch_observer_requires_every_node_and_does_not_count_retries() -
     assert!(observe_receipt(&mut row, 3, 0, good, 4, &mut counts)?);
     assert!(!observe_receipt(&mut row, 3, 0, good, 5, &mut counts)?);
     assert_eq!(counts.successful_transactions, 1);
-    assert_eq!(row.finalized_us, [Some(2), Some(2), Some(2), Some(4)]);
+    assert_eq!(
+        row.receipt_query_observed_us,
+        [Some(2), Some(2), Some(2), Some(4)]
+    );
     let wrong = ReceiptState::Finalized {
         success: false,
         nonce_after: 7,
@@ -1047,7 +1063,7 @@ fn native_load_batch_observer_requires_every_node_and_does_not_count_retries() -
     assert!(observe_receipt(&mut row, 3, 0, wrong, 6, &mut counts).is_err());
     assert!(observe_receipt(&mut row, 3, 0, ReceiptState::NotRecent, 6, &mut counts).is_err());
     let mut failed = row.clone();
-    failed.finalized_us = [None; 4];
+    failed.receipt_query_observed_us = [None; 4];
     failed.receipt = None;
     for node in 0..4 {
         assert_eq!(

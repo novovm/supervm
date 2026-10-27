@@ -327,6 +327,13 @@ impl CandidateBodies {
                         self.integer_rows += done.observation.gpu_rows as u64;
                         self.integer_plans += done.observation.gpu_waves as u64;
                         self.apfl_rows += done.observation.apfl_view_transactions as u64;
+                        crate::native_pipeline::profile::critical_event(
+                            crate::native_pipeline::profile::CriticalEvent::CandidateExecutionDone,
+                            body.context.height,
+                            body.local_round.unwrap_or_else(|| progress.round()),
+                            None,
+                            Some(*id),
+                        );
                         body.work = Work::Ready(done.candidate().clone());
                     }
                     Err(error) => {

@@ -76,6 +76,7 @@ fn config(size: usize) -> ResidentConfig {
         uca_initialization: None,
         workers: 1,
         execution_backend: Default::default(),
+        signature_backend: Default::default(),
         batch_size: size,
         genesis: GenesisConfig {
             chain_id: 71,
@@ -310,6 +311,24 @@ fn gpu_deployment_selection_reaches_the_same_original_pipeline_without_protocol_
         serde_json::to_value(cpu.genesis).unwrap(),
         serde_json::to_value(gpu.genesis).unwrap()
     );
+}
+
+#[test]
+fn signature_selection_reaches_original_pipeline_without_changing_business_or_domain() {
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1 as Backend;
+    let original = config(71);
+    let baseline = pipeline_config(&original);
+    for backend in [Backend::Auto, Backend::Cpu, Backend::GpuRequired] {
+        let mut selected = original.clone();
+        selected.signature_backend = backend;
+        let pipeline = pipeline_config(&selected);
+        assert_eq!(pipeline.signature_backend, backend);
+        assert_eq!(pipeline.execution_backend, baseline.execution_backend);
+        assert_eq!(pipeline.store.domain, baseline.store.domain);
+        assert_eq!(pipeline.store.library, baseline.store.library);
+        assert_eq!(pipeline.plan.transactions, baseline.plan.transactions);
+        assert_eq!(pipeline.workers, baseline.workers);
+    }
 }
 
 #[test]

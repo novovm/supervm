@@ -787,13 +787,9 @@ jobs:
       group: ci-runtime-${{ matrix.os }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
       cancel-in-progress: true
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        include:
-          - os: ubuntu-latest
-            aoem_library: aoem/linux/core/bin/libaoem_ffi.so
-          - os: windows-latest
-            aoem_library: aoem/windows/core/bin/aoem_ffi.dll
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -810,6 +806,31 @@ jobs:
       - name: Shared proof relation without native dependencies (not zkVM proof)
         run: cargo clippy --manifest-path runtime/Cargo.toml -p novovm-host --lib --no-default-features --locked -- -D warnings
       - run: cargo test --manifest-path runtime/Cargo.toml --workspace --locked
+
+  # Release includes ordinary AND ignored tests. Keep this separate from the
+  # lint/debug budget; do not replace --include-ignored with --ignored.
+  runtime_modules_release:
+    name: Preserved runtime release / ${{ matrix.os }} (not chain acceptance)
+    needs: detect
+    if: needs.detect.outputs.full == 'true'
+    concurrency:
+      group: ci-runtime-release-${{ matrix.os }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            aoem_library: aoem/linux/core/bin/libaoem_ffi.so
+          - os: windows-latest
+            aoem_library: aoem/windows/core/bin/aoem_ffi.dll
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
       - name: Fetch only the platform AOEM binary
         env:
           AOEM_TEST_BINARY: ${{ matrix.aoem_library }}
@@ -829,7 +850,7 @@ jobs:
   result:
     name: CI scope result
     if: always()
-    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules]
+    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules, runtime_modules_release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

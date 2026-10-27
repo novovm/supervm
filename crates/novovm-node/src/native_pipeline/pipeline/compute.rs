@@ -31,6 +31,7 @@ pub(crate) struct ComputeConfig {
     pub library: PathBuf,
     pub workers: u32,
     pub execution_backend: super::ExecutionBackend,
+    pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
     pub queue_capacity: usize,
     pub authentication: AuthenticationBudget,
     pub plan: PlanBudget,
@@ -616,7 +617,11 @@ fn ensure_uca_facade(
         )?;
         // Owned verification-only qualification retains this exact library;
         // neither a second loader nor signing/key-generation authority is used.
-        *facade = Some(selection.open_wire_facade()?.uca_spend_verifier_v1()?);
+        *facade = Some(
+            selection
+                .open_wire_facade()?
+                .uca_spend_verifier_with_backend_v1(config.signature_backend)?,
+        );
     }
     Ok(())
 }

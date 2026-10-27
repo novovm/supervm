@@ -45,7 +45,7 @@ use crate::native_pipeline::persistence::{
 use crate::native_pipeline::state::frontier::CaptureBudget;
 use crate::native_pipeline::state::tree::NodeHash;
 use anyhow::{ensure, Context, Result};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -66,6 +66,7 @@ pub struct PipelineConfig {
     pub store: StoreConfig,
     pub workers: u32,
     pub execution_backend: ExecutionBackend,
+    pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
     pub max_batches: usize,
     pub max_retained_bytes: usize,
     pub authentication: AuthenticationBudget,
@@ -418,12 +419,38 @@ struct Usage {
     bytes: usize,
     background: usize,
     ingress: usize,
+    authority: usize,
 }
 struct Permit {
     usage: Arc<Mutex<Usage>>,
     bytes: usize,
     background: bool,
     ingress: bool,
+    authority_parked: AtomicBool,
+}
+impl Permit {
+    fn park_for_authority(&self) -> Result<()> {
+        ensure!(
+            self.ingress && !self.background,
+            "non-ingress authority permit"
+        );
+        let mut usage = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
+        ensure!(
+            !self.authority_parked.load(Ordering::Relaxed),
+            "signature output already parked for authority"
+        );
+        ensure!(usage.authority == 0, "authority admission slot occupied");
+        ensure!(usage.ingress == 1, "signature admission slot not owned");
+        // The immutable ingress role still owns every retained byte. Only its
+        // scheduling phase changes, under the same mutex as issuance and drop.
+        usage.ingress -= 1;
+        usage.authority += 1;
+        self.authority_parked.store(true, Ordering::Relaxed);
+        Ok(())
+    }
 }
 impl Drop for Permit {
     fn drop(&mut self) {
@@ -431,7 +458,13 @@ impl Drop for Permit {
         usage.batches -= usize::from(!self.ingress);
         usage.bytes -= self.bytes;
         usage.background -= usize::from(self.background);
-        usage.ingress -= usize::from(self.ingress);
+        if self.ingress {
+            if self.authority_parked.load(Ordering::Relaxed) {
+                usage.authority -= 1;
+            } else {
+                usage.ingress -= 1;
+            }
+        }
     }
 }
 
@@ -700,6 +733,7 @@ impl CandidatePipeline {
             bytes,
             background,
             ingress: false,
+            authority_parked: AtomicBool::new(false),
         })))
     }
 
@@ -712,6 +746,22 @@ impl CandidatePipeline {
             .as_ref()
             .context("pipeline I/O closed")?
             .try_read_value(root, key)
+    }
+
+    pub(crate) fn capture_budget(&self) -> CaptureBudget {
+        self.config.capture
+    }
+
+    /// Read-only frontier capture uses the same immutable-tree I/O owner and
+    /// bounded query lane, without reserving candidate publication permits.
+    pub(crate) fn try_read_state_nodes(
+        &self,
+        hashes: Vec<NodeHash>,
+    ) -> Result<Option<IoTicket<crate::native_pipeline::persistence::io::NodeReadReply>>> {
+        self.queries
+            .as_ref()
+            .context("pipeline I/O closed")?
+            .try_read_nodes(hashes)
     }
 
     pub(crate) fn try_read_consensus_metadata(

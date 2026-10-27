@@ -207,6 +207,24 @@ impl IoMetadataClient {
 }
 
 impl IoReadClient {
+    /// Bounded frontier batches on the same read-only lane and storage owner.
+    /// This does not borrow candidate-capture/write permits or add parallel I/O.
+    pub(crate) fn try_read_nodes(
+        &self,
+        hashes: Vec<NodeHash>,
+    ) -> Result<Option<IoTicket<NodeReadReply>>> {
+        ensure!(
+            !hashes.is_empty() && hashes.len() <= BULK_KEYS,
+            "I/O node request must contain 1..=64 hashes"
+        );
+        let bytes = hashes.len() * (32 + 291 + 1);
+        enqueue(
+            &self.sender,
+            reserve(&self.usage, self.budget, bytes)?,
+            |reply| Operation::Nodes { hashes, reply },
+        )
+    }
+
     pub(crate) fn try_read_value(
         &self,
         root: NodeHash,
@@ -345,7 +363,11 @@ impl IoService {
     pub(crate) fn read_client(&self) -> Result<IoReadClient> {
         let budget = IoBudget {
             requests: self.budget.requests,
-            bytes: self.budget.requests * (256 + 32 + 257),
+            // A lane ticket can own either one point result or one existing
+            // 64-node frontier reply, never both. Keep the request count and
+            // owner unchanged while accounting for the actual reply shape.
+            bytes: (self.budget.requests * (256 + 32 + 257).max(BULK_KEYS * (32 + 291 + 1)))
+                .min(self.budget.bytes),
         };
         let notify = self
             .usage
@@ -553,3 +575,61 @@ fn run_owner(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod frontier_query_tests {
+    use super::*;
+
+    #[test]
+    fn query_frontier_counts_one_bounded_reply_and_keeps_candidate_quota_separate() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let mut service = IoService {
+            sender,
+            worker: thread::spawn(|| {}),
+            usage: Arc::new(Mutex::new(Usage::default())),
+            budget: IoBudget {
+                requests: 1,
+                bytes: 128 * 1024,
+            },
+            recovery_bytes: 1024,
+        };
+        let client = service.read_client().unwrap();
+        assert_eq!(client.budget.requests, 1);
+        assert_eq!(client.budget.bytes, BULK_KEYS * (32 + 291 + 1));
+        assert!(client.try_read_nodes(Vec::new()).is_err());
+        assert!(client.try_read_nodes(vec![[1; 32]; 65]).is_err());
+        let mut ticket = client.try_read_nodes(vec![[1; 32]; 64]).unwrap().unwrap();
+        assert!(client.try_read_nodes(vec![[2; 32]]).unwrap().is_none());
+        // The held query permit cannot reserve the internal candidate quota.
+        let candidate = service.try_read_nodes(vec![[3; 32]]).unwrap().unwrap();
+        assert_eq!(service.usage.lock().unwrap().requests, 1);
+        assert_eq!(client.usage.lock().unwrap().requests, 1);
+        let Command { operation, permit } = receiver.recv().unwrap();
+        let Operation::Nodes { hashes, reply } = operation else {
+            panic!("frontier lane changed operation")
+        };
+        assert_eq!(hashes.len(), 64);
+        reply.send(Ok(vec![None; 64])).unwrap();
+        drop(permit);
+        // Completed but unconsumed data still owns the full reply reservation.
+        assert!(client.try_read_nodes(vec![[2; 32]]).unwrap().is_none());
+        assert_eq!(ticket.try_take().unwrap().unwrap().len(), 64);
+        assert_eq!(client.usage.lock().unwrap().requests, 0);
+        assert!(ticket.try_take().is_err());
+        drop(candidate);
+        // Reply-shape accounting must not override an owner's smaller limit
+        // or multiply a large request count into an unconfigured byte budget.
+        service.budget.bytes = 1024;
+        let limited = service.read_client().unwrap();
+        assert_eq!(limited.budget.bytes, 1024);
+        assert!(limited.try_read_nodes(vec![[4; 32]; 64]).is_err());
+        drop(limited);
+        service.budget.requests = 65_536;
+        service.budget.bytes = 128 * 1024 * 1024;
+        let many = service.read_client().unwrap();
+        assert_eq!(many.budget.bytes, service.budget.bytes);
+        drop(many);
+        drop(receiver);
+        service.shutdown().unwrap();
+    }
+}

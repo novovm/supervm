@@ -1,8 +1,8 @@
 //! The shared spend-signature consumer of the existing AOEM crypto capability.
 //! A checked signature is NOT a trusted UCA state proof or permission to publish.
 use crate::pq_signature::{
-    AoemMldsaParameterSet, MldsaSigner, MldsaVerifyInput, OwnedMldsaVerifier,
-    MLDSA_VERIFY_BATCH_MAX_ITEMS,
+    AoemMldsaParameterSet, MldsaSigner, MldsaVerificationBackendV1, MldsaVerificationExecutionV1,
+    MldsaVerifyInput, OwnedMldsaVerifier, MLDSA_VERIFY_BATCH_MAX_ITEMS,
 };
 use crate::AoemExecFacade;
 use anyhow::{ensure, Result};
@@ -51,6 +51,13 @@ pub struct UcaSpendVerifierV1 {
 }
 
 impl UcaSpendVerifierV1 {
+    /// Latest completed semantic call on this shared owner, including startup
+    /// qualification. Diagnostic only: concurrent callers must not associate
+    /// this snapshot with a particular transaction or use it as authority.
+    pub fn last_execution_v1(&self) -> Option<MldsaVerificationExecutionV1> {
+        self.verifier.last_execution_v1()
+    }
+
     pub fn verify(&self, signed: SignedUcaSpendV1) -> Result<SignatureCheckedUcaSpendV1> {
         signed.validate()?;
         self.verifier.verify(MldsaVerifyInput {
@@ -63,7 +70,7 @@ impl UcaSpendVerifierV1 {
     }
 
     /// Verifies one bounded admission unit through the qualified AOEM batch
-    /// export. Per-row failures preserve input order; an outer failure invalidates
+    /// semantic entry. Per-row failures preserve input order; an outer failure invalidates
     /// the whole call, without scalar retries. A checked signature remains only
     /// cryptographic evidence, never a trusted parent/nonce/budget permission.
     pub fn verify_batch(
@@ -154,6 +161,20 @@ impl AoemExecFacade {
         let verifier = OwnedMldsaVerifier::new(
             std::sync::Arc::clone(&self.dynlib),
             AoemMldsaParameterSet::MlDsa65,
+        )?;
+        Ok(UcaSpendVerifierV1 { verifier })
+    }
+
+    /// Explicit backend qualification for isolated comparisons using the same
+    /// original consumer. No fallback or change to the default Auto policy.
+    pub fn uca_spend_verifier_with_backend_v1(
+        &self,
+        backend: MldsaVerificationBackendV1,
+    ) -> Result<UcaSpendVerifierV1> {
+        let verifier = OwnedMldsaVerifier::new_with_backend(
+            std::sync::Arc::clone(&self.dynlib),
+            AoemMldsaParameterSet::MlDsa65,
+            backend,
         )?;
         Ok(UcaSpendVerifierV1 { verifier })
     }
