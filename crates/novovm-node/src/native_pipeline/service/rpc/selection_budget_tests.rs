@@ -7,12 +7,12 @@ use novovm_protocol::uca_spend::{
 };
 use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
 
-fn pending_uca() -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)> {
+fn pending_uca(rows: usize) -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)> {
     let public = vec![9; MLDSA65_PUBLIC_KEY_BYTES];
     let mut order = VecDeque::new();
     let mut pending = BTreeMap::new();
-    for first in [0usize, 64] {
-        let raws = (first..first + 64)
+    for first in (0..rows).step_by(64) {
+        let raws = (first..(first + 64).min(rows))
             .map(|nonce| {
                 SignedAssetSpendV2 {
                     intent: AssetSpendIntentV2 {
@@ -69,13 +69,13 @@ fn pending_uca() -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)> {
 }
 
 #[test]
-fn asset_selection_charges_actual_signed_bytes_at_384k_without_losing_nonce_prefix() -> Result<()> {
-    let (order, pending) = pending_uca()?;
+fn asset_selection_1024_rows_at_8m_preserves_queued_nonce_suffix() -> Result<()> {
+    let (order, pending) = pending_uca(1024 + 64)?;
     let limit = super::super::uca_body_byte_limit(1024);
-    assert_eq!(limit, 384 * 1024);
+    assert_eq!(limit, 8 * 1024 * 1024);
     let row = &pending[&order[0]];
     assert_eq!(row.selection_input_bytes(), Some(row.canonical_len));
-    let expected_count = limit / row.canonical_len;
+    let expected_count = 1024;
     let known = BTreeMap::from([([3; 32], 0)]);
     let selected = select_pending_batch(&order, &pending, &known, BTreeMap::new(), 1024);
     assert_eq!(selected.len(), expected_count);
@@ -93,16 +93,13 @@ fn asset_selection_charges_actual_signed_bytes_at_384k_without_losing_nonce_pref
         .sum::<usize>();
     assert!(bytes <= limit);
     assert!(
-        bytes
-            + pending[&order[expected_count]]
-                .selection_input_bytes()
-                .unwrap()
-            > limit
+        bytes > 384 * 1024,
+        "the old byte ceiling cannot hold this prefix"
     );
     assert_eq!(
         pending.len(),
-        128,
-        "byte limit cannot discard queued transactions"
+        1088,
+        "selection cannot discard the queued nonce suffix"
     );
     assert_eq!(
         known[&[3; 32]], 0,
@@ -118,17 +115,20 @@ fn asset_selection_charges_actual_signed_bytes_at_384k_without_losing_nonce_pref
             .copied()
             .collect::<Vec<_>>()
     );
-    // A stricter row-count budget still wins; byte accounting is not capacity expansion.
-    assert_eq!(
-        select_pending_batch(&order, &pending, &known, BTreeMap::new(), 32).len(),
-        32
-    );
+    assert_eq!(later.len(), 64);
+    // Lower configured row limits still win; low load need not wait for 1024.
+    for rows in [32, 64] {
+        assert_eq!(
+            select_pending_batch(&order, &pending, &known, BTreeMap::new(), rows).len(),
+            rows
+        );
+    }
     Ok(())
 }
 
 #[test]
 fn asset_selection_refuses_invalid_row_and_length_before_nonce_credit() -> Result<()> {
-    let (order, mut pending) = pending_uca()?;
+    let (order, mut pending) = pending_uca(128)?;
     let first = order[0];
     pending.get_mut(&first).unwrap().canonical_len = usize::MAX;
     assert!(pending[&first].selection_input_bytes().is_none());
@@ -148,7 +148,7 @@ fn asset_selection_refuses_invalid_row_and_length_before_nonce_credit() -> Resul
 
 #[test]
 fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum() -> Result<()> {
-    let (order, mut pending) = pending_uca()?;
+    let (order, mut pending) = pending_uca(1024 + 64)?;
     let known = BTreeMap::from([([3; 32], 0)]);
     let first_quantum = order.iter().take(32).copied().collect();
     let (partial, full) =
@@ -166,17 +166,27 @@ fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum
         "later admission must not block a full ready candidate"
     );
 
+    let partial_source = nonce_selection_window(&order, 0, 128);
+    let (selected, full) =
+        select_prepared_nonce_window(&partial_source, &pending, &known, BTreeMap::new(), 1024)
+            .unwrap();
+    assert_eq!(selected.len(), 128);
+    assert!(
+        !full,
+        "128 rows no longer exhaust the candidate byte budget"
+    );
+
     let (selected, full) =
         select_prepared_nonce_window(&order, &pending, &known, BTreeMap::new(), 1024).unwrap();
-    assert!(selected.len() < 128);
-    assert!(full, "the original byte budget also makes a full candidate");
+    assert_eq!(selected.len(), 1024);
+    assert!(full, "the configured row limit makes a full candidate");
     let bytes = selected
         .iter()
         .map(|hash| pending[hash].selection_input_bytes().unwrap())
         .sum::<usize>();
     assert!(bytes <= super::super::uca_body_byte_limit(1024));
     assert_eq!(known[&[3; 32]], 0);
-    assert_eq!(pending.len(), 128);
+    assert_eq!(pending.len(), 1088);
 
     // Many retained rows do not imply an executable prefix. Neither a real
     // nonce gap nor an unresolved read grants the full-candidate exception.

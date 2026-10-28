@@ -14,7 +14,9 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 use crate::native_pipeline::execution::plan::{BatchContext, BatchPlan, PlanBudget};
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
 use crate::native_pipeline::state::frontier::DeclaredAccess;
-use crate::native_pipeline::state::tree::{validate_state_node_bytes, NodeHash};
+use crate::native_pipeline::state::tree::{
+    validate_state_node_bytes, NodeHash, MAX_BATCH_READ_KEYS,
+};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -51,7 +53,7 @@ impl Default for PacketBudget {
             max_nodes: TREE_MAX_NODES,
             max_transactions: 1024,
             max_transaction_bytes: 1024 * 1024,
-            max_access_keys: 4096,
+            max_access_keys: MAX_BATCH_READ_KEYS,
             max_receipt_bytes: 1024 * 1024,
         }
     }

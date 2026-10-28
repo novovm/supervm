@@ -1,0 +1,13 @@
+
+running 1 test
+NUAS process recovery evidence=D:\WorksArea\SUPERVM\target\native-product-rpc\uca-recovery-19528-1793227685118971500
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::uca_recovery::native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::application::queries::uca_recovery::native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1756 filtered out; finished in 200.08s
+
+Error: native query timeout: Receipt { hash: [26, 126, 29, 201, 110, 91, 131, 137, 194, 202, 107, 221, 173, 100, 235, 160, 176, 206, 233, 244, 72, 228, 221, 241, 123, 145, 247, 143, 173, 162, 52, 203] }

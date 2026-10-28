@@ -6,6 +6,7 @@ use crate::native_pipeline::consensus::tests::progress_integration::{
     with_archive_lifecycle_for_test, with_delivery_lifecycle_for_test,
     with_delivery_live_body_for_test, with_delivery_peer_lifecycle_for_test,
 };
+use crate::native_pipeline::consensus::transport;
 
 fn prepared(node: &NativeLifecycle, message: &Message) -> Result<PreparedMessage> {
     node.channel.prepare(message)
@@ -15,6 +16,63 @@ fn request(node: &NativeLifecycle, index: u64) -> Result<PreparedMessage> {
     let mut body_id = [0x91; 32];
     body_id[..8].copy_from_slice(&index.to_le_bytes());
     node.channel.prepare(&Message::RequestBody { body_id })
+}
+
+#[test]
+fn native_control_reserve_tracks_signed_evidence_not_expanded_body_capacity() -> Result<()> {
+    let small = DecodeLimits {
+        transactions: 1024,
+        transaction_bytes: 8192,
+        body_bytes: 384 * 1024,
+        message_bytes: 512 * 1024,
+    };
+    let large = DecodeLimits {
+        body_bytes: 8 * 1024 * 1024,
+        message_bytes: 8 * 1024 * 1024 + 128 * 1024,
+        ..small
+    };
+    let send = NativeSendLimits {
+        messages: 32,
+        bytes: 16 * 1024 * 1024,
+        peer_messages: 4,
+        peer_bytes: 2 * 1024 * 1024,
+    };
+    let control = transport::durable_control_bound(4, large)?;
+    let reserve = control_reservation(4, large, &send)?;
+    assert_eq!(reserve, (8, 8 * control));
+    assert_eq!(reserve, control_reservation(4, small, &send)?);
+    assert!(reserve.1 < small.message_bytes);
+    assert!(control_reservation(0, large, &send).is_err());
+    Ok(())
+}
+
+#[test]
+fn native_control_reserve_keeps_current_controls_and_exact_bounded_drain() -> Result<()> {
+    let codec = DecodeLimits {
+        transactions: 1024,
+        transaction_bytes: 8192,
+        body_bytes: 8 * 1024 * 1024,
+        message_bytes: 8 * 1024 * 1024 + 128 * 1024,
+    };
+    let control = transport::durable_control_bound(4, codec)?;
+    for (messages, peer_messages, bytes, peer_bytes, slots, drain) in [
+        (32, 4, 16 * control, 8 * control, 4, 4 * control),
+        (2, 4, 16 * control, 8 * control, 2, 2 * control),
+        (32, 4, 16 * control, control + 1, 4, control + 1),
+        (32, 4, control + 1, 16 * control, 4, control + 1),
+    ] {
+        let send = NativeSendLimits {
+            messages,
+            bytes,
+            peer_messages,
+            peer_bytes,
+        };
+        assert_eq!(
+            control_reservation(4, codec, &send)?,
+            (4 + slots, 4 * control + drain)
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -490,6 +548,13 @@ fn native_realtime_retirement_auxiliary_full_preserves_four_current_controls() -
         ensure!(
             node.limits.messages_per_peer == 32,
             "retain actual fixture host budget"
+        );
+        let control =
+            transport::durable_control_bound(node.validators.members().len(), node.codec)?;
+        ensure!(node.control_reserve_messages == 8);
+        ensure!(
+            node.control_reserve_bytes == 8 * control,
+            "body capacity was incorrectly reserved as control evidence"
         );
         let old = fixture_control_votes(node, 1)?;
         let start = Instant::now();

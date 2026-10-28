@@ -7,7 +7,7 @@
 //! nonce/budget consumption must be compiled into the economic effect plan.
 use super::{nov_transfer_batch, quoted_transfer::Account, record_pages};
 use crate::native_pipeline::state::frontier::{DeclaredAccess, OwnedStateInput};
-use crate::native_pipeline::state::tree::{NodeHash, StateChange};
+use crate::native_pipeline::state::tree::{NodeHash, StateChange, MAX_BATCH_READ_KEYS};
 use anyhow::{ensure, Context, Result};
 use novovm_adapter_api::uca_spend_policy::{SuppliedAssetSpendGrantV2, SuppliedAssetSpendStateV2};
 use novovm_exec::uca_spend::SignatureCheckedAssetSpendV2;
@@ -318,7 +318,10 @@ impl AssetSpendStateAccessV2 {
             .collect::<Vec<_>>();
         // This is the existing tree/plan key bound and its already-reserved
         // key-value materialization allowance, not another state cache.
-        ensure!(keys.len() <= 4096, "UCA batch read key bound");
+        ensure!(
+            keys.len() <= MAX_BATCH_READ_KEYS,
+            "UCA batch read key bound"
+        );
         let values = input.read_many(&keys)?;
         ensure!(values.len() == keys.len(), "UCA capture shape mismatch");
         ensure!(

@@ -8,6 +8,7 @@ use crate::native_pipeline::business::quoted_transfer::{
 use crate::native_pipeline::business::uca_spend_state::{
     self, AssetAccountAuthorityV2, AssetSpendStateAccessV2,
 };
+use crate::native_pipeline::state::tree::MAX_BATCH_READ_KEYS;
 use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
 use novovm_exec::uca_spend::SignatureCheckedAssetSpendV2;
 use novovm_protocol::uca_spend::AssetSpendIntentV2;
@@ -337,7 +338,8 @@ impl NovTransferBody {
             }
             accesses.push(access);
             ensure!(
-                declarations.len() <= plan_budget.access_keys && declarations.len() <= 4096,
+                declarations.len() <= plan_budget.access_keys
+                    && declarations.len() <= MAX_BATCH_READ_KEYS,
                 "UCA access budget"
             );
         }
@@ -348,7 +350,8 @@ impl NovTransferBody {
             declarations.insert(d.key.clone(), d);
         }
         ensure!(
-            declarations.len() <= 4096 && declarations.len() <= plan_budget.access_keys,
+            declarations.len() <= MAX_BATCH_READ_KEYS
+                && declarations.len() <= plan_budget.access_keys,
             "UCA tree effect budget"
         );
         Ok(Self {

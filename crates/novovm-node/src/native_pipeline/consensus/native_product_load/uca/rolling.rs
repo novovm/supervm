@@ -42,12 +42,24 @@ impl LoadMode {
     }
 
     pub(super) fn validate_count(self, count: usize, frame_rows: usize) -> Result<()> {
-        if self.dynamic_windows() {
+        ensure!(
+            frame_rows > 0
+                && frame_rows <= CONFIGURED_BATCH
+                && count > 0
+                && count.is_multiple_of(frame_rows),
+            "load requires whole bounded wire frames"
+        );
+        if self.is_rolling() {
             ensure!(
                 count >= WAVE_ROWS
                     && count.is_multiple_of(WAVE_ROWS)
                     && WAVE_ROWS.is_multiple_of(frame_rows),
                 "rolling load requires complete 256-row waves and whole wire frames"
+            );
+        } else if self == Self::Continuous {
+            ensure!(
+                count <= WINDOW || WINDOW.is_multiple_of(frame_rows),
+                "continuous initial window must contain whole wire frames"
             );
         }
         Ok(())
@@ -163,14 +175,19 @@ pub(super) fn prepare_inputs(
     _first_index: usize,
     frame_rows: usize,
 ) -> Result<Vec<PreparedApplicationInput>> {
+    ensure!(
+        frame_rows > 0 && raw.len().is_multiple_of(frame_rows),
+        "prepared load must contain whole wire frames"
+    );
+    let codec = native_decode_limits(frame_rows, true);
     raw.chunks(frame_rows)
         .map(|rows| {
             client.prepare_asset_spend(Arc::new(AssetSpendBatchV2::from_raw(
                 rows,
                 AssetSpendBatchLimitsV2 {
                     transactions: frame_rows,
-                    transaction_bytes: MAX_SIGNED_SPEND_BYTES,
-                    body_bytes: CANONICAL_BODY_BYTES,
+                    transaction_bytes: codec.transaction_bytes,
+                    body_bytes: codec.body_bytes,
                 },
             )?))
         })
@@ -408,6 +425,10 @@ pub(super) fn drive_continuous(
     let mut no_outstanding_us = 0u64;
     let mut outstanding_row_us = 0u128;
     let mut intervals = vec![(0, raw.len(), SpendWindow::after(0)?)];
+    // Never append a partial frame and then count it as frame_rows in the
+    // original driver. Larger APFL inputs replenish one or more whole frames;
+    // this changes preparation granularity, not the 8192 outstanding ceiling.
+    let generation_rows = WAVE_ROWS.div_ceil(frame_rows) * frame_rows;
     let result = std::thread::scope(|scope| -> Result<Duration> {
         let mut pending = None;
         loop {
@@ -415,7 +436,7 @@ pub(super) fn drive_continuous(
             // A four-node observation frees the original WINDOW budget, but a
             // whole window does not have to drain before its replacement begins.
             if pending.is_none() && raw.len() < count {
-                let generate = WAVE_ROWS.min(count - raw.len());
+                let generate = generation_rows.min(count - raw.len());
                 if raw.len() + generate - driver.complete <= WINDOW {
                     let first = raw.len();
                     let parent = *driver.finalized_heights.iter().min().unwrap();
@@ -505,6 +526,7 @@ pub(super) fn drive_continuous(
         observed_duration(observations, false)
     });
     evidence["continuous_signer_workers"] = json!(workers);
+    evidence["continuous_generation_batch_rows"] = json!(generation_rows);
     evidence["continuous_timed_generation_task_us"] = json!(signing_us);
     evidence["continuous_timed_structure_preparation_us"] = json!(preparation_us);
     evidence["continuous_generator_starved_poll_us"] = json!(generator_starved_us);
@@ -634,6 +656,12 @@ fn native_uca_rolling_window_and_original_funding_contract() -> Result<()> {
     assert_eq!(LoadMode::Continuous.first_rows(65_536), WINDOW);
     assert_eq!(LoadMode::Continuous.first_rows(1024), 1024);
     assert!(LoadMode::Continuous.validate_count(65_536, 32).is_ok());
+    assert!(LoadMode::Continuous.validate_count(65_536, 1024).is_ok());
+    assert!(LoadMode::Continuous.validate_count(65_536, 0).is_err());
+    assert!(LoadMode::Continuous.validate_count(65_536, 2048).is_err());
+    assert!(LoadMode::Continuous.validate_count(9000, 1000).is_err());
+    assert!(LoadMode::Rolling.validate_count(65_536, 1024).is_err());
+    assert!(LoadMode::Static.validate_count(65_536, 1024).is_ok());
     assert_eq!(LoadMode::Continuous.grant_expiry(65_536)?, 65_793);
     let nonces_per_payer = 65_536 / SENDERS;
     assert_eq!(nonces_per_payer, 4096);
@@ -743,5 +771,93 @@ fn native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash() -> Result
     .is_err());
     assert_eq!(raw.len(), 2 * SENDERS);
     assert_eq!(observations.len(), raw.len());
+    Ok(())
+}
+
+#[test]
+fn native_asset_1024_apfl_frame_sizes_and_lossless_roundtrip() -> Result<()> {
+    use crate::native_pipeline::consensus::transport::{self, Message, TransactionsScope};
+    use novovm_protocol::uca_spend::{MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES};
+
+    // Structural sizing only: patterned signature bytes are deliberately not
+    // presented as cryptographically valid. The process load uses AOEM signing.
+    let codec = native_decode_limits(CONFIGURED_BATCH, true);
+    assert_eq!(codec.transactions, 1024);
+    assert_eq!(codec.body_bytes, 8 * 1024 * 1024);
+    let mut reports = Vec::new();
+    for distinct_keys in [1, SENDERS, CONFIGURED_BATCH] {
+        let raw = (0..CONFIGURED_BATCH)
+            .map(|index| {
+                let mut public_key = vec![7; MLDSA65_PUBLIC_KEY_BYTES];
+                public_key[..8].copy_from_slice(&((index % distinct_keys) as u64).to_be_bytes());
+                SignedAssetSpendV2 {
+                    intent: AssetSpendIntentV2 {
+                        chain_id: CHAIN,
+                        genesis: [1; 32],
+                        payer: account_bytes(index % SENDERS).to_vec(),
+                        recipient: account_bytes(SENDERS).to_vec(),
+                        asset: 1,
+                        amount: 1,
+                        max_fee: 50,
+                        nonce: (index / SENDERS) as u64,
+                        authorization_epoch: 1,
+                        spend_key_ref: spend_key_ref_v1(&public_key)?,
+                        not_before_height: 1,
+                        expires_at_height: 257,
+                        authority_update: None,
+                    },
+                    public_key,
+                    signature: vec![index as u8; MLDSA65_SIGNATURE_BYTES],
+                }
+                .encode()
+                .map_err(anyhow::Error::from)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let limits = AssetSpendBatchLimitsV2 {
+            transactions: codec.transactions,
+            transaction_bytes: codec.transaction_bytes,
+            body_bytes: codec.body_bytes,
+        };
+        let batch = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
+        let apfl_bytes = batch.encode()?.len();
+        let message = Message::AssetTransactions {
+            scope: TransactionsScope {
+                chain_id: CHAIN,
+                genesis: [1; 32],
+                protocol: [2; 32],
+                epoch: 1,
+                validator_set_hash: [3; 32],
+                session: [4; 32],
+                sequence: 1,
+            },
+            batch,
+        };
+        let wire = transport::encode(&message, codec)?;
+        let Message::AssetTransactions { batch, .. } = transport::decode(&wire, codec)? else {
+            bail!("1024-row asset APFL input changed message kind");
+        };
+        assert_eq!(batch.len(), CONFIGURED_BATCH);
+        assert_eq!(
+            batch.canonical_bytes(),
+            raw.iter().map(Vec::len).sum::<usize>()
+        );
+        for (index, expected) in raw.iter().enumerate() {
+            assert_eq!(&batch.raw_transaction(index)?, expected);
+        }
+        let mut sizes = apfl_frame_sizes(&raw, CONFIGURED_BATCH)?;
+        assert_eq!(sizes.len(), 1);
+        assert_eq!(sizes[0]["apfl_encoded_bytes"], json!(apfl_bytes));
+        sizes[0]["distinct_public_keys"] = json!(distinct_keys);
+        sizes[0]["native_application_object_bytes"] = json!(wire.len());
+        reports.push(sizes.remove(0));
+    }
+    println!(
+        "{}",
+        json!({
+            "scope":"actual original codec structural sizing and exact byte roundtrip, not signature or TPS acceptance",
+            "transactions":CONFIGURED_BATCH,"expanded_budget":codec.body_bytes,
+            "message_budget":codec.message_bytes,"frames":reports,
+        })
+    );
     Ok(())
 }

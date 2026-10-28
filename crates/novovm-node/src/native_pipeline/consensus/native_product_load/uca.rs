@@ -18,7 +18,7 @@ use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_protocol::{
     native_query::{AssetReadIntentV2, AssetSpendStateViewV2, AssetState},
-    uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES},
+    uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2},
     uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
 };
 use std::collections::BTreeMap;
@@ -27,7 +27,6 @@ const CONFIGURED_BATCH: usize = 1024;
 // Preserve the existing 32-account initialization bound, including recipient.
 const SENDERS: usize = 16;
 const FUNDING: u128 = 1_000_000;
-const CANONICAL_BODY_BYTES: usize = 384 * 1024;
 
 #[path = "uca/rolling.rs"]
 mod rolling;
@@ -57,6 +56,30 @@ fn account_bytes(index: usize) -> [u8; 20] {
 
 fn account_name(index: usize) -> String {
     format!("uca:native-load-{index}")
+}
+
+// Re-encoding for size evidence happens after the four-receipt stopwatch, never
+// in the measured submission loop. These are logical bytes, not UDP traffic.
+fn apfl_frame_sizes(raw: &[Vec<u8>], frame_rows: usize) -> Result<Vec<Value>> {
+    let codec = native_decode_limits(frame_rows, true);
+    raw.chunks(frame_rows)
+        .map(|rows| {
+            let batch = AssetSpendBatchV2::from_raw(
+                rows,
+                AssetSpendBatchLimitsV2 {
+                    transactions: codec.transactions,
+                    transaction_bytes: codec.transaction_bytes,
+                    body_bytes: codec.body_bytes,
+                },
+            )?;
+            Ok(json!({
+                "rows":batch.len(),
+                "canonical_expanded_bytes":batch.canonical_bytes(),
+                "apfl_encoded_bytes":batch.encode()?.len(),
+                "independent_signature_bytes":batch.len() * novovm_protocol::uca_spend::MLDSA65_SIGNATURE_BYTES,
+            }))
+        })
+        .collect()
 }
 
 fn progress_matches_final_head(progress: &Value, head: Status) -> bool {
@@ -310,9 +333,10 @@ fn run_native_uca_load_mode(
     let count = env_count(
         "NOVOVM_NATIVE_UCA_LOAD_TRANSACTIONS",
         if mode.dynamic_windows() { 65_536 } else { 1024 },
-        if mode.dynamic_windows() { 65_536 } else { 4096 },
+        65_536,
     )?;
-    let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, 64)?;
+    let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, CONFIGURED_BATCH)?;
+    let codec = native_decode_limits(CONFIGURED_BATCH, true);
     ensure!(
         count % SENDERS == 0 && count % frame_rows == 0,
         "NUAS load must contain whole sender rounds and wire frames"
@@ -374,15 +398,16 @@ fn run_native_uca_load_mode(
     let mut evidence = json!({"scope":"one_host_four_original_processes_bounded_nuas_load",
         "transactions":count,"configured_candidate_batch_limit":CONFIGURED_BATCH,"wire_frame_rows":frame_rows,
         "senders":SENDERS,"window":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
-        "original_sdk_outstanding_ceiling":WINDOW,"sdk_io_quantum":IO_QUANTUM,"canonical_body_budget":CANONICAL_BODY_BYTES,
-        "wire_message_budget":MAX_MESSAGE,"query_batch":env_count("NOVOVM_NATIVE_QUERY_BATCH",1,MAX_RECEIPTS)?,
+        "original_sdk_outstanding_ceiling":WINDOW,"sdk_io_quantum":IO_QUANTUM,"canonical_body_budget":codec.body_bytes,
+        "wire_message_budget":codec.message_bytes,"query_batch":env_count("NOVOVM_NATIVE_QUERY_BATCH",1,MAX_RECEIPTS)?,
         "backend":test_execution_backend()?,"binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
         "signature_backend":signature_override.unwrap_or(crate::native_pipeline::service::config::test_signature_backend()?),
         "aoem_sha256":hex(&Sha256::digest(fs::read(&library)?)),"real_processes":4,"real_machines":1,
         "asset_signature":"ML-DSA-65","transport":"native_novorudp_apfl","http_listeners":0,
-        "requested_full_65536_workload":mode.dynamic_windows() && count == 65_536,
+        "requested_full_65536_workload":count == 65_536,
         "full_65536_workload":false,
         "static_intent_window":if mode.dynamic_windows() {Value::Null} else {json!([1,257])},
+        "static_65536_feasibility":"1024 full candidates need 64 heights; actual packing/rounds must still finish every signed row within [1,257), otherwise fail without extending or renewing signed intents",
         "load_strategy":mode.label(),"grant_expires_at_height":grant_expiry,
         "rolling_wave_transactions":if mode.is_rolling() {Some(rolling::WAVE_ROWS)} else {None},
         "effective_outstanding_limit":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
@@ -729,6 +754,8 @@ fn run_native_uca_load_mode(
         }
         evidence["signed_workload_sha256"] = json!(hex(&workload_hash));
         evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
+        evidence["apfl_frame_sizes"] = json!(apfl_frame_sizes(&raw, frame_rows)?);
+        evidence["apfl_size_measurement_scope"] = json!("untimed reconstruction from the exact submitted signed corpus; canonical expanded bytes and lossless APFL bytes preserve every signature; application_object_bytes also includes original native envelope, neither is physical/retransmitted UDP traffic");
         ensure!(
             counts.successful_transactions == count && counts.business_failed_transactions == 0,
             "NUAS load did not finalize all successful transactions"
@@ -905,8 +932,7 @@ fn run_native_uca_load_mode(
     latency.sort_unstable();
     evidence["phase"] = json!(phase);
     evidence["passed"] = json!(result.is_ok());
-    evidence["full_65536_workload"] =
-        json!(result.is_ok() && mode.dynamic_windows() && count == 65_536);
+    evidence["full_65536_workload"] = json!(result.is_ok() && count == 65_536);
     evidence["error"] = json!(result.as_ref().err().map(|e| format!("{e:#}")));
     evidence["counts"] = json!(counts);
     evidence["elapsed_seconds"] = json!(measured.map(|d| d.as_secs_f64()));
@@ -964,6 +990,10 @@ fn native_uca_same_corpus_signature_cpu_gpu_cpu() -> Result<()> {
                 && report["aoem_sha256"] == reports[0]["aoem_sha256"]
                 && report["backend"] == reports[0]["backend"]
                 && report["transactions"] == reports[0]["transactions"]
+                && report["wire_frame_rows"] == reports[0]["wire_frame_rows"]
+                && report["canonical_body_budget"] == reports[0]["canonical_body_budget"]
+                && report["wire_message_budget"] == reports[0]["wire_message_budget"]
+                && report["static_intent_window"] == reports[0]["static_intent_window"]
                 && report["query_batch"] == reports[0]["query_batch"]
                 && report["cold_recovery_pass"] == true
                 && report["full_fee_state_audited"] == true,
@@ -992,7 +1022,8 @@ fn native_uca_same_corpus_signature_cpu_gpu_cpu() -> Result<()> {
             "all_round_databases_and_journals_retained":true,
             "fresh_fixture_stores_same_synthetic_domain":true,
             "deployment_custody_used":false,
-            "full_65536_workload":"NOT_EXECUTED: retained bounded intent window and 4096 cap",
+            "full_65536_workload":reports.iter().all(|report|report["full_65536_workload"] == true),
+            "validity":"all static intents retain [1,257); no automatic renewal if actual packing takes too many heights",
             "confirmation_time":"client all-four receipt observations, not internal durable timestamp",
             "rounds":reports
         }))?,
@@ -1097,7 +1128,7 @@ fn native_uca_same_corpus_bulk_authority_before_after() -> Result<()> {
             "same_signed_corpus_and_initial_state":true,
             "all_round_databases_and_journals_retained":true,
             "business_backend_unchanged":true,
-            "full_65536":"NOT_EXECUTED: bounded static intent fixture",
+            "full_65536":rounds.iter().all(|(_,report)|report["full_65536_workload"] == true),
             "rounds":rounds.into_iter().map(|(label,report)|json!({"label":label,"report":report})).collect::<Vec<_>>()
         }))?,
     )?;

@@ -116,7 +116,7 @@ impl OwnedStateInput {
         read_state_value(&OwnedNodeReader(self), self.root, key)
     }
 
-    /// Read at most 4096 declared keys from this immutable parent in one shared
+    /// Read at most `MAX_BATCH_READ_KEYS` from this immutable parent in one shared
     /// traversal. Results retain input order and duplicates. All permissions
     /// are checked before traversing any node; no partial result escapes on an
     /// error. Captured sibling bytes never grant access to undeclared keys.

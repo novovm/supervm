@@ -5,10 +5,9 @@ use super::NativeApplicationClient;
 use crate::native_pipeline::{
     consensus::{
         native::{LaneLimits, MessageDomain, ValidatorTransportBindings},
-        transport::DecodeLimits,
         wire::{Validator, ValidatorSet},
     },
-    service::{GenesisValidator, NativePeerConfig},
+    service::{native_decode_limits, GenesisValidator, NativePeerConfig},
 };
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
@@ -35,8 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const MAX_BYTES: usize = 512 * 1024;
-const MAX_ROWS: usize = 64; // Local CLI budget, not a protocol capacity ceiling.
+const MAX_ROWS: usize = 1024;
 const MAX_CLIENT_VALIDATORS: usize = 64;
 /// Local configuration budget shared with managed health inspection. A pretty
 /// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate 32-byte
@@ -118,6 +116,7 @@ impl ClientConfig {
 
     fn connect(&self, key: SigningKey) -> Result<NativeApplicationClient> {
         let domain = self.domain(&key)?;
+        let codec = native_decode_limits(MAX_ROWS, true);
         NativeApplicationClient::connect(
             UdpSocket::bind(self.bind_addr)?,
             key,
@@ -131,26 +130,21 @@ impl ClientConfig {
                 address: self.node.address,
             },
             domain,
-            DecodeLimits {
-                transactions: MAX_ROWS,
-                transaction_bytes: MAX_SIGNED_SPEND_BYTES,
-                body_bytes: MAX_BYTES,
-                message_bytes: MAX_BYTES,
-            },
+            codec,
             LaneLimits {
                 receive: ReassemblyLimits {
-                    max_message_bytes: MAX_BYTES,
+                    max_message_bytes: codec.message_bytes,
                     messages: 2,
-                    bytes: 2 * MAX_BYTES,
+                    bytes: 2 * codec.message_bytes,
                     peer_messages: 2,
-                    peer_bytes: 2 * MAX_BYTES,
+                    peer_bytes: 2 * codec.message_bytes,
                     ttl: Duration::from_secs(30),
                 },
                 send: NativeSendLimits {
                     messages: 2,
-                    bytes: 2 * MAX_BYTES,
+                    bytes: 2 * codec.message_bytes,
                     peer_messages: 2,
-                    peer_bytes: 2 * MAX_BYTES,
+                    peer_bytes: 2 * codec.message_bytes,
                 },
             },
             NativeSendPolicy {
@@ -260,6 +254,7 @@ fn answer_view(answer: Answer) -> Value {
 }
 
 fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
+    let codec = native_decode_limits(MAX_ROWS, true);
     match (action, input) {
         ("status", None) => Ok(Operation::Query(Query::Status)),
         ("query", Some(path)) => {
@@ -273,11 +268,11 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
             Ok(Operation::Query(request.query))
         }
         ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(AssetSpendBatchV2::decode(
-            &read_bounded(path, MAX_BYTES)?,
+            &read_bounded(path, codec.message_bytes)?,
             AssetSpendBatchLimitsV2 {
                 transactions: MAX_ROWS,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
-                body_bytes: MAX_BYTES,
+                body_bytes: codec.body_bytes,
             },
         )?))),
         _ => anyhow::bail!(

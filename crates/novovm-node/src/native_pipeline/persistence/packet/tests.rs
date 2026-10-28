@@ -19,6 +19,20 @@ use ed25519_dalek::{Signer, SigningKey};
 #[path = "uca_tests.rs"]
 mod uca_tests;
 
+#[test]
+fn packet_access_capacity_matches_tree_without_widening_other_limits() {
+    let budget = PacketBudget::default();
+    assert_eq!(budget.max_access_keys, MAX_BATCH_READ_KEYS);
+    assert_eq!(budget.max_access_keys, 32_768);
+    assert_eq!(budget.plan().access_keys, MAX_BATCH_READ_KEYS);
+    assert_eq!(budget.max_transactions, 1024);
+    assert_eq!(budget.max_bytes, 32 * 1024 * 1024);
+    assert_eq!(budget.max_nodes, 65_536);
+    assert_eq!(budget.max_value_bytes, 1024 * 1024);
+    assert_eq!(budget.max_transaction_bytes, 1024 * 1024);
+    assert_eq!(budget.max_receipt_bytes, 1024 * 1024);
+}
+
 struct Empty;
 impl StateNodeReader for Empty {
     fn read_node(&self, _: &NodeHash) -> Result<Option<Vec<u8>>> {

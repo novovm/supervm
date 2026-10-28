@@ -1,0 +1,12 @@
+
+running 1 test
+Error: rolling load requires complete 256-row waves and whole wire frames
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_uca_rolling_65536_signature_cpu_gpu_cpu ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_uca_rolling_65536_signature_cpu_gpu_cpu
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1756 filtered out; finished in 0.00s
+

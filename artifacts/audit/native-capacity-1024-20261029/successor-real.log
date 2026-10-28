@@ -1,0 +1,8 @@
+
+running 3 tests
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_complete_state_waits_for_ack_and_recovers ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_round_change_drains_auth_and_execution_without_publication ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1754 filtered out; finished in 1.91s
+

@@ -15,7 +15,7 @@ use crate::native_pipeline::{
     pipeline::CandidatePipeline,
 };
 use anyhow::{ensure, Context, Result};
-use novovm_network::novorudp::object_sender::ObjectSendState;
+use novovm_network::novorudp::{object_link::NativeSendLimits, object_sender::ObjectSendState};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
@@ -26,6 +26,31 @@ use std::{
 pub struct DeliveryLimits {
     pub messages_per_peer: usize,
     pub bytes_per_peer: usize,
+}
+
+/// Reserve the actual largest signed control envelope, independently of the
+/// larger data-body ceiling. Existing admitted controls keep their byte charge
+/// until their original sender returns, so reserve both current and drain work.
+fn control_reservation(
+    validators: usize,
+    codec: DecodeLimits,
+    send: &NativeSendLimits,
+) -> Result<(usize, usize)> {
+    let draining = send.messages.min(send.peer_messages);
+    let control_bytes = super::transport::durable_control_bound(validators, codec)?;
+    let messages = 4usize
+        .checked_add(draining)
+        .context("control slot reserve overflow")?;
+    let drain_bytes = draining
+        .checked_mul(control_bytes)
+        .context("control drain reserve overflow")?
+        .min(send.bytes)
+        .min(send.peer_bytes);
+    let bytes = control_bytes
+        .checked_mul(4)
+        .and_then(|n| n.checked_add(drain_bytes))
+        .context("control byte reserve overflow")?;
+    Ok((messages, bytes))
 }
 struct Delivery {
     prepared: PreparedMessage,
@@ -152,27 +177,8 @@ impl NativeLifecycle {
         codec: DecodeLimits,
     ) -> Result<Self> {
         let send = channel.control_send_limits();
-        let draining = send.messages.min(send.peer_messages);
-        let control_bytes =
-            super::transport::durable_control_bound(validators.members().len(), codec)?;
-        let control_reserve_messages = 4usize
-            .checked_add(draining)
-            .context("control slot reserve overflow")?;
-        let drain_bytes = draining
-            .checked_mul(control_bytes)
-            .context("control drain reserve overflow")?
-            .min(send.bytes)
-            .min(send.peer_bytes);
-        let control_reserve_bytes = control_bytes
-            .checked_mul(4)
-            .and_then(|n| n.checked_add(drain_bytes))
-            .context("control byte reserve overflow")?
-            .max(
-                codec
-                    .message_bytes
-                    .checked_mul(4)
-                    .context("control byte reserve overflow")?,
-            );
+        let (control_reserve_messages, control_reserve_bytes) =
+            control_reservation(validators.members().len(), codec, send)?;
         ensure!(
             (8..=4096).contains(&limits.messages_per_peer)
                 && limits.messages_per_peer > control_reserve_messages

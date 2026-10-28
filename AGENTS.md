@@ -1,5 +1,21 @@
 # Agent Highest Law
 
+## 2026-10-29 authorized ML-DSA capacity adaptation
+
+The user now authorizes coordinated capacity adaptation on the existing APFL /
+NovoRUDP path for up to 1,024 ML-DSA asset transactions per candidate. Use an
+8 MiB expanded-body candidate budget as the initial qualification setting,
+with corresponding encoded-message, per-peer send/reassembly/delivery and
+state-access/persistence budgets. Preserve structural sharing and independent
+signatures; this is not signature aggregation or permission for unbounded queues.
+Low load must not wait for 1,024 rows. Measure actual APFL bytes, candidate rows,
+resource limits, four-node final receipts and recovery. The previous 384 KiB
+diagnostic restriction is superseded for this scoped capacity work, not silently
+removed to manufacture TPS. Keep the prior CPU regression as a separate
+comparison; capacity support alone does not establish 12K or performance closure.
+Do not change signature/authority/economic/quorum semantics or production TTLs,
+advance main, replace shipped AOEM or deploy this unqualified candidate.
+
 ## 2026-10-29 simple implementation and measured throughput
 
 Follow the user's implementation rules for this repository:

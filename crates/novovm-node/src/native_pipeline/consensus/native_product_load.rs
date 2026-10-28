@@ -5,14 +5,11 @@
 use super::*;
 use crate::native_pipeline::{
     business::direct_nov_fee::{quote_transfer, TransferFeeRequest},
-    consensus::{
-        native::{LaneLimits, MessageDomain},
-        transport::DecodeLimits,
-    },
+    consensus::native::{LaneLimits, MessageDomain},
     ingress::apfl::{ApflLimits, ApflTransferBatch},
     service::{
         client::{NativeApplicationClient, PreparedApplicationInput, PreparedQuery},
-        ResidentConfig,
+        native_decode_limits, ResidentConfig,
     },
 };
 use novovm_network::novorudp::{
@@ -29,7 +26,6 @@ use serde::Serialize;
 use std::{collections::BTreeSet, net::UdpSocket};
 
 const WINDOW: usize = 8192;
-const MAX_MESSAGE: usize = 512 * 1024;
 // Existing endpoint/object sender/reassembly contracts all cap a turn at 64.
 const IO_QUANTUM: usize = 64;
 
@@ -212,8 +208,7 @@ fn inspect_copied_first_height_decision() -> Result<()> {
 }
 
 fn body_budget(batch: usize) -> usize {
-    // Same original service::body_byte_limit, not a wider client-only budget.
-    (batch * 1024).min(384 * 1024)
+    native_decode_limits(batch, false).body_bytes
 }
 
 fn env_count(name: &str, default: usize, max: usize) -> Result<usize> {
@@ -252,7 +247,8 @@ fn client(
     batch: usize,
 ) -> Result<NativeApplicationClient> {
     let config: ResidentConfig = serde_json::from_slice(&fs::read(&nodes.configs[index])?)?;
-    let uca = config.uca_initialization.is_some();
+    let codec = native_decode_limits(batch, config.uca_initialization.is_some());
+    let message_bytes = codec.message_bytes;
     NativeApplicationClient::connect(
         UdpSocket::bind("127.0.0.1:0")?,
         SigningKey::from_bytes(&[201; 32]),
@@ -266,34 +262,21 @@ fn client(
             protocol: config.genesis.protocol_commitment,
             validators: set,
         },
-        DecodeLimits {
-            transactions: batch,
-            transaction_bytes: if uca {
-                novovm_protocol::uca_spend::MAX_SIGNED_SPEND_BYTES
-            } else {
-                1024
-            },
-            body_bytes: if uca {
-                (batch * 8192).min(384 * 1024)
-            } else {
-                body_budget(batch)
-            },
-            message_bytes: MAX_MESSAGE,
-        },
+        codec,
         LaneLimits {
             receive: ReassemblyLimits {
-                max_message_bytes: MAX_MESSAGE,
+                max_message_bytes: message_bytes,
                 messages: 8,
-                bytes: 8 * MAX_MESSAGE,
+                bytes: 8 * message_bytes,
                 peer_messages: 8,
-                peer_bytes: 8 * MAX_MESSAGE,
+                peer_bytes: 8 * message_bytes,
                 ttl: Duration::from_secs(30),
             },
             send: NativeSendLimits {
                 messages: 8,
-                bytes: 8 * MAX_MESSAGE,
+                bytes: 8 * message_bytes,
                 peer_messages: 8,
-                peer_bytes: 8 * MAX_MESSAGE,
+                peer_bytes: 8 * message_bytes,
             },
         },
         NativeSendPolicy {

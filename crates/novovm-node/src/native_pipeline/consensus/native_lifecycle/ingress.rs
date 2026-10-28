@@ -153,10 +153,10 @@ impl NativeLifecycle {
             prepared.lane() == 2,
             "native input routed outside ingress lane"
         );
-        // A valid 5*M byte budget reserves 4*M for durable control, leaving
-        // less auxiliary room than the historical half-budget availability
-        // hint. Backpressure retains the caller's original Arc, not a fatal
-        // reservation mismatch. Other independently available peers continue.
+        // The signed-control/drain reservation can leave less auxiliary room
+        // than the cheap half-budget hint. Backpressure retains the caller's
+        // original Arc, not a fatal reservation mismatch. Other independently
+        // available peers continue.
         let Some(reserved) = fitting_recipients(reserved, |peer| self.fits(peer, &prepared, false))
         else {
             return Ok(None);
@@ -190,8 +190,10 @@ mod tests {
     use super::fitting_recipients;
 
     #[test]
-    fn five_message_budget_auxiliary_full_is_backpressure_not_a_reservation() {
+    fn auxiliary_full_is_backpressure_not_a_reservation() {
         let maximum_message = 1024usize;
+        let signed_control = maximum_message / 2;
+        let control_reserve = 8 * signed_control;
         let budget = 5 * maximum_message;
         let auxiliary_used = maximum_message;
         let prepared_bytes = maximum_message / 4;
@@ -199,7 +201,7 @@ mod tests {
         // while fits()'s reserved-control auxiliary ceiling is already full.
         let available = auxiliary_used + maximum_message <= budget / 2;
         assert!(available);
-        let auxiliary_budget = budget - 4 * maximum_message;
+        let auxiliary_budget = budget - control_reserve;
         let requested = [true];
         let reserved = requested.iter().map(|r| *r && available).collect();
         let mut checked = 0;
@@ -222,6 +224,8 @@ mod tests {
     #[test]
     fn exact_auxiliary_backpressure_isolated_to_that_recipient() {
         let maximum_message = 1024usize;
+        let signed_control = maximum_message / 2;
+        let control_reserve = 8 * signed_control;
         let budget = 5 * maximum_message;
         let used = [maximum_message, 0];
         let available: Vec<_> = used
@@ -230,7 +234,7 @@ mod tests {
             .collect();
         assert_eq!(available, [true, true]);
         let reserved = fitting_recipients(available, |peer| {
-            maximum_message / 4 <= (budget - 4 * maximum_message).saturating_sub(used[peer])
+            maximum_message / 4 <= (budget - control_reserve).saturating_sub(used[peer])
         });
         assert_eq!(reserved, Some(vec![false, true]));
         assert_eq!(

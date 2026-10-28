@@ -36,19 +36,38 @@ fn query_until(
     mut alive: impl FnMut() -> Result<()>,
 ) -> Result<Answer> {
     let request = client.prepare_query(selector.clone())?;
+    let started = Instant::now();
     let mut sent = false;
+    let mut poll_max_us = 0u128;
+    // Bounded diagnostic counters only; no delivery outcome changes retries.
+    let mut completions = [0u64; 5];
     loop {
         alive()?;
         let now = Instant::now();
         if now >= deadline {
             client.abandon_query(&request)?;
-            return Err(QueryTimeout(selector).into());
+            return Err(anyhow::Error::new(QueryTimeout(selector)).context(format!(
+                "query transport: elapsed_ms={} sent={sent} poll_max_us={poll_max_us} completions[sending,delivered,expired,session_replaced,cancelled]={completions:?}",
+                started.elapsed().as_millis(),
+            )));
         }
-        let _ = client.poll(
+        let poll_started = Instant::now();
+        let report = client.poll(
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
             now,
             64,
         )?;
+        poll_max_us = poll_max_us.max(poll_started.elapsed().as_micros());
+        for completion in report.completed {
+            let index = match completion.state {
+                ObjectSendState::Sending => 0,
+                ObjectSendState::Delivered => 1,
+                ObjectSendState::Expired => 2,
+                ObjectSendState::SessionReplaced => 3,
+                ObjectSendState::Cancelled => 4,
+            };
+            completions[index] += 1;
+        }
         if !sent {
             sent = client.try_send_query(&request, now)?;
         }
@@ -309,34 +328,100 @@ fn receipts_until(
     hashes: &[[u8; 32]],
     deadline: Instant,
 ) -> Result<Vec<ReceiptState>> {
+    let batched = hashes.len() > novovm_protocol::native_query::MAX_RECEIPTS;
     loop {
         nodes.alive()?;
         let mut all = Vec::new();
-        for client in clients.iter_mut() {
+        for (client_index, client) in clients.iter_mut().enumerate() {
             let mut rows = Vec::new();
-            for hash in hashes {
-                if let Answer::Receipt {
-                    state: state @ ReceiptState::Finalized { .. },
-                    ..
-                } = query_until(
-                    client,
-                    Query::Receipt { hash: *hash },
-                    deadline.min(Instant::now() + Duration::from_secs(5)),
-                    || nodes.alive(),
-                )? {
-                    rows.push(state);
+            if batched {
+                // The original typed batch query preserves every selector's
+                // position, including unfinished rows. It does not restart
+                // the shared observation deadline between chunks or peers.
+                for (chunk_index, chunk) in hashes
+                    .chunks(novovm_protocol::native_query::MAX_RECEIPTS)
+                    .enumerate()
+                {
+                    let Answer::Receipts { states, .. } = query_until(
+                        client,
+                        Query::Receipts {
+                            hashes: chunk.to_vec().try_into().map_err(anyhow::Error::msg)?,
+                        },
+                        deadline.min(Instant::now() + Duration::from_secs(5)),
+                        || nodes.alive(),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "receipt observation: client={client_index} chunk_offset={} chunk_rows={} total_rows={} shared_deadline_remaining_ms={}",
+                            chunk_index * novovm_protocol::native_query::MAX_RECEIPTS,
+                            chunk.len(),
+                            hashes.len(),
+                            deadline.saturating_duration_since(Instant::now()).as_millis(),
+                        )
+                    })?
+                    else {
+                        anyhow::bail!("native batch receipt missing");
+                    };
+                    ensure!(states.len() == chunk.len(), "native batch receipt count");
+                    rows.extend_from_slice(states.as_slice());
+                }
+            } else {
+                for (row, hash) in hashes.iter().enumerate() {
+                    if let Answer::Receipt {
+                        state: state @ ReceiptState::Finalized { .. },
+                        ..
+                    } = query_until(
+                        client,
+                        Query::Receipt { hash: *hash },
+                        deadline.min(Instant::now() + Duration::from_secs(5)),
+                        || nodes.alive(),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "receipt observation: client={client_index} row={row} total_rows={} shared_deadline_remaining_ms={}",
+                            hashes.len(),
+                            deadline.saturating_duration_since(Instant::now()).as_millis(),
+                        )
+                    })? {
+                        rows.push(state);
+                    }
                 }
             }
             all.push(rows);
         }
-        if all.iter().all(|rows| rows.len() == hashes.len()) {
+        if all.iter().all(|rows| {
+            rows.len() == hashes.len()
+                && rows
+                    .iter()
+                    .all(|state| matches!(state, ReceiptState::Finalized { .. }))
+        }) {
             ensure!(
                 all.iter().all(|rows| rows == &all[0]),
                 "four native receipts differ: {all:?}"
             );
+            if batched {
+                // Large recovery checks every row through v2 above; only the
+                // first and last selectors are independently compared with v1.
+                for (client, rows) in clients.iter_mut().zip(&all) {
+                    for index in [0, hashes.len() - 1] {
+                        let Answer::Receipt { state, .. } = query_until(
+                            client,
+                            Query::Receipt {
+                                hash: hashes[index],
+                            },
+                            deadline.min(Instant::now() + Duration::from_secs(5)),
+                            || nodes.alive(),
+                        )?
+                        else {
+                            anyhow::bail!("native single receipt missing");
+                        };
+                        ensure!(state == rows[index], "native v1/v2 receipt sample differs");
+                    }
+                }
+            }
             // Maximum-size v2 response crosses real object fragments. Ordered
-            // duplicates and an unknown hash must agree with the v1 projection,
-            // including failed business receipts, before and after cold reopen.
+            // duplicates and an unknown hash must agree with the full ordered
+            // projection, including failed business receipts and cold reopen.
             let selectors: Vec<_> = (0..127)
                 .map(|i| hashes[hashes.len() - 1 - i % hashes.len()])
                 .chain(std::iter::once([0xa7; 32]))
@@ -359,7 +444,7 @@ fn receipts_until(
                 };
                 ensure!(
                     states.as_slice() == expected.as_slice(),
-                    "native batch projection differs from single reads"
+                    "native batch projection differs from ordered receipts"
                 );
             }
             return Ok(all.remove(0));

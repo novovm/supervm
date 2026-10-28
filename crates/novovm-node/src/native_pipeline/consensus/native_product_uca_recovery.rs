@@ -18,6 +18,8 @@ use novovm_protocol::{
 const ID: &str = "uca:process-owner";
 const ADDRESS: [[u8; 20]; 2] = [[11; 20], [12; 20]];
 const OFFLINE_HEIGHTS: u64 = 40;
+const LARGE_BODY_ROWS: usize = 1024;
+const OFFLINE_TRANSACTIONS: u64 = OFFLINE_HEIGHTS - 1 + LARGE_BODY_ROWS as u64;
 const INITIAL: u128 = 1_000_000;
 
 fn operator_call(
@@ -150,12 +152,17 @@ fn send_uca(
     signed: &SignedAssetSpendV2,
     _payer: usize,
 ) -> Result<()> {
+    send_uca_batch(client, &[signed.encode()?])
+}
+
+fn send_uca_batch(client: &mut NativeApplicationClient, raw: &[Vec<u8>]) -> Result<()> {
+    let codec = crate::native_pipeline::service::native_decode_limits(LARGE_BODY_ROWS, true);
     let batch = Arc::new(AssetSpendBatchV2::from_raw(
-        &[signed.encode()?],
+        raw,
         AssetSpendBatchLimitsV2 {
-            transactions: 2,
-            transaction_bytes: MAX_SIGNED_SPEND_BYTES,
-            body_bytes: 2 * MAX_SIGNED_SPEND_BYTES,
+            transactions: codec.transactions,
+            transaction_bytes: codec.transaction_bytes,
+            body_bytes: codec.body_bytes,
         },
     )?);
     let prepared = client.prepare_asset_spend(batch)?;
@@ -257,7 +264,7 @@ fn checked_fee(
 }
 
 #[test]
-#[ignore = "real four original-node processes, trusted AOEM, 40-height offline and interrupted NUAS replay; run alone"]
+#[ignore = "real four original-node processes, trusted AOEM, 40-height offline with 1024-row archive and interrupted NUAS replay; run alone"]
 fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery() -> Result<()> {
     let binary = PathBuf::from(
         std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY")
@@ -294,7 +301,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
     fs::create_dir_all(&directory)?;
     let directory =
         crate::native_pipeline::service::config::native_path(&directory.canonicalize()?);
-    let (mut nodes, set) = setup_with_genesis(&directory, binary, base.clone(), 1)?;
+    let (mut nodes, set) = setup_with_genesis(&directory, binary, base.clone(), LARGE_BODY_ROWS)?;
     base.genesis_config_commitment = [0; 32];
     let manifest = UcaGenesisManifestV2 {
         genesis: base,
@@ -404,6 +411,8 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
     let mut evidence = json!({"completed":false,"scope":"four_original_node_processes_one_host_nuas_recovery",
         "real_processes":4,"real_machines":1,"http_listeners":0,"fixed_quorum":3,"shared_identity_distinct_asset_accounts":true,
         "missing_validator":missing,"offline_heights":OFFLINE_HEIGHTS,"mainnet":false,"tps_acceptance":false,
+        "offline_transactions":OFFLINE_TRANSACTIONS,"total_transactions":OFFLINE_TRANSACTIONS+1,
+        "large_body_height":OFFLINE_HEIGHTS,"large_body_rows":LARGE_BODY_ROWS,
         "wallet_replay_to_laggard":false,"database_copy":false,"business_proof_verified":false,
         "binary_sha256":hex(&Sha256::digest(fs::read(&nodes.binary)?)),"library_sha256":hex(&Sha256::digest(fs::read(&library)?)),
         "offline_progress":[]});
@@ -429,30 +438,67 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         let mut final_receipts = Vec::new();
         let mut alice_fees = 0u128;
         let mut fee_oracle = FeeState::default();
-        for nonce in 0..OFFLINE_HEIGHTS {
-            let signed = signer.sign(intent(0, nonce, 100)?, &keys[2].0, &keys[2].1)?;
-            let hash = Sha256::digest(signed.intent.signing_bytes()?).into();
-            if nonce == 0 {
-                evidence["operator_client"] = operator_submit(&nodes, healthy[0], &signed)?;
+        let mut large_raw = Vec::new();
+        let credited = u128::from(OFFLINE_TRANSACTIONS) * 100;
+        ensure!(
+            u128::from(OFFLINE_TRANSACTIONS) * 150 <= INITIAL,
+            "original recovery funding cannot cover amount plus maximum fee"
+        );
+        for round in 0..OFFLINE_HEIGHTS {
+            let rows = if round + 1 == OFFLINE_HEIGHTS {
+                LARGE_BODY_ROWS
             } else {
-                send_uca(&mut clients[0], &signed, 0)?;
+                1
+            };
+            let first_nonce = hashes.len() as u64;
+            let signed = (0..rows)
+                .map(|row| {
+                    signer.sign(
+                        intent(0, first_nonce + row as u64, 100)?,
+                        &keys[2].0,
+                        &keys[2].1,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let raw = signed
+                .iter()
+                .map(SignedAssetSpendV2::encode)
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let batch_hashes = signed
+                .iter()
+                .map(|signed| Ok(Sha256::digest(signed.intent.signing_bytes()?).into()))
+                .collect::<Result<Vec<[u8; 32]>>>()?;
+            if round == 0 {
+                evidence["operator_client"] = operator_submit(&nodes, healthy[0], &signed[0])?;
+            } else {
+                send_uca_batch(&mut clients[0], &raw)?;
             }
-            let batch = receipts(&mut nodes, &mut clients, &[hash])?;
-            alice_fees += checked_fee(
-                &batch[0],
-                &signed,
-                0,
-                &configured_genesis,
-                &mut fee_oracle,
-                INITIAL - nonce as u128 * 100 - alice_fees,
-            )?;
-            hashes.push(hash);
+            let batch = receipts(&mut nodes, &mut clients, &batch_hashes)?;
+            ensure!(batch.len() == rows, "recovery input/receipt count mismatch");
+            for (signed, receipt) in signed.iter().zip(&batch) {
+                ensure!(
+                    matches!(receipt, ReceiptState::Finalized {height,..} if *height == round+1),
+                    "recovery input split across heights instead of one exact candidate"
+                );
+                alice_fees += checked_fee(
+                    receipt,
+                    signed,
+                    0,
+                    &configured_genesis,
+                    &mut fee_oracle,
+                    INITIAL - u128::from(signed.intent.nonce) * 100 - alice_fees,
+                )?;
+            }
+            hashes.extend(batch_hashes);
             final_receipts.extend(batch);
-            let heads = recovery::wait_height(&mut nodes, &mut clients, nonce + 1)?;
+            if rows == LARGE_BODY_ROWS {
+                large_raw = raw;
+            }
+            let heads = recovery::wait_height(&mut nodes, &mut clients, round + 1)?;
             evidence["offline_progress"]
                 .as_array_mut()
                 .unwrap()
-                .push(json!({"height":nonce+1,"head":heads[0]}));
+                .push(json!({"height":round+1,"transactions":rows,"head":heads[0]}));
             fs::write(&report, serde_json::to_vec_pretty(&evidence)?)?;
         }
         while absent_since.elapsed() < Duration::from_secs(31) {
@@ -470,8 +516,8 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
             let observed = recovery_status(&mut nodes, &mut late, deadline)?;
             if observed.height > 0 {
                 ensure!(
-                    observed.height < target.height,
-                    "catch-up already finished; cannot claim interrupted replay"
+                    observed.height == 1 && observed.height < target.height,
+                    "catch-up observation missed height one; cannot claim the required interruption"
                 );
                 break observed;
             }
@@ -494,14 +540,14 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
             receipts(&mut nodes, &mut clients, &hashes)? == final_receipts,
             "NUAS catch-up receipts differ"
         );
-        let alice_intent = intent(0, OFFLINE_HEIGHTS, 1)?;
+        let alice_intent = intent(0, OFFLINE_TRANSACTIONS, 1)?;
         for client in &mut clients {
             let view = state(client, &alice_intent, 0)?;
             ensure!(
-                view.next_nonce == OFFLINE_HEIGHTS
-                    && view.payer_balance == INITIAL - 4000 - alice_fees
-                    && view.remaining_debit_budget == INITIAL - 4000 - alice_fees
-                    && view.recipient_balance == 4000,
+                view.next_nonce == OFFLINE_TRANSACTIONS
+                    && view.payer_balance == INITIAL - credited - alice_fees
+                    && view.remaining_debit_budget == INITIAL - credited - alice_fees
+                    && view.recipient_balance == credited,
                 "replay economic state {view:?}"
             );
         }
@@ -519,7 +565,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
             1,
             &configured_genesis,
             &mut fee_oracle,
-            4000,
+            credited,
         )?;
         hashes.push(id);
         final_receipts.extend(respend_receipts);
@@ -537,12 +583,12 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
             ensure!(
                 alice.state_root == final_heads[0].state_root
                     && bob.state_root == alice.state_root
-                    && alice.next_nonce == OFFLINE_HEIGHTS
+                    && alice.next_nonce == OFFLINE_TRANSACTIONS
                     && bob.next_nonce == 1
-                    && alice.remaining_debit_budget == INITIAL - 4000 - alice_fees
+                    && alice.remaining_debit_budget == INITIAL - credited - alice_fees
                     && bob.remaining_debit_budget == INITIAL - 40 - bob_fee
-                    && alice.payer_balance == INITIAL - 3960 - alice_fees
-                    && bob.payer_balance == 3960 - bob_fee
+                    && alice.payer_balance == INITIAL - credited + 40 - alice_fees
+                    && bob.payer_balance == credited - 40 - bob_fee
                     && alice.recipient_balance == bob.payer_balance
                     && bob.recipient_balance == alice.payer_balance,
                 "NUAS balances/nonce/budgets differ {alice:?} {bob:?}"
@@ -561,6 +607,11 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         // every canonical fee/policy page, including absent tails, with the
         // independent ordered oracle; never install this oracle into the ledger.
         let fee_records = fee_record_changes(&configured_genesis.policy, &fee_oracle)?;
+        ensure!(
+            large_raw.len() == LARGE_BODY_ROWS,
+            "large recovery body was not submitted"
+        );
+        let mut large_archives = Vec::new();
         for index in 0..4 {
             let store = recovery::open_stopped_store(&nodes, index)?;
             for change in &fee_records {
@@ -577,7 +628,50 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
                     "node {index} durable fee page differs from oracle"
                 );
             }
+            // Verify the actual stopped archive, including the laggard that
+            // received no wallet inputs. Row count alone must not turn 1024
+            // small candidates into a claimed multi-megabyte recovery body.
+            let bytes = store
+                .read_metadata(&[MetaKey::ChainBlock {
+                    height: OFFLINE_HEIGHTS,
+                }])?
+                .values
+                .pop()
+                .flatten()
+                .context("large NUAS archive height missing")?;
+            let record = crate::native_pipeline::consensus::chain::ChainRecord::decode(&bytes)?;
+            let stored = store
+                .recover(record.candidate_id())?
+                .context("large NUAS archived candidate missing")?;
+            ensure!(
+                record.point().height == OFFLINE_HEIGHTS
+                    && stored.raw_transactions() == large_raw.as_slice(),
+                "node {index} large archive changed input bytes/order"
+            );
+            let codec =
+                crate::native_pipeline::service::native_decode_limits(LARGE_BODY_ROWS, true);
+            let batch = AssetSpendBatchV2::from_raw(
+                stored.raw_transactions(),
+                AssetSpendBatchLimitsV2 {
+                    transactions: codec.transactions,
+                    transaction_bytes: codec.transaction_bytes,
+                    body_bytes: codec.body_bytes,
+                },
+            )?;
+            let apfl = batch.encode()?;
+            ensure!(
+                batch.len() == LARGE_BODY_ROWS
+                    && batch.canonical_bytes() > 512 * 1024
+                    && apfl.len() > 512 * 1024,
+                "large recovery body did not cross the former message limit"
+            );
+            large_archives.push(json!({
+                "node":index,"height":OFFLINE_HEIGHTS,"transactions":batch.len(),
+                "canonical_expanded_bytes":batch.canonical_bytes(),"apfl_encoded_bytes":apfl.len(),
+                "apfl_sha256":hex(&Sha256::digest(&apfl)),"exact_submitted_bytes":true,
+            }));
         }
+        evidence["large_body_archives"] = json!(large_archives);
         evidence["durable_fee_oracle"] = json!(fee_oracle);
         clients.clear();
         {

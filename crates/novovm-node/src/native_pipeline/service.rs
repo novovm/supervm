@@ -327,10 +327,58 @@ fn body_byte_limit(batch_size: usize) -> usize {
     (batch_size * 1024).min(384 * 1024)
 }
 
-// Canonical ML-DSA-65 input is >5 KiB. Keep the original total native object
-// ceiling; signature width must not be confused with the V3 1 KiB row bound.
+// Expanded signed inputs, distinct from the APFL encoded network object.
 fn uca_body_byte_limit(batch_size: usize) -> usize {
-    (batch_size * 8192).min(384 * 1024)
+    batch_size * 8192
+}
+
+/// Shared original node/client capacity policy. Callers already validate the
+/// configured row count (1..=1024); no alternative transaction or wire format.
+pub(crate) fn native_decode_limits(batch_size: usize, asset_accounts: bool) -> DecodeLimits {
+    let body_bytes = if asset_accounts {
+        uca_body_byte_limit(batch_size)
+    } else {
+        body_byte_limit(batch_size)
+    };
+    DecodeLimits {
+        transactions: batch_size,
+        transaction_bytes: if asset_accounts { 8192 } else { 1024 },
+        body_bytes,
+        // Fourteen APFL columns add at most two u32 fields per cell, plus
+        // dictionary counts and the existing frame/context header. At 1024
+        // rows that overhead is below 128 KiB, even without shared values.
+        message_bytes: if asset_accounts {
+            (body_bytes + 128 * 1024).max(512 * 1024)
+        } else {
+            512 * 1024
+        },
+    }
+}
+
+fn native_lane_limits(message_bytes: usize) -> LaneLimits {
+    LaneLimits {
+        receive: ReassemblyLimits {
+            max_message_bytes: message_bytes,
+            messages: 32,
+            bytes: (16 * message_bytes).max(16 * 1024 * 1024),
+            peer_messages: 4,
+            peer_bytes: 4 * message_bytes,
+            ttl: Duration::from_secs(30),
+        },
+        send: NativeSendLimits {
+            messages: 32,
+            bytes: (16 * message_bytes).max(16 * 1024 * 1024),
+            peer_messages: 4,
+            peer_bytes: 4 * message_bytes,
+        },
+    }
+}
+
+fn native_body_retention_limit(codec: DecodeLimits) -> usize {
+    // Previous decided input + current body + successor retain encoded and
+    // expanded inputs/signature facts. Keep the existing ordinary-body reserve
+    // too; increasing wire capacity alone must not disable lookahead.
+    (16 * codec.message_bytes).max(64 * 1024 * 1024)
 }
 
 fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
@@ -344,12 +392,11 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
     } else {
         size * 1024
     };
-    // UCA uses existing paged identity/grant declarations, not only balances.
-    let keys = if uca {
-        128 * size + 128
-    } else {
-        3 * size + 128
-    };
+    // Asset transactions do not read UCA identity mappings. The largest
+    // account-management row declares 31 keys; policy/fee keys add 42 per batch.
+    // Charge actual supported access, not 128 old identity pages per row: the
+    // latter would unnecessarily consume the second candidate's reservation.
+    let keys = if uca { 31 * size + 42 } else { 3 * size + 128 };
     PipelineConfig {
         store: StoreConfig {
             library: config.library.clone(),
@@ -437,20 +484,7 @@ fn start_native(
         std::thread::sleep(Duration::from_millis(1));
     };
 
-    let codec = DecodeLimits {
-        transactions: config.batch_size,
-        transaction_bytes: if config.uca_initialization.is_some() {
-            8192
-        } else {
-            1024
-        },
-        body_bytes: if config.uca_initialization.is_some() {
-            uca_body_byte_limit(config.batch_size)
-        } else {
-            body_byte_limit(config.batch_size)
-        },
-        message_bytes: 512 * 1024,
-    };
+    let codec = native_decode_limits(config.batch_size, config.uca_initialization.is_some());
     let progress = RoundProgress::new(
         journal,
         pipeline,
@@ -478,7 +512,7 @@ fn start_native(
         codec,
         BodyLimits {
             bodies: (validators.members().len() * 2 + 4).min(64),
-            bytes: 64 * 1024 * 1024,
+            bytes: native_body_retention_limit(codec),
             inflight: 2,
         },
     )?;
@@ -504,21 +538,14 @@ fn start_native(
             validators: validators.clone(),
         },
         codec,
-        std::array::from_fn(|_| LaneLimits {
-            receive: ReassemblyLimits {
-                max_message_bytes: codec.message_bytes,
-                messages: 32,
-                bytes: 16 * 1024 * 1024,
-                peer_messages: 4,
-                peer_bytes: 2 * 1024 * 1024,
-                ttl: Duration::from_secs(30),
-            },
-            send: NativeSendLimits {
-                messages: 32,
-                bytes: 16 * 1024 * 1024,
-                peer_messages: 4,
-                peer_bytes: 2 * 1024 * 1024,
-            },
+        // Control evidence does not grow with transaction bodies. Keep its
+        // original lane ceiling; body/ingress lanes share the larger policy.
+        std::array::from_fn(|lane| {
+            native_lane_limits(if lane == 0 {
+                512 * 1024
+            } else {
+                codec.message_bytes
+            })
         }),
         NativeSendPolicy {
             window: NovoRudpWindowConfig {
@@ -548,7 +575,7 @@ fn start_native(
         &validators,
         DeliveryLimits {
             messages_per_peer: 32,
-            bytes_per_peer: 4 * 1024 * 1024,
+            bytes_per_peer: 8 * codec.message_bytes,
         },
         config.genesis.policy.clone(),
         codec,

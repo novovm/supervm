@@ -95,6 +95,150 @@ fn batch_read(
 }
 
 #[test]
+fn independent_1024_asset_accounts_capture_and_stage_above_old_key_limit() -> Result<()> {
+    use crate::native_pipeline::state::frontier::{BulkCapture, CaptureStep};
+
+    const ROWS: usize = 1024;
+    let intents = (0..ROWS)
+        .map(|row| {
+            let mut value = intent();
+            value.payer = vec![0; 32];
+            value.payer[..8].copy_from_slice(&(row as u64).to_be_bytes());
+            value.payer[31] = 1;
+            value.recipient = value.payer.clone();
+            value.recipient[31] = 2;
+            value
+        })
+        .collect::<Vec<_>>();
+    let accesses = intents
+        .iter()
+        .map(|value| {
+            AssetSpendStateAccessV2::new(
+                value.clone(),
+                Account::try_from(value.payer.as_slice()).map_err(anyhow::Error::msg)?,
+                Account::try_from(value.recipient.as_slice()).map_err(anyhow::Error::msg)?,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut declarations = BTreeMap::new();
+    for (value, access) in intents.iter().zip(&accesses) {
+        for declaration in access.declarations() {
+            declarations.insert(declaration.key.clone(), declaration.clone());
+        }
+        for declaration in grant_write_declarations(value)? {
+            declarations.insert(declaration.key.clone(), declaration);
+        }
+        for key in [
+            nov_transfer_batch::balance_key(&access.payer),
+            nov_transfer_batch::balance_key(&access.recipient),
+            nov_transfer_batch::nonce_key(&value.nonce_identity()?),
+        ] {
+            declarations.get_mut(&key).unwrap().may_put = true;
+        }
+    }
+    let declarations = declarations.into_values().collect::<Vec<_>>();
+    assert_eq!(declarations.len(), 10 * ROWS);
+    assert!(declarations.len() > 4096);
+    let capture_budget = CaptureBudget {
+        keys: MAX_BATCH_READ_KEYS,
+        nodes: 65_536,
+        bytes: 16 * 1024 * 1024,
+    };
+
+    // Initialize with the real record codec/tree, independently of the batch
+    // under test. Keep each seeding operation within the previous key ceiling.
+    let mut memory = Memory::default();
+    let mut root = empty_root();
+    for group in intents.chunks(128) {
+        let writes = group.iter().flat_map(changes).collect::<Vec<_>>();
+        let staged = stage_state_update(&memory, root, &writes)?;
+        root = staged.root();
+        memory.0.extend(staged.nodes().clone());
+    }
+    assert!(BulkCapture::new(
+        root,
+        &declarations,
+        CaptureBudget {
+            keys: declarations.len() - 1,
+            ..capture_budget
+        },
+    )
+    .is_err());
+    let capture_batch = |memory: &Memory, parent| -> Result<OwnedStateInput> {
+        let mut capture = BulkCapture::new(parent, &declarations, capture_budget)?;
+        loop {
+            match capture.advance(64)? {
+                CaptureStep::More => {}
+                CaptureStep::NeedRead => {
+                    let request = capture.next_request()?.context("capture read absent")?;
+                    assert!(!request.is_empty() && request.len() <= 64);
+                    capture.accept(
+                        request
+                            .iter()
+                            .map(|hash| memory.read_node(hash))
+                            .collect::<Result<Vec<_>>>()?,
+                    )?;
+                }
+                CaptureStep::Complete => return capture.finish(),
+            }
+        }
+    };
+    let input = capture_batch(&memory, root)?;
+    assert!(input.captured_nodes() <= capture_budget.nodes);
+    assert!(input.captured_bytes() <= capture_budget.bytes);
+    let states = AssetSpendStateAccessV2::read_captured_batch(&accesses, &input, root)?
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(states.len(), ROWS);
+    for (state, value) in states.iter().zip(&intents) {
+        assert!(state.matches_intent(value));
+        assert_eq!(state.balances(), (1000, 7));
+        assert_eq!(state.next_nonce(), 9);
+        assert_eq!(state.static_failure(12), None);
+        assert_eq!(state.grant().unwrap().remaining_debit_budget, 100);
+    }
+
+    // Exercise real frontier permissions and tree staging with more than 4096
+    // writes, including required absent tail deletes. This is storage capacity
+    // evidence, not a substitute for executing signed transfers or fee rules.
+    let mut writes = Vec::new();
+    for value in &intents {
+        let mut record = grant(value);
+        record.remaining_debit_budget = 15;
+        writes.extend(grant_record_changes(value, &record)?);
+    }
+    for access in &accesses {
+        for (account, balance) in [(&access.payer, 920u128), (&access.recipient, 87)] {
+            writes.push(StateChange::Put {
+                key: nov_transfer_batch::balance_key(account),
+                value: balance.to_le_bytes().to_vec(),
+            });
+        }
+    }
+    for value in &intents {
+        writes.push(StateChange::Put {
+            key: nov_transfer_batch::nonce_key(&value.nonce_identity()?),
+            value: 10u64.to_le_bytes().to_vec(),
+        });
+    }
+    assert_eq!(writes.len(), 6 * ROWS);
+    let staged = input.stage(&writes)?;
+    assert_ne!(staged.root(), root);
+    let next_root = staged.root();
+    memory.0.extend(staged.nodes().clone());
+    let successor = capture_batch(&memory, next_root)?;
+    assert!(AssetSpendStateAccessV2::read_captured_batch(&accesses, &input, next_root).is_err());
+    let after = AssetSpendStateAccessV2::read_captured_batch(&accesses, &successor, next_root)?
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(after.len(), ROWS);
+    for state in after {
+        assert_eq!(state.balances(), (920, 87));
+        assert_eq!(state.next_nonce(), 10);
+        assert_eq!(state.grant().unwrap().remaining_debit_budget, 15);
+    }
+    Ok(())
+}
+
+#[test]
 fn one_parent_resolves_original_accounts_grant_nonce_and_balances() -> Result<()> {
     let i = intent();
     let a = access(&i);

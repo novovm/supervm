@@ -3,12 +3,9 @@
 //! verifies submission AND observation over the native original-node socket.
 use super::*;
 use crate::native_pipeline::{
-    consensus::{
-        native::{LaneLimits, MessageDomain},
-        transport::DecodeLimits,
-    },
+    consensus::native::{LaneLimits, MessageDomain},
     ingress::apfl::{ApflLimits, ApflTransferBatch},
-    service::{client::NativeApplicationClient, ResidentConfig},
+    service::{client::NativeApplicationClient, native_decode_limits, ResidentConfig},
 };
 use novovm_network::novorudp::{
     endpoint::NativePeer,
@@ -39,11 +36,12 @@ fn connect(
     set: Arc<ValidatorSet>,
 ) -> Result<NativeApplicationClient> {
     let config: ResidentConfig = serde_json::from_slice(&fs::read(&nodes.configs[ingress])?)?;
-    let transaction_bytes = if config.uca_initialization.is_some() {
-        novovm_protocol::uca_spend::MAX_SIGNED_SPEND_BYTES
-    } else {
-        1024
-    };
+    let asset_accounts = config.uca_initialization.is_some();
+    let codec = native_decode_limits(
+        if asset_accounts { config.batch_size } else { 2 },
+        asset_accounts,
+    );
+    let message_bytes = codec.message_bytes;
     // This device key is NOT in genesis and is never added to a node allowlist.
     let key = SigningKey::from_bytes(&[201; 32]);
     ensure!(
@@ -66,26 +64,21 @@ fn connect(
             protocol: config.genesis.protocol_commitment,
             validators: set,
         },
-        DecodeLimits {
-            transactions: 2,
-            transaction_bytes,
-            body_bytes: 2 * transaction_bytes,
-            message_bytes: 512 * 1024,
-        },
+        codec,
         LaneLimits {
             receive: ReassemblyLimits {
-                max_message_bytes: 512 * 1024,
+                max_message_bytes: message_bytes,
                 messages: 2,
-                bytes: 1024 * 1024,
+                bytes: 2 * message_bytes,
                 peer_messages: 2,
-                peer_bytes: 1024 * 1024,
+                peer_bytes: 2 * message_bytes,
                 ttl: Duration::from_secs(30),
             },
             send: NativeSendLimits {
                 messages: 2,
-                bytes: 1024 * 1024,
+                bytes: 2 * message_bytes,
                 peer_messages: 2,
-                peer_bytes: 1024 * 1024,
+                peer_bytes: 2 * message_bytes,
             },
         },
         NativeSendPolicy {

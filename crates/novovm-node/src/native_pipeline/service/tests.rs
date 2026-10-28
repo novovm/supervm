@@ -386,3 +386,39 @@ fn rpc_pipeline_budget_covers_real_independent_accounts_not_only_shared_receiver
     }
     Ok(())
 }
+
+#[test]
+fn native_asset_capacity_covers_1024_rows_without_growing_control_or_ttl() -> Result<()> {
+    use crate::native_pipeline::consensus::transport::{encode, Message};
+    let control = native_lane_limits(512 * 1024);
+    assert_eq!(control.receive.bytes, 16 * 1024 * 1024);
+    assert_eq!(control.send.peer_bytes, 2 * 1024 * 1024);
+    for rows in [1, 8, 64, 1024] {
+        let codec = native_decode_limits(rows, true);
+        assert_eq!(codec.transactions, rows);
+        assert_eq!(codec.body_bytes, rows * 8192);
+        assert!(codec.message_bytes >= codec.body_bytes + 128 * 1024);
+        encode(&Message::RequestBody { body_id: [1; 32] }, codec)?;
+        let lane = native_lane_limits(codec.message_bytes);
+        assert_eq!(lane.receive.max_message_bytes, codec.message_bytes);
+        assert_eq!(lane.receive.peer_bytes, 4 * codec.message_bytes);
+        assert_eq!(lane.send.peer_bytes, lane.receive.peer_bytes);
+        assert_eq!(lane.send.messages, 32);
+        assert_eq!(lane.send.peer_messages, 4);
+        assert_eq!(lane.receive.ttl, Duration::from_secs(30));
+        assert!(lane.receive.bytes >= lane.receive.peer_bytes * 4);
+    }
+    let maximum = native_decode_limits(1024, true);
+    assert_eq!(maximum.body_bytes, 8 * 1024 * 1024);
+    assert_eq!(maximum.message_bytes, 8 * 1024 * 1024 + 128 * 1024);
+    // Unrelated historical V3/reference capacity is not changed by this migration.
+    let reference = native_decode_limits(1024, false);
+    assert_eq!(reference.body_bytes, 384 * 1024);
+    assert_eq!(reference.message_bytes, 512 * 1024);
+    assert_eq!(native_body_retention_limit(reference), 64 * 1024 * 1024);
+    assert_eq!(
+        native_body_retention_limit(native_decode_limits(1024, true)),
+        130 * 1024 * 1024
+    );
+    Ok(())
+}
