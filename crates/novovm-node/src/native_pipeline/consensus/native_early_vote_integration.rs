@@ -3,6 +3,87 @@
 use super::*;
 
 #[test]
+#[ignore = "real AOEM journal; eager enqueue never consumes ACK or releases a failed submission"]
+fn native_progress_eager_submit_keeps_ack_and_owner_boundary() -> Result<()> {
+    let Fixture {
+        ids,
+        mut services,
+        mut drivers,
+        ..
+    } = fixture_with(
+        ExecutionBackend::CpuCallbacks,
+        codec(),
+        initialize,
+        |path| {
+            let mut config = pipeline_config(path)?;
+            // The observer reads metadata while deliberately retaining the write
+            // ticket. Two fixture slots permit that observation; product limits
+            // and the original journal's single pending transition are unchanged.
+            config.io.requests = 2;
+            Ok(config)
+        },
+    )?;
+    let now = Instant::now();
+    let deadline = now + Duration::from_secs(5);
+    let parent = drivers[0].parent();
+    drivers[0].poll_after_receive(&services.0[0], now)?;
+    // The unchanged propose deadline stages a nil vote. Do not run the ACK
+    // path: read the real owner metadata to prove submission already occurred.
+    drivers[0].poll_after_receive(&services.0[0], deadline)?;
+    let keys = vec![
+        MetaKey::ConsensusState(ids[0]),
+        MetaKey::ConsensusOutbox {
+            validator: ids[0],
+            sequence: 1,
+        },
+    ];
+    let saved = super::super::read_metadata(&services.0[0], keys)?;
+    ensure!(
+        saved.values.iter().all(Option::is_some),
+        "stage waited for another control poll before I/O submission"
+    );
+    ensure!(
+        drivers[0].pending_message().is_none()
+            && drivers[0].step() == TimeoutStep::Propose
+            && drivers[0].parent() == parent,
+        "enqueue or unconsumed durable completion released a vote"
+    );
+    drivers[0].poll_after_receive(&services.0[0], deadline)?;
+    ensure!(
+        drivers[0].pending_message().is_none(),
+        "repeated enqueue consumed ACK"
+    );
+    drivers[0].poll_acknowledgements(&services.0[0])?;
+    let Some(Message::Vote(vote)) = drivers[0].take_message() else {
+        bail!("exact ACK did not release the staged vote");
+    };
+    ensure!(vote.phase == Phase::Prevote && vote.value.is_none());
+    drivers[0].poll_acknowledgements(&services.0[0])?;
+    ensure!(
+        drivers[0].pending_message().is_none(),
+        "one durable vote emitted twice"
+    );
+
+    // Failure at the original journal owner check freezes the progress owner;
+    // it cannot emit the newly staged bytes or write them into another store.
+    drivers[1].poll_after_receive(&services.0[2], now)?;
+    ensure!(drivers[1]
+        .poll_after_receive(&services.0[2], deadline)
+        .is_err());
+    ensure!(drivers[1].is_frozen() && drivers[1].pending_message().is_none());
+    for pipeline in [&services.0[1], &services.0[2]] {
+        let saved = super::super::read_metadata(pipeline, vec![MetaKey::ConsensusState(ids[1])])?;
+        ensure!(
+            saved.values == vec![None],
+            "failed submission wrote signing state"
+        );
+    }
+    drop(drivers);
+    services.shutdown()?;
+    Ok(())
+}
+
+#[test]
 #[ignore = "real AOEM; next-height votes survive the original AdvanceHeight ACK window"]
 fn native_progress_early_height_votes_survive_advance_height_ack() -> Result<()> {
     let Fixture {
@@ -110,7 +191,7 @@ fn native_progress_early_height_votes_survive_advance_height_ack() -> Result<()>
     // Decision publication and AdvanceHeight are distinct durable transitions.
     // Stage the latter, but deliberately do not poll its ACK until all early
     // child messages have passed through the SAME authenticated receiver once.
-    drivers[laggard].poll_after_receive(Instant::now())?;
+    drivers[laggard].poll_after_receive(&services.0[laggard], Instant::now())?;
     let before_parent = drivers[laggard].parent();
     let before_head = drivers[laggard].head();
     let (source, proposal) = child_proposal.context("no actual child proposal")?;

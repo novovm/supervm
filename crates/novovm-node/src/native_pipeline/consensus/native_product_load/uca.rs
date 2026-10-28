@@ -309,8 +309,8 @@ fn run_native_uca_load_mode(
 ) -> Result<Value> {
     let count = env_count(
         "NOVOVM_NATIVE_UCA_LOAD_TRANSACTIONS",
-        if mode.is_rolling() { 65_536 } else { 1024 },
-        if mode.is_rolling() { 65_536 } else { 4096 },
+        if mode.dynamic_windows() { 65_536 } else { 1024 },
+        if mode.dynamic_windows() { 65_536 } else { 4096 },
     )?;
     let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, 64)?;
     ensure!(
@@ -328,7 +328,7 @@ fn run_native_uca_load_mode(
     );
     let timeout = Duration::from_secs(env_count(
         "NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS",
-        if mode.is_rolling() { 90 } else { 600 },
+        if mode.dynamic_windows() { 90 } else { 600 },
         3600,
     )? as u64);
     let binary = match binary_override {
@@ -366,6 +366,7 @@ fn run_native_uca_load_mode(
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
         "NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND",
         "NOVOVM_RESIDENT_TEST_SIGNATURE_BACKEND",
+        "NOVOVM_NATIVE_LOAD_SIGNERS",
     ]
     .into_iter()
     .map(|name| (name, std::env::var(name).ok()))
@@ -379,20 +380,21 @@ fn run_native_uca_load_mode(
         "signature_backend":signature_override.unwrap_or(crate::native_pipeline::service::config::test_signature_backend()?),
         "aoem_sha256":hex(&Sha256::digest(fs::read(&library)?)),"real_processes":4,"real_machines":1,
         "asset_signature":"ML-DSA-65","transport":"native_novorudp_apfl","http_listeners":0,
-        "requested_full_65536_workload":mode.is_rolling() && count == 65_536,
+        "requested_full_65536_workload":mode.dynamic_windows() && count == 65_536,
         "full_65536_workload":false,
-        "static_intent_window":if mode.is_rolling() {Value::Null} else {json!([1,257])},
+        "static_intent_window":if mode.dynamic_windows() {Value::Null} else {json!([1,257])},
         "load_strategy":mode.label(),"grant_expires_at_height":grant_expiry,
         "rolling_wave_transactions":if mode.is_rolling() {Some(rolling::WAVE_ROWS)} else {None},
         "effective_outstanding_limit":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
         "rolling_signature_65536":if mode.is_rolling() {"PENDING"} else {"NOT_EXECUTED"},
-        "input_identity":if mode.is_rolling() {"same logical payer/recipient/amount/nonce and approved genesis; rolling expiry and randomized signatures can differ across runs, NOT byte-identical"} else if signature_override.is_some() {"one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU"} else {"fresh generated per invocation; same logical workload is not byte-identical input"},
+        "continuous_signature_65536":if mode == LoadMode::Continuous {"PENDING"} else {"NOT_EXECUTED"},
+        "input_identity":if mode.dynamic_windows() {"same logical payer/recipient/amount/nonce and approved genesis; receipt-anchored expiry and signatures can differ across runs, NOT byte-identical"} else if signature_override.is_some() {"one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU"} else {"fresh generated per invocation; same logical workload is not byte-identical input"},
         "laboratory_replay_only":signature_override.is_some(),
         "deployment_replay_authorized":false,
-        "signature_generation_timed":mode.is_rolling(),
-        "signature_generation_timing":if mode.is_rolling() {"first-wave preparation excluded before first submission; ALL later signing/preparation/head queries remain inside the uninterrupted wall"} else {"all workload signing excluded before first submission"},
+        "signature_generation_timed":mode.dynamic_windows(),
+        "signature_generation_timing":if mode.dynamic_windows() {"initial bounded input preparation excluded before first submission; ALL later signing/preparation remain inside the uninterrupted wall; continuous mode overlaps signing with original SDK polling"} else {"all workload signing excluded before first submission"},
         "overall_deadline_seconds":timeout.as_secs(),
-        "diagnostic_extended_deadline":mode.is_rolling() && timeout != Duration::from_secs(90),
+        "diagnostic_extended_deadline":mode.dynamic_windows() && timeout != Duration::from_secs(90),
         "system_capacity_claim":false,"business_proof_verified":false,
         "diagnostics_enabled":std::env::var("NOVOVM_PROFILE_STAGES").as_deref()==Ok("1"),
         "critical_path_diagnostics_enabled":std::env::var("NOVOVM_PROFILE_CRITICAL_PATH").as_deref()==Ok("1"),
@@ -548,7 +550,7 @@ fn run_native_uca_load_mode(
         .nov_amount;
         let debit = fee.checked_add(1).context("NUAS fee overflow")?;
         ensure!(
-            mode.is_rolling() || corpus.signed.as_ref().is_none_or(|raw| raw.len() == count),
+            mode.dynamic_windows() || corpus.signed.as_ref().is_none_or(|raw| raw.len() == count),
             "paired corpus transaction count changed"
         );
         let mut raw = Vec::with_capacity(count);
@@ -558,7 +560,7 @@ fn run_native_uca_load_mode(
             let payer = index % SENDERS;
             let nonce = (index / SENDERS) as u64;
             let key = &keys[SENDERS + 1 + payer];
-            let signed = match corpus.signed.as_ref().filter(|_| !mode.is_rolling()) {
+            let signed = match corpus.signed.as_ref().filter(|_| !mode.dynamic_windows()) {
                 Some(raw) => SignedAssetSpendV2::decode(&raw[index])?,
                 None => signer.sign(make_intent(payer, nonce, window)?, &key.0, &key.1)?,
             };
@@ -568,21 +570,39 @@ fn run_native_uca_load_mode(
             );
             Ok(signed)
         };
-        let first_count = if mode.is_rolling() {
-            rolling::WAVE_ROWS
+        let first_count = mode.first_rows(count);
+        let initial_preparation_started = Instant::now();
+        if mode == LoadMode::Continuous {
+            let generated = rolling::generate_rows(
+                0,
+                first_count,
+                SpendWindow::after(0)?,
+                env_count("NOVOVM_NATIVE_LOAD_SIGNERS", 4, 16)?,
+                &make_signed,
+            )?;
+            rolling::append_generated_rows(
+                &mut raw,
+                &mut observations,
+                &mut workload_hash,
+                generated.into_iter().map(Ok),
+                SpendWindow::after(0)?,
+                fee,
+            )?;
         } else {
-            count
-        };
-        rolling::append_signed_rows(
-            &mut raw,
-            &mut observations,
-            &mut workload_hash,
-            first_count,
-            SpendWindow::after(0)?,
-            fee,
-            &make_signed,
-        )?;
-        if mode.is_rolling() {
+            rolling::append_signed_rows(
+                &mut raw,
+                &mut observations,
+                &mut workload_hash,
+                first_count,
+                SpendWindow::after(0)?,
+                fee,
+                &make_signed,
+            )?;
+        }
+        evidence["initial_signed_corpus_rows"] = json!(first_count);
+        evidence["initial_signed_corpus_preparation_us"] =
+            json!(initial_preparation_started.elapsed().as_micros() as u64);
+        if mode.dynamic_windows() {
             ensure!(
                 corpus
                     .rolling_identity
@@ -635,7 +655,24 @@ fn run_native_uca_load_mode(
             .collect::<Vec<_>>());
         phase = "native submission through four-node final receipt observation";
         timed_attempt = Some(Instant::now());
-        measured = Some(if mode.is_rolling() {
+        measured = Some(if mode == LoadMode::Continuous {
+            rolling::drive_continuous(
+                &mut nodes,
+                &mut clients,
+                ingress,
+                inputs,
+                frame_rows,
+                &mut raw,
+                &mut observations,
+                &mut workload_hash,
+                &mut counts,
+                timeout,
+                count,
+                fee,
+                &make_signed,
+                &mut evidence,
+            )?
+        } else if mode.is_rolling() {
             rolling::drive_rolling(
                 &mut nodes,
                 &mut clients,
@@ -666,9 +703,14 @@ fn run_native_uca_load_mode(
         });
         timed_attempt = None;
         let workload_hash: Hash = workload_hash.finalize().into();
-        if mode.is_rolling() {
+        if mode.dynamic_windows() {
             corpus.rolling_identity = Some((domain, material.expected_initial_root));
-            evidence["rolling_signature_65536"] = json!(if count == 65_536 {
+            let load_status = if mode == LoadMode::Continuous {
+                "continuous_signature_65536"
+            } else {
+                "rolling_signature_65536"
+            };
+            evidence[load_status] = json!(if count == 65_536 {
                 "EXECUTED"
             } else {
                 "REDUCED_DIAGNOSTIC"
@@ -704,10 +746,10 @@ fn run_native_uca_load_mode(
             );
         }
         ensure!(
-            mode.is_rolling() || before[0].height < 257,
+            mode.dynamic_windows() || before[0].height < 257,
             "static NUAS intent window exceeded"
         );
-        let query_window = if mode.is_rolling() {
+        let query_window = if mode.dynamic_windows() {
             SpendWindow::after(before[0].height)?
         } else {
             SpendWindow::after(0)?
@@ -863,7 +905,8 @@ fn run_native_uca_load_mode(
     latency.sort_unstable();
     evidence["phase"] = json!(phase);
     evidence["passed"] = json!(result.is_ok());
-    evidence["full_65536_workload"] = json!(result.is_ok() && mode.is_rolling() && count == 65_536);
+    evidence["full_65536_workload"] =
+        json!(result.is_ok() && mode.dynamic_windows() && count == 65_536);
     evidence["error"] = json!(result.as_ref().err().map(|e| format!("{e:#}")));
     evidence["counts"] = json!(counts);
     evidence["elapsed_seconds"] = json!(measured.map(|d| d.as_secs_f64()));
@@ -882,7 +925,9 @@ fn run_native_uca_load_mode(
     evidence["latency_us"] = json!({"p50":percentile(&latency,50),"p95":percentile(&latency,95),
         "p99":percentile(&latency,99),"sample_count":latency.len(),
         "definition":"first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"});
-    evidence["timing"] = json!(if mode.is_rolling() {
+    evidence["timing"] = json!(if mode == LoadMode::Continuous {
+        "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not byte-identical across backend runs"
+    } else if mode.is_rolling() {
         "same native load observer: first SDK submission attempt through final unique four-node receipt observation on ONE unpaused clock; all intervening signing/structure/head queries/transport drains included; startup/keygen/first-wave preparation/final audit/cold recovery excluded; not an 8192-inflight static-input comparison"
     } else {
         "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded"

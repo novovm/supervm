@@ -534,6 +534,7 @@ impl CandidatePipeline {
         let worker_seed = seed.clone();
         let signatures = Arc::new(SignatureWork::default());
         let worker_signatures = signatures.clone();
+        let control = thread::current();
         let worker = thread::Builder::new()
             .name("novovm-candidate-pipeline".into())
             .spawn(move || {
@@ -544,7 +545,7 @@ impl CandidatePipeline {
                     ready,
                     worker_identity,
                     worker_signatures,
-                    worker_seed,
+                    (worker_seed, control),
                 )
             })
             .context("start candidate pipeline")?;

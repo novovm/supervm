@@ -404,7 +404,7 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
             assert_eq!(prepared_cleanup_turns, 0);
         } else {
             assert!(!cache.has_pending_reads());
-            assert_eq!(selection, Some(order.iter().copied().collect()));
+            assert_eq!(selection, Some((order.iter().copied().collect(), true)));
         }
     }
     assert_eq!(
@@ -488,14 +488,14 @@ fn fully_known_gap_window_rotates_to_ready_work_but_unknown_window_does_not() {
     );
     assert_eq!(
         select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 4),
-        Some(Vec::new())
+        Some((Vec::new(), false))
     );
     let next = advance_nonce_window(0, window.len(), order.len());
     assert_eq!(next, 4);
     let ready = nonce_selection_window(&order, next, 4);
     assert_eq!(
         select_prepared_nonce_window(&ready, &pending, &known, BTreeMap::new(), 4),
-        Some(order.iter().skip(4).copied().collect())
+        Some((order.iter().skip(4).copied().collect(), true))
     );
     assert_eq!(advance_nonce_window(next, ready.len(), order.len()), 0);
     assert_eq!(pending.len(), 8);

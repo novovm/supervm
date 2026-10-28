@@ -145,3 +145,52 @@ fn asset_selection_refuses_invalid_row_and_length_before_nonce_credit() -> Resul
     assert_eq!(known[&[3; 32]], 0);
     Ok(())
 }
+
+#[test]
+fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum() -> Result<()> {
+    let (order, mut pending) = pending_uca()?;
+    let known = BTreeMap::from([([3; 32], 0)]);
+    let first_quantum = order.iter().take(32).copied().collect();
+    let (partial, full) =
+        select_prepared_nonce_window(&first_quantum, &pending, &known, BTreeMap::new(), 64)
+            .unwrap();
+    assert_eq!(partial.len(), 32);
+    assert!(!full, "32 verified rows do not fill a 64-row source budget");
+
+    let full_source = nonce_selection_window(&order, 0, 64);
+    let (selected, full) =
+        select_prepared_nonce_window(&full_source, &pending, &known, BTreeMap::new(), 64).unwrap();
+    assert_eq!(selected.len(), 64);
+    assert!(
+        full,
+        "later admission must not block a full ready candidate"
+    );
+
+    let (selected, full) =
+        select_prepared_nonce_window(&order, &pending, &known, BTreeMap::new(), 1024).unwrap();
+    assert!(selected.len() < 128);
+    assert!(full, "the original byte budget also makes a full candidate");
+    let bytes = selected
+        .iter()
+        .map(|hash| pending[hash].selection_input_bytes().unwrap())
+        .sum::<usize>();
+    assert!(bytes <= super::super::uca_body_byte_limit(1024));
+    assert_eq!(known[&[3; 32]], 0);
+    assert_eq!(pending.len(), 128);
+
+    // Many retained rows do not imply an executable prefix. Neither a real
+    // nonce gap nor an unresolved read grants the full-candidate exception.
+    pending.get_mut(&order[0]).unwrap().nonce = 7;
+    let (selected, full) =
+        select_prepared_nonce_window(&order, &pending, &known, BTreeMap::new(), 1024).unwrap();
+    assert!(selected.is_empty() && !full);
+    assert!(select_prepared_nonce_window(
+        &order,
+        &pending,
+        &BTreeMap::new(),
+        BTreeMap::new(),
+        1024,
+    )
+    .is_none());
+    Ok(())
+}

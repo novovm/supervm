@@ -866,13 +866,20 @@ impl NativeObjectLink {
         report: &mut NativeLinkPoll,
     ) -> Result<()> {
         // Control/body/ingress feedback have independent bounded hint queues.
+        let mut empty_lanes = 0;
         for _ in 0..quantum {
             let stream = self.streams[self.feedback_turn];
             self.feedback_turn = (self.feedback_turn + 1) % self.streams.len();
             let lane = self.lanes.get_mut(&stream).expect("configured lane");
             let Some((peer, id)) = lane.feedback.pop_front() else {
+                empty_lanes += 1;
+                // A complete empty round cannot produce work in this poll.
+                if empty_lanes == self.streams.len() {
+                    break;
+                }
                 continue;
             };
+            empty_lanes = 0;
             lane.queued.remove(&(peer, id));
             let Some(session) = self.endpoint.session_id(peer) else {
                 continue;

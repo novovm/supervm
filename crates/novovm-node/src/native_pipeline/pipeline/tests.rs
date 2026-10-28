@@ -512,6 +512,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
             receiver,
             &worker_identity,
             &worker_seed,
+            &thread::current(),
         );
         compute.shutdown()
     });

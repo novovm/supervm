@@ -20,15 +20,16 @@ pub(super) fn start(
     ready: mpsc::SyncSender<Result<Arc<IoService>>>,
     identity: Arc<()>,
     signatures: Arc<SignatureWork>,
-    seed: SeedSlot,
+    seed_and_control: (SeedSlot, thread::Thread),
 ) -> Result<()> {
+    let (seed, control) = seed_and_control;
     let startup = (|| {
         let notify = Some(thread::current());
         let io = Arc::new(IoService::start_with_notify(
             config.store.clone(),
             mode,
             config.io,
-            notify.clone(),
+            [notify.clone(), Some(control.clone())],
         )?);
         let compute = ComputeOwner::start(
             ComputeConfig {
@@ -59,7 +60,7 @@ pub(super) fn start(
     if ready.send(Ok(io.clone())).is_err() {
         return compute.shutdown();
     }
-    run(&config, &io, &compute, receiver, &identity, &seed);
+    run(&config, &io, &compute, receiver, &identity, &seed, &control);
     // I/O shutdown belongs to CandidatePipeline after this coordinator releases
     // its Arc. All admitted jobs (including lost replies) have drained here.
     compute.shutdown()
@@ -404,6 +405,7 @@ pub(super) fn run(
     receiver: mpsc::Receiver<DriverMessage>,
     identity: &Arc<()>,
     cache: &SeedSlot,
+    control: &thread::Thread,
 ) {
     let mut jobs = VecDeque::<Job>::new();
     let mut connected = true;
@@ -427,6 +429,7 @@ pub(super) fn run(
             }
         }
         let mut progressed = false;
+        let mut completed = false;
         // One bounded transition per job per round. Large frontiers do not
         // restart from the root or monopolize already-computed persistence.
         for _ in 0..jobs.len() {
@@ -459,6 +462,7 @@ pub(super) fn run(
                         reply.fail(anyhow::anyhow!("signature rows for candidate request"));
                     }
                     progressed = true;
+                    completed = true;
                 }
                 Ok(Advancement::Pending {
                     stage,
@@ -483,6 +487,7 @@ pub(super) fn run(
                         ));
                     }
                     progressed = true;
+                    completed = true;
                 }
                 Ok(Advancement::Authenticated(body)) => {
                     if let Reply::Authenticated(reply) = reply {
@@ -495,6 +500,7 @@ pub(super) fn run(
                         reply.fail(anyhow::anyhow!("authentication result for durable request"));
                     }
                     progressed = true;
+                    completed = true;
                 }
                 Err(error) => {
                     let error = PipelineFailure {
@@ -504,8 +510,12 @@ pub(super) fn run(
                     };
                     reply.fail(error.into());
                     progressed = true;
+                    completed = true;
                 }
             }
+        }
+        if completed {
+            control.unpark();
         }
         if !progressed && !jobs.is_empty() {
             // Normal completions and submissions unpark immediately. This is

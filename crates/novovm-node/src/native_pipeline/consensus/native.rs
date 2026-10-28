@@ -348,6 +348,14 @@ impl NativeChannel {
         self.prepare_kind(message, false)
     }
 
+    #[cfg(test)]
+    pub(super) fn qualify_control_for_test(
+        &self,
+        message: &transport::Message,
+    ) -> Result<VerifiedEvidence> {
+        message_evidence::verify(message, &self.domain)
+    }
+
     /// Only solicited decision/body replies may use the recovery completion
     /// namespace. Evidence, execution identity and resource limits are unchanged.
     pub(super) fn prepare_recovery_reply(

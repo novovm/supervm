@@ -5,6 +5,11 @@ use novovm_protocol::uca_spend::SignedAssetSpendV2;
 use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
 use sha2::{Digest, Sha256};
 
+pub(super) enum UcaAdmission {
+    Accepted,
+    Backpressured(AdmissionInput, AdmittedTransfer),
+}
+
 pub(super) fn hash(signed: &SignedAssetSpendV2) -> Result<Hash> {
     Ok(Sha256::digest(signed.intent.signing_bytes()?).into())
 }
@@ -70,7 +75,7 @@ impl RpcLifecycle {
         admitted: AdmittedTransfer,
         state: &crate::native_pipeline::business::uca_spend_state::CapturedAssetSpendStateV2,
         broadcast: bool,
-    ) -> Result<Hash> {
+    ) -> Result<UcaAdmission> {
         ensure!(
             self.is_uca() && self.projection_error.is_none(),
             "UCA admission unavailable"
@@ -121,26 +126,38 @@ impl RpcLifecycle {
         );
         let id = hash(checked.signed())?;
         if self.receipts.contains_key(&id) || self.pending.contains_key(&id) {
-            return Ok(id);
+            return Ok(UcaAdmission::Accepted);
         }
         let signer = intent.nonce_identity()?;
         let nonce = intent.nonce;
-        self.nonces.bind_current_parent(parent);
-        self.nonces
-            .observe_present_at_parent(parent, signer, state.next_nonce())?;
         ensure!(
             !self.reservations.contains(&(signer, nonce)),
             "UCA account nonce already reserved"
         );
         let canonical_len = input.encoded_len()?;
-        ensure!(
-            self.pending.len() < MAX_POOL
-                && canonical_len <= MAX_POOL_BYTES.saturating_sub(self.pending_bytes),
-            "UCA pool backpressure"
-        );
+        let limit = MAX_POOL_BYTES;
+        #[cfg(test)]
+        let limit = self.admission.pool_byte_limit.unwrap_or(limit);
+        if self.pending.len() >= MAX_POOL
+            || canonical_len > limit.saturating_sub(self.pending_bytes)
+        {
+            return Ok(UcaAdmission::Backpressured(input, admitted));
+        }
         let metadata = admitted.retained_metadata_bytes();
-        self.pending_retention
-            .reserve(&input, metadata, MAX_POOL_BYTES)?;
+        if let Err(error) = self.pending_retention.reserve(&input, metadata, limit) {
+            if error.is::<PoolBackpressure>() {
+                return Ok(UcaAdmission::Backpressured(input, admitted));
+            }
+            return Err(error);
+        }
+        self.nonces.bind_current_parent(parent);
+        if let Err(error) =
+            self.nonces
+                .observe_present_at_parent(parent, signer, state.next_nonce())
+        {
+            self.pending_retention.release(&input, metadata);
+            return Err(error);
+        }
         self.pending_bytes += canonical_len;
         self.pending.insert(
             id,
@@ -158,20 +175,20 @@ impl RpcLifecycle {
         if broadcast {
             self.queue_gossip(id);
         }
-        Ok(id)
+        Ok(UcaAdmission::Accepted)
     }
 
     pub(super) fn selected_uca_batch(&self, selected: &[Hash]) -> Result<Arc<AssetSpendBatchV2>> {
-        let mut raws = Vec::with_capacity(selected.len());
+        let mut views = Vec::with_capacity(selected.len());
         for id in selected {
             let entry = self.pending.get(id).context("selected UCA entry missing")?;
             let AdmissionInput::Uca { batch, index } = &entry.input else {
                 anyhow::bail!("mixed pool contracts");
             };
-            raws.push(batch.raw_transaction(*index)?);
+            views.push(batch.view(*index)?);
         }
-        Ok(Arc::new(AssetSpendBatchV2::from_raw(
-            &raws,
+        Ok(Arc::new(AssetSpendBatchV2::from_views(
+            &views,
             AssetSpendBatchLimitsV2 {
                 transactions: self.batch_size,
                 transaction_bytes: 8192,

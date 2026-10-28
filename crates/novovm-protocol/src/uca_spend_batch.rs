@@ -53,7 +53,104 @@ pub struct AssetSpendBatchV2 {
     max_transaction_bytes: usize,
 }
 
+/// Borrowed, structurally validated row of an immutable batch. This is not a
+/// signature or spending capability. Private fields prevent callers from
+/// constructing an unchecked view or substituting a row's signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AssetSpendViewV2<'a> {
+    cells: [&'a [u8]; FIELDS],
+    signature: &'a [u8],
+}
+
+impl AssetSpendViewV2<'_> {
+    fn intent(&self) -> Result<AssetSpendIntentV2> {
+        let cell = |field: usize| self.cells[field];
+        let array8 = |field| cell(field).try_into().map_err(|_| SpendEncodingError);
+        Ok(AssetSpendIntentV2 {
+            chain_id: u64::from_be_bytes(array8(0)?),
+            genesis: cell(1).try_into().map_err(|_| SpendEncodingError)?,
+            payer: cell(2).to_vec(),
+            authorization_epoch: u64::from_be_bytes(array8(3)?),
+            spend_key_ref: cell(4).try_into().map_err(|_| SpendEncodingError)?,
+            recipient: cell(5).to_vec(),
+            asset: cell(12)[0],
+            amount: u128::from_be_bytes(cell(6).try_into().map_err(|_| SpendEncodingError)?),
+            max_fee: u128::from_be_bytes(cell(7).try_into().map_err(|_| SpendEncodingError)?),
+            nonce: u64::from_be_bytes(array8(8)?),
+            not_before_height: u64::from_be_bytes(array8(9)?),
+            expires_at_height: u64::from_be_bytes(array8(10)?),
+            authority_update: decode_authority_update_v2(cell(13))?,
+        })
+    }
+
+    /// Original canonical intent encoding, without copying the key/signature.
+    pub fn signing_bytes(&self) -> Result<Vec<u8>> {
+        self.intent()?.signing_bytes()
+    }
+
+    /// Compare every canonical field, public key and signature directly. An
+    /// intent hash alone cannot establish that a signature fact is reusable.
+    pub fn matches_signed(&self, signed: &SignedAssetSpendV2) -> Result<bool> {
+        let i = &signed.intent;
+        Ok(self.cells[0] == i.chain_id.to_be_bytes()
+            && self.cells[1] == i.genesis
+            && self.cells[2] == i.payer
+            && self.cells[3] == i.authorization_epoch.to_be_bytes()
+            && self.cells[4] == i.spend_key_ref
+            && self.cells[5] == i.recipient
+            && self.cells[6] == i.amount.to_be_bytes()
+            && self.cells[7] == i.max_fee.to_be_bytes()
+            && self.cells[8] == i.nonce.to_be_bytes()
+            && self.cells[9] == i.not_before_height.to_be_bytes()
+            && self.cells[10] == i.expires_at_height.to_be_bytes()
+            && self.cells[11] == signed.public_key
+            && self.cells[12] == [i.asset]
+            && self.cells[13] == encode_authority_update_v2(&i.authority_update)?
+            && self.signature == signed.signature)
+    }
+
+    fn encoded_len(&self) -> usize {
+        MIN_RAW + self.cells[2].len() + self.cells[5].len() - 40 + self.cells[13].len() - 1
+    }
+}
+
 impl AssetSpendBatchV2 {
+    /// Rebatch existing validated columns without expanding, encoding and
+    /// reparsing transactions. The selected order and all signature bytes are
+    /// preserved; the new retaining owner must still reserve its own budget.
+    pub fn from_views(
+        views: &[AssetSpendViewV2<'_>],
+        limits: AssetSpendBatchLimitsV2,
+    ) -> Result<Self> {
+        let total = views.iter().try_fold(0usize, |n, row| {
+            n.checked_add(row.encoded_len()).ok_or(SpendEncodingError)
+        })?;
+        let max = views
+            .iter()
+            .map(AssetSpendViewV2::encoded_len)
+            .max()
+            .unwrap_or(0);
+        limits.check(views.len(), total, max)?;
+        let mut signatures = Vec::with_capacity(
+            views
+                .len()
+                .checked_mul(MLDSA65_SIGNATURE_BYTES)
+                .ok_or(SpendEncodingError)?,
+        );
+        for row in views {
+            signatures.extend_from_slice(row.signature);
+        }
+        Ok(Self {
+            rows: views.len(),
+            columns: std::array::from_fn(|field| {
+                Column::collect(views.iter().map(|row| row.cells[field])).map(<[u8]>::to_vec)
+            }),
+            signatures,
+            canonical_bytes: total,
+            max_transaction_bytes: max,
+        })
+    }
+
     pub fn from_raw(raw: &[Vec<u8>], limits: AssetSpendBatchLimitsV2) -> Result<Self> {
         let total = raw.iter().try_fold(0usize, |n, row| {
             n.checked_add(row.len()).ok_or(SpendEncodingError)
@@ -205,32 +302,23 @@ impl AssetSpendBatchV2 {
         Ok(batch)
     }
 
-    pub fn row(&self, row: usize) -> Result<SignedAssetSpendV2> {
+    pub fn view(&self, row: usize) -> Result<AssetSpendViewV2<'_>> {
         if row >= self.rows {
             return Err(SpendEncodingError);
         }
-        let cell = |field: usize| self.columns[field].value(row).as_slice();
-        let array8 = |field| cell(field).try_into().map_err(|_| SpendEncodingError);
+        Ok(AssetSpendViewV2 {
+            cells: std::array::from_fn(|field| self.columns[field].value(row).as_slice()),
+            signature: &self.signatures
+                [row * MLDSA65_SIGNATURE_BYTES..(row + 1) * MLDSA65_SIGNATURE_BYTES],
+        })
+    }
+
+    pub fn row(&self, row: usize) -> Result<SignedAssetSpendV2> {
+        let view = self.view(row)?;
         Ok(SignedAssetSpendV2 {
-            intent: AssetSpendIntentV2 {
-                chain_id: u64::from_be_bytes(array8(0)?),
-                genesis: cell(1).try_into().map_err(|_| SpendEncodingError)?,
-                payer: cell(2).to_vec(),
-                authorization_epoch: u64::from_be_bytes(array8(3)?),
-                spend_key_ref: cell(4).try_into().map_err(|_| SpendEncodingError)?,
-                recipient: cell(5).to_vec(),
-                asset: cell(12)[0],
-                amount: u128::from_be_bytes(cell(6).try_into().map_err(|_| SpendEncodingError)?),
-                max_fee: u128::from_be_bytes(cell(7).try_into().map_err(|_| SpendEncodingError)?),
-                nonce: u64::from_be_bytes(array8(8)?),
-                not_before_height: u64::from_be_bytes(array8(9)?),
-                expires_at_height: u64::from_be_bytes(array8(10)?),
-                authority_update: decode_authority_update_v2(cell(13))?,
-            },
-            public_key: cell(11).to_vec(),
-            signature: self.signatures
-                [row * MLDSA65_SIGNATURE_BYTES..(row + 1) * MLDSA65_SIGNATURE_BYTES]
-                .to_vec(),
+            intent: view.intent()?,
+            public_key: view.cells[11].to_vec(),
+            signature: view.signature.to_vec(),
         })
     }
 
@@ -442,6 +530,81 @@ mod tests {
         assert!(decoded.signed_accounts(4).is_err());
         assert!(decoded.retained_bytes().unwrap() >= decoded.signatures.len());
     }
+
+    #[test]
+    fn borrowed_rebatch_preserves_canonical_order_and_enforces_original_limits() {
+        let (raw, limits) = fixture();
+        let left = AssetSpendBatchV2::from_raw(&raw[..2], limits).unwrap();
+        let right = AssetSpendBatchV2::from_raw(&raw[2..], limits).unwrap();
+        let views = [
+            right.view(1).unwrap(),
+            left.view(0).unwrap(),
+            right.view(0).unwrap(),
+        ];
+        let expected_raw = vec![raw[3].clone(), raw[0].clone(), raw[2].clone()];
+        let expected = AssetSpendBatchV2::from_raw(&expected_raw, limits).unwrap();
+        let actual = AssetSpendBatchV2::from_views(&views, limits).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual.encode().unwrap(), expected.encode().unwrap());
+        assert_eq!(actual.columns[11].values.len(), 1);
+        assert!(left.view(2).is_err());
+        assert!(AssetSpendBatchV2::from_views(&[], limits).is_err());
+        for limited in [
+            AssetSpendBatchLimitsV2 {
+                transactions: 2,
+                ..limits
+            },
+            AssetSpendBatchLimitsV2 {
+                transaction_bytes: actual.max_transaction_bytes() - 1,
+                ..limits
+            },
+            AssetSpendBatchLimitsV2 {
+                body_bytes: actual.canonical_bytes() - 1,
+                ..limits
+            },
+        ] {
+            assert!(AssetSpendBatchV2::from_views(&views, limited).is_err());
+        }
+    }
+
+    #[test]
+    fn borrowed_row_match_binds_all_fields_key_and_signature_not_just_intent_hash() {
+        let (raw, limits) = fixture();
+        let batch = AssetSpendBatchV2::from_raw(&raw, limits).unwrap();
+        let view = batch.view(0).unwrap();
+        let signed = SignedAssetSpendV2::decode(&raw[0]).unwrap();
+        assert_eq!(
+            view.signing_bytes().unwrap(),
+            signed.intent.signing_bytes().unwrap()
+        );
+        assert!(view.matches_signed(&signed).unwrap());
+        for field in 0..15 {
+            let mut changed = signed.clone();
+            let i = &mut changed.intent;
+            match field {
+                0 => i.chain_id += 1,
+                1 => i.genesis[0] ^= 1,
+                2 => i.payer[0] ^= 1,
+                3 => i.authorization_epoch += 1,
+                4 => i.spend_key_ref[0] ^= 1,
+                5 => i.recipient[0] ^= 1,
+                6 => i.amount += 1,
+                7 => i.max_fee += 1,
+                8 => i.nonce += 1,
+                9 => i.not_before_height += 1,
+                10 => i.expires_at_height += 1,
+                11 => changed.public_key[0] ^= 1,
+                12 => i.asset ^= 1,
+                13 => changed.signature[0] ^= 1,
+                14 => {
+                    changed.signature.pop().unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(!view.matches_signed(&changed).unwrap(), "field {field}");
+        }
+        assert_ne!(view, batch.view(1).unwrap());
+    }
     #[test]
     fn bounds_headers_truncation_and_trailing_bytes_fail_closed() {
         let (raw, limits) = fixture();
@@ -545,11 +708,27 @@ mod tests {
         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum());
         let wire = batch.encode().unwrap();
         let decoded = AssetSpendBatchV2::decode(&wire, limits).unwrap();
+        let views = (0..decoded.len())
+            .map(|index| decoded.view(index).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            AssetSpendBatchV2::from_views(&views, limits).unwrap(),
+            decoded
+        );
         for (index, bytes) in raw.iter().enumerate() {
             assert_eq!(decoded.raw_transaction(index).unwrap(), *bytes);
             assert_eq!(decoded.transaction_bytes(index).unwrap(), bytes.len());
-            assert!(decoded.row(index).unwrap() == SignedAssetSpendV2::decode(bytes).unwrap());
+            let signed = SignedAssetSpendV2::decode(bytes).unwrap();
+            assert!(decoded.row(index).unwrap() == signed);
+            assert!(decoded
+                .view(index)
+                .unwrap()
+                .matches_signed(&signed)
+                .unwrap());
         }
+        let mut changed = management;
+        changed.intent.authority_update.as_mut().unwrap().grants[0].remaining_debit_budget += 1;
+        assert!(!decoded.view(1).unwrap().matches_signed(&changed).unwrap());
         let mut wrong = batch;
         wrong.columns[13].values.push(vec![0]);
         assert!(AssetSpendBatchV2::decode(&wrong.encode().unwrap(), limits).is_err());

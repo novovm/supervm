@@ -1,5 +1,40 @@
 # Agent Highest Law
 
+## 2026-10-29 simple implementation and measured throughput
+
+Follow the user's implementation rules for this repository:
+
+- Do not add complexity for speculative attacks or unlikely boundary cases.
+  Before expanding scope for such a case, explain the concrete failure path,
+  likelihood, code cost and tradeoff, and obtain the user's agreement. This is
+  not permission to remove the existing signature, asset-authority, replay,
+  quorum, resource or durability contract.
+- Validate external shape/length/encoding at the owning ingress boundary; carry
+  its typed, validated representation internally instead of repeatedly checking
+  unchanged facts. Current-parent authority, revocation, nonce, budget and
+  consensus checks are state-dependent obligations, not duplicate parsing.
+- Do not extract one-use trivial functions. Extract reused logic, genuinely
+  complex logic, or a concept with a clear independent name.
+- Keep the main function's normal flow readable; put necessary validation and
+  detailed work in focused helpers. Comments explain non-obvious constraints or
+  counterintuitive behavior, not what obvious code already says.
+- Do not hand-edit generated files; change their source and regenerate.
+- Test the real implementation. Do not copy business logic into tests to obtain
+  matching answers; minimize mocks and keep independent reference checks where
+  they actually test correctness.
+- Work inside existing flows. Do not create unused tools, frameworks, queues,
+  caches or alternative product paths to manage a hypothetical future need.
+
+For native performance recovery, reuse the original continuous in-flight load
+and execution owners that produced the historical ~12K result. A stop-and-wait
+256-row correctness workload is not the capacity acceptance workload. Restore
+continuous bounded supply and useful dependency-safe execution overlap while
+retaining legal validity, actual-account authority, fees and the all-four-node
+durable-receipt endpoint. Report generator/signing time separately and preserve
+negative samples. Neither a changed measurement boundary nor passing tests is a
+performance improvement. ~12K is a recovery objective, not a promised result or
+the final ceiling; do not weaken contracts or inflate protocol limits to claim it.
+
 ## 2026-10-28 UCA identity is not an asset account
 
 The user's latest correction supersedes any earlier implication that a UCA is

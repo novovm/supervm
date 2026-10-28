@@ -41,7 +41,7 @@ impl Default for IoBudget {
 struct Usage {
     requests: usize,
     bytes: usize,
-    notify: Option<thread::Thread>,
+    notify: [Option<thread::Thread>; 2],
 }
 
 struct Permit {
@@ -56,7 +56,7 @@ impl Drop for Permit {
         usage.bytes -= self.bytes;
         let notify = usage.notify.clone();
         drop(usage);
-        if let Some(thread) = &notify {
+        for thread in notify.iter().flatten() {
             thread.unpark();
         }
     }
@@ -294,16 +294,16 @@ impl IoService {
     /// Blocking initialization on a new thread; call before activating network
     /// service. Opening never transfers a live native handle across threads.
     pub fn start(config: StoreConfig, mode: OpenMode, budget: IoBudget) -> Result<Self> {
-        Self::start_with_notify(config, mode, budget, None)
+        Self::start_with_notify(config, mode, budget, [None, None])
     }
 
-    /// Completion wakeup for the resident pipeline coordinator. Notification
+    /// Completion wakeups for the pipeline and its control thread. Notification
     /// has no data/authority; the receiving ticket still owns the exact result.
     pub(crate) fn start_with_notify(
         config: StoreConfig,
         mode: OpenMode,
         budget: IoBudget,
-        notify: Option<thread::Thread>,
+        notify: [Option<thread::Thread>; 2],
     ) -> Result<Self> {
         ensure!(
             budget.requests > 0 && budget.requests <= 65_536 && budget.bytes > 0,
@@ -458,7 +458,7 @@ impl IoService {
 fn run_owner(
     store: CandidateStore,
     receiver: mpsc::Receiver<Command>,
-    notify: Option<thread::Thread>,
+    notify: [Option<thread::Thread>; 2],
 ) {
     let mut pending = VecDeque::new();
     let mut active: Option<WriteJob> = None;
@@ -566,7 +566,7 @@ fn run_owner(
             }
         }
         if completed {
-            if let Some(thread) = &notify {
+            for thread in notify.iter().flatten() {
                 thread.unpark();
             }
         }

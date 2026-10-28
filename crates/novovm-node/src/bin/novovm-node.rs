@@ -44263,7 +44263,9 @@ fn run_native_execution_tick_node_mode_v1(
             let progressed = product.admission_progress()
                 || before != novovm_node::native_pipeline::service::rpc::control_progress(product);
             if product_idle.should_sleep(Instant::now(), progressed) {
-                std::thread::sleep(Duration::from_millis(1));
+                // Existing owner completions unpark the original tick. Network
+                // arrivals still get the same bounded 1ms polling watchdog.
+                std::thread::park_timeout(Duration::from_millis(1));
             } else if !progressed {
                 std::thread::yield_now();
             }

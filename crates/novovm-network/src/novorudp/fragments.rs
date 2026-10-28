@@ -168,6 +168,11 @@ pub struct Reassembler {
     entries: BTreeMap<Key, Entry>,
     // Optional transport-only completion history. No payload or execution result.
     completed: BTreeMap<Key, (usize, Instant)>,
+    // Conservative earliest creation across both collections. Removal may leave
+    // it early; insertion must never leave it later than a retained object.
+    oldest_created: Option<Instant>,
+    #[cfg(test)]
+    expiry_scans: usize,
     completion_cache: bool,
     reserved: usize,
     turn: usize,
@@ -264,6 +269,9 @@ impl Reassembler {
             peers,
             entries: BTreeMap::new(),
             completed: BTreeMap::new(),
+            oldest_created: None,
+            #[cfg(test)]
+            expiry_scans: 0,
             completion_cache: false,
             reserved: 0,
             turn: 0,
@@ -315,6 +323,7 @@ impl Reassembler {
             }
         }
         self.completed.insert(key, (length, now));
+        self.oldest_created = Some(self.oldest_created.map_or(now, |oldest| oldest.min(now)));
     }
 
     /// Bounded ACK work: the missing prefix advances once per admitted chunk;
@@ -454,6 +463,7 @@ impl Reassembler {
                     hash: digest(self.domain, length),
                 },
             );
+            self.oldest_created = Some(self.oldest_created.map_or(now, |oldest| oldest.min(now)));
             self.reserved += length;
         }
         let entry = self
@@ -471,16 +481,37 @@ impl Reassembler {
     }
 
     pub fn expire(&mut self, now: Instant) -> usize {
-        self.completed
-            .retain(|_, (_, created)| now.saturating_duration_since(*created) < self.limits.ttl);
+        if self
+            .oldest_created
+            .is_none_or(|created| now.saturating_duration_since(created) < self.limits.ttl)
+        {
+            return 0;
+        }
+        #[cfg(test)]
+        {
+            self.expiry_scans += 1;
+        }
+        let mut oldest_created: Option<Instant> = None;
+        self.completed.retain(|_, (_, created)| {
+            let retain = now.saturating_duration_since(*created) < self.limits.ttl;
+            if retain {
+                oldest_created =
+                    Some(oldest_created.map_or(*created, |oldest| oldest.min(*created)));
+            }
+            retain
+        });
         let before = self.entries.len();
         self.entries.retain(|_, entry| {
             let retain = now.saturating_duration_since(entry.created) < self.limits.ttl;
-            if !retain {
+            if retain {
+                oldest_created =
+                    Some(oldest_created.map_or(entry.created, |oldest| oldest.min(entry.created)));
+            } else {
                 self.reserved -= entry.length;
             }
             retain
         });
+        self.oldest_created = oldest_created;
         before - self.entries.len()
     }
 

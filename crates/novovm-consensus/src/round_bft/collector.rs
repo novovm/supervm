@@ -8,7 +8,7 @@
 //! permits the controller to START the corresponding timeout; it is not a QC
 //! and does not mean the timeout has expired. Round/context changes are explicit.
 
-use super::wire::{Context, Hash, Phase, Quorum, ValidatorSet, VerifiedQuorum, Vote};
+use super::wire::{Context, Hash, Phase, ValidatorSet, VerifiedQuorum, VerifiedVote, Vote};
 use anyhow::{ensure, Context as _, Result};
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -168,11 +168,25 @@ impl VoteCollector {
             + self.catch_up.as_ref().map_or(0, |proof| proof.votes.len());
     }
 
-    /// Accept only this exact local context. Every accepted input, including a
-    /// duplicate and a Vote extracted from someone else's VerifiedVote, is
-    /// actually verified against OUR immutable set. No unchecked-weight entry
-    /// point exists. Budget failures leave all existing evidence untouched.
+    /// Raw bytes, including duplicates and votes extracted from a foreign
+    /// qualification, always cross the cryptographic boundary.
     pub fn insert(&mut self, vote: &Vote) -> Result<VoteInsert> {
+        self.check_position(vote)?;
+        vote.verify(&self.set)?;
+        self.insert_qualified(vote)
+    }
+
+    /// Consume an existing immutable signature fact from OUR exact local
+    /// set/verifier. Context, round, equivocation, weight and resource checks
+    /// remain current; a foreign VerifiedVote is never an unchecked entry.
+    pub fn insert_verified(&mut self, verified: &VerifiedVote) -> Result<VoteInsert> {
+        verified.ensure_verified_by(&self.set)?;
+        let vote = verified.vote();
+        self.check_position(vote)?;
+        self.insert_qualified(vote)
+    }
+
+    fn check_position(&self, vote: &Vote) -> Result<()> {
         ensure!(
             vote.context == self.context,
             "collector vote context mismatch"
@@ -186,7 +200,10 @@ impl VoteCollector {
                 || vote.round - self.current_round <= self.limits.max_future_round_span,
             "collector vote exceeds future-round span"
         );
-        vote.verify(&self.set)?;
+        Ok(())
+    }
+
+    fn insert_qualified(&mut self, vote: &Vote) -> Result<VoteInsert> {
         let known = self
             .rounds
             .get(&vote.round)
@@ -328,16 +345,14 @@ impl VoteCollector {
             if weight < self.set.quorum_weight() {
                 return Ok(None);
             }
-            return Ok(Some(
-                Quorum {
-                    votes: votes
-                        .into_values()
-                        .filter(|vote| vote.value == value)
-                        .cloned()
-                        .collect(),
-                }
-                .verify(&self.set)?,
-            ));
+            return Ok(Some(VerifiedQuorum::from_collected_votes(
+                &self.set,
+                votes
+                    .into_values()
+                    .filter(|vote| vote.value == value)
+                    .cloned()
+                    .collect(),
+            )?));
         }
         let Some(round) = self.rounds.get(&round) else {
             return Ok(None);
@@ -354,9 +369,12 @@ impl VoteCollector {
         }
         // Waiting for a quorum does not repeatedly allocate/copy partial votes.
         let votes = matching().cloned().collect();
-        // BTreeMap iteration is the wire's strict sorted-validator order. The
-        // public verification boundary checks signatures and context again.
-        Ok(Some(Quorum { votes }.verify(&self.set)?))
+        // BTreeMap iteration is the wire's strict sorted-validator order.
+        // Every retained vote already crossed OUR qualification boundary.
+        // Recheck certificate shape/context/weight without redoing signatures.
+        Ok(Some(VerifiedQuorum::from_collected_votes(
+            &self.set, votes,
+        )?))
     }
 
     /// Highest future round supported by >1/3 DISTINCT validator weight in that

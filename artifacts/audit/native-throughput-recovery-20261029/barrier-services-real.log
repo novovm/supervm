@@ -1,0 +1,12 @@
+
+running 2 tests
+test native_pipeline::service::uca_native_tests::actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\15340-1793223547179615900
+NUAS retained-byte pool pressure: accepted prefix published, waiting row recaptured at new parent and published without resend; four-node receipts/state and cold recovery equal
+ok
+test native_pipeline::service::uca_native_tests::actual_native_uca_single_client_respend_and_cold_recovery ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\15340-1793223548774302200
+UCA overlap/cached-tail/ready-pool selection counterexample
+NUAS original application -> four original services/DBs -> durable transfer/respend, manager and spend-key rotation, freeze/recovery, rejected cross-account/identity authority -> repeated cold state/receipt equality; no HTTP, no direct input, no forced publish crash, no offline management catchup, no TPS claim
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1749 filtered out; finished in 12.49s
+

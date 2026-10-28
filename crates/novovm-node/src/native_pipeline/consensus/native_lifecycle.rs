@@ -4,6 +4,7 @@
 //! body production by a fixture, or business calculation in the control loop.
 use super::{
     bodies::CandidateBodies,
+    message_evidence::VerifiedEvidence,
     native::{NativeChannel, PreparedMessage, ReceiveEvent},
     progress::RoundProgress,
     transport::Message,
@@ -45,6 +46,7 @@ struct Fanout {
 struct Incoming {
     peer: usize,
     message: Arc<Message>,
+    evidence: VerifiedEvidence,
 }
 
 /// Owns prepared messages until delivery or explicit expiry/retry. Per-peer
@@ -131,9 +133,11 @@ impl NativeLifecycle {
             .position(|id| *id == peer)
             .context("unknown fixture peer")?;
         ensure!(self.pending[0].is_none(), "fixture control slot occupied");
+        let evidence = self.channel.qualify_control_for_test(&message)?;
         self.pending[0] = Some(Incoming {
             peer,
             message: Arc::new(message),
+            evidence,
         });
         Ok(())
     }
@@ -588,6 +592,7 @@ impl NativeLifecycle {
                             self.pending[lane] = Some(Incoming {
                                 peer,
                                 message: Arc::new(message.message),
+                                evidence: message.evidence,
                             });
                         }
                         Some(ReceiveEvent::Rejected { .. }) => {
@@ -622,7 +627,11 @@ impl NativeLifecycle {
                         Message::Proposal { .. } | Message::Vote(_) | Message::Decision { .. } => {
                             if self
                                 .progress
-                                .receive(self.peers[peer], &received.message)
+                                .receive_verified(
+                                    self.peers[peer],
+                                    &received.message,
+                                    received.evidence,
+                                )
                                 .is_err()
                             {
                                 self.rejected_messages += 1;
@@ -652,7 +661,7 @@ impl NativeLifecycle {
         // ACK/context first, then the bounded native ingress above, then ready
         // evidence and deadlines. A control message already in custody must
         // not lose to the timeout of the same poll and force an avoidable round.
-        self.progress.poll_after_receive(now)?;
+        self.progress.poll_after_receive(pipeline, now)?;
         if let Some(message) = self.progress.pending_message() {
             if self.outbox.is_none() {
                 self.outbox = Some(Fanout {

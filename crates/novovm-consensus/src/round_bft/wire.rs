@@ -98,6 +98,9 @@ pub struct ValidatorSet {
     quorum_weight: u64,
     hash: Hash,
     verifier: Option<Arc<dyn ConsensusVerifier>>,
+    // Clones share this local qualification owner. Replacing the verifier
+    // creates a new owner even when all public validator bytes are unchanged.
+    verification_owner: Arc<()>,
 }
 
 impl std::fmt::Debug for ValidatorSet {
@@ -177,6 +180,7 @@ impl ValidatorSet {
             quorum_weight,
             hash,
             verifier: None,
+            verification_owner: Arc::new(()),
         })
     }
 
@@ -191,6 +195,7 @@ impl ValidatorSet {
     }
     pub fn with_verifier(mut self, verifier: Arc<dyn ConsensusVerifier>) -> Self {
         self.verifier = Some(verifier);
+        self.verification_owner = Arc::new(());
         self
     }
     pub fn has_verifier(&self) -> bool {
@@ -337,10 +342,20 @@ pub struct Vote {
 #[derive(Clone, Debug)]
 pub struct VerifiedVote {
     vote: Vote,
+    verification_owner: Arc<()>,
 }
 impl VerifiedVote {
     pub fn vote(&self) -> &Vote {
         &self.vote
+    }
+    /// Reuse only the immutable signature fact from this exact local set and
+    /// verifier owner. This grants no current-round or voting authority.
+    pub fn ensure_verified_by(&self, set: &ValidatorSet) -> Result<()> {
+        ensure!(
+            Arc::ptr_eq(&self.verification_owner, &set.verification_owner),
+            "verified vote belongs to another validator/verifier owner"
+        );
+        Ok(())
     }
 }
 
@@ -360,7 +375,10 @@ impl Vote {
 
     pub fn verify(&self, set: &ValidatorSet) -> Result<VerifiedVote> {
         self.verify_signature(set)?;
-        Ok(VerifiedVote { vote: self.clone() })
+        Ok(VerifiedVote {
+            vote: self.clone(),
+            verification_owner: set.verification_owner.clone(),
+        })
     }
 
     fn verify_signature(&self, set: &ValidatorSet) -> Result<()> {
@@ -432,6 +450,7 @@ pub struct Proposal {
 #[derive(Clone, Debug)]
 pub struct VerifiedProposal {
     proposal: Proposal,
+    verification_owner: Arc<()>,
 }
 impl VerifiedProposal {
     /// Move already-verified historical bytes to the transport owner without
@@ -441,6 +460,13 @@ impl VerifiedProposal {
     }
     pub fn proposal(&self) -> &Proposal {
         &self.proposal
+    }
+    pub fn ensure_verified_by(&self, set: &ValidatorSet) -> Result<()> {
+        ensure!(
+            Arc::ptr_eq(&self.verification_owner, &set.verification_owner),
+            "verified proposal belongs to another validator/verifier owner"
+        );
+        Ok(())
     }
 }
 
@@ -466,6 +492,7 @@ impl Proposal {
         self.verify_signature(set)?;
         Ok(VerifiedProposal {
             proposal: self.clone(),
+            verification_owner: set.verification_owner.clone(),
         })
     }
 
@@ -538,6 +565,7 @@ pub struct Quorum {
 pub struct VerifiedQuorum {
     quorum: Quorum,
     signed_weight: u64,
+    verification_owner: Arc<()>,
 }
 impl VerifiedQuorum {
     /// Consume an immutable verified certificate without copying its vote set.
@@ -562,6 +590,26 @@ impl VerifiedQuorum {
     pub fn signed_weight(&self) -> u64 {
         self.signed_weight
     }
+    pub fn ensure_verified_by(&self, set: &ValidatorSet) -> Result<()> {
+        ensure!(
+            Arc::ptr_eq(&self.verification_owner, &set.verification_owner),
+            "verified quorum belongs to another validator/verifier owner"
+        );
+        Ok(())
+    }
+
+    /// Only the private vote collector calls this with votes already verified
+    /// by its immutable set. No public constructor accepts a claimed weight or
+    /// skips cryptography. Recheck all certificate structure and weight here.
+    pub(super) fn from_collected_votes(set: &ValidatorSet, votes: Vec<Vote>) -> Result<Self> {
+        let quorum = Quorum { votes };
+        let signed_weight = quorum.checked_weight_inner(set, false)?;
+        Ok(Self {
+            quorum,
+            signed_weight,
+            verification_owner: set.verification_owner.clone(),
+        })
+    }
 }
 
 impl Quorum {
@@ -581,6 +629,7 @@ impl Quorum {
         Ok(VerifiedQuorum {
             quorum: self.clone(),
             signed_weight,
+            verification_owner: set.verification_owner.clone(),
         })
     }
 
@@ -608,6 +657,10 @@ impl Quorum {
     }
 
     fn checked_weight(&self, set: &ValidatorSet) -> Result<u64> {
+        self.checked_weight_inner(set, true)
+    }
+
+    fn checked_weight_inner(&self, set: &ValidatorSet, verify_signatures: bool) -> Result<u64> {
         self.validate_shape()?;
         ensure!(
             self.votes.len() <= set.members.len(),
@@ -615,7 +668,10 @@ impl Quorum {
         );
         let mut weight = 0u64;
         for vote in &self.votes {
-            vote.verify_signature(set)?;
+            vote.context.validate(set)?;
+            if verify_signatures {
+                vote.verify_signature(set)?;
+            }
             weight = weight
                 .checked_add(
                     set.member(&vote.validator_id)

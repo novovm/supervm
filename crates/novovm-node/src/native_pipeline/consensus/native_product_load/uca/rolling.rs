@@ -1,7 +1,9 @@
-//! Legal rolling NUAS workload, not a production protocol or authorization
-//! change. At most 256 unique transactions are supplied between common-head
-//! fences; the original nonempty-candidate rule bounds their height advance.
-//! This is a different load strategy from the retained 8192-window static A/B.
+//! Dynamic validity windows on the original native load driver; no production
+//! protocol or authorization change. Rolling is a 256-row stop/wait correctness
+//! fixture. Continuous reuses the original 8192 in-flight ceiling and overlaps
+//! replacement signing with SDK polling, without common-head fences. Its signed
+//! windows remain 256 heights: an overloaded/underfilled run can expire and must
+//! fail, never renew already-submitted bytes or silently widen the contract.
 use super::*;
 use novovm_protocol::uca_spend::MAX_SPEND_WINDOW;
 
@@ -11,6 +13,7 @@ pub(super) const WAVE_ROWS: usize = 256;
 pub(super) enum LoadMode {
     Static,
     Rolling,
+    Continuous,
 }
 
 impl LoadMode {
@@ -18,15 +21,28 @@ impl LoadMode {
         self == Self::Rolling
     }
 
+    pub(super) fn dynamic_windows(self) -> bool {
+        self != Self::Static
+    }
+
+    pub(super) fn first_rows(self, count: usize) -> usize {
+        match self {
+            Self::Static => count,
+            Self::Rolling => WAVE_ROWS,
+            Self::Continuous => count.min(WINDOW),
+        }
+    }
+
     pub(super) fn label(self) -> &'static str {
         match self {
             Self::Static => "static_signed_corpus_8192_outstanding_limit",
             Self::Rolling => "rolling_256_transaction_common_head_waves",
+            Self::Continuous => "continuous_8192_outstanding_receipt_anchored_windows",
         }
     }
 
     pub(super) fn validate_count(self, count: usize, frame_rows: usize) -> Result<()> {
-        if self.is_rolling() {
+        if self.dynamic_windows() {
             ensure!(
                 count >= WAVE_ROWS
                     && count.is_multiple_of(WAVE_ROWS)
@@ -38,7 +54,7 @@ impl LoadMode {
     }
 
     pub(super) fn grant_expiry(self, count: usize) -> Result<u64> {
-        if self.is_rolling() {
+        if self.dynamic_windows() {
             u64::try_from(count)?
                 .checked_add(MAX_SPEND_WINDOW + 1)
                 .context("rolling fixture grant height exhausted")
@@ -88,13 +104,32 @@ pub(super) fn append_signed_rows(
     fee: u128,
     make_signed: &impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2>,
 ) -> Result<()> {
+    let first = raw.len();
+    append_generated_rows(
+        raw,
+        observations,
+        workload_hash,
+        (first..first + count).map(|index| make_signed(index, window)),
+        window,
+        fee,
+    )
+}
+
+pub(super) fn append_generated_rows(
+    raw: &mut Vec<Vec<u8>>,
+    observations: &mut Vec<Observation>,
+    workload_hash: &mut Sha256,
+    rows: impl IntoIterator<Item = Result<SignedAssetSpendV2>>,
+    window: SpendWindow,
+    fee: u128,
+) -> Result<()> {
     ensure!(
         raw.len() == observations.len(),
         "rolling raw/observation index mismatch"
     );
-    for _ in 0..count {
+    for signed in rows {
         let index = raw.len();
-        let signed = make_signed(index, window)?;
+        let signed = signed?;
         ensure!(
             signed.intent.payer == account_bytes(index % SENDERS)
                 && signed.intent.recipient == account_bytes(SENDERS)
@@ -312,6 +347,182 @@ pub(super) fn drive_rolling(
     result
 }
 
+// Independent fixture signatures use the existing signer concurrently; there
+// is one bounded generation task, not a product queue or alternate verifier.
+pub(super) fn generate_rows(
+    first: usize,
+    count: usize,
+    window: SpendWindow,
+    workers: usize,
+    make_signed: &(impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2> + Sync),
+) -> Result<Vec<SignedAssetSpendV2>> {
+    ensure!(workers > 0 && workers <= 16, "fixture signer worker bound");
+    std::thread::scope(|scope| {
+        let chunk = count.div_ceil(workers).max(1);
+        let handles = (first..first + count)
+            .step_by(chunk)
+            .map(|begin| {
+                let end = (begin + chunk).min(first + count);
+                scope.spawn(move || {
+                    (begin..end)
+                        .map(|index| make_signed(index, window))
+                        .collect::<Result<Vec<_>>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut rows = Vec::with_capacity(count);
+        for handle in handles {
+            rows.extend(
+                handle
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("fixture signer panicked"))??,
+            );
+        }
+        Ok(rows)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_continuous(
+    nodes: &mut ProductNodes,
+    clients: &mut [NativeApplicationClient],
+    ingress: usize,
+    mut inputs: Vec<PreparedApplicationInput>,
+    frame_rows: usize,
+    raw: &mut Vec<Vec<u8>>,
+    observations: &mut Vec<Observation>,
+    workload_hash: &mut Sha256,
+    counts: &mut Counts,
+    timeout: Duration,
+    count: usize,
+    fee: u128,
+    make_signed: &(impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2> + Sync),
+    evidence: &mut Value,
+) -> Result<Duration> {
+    let workers = env_count("NOVOVM_NATIVE_LOAD_SIGNERS", 4, 16)?;
+    let start = Instant::now();
+    let mut driver = LoadDriver::new(&inputs, observations.len(), start)?;
+    let mut signing_us = 0u64;
+    let mut preparation_us = 0u64;
+    let mut generator_starved_us = 0u64;
+    let mut no_outstanding_us = 0u64;
+    let mut outstanding_row_us = 0u128;
+    let mut intervals = vec![(0, raw.len(), SpendWindow::after(0)?)];
+    let result = std::thread::scope(|scope| -> Result<Duration> {
+        let mut pending = None;
+        loop {
+            let turn = Instant::now();
+            // A four-node observation frees the original WINDOW budget, but a
+            // whole window does not have to drain before its replacement begins.
+            if pending.is_none() && raw.len() < count {
+                let generate = WAVE_ROWS.min(count - raw.len());
+                if raw.len() + generate - driver.complete <= WINDOW {
+                    let first = raw.len();
+                    let parent = *driver.finalized_heights.iter().min().unwrap();
+                    let window = SpendWindow::after(parent)?;
+                    pending = Some((
+                        first,
+                        window,
+                        scope.spawn(move || {
+                            let generated_at = Instant::now();
+                            let rows =
+                                generate_rows(first, generate, window, workers, make_signed)?;
+                            Ok::<_, anyhow::Error>((
+                                rows,
+                                generated_at.elapsed().as_micros() as u64,
+                            ))
+                        }),
+                    ));
+                }
+            }
+            if pending
+                .as_ref()
+                .is_some_and(|(_, _, task)| task.is_finished())
+            {
+                let (first, window, task) = pending.take().unwrap();
+                let (rows, elapsed) = task
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("continuous fixture signer panicked"))??;
+                signing_us += elapsed;
+                ensure!(raw.len() == first, "continuous signer reordered input");
+                let prepare = Instant::now();
+                append_generated_rows(
+                    raw,
+                    observations,
+                    workload_hash,
+                    rows.into_iter().map(Ok),
+                    window,
+                    fee,
+                )?;
+                let prepared =
+                    prepare_inputs(&mut clients[ingress], &raw[first..], first, frame_rows)?;
+                driver
+                    .ids
+                    .extend(prepared.iter().map(PreparedApplicationInput::id));
+                if let Some(sizes) = evidence["application_object_bytes"].as_array_mut() {
+                    sizes.extend(prepared.iter().map(|input| json!(input.byte_len())));
+                }
+                inputs.extend(prepared);
+                preparation_us += prepare.elapsed().as_micros() as u64;
+                intervals.push((first, raw.len(), window));
+            }
+            let awaiting_generator = driver.next_batch == inputs.len() && raw.len() < count;
+            let outstanding = driver.dispatched - driver.complete;
+            driver.poll(
+                nodes,
+                clients,
+                ingress,
+                &inputs,
+                frame_rows,
+                observations,
+                counts,
+                timeout,
+            )?;
+            let elapsed = turn.elapsed().as_micros() as u64;
+            outstanding_row_us += u128::from(elapsed) * outstanding as u128;
+            if awaiting_generator {
+                generator_starved_us += elapsed;
+            }
+            if outstanding == 0 {
+                no_outstanding_us += elapsed;
+            }
+            if driver.finished(count, inputs.len(), false) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        for &(first, end, window) in &intervals {
+            ensure!(
+                observations[first..end].iter().all(|row| {
+                    row.complete()
+                        && matches!(row.receipt,
+                    Some(ReceiptState::Finalized { success: true, height, .. })
+                    if height >= window.not_before && height < window.expires)
+                }),
+                "continuous signed workload expired or lacks four successful receipts"
+            );
+        }
+        observed_duration(observations, false)
+    });
+    evidence["continuous_signer_workers"] = json!(workers);
+    evidence["continuous_timed_generation_task_us"] = json!(signing_us);
+    evidence["continuous_timed_structure_preparation_us"] = json!(preparation_us);
+    evidence["continuous_generator_starved_poll_us"] = json!(generator_starved_us);
+    evidence["continuous_no_outstanding_poll_us"] = json!(no_outstanding_us);
+    evidence["continuous_outstanding_row_poll_us"] = json!(outstanding_row_us);
+    evidence["continuous_generation_windows"] = json!(intervals
+        .iter()
+        .map(|(first, end, window)| json!({
+            "first_transaction":first,"transactions":end-first,
+            "not_before_height":window.not_before,"expires_at_height_exclusive":window.expires,
+        }))
+        .collect::<Vec<_>>());
+    evidence["continuous_phase_timing_scope"] = json!("generation task wall overlaps original SDK polling; phase times are not additive and never subtracted from TPS; poll starvation excludes yield scheduling");
+    evidence["continuous_prepared_transactions"] = json!(raw.len());
+    evidence["continuous_single_clock"] = json!(true);
+    result
+}
+
 #[test]
 #[ignore = "four original processes; legal rolling 65536 NUAS intents and cold economics; run alone"]
 fn native_uca_rolling_65536_final_receipts_and_cold_economics() -> Result<()> {
@@ -322,11 +533,33 @@ fn native_uca_rolling_65536_final_receipts_and_cold_economics() -> Result<()> {
 #[test]
 #[ignore = "CPU/GPU/CPU rolling 65536 NUAS business comparison, not byte-identical input; run alone"]
 fn native_uca_rolling_65536_signature_cpu_gpu_cpu() -> Result<()> {
+    run_dynamic_pair(LoadMode::Rolling)
+}
+
+#[test]
+#[ignore = "four original processes; continuous bounded 65536 legal signed load and cold economics; run alone"]
+fn native_asset_continuous_65536_final_receipts_and_cold_economics() -> Result<()> {
+    run_native_uca_load_mode(
+        None,
+        &mut PairedCorpus::default(),
+        None,
+        LoadMode::Continuous,
+    )
+    .map(|_| ())
+}
+
+#[test]
+#[ignore = "CPU/GPU/CPU continuous 65536 load, same logical business not byte-identical dynamic windows; run alone"]
+fn native_asset_continuous_65536_signature_cpu_gpu_cpu() -> Result<()> {
+    run_dynamic_pair(LoadMode::Continuous)
+}
+
+fn run_dynamic_pair(mode: LoadMode) -> Result<()> {
     use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
     let mut corpus = PairedCorpus::default();
     let mut reports: Vec<Value> = Vec::new();
     for backend in [Cpu, GpuRequired, Cpu] {
-        let report = run_native_uca_load_mode(Some(backend), &mut corpus, None, LoadMode::Rolling)?;
+        let report = run_native_uca_load_mode(Some(backend), &mut corpus, None, mode)?;
         if let Some(first) = reports.first() {
             for field in [
                 "signing_domain",
@@ -341,6 +574,7 @@ fn native_uca_rolling_65536_signature_cpu_gpu_cpu() -> Result<()> {
                 "canonical_body_budget",
                 "load_strategy",
                 "effective_outstanding_limit",
+                "continuous_signer_workers",
                 "grant_expires_at_height",
                 "overall_deadline_seconds",
             ] {
@@ -365,14 +599,15 @@ fn native_uca_rolling_65536_signature_cpu_gpu_cpu() -> Result<()> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/native-product-load")
         .join(format!(
-            "rolling-paired-{}-{}.json",
+            "{}-paired-{}-{}.json",
+            mode.label(),
             std::process::id(),
             clock_ms()?
         ));
     fs::write(
         &path,
         serde_json::to_vec_pretty(&json!({
-            "scope":"one-host four-process rolling-window acceptance; not static 8192-inflight throughput",
+            "scope":mode.label(),
             "same_signed_corpus":false,"same_approved_genesis_and_logical_business_workload":true,
             "signature_backend_order":["cpu","gpu_required","cpu"],
             "expiry_and_randomized_signature_bytes_may_differ":true,
@@ -380,7 +615,7 @@ fn native_uca_rolling_65536_signature_cpu_gpu_cpu() -> Result<()> {
             "all_round_databases_and_journals_retained":true,"rounds":reports,
         }))?,
     )?;
-    eprintln!("NUAS rolling paired report={}", path.display());
+    eprintln!("NUAS dynamic-window paired report={}", path.display());
     Ok(())
 }
 
@@ -396,6 +631,10 @@ fn native_uca_rolling_window_and_original_funding_contract() -> Result<()> {
     assert!(LoadMode::Rolling.validate_count(65_536, 32).is_ok());
     assert!(LoadMode::Rolling.validate_count(4097, 32).is_err());
     assert!(LoadMode::Rolling.validate_count(65_536, 48).is_err());
+    assert_eq!(LoadMode::Continuous.first_rows(65_536), WINDOW);
+    assert_eq!(LoadMode::Continuous.first_rows(1024), 1024);
+    assert!(LoadMode::Continuous.validate_count(65_536, 32).is_ok());
+    assert_eq!(LoadMode::Continuous.grant_expiry(65_536)?, 65_793);
     let nonces_per_payer = 65_536 / SENDERS;
     assert_eq!(nonces_per_payer, 4096);
     assert_eq!(nonces_per_payer as u128 * 51, 208_896);
@@ -449,6 +688,16 @@ fn native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash() -> Result
             signature: vec![index as u8; MLDSA65_SIGNATURE_BYTES],
         })
     };
+    let parallel = generate_rows(0, 2 * SENDERS, SpendWindow::after(0)?, 4, &make_signed)?;
+    for (index, signed) in parallel.iter().enumerate() {
+        assert!(signed == &make_signed(index, SpendWindow::after(0)?)?);
+    }
+    assert!(generate_rows(0, SENDERS, SpendWindow::after(0)?, 0, &make_signed).is_err());
+    let failed_signer = |index, window| {
+        ensure!(index != SENDERS, "injected fixture signing failure");
+        make_signed(index, window)
+    };
+    assert!(generate_rows(0, 2 * SENDERS, SpendWindow::after(0)?, 4, &failed_signer).is_err());
     let mut raw = Vec::new();
     let mut observations = Vec::new();
     let mut hash = Sha256::new();

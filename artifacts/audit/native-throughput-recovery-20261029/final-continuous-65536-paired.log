@@ -1,0 +1,14 @@
+
+running 1 test
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-18940-1793222646242647900
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-18940-1793222726561667200
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_signature_cpu_gpu_cpu ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_signature_cpu_gpu_cpu
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 142.00s
+
+Error: native application completion mismatch/expiry: node=0, state=Expired

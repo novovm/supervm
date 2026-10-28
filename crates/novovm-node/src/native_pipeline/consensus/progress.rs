@@ -13,7 +13,7 @@ use super::statement::ParentPoint;
 use super::transport::Message;
 use super::wire::{
     Context as VoteContext, Hash, Phase, ValidatorSet, VerifiedProposal, VerifiedQuorum,
-    VerifiedVote, Vote,
+    VerifiedVote,
 };
 use super::{DurableMessage, TimeoutStep, ValidatorJournal};
 use crate::native_pipeline::pipeline::{CandidatePipeline, DurableCandidate};
@@ -66,7 +66,7 @@ struct ReplayOffer {
 /// QC, timer, signing or publication decision is made before journal ACK.
 #[derive(Default)]
 struct FutureVotes {
-    tips: BTreeMap<(Hash, u8), Vote>,
+    tips: BTreeMap<(Hash, u8), VerifiedVote>,
 }
 
 impl FutureVotes {
@@ -89,6 +89,7 @@ impl FutureVotes {
         // cannot spend another signer's phase slot by relaying duplicates.
         let key = (vote.validator_id, u8::from(vote.phase == Phase::Precommit));
         if let Some(old) = self.tips.get(&key) {
+            let old = old.vote();
             ensure!(
                 old.context == vote.context,
                 "next-height validator signed conflicting contexts"
@@ -102,17 +103,19 @@ impl FutureVotes {
                 return Ok(());
             }
         }
-        self.tips.insert(key, vote.clone());
+        self.tips.insert(key, verified.clone());
         Ok(())
     }
 
     /// Only the existing journal ACK calls this with its new full context.
     /// Removing custody first makes promotion one-shot. The original collector
-    /// re-verifies every exact-context vote, with its unchanged quorum rules.
+    /// rechecks every exact-context vote and its local verification owner, with
+    /// unchanged quorum rules and without repeating its signature arithmetic.
     fn promote(&mut self, collector: &mut VoteCollector) -> Result<()> {
-        for (_, vote) in std::mem::take(&mut self.tips) {
+        for (_, verified) in std::mem::take(&mut self.tips) {
+            let vote = verified.vote();
             if vote.context == *collector.context() {
-                collector.insert(&vote)?;
+                collector.insert_verified(&verified)?;
                 crate::native_pipeline::profile::critical_event(
                     crate::native_pipeline::profile::CriticalEvent::VoteReceived,
                     vote.context.height,
@@ -410,6 +413,19 @@ impl RoundProgress {
     /// the existing native session, NOT an identity claimed in the payload.
     /// Invalid peer input is returned as an error, never freezes local signing.
     pub fn receive(&mut self, peer: Hash, message: &Message) -> Result<()> {
+        let evidence = message_evidence::verify(message, &self.domain)?;
+        self.receive_verified(peer, message, evidence)
+    }
+
+    /// NativeChannel already qualified the exact message. Reuse that fact, not
+    /// a prior consensus decision: peer, domain, context, round, equivocation,
+    /// custody budgets and execution/publication authority remain local checks.
+    pub(super) fn receive_verified(
+        &mut self,
+        peer: Hash,
+        message: &Message,
+        evidence: VerifiedEvidence,
+    ) -> Result<()> {
         ensure!(!self.is_frozen(), "progress frozen");
         ensure!(
             self.domain
@@ -419,10 +435,11 @@ impl RoundProgress {
                 .any(|v| v.id() == peer),
             "progress source is outside validator set"
         );
-        match (message, message_evidence::verify(message, &self.domain)?) {
+        evidence.ensure_matches(message, &self.domain)?;
+        match (message, evidence) {
             (Message::Vote(vote), VerifiedEvidence::Vote(verified)) => {
                 if vote.context == self.context() {
-                    self.collector.insert(vote)?;
+                    self.collector.insert_verified(&verified)?;
                     crate::native_pipeline::profile::critical_event(
                         crate::native_pipeline::profile::CriticalEvent::VoteReceived,
                         vote.context.height,
@@ -572,7 +589,7 @@ impl RoundProgress {
     /// signer. Peer rejection is intentionally outside this failure boundary.
     pub fn poll(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
         self.poll_acknowledgements(pipeline)?;
-        self.poll_after_receive(now)
+        self.poll_after_receive(pipeline, now)
     }
 
     /// Advance durable ACK/context and recovery before receiving control for
@@ -592,7 +609,11 @@ impl RoundProgress {
 
     /// Process already qualified proposals/QCs before the unchanged local
     /// timer. Outbox/recovery backpressure still prevents another transition.
-    pub(crate) fn poll_after_receive(&mut self, now: Instant) -> Result<()> {
+    pub(crate) fn poll_after_receive(
+        &mut self,
+        pipeline: &CandidatePipeline,
+        now: Instant,
+    ) -> Result<()> {
         let _phase = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::Consensus,
         );
@@ -604,6 +625,13 @@ impl RoundProgress {
             self.drive_consensus()?;
             self.pacemaker
                 .poll(&mut self.journal, &self.collector, now)?;
+            if self.journal.is_pending() {
+                // Submit the existing transition before the rest of this Host
+                // turn. Enqueue is NOT an ACK: only poll_acknowledgements may
+                // adopt durable state and expose the original signed outbox.
+                // Backpressure retains that same private ticket/transition.
+                self.journal.enqueue_pending(pipeline)?;
+            }
             Ok(())
         })();
         if result.is_err() {
@@ -1113,7 +1141,7 @@ mod future_vote_tests {
     use super::*;
     use novovm_consensus::round_bft::{
         test_vectors::{sign_vote, FixtureSigningKey},
-        wire::Validator,
+        wire::{Validator, Vote},
     };
 
     struct Fixture {
@@ -1288,7 +1316,10 @@ mod future_vote_tests {
                 )
             )
             .is_err());
-        assert_eq!(retained.tips.values().next(), Some(&vote));
+        assert_eq!(
+            retained.tips.values().next().map(VerifiedVote::vote),
+            Some(&vote)
+        );
         f.receive(&mut retained, f.vote(0, f.child, 1, Phase::Prevote))?;
         assert!(f.receive(&mut retained, vote).is_err());
         f.receive(&mut retained, f.vote(0, f.child, 0, Phase::Precommit))?;

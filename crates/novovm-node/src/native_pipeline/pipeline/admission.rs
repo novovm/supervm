@@ -464,13 +464,13 @@ impl CandidatePipeline {
             else {
                 anyhow::bail!("V3 admission cannot authorize a UCA body");
             };
-            let raw = batch.raw_transaction(index)?;
+            let view = batch.view(index)?;
             ensure!(
                 checked.intent().chain_id == self.config.store.domain.chain_id
                     && checked.intent().genesis
                         == self.config.store.domain.genesis_config_commitment
-                    && checked.signed().encode()? == raw
-                    && original.raw_transaction(*original_index)? == raw
+                    && view.matches_signed(checked.signed())?
+                    && original.view(*original_index)? == view
                     && seen.insert(checked.intent().signing_bytes()?),
                 "admitted UCA signed row, order, locator or domain mismatch"
             );

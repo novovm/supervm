@@ -141,6 +141,17 @@ struct PoolRetention {
     owners: BTreeMap<usize, (usize, usize)>, // references, retained owner bytes
 }
 
+#[derive(Debug)]
+struct PoolBackpressure;
+
+impl std::fmt::Display for PoolBackpressure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RPC retained pool backpressure; transaction not accepted")
+    }
+}
+
+impl std::error::Error for PoolBackpressure {}
+
 impl PoolRetention {
     fn reserve(&mut self, input: &AdmissionInput, metadata: usize, limit: usize) -> Result<()> {
         let (owner, payload) = match input {
@@ -171,15 +182,13 @@ impl PoolRetention {
             .bytes
             .checked_add(additional)
             .context("pool retained bytes overflow")?;
-        ensure!(
-            next <= limit,
-            "RPC retained pool backpressure; transaction not accepted"
-        );
+        if next > limit {
+            return Err(PoolBackpressure.into());
+        }
         if let Some(key) = owner {
-            ensure!(
-                self.owners.contains_key(&key) || self.owners.len() < MAX_POOL,
-                "RPC retained owner count limit"
-            );
+            if !self.owners.contains_key(&key) && self.owners.len() >= MAX_POOL {
+                return Err(PoolBackpressure.into());
+            }
             let record = self.owners.entry(key).or_insert((0, payload));
             record.0 = record
                 .0
@@ -356,14 +365,12 @@ impl RpcLifecycle {
         if self.indexed_height != self.node.controller.parent().height {
             return Ok(());
         }
-        // Give a finite incoming body time to finish its strict admission
-        // rather than turning every 32-signature service quantum into a block.
-        // Every completed body grants a proposal turn even if the next body
-        // has begun, so a continuous inbound stream cannot starve selection.
-        if (self.incoming.is_some()
-            || self.is_uca() && self.admission.has_pending_native_admission())
-            && !self.ingress_batch_boundary
-        {
+        let awaiting_admission = self.incoming.is_some()
+            || self.is_uca() && self.admission.has_pending_native_admission();
+        // V3 retains its whole-source preference. Asset admission can overlap
+        // selection of an already authenticated FULL candidate below; a later
+        // source's authority capture cannot hold that older work hostage.
+        if awaiting_admission && !self.ingress_batch_boundary && !self.is_uca() {
             // Strict admission gates selection, not completion of a previously
             // prepared window's read-only I/O. Otherwise every eight nonce
             // reads wait for another whole body to finish authentication.
@@ -448,7 +455,7 @@ impl RpcLifecycle {
             // budget, not a smaller consensus/transaction batch size.
             self.poll_window_nonces(&next)?;
             let window = &self.nonce_window.as_ref().expect("nonce window").1;
-            let Some(selected) = select_prepared_nonce_window(
+            let Some((selected, budget_full)) = select_prepared_nonce_window(
                 window,
                 &self.pending,
                 &self.nonces.values,
@@ -458,11 +465,32 @@ impl RpcLifecycle {
                 return Ok(());
             };
             let window_len = window.len();
+            if self.is_uca()
+                && !budget_full
+                && window_len < self.batch_size
+                && window_len < self.order.len()
+            {
+                // All reads for the old window are complete. Include newly
+                // admitted suffix rows before releasing a whole-body turn.
+                self.nonce_window = None;
+                return Ok(());
+            }
+            if awaiting_admission
+                && !self.ingress_batch_boundary
+                && !budget_full
+                && !selected.is_empty()
+            {
+                // Do not turn the first 32-row authentication quantum of a
+                // finite source into a small block. Only completed, ordered
+                // pool rows count toward fullness, never raw pending count.
+                return Ok(());
+            }
             // Once per prepared window, not once per eight I/O completions.
             // Selection already skips stale nonces; no unknown/read-wait turn
             // needs a pool-wide cleanup. Publication retains its own cleanup.
             self.retire_stale_pending();
             if selected.is_empty() {
+                self.ingress_batch_boundary = false;
                 // All required reads are known: these are actual gaps/stale
                 // entries, not temporary I/O. Try another finite window next
                 // turn rather than allowing the prefix to starve ready work.
@@ -518,6 +546,10 @@ impl RpcLifecycle {
             };
         if accepted {
             self.offered = Some(position);
+            // Consume the whole-source opportunity only after the original
+            // body owner accepts it. Parent projection, nonce I/O and owner
+            // backpressure above must not erase an unserved opportunity.
+            self.ingress_batch_boundary = false;
         }
         Ok(())
     }
@@ -1137,11 +1169,11 @@ fn admitted_for_body<'a>(
     pending: &'a BTreeMap<Hash, Pending>,
 ) -> Result<Option<Vec<&'a AdmittedTransfer>>> {
     if let Message::AssetBody { batch, .. } = message {
+        use sha2::{Digest, Sha256};
         let mut admitted = Vec::with_capacity(batch.len());
         for index in 0..batch.len() {
-            let raw = batch.raw_transaction(index)?;
-            let signed = novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&raw)?;
-            let hash = uca::hash(&signed)?;
+            let view = batch.view(index)?;
+            let hash: Hash = Sha256::digest(view.signing_bytes()?).into();
             let Some(entry) = pending.get(&hash) else {
                 return Ok(None);
             };
@@ -1157,12 +1189,15 @@ fn admitted_for_body<'a>(
             };
             // Intent hashes deliberately omit signatures. Match complete
             // signed bytes, including concrete accounts, before reusing this fact.
-            if original.raw_transaction(*original_index)? != raw
+            if original.view(*original_index)? != view
                 || !checked.matches_uca_source(original, *original_index)
-                || checked
-                    .checked_uca()
-                    .is_none_or(|value| value.signed() != &signed)
             {
+                return Ok(None);
+            }
+            let Some(value) = checked.checked_uca() else {
+                return Ok(None);
+            };
+            if !view.matches_signed(value.signed())? {
                 return Ok(None);
             }
             admitted.push(checked);
@@ -1243,7 +1278,7 @@ fn advance_nonce_window(start: usize, count: usize, remaining: usize) -> usize {
     }
 }
 
-/// None is temporary nonce preparation, not an empty candidate. Some(empty)
+/// None is temporary nonce preparation, not an empty candidate. Some((empty, _))
 /// means every extant row's parent nonce is known but the real order/gaps offer
 /// no executable prefix; only then may the caller fairly rotate its window.
 fn select_prepared_nonce_window(
@@ -1252,7 +1287,7 @@ fn select_prepared_nonce_window(
     nonces: &BTreeMap<Hash, u64>,
     next: BTreeMap<Hash, u64>,
     batch_size: usize,
-) -> Option<Vec<Hash>> {
+) -> Option<(Vec<Hash>, bool)> {
     if window.iter().any(|hash| {
         pending.get(hash).is_some_and(|entry| {
             !next.contains_key(&entry.signer) && !nonces.contains_key(&entry.signer)
@@ -1260,20 +1295,34 @@ fn select_prepared_nonce_window(
     }) {
         return None;
     }
-    Some(select_pending_batch(
+    Some(select_pending_batch_with_budget(
         window, pending, nonces, next, batch_size,
     ))
 }
 
+#[cfg(test)]
 fn select_pending_batch(
+    order: &VecDeque<Hash>,
+    pending: &BTreeMap<Hash, Pending>,
+    nonces: &BTreeMap<Hash, u64>,
+    next: BTreeMap<Hash, u64>,
+    batch_size: usize,
+) -> Vec<Hash> {
+    select_pending_batch_with_budget(order, pending, nonces, next, batch_size).0
+}
+
+// Fullness comes from the SAME ordered nonce/byte selection, not a pool-wide
+// count (which can include stale rows and gaps). No second readiness scan.
+fn select_pending_batch_with_budget(
     order: &VecDeque<Hash>,
     pending: &BTreeMap<Hash, Pending>,
     nonces: &BTreeMap<Hash, u64>,
     mut next: BTreeMap<Hash, u64>,
     batch_size: usize,
-) -> Vec<Hash> {
+) -> (Vec<Hash>, bool) {
     let mut selected = Vec::new();
     let mut raw_bytes = 0usize;
+    let mut budget_full = false;
     let body_limit = if pending
         .values()
         .next()
@@ -1303,17 +1352,19 @@ fn select_pending_batch(
                 break;
             };
             if row_bytes > body_limit.saturating_sub(raw_bytes) {
+                budget_full = true;
                 break;
             }
             raw_bytes += row_bytes;
             selected.push(*hash);
             *expected += 1;
-            if selected.len() == batch_size {
+            if selected.len() == batch_size || raw_bytes == body_limit {
+                budget_full = true;
                 break;
             }
         }
     }
-    selected
+    (selected, budget_full)
 }
 
 fn reserve_balance_slot(balances: &mut VecDeque<BalanceQuery>) -> Result<()> {
@@ -1410,7 +1461,8 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
             }
             // HTTP silence is not controller idleness. Allow bounded handoff
             // turns after actual progress, without changing protocol timers,
-            // queue bounds, durability or the ordinary 1ms idle sleep.
+            // queue bounds or durability. Owner completions wake this control
+            // thread; the 1ms watchdog still polls network arrivals/timers.
             let progress = rpc_progress
                 || lifecycle.admission.made_progress
                 || before != control_progress(&lifecycle);
@@ -1418,7 +1470,7 @@ pub fn run(path: &Path, mode: StartMode, run_for: Option<Duration>) -> Result<()
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Idle,
                 );
-                std::thread::sleep(Duration::from_millis(1));
+                std::thread::park_timeout(Duration::from_millis(1));
             } else if !progress {
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Yield,

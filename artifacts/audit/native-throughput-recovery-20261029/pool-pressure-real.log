@@ -1,0 +1,13 @@
+
+running 1 test
+test native_pipeline::service::uca_native_tests::actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\20540-1793221752510005300
+FAILED
+Error: Condition failed: `self.admission.uca_capture.parent_restarts > 0` (0 vs 0)
+
+failures:
+
+failures:
+    native_pipeline::service::uca_native_tests::actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1748 filtered out; finished in 0.67s
+

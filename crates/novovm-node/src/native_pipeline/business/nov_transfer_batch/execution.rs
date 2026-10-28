@@ -305,17 +305,20 @@ fn speculate(
             recipient_balance: balances[&request.recipient],
             next_nonce: nonces[&prepared.identities[index]],
         };
-        // UCA nonce/budget depend on effective authorized predecessors. Never
-        // pre-increment or reject a later row using the parent's nonce here.
-        let outcome = if prepared.spend.is_some() {
-            None
-        } else {
-            let outcome = compute_outcome(&intent, &snapshot, rejection.as_deref())?;
+        // These are tentative component-local money effects, never authority
+        // or budget consumption. Ordered settlement checks the actual prefix
+        // before reuse; an earlier rejected grant or fee invalidates dependent
+        // snapshots. A speculative asset nonce gap is not a batch rejection.
+        let outcome = match compute_outcome(&intent, &snapshot, rejection.as_deref()) {
+            Ok(outcome) => Some(outcome),
+            Err(_) if prepared.spend.is_some() => None,
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(outcome) = &outcome {
             balances.insert(request.payer.clone(), outcome.delta().payer.after);
             balances.insert(request.recipient.clone(), outcome.delta().recipient.after);
             nonces.insert(prepared.identities[index], outcome.delta().nonce_after);
-            Some(outcome)
-        };
+        }
         predictions.push(Prediction {
             index,
             snapshot,

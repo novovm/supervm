@@ -2,9 +2,9 @@
 //! localhost NovoRUDP application and validator sockets. The UDP closure has no
 //! direct transaction injection, HTTP observer, synthetic vote or alternate execution authority.
 //! This is not four-process/machine, mainnet, full PQ consensus or TPS evidence.
-//! The explicitly labelled admission-boundary subcase injects real signed
-//! batches into the original consumer without a network/consensus tick, then
-//! reopens the same genesis databases before the unchanged UDP closure below.
+//! The labelled admission/selection subcase injects real signed batches into
+//! the original consumer and offers only already admitted rows without a peer
+//! quorum, then reopens the same genesis databases before the UDP closure.
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
@@ -380,6 +380,16 @@ fn reject_unchanged(
 #[test]
 #[ignore = "real trusted AOEM; four original services and DBs in one process, actual UDP, run alone"]
 fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
+    run_native_uca_service_fixture(false)
+}
+
+#[test]
+#[ignore = "real trusted AOEM; four original services, bounded pool pressure and real publication, run alone"]
+fn actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures() -> Result<()> {
+    run_native_uca_service_fixture(true)
+}
+
+fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
             .context("explicit trusted library required")?,
@@ -533,7 +543,7 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
     let ingress = (0..4)
         .find(|i| !nodes[*i].node.controller.is_local_leader().unwrap())
         .context("nonleader ingress missing")?;
-    let clients = configs
+    let mut clients = configs
         .iter()
         .map(|config| connect(config, validators.clone()))
         .collect::<Result<Vec<_>>>()?;
@@ -578,16 +588,83 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         prefix.push(signer.sign(next, &keys[2].0, &keys[2].1)?);
     }
     prefix.push(transfer.clone()); // Entire final chunk is an exact cache hit.
+    if pool_pressure {
+        nodes[ingress].prepare_uca_pool_backpressure_for_test(
+            make_batch(std::slice::from_ref(&transfer))?,
+            make_batch(&prefix)?,
+        )?;
+        // No client resend or direct pool release. The original selector,
+        // consensus and published projection must free the accepted prefix.
+        let mut receipts = Vec::new();
+        for client in &mut clients {
+            let first = receipt(&mut nodes, client, &transfer)?;
+            let second = receipt(&mut nodes, client, &prefix[0])?;
+            fee(first, 1, 1)?;
+            fee(second, 2, 2)?;
+            receipts.push((first, second));
+        }
+        ensure!(receipts.iter().all(|value| value == &receipts[0]));
+        let deadline = Instant::now() + TIMEOUT;
+        while nodes[ingress].status()["pending"] != 0
+            || nodes[ingress].status()["rpc_authentication"]["uca_authority_pending"] != false
+        {
+            ensure!(
+                Instant::now() < deadline,
+                "pool pressure suffix failed to drain"
+            );
+            tick(&mut nodes)?;
+        }
+        nodes[ingress].assert_uca_pool_backpressure_recovered_for_test()?;
+        let before = clients
+            .iter_mut()
+            .map(|client| state(&mut nodes, client, &prefix[0].intent, 0, 1))
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(before.iter().all(|value| value == &before[0]));
+        ensure!(before[0].next_nonce == 2);
+        drop(clients);
+        for node in nodes {
+            node.node.shutdown()?;
+        }
+        let mut nodes = start(&configs, StartMode::Existing)?;
+        let mut clients = configs
+            .iter()
+            .map(|config| connect(config, validators.clone()))
+            .collect::<Result<Vec<_>>>()?;
+        for (index, client) in clients.iter_mut().enumerate() {
+            assert_eq!(receipt(&mut nodes, client, &transfer)?, receipts[index].0);
+            assert_eq!(receipt(&mut nodes, client, &prefix[0])?, receipts[index].1);
+            assert_eq!(
+                state(&mut nodes, client, &prefix[0].intent, 0, 1)?,
+                before[index]
+            );
+        }
+        drop(clients);
+        for node in nodes {
+            node.node.shutdown()?;
+        }
+        println!("NUAS retained-byte pool pressure: accepted prefix published, waiting row recaptured at new parent and published without resend; four-node receipts/state and cold recovery equal");
+        return Ok(());
+    }
     let mut bad = signer.sign(intent(0, 1, 1, 1)?, &keys[2].0, &keys[2].1)?;
     bad.signature[0] ^= 1;
-    println!("UCA admission-only overlap/cached-tail/next-body counterexample");
+    let next_valid = (2..4)
+        .map(|nonce| {
+            let mut next = intent(0, 1, 1, 1)?;
+            next.nonce = nonce;
+            signer
+                .sign(next, &keys[2].0, &keys[2].1)
+                .map_err(anyhow::Error::msg)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    println!("UCA overlap/cached-tail/ready-pool selection counterexample");
     nodes[ingress].assert_uca_overlap_body_boundaries_for_test(
         make_batch(std::slice::from_ref(&transfer))?,
         make_batch(&prefix)?,
         make_batch(&[bad.clone(), bad])?,
+        make_batch(&next_valid)?,
     )?;
-    // Admission is volatile: no controller tick, candidate publication, reset,
-    // deletion or fabricated authorization. Reopen the SAME original genesis
+    // Admission/selection cannot publish: no quorum, reset, deletion or
+    // fabricated authorization. Reopen the SAME original genesis
     // databases before the existing real UDP/respend/recovery acceptance.
     drop(clients);
     drop(nodes);

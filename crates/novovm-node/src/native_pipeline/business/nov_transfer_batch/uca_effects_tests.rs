@@ -221,6 +221,8 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
             "budget-prefix",
             "sufficient-budget",
             "stale-epoch",
+            "rejected-limit-prefix",
+            "nonce-gap-prefix",
             "zero-max-fee",
             "revoked",
             "expired",
@@ -239,6 +241,14 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
             if case == "stale-epoch" {
                 intents[0].authorization_epoch = 2;
                 intents[1].nonce = 0; // Rejected authorization cannot consume it.
+            }
+            if case == "rejected-limit-prefix" {
+                intents[0].amount = 60; // 60 + max fee 50 exceeds the grant's 100 cap.
+                intents[1].nonce = 0;
+            }
+            if case == "nonce-gap-prefix" {
+                intents[0].nonce = 2;
+                intents[1].nonce = 0;
             }
             if case == "zero-max-fee" {
                 intents.truncate(1);
@@ -311,6 +321,11 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                 )
             };
             let cpu = capture()?.execute(&mut cpu_session, Duration::from_secs(30))?;
+            assert_eq!(
+                cpu.observation().recomputed_transactions,
+                usize::from(matches!(case, "stale-epoch" | "rejected-limit-prefix")),
+                "{case}: reuse useful component outcomes; repair only a changed prefix"
+            );
             if let Some(integer) = &mut integer {
                 let gpu = capture()?.execute_integer_plan(integer)?;
                 assert_eq!(
@@ -373,6 +388,23 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                     assert_eq!(accepted.len(), 1);
                     assert!(receipts[1].failure.is_none());
                     assert_eq!(receipts[1].delta.nonce_after, 1);
+                }
+                "rejected-limit-prefix" | "nonce-gap-prefix" => {
+                    assert_eq!(
+                        outputs[0].failure,
+                        Some(if case == "rejected-limit-prefix" {
+                            SpendPolicyError::LimitExceeded
+                        } else {
+                            SpendPolicyError::NonceMismatch
+                        })
+                    );
+                    assert_eq!(receipts[0].delta.nonce_after, 0);
+                    assert_eq!(receipts[0].delta.fee_funding_delta, 0);
+                    assert!(receipts[0].journal.is_none());
+                    assert!(receipts[1].failure.is_none());
+                    assert_eq!(receipts[1].delta.nonce_before, 0);
+                    assert_eq!(receipts[1].delta.nonce_after, 1);
+                    assert_eq!(accepted.len(), 1);
                 }
                 "zero-max-fee" => {
                     assert!(accepted.is_empty(), "zero max fee is not unlimited");
@@ -548,10 +580,171 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
             }
         }
         run_asset_management_cases(&path, &facade, compare_integer)?;
+        run_asset_component_cases(&path, &facade, compare_integer)?;
         Ok(())
     })();
     secret.fill(0); // Ephemeral test key, including ordinary error returns.
     other_secret.fill(0);
+    result
+}
+
+fn run_asset_component_cases(
+    path: &std::path::Path,
+    facade: &AoemExecFacade,
+    compare_integer: bool,
+) -> Result<()> {
+    use crate::native_pipeline::business::direct_nov_fee::{FeeAccounting, FeeFailureCode};
+    let signer = facade.asset_spend_signer_v2()?;
+    let verifier = facade.asset_spend_verifier_v2()?;
+    let mut keys = (0..2)
+        .map(|_| aoem_bindings::mldsa_keygen_v1_auto(65)?.context("component fixture key missing"))
+        .collect::<Result<Vec<_>>>()?;
+    let result = (|| -> Result<()> {
+        let policy = super::body_tests::policy();
+        let mut session = ComputeSession::open(path, 4)?;
+        let mut integer = if compare_integer {
+            Some(ResidentTransferResources::new(path, 4, 2)?)
+        } else {
+            None
+        };
+        for case in [
+            "independent-credit",
+            "incoming-respend",
+            "rejected-incoming",
+        ] {
+            let dependent = case != "independent-credit";
+            let intents = [0usize, 1]
+                .into_iter()
+                .map(|index| {
+                    Ok(AssetSpendIntentV2 {
+                        chain_id: 7,
+                        genesis: [2; 32],
+                        payer: vec![11 + index as u8; 20],
+                        recipient: vec![if dependent && index == 0 { 12 } else { 13 }; 20],
+                        asset: 1,
+                        authorization_epoch: 3,
+                        spend_key_ref: spend_key_ref_v1(&keys[index].0)?,
+                        amount: if index == 0 { 50 } else { 1 },
+                        max_fee: 50,
+                        nonce: 0,
+                        not_before_height: 10,
+                        expires_at_height: 20,
+                        authority_update: None,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let mut fees = FeeState::default();
+            if case == "rejected-incoming" {
+                fees.accounting = FeeAccounting {
+                    treasury_reserve_nov: Some(u128::MAX),
+                    ..FeeAccounting::default()
+                };
+            }
+            let mut changes = fee_record_changes(&policy, &fees)?;
+            for (address, balance) in [
+                (11, 1000u128),
+                (12, if dependent { 0 } else { 1000 }),
+                (13, 7),
+            ] {
+                changes.extend(account_record_changes(
+                    7,
+                    &[2; 32],
+                    &account("component-fixture", vec![address; 20]),
+                )?);
+                changes.push(StateChange::Put {
+                    key: balance_key(&Account::from([address; 20])),
+                    value: balance.to_le_bytes().to_vec(),
+                });
+            }
+            for intent in &intents {
+                changes.extend(grant_record_changes(intent, &grant(intent, 1000, case))?);
+                changes.push(StateChange::Put {
+                    key: nonce_key(&intent.nonce_identity()?),
+                    value: 0u64.to_le_bytes().to_vec(),
+                });
+            }
+            let staged = stage_state_update(&Memory::default(), empty_root(), &changes)?;
+            let root = staged.root();
+            let memory = Memory(staged.nodes().clone());
+            let signed = intents
+                .iter()
+                .enumerate()
+                .map(|(index, intent)| signer.sign(intent.clone(), &keys[index].0, &keys[index].1))
+                .collect::<Result<Vec<_>>>()?;
+            let capture = || -> Result<NovTransferInput> {
+                NovTransferInput::capture_uca(
+                    signed
+                        .iter()
+                        .cloned()
+                        .map(|tx| verifier.verify(tx))
+                        .collect::<Result<Vec<_>>>()?,
+                    context(root, &policy)?,
+                    policy.clone(),
+                    &memory,
+                    PlanBudget {
+                        transactions: 2,
+                        transaction_bytes: 8192,
+                        body_bytes: 16384,
+                        access_keys: 4096,
+                    },
+                    capture_budget(),
+                )
+            };
+            let cpu = capture()?.execute(&mut session, Duration::from_secs(30))?;
+            assert_eq!(cpu.observation().components, if dependent { 1 } else { 2 });
+            assert_eq!(cpu.observation().credit_only_accounts, 1);
+            assert_eq!(
+                cpu.observation().recomputed_transactions,
+                usize::from(case == "rejected-incoming"),
+                "{case}: global fee failure invalidates only the dependent prediction"
+            );
+            let receipts = cpu.receipts();
+            assert!(receipts.iter().all(|r| r.delta.nonce_after == 1));
+            if case == "rejected-incoming" {
+                assert_eq!(
+                    receipts[0].fee_failure.as_ref().unwrap().code,
+                    FeeFailureCode::AmountOverflow
+                );
+                assert_eq!(
+                    receipts[1].fee_failure.as_ref().unwrap().code,
+                    FeeFailureCode::InsufficientUserBalance
+                );
+                assert!(receipts.iter().all(|r| r.delta.fee_funding_delta == 0));
+                assert!(cpu
+                    .spend_outputs()
+                    .unwrap()
+                    .iter()
+                    .all(|o| o.remaining == 1000));
+            } else {
+                assert!(receipts.iter().all(|r| r.failure.is_none()));
+                if dependent {
+                    assert_eq!(receipts[1].delta.payer.before, 50);
+                } else {
+                    assert_eq!(receipts[1].delta.recipient.before, 57);
+                }
+            }
+            if let Some(integer) = &mut integer {
+                let gpu = capture()?.execute_integer_plan(integer)?;
+                assert_eq!(cpu.receipts(), gpu.receipts(), "{case}: money/fees/nonce");
+                assert_eq!(cpu.spend_outputs(), gpu.spend_outputs(), "{case}: budgets");
+                assert_eq!(cpu.fees(), gpu.fees(), "{case}: complete fee state");
+                assert_eq!(cpu.effects().update().root(), gpu.effects().update().root());
+                assert_eq!(
+                    cpu.effects().update().nodes(),
+                    gpu.effects().update().nodes()
+                );
+                assert_eq!(
+                    cpu.receipt_batch_commitment(),
+                    gpu.receipt_batch_commitment()
+                );
+                assert_eq!(cpu.statement_commitment(), gpu.statement_commitment());
+            }
+        }
+        Ok(())
+    })();
+    for (_, secret) in &mut keys {
+        secret.fill(0);
+    }
     result
 }
 

@@ -749,6 +749,69 @@ fn blocked_feedback_pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<Bl
     Ok((client, server, io))
 }
 #[test]
+fn empty_feedback_stops_after_one_lane_round() -> Result<()> {
+    let (mut link, _, _) = pair_and_third()?;
+    assert!(link.lanes.values().all(|lane| lane.feedback.is_empty()));
+    let mut report = NativeLinkPoll::default();
+    for start in 0..link.streams.len() {
+        link.feedback_turn = start;
+        // An odd quantum would leave a different turn if all 63 empty
+        // iterations ran; one complete empty round preserves the next lane.
+        link.poll_feedback(Instant::now(), 63, &mut report)?;
+        assert_eq!(link.feedback_turn, start);
+    }
+    assert_eq!(report.feedback_sent, 0);
+    Ok(())
+}
+
+#[test]
+fn feedback_work_resets_empty_lane_round() -> Result<()> {
+    let (mut link, _, _) = pair_and_third()?;
+    let lane = link.lanes.get_mut(&CONTROL).unwrap();
+    // Unknown objects are real stale feedback hints, retired by the original
+    // receiver path. Both must be examined despite the empty intervening lane.
+    lane.feedback(0, [241; 32]);
+    lane.feedback(0, [242; 32]);
+    link.feedback_turn = link.streams.iter().position(|&s| s == BODY).unwrap();
+    let epoch = link.epoch;
+    let mut report = NativeLinkPoll::default();
+    link.poll_feedback(Instant::now(), 64, &mut report)?;
+    assert!(link.lanes[&CONTROL].feedback.is_empty());
+    assert!(link.lanes[&CONTROL].queued.is_empty());
+    assert_eq!(link.epoch, epoch + 2);
+    assert_eq!(report.feedback_sent, 0);
+    Ok(())
+}
+
+#[test]
+fn blocked_feedback_survives_empty_other_lane() -> Result<()> {
+    let (mut client, mut server, io) = blocked_feedback_pair()?;
+    let now = Instant::now();
+    let body = message(CONTROL, 13, 1000)?;
+    assert!(client.try_send(0, CONTROL, &body, now)?);
+    assert_eq!(client.poll(1000, now, 1)?.data_sent, 1);
+    let _ = server.poll(1000, now, 2)?;
+    let key = (0, body.id());
+    let original = server.lanes[&CONTROL].pending_feedback[&key].frame.clone();
+    let epoch = server.epoch;
+    let mut report = NativeLinkPoll::default();
+    server.poll_feedback(now, 64, &mut report)?;
+    let lane = &server.lanes[&CONTROL];
+    assert_eq!(lane.feedback.len(), 1);
+    assert!(lane.queued.contains(&key));
+    assert_eq!(lane.pending_feedback[&key].frame, original);
+    assert_eq!(server.epoch, epoch);
+    assert_eq!(report.feedback_sent, 0);
+    io.blocked.store(false, Ordering::Relaxed);
+    server.poll_feedback(now, 64, &mut report)?;
+    assert_eq!(report.feedback_sent, 1);
+    assert!(server.lanes[&CONTROL].feedback.is_empty());
+    assert!(server.lanes[&CONTROL].pending_feedback.is_empty());
+    assert!(server.lanes[&CONTROL].queued.is_empty());
+    Ok(())
+}
+
+#[test]
 fn blocked_feedback_preserves_frame_then_emits_newer_snapshot() -> Result<()> {
     let (mut client, mut server, io) = blocked_feedback_pair()?;
     let now = Instant::now();

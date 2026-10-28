@@ -62,6 +62,10 @@ pub(super) struct AdmissionState {
     cached_body_boundary_waiting: bool,
     #[cfg(test)]
     hold_authority_poll_once: bool,
+    #[cfg(test)]
+    hold_authority_until_parent_advance: bool,
+    #[cfg(test)]
+    pub(super) pool_byte_limit: Option<usize>,
     next_signature_submitted_while_capture: u64,
     signature_completed_while_capture: u64,
     max_retained_stage_slots: usize,
@@ -81,8 +85,10 @@ pub(super) struct AdmissionState {
 // an independently admitted queue or another execution owner.
 struct UcaWork {
     _output: crate::native_pipeline::pipeline::SignatureAdmissionOutput,
-    rows: Vec<(AdmissionInput, AdmittedTransfer)>,
+    rows: VecDeque<(AdmissionInput, AdmittedTransfer)>,
     read: Option<native_query::UcaBatchStateRead>,
+    states: Option<VecDeque<Result<native_query::UcaReadResult>>>,
+    pool_wait: Option<(usize, usize, usize)>,
     parent: Option<ParentPoint>,
     capture_started: Option<Instant>,
     complete_body: bool,
@@ -274,14 +280,111 @@ fn response(id: Value, result: Result<Value>) -> Value {
 }
 
 impl RpcLifecycle {
-    /// Admission-only counterexample on a real original service and real signed
-    /// NUAS bytes. Does not poll consensus/network or publish a candidate.
+    /// Force retained-byte pressure with real signed rows and the original
+    /// accounting, without allocating 64 MiB or inventing an authority result.
+    /// The caller then polls all real nodes to publish/free the accepted prefix.
+    #[cfg(test)]
+    pub(crate) fn prepare_uca_pool_backpressure_for_test(
+        &mut self,
+        cached: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        partial: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+    ) -> Result<()> {
+        use crate::native_pipeline::consensus::transport::TransactionsScope;
+        ensure!(self.is_uca() && cached.len() == 1 && partial.len() == 2);
+        let original_batch_size = self.batch_size;
+        self.batch_size = 1;
+        let scope = TransactionsScope {
+            chain_id: self.node.template.chain_id,
+            genesis: self.node.template.genesis_config_commitment,
+            protocol: self.node.template.protocol_commitment,
+            epoch: 1,
+            validator_set_hash: self.node.validators.hash(),
+            session: [18; 32],
+            sequence: 1,
+        };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        self.incoming_from_client = true;
+        self.incoming = Some((
+            Arc::new(Message::AssetTransactions {
+                scope,
+                batch: cached,
+            }),
+            0,
+        ));
+        while self.incoming.is_some() || self.admission.has_pending_native_admission() {
+            ensure!(
+                Instant::now() < deadline,
+                "pool pressure prefix admission timeout"
+            );
+            self.poll_admission()?;
+            std::thread::yield_now();
+        }
+        ensure!(self.pending.len() == 1);
+        // The new source itself fits; its real checked credential does not.
+        // Removing the accepted prefix through publication will free enough.
+        self.admission.pool_byte_limit =
+            Some(self.pending_retention.bytes + partial.retained_bytes()?);
+        let rejected = self.gossip_rejected;
+        self.incoming = Some((
+            Arc::new(Message::AssetTransactions {
+                scope,
+                batch: partial,
+            }),
+            0,
+        ));
+        while self
+            .admission
+            .uca
+            .as_ref()
+            .is_none_or(|work| work.pool_wait.is_none())
+        {
+            ensure!(Instant::now() < deadline, "pool pressure was not retained");
+            self.poll_admission()?;
+            std::thread::yield_now();
+        }
+        ensure!(self.pending.len() == 1 && self.gossip_rejected == rejected);
+        ensure!(self.ingress_batch_boundary && self.admission.cached_body_boundary_waiting);
+        let work = self.admission.uca.as_ref().unwrap();
+        ensure!(work.rows.len() == 1 && work.states.as_ref().unwrap().len() == 1);
+        let capture_batches = self.admission.uca_capture.batches;
+        let reservations = self.reservations.len();
+        for _ in 0..3 {
+            self.poll_admission()?;
+            ensure!(self.ingress_batch_boundary && !self.admission.made_progress);
+            ensure!(self.pending.len() == 1 && self.reservations.len() == reservations);
+            ensure!(self.gossip_rejected == rejected);
+            ensure!(self.admission.uca_capture.batches == capture_batches);
+        }
+        // Publication can free the pool before the journal's NEXT-height
+        // transition advances controller.parent(). Hold only this test's
+        // authority poll until that real transition, so recapture is exercised
+        // deterministically rather than assuming head and parent move together.
+        self.admission.hold_authority_until_parent_advance = true;
+        self.batch_size = original_batch_size;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn assert_uca_pool_backpressure_recovered_for_test(&self) -> Result<()> {
+        ensure!(self.pending.is_empty() && self.reservations.is_empty());
+        ensure!(self.pending_retention.bytes == 0 && self.pending_retention.owners.is_empty());
+        ensure!(self.admission.uca.is_none());
+        ensure!(!self.admission.hold_authority_until_parent_advance);
+        ensure!(!self.admission.cached_body_boundary_waiting);
+        ensure!(self.admission.backpressured_polls > 0);
+        ensure!(self.admission.uca_capture.parent_restarts > 0);
+        Ok(())
+    }
+
+    /// Admission/selection counterexamples on the real original service and
+    /// signed NUAS bytes. The final local offer has no peer quorum/publication.
     #[cfg(test)]
     pub(crate) fn assert_uca_overlap_body_boundaries_for_test(
         &mut self,
         cached: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         partial: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         newer_bad: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        newer_valid: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
     ) -> Result<()> {
         use crate::native_pipeline::consensus::transport::TransactionsScope;
         ensure!(self.is_uca(), "UCA fixture required");
@@ -322,6 +425,9 @@ impl RpcLifecycle {
             std::thread::yield_now();
         }
         ensure!(self.pending.len() == 1, "real cached row not admitted");
+        // This admission-only fixture consumes the prior source's opportunity
+        // explicitly; production consumes it on accepted candidate selection.
+        self.ingress_batch_boundary = false;
 
         self.incoming = Some((message(partial), 0));
         while self.admission.uca.is_none() {
@@ -366,6 +472,11 @@ impl RpcLifecycle {
         ensure!(self.ingress_batch_boundary && !self.admission.cached_body_boundary_waiting);
         ensure!(self.admission.work.is_some(), "next output lost its slot");
         let rejected_before = self.gossip_rejected;
+        // A later admission poll cannot erase the older body's unserved turn.
+        // In production projection/nonce readiness can defer selection between
+        // these polls without granting any permission to the newer rows.
+        self.poll_admission()?;
+        ensure!(self.ingress_batch_boundary, "unserved source turn was lost");
         while self.incoming.is_some() || self.admission.has_pending_native_admission() {
             ensure!(
                 Instant::now() < deadline,
@@ -400,6 +511,57 @@ impl RpcLifecycle {
                 self.node.controller.round()
             ) == position,
             "admission advanced consensus position"
+        );
+
+        // The two old, strictly admitted rows already fill this service's
+        // original candidate budget. Keep a real later signature batch at its
+        // authority boundary: only those OLD rows may be offered meanwhile.
+        ensure!(self.pending.len() == original_batch_size);
+        self.incoming = Some((message(newer_valid), 0));
+        while self.admission.uca.is_none() {
+            ensure!(Instant::now() < deadline, "next authority slot unavailable");
+            self.poll_admission()?;
+            std::thread::yield_now();
+        }
+        let pending = self.order.clone();
+        let authority_rows = self.admission.uca.as_ref().unwrap().rows.len();
+        ensure!(authority_rows > 0 && self.offer.is_none());
+        // Explicitly hold projection readiness, without changing the journal
+        // or its authoritative parent. A completed-body turn must survive.
+        let indexed_height = self.indexed_height;
+        self.indexed_height = parent.height.checked_add(1).context("height overflow")?;
+        self.ingress_batch_boundary = true;
+        for _ in 0..3 {
+            self.admission.hold_authority_poll_once = true;
+            self.poll(Instant::now())?;
+            ensure!(self.ingress_batch_boundary && self.offer.is_none());
+            ensure!(self.order == pending && self.node.controller.parent() == parent);
+        }
+        self.indexed_height = indexed_height;
+        // Independently prove full old-pool selection needs NO boundary credit.
+        self.ingress_batch_boundary = false;
+        while self.offered.is_none() {
+            ensure!(
+                Instant::now() < deadline,
+                "ready pool blocked by new admission"
+            );
+            self.admission.hold_authority_poll_once = true;
+            self.poll(Instant::now())?;
+            ensure!(
+                self.order == pending,
+                "unfinished authority entered the pool"
+            );
+            ensure!(self.admission.uca.as_ref().unwrap().rows.len() == authority_rows);
+            std::thread::yield_now();
+        }
+        let Message::AssetBody { batch, .. } = self.offer.as_ref().unwrap().1.as_ref() else {
+            anyhow::bail!("asset pool selected a different contract");
+        };
+        ensure!(batch.len() == original_batch_size);
+        ensure!(!self.ingress_batch_boundary);
+        ensure!(
+            self.node.controller.head() == head,
+            "selection published state"
         );
         Ok(())
     }
@@ -520,7 +682,12 @@ impl RpcLifecycle {
 
     pub(super) fn poll_admission(&mut self) -> Result<()> {
         self.admission.made_progress = false;
-        self.ingress_batch_boundary = false;
+        // A completed body grants an opportunity, not a one-poll pulse. Keep it
+        // while projection/selection is unavailable, but do not carry an empty
+        // source's stale grant into the first partial quantum of a later source.
+        if self.pending.is_empty() {
+            self.ingress_batch_boundary = false;
+        }
         if self.admission.uca.is_some() {
             self.poll_uca_admission()?;
         }
@@ -843,7 +1010,7 @@ impl RpcLifecycle {
                 ensure!(rows <= self.batch_size, "UCA admission batch limit");
                 ensure!(self.admission.uca.is_none(), "UCA authority slot occupied");
                 output.park_for_authority()?;
-                let mut checked_rows = Vec::with_capacity(rows);
+                let mut checked_rows = VecDeque::with_capacity(rows);
                 while let Some(row) = output.pop_admitted() {
                     self.admission.checked_rows += 1;
                     // Reject malformed rows locally. Valid rows preserve their
@@ -852,7 +1019,7 @@ impl RpcLifecycle {
                         uca_capture_input(&row.input, &checked)?;
                         Ok(checked)
                     }) {
-                        Ok(checked) => checked_rows.push((row.input, checked)),
+                        Ok(checked) => checked_rows.push_back((row.input, checked)),
                         Err(_) => {
                             self.admission.rejected_rows += 1;
                             self.gossip_rejected += 1;
@@ -863,6 +1030,8 @@ impl RpcLifecycle {
                     _output: output,
                     rows: checked_rows,
                     read: None,
+                    states: None,
+                    pool_wait: None,
                     parent: None,
                     capture_started: None,
                     complete_body: *complete_body,
@@ -941,6 +1110,18 @@ impl RpcLifecycle {
         if std::mem::take(&mut self.admission.hold_authority_poll_once) {
             return Ok(());
         }
+        #[cfg(test)]
+        if self.admission.hold_authority_until_parent_advance {
+            let work = self.admission.uca.as_ref().expect("held authority work");
+            ensure!(work.pool_wait.is_some() && work.states.is_some());
+            if work.parent == Some(self.node.controller.parent()) {
+                // Only already admitted rows can be selected. Consensus and
+                // the original journal continue to make their real progress.
+                self.ingress_batch_boundary = true;
+                return Ok(());
+            }
+            self.admission.hold_authority_until_parent_advance = false;
+        }
         let mut work = self.admission.uca.take().expect("pending UCA work");
         if work.rows.is_empty() {
             self.finish_uca_admission(work);
@@ -948,75 +1129,123 @@ impl RpcLifecycle {
         }
         let parent = self.node.controller.parent();
         if work.parent != Some(parent) {
+            if work.parent.is_some() {
+                self.admission.uca_capture.parent_restarts =
+                    self.admission.uca_capture.parent_restarts.saturating_add(1);
+            }
             if let Some(read) = work.read.take() {
                 self.admission
                     .uca_capture
                     .record(&read, work.capture_started.take());
-                self.admission.uca_capture.parent_restarts =
-                    self.admission.uca_capture.parent_restarts.saturating_add(1);
             }
+            work.states = None;
+            work.pool_wait = None;
             work.parent = Some(parent);
         }
-        let result = (|| {
-            if work.read.is_none() {
-                work.capture_started = crate::native_pipeline::profile::mark();
-                let inputs = work
-                    .rows
-                    .iter()
-                    .map(|(input, checked)| uca_capture_input(input, checked))
-                    .collect::<Result<Vec<_>>>()?;
-                work.read = Some(
-                    native_query::UcaBatchStateRead::new(
-                        parent.state_root,
-                        inputs,
-                        self.node.pipeline.capture_budget(),
-                    )?
-                    .with_read_locality(
-                        &self.node.pipeline,
-                        parent,
-                        self.node.template,
-                    )?,
-                );
+        let pool = (
+            self.pending.len(),
+            self.pending_bytes,
+            self.pending_retention.bytes,
+        );
+        if work.pool_wait == Some(pool) {
+            // Nothing can fit until publication frees the SAME pending pool.
+            // Give already admitted rows a selection turn, without claiming
+            // progress, re-reading authority or admitting an unchecked suffix.
+            self.ingress_batch_boundary = true;
+            self.admission.uca = Some(work);
+            return Ok(());
+        }
+        work.pool_wait = None;
+        if work.states.is_none() {
+            let result = (|| {
+                if work.read.is_none() {
+                    work.capture_started = crate::native_pipeline::profile::mark();
+                    let inputs = work
+                        .rows
+                        .iter()
+                        .map(|(input, checked)| uca_capture_input(input, checked))
+                        .collect::<Result<Vec<_>>>()?;
+                    work.read = Some(
+                        native_query::UcaBatchStateRead::new(
+                            parent.state_root,
+                            inputs,
+                            self.node.pipeline.capture_budget(),
+                        )?
+                        .with_read_locality(
+                            &self.node.pipeline,
+                            parent,
+                            self.node.template,
+                        )?,
+                    );
+                }
+                work.read
+                    .as_mut()
+                    .expect("UCA batch capture")
+                    .poll(&self.node.pipeline)
+            })();
+            self.admission.made_progress |=
+                work.read.as_ref().is_some_and(|read| read.made_progress());
+            match result {
+                Ok(None) => {
+                    self.admission.uca = Some(work);
+                    return Ok(());
+                }
+                Ok(Some(states)) if states.len() == work.rows.len() => {
+                    work.states = Some(states.into());
+                }
+                // Missing/corrupt I/O or an invalid result shape rejects this
+                // snapshot, never fabricates absent accounts or a prefix.
+                _ => {
+                    self.gossip_rejected += work.rows.len() as u64;
+                    self.admission.rejected_rows += work.rows.len() as u64;
+                    work.rows.clear();
+                }
             }
-            work.read
-                .as_mut()
-                .expect("UCA batch capture")
-                .poll(&self.node.pipeline)
-        })();
-        self.admission.made_progress |= work.read.as_ref().is_some_and(|read| read.made_progress());
-        let states = match result {
-            Ok(None) => {
-                self.admission.uca = Some(work);
-                return Ok(());
+            if let Some(read) = work.read.take() {
+                self.admission
+                    .uca_capture
+                    .record(&read, work.capture_started.take());
             }
-            Ok(Some(states)) if states.len() == work.rows.len() => Some(states),
-            // Missing/corrupt I/O or an invalid result shape rejects this
-            // entire snapshot, never fabricates absent accounts or a prefix.
-            _ => None,
-        };
-        if let Some(read) = work.read.take() {
-            self.admission
-                .uca_capture
-                .record(&read, work.capture_started.take());
         }
         // The control-owned parent cannot change during this bounded in-memory
         // loop. No I/O or state consumption occurs here. Original nonce/pool
         // reservations are applied in input order by the unchanged checker;
         // final grant/balance/fee consumption remains the candidate plan's job.
-        let mut states = states.map(Vec::into_iter);
-        for (input, checked) in work.rows.drain(..) {
-            let state = states.as_mut().and_then(Iterator::next);
-            let admitted = match state {
+        while let Some((input, checked)) = work.rows.pop_front() {
+            let state = work.states.as_mut().and_then(VecDeque::pop_front);
+            let admitted = match &state {
                 Some(Ok(native_query::UcaReadResult::Present(state))) => {
-                    self.admit_uca_checked(input, checked, &state, work.broadcast)
+                    self.admit_uca_checked(input, checked, state, work.broadcast)
                 }
                 _ => Err(anyhow::anyhow!("UCA authoritative input unavailable")),
             };
-            if admitted.is_ok() {
-                self.gossip_verified += 1;
-            } else {
-                self.gossip_rejected += 1;
-                self.admission.rejected_rows += 1;
+            match admitted {
+                Ok(uca::UcaAdmission::Accepted) => {
+                    self.gossip_verified += 1;
+                }
+                Ok(uca::UcaAdmission::Backpressured(input, checked)) => {
+                    work.rows.push_front((input, checked));
+                    work.states
+                        .as_mut()
+                        .expect("captured UCA states")
+                        .push_front(state.expect("checked present state"));
+                    work.pool_wait = Some((
+                        self.pending.len(),
+                        self.pending_bytes,
+                        self.pending_retention.bytes,
+                    ));
+                    self.admission.backpressured_polls += 1;
+                    // A body boundary is a batching preference, not permission
+                    // to deadlock a full pool. Only its accepted prefix exists
+                    // in `pending`; the suffix retains its original permit.
+                    self.ingress_batch_boundary = true;
+                    self.admission.uca = Some(work);
+                    return Ok(());
+                }
+                Err(_) => {
+                    self.gossip_rejected += 1;
+                    self.admission.rejected_rows += 1;
+                }
             }
         }
         self.finish_uca_admission(work);

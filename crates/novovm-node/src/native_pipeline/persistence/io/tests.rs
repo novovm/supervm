@@ -277,13 +277,28 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
         .collect();
     let key = b"io/0037".to_vec();
     let reserved_bytes = 64 * (32 + 291 + 1) + key.len() + 32 + 257;
-    let service = IoService::start(
+    let (woke_tx, woke_rx) = mpsc::channel();
+    let waiters: Vec<_> = (0..2)
+        .map(|index| {
+            let woke_tx = woke_tx.clone();
+            thread::spawn(move || {
+                // Completion before park must retain its notification too.
+                thread::park();
+                let _ = woke_tx.send(index);
+            })
+        })
+        .collect();
+    let service = IoService::start_with_notify(
         config.clone(),
         OpenMode::Existing,
         IoBudget {
             requests: 2,
             bytes: reserved_bytes,
         },
+        [
+            Some(waiters[0].thread().clone()),
+            Some(waiters[1].thread().clone()),
+        ],
     )?;
     let accounting = service.usage.clone();
     let nodes = admit_real(|| service.try_read_nodes(hashes.clone()))?;
@@ -292,6 +307,15 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
     // Both native reads really finish before shutdown returns. Their unconsumed
     // replies still retain admission permits; completion is not consumption.
     service.shutdown()?;
+    let first_wake = woke_rx.recv_timeout(Duration::from_secs(5));
+    let second_wake = woke_rx.recv_timeout(Duration::from_secs(5));
+    for waiter in &waiters {
+        waiter.thread().unpark();
+    }
+    for waiter in waiters {
+        waiter.join().expect("completion waiter panicked");
+    }
+    assert_ne!(first_wake?, second_wake?);
     assert_eq!(usage(&accounting), (2, reserved_bytes));
     assert_eq!(nodes.wait()?, expected);
     assert_eq!(usage(&accounting).0, 1);

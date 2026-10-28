@@ -525,25 +525,91 @@ fn drive_at(
     start: Instant,
     drain_inputs: bool,
 ) -> Result<Duration> {
-    let query_batch = env_count("NOVOVM_NATIVE_QUERY_BATCH", 1, MAX_RECEIPTS)?;
-    let cold = inputs.is_empty();
-    let mut dispatched = if cold { observations.len() } else { 0 };
-    let mut complete = 0;
-    let mut next_batch = 0;
-    let mut cursors = [0usize; 4];
-    let mut reads: [Option<PendingRead>; 4] = std::array::from_fn(|_| None);
-    let mut delivered = BTreeSet::new();
-    let ids: BTreeSet<_> = inputs.iter().map(PreparedApplicationInput::id).collect();
-    let mut last_alive = Instant::now();
-    while complete < observations.len() || (drain_inputs && delivered.len() < inputs.len()) {
+    let mut driver = LoadDriver::new(inputs, observations.len(), start)?;
+    while !driver.finished(observations.len(), inputs.len(), drain_inputs) {
+        driver.poll(
+            nodes,
+            clients,
+            ingress,
+            inputs,
+            batch,
+            observations,
+            counts,
+            timeout,
+        )?;
+        std::thread::yield_now();
+    }
+    observed_duration(observations, driver.cold)
+}
+
+// The same SDK send/query loop is reused by static, rolling and continuously
+// supplied workloads. Supply policy never performs business execution/finality.
+struct LoadDriver {
+    start: Instant,
+    query_batch: usize,
+    cold: bool,
+    dispatched: usize,
+    complete: usize,
+    next_batch: usize,
+    cursors: [usize; 4],
+    reads: [Option<PendingRead>; 4],
+    delivered: BTreeSet<Hash>,
+    ids: BTreeSet<Hash>,
+    last_alive: Instant,
+    finalized_heights: [u64; 4],
+}
+
+impl LoadDriver {
+    fn new(inputs: &[PreparedApplicationInput], rows: usize, start: Instant) -> Result<Self> {
+        let cold = inputs.is_empty();
+        Ok(Self {
+            start,
+            query_batch: env_count("NOVOVM_NATIVE_QUERY_BATCH", 1, MAX_RECEIPTS)?,
+            cold,
+            dispatched: if cold { rows } else { 0 },
+            complete: 0,
+            next_batch: 0,
+            cursors: [0; 4],
+            reads: std::array::from_fn(|_| None),
+            delivered: BTreeSet::new(),
+            ids: inputs.iter().map(PreparedApplicationInput::id).collect(),
+            last_alive: Instant::now(),
+            finalized_heights: [0; 4],
+        })
+    }
+
+    fn finished(&self, rows: usize, inputs: usize, drain_inputs: bool) -> bool {
+        self.complete == rows && (!drain_inputs || self.delivered.len() == inputs)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn poll(
+        &mut self,
+        nodes: &mut ProductNodes,
+        clients: &mut [NativeApplicationClient],
+        ingress: usize,
+        inputs: &[PreparedApplicationInput],
+        batch: usize,
+        observations: &mut [Observation],
+        counts: &mut Counts,
+        timeout: Duration,
+    ) -> Result<()> {
+        let start = self.start;
+        let query_batch = self.query_batch;
         let now = Instant::now();
         if start.elapsed() >= timeout {
             counts.deadline_expirations += 1;
-            bail!("native load timeout: completed={complete}/{}, dispatched={dispatched}, cursors={cursors:?}", observations.len());
+            bail!(
+                "native load timeout: completed={}/{}, dispatched={}, cursors={:?}",
+                self.complete,
+                observations.len(),
+                self.dispatched,
+                self.cursors
+            );
         }
-        if last_alive.elapsed() >= Duration::from_millis(100) {
+        if self.last_alive.elapsed() >= Duration::from_millis(100) {
             nodes.alive()?;
-            last_alive = now;
+            self.last_alive = now;
         }
         let wall = clock_ms()?;
         for (node, client) in clients.iter_mut().enumerate() {
@@ -552,7 +618,7 @@ fn drive_at(
                     continue;
                 }
                 if node != ingress
-                    || !ids.contains(&done.body.id())
+                    || !self.ids.contains(&done.body.id())
                     || done.state != ObjectSendState::Delivered
                 {
                     counts.transport_failures += 1;
@@ -561,31 +627,32 @@ fn drive_at(
                         done.state
                     );
                 }
-                if delivered.insert(done.body.id()) {
+                if self.delivered.insert(done.body.id()) {
                     counts.application_batches_transport_delivered += 1;
                 }
             }
         }
-        if !cold && next_batch < inputs.len() {
-            let end = (dispatched + batch).min(observations.len());
-            if end - complete <= WINDOW {
+        if !self.cold && self.next_batch < inputs.len() {
+            let end = (self.dispatched + batch).min(observations.len());
+            if end - self.complete <= WINDOW {
                 let elapsed = start.elapsed().as_micros() as u64;
-                for row in &mut observations[dispatched..end] {
+                for row in &mut observations[self.dispatched..end] {
                     row.first_submit_us.get_or_insert(elapsed);
                 }
-                if clients[ingress].try_send(&inputs[next_batch], now)? {
-                    dispatched = end;
-                    next_batch += 1;
+                if clients[ingress].try_send(&inputs[self.next_batch], now)? {
+                    self.dispatched = end;
+                    self.next_batch += 1;
                     counts.application_batches_sent += 1;
-                    counts.maximum_outstanding =
-                        counts.maximum_outstanding.max(dispatched - complete);
+                    counts.maximum_outstanding = counts
+                        .maximum_outstanding
+                        .max(self.dispatched - self.complete);
                 }
             }
         }
         for node in 0..4 {
-            if reads[node].is_none() && cursors[node] < dispatched {
-                let index = cursors[node];
-                let count = query_batch.min(dispatched - index);
+            if self.reads[node].is_none() && self.cursors[node] < self.dispatched {
+                let index = self.cursors[node];
+                let count = query_batch.min(self.dispatched - index);
                 let selector = if query_batch == 1 {
                     Query::Receipt {
                         hash: observations[index].hash,
@@ -600,7 +667,7 @@ fn drive_at(
                             .map_err(anyhow::Error::msg)?,
                     }
                 };
-                reads[node] = Some(PendingRead {
+                self.reads[node] = Some(PendingRead {
                     request: clients[node].prepare_query(selector)?,
                     index,
                     count,
@@ -610,7 +677,7 @@ fn drive_at(
                 counts.observation_requests += 1;
                 counts.receipt_query_requests_by_node[node] += 1;
             }
-            let Some(read) = reads[node].as_mut() else {
+            let Some(read) = self.reads[node].as_mut() else {
                 continue;
             };
             if now >= read.deadline {
@@ -629,7 +696,7 @@ fn drive_at(
             };
             let index = read.index;
             let count = read.count;
-            reads[node] = None;
+            self.reads[node] = None;
             let states = match response.answer {
                 Answer::Receipt { state, .. } if query_batch == 1 => vec![state],
                 Answer::Receipts { states, .. } if query_batch > 1 => states.into_vec(),
@@ -644,13 +711,16 @@ fn drive_at(
             counts.receipt_query_rows_received_by_node[node] += states.len();
             let elapsed_us = start.elapsed().as_micros() as u64;
             for (offset, state) in states.into_iter().enumerate() {
+                if let ReceiptState::Finalized { height, .. } = state {
+                    self.finalized_heights[node] = self.finalized_heights[node].max(height);
+                }
                 if !matches!(
                     state,
                     ReceiptState::Finalized { .. } | ReceiptState::RejectedNonce
                 ) {
                     counts.receipt_query_not_final_by_node[node] += 1;
                 }
-                complete += usize::from(observe_receipt(
+                self.complete += usize::from(observe_receipt(
                     &mut observations[index + offset],
                     node,
                     index + offset,
@@ -659,15 +729,14 @@ fn drive_at(
                     counts,
                 )?);
             }
-            while cursors[node] < dispatched
-                && observations[cursors[node]].receipt_query_observed_us[node].is_some()
+            while self.cursors[node] < self.dispatched
+                && observations[self.cursors[node]].receipt_query_observed_us[node].is_some()
             {
-                cursors[node] += 1;
+                self.cursors[node] += 1;
             }
         }
-        std::thread::yield_now();
+        Ok(())
     }
-    observed_duration(observations, cold)
 }
 
 fn observed_duration(observations: &[Observation], cold: bool) -> Result<Duration> {
