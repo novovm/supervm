@@ -18266,9 +18266,70 @@ mod tests {
 
     #[test]
     fn real_rlpx_parallel_bootstrap_bounds_slow_connects_v1() {
+        const CHILD_ENV: &str = "NOVOVM_TEST_RLPX_PARALLEL_BOOTSTRAP_CHILD_V1";
+        const CHILD_COMPLETE: &str = "RLPX_PARALLEL_BOOTSTRAP_CHILD_COMPLETE_V1";
+        if std::env::var_os(CHILD_ENV).as_deref() != Some(std::ffi::OsStr::new("1")) {
+            // This strict elapsed-time test owns six real peers, but the RLPx
+            // session map is process-global and other test chains hold its lock
+            // across socket reads. Isolate the ORIGINAL worker, not its clock or
+            // limits, from unrelated test fixtures. This does NOT establish
+            // production cross-chain lock independence. Never hold/mutate the
+            // parent's shared environment while the child is running.
+            let mut command = std::process::Command::new(
+                std::env::current_exe().expect("current network test executable"),
+            );
+            command
+                .args([
+                    "--exact",
+                    "transport::tests::real_rlpx_parallel_bootstrap_bounds_slow_connects_v1",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD_ENV, "1")
+                .env("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS", "250")
+                .env("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS", "1000")
+                .env("NOVOVM_ETH_RLPX_BOOTSTRAP_JOBS_PER_TICK", "16")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            let mut child = command.spawn().expect("spawn isolated bootstrap test");
+            // Process startup/fixture cleanup watchdog, NOT the 3s worker gate.
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut timed_out = false;
+            loop {
+                if child
+                    .try_wait()
+                    .expect("poll bootstrap test child")
+                    .is_some()
+                {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().expect("reap bootstrap test child");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !timed_out && output.status.success() && stderr.contains(CHILD_COMPLETE),
+                "isolated bootstrap test failed: status={} watchdog={timed_out}\n{stdout}\n{stderr}",
+                output.status
+            );
+            eprintln!("{stderr}");
+            return;
+        }
         let _guard = eth_rlpx_env_test_lock_v1()
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .expect("isolated bootstrap test environment must not be poisoned");
         let _connect_timeout = set_test_env_var_v1("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS", "250");
         let _tick_budget = set_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS", "1000");
 
@@ -18301,6 +18362,59 @@ mod tests {
             listeners.push(listener);
         }
 
+        // Explicitly accept and consume the bounded auth request, then withhold
+        // the ACK until the ORIGINAL client times out. Merely leaving sockets in
+        // listen() gives no evidence that each attempt reached the auth read.
+        let mut stalled_peers = Vec::new();
+        for listener in listeners {
+            listener.set_nonblocking(true).expect("nonblocking accept");
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            let handle = thread::spawn(move || -> Result<usize, String> {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if Instant::now() >= deadline {
+                                return Err("stalled peer accept deadline".into());
+                            }
+                            match released.try_recv() {
+                                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                    return Err("bootstrap ended before peer accepted".into());
+                                }
+                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                            }
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(error) => return Err(format!("stalled peer accept: {error}")),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .map_err(|error| format!("stalled peer blocking stream: {error}"))?;
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .map_err(|error| format!("stalled peer read timeout: {error}"))?;
+                let mut prefix = [0; 2];
+                stream
+                    .read_exact(&mut prefix)
+                    .map_err(|error| format!("stalled peer auth prefix: {error}"))?;
+                let length = usize::from(u16::from_be_bytes(prefix));
+                if length == 0 || length > crate::ETH_RLPX_HANDSHAKE_MAX_BYTES {
+                    return Err(format!("stalled peer auth size: {length}"));
+                }
+                let mut auth = vec![0; length];
+                stream
+                    .read_exact(&mut auth)
+                    .map_err(|error| format!("stalled peer auth body: {error}"))?;
+                released
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|error| format!("stalled peer release deadline: {error}"))?;
+                Ok(length)
+            });
+            stalled_peers.push((release, handle));
+        }
+
         let mut budget = default_eth_fullnode_budget_hooks_v1();
         budget.active_native_peer_soft_limit = 6;
         budget.active_native_peer_hard_limit = 6;
@@ -18317,15 +18431,44 @@ mod tests {
         });
 
         let started = Instant::now();
-        let report = worker
-            .drive_real_network_once()
-            .expect("bootstrap tick should be budgeted");
+        let result = worker.drive_real_network_once();
+        let elapsed = started.elapsed();
+        // Release ALL accepted sockets before joining any helper, even when the
+        // worker result fails. Every helper has bounded accept/read/release work.
+        for (release, _) in &stalled_peers {
+            let _ = release.send(());
+        }
+        let mut peer_results = Vec::with_capacity(stalled_peers.len());
+        for (_, handle) in stalled_peers {
+            peer_results.push(
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("stalled peer thread panicked".into())),
+            );
+        }
+        let observed_auth = peer_results
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("all six peers must receive real bounded auth requests");
+        let report = result.expect("bootstrap tick should be budgeted");
         assert_eq!(report.scheduled_bootstrap_peers, 6);
         assert_eq!(
             report.attempted_bootstrap_peers, report.scheduled_bootstrap_peers,
             "parallel bootstrap should attempt the selected public fanout in one tick"
         );
         assert_eq!(report.skipped_bootstrap_budget_peers, 0);
+        assert_eq!(observed_auth.len(), 6);
+        assert_eq!(report.connected_peers, 0);
+        assert_eq!(report.failed_bootstrap_peers, 6);
+        assert_eq!(report.peer_failures.len(), 6);
+        assert!(
+            report.peer_failures.iter().all(|failure| {
+                failure.lifecycle_class == Some(crate::EthPeerFailureClassV1::Timeout)
+                    && failure.reason_name.as_deref() == Some("auth_timeout")
+            }),
+            "stalled peers must fail on auth timeout, not connect/parse/remote close: {:?}",
+            report.peer_failures
+        );
         assert_eq!(
             report.attempted_bootstrap_peers
                 + report.skipped_bootstrap_budget_peers
@@ -18333,10 +18476,13 @@ mod tests {
             report.scheduled_bootstrap_peers
         );
         assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "bootstrap tick should stay bounded even with stalled local peers"
+            elapsed < Duration::from_secs(3),
+            "bootstrap tick should stay bounded even with stalled local peers: {elapsed:?}"
         );
-        drop(listeners);
+        eprintln!(
+            "{CHILD_COMPLETE} elapsed={elapsed:?} received_auth={}",
+            observed_auth.len()
+        );
     }
 
     #[test]

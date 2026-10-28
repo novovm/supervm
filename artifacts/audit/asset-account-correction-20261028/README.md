@@ -1,7 +1,13 @@
 # Actual asset-account correction — 2026-10-28
 
-Status: corrected-account implementation; final validation in progress.
+Status: corrected-account implementation and local native validation delivered;
+affected network parallel fixture closure verified twice.
 NOT a release, main integration, multi-host or restored-TPS signoff.
+
+本轮结论：实际资产账户寻址、独立账户权限/nonce、管理换钥/冻结/资产恢复已经落到
+原节点与原 journal，不再拿 UCA 身份代替银行卡。账户模型的本地验收与性能验收分开：
+模型和已列恢复场景通过；吞吐仍未恢复约12K，严格同字节65,536 A/B及正式SDK/CI未通过。
+本轮仅操作隔离夹具；没有激活部署、转换旧库、覆盖身份或更新正式随包运行库。
 
 Baseline: `dev/mldsa65-identity-closure@8d92bbb1` plus the preserved uncommitted
 performance/recovery work inventoried before this round. `main`, bundled AOEM,
@@ -75,12 +81,69 @@ unchanged 16 MiB text ceiling: 16,689,665 bytes. Canonical manifest: 709,378 byt
 The first maximum-shape failure is retained in `genesis-cli-first.log`; compact
 approval JSON fixes presentation size, not canonical signatures or wire limits.
 
+Final default-parallel network repeat initially failed: one pre-existing strict
+3-second RLPx fanout test waited behind other tests' process-global session lock;
+its poisoned ENV test lock cascaded to 14 more cases (860/15/11). The identical
+single test passed in 0.27 s, which by itself was NOT acceptance. Its fixture is
+now isolated in the SAME test executable's child process; the parent does not
+hold or mutate shared ENV. Original 3 s/6 jobs/250 ms connect/1,000 ms tick limits
+remain, with six real accepted auth requests, six auth-timeout failures and zero
+connected peers checked. Outer 15 s watchdog only supervises child startup and
+cleanup, not the worker limit. The complete default-parallel suite then passed
+TWICE: 875/0/11 in 20.02 s and 20.13 s, and affected strict Clippy passed.
+
+The production foreign-chain RLPx global session lock still spans blocking socket
+reads. This is a known independent concurrency limitation, NOT fixed by isolating
+the test and NOT established as the cause of native NOV TPS. The final follow-up
+changes ONLY this cfg(test) fixture and evidence; native wire/economics/runtime
+code and the measured c6810b49 binaries are unchanged. Renewed affected validation
+is the network suite/Clippy above, not inherited whole-product or release approval.
+
 Failed first runs are retained (`native-regressions-first.log`,
 `strict-clippy.log`, `all-actual-mldsa.log`). Corrected fixtures do not remove
 production assertions. The packaged-library test is a separate retained failure,
 not silently substituted by the isolated candidate (below).
 
-## Performance checkpoints — not a restored-performance claim
+## Final native measurement at source checkpoint c6810b49
+
+Actual final node: `03105a3c2d9b9231792ad1fc3372c48949edac7c32453c1c160f701b74136d9e`.
+Client: `607c1fec00c7c821b5a925e069ec2498d658b48a0424e1de653b3634ad43eb34`.
+The AOEM DLL and unchanged business backend are the same as the table below.
+
+| Input | Signature backend | Successful TPS | P95 ms | P99 ms |
+| --- | --- | ---: | ---: | ---: |
+| Same 4,096 signed rows | CPU 1 | 1,860.04 | 1,067.159 | 1,086.461 |
+| Same 4,096 signed rows | GPU-required | 709.37 | 3,724.015 | 4,135.800 |
+| Same 4,096 signed rows | CPU 2 | 1,640.67 | 1,432.374 | 1,441.395 |
+| Legal rolling 65,536 | CPU 1 | 1,286.51 | 158.684 | 187.240 |
+| Legal rolling 65,536 | GPU-required | 1,186.42 | 162.064 | 198.969 |
+| Legal rolling 65,536 | CPU 2 | 1,265.82 | 164.334 | 199.879 |
+
+Every round passed four-node economic equality and cold recovery. Full results:
+`paired-4096-final-report.json` and `rolling-65536-final-report.json`. Do not mix
+these artifact identities or samples with the earlier checkpoint table below.
+The final independent-process recovery also passed (121.29 s): healthy peers
+advanced 40 heights; missing validator started after 106,252 ms, was killed at
+durable height 1 while target-height-40 archive was absent, then restarted its own
+store and caught up. All four ended at height 41 after recipient respend; cold
+reopen and fee/nonce/authority/receipt checks passed. See
+`four-process-final-report.json`.
+
+One canonical signed transfer is 5,448 bytes in this corpus. The unchanged
+393,216-byte canonical body budget admits at most 72 such rows; 65,536 rows need
+at least 911 nonempty heights. Final rolling runs used 1,477/1,497/1,499 heights,
+not the historical V3 64 heights. This is a proven amortization difference, NOT
+proof it is the sole bottleneck. Rolling includes ~9.86–9.88 s subsequent signing,
+~0.31–0.32 s structure preparation and ~1.27–1.41 s head queries; none is subtracted
+to manufacture a faster TPS. Internal durable timestamps, wire traffic, memory
+peaks and the exact cause of GPU/confirmation waiting were not measured here.
+
+The strict same-byte 65,536 exit remains OPEN. The static signature window
+`[1,257)` cannot cover the minimum required heights, and the rolling messages
+explicitly differ across rounds. Neither protocol limits nor validity rules were
+expanded. These results are useful legal-load evidence, not a substituted exit.
+
+## Earlier performance checkpoints — retained negative samples
 
 Measured node SHA-256:
 `5d4897e4025f1ba4db44e53979d5a3bec5cfd3ec434a2f54e1f7aaf744862317`.
@@ -136,11 +199,22 @@ artifact qualification and an explicitly approved SDK update. No full CI was
 triggered for these intermediate changes. C must consume the v2 shared contract;
 D must not package an unqualified or mixed candidate. Multi-host, mobile,
 privacy/proof, final economic allocations and formal genesis remain separate.
+Remaining native transport/device/service ML-DSA migration is not delivered by
+correcting the asset-account contract; transport still has a distinct legacy
+signature boundary. Do not claim complete first-release PQ identity migration.
 
-Final guard/lifecycle regression and binary identities will be appended after
-their last build. Prior UCA-addressed results do not qualify this account model.
+Raw command logs, including failed first runs and both successful network repeats,
+are retained verbatim in `validation-logs.zip`; local `.log` files also remain.
+No private key, database, phone state or signing journal is included in that zip.
+All 49 ZIP entries were SHA-256 compared with their original logs. Bundle hash:
+`26d28059a6d674de864017b29186401a5849c3f90ae1becae3887312842e0d75`.
 
-Final rebuilt node before the last process/performance rerun:
+Prior UCA-addressed results do not qualify this account model. Ordinary spending
+requires already-approved initialized asset accounts; this round is not delivery
+of dynamic asset-account onboarding, all identity-recovery flows or treasury
+governance. Management publication crash/offline combinations remain untested.
+
+Intermediate rebuilt node before test-only network formatting:
 `936c30ca7cd17c0c64638e1ed9f4fc2f3f9660a797d04ec970bb5bb399eda36b`.
 Client: `c54202db7373fb210a6ff07a35dbc56c1d2d0c6d9a374cac17808806325ef065`.
 CLI: `ada18750291265c09f2a45079b8452ea9036a56c13ba5ccfae9e77eab4978f24`.
