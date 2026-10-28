@@ -6,11 +6,11 @@ use anyhow::{ensure, Context, Result};
 use aoem_bindings::{AoemDyn, AoemMldsaVerifyItemRef};
 use novovm_exec::{
     pq_signature::{AoemMldsaParameterSet, MldsaVerificationBackendV1},
-    uca_spend::UcaSpendVerifierV1,
+    uca_spend::AssetSpendVerifierV2,
     AoemExecFacade, AoemExecOpenOptions,
 };
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, SPEND_CONTEXT_V1,
+    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, SPEND_CONTEXT_V2,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -38,8 +38,9 @@ fn main() -> Result<()> {
     // SAFETY: same trusted, explicitly selected ABI-compatible library already
     // opened by the facade; the loaded owner outlives all reference invocations.
     let direct = unsafe { AoemDyn::load(&path)? };
-    let cpu = facade.uca_spend_verifier_with_backend_v1(MldsaVerificationBackendV1::Cpu)?;
-    let gpu = facade.uca_spend_verifier_with_backend_v1(MldsaVerificationBackendV1::GpuRequired)?;
+    let cpu = facade.asset_spend_verifier_with_backend_v2(MldsaVerificationBackendV1::Cpu)?;
+    let gpu =
+        facade.asset_spend_verifier_with_backend_v2(MldsaVerificationBackendV1::GpuRequired)?;
     let (rows, wrong_context) = signed_rows(&facade, count.max(5))?;
     let rows_for_timing = &rows[..count];
     let mut corpus_hash = Sha256::new();
@@ -111,9 +112,9 @@ fn main() -> Result<()> {
 fn measure(
     group: usize,
     direct: &AoemDyn,
-    cpu: &UcaSpendVerifierV1,
-    gpu: &UcaSpendVerifierV1,
-    rows: &[SignedUcaSpendV1],
+    cpu: &AssetSpendVerifierV2,
+    gpu: &AssetSpendVerifierV2,
+    rows: &[SignedAssetSpendV2],
 ) -> Result<f64> {
     // Equal caller-owned input cloning is outside all three timing boundaries.
     let input = rows.to_vec();
@@ -152,7 +153,7 @@ fn measure(
     Ok(started.elapsed().as_secs_f64() * 1e6)
 }
 
-fn direct_rows(runtime: &AoemDyn, rows: &[SignedUcaSpendV1]) -> Result<Vec<bool>> {
+fn direct_rows(runtime: &AoemDyn, rows: &[SignedAssetSpendV2]) -> Result<Vec<bool>> {
     let mut results = vec![false; rows.len()];
     let mut prepared = Vec::new();
     let mut total_message_bytes = 0usize;
@@ -163,8 +164,8 @@ fn direct_rows(runtime: &AoemDyn, rows: &[SignedUcaSpendV1]) -> Result<Vec<bool>
         let message = row.intent.signing_bytes()?;
         // Test/reference-only expansion of the existing external-pure contract.
         // B/C use the real facade's sole framing owner. Never preframe their input.
-        let mut framed = vec![0, u8::try_from(SPEND_CONTEXT_V1.len())?];
-        framed.extend_from_slice(SPEND_CONTEXT_V1);
+        let mut framed = vec![0, u8::try_from(SPEND_CONTEXT_V2.len())?];
+        framed.extend_from_slice(SPEND_CONTEXT_V2);
         framed.extend_from_slice(&message);
         total_message_bytes = total_message_bytes
             .checked_add(framed.len())
@@ -195,9 +196,9 @@ fn direct_rows(runtime: &AoemDyn, rows: &[SignedUcaSpendV1]) -> Result<Vec<bool>
 fn signed_rows(
     facade: &AoemExecFacade,
     count: usize,
-) -> Result<(Vec<SignedUcaSpendV1>, SignedUcaSpendV1)> {
+) -> Result<(Vec<SignedAssetSpendV2>, SignedAssetSpendV2)> {
     let runtime = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let signer = facade.uca_spend_signer_v1()?;
+    let signer = facade.asset_spend_signer_v2()?;
     let pairs = (0..count.min(64))
         .map(|_| runtime.generate_keypair())
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -205,18 +206,20 @@ fn signed_rows(
     for index in 0..count {
         let key = &pairs[index % pairs.len()];
         rows.push(signer.sign(
-            UcaSpendIntentV1 {
+            AssetSpendIntentV2 {
                 chain_id: 991_027,
                 genesis: [93; 32],
-                account_id: format!("uca:compare-{}", index % pairs.len()),
+                payer: ((index % pairs.len()) as u128).to_be_bytes().repeat(2),
                 authorization_epoch: 1,
                 spend_key_ref: spend_key_ref_v1(&key.public_key)?,
-                recipient_uca: "uca:compare-recipient".into(),
+                recipient: vec![0xff; 32],
+                asset: novovm_protocol::uca_spend::NATIVE_NOV_ASSET,
                 amount: 1,
                 max_fee: 50,
                 nonce: (index / pairs.len()) as u64,
                 not_before_height: 1,
                 expires_at_height: 100,
+                authority_update: None,
             },
             &key.public_key,
             &key.expanded_secret_key,
@@ -239,7 +242,7 @@ fn summary(samples: &[f64]) -> Value {
     json!({"p50":rank(50),"p95":rank(95),"p99":rank(99),"raw":samples})
 }
 
-fn execution_json(verifier: &UcaSpendVerifierV1) -> Result<Value> {
+fn execution_json(verifier: &AssetSpendVerifierV2) -> Result<Value> {
     let value = verifier
         .last_execution_v1()
         .context("missing measured execution receipt")?;

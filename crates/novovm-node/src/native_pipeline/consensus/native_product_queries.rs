@@ -101,7 +101,7 @@ fn retry_status_until<T>(
     }
 }
 
-fn recovery_status(
+pub(super) fn recovery_status(
     nodes: &mut ProductNodes,
     client: &mut NativeApplicationClient,
     deadline: Instant,
@@ -168,6 +168,79 @@ fn native_status_readiness_deadline_does_not_restart_for_another_peer() {
         .unwrap_err()
         .to_string()
         .contains("deadline exhausted"));
+}
+
+#[test]
+fn native_status_readiness_successful_peer_does_not_refresh_remaining_budget() -> Result<()> {
+    let start = Instant::now();
+    let clock = std::cell::Cell::new(start);
+    let deadline = start + Duration::from_secs(90);
+    let mut first_attempts = 0;
+    retry_status_until(
+        deadline,
+        || clock.get(),
+        |until| {
+            first_attempts += 1;
+            if first_attempts == 1 {
+                assert_eq!(until, start + Duration::from_secs(5));
+                clock.set(until);
+                Err(QueryTimeout(Query::Status).into())
+            } else {
+                assert_eq!(until, start + Duration::from_secs(10));
+                clock.set(start + Duration::from_secs(6));
+                Ok(())
+            }
+        },
+    )?;
+    assert_eq!(first_attempts, 2);
+
+    // Another peer has only the original remaining 84 seconds, even though
+    // the previous peer eventually became ready. Its last attempt gets four
+    // seconds, not a refreshed five-second or ninety-second timeout.
+    let mut attempts = Vec::new();
+    let result: Result<()> = retry_status_until(
+        deadline,
+        || clock.get(),
+        |until| {
+            attempts.push(until);
+            clock.set(until);
+            Err(QueryTimeout(Query::Status).into())
+        },
+    );
+    assert!(result.unwrap_err().is::<QueryTimeout>());
+    assert_eq!(attempts.len(), 17);
+    assert_eq!(attempts[0], start + Duration::from_secs(11));
+    assert_eq!(attempts[15], start + Duration::from_secs(86));
+    assert_eq!(attempts[16], deadline);
+    let result: Result<()> = retry_status_until(
+        deadline,
+        || clock.get(),
+        |_| panic!("the next peer cannot renew the exhausted recovery budget"),
+    );
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn native_status_readiness_rejected_and_wrong_answers_are_not_retried() {
+    use novovm_protocol::native_query::QueryError;
+    for answer in [
+        Answer::Error(QueryError::Busy),
+        Answer::Error(QueryError::Unavailable),
+        Answer::NovBalance(None),
+    ] {
+        let mut attempts = 0;
+        let result = retry_status_until(
+            Instant::now() + Duration::from_secs(90),
+            Instant::now,
+            |_| {
+                attempts += 1;
+                checked_status(answer.clone())
+            },
+        );
+        assert_eq!(result.unwrap_err().to_string(), "native status missing");
+        assert_eq!(attempts, 1);
+    }
 }
 
 #[test]

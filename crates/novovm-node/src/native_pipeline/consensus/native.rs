@@ -393,7 +393,7 @@ impl NativeChannel {
                 }
                 transport::Message::Body { context, .. }
                 | transport::Message::ApflBody { context, .. }
-                | transport::Message::UcaBody { context, .. } => Some((context.height, None)),
+                | transport::Message::AssetBody { context, .. } => Some((context.height, None)),
                 transport::Message::RequestDecision { context } => Some((context.height, None)),
                 _ => None,
             },
@@ -517,7 +517,7 @@ impl NativeChannel {
                     || matches!(
                         &message,
                         transport::Message::ApflTransactions { .. }
-                            | transport::Message::UcaTransactions { .. }
+                            | transport::Message::AssetTransactions { .. }
                     ),
                 "application lane accepts only signed structural transaction inputs"
             );

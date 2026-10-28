@@ -351,7 +351,13 @@ jobs:
           grep -q 'native_successor_single_inflight_keeps_current_height_progress: test' target/native-successor-test-list.txt
           grep -q 'native_successor_auth_ticket_drains_after_source_round_changes: test' target/native-successor-test-list.txt
           grep -q 'native_successor_execution_ticket_drains_after_source_round_changes: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_uca_complete_state_waits_for_ack_and_recovers: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_uca_round_change_drains_auth_and_execution_without_publication: test' target/native-successor-test-list.txt
           cargo test -p novovm-node --lib native_successor_ --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib native_progress_early_height_ --locked -- --ignored --list > target/native-early-height-test-list.txt
+          grep -q 'native_progress_early_height_votes_survive_advance_height_ack: test' target/native-early-height-test-list.txt
+          cargo test -p novovm-node --lib native_progress_early_height_ --locked -- --ignored --test-threads=1
           # Retained test-only opaque attachment durability. This does not enable
           # the retired backend-specific product proof service or prove ZK/GPU.
           cargo test -p novovm-node --lib real_proof_storage_multichunk_reopen_immutable_and_corruption_rejection --locked -- --ignored --test-threads=1

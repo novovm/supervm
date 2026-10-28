@@ -278,24 +278,28 @@ fn regrouped_candidate_does_not_pin_retired_pool_dictionaries() -> Result<()> {
 #[ignore = "explicit packaged AOEM; retained NUAS pool evidence, not asset authorization"]
 fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Result<()> {
     use crate::native_pipeline::pipeline::admitted_uca_for_test;
-    use novovm_protocol::uca_spend::{spend_key_ref_v1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES};
-    use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+    use novovm_protocol::uca_spend::{
+        spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES,
+    };
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
     let library: std::path::PathBuf = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
         .context("explicit trusted AOEM library required")?
         .into();
     let facade = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
     let keys = facade.mldsa_keygen_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
-    let signer = facade.uca_spend_signer_v1()?;
+    let signer = facade.asset_spend_signer_v2()?;
     let mut signed = Vec::new();
     for nonce in 0..2 {
         signed.push(signer.sign(
-            UcaSpendIntentV1 {
+            AssetSpendIntentV2 {
+                asset: 1,
+                authority_update: None,
                 chain_id: 71,
                 genesis: [1; 32],
-                account_id: "uca:pool-alice".into(),
+                payer: vec![1; 20],
                 authorization_epoch: 1,
                 spend_key_ref: spend_key_ref_v1(&keys.public_key)?,
-                recipient_uca: "uca:pool-bob".into(),
+                recipient: vec![2; 20],
                 amount: 30,
                 max_fee: 50,
                 nonce,
@@ -310,16 +314,15 @@ fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Res
         .iter()
         .map(|s| s.encode())
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let hints = vec![(vec![1; 20], vec![2; 20]); 2];
-    let limits = UcaSpendBatchLimits {
+    let limits = AssetSpendBatchLimitsV2 {
         transactions: 16,
         transaction_bytes: MAX_SIGNED_SPEND_BYTES,
         body_bytes: 65536,
     };
-    let make = |raws: &[Vec<u8>], hints: &[(Vec<u8>, Vec<u8>)]| -> Result<_> {
-        Ok(Arc::new(UcaSpendBatch::from_raw(raws, hints, limits)?))
+    let make = |raws: &[Vec<u8>]| -> Result<_> {
+        Ok(Arc::new(AssetSpendBatchV2::from_raw(raws, limits)?))
     };
-    let source = make(&raws, &hints)?;
+    let source = make(&raws)?;
     let owner = Arc::new(());
     let mut pending = BTreeMap::new();
     for (index, row) in signed.iter().enumerate() {
@@ -346,12 +349,12 @@ fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Res
     let Message::ApflBody { context, .. } = body(apfl_batch(&raw(1), 8)?) else {
         unreachable!()
     };
-    let message = |batch| Message::UcaBody { context, batch };
-    let selected = message(make(&raws, &hints)?);
+    let message = |batch| Message::AssetBody { context, batch };
+    let selected = message(make(&raws)?);
     let reused = admitted_for_body(&selected, &pending)?.context("exact UCA rows should reuse")?;
     assert_eq!(reused.len(), 2);
     assert_eq!(reused[0].checked_uca().unwrap().intent().nonce, 0);
-    let reversed = message(make(&[raws[1].clone(), raws[0].clone()], &hints)?);
+    let reversed = message(make(&[raws[1].clone(), raws[0].clone()])?);
     assert_eq!(
         admitted_for_body(&reversed, &pending)?.unwrap()[0]
             .checked_uca()
@@ -368,16 +371,20 @@ fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Res
         "intent hash is not signature evidence"
     );
     assert!(admitted_for_body(
-        &message(make(&[tampered.encode()?, raws[1].clone()], &hints)?),
+        &message(make(&[tampered.encode()?, raws[1].clone()])?),
         &pending
     )?
     .is_none());
-    let mut changed_hints = hints.clone();
-    changed_hints[0].0[0] ^= 1;
-    assert!(admitted_for_body(&message(make(&raws, &changed_hints)?), &pending)?.is_none());
+    let mut changed_account = signed[0].clone();
+    changed_account.intent.payer[0] ^= 1;
+    assert!(admitted_for_body(
+        &message(make(&[changed_account.encode()?, raws[1].clone()])?),
+        &pending
+    )?
+    .is_none());
     let first = uca::hash(&signed[0])?;
     pending.get_mut(&first).unwrap().input = AdmissionInput::Uca {
-        batch: make(&raws, &hints)?,
+        batch: make(&raws)?,
         index: 0,
     };
     assert!(

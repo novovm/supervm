@@ -2,6 +2,7 @@
 //! Only workload construction differs from the retained V3 comparison. Neither
 //! this test nor its oracle executes/publishes business effects for the nodes.
 use super::*;
+use crate::native_pipeline::service::config::test_asset_genesis::approve_manifest;
 use crate::native_pipeline::{
     business::{
         direct_nov_fee::{quote_and_settle, FeeState},
@@ -9,16 +10,16 @@ use crate::native_pipeline::{
     },
     consensus::chain::ChainRecord,
     service::config::uca_genesis::{
-        UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
-        UcaInitializationConfigV1, INITIALIZATION_CONTEXT_V1,
+        UcaGenesisAccountV2, UcaGenesisApprovalV2, UcaGenesisGrantV2, UcaGenesisIdentityV2,
+        UcaGenesisManifestV2, UcaInitializationConfigV2,
     },
 };
-use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_protocol::{
-    native_query::{UcaReadIntent, UcaSpendStateView, UcaState},
-    uca_spend::{spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES},
-    uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits},
+    native_query::{AssetReadIntentV2, AssetSpendStateViewV2, AssetState},
+    uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES},
+    uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
 };
 use std::collections::BTreeMap;
 
@@ -27,6 +28,10 @@ const CONFIGURED_BATCH: usize = 1024;
 const SENDERS: usize = 16;
 const FUNDING: u128 = 1_000_000;
 const CANONICAL_BODY_BYTES: usize = 384 * 1024;
+
+#[path = "uca/rolling.rs"]
+mod rolling;
+use rolling::{LoadMode, SpendWindow};
 
 // Isolated acceptance replay only. These are synthetic process-fixture keys,
 // never operator/deployment custody. The three runs retain separate original
@@ -38,9 +43,10 @@ type CorpusKeyPair = (Vec<u8>, zeroize::Zeroizing<Vec<u8>>);
 #[derive(Default)]
 struct PairedCorpus {
     keys: Option<Vec<CorpusKeyPair>>,
-    approvals: Option<Vec<UcaGenesisApprovalV1>>,
+    approvals: Option<Vec<UcaGenesisApprovalV2>>,
     signed: Option<Vec<Vec<u8>>>,
     identity: Option<(Hash, Hash, Hash)>,
+    rolling_identity: Option<(Hash, Hash)>,
 }
 
 fn account_bytes(index: usize) -> [u8; 20] {
@@ -123,22 +129,20 @@ fn collect_final_progress(nodes: &mut ProductNodes, head: Status) -> Result<Valu
 
 fn read_uca_state(
     client: &mut NativeApplicationClient,
-    intent: &UcaSpendIntentV1,
-    payer: usize,
-) -> Result<UcaSpendStateView> {
+    intent: &AssetSpendIntentV2,
+    _payer: usize,
+) -> Result<AssetSpendStateViewV2> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         ensure!(Instant::now() < deadline, "NUAS load state query deadline");
         match query(
             client,
-            Query::UcaSpendState {
-                intent: UcaReadIntent::new(intent).map_err(anyhow::Error::msg)?,
-                payer_hint: AccountId::Bytes20(account_bytes(payer)),
-                recipient_hint: AccountId::Bytes20(account_bytes(SENDERS)),
+            Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(intent).map_err(anyhow::Error::msg)?,
             },
         )? {
-            Answer::UcaSpendState(UcaState::Present(value)) => return Ok(value),
-            Answer::UcaSpendState(UcaState::Pending) => {}
+            Answer::AssetSpendState(AssetState::Present(value)) => return Ok(*value),
+            Answer::AssetSpendState(AssetState::Pending) => {}
             other => bail!("NUAS load authoritative state unavailable: {other:?}"),
         }
     }
@@ -200,7 +204,7 @@ fn audit_fee_pages(
             .context("NUAS archived candidate missing")?;
         actual_batch_sizes.push(stored.raw_transactions().len());
         for bytes in stored.raw_transactions() {
-            let signed = SignedUcaSpendV1::decode(bytes)?;
+            let signed = SignedAssetSpendV2::decode(bytes)?;
             let hash: Hash = Sha256::digest(signed.intent.signing_bytes()?).into();
             let index = *by_hash
                 .get(&hash)
@@ -211,8 +215,8 @@ fn audit_fee_pages(
             );
             let payer = index % SENDERS;
             ensure!(
-                signed.intent.account_id == account_name(payer)
-                    && signed.intent.recipient_uca == account_name(SENDERS)
+                signed.intent.payer == account_bytes(payer)
+                    && signed.intent.recipient == account_bytes(SENDERS)
                     && signed.intent.nonce == nonces[payer],
                 "NUAS archive payer/nonce order"
             );
@@ -289,15 +293,44 @@ fn run_native_uca_load(
     corpus: &mut PairedCorpus,
     binary_override: Option<&Path>,
 ) -> Result<Value> {
-    let count = env_count("NOVOVM_NATIVE_UCA_LOAD_TRANSACTIONS", 1024, 4096)?;
+    run_native_uca_load_mode(
+        signature_override,
+        corpus,
+        binary_override,
+        LoadMode::Static,
+    )
+}
+
+fn run_native_uca_load_mode(
+    signature_override: Option<novovm_exec::pq_signature::MldsaVerificationBackendV1>,
+    corpus: &mut PairedCorpus,
+    binary_override: Option<&Path>,
+    mode: LoadMode,
+) -> Result<Value> {
+    let count = env_count(
+        "NOVOVM_NATIVE_UCA_LOAD_TRANSACTIONS",
+        if mode.is_rolling() { 65_536 } else { 1024 },
+        if mode.is_rolling() { 65_536 } else { 4096 },
+    )?;
     let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, 64)?;
     ensure!(
         count % SENDERS == 0 && count % frame_rows == 0,
         "NUAS load must contain whole sender rounds and wire frames"
     );
     let rounds = count / SENDERS;
-    let timeout =
-        Duration::from_secs(env_count("NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS", 600, 3600)? as u64);
+    mode.validate_count(count, frame_rows)?;
+    let grant_expiry = mode.grant_expiry(count)?;
+    ensure!(
+        (rounds as u128)
+            .checked_mul(51)
+            .is_some_and(|value| value <= FUNDING),
+        "NUAS original funded balance/budget cannot cover amount plus maximum fee"
+    );
+    let timeout = Duration::from_secs(env_count(
+        "NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS",
+        if mode.is_rolling() { 90 } else { 600 },
+        3600,
+    )? as u64);
     let binary = match binary_override {
         Some(path) => fs::canonicalize(path)?,
         None => fs::canonicalize(
@@ -339,17 +372,28 @@ fn run_native_uca_load(
     .collect::<BTreeMap<_, _>>();
     let mut evidence = json!({"scope":"one_host_four_original_processes_bounded_nuas_load",
         "transactions":count,"configured_candidate_batch_limit":CONFIGURED_BATCH,"wire_frame_rows":frame_rows,
-        "senders":SENDERS,"window":WINDOW,"sdk_io_quantum":IO_QUANTUM,"canonical_body_budget":CANONICAL_BODY_BYTES,
+        "senders":SENDERS,"window":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
+        "original_sdk_outstanding_ceiling":WINDOW,"sdk_io_quantum":IO_QUANTUM,"canonical_body_budget":CANONICAL_BODY_BYTES,
         "wire_message_budget":MAX_MESSAGE,"query_batch":env_count("NOVOVM_NATIVE_QUERY_BATCH",1,MAX_RECEIPTS)?,
         "backend":test_execution_backend()?,"binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
         "signature_backend":signature_override.unwrap_or(crate::native_pipeline::service::config::test_signature_backend()?),
         "aoem_sha256":hex(&Sha256::digest(fs::read(&library)?)),"real_processes":4,"real_machines":1,
         "asset_signature":"ML-DSA-65","transport":"native_novorudp_apfl","http_listeners":0,
-        "full_65536_workload":false,"static_intent_window":[1,257],"rolling_signature_65536":"NOT_EXECUTED",
-        "input_identity":if signature_override.is_some() {"one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU"} else {"fresh generated per invocation; same logical workload is not byte-identical input"},
+        "requested_full_65536_workload":mode.is_rolling() && count == 65_536,
+        "full_65536_workload":false,
+        "static_intent_window":if mode.is_rolling() {Value::Null} else {json!([1,257])},
+        "load_strategy":mode.label(),"grant_expires_at_height":grant_expiry,
+        "rolling_wave_transactions":if mode.is_rolling() {Some(rolling::WAVE_ROWS)} else {None},
+        "effective_outstanding_limit":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
+        "rolling_signature_65536":if mode.is_rolling() {"PENDING"} else {"NOT_EXECUTED"},
+        "input_identity":if mode.is_rolling() {"same logical payer/recipient/amount/nonce and approved genesis; rolling expiry and randomized signatures can differ across runs, NOT byte-identical"} else if signature_override.is_some() {"one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU"} else {"fresh generated per invocation; same logical workload is not byte-identical input"},
         "laboratory_replay_only":signature_override.is_some(),
         "deployment_replay_authorized":false,
-        "signature_generation_timed":false,"system_capacity_claim":false,"business_proof_verified":false,
+        "signature_generation_timed":mode.is_rolling(),
+        "signature_generation_timing":if mode.is_rolling() {"first-wave preparation excluded before first submission; ALL later signing/preparation/head queries remain inside the uninterrupted wall"} else {"all workload signing excluded before first submission"},
+        "overall_deadline_seconds":timeout.as_secs(),
+        "diagnostic_extended_deadline":mode.is_rolling() && timeout != Duration::from_secs(90),
+        "system_capacity_claim":false,"business_proof_verified":false,
         "diagnostics_enabled":std::env::var("NOVOVM_PROFILE_STAGES").as_deref()==Ok("1"),
         "critical_path_diagnostics_enabled":std::env::var("NOVOVM_PROFILE_CRITICAL_PATH").as_deref()==Ok("1"),
         "progress_reports_enabled":std::env::var("NOVOVM_NATIVE_LOAD_DIAGNOSTICS").as_deref()==Ok("1"),
@@ -362,7 +406,7 @@ fn run_native_uca_load(
         "cold_recovery_pass":false,"full_fee_state_audited":false});
     let mut observations = Vec::new();
     let mut counts = Counts::default();
-    let mut measured = None;
+    let mut measured: Option<Duration> = None;
     let mut timed_attempt = None;
     let mut phase = "prepare approved NUAS fixture and signed workload";
     let result = (|| -> Result<()> {
@@ -371,7 +415,7 @@ fn run_native_uca_load(
         let keys = match &corpus.keys {
             Some(keys) => keys.clone(),
             None => {
-                let keys = (0..2 * (SENDERS + 1))
+                let keys = (0..2 * (SENDERS + 1) + 1)
                     .map(|_| {
                         let pair = keygen.generate_keypair()?;
                         Ok((pair.public_key, pair.expanded_secret_key))
@@ -397,24 +441,30 @@ fn run_native_uca_load(
             CONFIGURED_BATCH,
         )?;
         genesis.genesis_config_commitment = [0; 32];
-        let manifest = UcaGenesisManifestV1 {
+        let manifest = UcaGenesisManifestV2 {
             genesis,
+            identities: vec![UcaGenesisIdentityV2 {
+                uca_id: account_name(0),
+                identity_public_key: keys[2 * (SENDERS + 1)].0.clone(),
+            }],
             accounts: (0..=SENDERS)
                 .map(|i| {
-                    Ok(UcaGenesisAccountV1 {
-                        uca_id: account_name(i),
+                    Ok(UcaGenesisAccountV2 {
+                        uca_id: account_name(0),
                         asset_account: account_bytes(i).to_vec(),
                         management_public_key: keys[i].0.clone(),
-                        grants: vec![UcaGenesisGrantV1 {
+                        recovery_public_key: None,
+                        grants: vec![UcaGenesisGrantV2 {
                             spend_public_key: keys[SENDERS + 1 + i].0.clone(),
-                            grant: SuppliedSpendGrantV1 {
-                                account_id: account_name(i),
+                            grant: SuppliedAssetSpendGrantV2 {
+                                asset: 1,
+                                account: account_bytes(i).to_vec(),
                                 key_ref: spend_key_ref_v1(&keys[SENDERS + 1 + i].0)?,
                                 authorization_epoch: 1,
                                 permits_nov_transfer: true,
                                 revoked: false,
                                 not_before_height: 1,
-                                expires_at_height: 1000,
+                                expires_at_height: grant_expiry,
                                 max_debit_per_intent: 1000,
                                 remaining_debit_budget: FUNDING,
                             },
@@ -424,30 +474,21 @@ fn run_native_uca_load(
                 .collect::<Result<Vec<_>>>()?,
         };
         let domain = manifest.signing_domain()?;
-        let manager = runtime.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
-        let canonical = manifest.canonical_bytes()?;
         let approvals = match &corpus.approvals {
             Some(approvals) => approvals.clone(),
             None => {
-                let approvals = (0..=SENDERS)
-                    .map(|i| {
-                        Ok(UcaGenesisApprovalV1 {
-                            uca_id: account_name(i),
-                            signature: manager.sign(
-                                &keys[i].0,
-                                &keys[i].1,
-                                &canonical,
-                                INITIALIZATION_CONTEXT_V1,
-                            )?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                let approval_keys = keys
+                    .iter()
+                    .map(|(p, s)| (p.as_slice(), s.as_slice()))
+                    .collect::<Vec<_>>();
+                let approvals = approve_manifest(&runtime, &manifest, &approval_keys)?;
                 corpus.approvals = Some(approvals.clone());
                 approvals
             }
         };
         let initial = manifest.compile(&runtime, domain, &approvals)?;
-        let material = UcaInitializationConfigV1 {
+        let material = UcaInitializationConfigV2 {
+            identities: manifest.identities.clone(),
             accounts: manifest.accounts.clone(),
             approvals,
             expected_signing_domain: domain,
@@ -471,22 +512,25 @@ fn run_native_uca_load(
         evidence["signing_domain"] = json!(hex(&domain));
         evidence["initial_root"] = json!(hex(&material.expected_initial_root));
         evidence["genesis_commitment"] = json!(hex(&material.expected_final_commitment));
-        let signer = runtime.uca_spend_signer_v1()?;
-        let make_intent = |payer: usize, nonce: u64| -> Result<UcaSpendIntentV1> {
-            Ok(UcaSpendIntentV1 {
-                chain_id: CHAIN,
-                genesis: domain,
-                account_id: account_name(payer),
-                authorization_epoch: 1,
-                spend_key_ref: spend_key_ref_v1(&keys[SENDERS + 1 + payer].0)?,
-                recipient_uca: account_name(SENDERS),
-                amount: 1,
-                max_fee: 50,
-                nonce,
-                not_before_height: 1,
-                expires_at_height: 257,
-            })
-        };
+        let signer = runtime.asset_spend_signer_v2()?;
+        let make_intent =
+            |payer: usize, nonce: u64, window: SpendWindow| -> Result<AssetSpendIntentV2> {
+                Ok(AssetSpendIntentV2 {
+                    asset: 1,
+                    authority_update: None,
+                    chain_id: CHAIN,
+                    genesis: domain,
+                    payer: account_bytes(payer).to_vec(),
+                    authorization_epoch: 1,
+                    spend_key_ref: spend_key_ref_v1(&keys[SENDERS + 1 + payer].0)?,
+                    recipient: account_bytes(SENDERS).to_vec(),
+                    amount: 1,
+                    max_fee: 50,
+                    nonce,
+                    not_before_height: window.not_before,
+                    expires_at_height: window.expires,
+                })
+            };
         let fee = quote_transfer(
             &TransferFeeRequest {
                 tx_hash: [0; 32],
@@ -504,50 +548,55 @@ fn run_native_uca_load(
         .nov_amount;
         let debit = fee.checked_add(1).context("NUAS fee overflow")?;
         ensure!(
-            corpus.signed.as_ref().is_none_or(|raw| raw.len() == count),
+            mode.is_rolling() || corpus.signed.as_ref().is_none_or(|raw| raw.len() == count),
             "paired corpus transaction count changed"
         );
         let mut raw = Vec::with_capacity(count);
         let mut workload_hash = Sha256::new();
         workload_hash.update(b"novovm/nuas-load/ordered-signed-inputs/v1\0");
-        for nonce in 0..rounds {
-            for payer in 0..SENDERS {
-                let key = &keys[SENDERS + 1 + payer];
-                let signed = match &corpus.signed {
-                    Some(raw) => SignedUcaSpendV1::decode(&raw[nonce * SENDERS + payer])?,
-                    None => signer.sign(make_intent(payer, nonce as u64)?, &key.0, &key.1)?,
-                };
-                ensure!(
-                    signed.intent == make_intent(payer, nonce as u64)?,
-                    "paired corpus intent changed"
-                );
-                let hash = Sha256::digest(signed.intent.signing_bytes()?).into();
-                let bytes = signed.encode()?;
-                workload_hash.update((bytes.len() as u64).to_be_bytes());
-                workload_hash.update(&bytes);
-                observations.push(Observation {
-                    hash,
-                    first_submit_us: None,
-                    receipt_query_observed_us: [None; 4],
-                    receipt: None,
-                    expected_nonce: nonce as u64 + 1,
-                    expected_fee: fee,
-                });
-                raw.push(bytes);
-            }
-        }
-        let workload_hash: Hash = workload_hash.finalize().into();
-        let identity = (domain, material.expected_initial_root, workload_hash);
-        if let Some(expected) = corpus.identity {
+        let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
+            let payer = index % SENDERS;
+            let nonce = (index / SENDERS) as u64;
+            let key = &keys[SENDERS + 1 + payer];
+            let signed = match corpus.signed.as_ref().filter(|_| !mode.is_rolling()) {
+                Some(raw) => SignedAssetSpendV2::decode(&raw[index])?,
+                None => signer.sign(make_intent(payer, nonce, window)?, &key.0, &key.1)?,
+            };
             ensure!(
-                identity == expected,
-                "paired genesis/root/signed bytes changed"
+                signed.intent == make_intent(payer, nonce, window)?,
+                "paired corpus intent changed"
             );
+            Ok(signed)
+        };
+        let first_count = if mode.is_rolling() {
+            rolling::WAVE_ROWS
         } else {
-            corpus.identity = Some(identity);
-            corpus.signed = Some(raw.clone());
+            count
+        };
+        rolling::append_signed_rows(
+            &mut raw,
+            &mut observations,
+            &mut workload_hash,
+            first_count,
+            SpendWindow::after(0)?,
+            fee,
+            &make_signed,
+        )?;
+        if mode.is_rolling() {
+            ensure!(
+                corpus
+                    .rolling_identity
+                    .is_none_or(|identity| identity == (domain, material.expected_initial_root)),
+                "rolling approved genesis/root changed"
+            );
+        } else if let Some(expected) = corpus.identity {
+            let input_hash: Hash = workload_hash.clone().finalize().into();
+            ensure!(
+                expected == (domain, material.expected_initial_root, input_hash),
+                "paired genesis/root/signed bytes changed before node startup"
+            );
         }
-        evidence["signed_workload_sha256"] = json!(hex(&workload_hash));
+        evidence["signed_workload_sha256"] = json!(hex(&workload_hash.clone().finalize()));
         evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
         let ingress = (0..4)
             .find(|i| {
@@ -579,56 +628,90 @@ fn run_native_uca_load(
                 "NUAS load HTTP listener unexpectedly open"
             );
         }
-        let inputs = raw
-            .chunks(frame_rows)
-            .enumerate()
-            .map(|(batch, rows)| {
-                let hints = (0..rows.len())
-                    .map(|i| {
-                        (
-                            account_bytes((batch * frame_rows + i) % SENDERS).to_vec(),
-                            account_bytes(SENDERS).to_vec(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                clients[ingress].prepare_uca(Arc::new(UcaSpendBatch::from_raw(
-                    rows,
-                    &hints,
-                    UcaSpendBatchLimits {
-                        transactions: frame_rows,
-                        transaction_bytes: MAX_SIGNED_SPEND_BYTES,
-                        body_bytes: CANONICAL_BODY_BYTES,
-                    },
-                )?))
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let inputs = rolling::prepare_inputs(&mut clients[ingress], &raw, 0, frame_rows)?;
         evidence["application_object_bytes"] = json!(inputs
             .iter()
             .map(PreparedApplicationInput::byte_len)
             .collect::<Vec<_>>());
         phase = "native submission through four-node final receipt observation";
         timed_attempt = Some(Instant::now());
-        measured = Some(drive(
-            &mut nodes,
-            &mut clients,
-            ingress,
-            &inputs,
-            frame_rows,
-            &mut observations,
-            &mut counts,
-            timeout,
-        )?);
+        measured = Some(if mode.is_rolling() {
+            rolling::drive_rolling(
+                &mut nodes,
+                &mut clients,
+                ingress,
+                inputs,
+                frame_rows,
+                &mut raw,
+                &mut observations,
+                &mut workload_hash,
+                &mut counts,
+                timeout,
+                count,
+                fee,
+                &make_signed,
+                &mut evidence,
+            )?
+        } else {
+            drive(
+                &mut nodes,
+                &mut clients,
+                ingress,
+                &inputs,
+                frame_rows,
+                &mut observations,
+                &mut counts,
+                timeout,
+            )?
+        });
         timed_attempt = None;
+        let workload_hash: Hash = workload_hash.finalize().into();
+        if mode.is_rolling() {
+            corpus.rolling_identity = Some((domain, material.expected_initial_root));
+            evidence["rolling_signature_65536"] = json!(if count == 65_536 {
+                "EXECUTED"
+            } else {
+                "REDUCED_DIAGNOSTIC"
+            });
+        } else {
+            let identity = (domain, material.expected_initial_root, workload_hash);
+            if let Some(expected) = corpus.identity {
+                ensure!(
+                    identity == expected,
+                    "paired genesis/root/signed bytes changed"
+                );
+            } else {
+                corpus.identity = Some(identity);
+                corpus.signed = Some(raw.clone());
+            }
+        }
+        evidence["signed_workload_sha256"] = json!(hex(&workload_hash));
+        evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
         ensure!(
             counts.successful_transactions == count && counts.business_failed_transactions == 0,
             "NUAS load did not finalize all successful transactions"
         );
         let before = ready(&mut nodes, &mut clients)?;
         same_head(&before, before[0])?;
+        if mode.is_rolling() {
+            ensure!(
+                evidence["rolling_waves"]
+                    .as_array()
+                    .and_then(|waves| waves.last())
+                    .and_then(|wave| wave["final_height"].as_u64())
+                    == Some(before[0].height),
+                "rolling final receipt height differs from original four-node final audit"
+            );
+        }
         ensure!(
-            before[0].height <= 257,
+            mode.is_rolling() || before[0].height < 257,
             "static NUAS intent window exceeded"
         );
+        let query_window = if mode.is_rolling() {
+            SpendWindow::after(before[0].height)?
+        } else {
+            SpendWindow::after(0)?
+        };
         evidence["before"] = json!(before);
         let remaining = FUNDING
             .checked_sub(rounds as u128 * debit)
@@ -648,7 +731,11 @@ fn run_native_uca_load(
         for client in &mut clients {
             let mut states = Vec::new();
             for payer in 0..=SENDERS {
-                let view = read_uca_state(client, &make_intent(payer, rounds as u64)?, payer)?;
+                let view = read_uca_state(
+                    client,
+                    &make_intent(payer, rounds as u64, query_window)?,
+                    payer,
+                )?;
                 let expected_nonce = if payer == SENDERS { 0 } else { rounds as u64 };
                 let expected_budget = if payer == SENDERS { FUNDING } else { remaining };
                 let expected_balance = if payer == SENDERS {
@@ -665,7 +752,7 @@ fn run_native_uca_load(
                         && view.permits_nov_transfer
                         && !view.revoked
                         && view.not_before_height == 1
-                        && view.expires_at_height == 1000
+                        && view.expires_at_height == grant_expiry
                         && view.max_debit_per_intent == 1000
                         && view.next_nonce == expected_nonce
                         && view.remaining_debit_budget == expected_budget
@@ -739,8 +826,11 @@ fn run_native_uca_load(
         for client in &mut clients {
             for (payer, expected_authority) in authority[0].iter().enumerate() {
                 ensure!(
-                    read_uca_state(client, &make_intent(payer, rounds as u64)?, payer)?
-                        == *expected_authority,
+                    read_uca_state(
+                        client,
+                        &make_intent(payer, rounds as u64, query_window)?,
+                        payer
+                    )? == *expected_authority,
                     "NUAS cold authorization/nonce changed"
                 );
             }
@@ -773,6 +863,7 @@ fn run_native_uca_load(
     latency.sort_unstable();
     evidence["phase"] = json!(phase);
     evidence["passed"] = json!(result.is_ok());
+    evidence["full_65536_workload"] = json!(result.is_ok() && mode.is_rolling() && count == 65_536);
     evidence["error"] = json!(result.as_ref().err().map(|e| format!("{e:#}")));
     evidence["counts"] = json!(counts);
     evidence["elapsed_seconds"] = json!(measured.map(|d| d.as_secs_f64()));
@@ -781,7 +872,8 @@ fn run_native_uca_load(
     evidence["incomplete_timed_attempt_seconds"] =
         json!(timed_attempt.map(|s| s.elapsed().as_secs_f64()));
     evidence["transactions_not_receipt_query_observed_on_all_four"] =
-        json!(observations.iter().filter(|r| !r.complete()).count());
+        json!(count.saturating_sub(observations.iter().filter(|r| r.complete()).count()));
+    evidence["prepared_transactions"] = json!(observations.len());
     evidence["first_height_all_receipt_queries_observed_us"] = json!(observations
         .iter()
         .filter(|r| matches!(r.receipt, Some(ReceiptState::Finalized { height: 1, .. })))
@@ -790,7 +882,11 @@ fn run_native_uca_load(
     evidence["latency_us"] = json!({"p50":percentile(&latency,50),"p95":percentile(&latency,95),
         "p99":percentile(&latency,99),"sample_count":latency.len(),
         "definition":"first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"});
-    evidence["timing"] = json!("same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded");
+    evidence["timing"] = json!(if mode.is_rolling() {
+        "same native load observer: first SDK submission attempt through final unique four-node receipt observation on ONE unpaused clock; all intervening signing/structure/head queries/transport drains included; startup/keygen/first-wave preparation/final audit/cold recovery excluded; not an 8192-inflight static-input comparison"
+    } else {
+        "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded"
+    });
     fs::write(
         directory.join("observations.json"),
         serde_json::to_vec(&observations)?,

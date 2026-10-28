@@ -2,19 +2,20 @@
 //! validator service, wallet replay to the laggard, or alternate publication path.
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::{quote_and_settle, TransferFeeRequest};
+use crate::native_pipeline::service::config::test_asset_genesis::approve_manifest;
 use crate::native_pipeline::service::config::uca_genesis::{
-    UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
-    UcaInitializationConfigV1, INITIALIZATION_CONTEXT_V1,
+    UcaGenesisAccountV2, UcaGenesisGrantV2, UcaGenesisIdentityV2, UcaGenesisManifestV2,
+    UcaInitializationConfigV2,
 };
-use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
 use novovm_protocol::{
-    native_query::{UcaReadIntent, UcaSpendStateView, UcaState},
-    uca_spend::{spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES},
-    uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits},
+    native_query::{AssetReadIntentV2, AssetSpendStateViewV2, AssetState},
+    uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES},
+    uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
 };
 
-const IDS: [&str; 2] = ["uca:process-alice", "uca:process-bob"];
+const ID: &str = "uca:process-owner";
 const ADDRESS: [[u8; 20]; 2] = [[11; 20], [12; 20]];
 const OFFLINE_HEIGHTS: u64 = 40;
 const INITIAL: u128 = 1_000_000;
@@ -57,7 +58,11 @@ fn operator_call(
 }
 
 // Exercise the operator consumer against actual child nodes, not a mock SDK.
-fn operator_submit(nodes: &ProductNodes, index: usize, signed: &SignedUcaSpendV1) -> Result<Value> {
+fn operator_submit(
+    nodes: &ProductNodes,
+    index: usize,
+    signed: &SignedAssetSpendV2,
+) -> Result<Value> {
     use crate::native_pipeline::service::{client::operator, ResidentConfig};
     let node = ResidentConfig::load(&nodes.configs[index])?;
     let config_path = nodes.directory.join("operator-client.json");
@@ -90,10 +95,8 @@ fn operator_submit(nodes: &ProductNodes, index: usize, signed: &SignedUcaSpendV1
             novovm_protocol::native_query::Request {
                 session: [9; 32],
                 sequence: 7,
-                query: Query::UcaSpendState {
-                    intent: UcaReadIntent::new(&signed.intent).map_err(anyhow::Error::msg)?,
-                    payer_hint: AccountId::Bytes20(ADDRESS[0]),
-                    recipient_hint: AccountId::Bytes20(ADDRESS[1]),
+                query: Query::AssetSpendState {
+                    intent: AssetReadIntentV2::new(&signed.intent).map_err(anyhow::Error::msg)?,
                 },
             },
         ))
@@ -106,22 +109,21 @@ fn operator_submit(nodes: &ProductNodes, index: usize, signed: &SignedUcaSpendV1
             "operator UCA state remained pending"
         );
         let observed = operator_call(nodes, &config_path, "query", Some(&query_path))?;
-        if observed["result"]["answer"]["UcaSpendState"] != "Pending" {
+        if observed["result"]["answer"]["AssetSpendState"] != "Pending" {
             break observed;
         }
         std::thread::sleep(Duration::from_millis(5));
     };
     ensure!(
-        query["result"]["answer"]["UcaSpendState"]["Present"]["payer_balance"]
+        query["result"]["answer"]["AssetSpendState"]["Present"]["payer_balance"]
             == INITIAL.to_string()
-            && query["result"]["answer"]["UcaSpendState"]["Present"]["remaining_debit_budget"]
+            && query["result"]["answer"]["AssetSpendState"]["Present"]["remaining_debit_budget"]
                 == INITIAL.to_string(),
         "binary UCA query amount/budget parity"
     );
-    let batch = UcaSpendBatch::from_raw(
+    let batch = AssetSpendBatchV2::from_raw(
         &[signed.encode()?],
-        &[(ADDRESS[0].to_vec(), ADDRESS[1].to_vec())],
-        UcaSpendBatchLimits {
+        AssetSpendBatchLimitsV2 {
             transactions: 2,
             transaction_bytes: MAX_SIGNED_SPEND_BYTES,
             body_bytes: 2 * MAX_SIGNED_SPEND_BYTES,
@@ -145,19 +147,18 @@ fn operator_submit(nodes: &ProductNodes, index: usize, signed: &SignedUcaSpendV1
 
 fn send_uca(
     client: &mut NativeApplicationClient,
-    signed: &SignedUcaSpendV1,
-    payer: usize,
+    signed: &SignedAssetSpendV2,
+    _payer: usize,
 ) -> Result<()> {
-    let batch = Arc::new(UcaSpendBatch::from_raw(
+    let batch = Arc::new(AssetSpendBatchV2::from_raw(
         &[signed.encode()?],
-        &[(ADDRESS[payer].to_vec(), ADDRESS[1 - payer].to_vec())],
-        UcaSpendBatchLimits {
+        AssetSpendBatchLimitsV2 {
             transactions: 2,
             transaction_bytes: MAX_SIGNED_SPEND_BYTES,
             body_bytes: 2 * MAX_SIGNED_SPEND_BYTES,
         },
     )?);
-    let prepared = client.prepare_uca(batch)?;
+    let prepared = client.prepare_asset_spend(batch)?;
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut sent = false;
     loop {
@@ -191,22 +192,20 @@ fn send_uca(
 
 fn state(
     client: &mut NativeApplicationClient,
-    intent: &UcaSpendIntentV1,
-    payer: usize,
-) -> Result<UcaSpendStateView> {
+    intent: &AssetSpendIntentV2,
+    _payer: usize,
+) -> Result<AssetSpendStateViewV2> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         ensure!(Instant::now() < deadline, "NUAS typed state deadline");
         match query(
             client,
-            Query::UcaSpendState {
-                intent: UcaReadIntent::new(intent).map_err(anyhow::Error::msg)?,
-                payer_hint: AccountId::Bytes20(ADDRESS[payer]),
-                recipient_hint: AccountId::Bytes20(ADDRESS[1 - payer]),
+            Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(intent).map_err(anyhow::Error::msg)?,
             },
         )? {
-            Answer::UcaSpendState(UcaState::Present(value)) => return Ok(value),
-            Answer::UcaSpendState(UcaState::Pending) => {}
+            Answer::AssetSpendState(AssetState::Present(value)) => return Ok(*value),
+            Answer::AssetSpendState(AssetState::Pending) => {}
             other => anyhow::bail!("NUAS authoritative state unavailable: {other:?}"),
         }
     }
@@ -214,7 +213,7 @@ fn state(
 
 fn checked_fee(
     receipt: &ReceiptState,
-    signed: &SignedUcaSpendV1,
+    signed: &SignedAssetSpendV2,
     payer: usize,
     genesis: &GenesisConfig,
     fees: &mut FeeState,
@@ -272,7 +271,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
     let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let keys = (0..4)
+    let keys = (0..5)
         .map(|_| {
             let pair = keygen.generate_keypair()?;
             Ok((pair.public_key, pair.expanded_secret_key))
@@ -297,18 +296,24 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         crate::native_pipeline::service::config::native_path(&directory.canonicalize()?);
     let (mut nodes, set) = setup_with_genesis(&directory, binary, base.clone(), 1)?;
     base.genesis_config_commitment = [0; 32];
-    let manifest = UcaGenesisManifestV1 {
+    let manifest = UcaGenesisManifestV2 {
         genesis: base,
+        identities: vec![UcaGenesisIdentityV2 {
+            uca_id: ID.into(),
+            identity_public_key: keys[4].0.clone(),
+        }],
         accounts: (0..2)
             .map(|i| {
-                Ok(UcaGenesisAccountV1 {
-                    uca_id: IDS[i].into(),
+                Ok(UcaGenesisAccountV2 {
+                    uca_id: ID.into(),
                     asset_account: ADDRESS[i].to_vec(),
                     management_public_key: keys[i].0.clone(),
-                    grants: vec![UcaGenesisGrantV1 {
+                    recovery_public_key: None,
+                    grants: vec![UcaGenesisGrantV2 {
                         spend_public_key: keys[i + 2].0.clone(),
-                        grant: SuppliedSpendGrantV1 {
-                            account_id: IDS[i].into(),
+                        grant: SuppliedAssetSpendGrantV2 {
+                            asset: 1,
+                            account: ADDRESS[i].to_vec(),
                             key_ref: spend_key_ref_v1(&keys[i + 2].0)?,
                             authorization_epoch: 1,
                             permits_nov_transfer: true,
@@ -324,22 +329,14 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
             .collect::<Result<Vec<_>>>()?,
     };
     let domain = manifest.signing_domain()?;
-    let manager = runtime.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let approvals = (0..2)
-        .map(|i| {
-            Ok(UcaGenesisApprovalV1 {
-                uca_id: IDS[i].into(),
-                signature: manager.sign(
-                    &keys[i].0,
-                    &keys[i].1,
-                    &manifest.canonical_bytes()?,
-                    INITIALIZATION_CONTEXT_V1,
-                )?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let approval_keys = keys
+        .iter()
+        .map(|(p, s)| (p.as_slice(), s.as_slice()))
+        .collect::<Vec<_>>();
+    let approvals = approve_manifest(&runtime, &manifest, &approval_keys)?;
     let initial = manifest.compile(&runtime, domain, &approvals)?;
-    let material = UcaInitializationConfigV1 {
+    let material = UcaInitializationConfigV2 {
+        identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
         approvals,
         expected_signing_domain: domain,
@@ -386,15 +383,17 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         .max_by_key(|index| validator_key(*index).public_key().to_vec())
         .unwrap();
     let healthy = (0..4).filter(|i| *i != missing).collect::<Vec<_>>();
-    let signer = runtime.uca_spend_signer_v1()?;
-    let intent = |payer: usize, nonce, amount| -> Result<UcaSpendIntentV1> {
-        Ok(UcaSpendIntentV1 {
+    let signer = runtime.asset_spend_signer_v2()?;
+    let intent = |payer: usize, nonce, amount| -> Result<AssetSpendIntentV2> {
+        Ok(AssetSpendIntentV2 {
+            asset: 1,
+            authority_update: None,
             chain_id: CHAIN,
             genesis: domain,
-            account_id: IDS[payer].into(),
+            payer: ADDRESS[payer].to_vec(),
             authorization_epoch: 1,
             spend_key_ref: spend_key_ref_v1(&keys[payer + 2].0)?,
-            recipient_uca: IDS[1 - payer].into(),
+            recipient: ADDRESS[1 - payer].to_vec(),
             amount,
             max_fee: 50,
             nonce,
@@ -403,7 +402,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         })
     };
     let mut evidence = json!({"completed":false,"scope":"four_original_node_processes_one_host_nuas_recovery",
-        "real_processes":4,"real_machines":1,"http_listeners":0,"fixed_quorum":3,
+        "real_processes":4,"real_machines":1,"http_listeners":0,"fixed_quorum":3,"shared_identity_distinct_asset_accounts":true,
         "missing_validator":missing,"offline_heights":OFFLINE_HEIGHTS,"mainnet":false,"tps_acceptance":false,
         "wallet_replay_to_laggard":false,"database_copy":false,"business_proof_verified":false,
         "binary_sha256":hex(&Sha256::digest(fs::read(&nodes.binary)?)),"library_sha256":hex(&Sha256::digest(fs::read(&library)?)),

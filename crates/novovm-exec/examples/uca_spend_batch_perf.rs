@@ -7,7 +7,7 @@
 //! and a previous batch must not warm the next batch's first-call observation.
 use anyhow::{bail, ensure, Context, Result};
 use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -102,7 +102,7 @@ fn run_one(size: usize, dataset: &Path) -> Result<()> {
     let library_open_us = micros(started);
 
     let started = Instant::now();
-    let verifier = facade.uca_spend_verifier_v1()?;
+    let verifier = facade.asset_spend_verifier_v2()?;
     let qualification_us = micros(started);
 
     // This is the first production-shaped verification after the verifier's
@@ -138,7 +138,7 @@ fn run_one(size: usize, dataset: &Path) -> Result<()> {
             "environment":environment,
             "capabilities":capabilities,
             "parameter_set":"ML-DSA-65",
-            "signature_context":"original SPEND_CONTEXT_V1",
+            "signature_context":"original SPEND_CONTEXT_V2",
             "signed_input_prefix_sha256":signed_input_sha256(sample_rows)?,
             "library_open_us":library_open_us,
             "qualification_us":qualification_us,
@@ -172,8 +172,8 @@ struct Sample {
 }
 
 fn measure_batch(
-    verifier: &novovm_exec::uca_spend::UcaSpendVerifierV1,
-    rows: &[SignedUcaSpendV1],
+    verifier: &novovm_exec::uca_spend::AssetSpendVerifierV2,
+    rows: &[SignedAssetSpendV2],
 ) -> Result<Sample> {
     let total_started = Instant::now();
     let started = Instant::now();
@@ -253,11 +253,11 @@ fn steady_sample_count() -> Result<usize> {
     Ok(samples)
 }
 
-fn signed_rows(count: usize) -> Result<Vec<SignedUcaSpendV1>> {
+fn signed_rows(count: usize) -> Result<Vec<SignedAssetSpendV2>> {
     let path = aoem_bindings::default_host_dll_path().canonicalize()?;
     let facade = AoemExecFacade::open(&path, AoemExecOpenOptions::default())?;
     let keys = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let signer = facade.uca_spend_signer_v1()?;
+    let signer = facade.asset_spend_signer_v2()?;
     let pairs = (0..64)
         .map(|_| keys.generate_keypair())
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -265,18 +265,20 @@ fn signed_rows(count: usize) -> Result<Vec<SignedUcaSpendV1>> {
         .map(|i| {
             let key = &pairs[i % pairs.len()];
             signer.sign(
-                UcaSpendIntentV1 {
+                AssetSpendIntentV2 {
                     chain_id: 991_026,
                     genesis: [91; 32],
-                    account_id: format!("uca:perf-payer-{}", i % pairs.len()),
+                    payer: ((i % pairs.len()) as u128).to_be_bytes().repeat(2),
                     authorization_epoch: 1,
                     spend_key_ref: spend_key_ref_v1(&key.public_key)?,
-                    recipient_uca: "uca:perf-recipient".into(),
+                    recipient: vec![0xff; 32],
+                    asset: novovm_protocol::uca_spend::NATIVE_NOV_ASSET,
                     amount: 1,
                     max_fee: 50,
                     nonce: (i / pairs.len()) as u64,
                     not_before_height: 1,
                     expires_at_height: 100,
+                    authority_update: None,
                 },
                 &key.public_key,
                 &key.expanded_secret_key,
@@ -285,7 +287,7 @@ fn signed_rows(count: usize) -> Result<Vec<SignedUcaSpendV1>> {
         .collect()
 }
 
-fn signed_input_sha256(rows: &[SignedUcaSpendV1]) -> Result<String> {
+fn signed_input_sha256(rows: &[SignedAssetSpendV2]) -> Result<String> {
     let mut transcript = Sha256::new();
     for row in rows {
         transcript.update(row.encode()?);
@@ -296,7 +298,7 @@ fn signed_input_sha256(rows: &[SignedUcaSpendV1]) -> Result<String> {
 struct DatasetFile(PathBuf);
 
 impl DatasetFile {
-    fn write(rows: &[SignedUcaSpendV1]) -> Result<Self> {
+    fn write(rows: &[SignedAssetSpendV2]) -> Result<Self> {
         let path = std::env::temp_dir().join(format!(
             "novovm-nuas-mldsa-batch-{}-{}.bin",
             std::process::id(),
@@ -326,7 +328,7 @@ impl Drop for DatasetFile {
     }
 }
 
-fn read_rows(path: &Path) -> Result<Vec<SignedUcaSpendV1>> {
+fn read_rows(path: &Path) -> Result<Vec<SignedAssetSpendV2>> {
     let bytes = fs::read(path)?;
     let mut cursor = 0usize;
     let count = read_u32(&bytes, &mut cursor)? as usize;
@@ -336,7 +338,7 @@ fn read_rows(path: &Path) -> Result<Vec<SignedUcaSpendV1>> {
         let len = read_u32(&bytes, &mut cursor)? as usize;
         let end = cursor.checked_add(len).context("dataset length overflow")?;
         ensure!(end <= bytes.len(), "truncated diagnostic dataset");
-        rows.push(SignedUcaSpendV1::decode(&bytes[cursor..end])?);
+        rows.push(SignedAssetSpendV2::decode(&bytes[cursor..end])?);
         cursor = end;
     }
     ensure!(cursor == bytes.len(), "trailing diagnostic dataset bytes");

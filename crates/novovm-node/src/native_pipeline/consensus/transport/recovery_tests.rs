@@ -133,7 +133,7 @@ fn recovery_reply_namespace_rejects_requests_votes_proposals_and_input() -> Resu
         unreachable!()
     };
     let (uca, uca_limits) = uca::tests::recovery_specimen()?;
-    let Message::UcaBody { batch: uca, .. } = uca else {
+    let Message::AssetBody { batch: uca, .. } = uca else {
         unreachable!()
     };
     for (message, limits) in [
@@ -155,7 +155,7 @@ fn recovery_reply_namespace_rejects_requests_votes_proposals_and_input() -> Resu
             Message::ApflTransactions { scope, batch: apfl },
             apfl_limits,
         ),
-        (Message::UcaTransactions { scope, batch: uca }, uca_limits),
+        (Message::AssetTransactions { scope, batch: uca }, uca_limits),
     ] {
         assert!(encode(&message, limits).is_ok());
         assert!(encode_recovery_reply(&message, limits).is_err());

@@ -330,7 +330,7 @@ impl BoundBatchCapture {
     pub(crate) fn advance_with_seed(
         &mut self,
         max_edge_steps: usize,
-        seed: Option<&crate::native_pipeline::state::frontier::PostStateSeed>,
+        seed: Option<&crate::native_pipeline::state::frontier::StateReadSeed>,
     ) -> Result<CaptureStep> {
         self.capture.advance_with_seed(max_edge_steps, seed)
     }
@@ -406,7 +406,7 @@ impl UnpublishedBatchEffects {
     pub(crate) fn into_poststate_seed(
         self,
         budget: CaptureBudget,
-    ) -> Result<Option<crate::native_pipeline::state::frontier::PostStateSeed>> {
+    ) -> Result<Option<crate::native_pipeline::state::frontier::StateReadSeed>> {
         self.input.into_poststate_seed(self.update, budget)
     }
 

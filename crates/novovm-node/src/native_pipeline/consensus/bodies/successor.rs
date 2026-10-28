@@ -175,6 +175,10 @@ impl CandidateBodies {
                 parent,
                 // Repeated signer entries intentionally keep the LAST actual
                 // receipt nonce; failure need not mean unchanged nonce.
+                // UCA stages nonce writes only for these executed subjects;
+                // rejected authority rows retain the current prefix nonce.
+                // Unmentioned published nonces are unchanged. This remains a
+                // local selection hint, never a grant/balance state overlay.
                 nonce_after: packet
                     .receipt_projection()
                     .iter()
@@ -225,11 +229,6 @@ impl CandidateBodies {
         admitted: Option<&[&AdmittedTransfer]>,
     ) -> Result<bool> {
         ensure!(
-            self.pin.business_program
-                == crate::native_pipeline::business::nov_transfer_batch::program_id(),
-            "UCA native successor body admission is not active; legacy V3 bodies are forbidden"
-        );
-        ensure!(
             Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
             "successor execution owner changed"
         );
@@ -245,21 +244,27 @@ impl CandidateBodies {
             pin == Pin::from_selection(selection),
             "stale successor selection pin"
         );
-        let Message::ApflBody { context, batch } = message.as_ref() else {
-            anyhow::bail!("successor requires original structured APFL body");
+        let context = match message.as_ref() {
+            Message::ApflBody { context, .. } | Message::AssetBody { context, .. } => context,
+            _ => anyhow::bail!("successor requires an original structured APFL/NUAS body"),
         };
+        ensure!(
+            matches!(message.as_ref(), Message::AssetBody { .. })
+                == (self.pin.business_program == uca_program_id()),
+            "successor body wire/profile mismatch"
+        );
         ensure!(
             matches_successor_context(context, &self.pin, pin)?,
             "successor parent/business pins mismatch"
         );
-        let id = transport::apfl_body_id(context, batch, self.codec)?;
+        let id = transport::candidate_body_id(message, self.codec)?;
         if let Some(work) = &self.successor {
             return Ok(!work.retired
                 && work.id == id
                 && Pin::from_selection(&work.selection) == pin);
         }
-        let (request, metadata) = match admitted {
-            Some(rows) => {
+        let (request, metadata) = match (message.as_ref(), admitted) {
+            (Message::ApflBody { batch, .. }, Some(rows)) => {
                 let checked = pipeline.rebind_admitted_apfl(batch.clone(), rows)?;
                 let bytes = checked.retained_metadata_bytes();
                 (
@@ -267,20 +272,41 @@ impl CandidateBodies {
                     bytes,
                 )
             }
-            None => (
+            (Message::ApflBody { batch, .. }, None) => (
                 AuthenticationRequest::from_apfl(batch.clone(), self.policy.clone())?,
                 0,
             ),
+            (Message::AssetBody { batch, .. }, Some(rows)) => {
+                let checked = pipeline.rebind_admitted_uca(batch.clone(), rows)?;
+                let bytes = checked.retained_metadata_bytes();
+                (
+                    AuthenticationRequest::from_authenticated(checked, self.policy.clone())?,
+                    bytes,
+                )
+            }
+            (Message::AssetBody { batch, .. }, None) => (
+                AuthenticationRequest::from_uca_batch(batch.clone(), self.policy.clone())?,
+                0,
+            ),
+            _ => unreachable!("structured successor profile checked above"),
         };
         if !pipeline.can_authenticate_background(&request)? {
             return Ok(false);
         }
-        let charge = transport::encode(message, self.codec)?
+        let mut charge = transport::encode(message, self.codec)?
             .len()
             .checked_mul(2)
             .and_then(|n| n.checked_add(actual.nonce_after.len().checked_mul(96)?))
             .and_then(|n| n.checked_add(metadata))
             .context("successor retained charge overflow")?;
+        // Match ordinary NUAS retention: the original structural dictionary and
+        // expanded locator pairs remain owned while authentication/bind runs.
+        if let Message::AssetBody { batch, .. } = message.as_ref() {
+            charge = charge
+                .checked_add(batch.canonical_bytes())
+                .and_then(|n| batch.len().checked_mul(64).and_then(|h| n.checked_add(h)))
+                .context("NUAS successor retained charge overflow")?;
+        }
         // Reserve one worst-case ordinary body. Optional work must never occupy
         // the last current-height input slot or its logical retained bytes.
         let reserve = self

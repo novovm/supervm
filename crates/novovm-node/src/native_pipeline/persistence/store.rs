@@ -11,11 +11,161 @@ use anyhow::{ensure, Context, Result};
 use novovm_exec::resident::{StorageConfig, StorageSession, StorageWrite};
 use sha2::{Digest, Sha256};
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+#[path = "store_guard_tests.rs"]
+mod guard_tests;
 
 pub(super) const BULK_KEYS: usize = 64;
 const FORMAT_KEY: &[u8] = b"novovm/replacement/candidate-store/format";
 const FORMAT: &[u8] = b"novovm/replacement/candidate-store/v1\0";
+const DOMAIN_GUARD: &str = "NOVOVM-CANDIDATE-DOMAIN";
+const DOMAIN_BYTES: usize = FORMAT.len() + 8 + 32 + 32;
+
+fn is_redirect(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT also covers directory junctions.
+        metadata.file_attributes() & 0x400 != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// No link/junction traversal for the configured store or its ancestry. These
+/// local files remain operator-owned: this is not protection against a hostile
+/// administrator replacing the directory concurrently with an AOEM path open.
+fn reject_redirects(path: &Path) -> Result<std::fs::Metadata> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut leaf = None;
+    for component in absolute.ancestors() {
+        let metadata = std::fs::symlink_metadata(component)
+            .context("candidate store pre-open path missing")?;
+        ensure!(
+            !is_redirect(&metadata),
+            "candidate store pre-open rejects redirected path"
+        );
+        if leaf.is_none() {
+            leaf = Some(metadata);
+        }
+    }
+    leaf.context("candidate store pre-open empty path")
+}
+
+fn guard_options() -> std::fs::OpenOptions {
+    let mut options = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Open the reparse point itself, not its target, if it changes after
+        // the path check. Handle metadata below rejects such an object.
+        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+}
+
+fn create_domain_guard(database: &Path, format: &[u8]) -> Result<()> {
+    ensure!(
+        format.len() == DOMAIN_BYTES,
+        "candidate store guard encoding size"
+    );
+    let parent = database
+        .parent()
+        .context("candidate store parent missing")?;
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    ensure!(
+        reject_redirects(parent)?.is_dir(),
+        "candidate store parent not a directory"
+    );
+    std::fs::create_dir(database)
+        .context("create new candidate database directory (must not exist)")?;
+    ensure!(
+        reject_redirects(database)?.is_dir(),
+        "candidate store new directory missing"
+    );
+    let mut file = guard_options()
+        .write(true)
+        .create_new(true)
+        .open(database.join(DOMAIN_GUARD))
+        .context("create exclusive candidate store domain guard")?;
+    ensure!(
+        !is_redirect(&file.metadata()?),
+        "candidate store guard redirected"
+    );
+    file.write_all(format)?;
+    file.sync_all()
+        .context("sync candidate store domain guard")?;
+    #[cfg(unix)]
+    std::fs::File::open(database)?
+        .sync_all()
+        .context("sync candidate store guard directory")?;
+    // Failure intentionally leaves the incomplete directory in place. Neither
+    // CreateNew nor Existing silently repairs or overwrites it on the next try.
+    Ok(())
+}
+
+fn check_domain_guard(database: &Path, format: &[u8]) -> Result<()> {
+    ensure!(
+        reject_redirects(database)?.is_dir(),
+        "candidate store pre-open database is not a directory"
+    );
+    let path = database.join(DOMAIN_GUARD);
+    let metadata = reject_redirects(&path)
+        .context("candidate store pre-open domain guard missing; no implicit migration")?;
+    ensure!(
+        metadata.is_file() && metadata.len() == DOMAIN_BYTES as u64,
+        "candidate store pre-open domain guard size/type mismatch"
+    );
+    let mut file = guard_options()
+        .read(true)
+        .open(&path)
+        .context("read candidate store pre-open domain guard")?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file() && !is_redirect(&metadata) && metadata.len() == DOMAIN_BYTES as u64,
+        "candidate store pre-open domain guard changed"
+    );
+    let mut bytes = [0; DOMAIN_BYTES];
+    file.read_exact(&mut bytes)?;
+    let mut tail = [0; 1];
+    ensure!(
+        file.read(&mut tail)? == 0 && bytes.as_slice() == format,
+        "candidate store pre-open format/domain mismatch"
+    );
+    reject_redirects(&path)?;
+    let current = reject_redirects(&database.join("CURRENT")).context(
+        "candidate store pre-open CURRENT missing; incomplete initialization is not repaired",
+    )?;
+    ensure!(
+        current.is_file() && current.len() > 0 && current.len() <= 256,
+        "candidate store pre-open CURRENT type/size mismatch"
+    );
+    // This file can only deny opening. The ORIGINAL in-database FORMAT_KEY
+    // remains mandatory after opening; neither file certifies balances, roots,
+    // candidate completeness, consensus finality or asset authorization.
+    Ok(())
+}
 
 /// Explicit configured scope, not an assertion that a parent is trusted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,7 +210,7 @@ pub struct StoreConfig {
 pub enum OpenMode {
     /// Exclusively create an absent directory. Its parent must already exist.
     CreateNew,
-    /// Require the RocksDB CURRENT file and an exact in-database domain marker.
+    /// Require a matching pre-open guard, RocksDB CURRENT and DB domain marker.
     /// The underlying ABI has no read-only/existing-only flag.
     Existing,
 }
@@ -100,14 +250,11 @@ impl CandidateStore {
             "empty candidate storage budget"
         );
         match mode {
-            OpenMode::CreateNew => std::fs::create_dir(&config.database)
-                .context("create new candidate database directory (must not exist)")?,
-            OpenMode::Existing => ensure!(
-                config.database.is_dir() && config.database.join("CURRENT").is_file(),
-                "existing candidate database missing"
-            ),
+            OpenMode::CreateNew => create_domain_guard(&config.database, &format)?,
+            OpenMode::Existing => check_domain_guard(&config.database, &format)?,
         }
-        let mut storage = StorageSession::open(&config.library, &config.database, config.storage)?;
+        let mut storage = StorageSession::open(&config.library, &config.database, config.storage)
+            .context("open AOEM after candidate pre-open guard")?;
         match mode {
             OpenMode::CreateNew => {
                 ensure!(

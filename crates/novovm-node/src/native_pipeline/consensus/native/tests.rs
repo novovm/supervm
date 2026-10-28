@@ -100,6 +100,14 @@ pub(crate) fn codec() -> transport::DecodeLimits {
 }
 impl Mesh {
     pub(crate) fn new(keys: &[FixtureSigningKey], domain: MessageDomain) -> Result<Self> {
+        Self::with_codec(keys, domain, codec())
+    }
+
+    pub(crate) fn with_codec(
+        keys: &[FixtureSigningKey],
+        domain: MessageDomain,
+        codec: transport::DecodeLimits,
+    ) -> Result<Self> {
         let transport_keys = (0..keys.len())
             .map(component_transport_key)
             .collect::<Vec<_>>();
@@ -134,25 +142,25 @@ impl Mesh {
             )?;
             let lanes = std::array::from_fn(|_| LaneLimits {
                 receive: ReassemblyLimits {
-                    max_message_bytes: codec().message_bytes,
+                    max_message_bytes: codec.message_bytes,
                     messages: 12,
-                    bytes: 12 * codec().message_bytes,
+                    bytes: 12 * codec.message_bytes,
                     peer_messages: 4,
-                    peer_bytes: 4 * codec().message_bytes,
+                    peer_bytes: 4 * codec.message_bytes,
                     ttl: Duration::from_secs(30),
                 },
                 send: NativeSendLimits {
                     messages: 12,
-                    bytes: 12 * codec().message_bytes,
+                    bytes: 12 * codec.message_bytes,
                     peer_messages: 4,
-                    peer_bytes: 4 * codec().message_bytes,
+                    peer_bytes: 4 * codec.message_bytes,
                 },
             });
             channels.push(NativeChannel::new(
                 endpoint,
                 domain.clone(),
                 bindings.clone(),
-                codec(),
+                codec,
                 lanes,
                 NativeSendPolicy {
                     window: NovoRudpWindowConfig {

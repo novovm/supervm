@@ -242,7 +242,8 @@ fn native_uca_record_restart_worker() {
     let reader = RecordOverlayV1::new(&nodes, parent_root);
     let parent = read_account(&reader);
     assert_eq!(parent, record());
-    let update = prepare_uca_account_update_v1(&parent, &revoke_wire(&parent), &domain()).unwrap();
+    let update =
+        prepare_asset_spend_account_update_v1(&parent, &revoke_wire(&parent), &domain()).unwrap();
     update
         .require_unchanged_parent(&read_account(&reader))
         .unwrap();
@@ -318,9 +319,12 @@ fn real_aoem_native_uca_records_survive_process_restart() {
         let reopened = read_account(&RecordOverlayV1::new(&nodes, root));
         assert_eq!(reopened.next_nonce, 1);
         assert!(reopened.authorizations.values().next().unwrap().revoked);
-        assert!(
-            prepare_uca_account_update_v1(&reopened, &revoke_wire(&record()), &domain()).is_err()
-        );
+        assert!(prepare_asset_spend_account_update_v1(
+            &reopened,
+            &revoke_wire(&record()),
+            &domain()
+        )
+        .is_err());
         let old = nodes.load_record_prepared([1; 32]).unwrap().unwrap().root();
         assert_eq!(read_account(&RecordOverlayV1::new(&nodes, old)), record());
         // Incremental consensus projection must equal cold typed-state import.

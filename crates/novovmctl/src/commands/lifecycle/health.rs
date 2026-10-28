@@ -607,7 +607,7 @@ fn ledger_observation(answer: &Value) -> CheckState {
             return CheckState::Failed;
         }
         balance
-    } else if let Some(uca) = answer.get("UcaSpendState") {
+    } else if let Some(uca) = answer.get("AssetSpendState") {
         if uca == "Pending" {
             return CheckState::Unavailable;
         }
@@ -927,12 +927,12 @@ mod tests {
             CheckState::Unavailable
         );
         assert_eq!(
-            ledger_observation(&json!({"UcaSpendState":"Pending"})),
+            ledger_observation(&json!({"AssetSpendState":"Pending"})),
             CheckState::Unavailable
         );
         assert_eq!(
             ledger_observation(
-                &json!({"UcaSpendState":{"Missing":{"height":1,"state_root":vec![4;32]}}})
+                &json!({"AssetSpendState":{"Missing":{"height":1,"state_root":vec![4;32]}}})
             ),
             CheckState::Verified
         );

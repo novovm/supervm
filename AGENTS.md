@@ -1,5 +1,34 @@
 # Agent Highest Law
 
+## 2026-10-28 UCA identity is not an asset account
+
+The user's latest correction supersedes any earlier implication that a UCA is
+the unique NOV debit/credit account. UCA is the unique NOVONET identity; one UCA
+may be associated with many concrete asset accounts. Quick-payment and savings
+accounts each have their OWN public/private key pair, balances and account-bound
+spending authority. Both retain the approved ML-DSA-65 single-signature suite;
+independent keys do not mean a mandatory dual signature or two algorithms.
+
+Native transfers must cryptographically bind the concrete payer and recipient
+asset accounts, asset, amount, fee, nonce, chain/signing domain and validity.
+UCA lookup may help select an account BEFORE signing; it must not substitute an
+unsigned address hint for the signed recipient. Identity possession, common UCA
+ownership or identity recovery does not grant cross-account spending authority.
+The quick-payment key cannot spend savings. Replay state stays with the concrete
+account across its authorized key rotation, not with a UCA-wide shared balance
+or a newly generated public key.
+
+Correct the original shared transaction contract and its existing consumers;
+do not keep optimizing UCA-as-address as the intended product model. The v1
+SignedUcaSpendV1 contract signed UCA identifiers and depended on binding checks;
+the explicitly versioned v2 candidate signs concrete asset accounts and rejects
+v1 instead of reinterpreting its bytes. Identity suspension/recovery/unbinding
+does not automatically freeze or transfer asset authority. Preserve the original pipeline, AOEM owner,
+account authorization/revocation/limits, fees, durability and evidence. No second
+account system, transfer route, database reset, main advance or deployment is
+authorized by this clarification. See the latest section of
+docs/NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md.
+
 ## 2026-10-26 authorized batch branch and staged validation
 
 The user authorizes ONE temporary integration branch for this development batch:

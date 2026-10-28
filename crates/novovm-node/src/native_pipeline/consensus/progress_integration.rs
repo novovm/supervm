@@ -23,6 +23,8 @@ use std::collections::VecDeque;
 mod deadline;
 #[path = "native_early_height_integration.rs"]
 mod early_height;
+#[path = "native_early_vote_integration.rs"]
+mod early_vote;
 #[path = "native_lifecycle_integration.rs"]
 mod lifecycle;
 #[path = "published_projection_integration.rs"]
@@ -84,6 +86,15 @@ struct Fixture {
     drivers: Vec<RoundProgress>,
 }
 fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
+    fixture_with(backend, codec(), initialize, pipeline_config)
+}
+
+fn fixture_with(
+    backend: ExecutionBackend,
+    codec: transport::DecodeLimits,
+    initialize: impl Fn(&Path) -> Result<Hash>,
+    configure: impl Fn(&Path) -> Result<PipelineConfig>,
+) -> Result<Fixture> {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/runtime-rebuild/consensus-tests")
         .join(format!(
@@ -118,7 +129,7 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
             )
         })
         .collect();
-    let mesh = Mesh::new(
+    let mesh = Mesh::with_codec(
         &keys,
         MessageDomain {
             chain_id: CHAIN,
@@ -126,6 +137,7 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
             protocol: PROTOCOL,
             validators: set.clone(),
         },
+        codec,
     )?;
     let mut services = Services::default();
     let mut anchor = None;
@@ -143,7 +155,7 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
             anchor.unwrap().state_root == root,
             "different fixture genesis"
         );
-        let mut config = pipeline_config(path)?;
+        let mut config = configure(path)?;
         config.execution_backend = backend;
         services
             .0

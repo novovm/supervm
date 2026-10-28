@@ -5,7 +5,7 @@ use crate::native_pipeline::consensus::{
     statement::ParentPoint, transport::TransactionsScope, wire::Context as VoteContext,
 };
 use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
-use novovm_protocol::uca_spend_batch::UcaSpendBatch;
+use novovm_protocol::uca_spend_batch::AssetSpendBatchV2;
 
 /// The cheap availability hint retains its existing conservative bounds. Only
 /// this exact, prepared-message check grants the final local reservation; the
@@ -76,8 +76,11 @@ impl NativeLifecycle {
         }))
     }
 
-    pub fn uca_transactions_message(&mut self, batch: Arc<UcaSpendBatch>) -> Result<Arc<Message>> {
-        Ok(Arc::new(Message::UcaTransactions {
+    pub fn uca_transactions_message(
+        &mut self,
+        batch: Arc<AssetSpendBatchV2>,
+    ) -> Result<Arc<Message>> {
+        Ok(Arc::new(Message::AssetTransactions {
             scope: self.next_transactions_scope()?,
             batch,
         }))
@@ -132,7 +135,7 @@ impl NativeLifecycle {
                 message.as_ref(),
                 Message::Transactions { .. }
                     | Message::ApflTransactions { .. }
-                    | Message::UcaTransactions { .. }
+                    | Message::AssetTransactions { .. }
             ),
             "expected signed-input dissemination"
         );

@@ -59,6 +59,59 @@ fn uca_cache_requires_initialized_nonce_even_after_eviction() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn bulk_observed_nonce_avoids_point_read_and_retires_redundant_notification() -> Result<()> {
+    let mut cache = cache(2);
+    cache.require_initialized_subjects();
+    let parent = parent(3);
+    let owner = subject(1);
+    cache.poll(parent, [owner].into_iter(), |_, _| {
+        Ok(Some(Completion::Pending))
+    })?;
+    cache.observe_present_at_parent(parent, owner, 7)?;
+    assert_eq!(cache.lookup(&owner), Lookup::Present(7));
+    assert!(cache.reads.is_empty());
+    assert!(!cache.poll(parent, [owner].into_iter(), |_, _| {
+        panic!("bulk-captured nonce must not be point-read again")
+    })?);
+    let (order, pending) = pending(owner, &[6, 7, 8]);
+    assert_eq!(
+        select_pending_batch(&order, &pending, &cache.values, BTreeMap::new(), 8),
+        vec![order[1], order[2]]
+    );
+    Ok(())
+}
+
+#[test]
+fn bulk_nonce_observation_cannot_change_parent_or_replace_a_conflicting_fact() -> Result<()> {
+    let mut cache = cache(2);
+    let old = parent(3);
+    let owner = subject(1);
+    assert!(cache.observe_present_at_parent(old, owner, 7).is_err());
+    cache.bind_current_parent(old);
+    cache.observe_present_at_parent(old, owner, 7)?;
+    cache.observe_present_at_parent(old, owner, 7)?;
+    assert!(cache.observe_present_at_parent(old, owner, 8).is_err());
+    let different_decision = ParentPoint {
+        decision_hash: subject(999),
+        ..old
+    };
+    assert!(cache
+        .observe_present_at_parent(different_decision, owner, 7)
+        .is_err());
+    assert_eq!(cache.parent, Some(old));
+    assert_eq!(cache.lookup(&owner), Lookup::Present(7));
+    cache.bind_current_parent(parent(4));
+    assert!(cache.observe_present_at_parent(old, owner, 7).is_err());
+    assert_eq!(cache.lookup(&owner), Lookup::Unknown);
+    cache.accept_read(parent(4), owner, None)?;
+    assert!(cache
+        .observe_present_at_parent(parent(4), owner, 0)
+        .is_err());
+    assert_eq!(cache.lookup(&owner), Lookup::Absent);
+    Ok(())
+}
+
 fn pending(subject: Hash, nonces: &[u64]) -> (VecDeque<Hash>, BTreeMap<Hash, Pending>) {
     let mut order = VecDeque::new();
     let mut pending = BTreeMap::new();

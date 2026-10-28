@@ -11776,6 +11776,43 @@ mod tests {
         EnvVarRestoreV1 { key, previous }
     }
 
+    #[test]
+    fn runtime_fixture_chain_cleanup_preserves_other_chain_requests() {
+        let cleared_chain = 20_271_110_u64;
+        let retained_chain = 20_271_111_u64;
+        let peer = 71;
+        let request_id = 73;
+        let height = 75;
+        for chain in [cleared_chain, retained_chain] {
+            clear_network_runtime_native_snapshots_for_chain_v1(chain);
+            mark_eth_fullnode_native_header_inflight_v1(chain, peer, request_id, height, 0, false);
+        }
+        clear_network_runtime_native_snapshots_for_chain_v1(cleared_chain);
+        clear_eth_fullnode_native_header_inflight_peer_v1(cleared_chain, peer);
+        {
+            let inflight = eth_fullnode_native_header_inflight_v1()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert!(!inflight.contains_key(&(cleared_chain, height, 0, false, peer)));
+            assert_eq!(
+                inflight
+                    .get(&(retained_chain, height, 0, false, peer))
+                    .expect("another chain's request must remain in flight")
+                    .request_id,
+                request_id
+            );
+        }
+        assert!(!should_dispatch_eth_fullnode_native_header_request_v1(
+            retained_chain,
+            peer,
+            height,
+            0,
+            false
+        ));
+        clear_eth_fullnode_native_header_inflight_peer_v1(retained_chain, peer);
+        clear_network_runtime_native_snapshots_for_chain_v1(retained_chain);
+    }
+
     const LIVE_MAINNET_BOOTNODES: [&str; 4] = [
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
         "enode://22a8232c3abc76a16ae9d6c3b164f98775fe226f0917b0ca871128a74a8e9630b458460865bab457221f1d448dd9791d24c4e5d88786180ac185df813a68d4de@3.209.45.79:30303",
@@ -12918,7 +12955,7 @@ mod tests {
 
     #[test]
     fn rlpx_block_headers_ingest_rejects_unrequested_response_v1() {
-        let chain_id = 9_928_u64;
+        let chain_id = 20_271_101_u64;
         let mut session = dummy_rlpx_live_session(chain_id);
         let header = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
@@ -13256,7 +13293,7 @@ mod tests {
 
     #[test]
     fn rlpx_small_header_batch_import_requests_current_first_body_suffix_at_highest_v1() {
-        let chain_id = 9_928_003_u64;
+        let chain_id = 20_271_102_u64;
         let peer_id = 79_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         set_network_runtime_sync_status(
@@ -13338,7 +13375,7 @@ mod tests {
 
     #[test]
     fn rlpx_product_header_batch_requests_current_body_at_known_highest_v1() {
-        let chain_id = 9_928_004_u64;
+        let chain_id = 20_271_103_u64;
         let peer_id = 80_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         set_network_runtime_sync_status(
@@ -13422,7 +13459,7 @@ mod tests {
 
     #[test]
     fn rlpx_response_ingest_rejects_unrequested_response_messages_v1() {
-        let chain_id = 9_929_u64;
+        let chain_id = 20_271_104_u64;
         let mut session = dummy_rlpx_live_session(chain_id);
         let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
         let tx_hash = [0xa1; 32];
@@ -14819,7 +14856,7 @@ mod tests {
 
     #[test]
     fn rlpx_missing_body_recovery_rebuilds_batch_from_retained_headers() {
-        let chain_id = 9_926_107_u64;
+        let chain_id = 20_271_105_u64;
         let peer_id = 1_300_108_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
 
@@ -15611,7 +15648,7 @@ mod tests {
 
     #[test]
     fn real_rlpx_worker_recovers_missing_body_before_read_timeout_v1() {
-        let chain_id = 9_926_106_u64;
+        let chain_id = 20_271_106_u64;
         let local = NodeId(1_300_106);
         let remote = NodeId(1_300_107);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -17875,7 +17912,7 @@ mod tests {
 
     #[test]
     fn native_peer_worker_plan_is_multi_peer_but_budget_bounded() {
-        let chain_id = 9_914_u64;
+        let chain_id = 20_271_107_u64;
         let local = NodeId(1_100);
         let peers = vec![NodeId(1_101), NodeId(1_102), NodeId(1_103), NodeId(1_104)];
         let mut budget = default_eth_fullnode_budget_hooks_v1();
@@ -18042,6 +18079,7 @@ mod tests {
         let local = NodeId(1_111);
         let bad_peer = NodeId(1_112);
         let good_peer = NodeId(1_113);
+        let (observed, ready_to_close) = std::sync::mpsc::sync_channel::<()>(0);
 
         let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -18131,7 +18169,10 @@ mod tests {
                 peer_status_code,
                 crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
             );
-            thread::sleep(Duration::from_millis(300));
+            // Keep the peer alive until the test observes the bootstrap result.
+            // A fixed sleep could expire before the concurrent test runner
+            // reached its ready-state assertion and correctly record disconnect.
+            let _ = ready_to_close.recv_timeout(Duration::from_secs(5));
         });
 
         let mut budget = default_eth_fullnode_budget_hooks_v1();
@@ -18173,6 +18214,7 @@ mod tests {
         assert_eq!(report.lifecycle_summary.permanently_rejected_count, 1);
         assert!(report.lifecycle_summary.ready_count >= 1);
 
+        observed.send(()).expect("release observed bootstrap peer");
         server.join().expect("server join");
     }
 
@@ -19211,7 +19253,7 @@ mod tests {
 
     #[test]
     fn evm_protocol_observable_equivalence_network_rlpx_header_body_service_gate_v3() {
-        let chain_id = 9_925_u64;
+        let chain_id = 20_271_108_u64;
         let local = NodeId(1_290);
         let remote = NodeId(1_291);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -21416,7 +21458,7 @@ mod tests {
 
     #[test]
     fn evm_protocol_observable_equivalence_network_rlpx_bal_request_materializes_gate_v3() {
-        let chain_id = 9_925_u64;
+        let chain_id = 20_271_109_u64;
         let local = NodeId(1_282);
         let remote = NodeId(1_283);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -24493,6 +24535,7 @@ mod tests {
         let chain_id = 9_945_u64;
         let local = NodeId(1_450);
         let remote = NodeId(1_451);
+        let (observed, ready_to_close) = std::sync::mpsc::sync_channel::<()>(0);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         set_network_runtime_sync_status(
             chain_id,
@@ -24604,7 +24647,9 @@ mod tests {
                 payload.as_slice(),
             )
             .expect("write block range update");
-            thread::sleep(Duration::from_millis(250));
+            // The assertion below requires a live peer, not just a retained
+            // highest-block hint. Close only after that observation completes.
+            let _ = ready_to_close.recv_timeout(Duration::from_secs(5));
         });
 
         let mut budget = default_eth_fullnode_budget_hooks_v1();
@@ -24644,6 +24689,9 @@ mod tests {
             snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[remote])[0].clone();
         assert_eq!(snapshot.last_head_height, 512);
 
+        observed
+            .send(())
+            .expect("release observed block-range peer");
         server.join().expect("server join");
     }
 

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 mod capture;
 pub use capture::{BulkCapture, CaptureStep};
 mod seed;
-pub(crate) use seed::PostStateSeed;
+pub(crate) use seed::StateReadSeed;
 mod witness;
 
 #[derive(Clone, Debug)]

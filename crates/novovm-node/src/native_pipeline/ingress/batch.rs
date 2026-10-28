@@ -32,7 +32,7 @@ pub struct AuthenticationBudget {
 pub(crate) enum BatchSource {
     Raw(Vec<Vec<u8>>),
     Apfl(Arc<ApflTransferBatch>),
-    Uca(Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>),
+    Uca(Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>),
 }
 
 impl BatchSource {
@@ -119,7 +119,7 @@ pub enum AdmissionInput {
         index: usize,
     },
     Uca {
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         index: usize,
     },
 }
@@ -129,7 +129,7 @@ impl AdmissionInput {
         match self {
             Self::Raw(raw) => Ok(raw.len()),
             Self::Apfl { batch, index } => batch.row(*index)?.encoded_len(),
-            Self::Uca { batch, index } => Ok(batch.raw_transaction(*index)?.len()),
+            Self::Uca { batch, index } => Ok(batch.transaction_bytes(*index)?),
         }
     }
 
@@ -152,8 +152,8 @@ pub struct AdmissionRow {
 pub enum CheckedAdmission {
     V3(SignatureCheckedTransfer),
     Uca {
-        checked: novovm_exec::uca_spend::SignatureCheckedUcaSpendV1,
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        checked: novovm_exec::uca_spend::SignatureCheckedAssetSpendV2,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         index: usize,
     },
 }
@@ -166,7 +166,7 @@ impl CheckedAdmission {
         }
     }
 
-    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedUcaSpendV1> {
+    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedAssetSpendV2> {
         match self {
             Self::Uca { checked, .. } => Some(checked),
             Self::V3(_) => None,
@@ -489,7 +489,7 @@ impl SignatureCheckedCapture {
     pub(crate) fn advance_with_seed(
         &mut self,
         max_edge_steps: usize,
-        seed: Option<&crate::native_pipeline::state::frontier::PostStateSeed>,
+        seed: Option<&crate::native_pipeline::state::frontier::StateReadSeed>,
     ) -> Result<CaptureStep> {
         self.capture.advance_with_seed(max_edge_steps, seed)
     }

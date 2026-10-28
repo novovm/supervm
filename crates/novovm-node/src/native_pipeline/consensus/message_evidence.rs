@@ -78,7 +78,7 @@ pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvide
     match message {
         Message::Body { context, .. }
         | Message::ApflBody { context, .. }
-        | Message::UcaBody { context, .. } => {
+        | Message::AssetBody { context, .. } => {
             ensure!(
                 context.chain_id == config.chain_id
                     && context.genesis_config_commitment == config.genesis
@@ -93,7 +93,7 @@ pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvide
         }
         Message::Transactions { scope, .. }
         | Message::ApflTransactions { scope, .. }
-        | Message::UcaTransactions { scope, .. }
+        | Message::AssetTransactions { scope, .. }
         | Message::TransactionsTaken { scope, .. } => {
             scope.validate_shape()?;
             ensure!(

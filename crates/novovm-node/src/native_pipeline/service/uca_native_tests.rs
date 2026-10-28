@@ -9,20 +9,24 @@ use super::*;
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
 use crate::native_pipeline::consensus::crypto::AoemConsensusCrypto;
+use crate::native_pipeline::service::config::test_asset_genesis::approve_manifest;
 use config::uca_genesis::{
-    UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
-    UcaInitializationConfigV1, INITIALIZATION_CONTEXT_V1,
+    UcaGenesisAccountV2, UcaGenesisGrantV2, UcaGenesisIdentityV2, UcaGenesisManifestV2,
+    UcaInitializationConfigV2,
 };
-use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
 use novovm_network::novorudp::object_sender::ObjectSendState;
 use novovm_protocol::{
     native_query::{
-        AccountId, Answer, Query, ReceiptState, UcaReadIntent, UcaSpendStateView, UcaState,
+        Answer, AssetReadIntentV2, AssetSpendStateViewV2, AssetState, Query, ReceiptState,
     },
-    uca_spend::{spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES},
-    uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits},
+    uca_spend::{
+        spend_key_ref_v1, AssetAuthorityUpdateV2, AssetGrantConfigV2, AssetSpendIntentV2,
+        SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES,
+    },
+    uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
 };
 use sha2::{Digest, Sha256};
 use std::{net::UdpSocket, path::PathBuf};
@@ -172,20 +176,19 @@ fn tick(nodes: &mut [rpc::RpcLifecycle]) -> Result<()> {
 fn send(
     nodes: &mut [rpc::RpcLifecycle],
     client: &mut client::NativeApplicationClient,
-    signed: &SignedUcaSpendV1,
-    payer: usize,
-    recipient: usize,
+    signed: &SignedAssetSpendV2,
+    _payer: usize,
+    _recipient: usize,
 ) -> Result<()> {
-    let batch = Arc::new(UcaSpendBatch::from_raw(
+    let batch = Arc::new(AssetSpendBatchV2::from_raw(
         &[signed.encode()?],
-        &[(ADDRESSES[payer].to_vec(), ADDRESSES[recipient].to_vec())],
-        UcaSpendBatchLimits {
+        AssetSpendBatchLimitsV2 {
             transactions: 2,
             transaction_bytes: MAX_SIGNED_SPEND_BYTES,
             body_bytes: 2 * MAX_SIGNED_SPEND_BYTES,
         },
     )?);
-    let prepared = client.prepare_uca(batch)?;
+    let prepared = client.prepare_asset_spend(batch)?;
     let deadline = Instant::now() + TIMEOUT;
     let mut sent = false;
     loop {
@@ -234,7 +237,7 @@ fn query(
 fn receipt(
     nodes: &mut [rpc::RpcLifecycle],
     client: &mut client::NativeApplicationClient,
-    signed: &SignedUcaSpendV1,
+    signed: &SignedAssetSpendV2,
 ) -> Result<ReceiptState> {
     let hash = Sha256::digest(signed.intent.signing_bytes()?).into();
     let deadline = Instant::now() + TIMEOUT;
@@ -257,44 +260,121 @@ fn receipt(
 fn state(
     nodes: &mut [rpc::RpcLifecycle],
     client: &mut client::NativeApplicationClient,
-    intent: &UcaSpendIntentV1,
-    payer: usize,
-    recipient: usize,
-) -> Result<UcaSpendStateView> {
+    intent: &AssetSpendIntentV2,
+    _payer: usize,
+    _recipient: usize,
+) -> Result<AssetSpendStateViewV2> {
     let deadline = Instant::now() + TIMEOUT;
     loop {
         ensure!(Instant::now() < deadline, "native UCA state timeout");
-        if let Answer::UcaSpendState(UcaState::Present(view)) = query(
+        if let Answer::AssetSpendState(AssetState::Present(view)) = query(
             nodes,
             client,
-            Query::UcaSpendState {
-                intent: UcaReadIntent::new(intent).map_err(anyhow::Error::msg)?,
-                payer_hint: AccountId::Bytes20(ADDRESSES[payer]),
-                recipient_hint: AccountId::Bytes20(ADDRESSES[recipient]),
+            Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(intent).map_err(anyhow::Error::msg)?,
             },
         )? {
-            return Ok(view);
+            return Ok(*view);
         }
     }
 }
 
-fn fee(receipt: ReceiptState, height: u64) -> Result<u128> {
+fn fee(receipt: ReceiptState, height: u64, expected_nonce: u64) -> Result<u128> {
     if let ReceiptState::Finalized {
         success: true,
-        nonce_after: 1,
+        nonce_after,
         charged_fee,
         height: actual,
         ..
     } = receipt
     {
         ensure!(
-            actual == height && charged_fee > 0,
-            "wrong finalized height/fee"
+            actual == height && nonce_after == expected_nonce && charged_fee > 0,
+            "wrong finalized height/nonce/fee"
         );
         Ok(charged_fee)
     } else {
         anyhow::bail!("unexpected UCA receipt {receipt:?}")
     }
+}
+
+fn publish(
+    nodes: &mut [rpc::RpcLifecycle],
+    clients: &mut [client::NativeApplicationClient],
+    ingress: usize,
+    signed: &SignedAssetSpendV2,
+) -> Result<ReceiptState> {
+    send(nodes, &mut clients[ingress], signed, 0, 0)?;
+    let receipts = clients
+        .iter_mut()
+        .map(|client| receipt(nodes, client, signed))
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        receipts.iter().all(|r| r == &receipts[0]),
+        "asset lifecycle four-node receipts differ"
+    );
+    Ok(receipts[0])
+}
+
+fn account_views(
+    nodes: &mut [rpc::RpcLifecycle],
+    clients: &mut [client::NativeApplicationClient],
+    alice: &AssetSpendIntentV2,
+    bob: &AssetSpendIntentV2,
+) -> Result<Vec<(AssetSpendStateViewV2, AssetSpendStateViewV2)>> {
+    let views = clients
+        .iter_mut()
+        .map(|client| {
+            Ok((
+                state(nodes, client, alice, 0, 1)?,
+                state(nodes, client, bob, 1, 0)?,
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        views.iter().all(|v| v == &views[0]) && views[0].0.state_root == views[0].1.state_root,
+        "asset lifecycle four-node authority/ledger roots differ"
+    );
+    Ok(views)
+}
+
+/// The original public ingress must reject unauthorized management/spending
+/// without a candidate, fee, nonce, grant or authority mutation on ANY node.
+fn reject_unchanged(
+    nodes: &mut [rpc::RpcLifecycle],
+    clients: &mut [client::NativeApplicationClient],
+    ingress: usize,
+    signed: &SignedAssetSpendV2,
+    observations: (&AssetSpendIntentV2, &AssetSpendIntentV2),
+) -> Result<()> {
+    let before = account_views(nodes, clients, observations.0, observations.1)?;
+    let baseline = match query(nodes, &mut clients[ingress], Query::Status)? {
+        Answer::Status(status) => status.rejected_inputs,
+        other => anyhow::bail!("asset lifecycle status {other:?}"),
+    };
+    send(nodes, &mut clients[ingress], signed, 0, 0)?;
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "unauthorized lifecycle input not rejected"
+        );
+        if let Answer::Status(status) = query(nodes, &mut clients[ingress], Query::Status)? {
+            ensure!(
+                status.height == before[0].0.height && status.pending == 0,
+                "unauthorized lifecycle input created state/work"
+            );
+            if status.rejected_inputs > baseline {
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        account_views(nodes, clients, observations.0, observations.1)?,
+        before,
+        "authorization refusal changed authority, budget, nonce, balance or root"
+    );
+    Ok(())
 }
 
 #[test]
@@ -325,13 +405,15 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         .map(|index| config::test_custody::generate_node_keys(&directory, 781, index, &crypto))
         .collect::<Result<Vec<_>>>()?;
     let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let keys = (0..4)
+    // Independent: two managers, two spending keys, one shared identity, two
+    // recovery keys, two replacement spending keys and a replacement manager.
+    let keys = (0..10)
         .map(|_| {
             let pair = keygen.generate_keypair()?;
             Ok((pair.public_key, pair.expanded_secret_key))
         })
         .collect::<Result<Vec<_>>>()?;
-    let manifest = UcaGenesisManifestV1 {
+    let manifest = UcaGenesisManifestV2 {
         genesis: GenesisConfig {
             chain_id: 781,
             validator_epoch: 1,
@@ -359,16 +441,22 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
             ],
             policy: policy(),
         },
+        identities: vec![UcaGenesisIdentityV2 {
+            uca_id: IDS[0].into(),
+            identity_public_key: keys[4].0.clone(),
+        }],
         accounts: (0..2)
             .map(|i| {
-                Ok(UcaGenesisAccountV1 {
-                    uca_id: IDS[i].into(),
+                Ok(UcaGenesisAccountV2 {
+                    uca_id: IDS[0].into(),
                     asset_account: ADDRESSES[i].to_vec(),
                     management_public_key: keys[i].0.clone(),
-                    grants: vec![UcaGenesisGrantV1 {
+                    recovery_public_key: Some(keys[i + 5].0.clone()),
+                    grants: vec![UcaGenesisGrantV2 {
                         spend_public_key: keys[i + 2].0.clone(),
-                        grant: SuppliedSpendGrantV1 {
-                            account_id: IDS[i].into(),
+                        grant: SuppliedAssetSpendGrantV2 {
+                            asset: 1,
+                            account: ADDRESSES[i].to_vec(),
                             key_ref: spend_key_ref_v1(&keys[i + 2].0)?,
                             authorization_epoch: 1,
                             permits_nov_transfer: true,
@@ -384,22 +472,14 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
             .collect::<Result<Vec<_>>>()?,
     };
     let domain = manifest.signing_domain()?;
-    let management = runtime.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let approvals = (0..2)
-        .map(|i| {
-            Ok(UcaGenesisApprovalV1 {
-                uca_id: IDS[i].into(),
-                signature: management.sign(
-                    &keys[i].0,
-                    &keys[i].1,
-                    &manifest.canonical_bytes()?,
-                    INITIALIZATION_CONTEXT_V1,
-                )?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let approval_keys = keys
+        .iter()
+        .map(|(p, s)| (p.as_slice(), s.as_slice()))
+        .collect::<Vec<_>>();
+    let approvals = approve_manifest(&runtime, &manifest, &approval_keys)?;
     let initial = manifest.compile(&runtime, domain, &approvals)?;
-    let material = UcaInitializationConfigV1 {
+    let material = UcaInitializationConfigV2 {
+        identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
         approvals,
         expected_signing_domain: domain,
@@ -458,14 +538,16 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         .map(|config| connect(config, validators.clone()))
         .collect::<Result<Vec<_>>>()?;
     let intent =
-        |payer: usize, recipient: usize, amount: u128, epoch: u64| -> Result<UcaSpendIntentV1> {
-            Ok(UcaSpendIntentV1 {
+        |payer: usize, recipient: usize, amount: u128, epoch: u64| -> Result<AssetSpendIntentV2> {
+            Ok(AssetSpendIntentV2 {
+                asset: 1,
+                authority_update: None,
                 chain_id: genesis.chain_id,
                 genesis: domain,
-                account_id: IDS[payer].into(),
+                payer: ADDRESSES[payer].to_vec(),
                 authorization_epoch: epoch,
                 spend_key_ref: spend_key_ref_v1(&keys[payer + 2].0)?,
-                recipient_uca: IDS[recipient].into(),
+                recipient: ADDRESSES[recipient].to_vec(),
                 amount,
                 max_fee: 50,
                 nonce: 0,
@@ -473,17 +555,16 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
                 expires_at_height: 100,
             })
         };
-    let signer = runtime.uca_spend_signer_v1()?;
+    let signer = runtime.asset_spend_signer_v2()?;
     let transfer = signer.sign(intent(0, 1, 100, 1)?, &keys[2].0, &keys[2].1)?;
-    let make_batch = |spends: &[SignedUcaSpendV1]| -> Result<Arc<UcaSpendBatch>> {
+    let make_batch = |spends: &[SignedAssetSpendV2]| -> Result<Arc<AssetSpendBatchV2>> {
         let raws = spends
             .iter()
             .map(|spend| spend.encode().map_err(anyhow::Error::msg))
             .collect::<Result<Vec<_>>>()?;
-        Ok(Arc::new(UcaSpendBatch::from_raw(
+        Ok(Arc::new(AssetSpendBatchV2::from_raw(
             &raws,
-            &vec![(ADDRESSES[0].to_vec(), ADDRESSES[1].to_vec()); spends.len()],
-            UcaSpendBatchLimits {
+            AssetSpendBatchLimitsV2 {
                 transactions: 3,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                 body_bytes: 3 * MAX_SIGNED_SPEND_BYTES,
@@ -547,7 +628,7 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         first.iter().all(|r| r == &first[0]),
         "first receipts differ"
     );
-    let first_fee = fee(first[0], 1)?;
+    let first_fee = fee(first[0], 1, 1)?;
     let respend = signer.sign(intent(1, 0, 40, 1)?, &keys[3].0, &keys[3].1)?;
     send(&mut nodes, &mut clients[ingress], &respend, 1, 0)?;
     let second = clients
@@ -558,7 +639,7 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         second.iter().all(|r| r == &second[0]),
         "second receipts differ"
     );
-    let second_fee = fee(second[0], 2)?;
+    let second_fee = fee(second[0], 2, 1)?;
     let mut before = Vec::new();
     for client in &mut clients {
         let alice = state(&mut nodes, client, &transfer.intent, 0, 1)?;
@@ -613,6 +694,294 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
         );
         assert_eq!(after, before[index]);
     }
+
+    // Continue on these SAME recovered databases. Every management/recovery
+    // transition is signed by its independent account-purpose key, submitted
+    // through the original UDP client, confirmed by the four original journals
+    // and observed through the existing typed published-state query.
+    let refs = keys
+        .iter()
+        .map(|(public, _)| spend_key_ref_v1(public).map_err(anyhow::Error::msg))
+        .collect::<Result<Vec<_>>>()?;
+    let replacement_grant = |key: usize, budget: u128| AssetGrantConfigV2 {
+        key_ref: refs[key],
+        permits_nov_transfer: true,
+        not_before_height: 1,
+        expires_at_height: 100,
+        max_debit_per_intent: 100,
+        remaining_debit_budget: budget,
+    };
+    let management = |epoch: u64,
+                      nonce: u64,
+                      key: usize,
+                      use_recovery: bool,
+                      active: bool,
+                      grants: Vec<AssetGrantConfigV2>|
+     -> Result<SignedAssetSpendV2> {
+        let mut action = intent(0, 0, 0, epoch)?;
+        action.nonce = nonce;
+        action.spend_key_ref = refs[key];
+        action.authority_update = Some(AssetAuthorityUpdateV2 {
+            use_recovery,
+            next_epoch: epoch + 1,
+            active,
+            management_key_ref: refs[9],
+            recovery_key_ref: Some(refs[5]),
+            grants,
+        });
+        signer.sign(action, &keys[key].0, &keys[key].1)
+    };
+    let rotate = management(1, 1, 0, false, true, vec![replacement_grant(7, 200)])?;
+    let rotated_receipt = publish(&mut nodes, &mut clients, ingress, &rotate)?;
+    let rotate_fee = fee(rotated_receipt, 3, 2)?;
+    let mut new_spend_intent = intent(0, 1, 10, 2)?;
+    new_spend_intent.nonce = 2;
+    new_spend_intent.spend_key_ref = refs[7];
+    let new_spend = signer.sign(new_spend_intent, &keys[7].0, &keys[7].1)?;
+    let rotated = account_views(&mut nodes, &mut clients, &new_spend.intent, &respend.intent)?;
+    for (alice, bob) in &rotated {
+        ensure!(
+            alice.height == 3
+                && alice.current_spend_epoch == 2
+                && alice.account_active
+                && alice.management_key_ref == refs[9]
+                && alice.recovery_key_ref == Some(refs[5])
+                && alice.next_nonce == 2
+                && alice.grant_epoch == 2
+                && alice.remaining_debit_budget == 200
+                && alice.payer_balance == before[0].0.payer_balance - rotate_fee
+                && bob.next_nonce == 1
+                && bob.remaining_debit_budget == before[0].1.remaining_debit_budget
+                && bob.payer_balance == before[0].1.payer_balance,
+            "published manager rotation changed wrong account or consumed spend budget"
+        );
+    }
+    let mut old_spend_intent = new_spend.intent.clone();
+    old_spend_intent.spend_key_ref = refs[2];
+    let revoked = signer.sign(old_spend_intent, &keys[2].0, &keys[2].1)?;
+    reject_unchanged(
+        &mut nodes,
+        &mut clients,
+        ingress,
+        &revoked,
+        (&new_spend.intent, &respend.intent),
+    )?;
+    // Obsolete manager, another asset's manager under the SAME UCA, and the
+    // UCA identity key cannot acquire this concrete account's authority.
+    for key in [0, 1, 4] {
+        let wrong = management(2, 2, key, false, false, vec![])?;
+        reject_unchanged(
+            &mut nodes,
+            &mut clients,
+            ingress,
+            &wrong,
+            (&new_spend.intent, &respend.intent),
+        )?;
+    }
+    let new_spend_receipt = publish(&mut nodes, &mut clients, ingress, &new_spend)?;
+    let new_spend_fee = fee(new_spend_receipt, 4, 3)?;
+    let spent = account_views(&mut nodes, &mut clients, &new_spend.intent, &respend.intent)?;
+    for (alice, bob) in &spent {
+        ensure!(
+            alice.height == 4
+                && alice.next_nonce == 3
+                && alice.remaining_debit_budget == 200 - 10 - new_spend_fee
+                && alice.payer_balance == rotated[0].0.payer_balance - 10 - new_spend_fee
+                && bob.payer_balance == rotated[0].1.payer_balance + 10
+                && bob.next_nonce == 1,
+            "replacement key did not spend with continuous account nonce"
+        );
+    }
+    let mut cross_account_intent = intent(1, 0, 1, 1)?;
+    cross_account_intent.nonce = 1;
+    cross_account_intent.spend_key_ref = refs[7];
+    let cross_account = signer.sign(cross_account_intent, &keys[7].0, &keys[7].1)?;
+    reject_unchanged(
+        &mut nodes,
+        &mut clients,
+        ingress,
+        &cross_account,
+        (&new_spend.intent, &respend.intent),
+    )?;
+    let freeze = management(2, 3, 9, false, false, vec![])?;
+    let freeze_receipt = publish(&mut nodes, &mut clients, ingress, &freeze)?;
+    let freeze_fee = fee(freeze_receipt, 5, 4)?;
+    let frozen = account_views(&mut nodes, &mut clients, &new_spend.intent, &respend.intent)?;
+    for (alice, bob) in &frozen {
+        ensure!(
+            alice.height == 5
+                && !alice.account_active
+                && alice.current_spend_epoch == 3
+                && alice.next_nonce == 4
+                && alice.management_key_ref == refs[9]
+                && alice.recovery_key_ref == Some(refs[5])
+                && alice.payer_balance == spent[0].0.payer_balance - freeze_fee
+                && alice.remaining_debit_budget == spent[0].0.remaining_debit_budget
+                && bob.payer_balance == spent[0].1.payer_balance
+                && bob.next_nonce == 1,
+            "freeze authority/fees/nonce were not atomically published"
+        );
+    }
+    let mut frozen_spend_intent = new_spend.intent.clone();
+    frozen_spend_intent.authorization_epoch = 3;
+    frozen_spend_intent.nonce = 4;
+    let frozen_spend = signer.sign(frozen_spend_intent, &keys[7].0, &keys[7].1)?;
+    reject_unchanged(
+        &mut nodes,
+        &mut clients,
+        ingress,
+        &frozen_spend,
+        (&new_spend.intent, &respend.intent),
+    )?;
+    drop(clients);
+    for node in nodes {
+        node.node.shutdown()?;
+    }
+    let mut nodes = start(&configs, StartMode::Existing)?;
+    let mut clients = configs
+        .iter()
+        .map(|config| connect(config, validators.clone()))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(
+        account_views(&mut nodes, &mut clients, &new_spend.intent, &respend.intent)?,
+        frozen,
+        "cold restart lost the published frozen authority"
+    );
+    for client in &mut clients {
+        assert_eq!(receipt(&mut nodes, client, &rotate)?, rotated_receipt);
+        assert_eq!(receipt(&mut nodes, client, &new_spend)?, new_spend_receipt);
+        assert_eq!(receipt(&mut nodes, client, &freeze)?, freeze_receipt);
+    }
+    // Recovery is the configured ASSET recovery key, never identity recovery,
+    // another account's recovery key or an obsolete spending key.
+    for key in [4, 6, 7] {
+        let wrong = management(3, 4, key, true, true, vec![replacement_grant(8, 150)])?;
+        reject_unchanged(
+            &mut nodes,
+            &mut clients,
+            ingress,
+            &wrong,
+            (&new_spend.intent, &respend.intent),
+        )?;
+    }
+    let recover = management(3, 4, 5, true, true, vec![replacement_grant(8, 150)])?;
+    let recovery_receipt = publish(&mut nodes, &mut clients, ingress, &recover)?;
+    let recovery_fee = fee(recovery_receipt, 6, 5)?;
+    let mut recovered_spend_intent = intent(0, 1, 7, 4)?;
+    recovered_spend_intent.nonce = 5;
+    recovered_spend_intent.spend_key_ref = refs[8];
+    let recovered_spend = signer.sign(recovered_spend_intent, &keys[8].0, &keys[8].1)?;
+    let recovered = account_views(
+        &mut nodes,
+        &mut clients,
+        &recovered_spend.intent,
+        &respend.intent,
+    )?;
+    for (alice, bob) in &recovered {
+        ensure!(
+            alice.height == 6
+                && alice.account_active
+                && alice.current_spend_epoch == 4
+                && alice.next_nonce == 5
+                && alice.management_key_ref == refs[9]
+                && alice.recovery_key_ref == Some(refs[5])
+                && alice.grant_epoch == 4
+                && alice.remaining_debit_budget == 150
+                && alice.payer_balance == frozen[0].0.payer_balance - recovery_fee
+                && bob.payer_balance == frozen[0].1.payer_balance
+                && bob.next_nonce == 1,
+            "asset recovery reset nonce, charged spend budget or changed another account"
+        );
+    }
+    let mut obsolete_after_recovery = recovered_spend.intent.clone();
+    obsolete_after_recovery.spend_key_ref = refs[7];
+    let obsolete_after_recovery = signer.sign(obsolete_after_recovery, &keys[7].0, &keys[7].1)?;
+    reject_unchanged(
+        &mut nodes,
+        &mut clients,
+        ingress,
+        &obsolete_after_recovery,
+        (&recovered_spend.intent, &respend.intent),
+    )?;
+    let recovered_spend_receipt = publish(&mut nodes, &mut clients, ingress, &recovered_spend)?;
+    let recovered_spend_fee = fee(recovered_spend_receipt, 7, 6)?;
+    let lifecycle_before = account_views(
+        &mut nodes,
+        &mut clients,
+        &recovered_spend.intent,
+        &respend.intent,
+    )?;
+    let lifecycle_receipts = [
+        (&rotate, rotated_receipt),
+        (&new_spend, new_spend_receipt),
+        (&freeze, freeze_receipt),
+        (&recover, recovery_receipt),
+        (&recovered_spend, recovered_spend_receipt),
+    ];
+    for (alice, bob) in &lifecycle_before {
+        ensure!(
+            alice.height == 7
+                && alice.next_nonce == 6
+                && alice.current_spend_epoch == 4
+                && alice.account_active
+                && alice.remaining_debit_budget == 150 - 7 - recovered_spend_fee
+                && alice.payer_balance
+                    == 923
+                        - first_fee
+                        - rotate_fee
+                        - new_spend_fee
+                        - freeze_fee
+                        - recovery_fee
+                        - recovered_spend_fee
+                && bob.payer_balance == 77 - second_fee
+                && bob.remaining_debit_budget == 1000 - 40 - second_fee
+                && bob.next_nonce == 1,
+            "durable lifecycle fees, nonce, balances or budgets differ"
+        );
+    }
+    for (signed, expected) in &lifecycle_receipts {
+        send(&mut nodes, &mut clients[ingress], signed, 0, 0)?;
+        assert_eq!(
+            receipt(&mut nodes, &mut clients[ingress], signed)?,
+            *expected
+        );
+    }
+    assert_eq!(
+        account_views(
+            &mut nodes,
+            &mut clients,
+            &recovered_spend.intent,
+            &respend.intent
+        )?,
+        lifecycle_before,
+        "published authority replay consumed nonce/fees or reset grant budget"
+    );
+    drop(clients);
+    for node in nodes {
+        node.node.shutdown()?;
+    }
+    let mut nodes = start(&configs, StartMode::Existing)?;
+    let mut clients = configs
+        .iter()
+        .map(|config| connect(config, validators.clone()))
+        .collect::<Result<Vec<_>>>()?;
+    assert_eq!(
+        account_views(
+            &mut nodes,
+            &mut clients,
+            &recovered_spend.intent,
+            &respend.intent
+        )?,
+        lifecycle_before,
+        "cold lifecycle authority, fees, nonce, balances or budgets differ"
+    );
+    for client in &mut clients {
+        assert_eq!(receipt(&mut nodes, client, &transfer)?, first[0]);
+        assert_eq!(receipt(&mut nodes, client, &respend)?, second[0]);
+        for (signed, expected) in &lifecycle_receipts {
+            assert_eq!(receipt(&mut nodes, client, signed)?, *expected);
+        }
+    }
     std::fs::write(
         directory.join("report.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
@@ -621,12 +990,25 @@ fn actual_native_uca_single_client_respend_and_cold_recovery() -> Result<()> {
             "http":false, "direct_transaction_injection":false, "first":first, "second":second,
             "state_before_and_after":before, "invalid_signature_rejected":true, "wrong_authorization_epoch_rejected":true,
             "published_replay_unchanged":true, "cold_restart":true, "TPS_acceptance":false, "production_activation":false,
+            "asset_lifecycle": {
+                "rotate":rotated_receipt, "replacement_key_spend":new_spend_receipt,
+                "freeze":freeze_receipt, "recover":recovery_receipt, "recovered_key_spend":recovered_spend_receipt,
+                "frozen_state_before_and_after_restart":frozen,
+                "final_state_before_and_after_restart":lifecycle_before,
+                "revoked_key_rejected":true, "old_manager_rejected":true,
+                "same_identity_cross_account_spend_rejected":true,
+                "identity_and_other_account_authority_rejected":true,
+                "identity_and_other_account_recovery_rejected":true,
+                "rejected_inputs_no_fee_nonce_or_authority_change":true,
+                "original_journal_durable_queries":true, "published_management_replay_unchanged":true,
+                "forced_crash_during_management_publish":false, "offline_management_catchup":false,
+            },
         }))?,
     )?;
     drop(clients);
     for node in nodes {
         node.node.shutdown()?;
     }
-    println!("NUAS original application -> four original services/DBs -> durable receipts -> recipient respend -> cold state equality; no HTTP, no direct input, no TPS claim");
+    println!("NUAS original application -> four original services/DBs -> durable transfer/respend, manager and spend-key rotation, freeze/recovery, rejected cross-account/identity authority -> repeated cold state/receipt equality; no HTTP, no direct input, no forced publish crash, no offline management catchup, no TPS claim");
     Ok(())
 }

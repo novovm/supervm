@@ -227,7 +227,7 @@ fn native_archive_request_older_completion_cannot_replace_newer_responsibility()
         let context = match &mut next_body {
             Message::Body { context, .. }
             | Message::ApflBody { context, .. }
-            | Message::UcaBody { context, .. } => context,
+            | Message::AssetBody { context, .. } => context,
             _ => anyhow::bail!("missing body fixture"),
         };
         context.parent_height = old.height;

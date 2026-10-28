@@ -6802,6 +6802,9 @@ pub fn snapshot_network_runtime_native_execution_budget_runtime_summary_v1(
 
 #[cfg(test)]
 pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
+    if let Ok(mut guard) = runtime_sync_status_map().lock() {
+        guard.remove(&chain_id);
+    }
     if let Ok(mut guard) = runtime_native_header_snapshot_map().lock() {
         guard.remove(&chain_id);
     }
@@ -6839,6 +6842,9 @@ pub fn clear_network_runtime_native_snapshots_for_chain_v1(chain_id: u64) {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_canonical_chain_map().lock() {
+        guard.remove(&chain_id);
+    }
+    if let Ok(mut guard) = runtime_native_header_source_peer_map().lock() {
         guard.remove(&chain_id);
     }
     if let Ok(mut guard) = runtime_native_pending_tx_map().lock() {
@@ -8220,7 +8226,7 @@ mod tests {
 
     #[test]
     fn completion_close_reports_missing_mapping() {
-        let chain_id = 9_998_774;
+        let chain_id = 20_271_001;
         clear_novorudp_sequence_ledger_for_test(chain_id);
         ensure_runtime_novorudp_sequence_expected_total_v1(chain_id, 14_400, 64);
         observe_runtime_novorudp_canonical_proof_close_v1(chain_id, [0x5a; 32]);
@@ -8970,7 +8976,7 @@ mod tests {
 
     #[test]
     fn native_canonical_chain_records_reorg_depth_and_count() {
-        let chain_id = 20336_u64;
+        let chain_id = 20_271_002_u64;
         clear_runtime_sync_status_for_test(chain_id);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
 
@@ -9717,7 +9723,11 @@ mod tests {
     #[test]
     fn native_header_source_peer_snapshot_tracks_same_block_observations() {
         let chain_id = 2_042_100_u64;
-        clear_network_runtime_native_state_for_host_tests_v1();
+        let retained_chain = 20_271_003_u64;
+        // This fixture runs alongside other chain owners. Global clearing here
+        // used to erase their pending transactions and recovery material.
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
+        clear_network_runtime_native_snapshots_for_chain_v1(retained_chain);
 
         for (source_peer_id, observed_unix_ms) in [(7_u64, 10_u128), (3_u64, 11_u128), (7, 12)] {
             set_network_runtime_native_header_snapshot_v1(
@@ -9754,10 +9764,44 @@ mod tests {
             snapshot_network_runtime_native_header_source_peers_v1(chain_id, [0x12; 32]).is_empty()
         );
 
-        clear_network_runtime_native_state_for_host_tests_v1();
+        let mut retained_header =
+            get_network_runtime_native_header_snapshot_v1(chain_id).expect("original header");
+        retained_header.chain_id = retained_chain;
+        retained_header.source_peer_id = Some(9);
+        set_network_runtime_native_header_snapshot_v1(retained_chain, retained_header);
+        for owner in [chain_id, retained_chain] {
+            observe_network_runtime_native_pending_tx_local_native_payload_v1(
+                owner,
+                [0x91; 32],
+                Some(b"NNX1-retained-payload"),
+            );
+        }
+        clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         assert!(
             snapshot_network_runtime_native_header_source_peers_v1(chain_id, [0x11; 32]).is_empty()
         );
+        assert!(get_network_runtime_native_header_snapshot_v1(chain_id).is_none());
+        assert!(get_network_runtime_native_pending_tx_v1(chain_id, [0x91; 32]).is_none());
+        assert_eq!(
+            snapshot_network_runtime_native_header_source_peers_v1(retained_chain, [0x11; 32]),
+            vec![9]
+        );
+        assert_eq!(
+            get_network_runtime_native_header_snapshot_v1(retained_chain)
+                .expect("other chain header must survive")
+                .hash,
+            [0x11; 32]
+        );
+        let pending =
+            snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
+                retained_chain,
+                10,
+                3,
+            );
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].tx_hash, [0x91; 32]);
+        assert_eq!(pending[0].tx_payload, b"NNX1-retained-payload");
+        clear_network_runtime_native_snapshots_for_chain_v1(retained_chain);
     }
 
     #[test]
@@ -10082,7 +10126,7 @@ mod tests {
 
     #[test]
     fn local_unsealed_execution_does_not_replace_shared_network_head() {
-        let chain_id = 2058_u64;
+        let chain_id = 20_271_004_u64;
         clear_runtime_sync_status_for_test(chain_id);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let tx_hash = [0x92; 32];
@@ -11283,7 +11327,7 @@ mod tests {
 
     #[test]
     fn pending_tx_propagation_budget_stops_broadcast_not_execution() {
-        let chain_id = 2062_u64;
+        let chain_id = 20_271_005_u64;
         clear_runtime_sync_status_for_test(chain_id);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         let tx_hash = [0xe1; 32];

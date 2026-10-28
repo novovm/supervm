@@ -99,7 +99,7 @@ pub fn verify_uca_delegation_v1(
 /// Local identity-owner operation. Validate context and the device signature
 /// BEFORE requesting root approval. The signer must enforce its own consent and
 /// purpose policy; no private key is accepted and no network request is made.
-pub fn prepare_uca_delegation_v1(
+pub fn prepare_asset_spend_delegation_v1(
     claims: UcaDelegationClaimsV1,
     tx: &NovNativeTxWireV1,
     context: &UcaDelegationContextV1<'_>,

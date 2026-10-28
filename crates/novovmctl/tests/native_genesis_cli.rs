@@ -5,9 +5,9 @@ use ed25519_dalek::SigningKey;
 use novovm_node::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use novovm_node::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
 use novovm_node::native_pipeline::service::config::uca_genesis::{
-    UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
-    UcaInitializationConfigV1, INITIALIZATION_CONTEXT_V1, MAX_INITIAL_GRANTS_PER_ACCOUNT,
-    MAX_INITIAL_UCA_ACCOUNTS,
+    UcaGenesisAccountV2, UcaGenesisApprovalV2, UcaGenesisGrantV2, UcaGenesisIdentityV2,
+    UcaGenesisManifestV2, UcaInitializationConfigV2, INITIALIZATION_CONTEXT_V2,
+    MAX_INITIAL_GRANTS_PER_ACCOUNT, MAX_INITIAL_UCA_ACCOUNTS,
 };
 use novovm_node::native_pipeline::service::config::{
     protocol_commitment, GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig,
@@ -55,12 +55,12 @@ impl Fixture {
         })
     }
 
-    fn write_manifest(&self, manifest: &UcaGenesisManifestV1) -> TestResult {
+    fn write_manifest(&self, manifest: &UcaGenesisManifestV2) -> TestResult {
         fs::write(&self.manifest, serde_json::to_vec(manifest)?)?;
         Ok(())
     }
 
-    fn write_approvals(&self, approvals: &[UcaGenesisApprovalV1]) -> TestResult {
+    fn write_approvals(&self, approvals: &[UcaGenesisApprovalV2]) -> TestResult {
         fs::write(&self.approvals, serde_json::to_vec(approvals)?)?;
         Ok(())
     }
@@ -88,6 +88,19 @@ impl Fixture {
                 "prepare".into(),
                 "--manifest".into(),
                 self.manifest.to_string_lossy().into_owned(),
+            ],
+        )
+    }
+
+    fn prepare_approval(&self, label: &str, index: usize) -> Result<Output, Box<dyn Error>> {
+        self.invoke(
+            label,
+            &[
+                "prepare".into(),
+                "--manifest".into(),
+                self.manifest.to_string_lossy().into_owned(),
+                "--approval-index".into(),
+                index.to_string(),
             ],
         )
     }
@@ -142,7 +155,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn manifest() -> Result<UcaGenesisManifestV1, Box<dyn Error>> {
+fn manifest() -> Result<UcaGenesisManifestV2, Box<dyn Error>> {
     let policy = DirectNovFeePolicy {
         quote_ttl_ms: 60_000,
         policy_version: 1,
@@ -172,26 +185,27 @@ fn manifest() -> Result<UcaGenesisManifestV1, Box<dyn Error>> {
         // Typed original grant parsing avoids a new policy schema and avoids
         // routing its full-width numbers through a generic JSON Value/f64.
         let grant = serde_json::from_str(&format!(
-            r#"{{"account_id":{id},"key_ref":{key},"authorization_epoch":1,
+            r#"{{"account":{account},"asset":1,"key_ref":{key},"authorization_epoch":1,
             "permits_nov_transfer":true,"revoked":false,"not_before_height":1,
             "expires_at_height":100,"max_debit_per_intent":{amount},
             "remaining_debit_budget":{budget}}}"#,
-            id = serde_json::to_string(&id)?,
+            account = serde_json::to_string(&vec![index + 1; 20])?,
             key = serde_json::to_string(&spend_key_ref_v1(&spend_key)?)?,
             amount = LARGE_EXACT_AMOUNT,
             budget = LARGE_EXACT_AMOUNT + 5,
         ))?;
-        accounts.push(UcaGenesisAccountV1 {
+        accounts.push(UcaGenesisAccountV2 {
             uca_id: id,
             asset_account: vec![index + 1; 20],
             management_public_key: vec![index + 21; MLDSA65_PUBLIC_KEY_BYTES],
-            grants: vec![UcaGenesisGrantV1 {
+            recovery_public_key: Some(vec![index + 31; MLDSA65_PUBLIC_KEY_BYTES]),
+            grants: vec![UcaGenesisGrantV2 {
                 spend_public_key: spend_key,
                 grant,
             }],
         });
     }
-    Ok(UcaGenesisManifestV1 {
+    Ok(UcaGenesisManifestV2 {
         genesis: GenesisConfig {
             chain_id: 0x00c0_de77,
             validator_epoch: 1,
@@ -221,6 +235,12 @@ fn manifest() -> Result<UcaGenesisManifestV1, Box<dyn Error>> {
             ],
             policy,
         },
+        identities: (0..2u8)
+            .map(|index| UcaGenesisIdentityV2 {
+                uca_id: format!("uca:isolated-cli-test-{index}"),
+                identity_public_key: vec![index + 41; MLDSA65_PUBLIC_KEY_BYTES],
+            })
+            .collect(),
         accounts,
     })
 }
@@ -246,7 +266,7 @@ fn rejected(output: &Output, expected: &str) {
     );
     assert!(text.contains(expected), "expected {expected:?}, got {text}");
     assert!(
-        !text.contains("\"management_approvals_verified\": true"),
+        !text.contains("\"identity_and_asset_approvals_verified\": true"),
         "failed review emitted successful authorization metadata"
     );
 }
@@ -262,6 +282,23 @@ fn assert_non_activation(value: &Value) {
     ] {
         assert_eq!(value[field], false, "{field}");
     }
+}
+
+fn assert_required_approvals(value: &Value, manifest: &UcaGenesisManifestV2) -> TestResult {
+    let transcripts = value["required_approvals"]
+        .as_array()
+        .ok_or("required approvals missing")?;
+    let required = manifest.required_approval_subjects();
+    assert_eq!(transcripts.len(), required.len());
+    for (index, (actual, (subject, public_key))) in transcripts.iter().zip(required).enumerate() {
+        assert_eq!(actual["index"], index);
+        assert_eq!(actual["subject"], serde_json::to_value(&subject)?);
+        assert_eq!(actual["public_key_hex"], hex(&public_key));
+        assert!(actual.get("signing_message_hex").is_none());
+    }
+    assert_eq!(value["signing_task_selected"], false);
+    assert!(value["selected_approval"].is_null());
+    Ok(())
 }
 
 #[test]
@@ -295,12 +332,13 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
             account.uca_id = format!("uca:maximum-pretty-fixture-{index}");
             account.asset_account = vec![index as u8 + 1; 20];
             account.management_public_key = metadata_key(2, index);
+            account.recovery_public_key = Some(metadata_key(4, index));
             account.grants = (0..MAX_INITIAL_GRANTS_PER_ACCOUNT)
                 .map(|grant_index| {
                     let mut entry = template.grants[0].clone();
                     entry.spend_public_key =
                         metadata_key(3, index * MAX_INITIAL_GRANTS_PER_ACCOUNT + grant_index);
-                    entry.grant.account_id = account.uca_id.clone();
+                    entry.grant.account = account.asset_account.clone();
                     entry.grant.key_ref = spend_key_ref_v1(&entry.spend_public_key).unwrap();
                     entry.grant.max_debit_per_intent = 80;
                     entry.grant.remaining_debit_budget = 1_000;
@@ -308,6 +346,15 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
                 })
                 .collect();
             account
+        })
+        .collect();
+    input.identities = input
+        .accounts
+        .iter()
+        .enumerate()
+        .map(|(index, account)| UcaGenesisIdentityV2 {
+            uca_id: account.uca_id.clone(),
+            identity_public_key: metadata_key(5, index),
         })
         .collect();
     let canonical = input.canonical_bytes()?;
@@ -320,18 +367,20 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
     assert!(pretty.len() < MAX_STARTUP_DOCUMENT_BYTES);
     fs::write(&fixture.manifest, &pretty)?;
     let observed = data(&fixture.prepare("maximum-pretty")?)?;
-    assert_eq!(observed["signing_message_bytes"], canonical.len());
-    assert_eq!(observed["signing_message_hex"], hex(&canonical));
+    assert_eq!(observed["canonical_manifest_bytes"], canonical.len());
+    assert_eq!(observed["canonical_manifest_hex"], hex(&canonical));
+    assert_required_approvals(&observed, &input)?;
     assert_non_activation(&observed);
     let approvals: Vec<_> = input
-        .accounts
-        .iter()
-        .map(|account| UcaGenesisApprovalV1 {
-            uca_id: account.uca_id.clone(),
+        .required_approval_subjects()
+        .into_iter()
+        .map(|(subject, _)| UcaGenesisApprovalV2 {
+            subject,
             signature: vec![255; 3309],
         })
         .collect();
-    let initialization = UcaInitializationConfigV1 {
+    let initialization = UcaInitializationConfigV2 {
+        identities: input.identities.clone(),
         accounts: input.accounts.clone(),
         approvals,
         expected_signing_domain: [1; 32],
@@ -409,7 +458,7 @@ fn prepare_matches_original_canonical_domain_without_authorizing_or_writing() ->
     fixture.write_manifest(&input)?;
     let observed = data(&fixture.prepare("prepare")?)?;
     assert_eq!(
-        observed["signing_message_hex"],
+        observed["canonical_manifest_hex"],
         hex(&input.canonical_bytes()?)
     );
     assert_eq!(
@@ -418,16 +467,67 @@ fn prepare_matches_original_canonical_domain_without_authorizing_or_writing() ->
     );
     assert_eq!(
         observed["signing_context_hex"],
-        hex(INITIALIZATION_CONTEXT_V1)
+        hex(INITIALIZATION_CONTEXT_V2)
     );
     assert_eq!(observed["message_is_unframed"], true);
     assert_eq!(observed["signing_algorithm"], "ML-DSA-65");
     assert_eq!(observed["consensus_signature_algorithm"], "ML-DSA-65");
     assert_eq!(observed["transport_signature_algorithm"], "Ed25519");
-    assert_eq!(observed["management_approvals_verified"], false);
+    assert_eq!(observed["schema_version"], 2);
+    assert_eq!(observed["identity_and_asset_approvals_verified"], false);
+    assert!(observed.get("signing_message_hex").is_none());
+    assert_required_approvals(&observed, &input)?;
     assert_eq!(observed["expected_domain_verified"], false);
     assert!(observed["review_only_startup_fragment"].is_null());
     assert_non_activation(&observed);
+    Ok(())
+}
+
+#[test]
+fn prepare_selects_one_domain_bound_subject_and_rejects_out_of_range() -> TestResult {
+    let fixture = Fixture::new("one-approval")?;
+    let mut input = manifest()?;
+    fixture.write_manifest(&input)?;
+    let required = input.required_approval_subjects();
+    for (index, (subject, public_key)) in required.iter().enumerate() {
+        let observed = data(&fixture.prepare_approval(&format!("subject-{index}"), index)?)?;
+        assert_eq!(observed["signing_task_selected"], true);
+        let selected = &observed["selected_approval"];
+        assert_eq!(selected["index"], index);
+        assert_eq!(selected["subject"], serde_json::to_value(subject)?);
+        assert_eq!(selected["public_key_hex"], hex(public_key));
+        assert_eq!(selected["signing_domain"], hex(&input.signing_domain()?));
+        assert_eq!(
+            selected["signing_context_hex"],
+            hex(INITIALIZATION_CONTEXT_V2)
+        );
+        let bytes = input.approval_signing_bytes(subject)?;
+        assert_eq!(selected["signing_message_hex"], hex(&bytes));
+        assert_eq!(selected["signing_message_bytes"], bytes.len());
+        assert_ne!(bytes, input.canonical_bytes()?);
+        assert_non_activation(&observed);
+    }
+    rejected(
+        &fixture.prepare_approval("out-of-range", required.len())?,
+        "approval index is outside",
+    );
+    let before = data(&fixture.prepare_approval("before-reorder", 0)?)?;
+    input.identities.reverse();
+    input.accounts.reverse();
+    fixture.write_manifest(&input)?;
+    let after = data(&fixture.prepare_approval("after-reorder", 0)?)?;
+    assert_eq!(before["selected_approval"], after["selected_approval"]);
+    input.accounts[0].grants[0].grant.remaining_debit_budget += 1;
+    fixture.write_manifest(&input)?;
+    let changed = data(&fixture.prepare_approval("different-domain", 0)?)?;
+    assert_ne!(
+        after["selected_approval"]["signing_domain"],
+        changed["selected_approval"]["signing_domain"]
+    );
+    assert_ne!(
+        after["selected_approval"]["signing_message_hex"],
+        changed["selected_approval"]["signing_message_hex"]
+    );
     Ok(())
 }
 
@@ -438,14 +538,16 @@ fn reordered_manifest_keeps_original_bytes_and_domain() -> TestResult {
     fixture.write_manifest(&input)?;
     let original = data(&fixture.prepare("ordered")?)?;
     input.accounts.reverse();
+    input.identities.reverse();
     input.genesis.validators.reverse();
     input.genesis.allocations.reverse();
     fixture.write_manifest(&input)?;
     let reordered = data(&fixture.prepare("reordered")?)?;
     for field in [
-        "signing_message_hex",
-        "signing_message_bytes",
+        "canonical_manifest_hex",
+        "canonical_manifest_bytes",
         "observed_signing_domain",
+        "required_approvals",
     ] {
         assert_eq!(original[field], reordered[field], "{field}");
     }
@@ -458,12 +560,15 @@ fn prepare_preserves_full_width_values_instead_of_rounding_through_json_value() 
     let mut input = manifest()?;
     fixture.write_manifest(&input)?;
     let first = data(&fixture.prepare("first")?)?;
-    assert_eq!(first["signing_message_hex"], hex(&input.canonical_bytes()?));
+    assert_eq!(
+        first["canonical_manifest_hex"],
+        hex(&input.canonical_bytes()?)
+    );
     input.accounts[0].grants[0].grant.remaining_debit_budget += 1;
     fixture.write_manifest(&input)?;
     let changed = data(&fixture.prepare("one-base-unit-change")?)?;
     assert_eq!(
-        changed["signing_message_hex"],
+        changed["canonical_manifest_hex"],
         hex(&input.canonical_bytes()?)
     );
     assert_ne!(
@@ -581,7 +686,7 @@ struct VerifiedEnvelope {
 
 #[derive(Deserialize)]
 struct VerifiedData {
-    management_approvals_verified: bool,
+    identity_and_asset_approvals_verified: bool,
     expected_domain_verified: bool,
     operator_launch_authorized: bool,
     activation_ready: bool,
@@ -596,7 +701,7 @@ struct VerifiedData {
 #[derive(Deserialize)]
 struct VerifiedFragment {
     genesis: GenesisConfig,
-    uca_initialization: UcaInitializationConfigV1,
+    uca_initialization: UcaInitializationConfigV2,
 }
 
 #[test]
@@ -617,7 +722,7 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
     let signer = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let keys = (0..4)
+    let keys = (0..8)
         .map(|_| signer.generate_keypair())
         .collect::<Result<Vec<_>, _>>()?;
     let fixture = Fixture::new("actual-aoem")?;
@@ -626,20 +731,26 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
         account.management_public_key = keys[index].public_key.clone();
         account.grants[0].spend_public_key = keys[index + 2].public_key.clone();
         account.grants[0].grant.key_ref = spend_key_ref_v1(&keys[index + 2].public_key)?;
+        account.recovery_public_key = Some(keys[index + 4].public_key.clone());
+        input.identities[index].identity_public_key = keys[index + 6].public_key.clone();
     }
     for validator in &mut input.genesis.validators {
         validator.public_key = signer.generate_keypair()?.public_key;
     }
-    let canonical = input.canonical_bytes()?;
     let mut approvals = Vec::new();
-    for (index, account) in input.accounts.iter().enumerate() {
-        approvals.push(UcaGenesisApprovalV1 {
-            uca_id: account.uca_id.clone(),
+    for (subject, public_key) in input.required_approval_subjects() {
+        let key = keys
+            .iter()
+            .find(|key| key.public_key == public_key)
+            .ok_or("missing local purpose key")?;
+        let message = input.approval_signing_bytes(&subject)?;
+        approvals.push(UcaGenesisApprovalV2 {
+            subject,
             signature: signer.sign(
-                &keys[index].public_key,
-                &keys[index].expanded_secret_key,
-                &canonical,
-                INITIALIZATION_CONTEXT_V1,
+                &key.public_key,
+                &key.expanded_secret_key,
+                &message,
+                INITIALIZATION_CONTEXT_V2,
             )?,
         });
     }
@@ -658,7 +769,7 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
     let observed: VerifiedEnvelope = serde_json::from_slice(&success.stdout)?;
     assert!(observed.ok);
     let observed = observed.data;
-    assert!(observed.management_approvals_verified && observed.expected_domain_verified);
+    assert!(observed.identity_and_asset_approvals_verified && observed.expected_domain_verified);
     assert!(!observed.operator_launch_authorized && !observed.activation_ready);
     assert!(!observed.database_created && !observed.state_published);
     assert_eq!(observed.observed_signing_domain, hex(&domain));
@@ -702,19 +813,21 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
     fixture.write_approvals(&approvals[..1])?;
     rejected(
         &fixture.verify("missing", domain, &library, library_hash)?,
-        "missing/extra UCA management approval",
+        "missing/extra identity or asset approval",
     );
-    fixture.write_approvals(&[approvals[0].clone(), approvals[0].clone()])?;
+    let mut duplicate = approvals.clone();
+    duplicate[1] = duplicate[0].clone();
+    fixture.write_approvals(&duplicate)?;
     rejected(
         &fixture.verify("duplicate", domain, &library, library_hash)?,
-        "duplicate/malformed UCA management approval",
+        "duplicate, unknown or malformed identity/asset approval",
     );
     let mut wrong = approvals.clone();
     wrong[0].signature = signer.sign(
         &keys[1].public_key,
         &keys[1].expanded_secret_key,
-        &canonical,
-        INITIALIZATION_CONTEXT_V1,
+        &input.approval_signing_bytes(&wrong[0].subject)?,
+        INITIALIZATION_CONTEXT_V2,
     )?;
     fixture.write_approvals(&wrong)?;
     rejected(
@@ -726,6 +839,40 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
     fixture.write_approvals(&corrupt)?;
     rejected(
         &fixture.verify("corrupt-signature", domain, &library, library_hash)?,
+        "original genesis compiler",
+    );
+    let mut reused = approvals.clone();
+    reused[2].signature = reused[0].signature.clone();
+    fixture.write_approvals(&reused)?;
+    rejected(
+        &fixture.verify(
+            "identity-is-not-asset-approval",
+            domain,
+            &library,
+            library_hash,
+        )?,
+        "original genesis compiler",
+    );
+    let mut unbound = approvals.clone();
+    let public_key = input.required_approval_subjects()[0].1.clone();
+    let key = keys
+        .iter()
+        .find(|key| key.public_key == public_key)
+        .ok_or("missing local key")?;
+    unbound[0].signature = signer.sign(
+        &key.public_key,
+        &key.expanded_secret_key,
+        &input.canonical_bytes()?,
+        INITIALIZATION_CONTEXT_V2,
+    )?;
+    fixture.write_approvals(&unbound)?;
+    rejected(
+        &fixture.verify(
+            "manifest-only-not-subject-approved",
+            domain,
+            &library,
+            library_hash,
+        )?,
         "original genesis compiler",
     );
     fixture.write_approvals(&approvals)?;

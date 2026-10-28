@@ -1,11 +1,11 @@
 //! NUAS adapts the original bounded pool, compute verifier and captured-state
 //! reader. Admission is volatile; only the original plan/journal spends funds.
 use super::*;
-use novovm_protocol::uca_spend::SignedUcaSpendV1;
-use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+use novovm_protocol::uca_spend::SignedAssetSpendV2;
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
 use sha2::{Digest, Sha256};
 
-pub(super) fn hash(signed: &SignedUcaSpendV1) -> Result<Hash> {
+pub(super) fn hash(signed: &SignedAssetSpendV2) -> Result<Hash> {
     Ok(Sha256::digest(signed.intent.signing_bytes()?).into())
 }
 
@@ -36,7 +36,7 @@ impl RpcLifecycle {
             anyhow::bail!("UCA requires the explicit native structured contract");
         };
         let raw = batch.raw_transaction(*index)?;
-        let signed = SignedUcaSpendV1::decode(&raw)?;
+        let signed = SignedAssetSpendV2::decode(&raw)?;
         ensure!(
             signed.intent.chain_id == self.node.template.chain_id
                 && signed.intent.genesis == self.node.template.genesis_config_commitment,
@@ -49,11 +49,8 @@ impl RpcLifecycle {
                 index: row,
             } = &entry.input
             {
-                // Intent hash excludes signatures. Exact bytes and hints are
-                // required before skipping this pipeline's strict verification.
-                if old.raw_transaction(*row)? == raw
-                    && old.account_hints(*row)? == batch.account_hints(*index)?
-                {
+                // The canonical v2 bytes include the concrete asset accounts.
+                if old.raw_transaction(*row)? == raw {
                     self.authentication_cache_hits += 1;
                     if broadcast {
                         self.queue_gossip(id);
@@ -71,7 +68,7 @@ impl RpcLifecycle {
         &mut self,
         input: AdmissionInput,
         admitted: AdmittedTransfer,
-        state: &crate::native_pipeline::business::uca_spend_state::CapturedUcaSpendStateV1,
+        state: &crate::native_pipeline::business::uca_spend_state::CapturedAssetSpendStateV2,
         broadcast: bool,
     ) -> Result<Hash> {
         ensure!(
@@ -108,11 +105,13 @@ impl RpcLifecycle {
             .amount
             .checked_add(intent.max_fee)
             .context("UCA debit overflow")?;
-        ensure!(
-            debit <= state.grant().max_debit_per_intent
-                && debit <= state.grant().remaining_debit_budget,
-            "UCA grant debit limit"
-        );
+        if intent.authority_update.is_none() {
+            let grant = state.grant().context("asset spend grant missing")?;
+            ensure!(
+                debit <= grant.max_debit_per_intent && debit <= grant.remaining_debit_budget,
+                "asset grant debit limit"
+            );
+        }
         let AdmissionInput::Uca { batch, index } = &input else {
             anyhow::bail!("UCA source required");
         };
@@ -126,6 +125,9 @@ impl RpcLifecycle {
         }
         let signer = intent.nonce_identity()?;
         let nonce = intent.nonce;
+        self.nonces.bind_current_parent(parent);
+        self.nonces
+            .observe_present_at_parent(parent, signer, state.next_nonce())?;
         ensure!(
             !self.reservations.contains(&(signer, nonce)),
             "UCA account nonce already reserved"
@@ -159,22 +161,18 @@ impl RpcLifecycle {
         Ok(id)
     }
 
-    pub(super) fn selected_uca_batch(&self, selected: &[Hash]) -> Result<Arc<UcaSpendBatch>> {
+    pub(super) fn selected_uca_batch(&self, selected: &[Hash]) -> Result<Arc<AssetSpendBatchV2>> {
         let mut raws = Vec::with_capacity(selected.len());
-        let mut hints = Vec::with_capacity(selected.len());
         for id in selected {
             let entry = self.pending.get(id).context("selected UCA entry missing")?;
             let AdmissionInput::Uca { batch, index } = &entry.input else {
                 anyhow::bail!("mixed pool contracts");
             };
             raws.push(batch.raw_transaction(*index)?);
-            let (payer, recipient) = batch.account_hints(*index)?;
-            hints.push((payer.to_vec(), recipient.to_vec()));
         }
-        Ok(Arc::new(UcaSpendBatch::from_raw(
+        Ok(Arc::new(AssetSpendBatchV2::from_raw(
             &raws,
-            &hints,
-            UcaSpendBatchLimits {
+            AssetSpendBatchLimitsV2 {
                 transactions: self.batch_size,
                 transaction_bytes: 8192,
                 body_bytes: self.input_body_limit(),

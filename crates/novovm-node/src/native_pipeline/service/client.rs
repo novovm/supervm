@@ -19,7 +19,7 @@ use novovm_network::novorudp::{
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
 };
 use novovm_protocol::native_query::{self as query, Frame, Query, Request, Response};
-use novovm_protocol::uca_spend_batch::UcaSpendBatch;
+use novovm_protocol::uca_spend_batch::AssetSpendBatchV2;
 use std::{
     net::UdpSocket,
     sync::Arc,
@@ -125,9 +125,13 @@ impl NativeApplicationClient {
     }
 
     /// Shared canonical ML-DSA-65 input on the same native application lane.
-    /// Hints locate state only; the receiving UCA owner establishes authority.
-    pub fn prepare_uca(&mut self, batch: Arc<UcaSpendBatch>) -> Result<PreparedApplicationInput> {
-        self.prepare_input(|scope| Message::UcaTransactions { scope, batch })
+    /// Actual payer/recipient accounts are signed. The receiving native owner
+    /// independently checks current asset authority at its trusted parent.
+    pub fn prepare_asset_spend(
+        &mut self,
+        batch: Arc<AssetSpendBatchV2>,
+    ) -> Result<PreparedApplicationInput> {
+        self.prepare_input(|scope| Message::AssetTransactions { scope, batch })
     }
 
     fn prepare_input(

@@ -14,7 +14,7 @@ pub const MAX_RECEIPTS: usize = 128;
 pub const MAX_BYTES: usize = 32 * 1024;
 const MAGIC_V1: &[u8; 8] = b"NVQUERY1";
 const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
-const MAGIC_V3: &[u8; 8] = b"NVQUERY3";
+const MAGIC_V4: &[u8; 8] = b"NVQUERY4";
 pub type Hash = [u8; 32];
 
 /// Nonempty bounded sequence. Its wire representation is an ordinary postcard
@@ -113,47 +113,45 @@ pub enum Query {
         hashes: ReceiptBatch<Hash>,
     },
     /// Read-only observation at a published root; NEVER a spend permission.
-    /// Hints locate state and must match authoritative binding records.
-    UcaSpendState {
-        intent: UcaReadIntent,
-        payer_hint: AccountId,
-        recipient_hint: AccountId,
+    /// Concrete accounts are committed by the canonical v2 intent, not hints.
+    AssetSpendState {
+        intent: AssetReadIntentV2,
     },
 }
 
 /// The original NUAS intent bytes, bounded and validated BEFORE ownership.
 /// This is neither a signed transaction nor a new signing transcript.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UcaReadIntent(Vec<u8>);
-impl UcaReadIntent {
-    pub fn new(intent: &crate::uca_spend::UcaSpendIntentV1) -> Result<Self, &'static str> {
+pub struct AssetReadIntentV2(Vec<u8>);
+impl AssetReadIntentV2 {
+    pub fn new(intent: &crate::uca_spend::AssetSpendIntentV2) -> Result<Self, &'static str> {
         intent
             .signing_bytes()
             .map(Self)
             .map_err(|_| "invalid UCA read intent")
     }
-    pub fn intent(&self) -> crate::uca_spend::UcaSpendIntentV1 {
-        crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&self.0)
+    pub fn intent(&self) -> crate::uca_spend::AssetSpendIntentV2 {
+        crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&self.0)
             .expect("validated immutable UCA read intent")
     }
 }
-impl Serialize for UcaReadIntent {
+impl Serialize for AssetReadIntentV2 {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(&self.0)
     }
 }
-impl<'de> Deserialize<'de> for UcaReadIntent {
+impl<'de> Deserialize<'de> for AssetReadIntentV2 {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct IntentVisitor;
         impl<'de> serde::de::Visitor<'de> for IntentVisitor {
-            type Value = UcaReadIntent;
+            type Value = AssetReadIntentV2;
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str("bounded canonical NUAS intent")
             }
             fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Self::Value, E> {
-                crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(value)
+                crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(value)
                     .map_err(|_| E::custom("invalid UCA read intent"))?;
-                Ok(UcaReadIntent(value.to_vec()))
+                Ok(AssetReadIntentV2(value.to_vec()))
             }
         }
         deserializer.deserialize_bytes(IntentVisitor)
@@ -163,11 +161,14 @@ impl<'de> Deserialize<'de> for UcaReadIntent {
 /// Serving-node observation only, not a proof or reservation. All fields are
 /// read from the SAME published root, not assembled from caller declarations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UcaSpendStateView {
+pub struct AssetSpendStateViewV2 {
     pub state_root: Hash,
     pub height: u64,
     pub account_active: bool,
     pub current_spend_epoch: u64,
+    pub management_key_ref: Hash,
+    pub recovery_key_ref: Option<Hash>,
+    pub grant_present: bool,
     pub grant_epoch: u64,
     pub permits_nov_transfer: bool,
     pub revoked: bool,
@@ -180,8 +181,8 @@ pub struct UcaSpendStateView {
     pub recipient_balance: u128,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UcaState {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssetState {
     Pending,
     /// A required account or grant record was absent at this exact root. Not
     /// unknown IO, malformed state or a claim that the UCA never existed.
@@ -189,7 +190,7 @@ pub enum UcaState {
         state_root: Hash,
         height: u64,
     },
-    Present(UcaSpendStateView),
+    Present(Box<AssetSpendStateViewV2>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,7 +257,7 @@ pub enum Answer {
         states: ReceiptBatch<ReceiptState>,
         indexed_height: u64,
     },
-    UcaSpendState(UcaState),
+    AssetSpendState(AssetState),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -279,7 +280,7 @@ fn is_batch(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::Receipts { .. })
 }
 fn is_uca(frame: &Frame) -> bool {
-    matches!(request(frame).query, Query::UcaSpendState { .. })
+    matches!(request(frame).query, Query::AssetSpendState { .. })
 }
 fn valid(frame: &Frame) -> bool {
     let request = request(frame);
@@ -292,7 +293,7 @@ fn valid(frame: &Frame) -> bool {
             | (Query::Status, Answer::Status(_))
             | (Query::Receipt { .. }, Answer::Receipt { .. })
             | (Query::NovBalance { .. }, Answer::NovBalance(_))
-            | (Query::UcaSpendState { .. }, Answer::UcaSpendState(_)) => true,
+            | (Query::AssetSpendState { .. }, Answer::AssetSpendState(_)) => true,
             (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
                 hashes.len() == states.len()
             }
@@ -307,7 +308,7 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     }
     let batch = is_batch(&frame);
     let mut bytes = if is_uca(&frame) {
-        MAGIC_V3
+        MAGIC_V4
     } else if batch {
         MAGIC_V2
     } else {
@@ -321,7 +322,7 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     Ok(bytes)
 }
 pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
-    let uca = bytes.starts_with(MAGIC_V3);
+    let uca = bytes.starts_with(MAGIC_V4);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
@@ -346,14 +347,16 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn uca_intent() -> crate::uca_spend::UcaSpendIntentV1 {
-        crate::uca_spend::UcaSpendIntentV1 {
+    fn uca_intent() -> crate::uca_spend::AssetSpendIntentV2 {
+        crate::uca_spend::AssetSpendIntentV2 {
+            asset: 1,
+            authority_update: None,
             chain_id: 7,
             genesis: [2; 32],
-            account_id: "uca:alice".into(),
+            payer: vec![1; 20],
             authorization_epoch: 3,
             spend_key_ref: [4; 32],
-            recipient_uca: "uca:bob".into(),
+            recipient: vec![2; 32],
             amount: u128::MAX - 1,
             max_fee: 1,
             nonce: u64::MAX - 1,
@@ -367,35 +370,38 @@ mod tests {
         let intent = uca_intent();
         let raw = intent.signing_bytes().unwrap();
         assert_eq!(
-            crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&raw).unwrap(),
+            crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&raw).unwrap(),
             intent
         );
         for len in 0..raw.len() {
-            assert!(crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&raw[..len]).is_err());
+            assert!(
+                crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&raw[..len]).is_err()
+            );
         }
         let mut tail = raw.clone();
         tail.push(0);
-        assert!(crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&tail).is_err());
+        assert!(crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&tail).is_err());
         let request = Request {
             session: [7; 32],
             sequence: 1,
-            query: Query::UcaSpendState {
-                intent: UcaReadIntent::new(&intent).unwrap(),
-                payer_hint: AccountId::Bytes20([1; 20]),
-                recipient_hint: AccountId::Bytes32([2; 32]),
+            query: Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(&intent).unwrap(),
             },
         };
         for answer in [
-            UcaState::Pending,
-            UcaState::Missing {
+            AssetState::Pending,
+            AssetState::Missing {
                 state_root: [9; 32],
                 height: 1,
             },
-            UcaState::Present(UcaSpendStateView {
+            AssetState::Present(Box::new(AssetSpendStateViewV2 {
                 state_root: [9; 32],
                 height: u64::MAX,
                 account_active: false,
                 current_spend_epoch: u64::MAX,
+                management_key_ref: [6; 32],
+                recovery_key_ref: None,
+                grant_present: true,
                 grant_epoch: u64::MAX,
                 permits_nov_transfer: false,
                 revoked: true,
@@ -406,16 +412,16 @@ mod tests {
                 next_nonce: u64::MAX,
                 payer_balance: u128::MAX,
                 recipient_balance: u128::MAX,
-            }),
+            })),
         ] {
             let frame = Frame::Response(Response {
                 request: request.clone(),
-                answer: Answer::UcaSpendState(answer),
+                answer: Answer::AssetSpendState(answer),
             });
             let bytes = encode(frame.clone()).unwrap();
-            assert!(bytes.starts_with(MAGIC_V3));
+            assert!(bytes.starts_with(MAGIC_V4));
             assert_eq!(decode(&bytes).unwrap(), frame);
-            for label in [MAGIC_V1, MAGIC_V2] {
+            for label in [MAGIC_V1, MAGIC_V2, b"NVQUERY3"] {
                 let mut wrong = bytes.clone();
                 wrong[..8].copy_from_slice(label);
                 assert!(decode(&wrong).is_err());
@@ -437,9 +443,9 @@ mod tests {
             raw
         }] {
             let encoded = postcard::to_allocvec(&bytes).unwrap();
-            assert!(postcard::from_bytes::<UcaReadIntent>(&encoded).is_err());
+            assert!(postcard::from_bytes::<AssetReadIntentV2>(&encoded).is_err());
         }
-        assert!(postcard::from_bytes::<UcaReadIntent>(
+        assert!(postcard::from_bytes::<AssetReadIntentV2>(
             &postcard::to_allocvec(&usize::MAX).unwrap()
         )
         .is_err());

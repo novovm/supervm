@@ -6,10 +6,10 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     uca_effect_contract, uca_program_id, uca_receipt_codec,
 };
 use crate::native_pipeline::service::{ResidentNode, StartMode};
-use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
-use novovm_protocol::uca_spend::spend_key_ref_v1;
+use novovm_protocol::uca_spend::{spend_key_ref_v1, NATIVE_NOV_ASSET};
 
 #[test]
 #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; actual fresh original service and reopen, not asset activation"]
@@ -36,7 +36,9 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
     let signer = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
+    let identity = signer.generate_keypair()?;
     let management = signer.generate_keypair()?;
+    let recovery = signer.generate_keypair()?;
     let spend = signer.generate_keypair()?;
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -90,16 +92,22 @@ fn actual_uca_startup_with_custody() -> Result<()> {
         (transport_key.clone(), std::fs::read(&transport_key)?),
     ];
     let id = "uca:startup-owner";
-    let manifest = UcaGenesisManifestV1 {
+    let manifest = UcaGenesisManifestV2 {
         genesis,
-        accounts: vec![UcaGenesisAccountV1 {
+        identities: vec![UcaGenesisIdentityV2 {
+            uca_id: id.into(),
+            identity_public_key: identity.public_key.clone(),
+        }],
+        accounts: vec![UcaGenesisAccountV2 {
             uca_id: id.into(),
             asset_account: vec![1; 20],
             management_public_key: management.public_key.clone(),
-            grants: vec![UcaGenesisGrantV1 {
+            recovery_public_key: Some(recovery.public_key.clone()),
+            grants: vec![UcaGenesisGrantV2 {
                 spend_public_key: spend.public_key.clone(),
-                grant: SuppliedSpendGrantV1 {
-                    account_id: id.into(),
+                grant: SuppliedAssetSpendGrantV2 {
+                    account: vec![1; 20],
+                    asset: NATIVE_NOV_ASSET,
                     key_ref: spend_key_ref_v1(&spend.public_key)?,
                     authorization_epoch: 1,
                     permits_nov_transfer: true,
@@ -113,17 +121,39 @@ fn actual_uca_startup_with_custody() -> Result<()> {
         }],
     };
     let domain = manifest.signing_domain()?;
-    let approvals = vec![UcaGenesisApprovalV1 {
-        uca_id: id.into(),
-        signature: signer.sign(
-            &management.public_key,
-            &management.expanded_secret_key,
-            &manifest.canonical_bytes()?,
-            INITIALIZATION_CONTEXT_V1,
-        )?,
-    }];
+    let approve = || -> Result<Vec<UcaGenesisApprovalV2>> {
+        [
+            (UcaGenesisApprovalSubjectV2::Identity(id.into()), &identity),
+            (
+                UcaGenesisApprovalSubjectV2::AssetManagement(vec![1; 20]),
+                &management,
+            ),
+            (
+                UcaGenesisApprovalSubjectV2::AssetRecovery(vec![1; 20]),
+                &recovery,
+            ),
+        ]
+        .into_iter()
+        .map(|(subject, key)| {
+            let signature = signer.sign(
+                &key.public_key,
+                &key.expanded_secret_key,
+                &manifest.approval_signing_bytes(&subject)?,
+                INITIALIZATION_CONTEXT_V2,
+            )?;
+            Ok(UcaGenesisApprovalV2 { subject, signature })
+        })
+        .collect()
+    };
+    let approvals = approve()?;
     let verified = manifest.compile(&runtime, domain, &approvals)?;
-    let material = UcaInitializationConfigV1 {
+    // Randomized signatures attest the same meaning; signatures themselves are
+    // never inserted into the initial state or used to choose a new chain root.
+    let repeated = manifest.compile(&runtime, domain, &approve()?)?;
+    assert_eq!(verified.state().root(), repeated.state().root());
+    assert_eq!(verified.final_commitment(), repeated.final_commitment());
+    let material = UcaInitializationConfigV2 {
+        identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
         approvals,
         expected_signing_domain: domain,
@@ -185,7 +215,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     // Each rejection must precede CandidateStore::open: even its directory may
     // not appear. The same invalid materials also cannot repair an existing DB.
     let mut invalid = Vec::new();
-    for case in 0..8 {
+    for case in 0..13 {
         let mut bad = config.clone();
         let init = bad.uca_initialization.as_mut().unwrap();
         match case {
@@ -220,6 +250,25 @@ fn actual_uca_startup_with_custody() -> Result<()> {
                 ));
             }
             7 => bad.key_storage = NodeKeyStorage::RawDevelopment,
+            8 => {
+                init.approvals.pop();
+            }
+            9 => init.approvals[1].signature = init.approvals[0].signature.clone(),
+            10 => init.approvals[2].signature = init.approvals[1].signature.clone(),
+            11 => {
+                init.approvals[1].subject =
+                    UcaGenesisApprovalSubjectV2::AssetManagement(vec![2; 20])
+            }
+            12 => {
+                // Even a genuine manager signature over just the manifest is
+                // not the account/purpose-bound v2 approval transcript.
+                init.approvals[1].signature = signer.sign(
+                    &management.public_key,
+                    &management.expanded_secret_key,
+                    &manifest.canonical_bytes()?,
+                    INITIALIZATION_CONTEXT_V2,
+                )?;
+            }
             _ => unreachable!(),
         }
         invalid.push(bad.clone());
@@ -254,20 +303,22 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     let parent = first.controller.parent();
     let mut lifecycle = crate::native_pipeline::service::rpc::RpcLifecycle::new(first, 2)?;
     let signed = runtime
-        .uca_spend_signer_v1()?
+        .asset_spend_signer_v2()?
         .sign(
-            novovm_protocol::uca_spend::UcaSpendIntentV1 {
+            novovm_protocol::uca_spend::AssetSpendIntentV2 {
                 chain_id: config.genesis.chain_id,
                 genesis: domain,
-                account_id: id.into(),
+                payer: vec![1; 20],
                 authorization_epoch: 1,
                 spend_key_ref: spend_key_ref_v1(&spend.public_key)?,
-                recipient_uca: id.into(),
+                recipient: vec![1; 20],
+                asset: NATIVE_NOV_ASSET,
                 amount: 1,
                 max_fee: 50,
                 nonce: 0,
                 not_before_height: 1,
                 expires_at_height: 100,
+                authority_update: None,
             },
             &spend.public_key,
             &spend.expanded_secret_key,

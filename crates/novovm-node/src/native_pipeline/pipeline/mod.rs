@@ -27,6 +27,7 @@ pub use authentication::{
     AuthenticationSubmission, AuthenticationTicket, RejectedAuthenticatedSubmission,
     RejectedAuthenticationSubmission,
 };
+pub(crate) use seed::ReadSeedLease;
 
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::nov_transfer_batch::ExecutionObservation;
@@ -133,25 +134,15 @@ pub struct BatchRequest {
 
 impl BatchRequest {
     /// Preserve the immutable structural batch until the resident verifier
-    /// consumes each canonical row. Hints locate state; they grant no authority.
+    /// consumes each canonical row, including its signed asset accounts.
     pub fn from_uca_batch(
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         context: BatchContext,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {
-        let hints = (0..batch.len())
-            .map(|index| {
-                let (payer, recipient) = batch.account_hints(index)?;
-                Ok((
-                    payer.try_into().map_err(anyhow::Error::msg)?,
-                    recipient.try_into().map_err(anyhow::Error::msg)?,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
         Self::from_input(
             compute::CandidateInput::Uca {
                 source: BatchSource::Uca(batch),
-                hints,
             },
             context,
             policy,
@@ -161,21 +152,12 @@ impl BatchRequest {
     /// owner. This does not activate a public native listener or grant authority.
     pub fn from_uca(
         raw_transactions: Vec<Vec<u8>>,
-        hints: Vec<(
-            crate::native_pipeline::business::quoted_transfer::Account,
-            crate::native_pipeline::business::quoted_transfer::Account,
-        )>,
         context: BatchContext,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {
-        ensure!(
-            raw_transactions.len() == hints.len(),
-            "UCA input/hint shape mismatch"
-        );
         Self::from_input(
             compute::CandidateInput::Uca {
                 source: BatchSource::Raw(raw_transactions),
-                hints,
             },
             context,
             policy,
@@ -226,19 +208,7 @@ impl BatchRequest {
             "empty pipeline request"
         );
         policy.validate()?;
-        let (mut body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
-        if let compute::CandidateInput::Uca { hints, .. } = &raw_transactions {
-            for (payer, recipient) in hints {
-                body_bytes = body_bytes
-                    .checked_add(payer.as_bytes().len())
-                    .and_then(|n| n.checked_add(recipient.as_bytes().len()))
-                    .context("UCA input/hint byte budget overflow")?;
-            }
-        } else if let compute::CandidateInput::Admitted(batch) = &raw_transactions {
-            body_bytes = body_bytes
-                .checked_add(batch.uca_hint_bytes()?)
-                .context("admitted UCA input/hint byte budget overflow")?;
-        }
+        let (body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
         let transaction_count = raw_transactions.source().len();
         Ok(Self {
             request: Box::new(compute::PrepareRequest {
@@ -529,6 +499,7 @@ pub struct CandidatePipeline {
     metadata: Option<IoMetadataClient>,
     identity: Arc<()>,
     usage: Arc<Mutex<Usage>>,
+    seed: seed::SeedSlot,
     signatures: Arc<SignatureWork>,
 }
 
@@ -559,6 +530,8 @@ impl CandidatePipeline {
         let worker_config = config.clone();
         let identity = Arc::new(());
         let worker_identity = identity.clone();
+        let seed = Arc::new(Mutex::new(None));
+        let worker_seed = seed.clone();
         let signatures = Arc::new(SignatureWork::default());
         let worker_signatures = signatures.clone();
         let worker = thread::Builder::new()
@@ -571,6 +544,7 @@ impl CandidatePipeline {
                     ready,
                     worker_identity,
                     worker_signatures,
+                    worker_seed,
                 )
             })
             .context("start candidate pipeline")?;
@@ -588,6 +562,7 @@ impl CandidatePipeline {
             metadata: Some(metadata),
             identity,
             usage: Arc::new(Mutex::new(Usage::default())),
+            seed,
             signatures,
         })
     }

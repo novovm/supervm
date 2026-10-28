@@ -99,14 +99,13 @@ impl Pending {
     /// input; column compression cannot make them free. Invalid metadata cannot
     /// be selected or advance the local nonce prefix.
     fn selection_input_bytes(&self) -> Option<usize> {
-        let hints = match &self.input {
+        match &self.input {
             AdmissionInput::Uca { batch, index } => {
-                let (payer, recipient) = batch.account_hints(*index).ok()?;
-                payer.len().checked_add(recipient.len())?
+                let bytes = batch.transaction_bytes(*index).ok()?;
+                (bytes == self.canonical_len).then_some(bytes)
             }
-            AdmissionInput::Raw(_) | AdmissionInput::Apfl { .. } => 0,
-        };
-        self.canonical_len.checked_add(hints)
+            AdmissionInput::Raw(_) | AdmissionInput::Apfl { .. } => Some(self.canonical_len),
+        }
     }
 
     fn retained_metadata_bytes(&self) -> usize {
@@ -395,13 +394,13 @@ impl RpcLifecycle {
         {
             None
         } else {
-            // UCA's full authority/budget successor overlay is not yet exposed
-            // by the existing lookahead. Never reinterpret it as a V3 prefix.
-            if self.is_uca() {
-                return Ok(());
-            }
             // Reuse one bounded lookahead within the existing body owner.
             // No duplicate body or repeated nonce projection while it runs.
+            // UCA uses its typed body and the original candidate's complete
+            // persisted state root. The local receipt nonce hint ONLY selects
+            // rows; it is not an authority/budget snapshot. Bind/capture still
+            // checks all grants, balances, fees and nonce at that exact root,
+            // and promotion still requires the original parent journal ACK.
             let Some(next_height) = current_height.checked_add(1) else {
                 return Ok(());
             };
@@ -485,7 +484,7 @@ impl RpcLifecycle {
             context.parent_receipt_root = parent.receipt_batch_commitment;
             context.parent_state_version = parent.state_version;
             let body = if self.is_uca() {
-                Message::UcaBody {
+                Message::AssetBody {
                     context,
                     batch: self.selected_uca_batch(&selected)?,
                 }
@@ -1137,11 +1136,11 @@ fn admitted_for_body<'a>(
     message: &Message,
     pending: &'a BTreeMap<Hash, Pending>,
 ) -> Result<Option<Vec<&'a AdmittedTransfer>>> {
-    if let Message::UcaBody { batch, .. } = message {
+    if let Message::AssetBody { batch, .. } = message {
         let mut admitted = Vec::with_capacity(batch.len());
         for index in 0..batch.len() {
             let raw = batch.raw_transaction(index)?;
-            let signed = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(&raw)?;
+            let signed = novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&raw)?;
             let hash = uca::hash(&signed)?;
             let Some(entry) = pending.get(&hash) else {
                 return Ok(None);
@@ -1157,9 +1156,8 @@ fn admitted_for_body<'a>(
                 return Ok(None);
             };
             // Intent hashes deliberately omit signatures. Match complete
-            // signed bytes and locator pairs before reusing this pool fact.
+            // signed bytes, including concrete accounts, before reusing this fact.
             if original.raw_transaction(*original_index)? != raw
-                || original.account_hints(*original_index)? != batch.account_hints(index)?
                 || !checked.matches_uca_source(original, *original_index)
                 || checked
                     .checked_uca()

@@ -1,30 +1,26 @@
 use super::*;
 
-fn fixture() -> (UcaSpendIntentV1, UcaAccount, SuppliedSpendGrantV1) {
+fn fixture() -> (AssetSpendIntentV2, Vec<u8>, SuppliedAssetSpendGrantV2) {
     (
-        UcaSpendIntentV1 {
+        AssetSpendIntentV2 {
             chain_id: 7,
             genesis: [2; 32],
-            account_id: "uca:alice".into(),
+            payer: vec![1; 32],
             authorization_epoch: 3,
             spend_key_ref: [4; 32],
-            recipient_uca: "uca:bob".into(),
+            recipient: vec![2; 32],
+            asset: NATIVE_NOV_ASSET,
             amount: 100,
             max_fee: 20,
             nonce: 9,
             not_before_height: 10,
             expires_at_height: 20,
+            authority_update: None,
         },
-        UcaAccount {
-            uca_id: "uca:alice".into(),
-            primary_key_ref: vec![8; 32],
-            primary_key_binding: None,
-            status: UcaStatus::Active,
-            created_at: 1,
-            updated_at: 2,
-        },
-        SuppliedSpendGrantV1 {
-            account_id: "uca:alice".into(),
+        vec![1; 32],
+        SuppliedAssetSpendGrantV2 {
+            account: vec![1; 32],
+            asset: NATIVE_NOV_ASSET,
             key_ref: [4; 32],
             authorization_epoch: 3,
             permits_nov_transfer: true,
@@ -41,20 +37,23 @@ fn fixture() -> (UcaSpendIntentV1, UcaAccount, SuppliedSpendGrantV1) {
 fn absent_state_and_unresolved_nonce_never_become_fresh_account() {
     let (intent, account, grant) = fixture();
     assert_eq!(
-        check_supplied_spend_state_v1(&intent, None, &[5; 32], 12),
+        check_supplied_spend_state_v2(&intent, None, &[5; 32], 12),
         Err(SpendPolicyError::StateUnavailable)
     );
-    let state = SuppliedSpendStateV1 {
+    let state = SuppliedAssetSpendStateV2 {
         chain_id: 7,
         genesis: [2; 32],
         parent_root: [5; 32],
         account: &account,
-        grant: &grant,
+        grant: Some(&grant),
+        account_active: true,
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
         current_spend_epoch: Some(3),
         next_spend_nonce: None,
     };
     assert_eq!(
-        check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::StateUnavailable)
     );
 }
@@ -82,10 +81,7 @@ fn supplied_policy_rejects_every_authority_boundary_without_mutation() {
     ] {
         let (intent, mut account, mut grant) = fixture();
         if case == 3 {
-            account.uca_id = "other".into();
-        }
-        if case == 4 {
-            account.status = UcaStatus::Recovering;
+            account[0] ^= 1;
         }
         if case == 5 {
             grant.key_ref = [6; 32];
@@ -112,20 +108,26 @@ fn supplied_policy_rejects_every_authority_boundary_without_mutation() {
             grant.remaining_debit_budget = 119;
         }
         if case == 14 {
-            grant.account_id = "other".into();
+            grant.account[0] ^= 1;
         }
         if case == 15 {
             grant.authorization_epoch = 0;
         }
-        let mut state = SuppliedSpendStateV1 {
+        let mut state = SuppliedAssetSpendStateV2 {
             chain_id: 7,
             genesis: [2; 32],
             parent_root: [5; 32],
             account: &account,
-            grant: &grant,
+            grant: Some(&grant),
+            account_active: true,
+            management_key_ref: [8; 32],
+            recovery_key_ref: Some([9; 32]),
             current_spend_epoch: Some(3),
             next_spend_nonce: Some(9),
         };
+        if case == 4 {
+            state.account_active = false;
+        }
         if case == 0 {
             state.parent_root = [6; 32];
         }
@@ -139,7 +141,7 @@ fn supplied_policy_rejects_every_authority_boundary_without_mutation() {
             state.next_spend_nonce = Some(10);
         }
         assert_eq!(
-            check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+            check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
             Err(expected),
             "case {case}"
         );
@@ -149,7 +151,7 @@ fn supplied_policy_rejects_every_authority_boundary_without_mutation() {
             Err(expected)
         };
         assert_eq!(
-            check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+            check_supplied_spend_authority_v2(&intent, Some(&state), &[5; 32], 12),
             authority_expected,
             "authority case {case}"
         );
@@ -169,39 +171,42 @@ fn rotation_keeps_account_and_nonce_and_rejects_old_key_and_replay() {
         old.nonce_identity().unwrap(),
         rotated.nonce_identity().unwrap()
     );
-    let mut state = SuppliedSpendStateV1 {
+    let mut state = SuppliedAssetSpendStateV2 {
         chain_id: 7,
         genesis: [2; 32],
         parent_root: [5; 32],
         account: &account,
-        grant: &grant,
+        grant: Some(&grant),
+        account_active: true,
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
         current_spend_epoch: Some(4),
         next_spend_nonce: Some(9),
     };
     assert_eq!(
-        check_supplied_spend_state_v1(&rotated, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&rotated, Some(&state), &[5; 32], 12),
         Ok(())
     );
     assert_eq!(
-        check_supplied_spend_state_v1(&old, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&old, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::WrongKey)
     );
     state.next_spend_nonce = Some(10);
     assert_eq!(
-        check_supplied_spend_state_v1(&rotated, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&rotated, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::NonceMismatch)
     );
     rotated.nonce = 10;
     assert_eq!(
-        check_supplied_spend_state_v1(&rotated, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&rotated, Some(&state), &[5; 32], 12),
         Ok(())
     );
     assert_eq!(
-        check_supplied_spend_state_v1(&rotated, Some(&state), &[5; 32], 20),
+        check_supplied_spend_state_v2(&rotated, Some(&state), &[5; 32], 20),
         Err(SpendPolicyError::Expired)
     );
     assert_eq!(
-        check_supplied_spend_state_v1(&rotated, Some(&state), &[5; 32], 9),
+        check_supplied_spend_state_v2(&rotated, Some(&state), &[5; 32], 9),
         Err(SpendPolicyError::Expired)
     );
 }
@@ -215,21 +220,24 @@ fn unresolved_or_zero_current_epoch_cannot_be_inferred_from_matching_grant() {
         (Some(2), SpendPolicyError::WrongEpoch),
         (Some(4), SpendPolicyError::WrongEpoch),
     ] {
-        let state = SuppliedSpendStateV1 {
+        let state = SuppliedAssetSpendStateV2 {
             chain_id: 7,
             genesis: [2; 32],
             parent_root: [5; 32],
             account: &account,
-            grant: &grant,
+            grant: Some(&grant),
+            account_active: true,
+            management_key_ref: [8; 32],
+            recovery_key_ref: Some([9; 32]),
             current_spend_epoch: epoch,
             next_spend_nonce: Some(9),
         };
         assert_eq!(
-            check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+            check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
             Err(expected)
         );
         assert_eq!(
-            check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+            check_supplied_spend_authority_v2(&intent, Some(&state), &[5; 32], 12),
             Err(expected)
         );
     }
@@ -241,36 +249,39 @@ fn authority_preflight_does_not_substitute_for_dynamic_prefix_checks() {
     intent.nonce = 10; // A preceding same-account intent may consume nonce 9.
     grant.max_debit_per_intent = 0;
     grant.remaining_debit_budget = 0;
-    let mut state = SuppliedSpendStateV1 {
+    let mut state = SuppliedAssetSpendStateV2 {
         chain_id: 7,
         genesis: [2; 32],
         parent_root: [5; 32],
         account: &account,
-        grant: &grant,
+        grant: Some(&grant),
+        account_active: true,
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
         current_spend_epoch: Some(3),
         next_spend_nonce: Some(9),
     };
     assert_eq!(
-        check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_authority_v2(&intent, Some(&state), &[5; 32], 12),
         Ok(())
     );
     assert_eq!(
-        check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::NonceMismatch),
         "original nonce rejection takes priority over debit limits"
     );
     state.next_spend_nonce = None;
     assert_eq!(
-        check_supplied_spend_authority_v1(&intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_authority_v2(&intent, Some(&state), &[5; 32], 12),
         Ok(())
     );
     assert_eq!(
-        check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::StateUnavailable)
     );
     state.next_spend_nonce = Some(10);
     assert_eq!(
-        check_supplied_spend_state_v1(&intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::LimitExceeded),
         "passing the authority-only check never waives debit limits"
     );
@@ -280,32 +291,33 @@ fn authority_preflight_does_not_substitute_for_dynamic_prefix_checks() {
 
 #[test]
 fn advancing_current_epoch_invalidates_retained_old_grant_without_resetting_nonce() {
-    let (old, mut account, old_grant) = fixture();
-    // Management timestamps may advance independently. Neither is a spend epoch.
-    account.updated_at = 4;
-    let mut state = SuppliedSpendStateV1 {
+    let (old, account, old_grant) = fixture();
+    let mut state = SuppliedAssetSpendStateV2 {
         chain_id: 7,
         genesis: [2; 32],
         parent_root: [5; 32],
         account: &account,
-        grant: &old_grant,
+        grant: Some(&old_grant),
+        account_active: true,
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
         current_spend_epoch: Some(3),
         next_spend_nonce: Some(9),
     };
     assert_eq!(
-        check_supplied_spend_state_v1(&old, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&old, Some(&state), &[5; 32], 12),
         Ok(())
     );
     state.current_spend_epoch = Some(4);
     assert!(!old_grant.revoked);
     assert_eq!(
-        check_supplied_spend_state_v1(&old, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&old, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::WrongEpoch)
     );
     let mut new_intent = old.clone();
     new_intent.authorization_epoch = 4;
     assert_eq!(
-        check_supplied_spend_state_v1(&new_intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&new_intent, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::WrongEpoch),
         "new intent cannot revive an old grant"
     );
@@ -313,9 +325,9 @@ fn advancing_current_epoch_invalidates_retained_old_grant_without_resetting_nonc
     new_grant.authorization_epoch = 4;
     new_grant.key_ref = [6; 32];
     new_intent.spend_key_ref = new_grant.key_ref;
-    state.grant = &new_grant;
+    state.grant = Some(&new_grant);
     assert_eq!(
-        check_supplied_spend_state_v1(&new_intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&new_intent, Some(&state), &[5; 32], 12),
         Ok(())
     );
     assert_eq!(
@@ -325,7 +337,116 @@ fn advancing_current_epoch_invalidates_retained_old_grant_without_resetting_nonc
     assert_eq!(state.next_spend_nonce, Some(9));
     new_intent.nonce = 0;
     assert_eq!(
-        check_supplied_spend_state_v1(&new_intent, Some(&state), &[5; 32], 12),
+        check_supplied_spend_state_v2(&new_intent, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::NonceMismatch)
+    );
+}
+
+#[test]
+fn concrete_accounts_isolate_keys_grants_and_nonce_even_with_shared_identity() {
+    let (quick, account, grant) = fixture();
+    let state = SuppliedAssetSpendStateV2 {
+        chain_id: 7,
+        genesis: [2; 32],
+        parent_root: [5; 32],
+        account: &account,
+        account_active: true,
+        grant: Some(&grant),
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
+        current_spend_epoch: Some(3),
+        next_spend_nonce: Some(9),
+    };
+    assert!(check_supplied_spend_state_v2(&quick, Some(&state), &[5; 32], 12).is_ok());
+    let mut savings = quick.clone();
+    savings.payer = vec![7; 32];
+    assert_ne!(
+        savings.nonce_identity().unwrap(),
+        quick.nonce_identity().unwrap()
+    );
+    assert_eq!(
+        check_supplied_spend_state_v2(&savings, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongAccount)
+    );
+    // Re-pointing the account alone does not transplant the other account's grant.
+    let savings_account = savings.payer.clone();
+    let savings_state = SuppliedAssetSpendStateV2 {
+        account: &savings_account,
+        ..state
+    };
+    assert_eq!(
+        check_supplied_spend_state_v2(&savings, Some(&savings_state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongAccount)
+    );
+    let mut cross_asset = grant.clone();
+    cross_asset.asset = 2;
+    let state = SuppliedAssetSpendStateV2 {
+        account: &account,
+        grant: Some(&cross_asset),
+        ..savings_state
+    };
+    assert_eq!(
+        check_supplied_spend_state_v2(&quick, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongDomain)
+    );
+}
+
+#[test]
+fn manager_or_explicit_recovery_can_update_inactive_account_without_spend_grant() {
+    use novovm_protocol::uca_spend::AssetAuthorityUpdateV2;
+    let (mut intent, account, _) = fixture();
+    intent.amount = 0;
+    intent.recipient = intent.payer.clone();
+    intent.spend_key_ref = [8; 32];
+    intent.authority_update = Some(AssetAuthorityUpdateV2 {
+        use_recovery: false,
+        next_epoch: 4,
+        active: true,
+        management_key_ref: [10; 32],
+        recovery_key_ref: Some([11; 32]),
+        grants: Vec::new(),
+    });
+    let mut state = SuppliedAssetSpendStateV2 {
+        chain_id: 7,
+        genesis: [2; 32],
+        parent_root: [5; 32],
+        account: &account,
+        account_active: false,
+        grant: None,
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
+        current_spend_epoch: Some(3),
+        next_spend_nonce: Some(9),
+    };
+    assert!(check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12).is_ok());
+    intent.spend_key_ref = [4; 32]; // The quick-payment key is not a manager.
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongKey)
+    );
+    intent.spend_key_ref = [10; 32]; // A proposed new manager cannot approve itself.
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongKey)
+    );
+    intent.spend_key_ref = [9; 32];
+    intent.authority_update.as_mut().unwrap().use_recovery = true;
+    assert!(check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12).is_ok());
+    state.recovery_key_ref = None;
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongKey)
+    );
+    state.recovery_key_ref = Some([9; 32]);
+    state.next_spend_nonce = Some(10);
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::NonceMismatch)
+    );
+    state.next_spend_nonce = Some(9);
+    state.current_spend_epoch = Some(4);
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongEpoch)
     );
 }

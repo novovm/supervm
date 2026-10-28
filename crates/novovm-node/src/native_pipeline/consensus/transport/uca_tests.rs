@@ -2,7 +2,7 @@
 //! ML-DSA verification, spending authorization, execution or network finality.
 use super::*;
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES,
+    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES,
     MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
 };
 
@@ -10,8 +10,7 @@ struct Fixture {
     context: BatchContext,
     policy: DirectNovFeePolicy,
     raw: Vec<Vec<u8>>,
-    hints: Vec<(Vec<u8>, Vec<u8>)>,
-    batch: Arc<UcaSpendBatch>,
+    batch: Arc<AssetSpendBatchV2>,
     limits: DecodeLimits,
 }
 
@@ -65,14 +64,16 @@ fn fixture() -> Result<Fixture> {
     let public_key = vec![7; MLDSA65_PUBLIC_KEY_BYTES];
     let raw = (0..4)
         .map(|nonce| {
-            SignedUcaSpendV1 {
-                intent: UcaSpendIntentV1 {
+            SignedAssetSpendV2 {
+                intent: AssetSpendIntentV2 {
+                    asset: 1,
+                    authority_update: None,
                     chain_id: context.chain_id,
                     genesis: context.genesis_config_commitment,
-                    account_id: "uca:alice".into(),
+                    payer: vec![1; 20],
                     authorization_epoch: 1,
                     spend_key_ref: spend_key_ref_v1(&public_key)?,
-                    recipient_uca: "uca:bob".into(),
+                    recipient: vec![2; 32],
                     amount: 8 + u128::from(nonce),
                     max_fee: 20,
                     nonce,
@@ -85,13 +86,11 @@ fn fixture() -> Result<Fixture> {
             .encode()
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let hints = vec![(vec![5; 20], vec![6; 32]); raw.len()];
-    let batch = Arc::new(UcaSpendBatch::from_raw(&raw, &hints, batch_limits(limits))?);
+    let batch = Arc::new(AssetSpendBatchV2::from_raw(&raw, batch_limits(limits))?);
     Ok(Fixture {
         context,
         policy,
         raw,
-        hints,
         batch,
         limits,
     })
@@ -100,7 +99,7 @@ fn fixture() -> Result<Fixture> {
 pub(in super::super) fn recovery_specimen() -> Result<(Message, DecodeLimits)> {
     let f = fixture()?;
     Ok((
-        Message::UcaBody {
+        Message::AssetBody {
             context: f.context,
             batch: f.batch,
         },
@@ -111,13 +110,13 @@ pub(in super::super) fn recovery_specimen() -> Result<(Message, DecodeLimits)> {
 #[test]
 fn nuas_body_uses_explicit_tag_and_existing_bounded_body_lane() -> Result<()> {
     let f = fixture()?;
-    let message = Message::UcaBody {
+    let message = Message::AssetBody {
         context: f.context,
         batch: f.batch.clone(),
     };
     let encoded = encode(&message, f.limits)?;
     assert_eq!(encoded[10], 14);
-    assert_eq!(&encoded[11..13], &1u16.to_be_bytes());
+    assert_eq!(&encoded[11..13], &2u16.to_be_bytes());
     assert_eq!(message_lane(&encoded)?, 1);
     assert_eq!(super::super::decode(&encoded, f.limits)?, message);
     assert_eq!(
@@ -140,7 +139,7 @@ fn nuas_body_uses_explicit_tag_and_existing_bounded_body_lane() -> Result<()> {
 #[test]
 fn nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit() -> Result<()> {
     let f = fixture()?;
-    let message = Message::UcaBody {
+    let message = Message::AssetBody {
         context: f.context,
         batch: f.batch.clone(),
     };
@@ -149,7 +148,7 @@ fn nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit() -> R
         assert!(super::super::decode(&encoded[..end], f.limits).is_err());
     }
     let mut bad = encoded.clone();
-    bad[12] = 2;
+    bad[12] = 1; // The superseded UCA-addressed body is not a fallback.
     assert!(super::super::decode(&bad, f.limits).is_err());
     let mut bad = encoded.clone();
     bad.push(0);
@@ -174,12 +173,11 @@ fn nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit() -> R
     }
     // A single row's explicit column framing is larger than its canonical
     // NUAS bytes, so isolate message_bytes without first violating body_bytes.
-    let single = Arc::new(UcaSpendBatch::from_raw(
+    let single = Arc::new(AssetSpendBatchV2::from_raw(
         &f.raw[..1],
-        &f.hints[..1],
         batch_limits(f.limits),
     )?);
-    let message = Message::UcaBody {
+    let message = Message::AssetBody {
         context: f.context,
         batch: single.clone(),
     };
@@ -205,7 +203,7 @@ fn nuas_body_profile_and_policy_cannot_reinterpret_v3() -> Result<()> {
     contexts[1].receipt_codec = receipt_codec();
     contexts[2].semantic_version = SEMANTIC_VERSION + 1;
     let original = encode(
-        &Message::UcaBody {
+        &Message::AssetBody {
             context: f.context,
             batch: f.batch.clone(),
         },
@@ -214,7 +212,7 @@ fn nuas_body_profile_and_policy_cannot_reinterpret_v3() -> Result<()> {
     // Context starts after transport prefix + NUAS payload version. Mutations
     // here test the receiving decoder, not just a local encoder's rejection.
     for (context, context_offset) in contexts.into_iter().zip([72usize, 252, 104]) {
-        let message = Message::UcaBody {
+        let message = Message::AssetBody {
             context,
             batch: f.batch.clone(),
         };
@@ -227,7 +225,7 @@ fn nuas_body_profile_and_policy_cannot_reinterpret_v3() -> Result<()> {
     let mut wrong_policy = f.context;
     wrong_policy.effect_contract[0] ^= 1;
     assert!(candidate_request(
-        &Message::UcaBody {
+        &Message::AssetBody {
             context: wrong_policy,
             batch: f.batch.clone()
         },
@@ -243,29 +241,34 @@ fn nuas_body_profile_and_policy_cannot_reinterpret_v3() -> Result<()> {
 }
 
 #[test]
-fn nuas_body_identity_commits_order_signatures_hints_and_parent() -> Result<()> {
+fn nuas_body_identity_commits_order_signatures_signed_accounts_and_parent() -> Result<()> {
     let f = fixture()?;
     let original = uca_body_id(&f.context, &f.batch, f.limits)?;
     let mut raw = f.raw.clone();
     raw.swap(0, 1);
-    let reordered = UcaSpendBatch::from_raw(&raw, &f.hints, batch_limits(f.limits))?;
+    let reordered = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
     assert_ne!(original, uca_body_id(&f.context, &reordered, f.limits)?);
     let mut raw = f.raw.clone();
     *raw[0].last_mut().unwrap() ^= 1;
-    let modified_signature = UcaSpendBatch::from_raw(&raw, &f.hints, batch_limits(f.limits))?;
+    let modified_signature = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
     assert_ne!(
         original,
         uca_body_id(&f.context, &modified_signature, f.limits)?
     );
-    for hint_column in 0..2 {
-        let mut hints = f.hints.clone();
-        if hint_column == 0 {
-            hints[0].0[0] ^= 1;
+    for account_column in 0..2 {
+        let mut raw = f.raw.clone();
+        let mut signed = SignedAssetSpendV2::decode(&raw[0])?;
+        if account_column == 0 {
+            signed.intent.payer[0] ^= 1;
         } else {
-            hints[0].1[0] ^= 1;
+            signed.intent.recipient[0] ^= 1;
         }
-        let modified_hint = UcaSpendBatch::from_raw(&f.raw, &hints, batch_limits(f.limits))?;
-        assert_ne!(original, uca_body_id(&f.context, &modified_hint, f.limits)?);
+        raw[0] = signed.encode()?;
+        let modified_account = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
+        assert_ne!(
+            original,
+            uca_body_id(&f.context, &modified_account, f.limits)?
+        );
     }
     let mut parent = f.context;
     parent.parent_state_root[0] ^= 1;
@@ -288,7 +291,7 @@ fn input_scope(f: &Fixture) -> TransactionsScope {
 #[test]
 fn nuas_application_input_uses_structural_tag15_not_candidate_authority() -> Result<()> {
     let f = fixture()?;
-    let message = Message::UcaTransactions {
+    let message = Message::AssetTransactions {
         scope: input_scope(&f),
         batch: f.batch.clone(),
     };
@@ -321,7 +324,7 @@ fn nuas_application_input_uses_structural_tag15_not_candidate_authority() -> Res
 #[test]
 fn nuas_application_input_limits_charge_original_bytes_not_compressed_size() -> Result<()> {
     let f = fixture()?;
-    let message = Message::UcaTransactions {
+    let message = Message::AssetTransactions {
         scope: input_scope(&f),
         batch: f.batch.clone(),
     };
@@ -347,12 +350,11 @@ fn nuas_application_input_limits_charge_original_bytes_not_compressed_size() -> 
         assert!(encode(&message, restricted).is_err());
         assert!(super::super::decode(&encoded, restricted).is_err());
     }
-    let single = Arc::new(UcaSpendBatch::from_raw(
+    let single = Arc::new(AssetSpendBatchV2::from_raw(
         &f.raw[..1],
-        &f.hints[..1],
         batch_limits(f.limits),
     )?);
-    let message = Message::UcaTransactions {
+    let message = Message::AssetTransactions {
         scope: input_scope(&f),
         batch: single.clone(),
     };
@@ -401,7 +403,7 @@ fn nuas_application_input_pins_domain_without_granting_spend_authority() -> Resu
         validator_set_hash: validators.hash(),
         ..input_scope(&f)
     };
-    let message = Message::UcaTransactions {
+    let message = Message::AssetTransactions {
         scope,
         batch: f.batch.clone(),
     };
@@ -419,7 +421,7 @@ fn nuas_application_input_pins_domain_without_granting_spend_authority() -> Resu
     wrong[6].session = [0; 32];
     for scope in wrong {
         assert!(message_evidence::verify(
-            &Message::UcaTransactions {
+            &Message::AssetTransactions {
                 scope,
                 batch: f.batch.clone()
             },

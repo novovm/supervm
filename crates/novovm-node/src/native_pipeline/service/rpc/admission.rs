@@ -60,6 +60,8 @@ pub(super) struct AdmissionState {
     work: Option<Work>,
     uca: Option<UcaWork>,
     cached_body_boundary_waiting: bool,
+    #[cfg(test)]
+    hold_authority_poll_once: bool,
     next_signature_submitted_while_capture: u64,
     signature_completed_while_capture: u64,
     max_retained_stage_slots: usize,
@@ -95,6 +97,9 @@ struct UcaCaptureTotals {
     unique_keys: u64,
     io_requests: u64,
     io_nodes: u64,
+    seed_nodes: u64,
+    poll_turns: u64,
+    local_steps: u64,
     parent_restarts: u64,
     elapsed_us: u64,
     max_elapsed_us: u64,
@@ -113,6 +118,9 @@ impl UcaCaptureTotals {
         self.unique_keys = self.unique_keys.saturating_add(stats.unique_keys as u64);
         self.io_requests = self.io_requests.saturating_add(stats.io_requests as u64);
         self.io_nodes = self.io_nodes.saturating_add(stats.io_nodes as u64);
+        self.seed_nodes = self.seed_nodes.saturating_add(stats.seed_nodes as u64);
+        self.poll_turns = self.poll_turns.saturating_add(stats.poll_turns as u64);
+        self.local_steps = self.local_steps.saturating_add(stats.local_steps as u64);
         if let Some(started) = started {
             let elapsed = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
             self.elapsed_us = self.elapsed_us.saturating_add(elapsed);
@@ -164,6 +172,9 @@ impl AdmissionState {
                 "declared_keys":self.uca_capture.declaration_keys,
                 "unique_keys":self.uca_capture.unique_keys,
                 "io_requests":self.uca_capture.io_requests,
+                "seed_nodes":self.uca_capture.seed_nodes,
+                "poll_turns":self.uca_capture.poll_turns,
+                "local_steps":self.uca_capture.local_steps,
                 "io_nodes":self.uca_capture.io_nodes,
                 "parent_restarts":self.uca_capture.parent_restarts,
                 "elapsed_us":self.uca_capture.elapsed_us,
@@ -268,9 +279,9 @@ impl RpcLifecycle {
     #[cfg(test)]
     pub(crate) fn assert_uca_overlap_body_boundaries_for_test(
         &mut self,
-        cached: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
-        partial: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
-        newer_bad: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        cached: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        partial: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        newer_bad: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
     ) -> Result<()> {
         use crate::native_pipeline::consensus::transport::TransactionsScope;
         ensure!(self.is_uca(), "UCA fixture required");
@@ -298,7 +309,7 @@ impl RpcLifecycle {
             session: [8; 32],
             sequence: 1,
         };
-        let message = |batch| Arc::new(Message::UcaTransactions { scope, batch });
+        let message = |batch| Arc::new(Message::AssetTransactions { scope, batch });
         let deadline = Instant::now() + Duration::from_secs(30);
         self.incoming_from_client = false;
         self.incoming = Some((message(cached), 0));
@@ -333,8 +344,13 @@ impl RpcLifecycle {
         self.admission.work = self.prepare_gossip_admission()?;
         ensure!(self.admission.work.is_some(), "next signature work missing");
         self.admission.record_retained_stages();
-        // First bulk capture poll submits its read and yields. The original
-        // next Work is then submitted through its ordinary compute owner.
+        // Deterministically hold the existing capture for ONE test poll. A
+        // same-parent seed can now satisfy this tiny fixture immediately; an
+        // OS/I/O timing assumption is not an overlap counterexample. No output
+        // is fabricated and the real queued signature work still uses the
+        // original production scheduler/compute owner. This is not a measured
+        // claim that an unforced product batch waited for physical I/O.
+        self.admission.hold_authority_poll_once = true;
         self.poll_admission()?;
         ensure!(self.admission.next_signature_submitted_while_capture > 0);
         while self.admission.uca.is_some() {
@@ -739,7 +755,7 @@ impl RpcLifecycle {
                 raw_transactions, ..
             } => raw_transactions.len(),
             Message::ApflTransactions { batch, .. } => batch.len(),
-            Message::UcaTransactions { batch, .. } => batch.len(),
+            Message::AssetTransactions { batch, .. } => batch.len(),
             _ => anyhow::bail!("transaction channel returned non-transaction message"),
         };
         let mut inputs = Vec::new();
@@ -754,7 +770,7 @@ impl RpcLifecycle {
                     batch: batch.clone(),
                     index,
                 },
-                Message::UcaTransactions { batch, .. } => AdmissionInput::Uca {
+                Message::AssetTransactions { batch, .. } => AdmissionInput::Uca {
                     batch: batch.clone(),
                     index,
                 },
@@ -921,6 +937,10 @@ impl RpcLifecycle {
     }
 
     fn poll_uca_admission(&mut self) -> Result<()> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.admission.hold_authority_poll_once) {
+            return Ok(());
+        }
         let mut work = self.admission.uca.take().expect("pending UCA work");
         if work.rows.is_empty() {
             self.finish_uca_admission(work);
@@ -945,11 +965,18 @@ impl RpcLifecycle {
                     .iter()
                     .map(|(input, checked)| uca_capture_input(input, checked))
                     .collect::<Result<Vec<_>>>()?;
-                work.read = Some(native_query::UcaBatchStateRead::new(
-                    parent.state_root,
-                    inputs,
-                    self.node.pipeline.capture_budget(),
-                )?);
+                work.read = Some(
+                    native_query::UcaBatchStateRead::new(
+                        parent.state_root,
+                        inputs,
+                        self.node.pipeline.capture_budget(),
+                    )?
+                    .with_read_locality(
+                        &self.node.pipeline,
+                        parent,
+                        self.node.template,
+                    )?,
+                );
             }
             work.read
                 .as_mut()
@@ -1018,7 +1045,7 @@ fn uca_capture_input(
     input: &AdmissionInput,
     checked: &AdmittedTransfer,
 ) -> Result<(
-    novovm_protocol::uca_spend::UcaSpendIntentV1,
+    novovm_protocol::uca_spend::AssetSpendIntentV2,
     Account,
     Account,
 )> {
@@ -1034,7 +1061,7 @@ fn uca_capture_input(
         checked.matches_uca_source(batch, *index),
         "UCA source capability mismatch"
     );
-    let (payer, recipient) = batch.account_hints(*index)?;
+    let (payer, recipient) = batch.signed_accounts(*index)?;
     let payer = Account::try_from(payer).map_err(anyhow::Error::msg)?;
     let recipient = Account::try_from(recipient).map_err(anyhow::Error::msg)?;
     Ok((intent, payer, recipient))
@@ -1103,6 +1130,9 @@ mod tests {
             unique_keys: 37,
             io_requests: 2,
             io_nodes: 64,
+            seed_nodes: 12,
+            poll_turns: 4,
+            local_steps: 16,
         };
         let mut totals = UcaCaptureTotals::default();
         totals.record_stats(stats, None);
@@ -1111,6 +1141,9 @@ mod tests {
         assert_eq!(totals.declaration_keys, 148);
         assert_eq!(totals.unique_keys, 74);
         assert_eq!(totals.io_requests, 4);
+        assert_eq!(totals.seed_nodes, 24);
+        assert_eq!(totals.poll_turns, 8);
+        assert_eq!(totals.local_steps, 32);
         assert_eq!(totals.io_nodes, 128);
         assert_eq!(totals.elapsed_us, 0);
         assert_eq!(totals.max_elapsed_us, 0);
@@ -1139,6 +1172,9 @@ mod tests {
             "unique_keys",
             "io_requests",
             "io_nodes",
+            "seed_nodes",
+            "poll_turns",
+            "local_steps",
             "parent_restarts",
             "elapsed_us",
             "max_elapsed_us",

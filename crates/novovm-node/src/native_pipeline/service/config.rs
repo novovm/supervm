@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[cfg(test)]
+pub(crate) mod test_asset_genesis;
+#[cfg(test)]
 pub(crate) mod test_custody;
 pub mod uca_genesis;
 
@@ -56,7 +58,7 @@ pub struct ResidentConfig {
     /// Explicitly pinned new-domain UCA initialization, not an asset ingress
     /// switch. Omission preserves the original development reference contract.
     #[serde(default)]
-    pub uca_initialization: Option<uca_genesis::UcaInitializationConfigV1>,
+    pub uca_initialization: Option<uca_genesis::UcaInitializationConfigV2>,
     /// AOEM ingress workers, not the V2 semantic callback pool size. The latter
     /// uses AOEM_SEMANTIC_GRAPH_V2_WORKERS (or available parallelism) at context
     /// creation. Co-located validators need an explicit process resource budget;
@@ -137,7 +139,7 @@ pub struct GenesisAllocation {
 pub fn protocol_commitment() -> Hash {
     let mut hash = Sha256::new();
     hash.update(
-        b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v2/fixed-nov-1e17\0",
+        b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v2/fixed-nov-1e17/asset-accounts-nuas-v2\0",
     );
     hash.update(program_id());
     hash.update(SEMANTIC_VERSION.to_be_bytes());

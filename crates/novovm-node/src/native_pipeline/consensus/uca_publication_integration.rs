@@ -7,7 +7,7 @@ use crate::native_pipeline::business::direct_nov_fee::{quote_and_settle, Transfe
 use crate::native_pipeline::business::nov_transfer_batch::{
     uca_effect_contract, uca_program_id, uca_receipt_codec,
 };
-use crate::native_pipeline::business::uca_spend_state::UcaSpendStateAccessV1;
+use crate::native_pipeline::business::uca_spend_state::AssetSpendStateAccessV2;
 use crate::native_pipeline::consensus::{
     bodies::{BodyLimits, CandidateBodies},
     collector::CollectorLimits,
@@ -15,22 +15,22 @@ use crate::native_pipeline::consensus::{
     progress::{ProgressLimits, RoundProgress},
     transport::{self, DecodeLimits, Message},
 };
+use crate::native_pipeline::service::config::test_asset_genesis::approve_manifest;
 use crate::native_pipeline::service::config::uca_genesis::{
-    UcaGenesisAccountV1, UcaGenesisApprovalV1, UcaGenesisGrantV1, UcaGenesisManifestV1,
-    INITIALIZATION_CONTEXT_V1,
+    UcaGenesisAccountV2, UcaGenesisGrantV2, UcaGenesisIdentityV2, UcaGenesisManifestV2,
 };
 use crate::native_pipeline::service::config::{
     self, GenesisAllocation, GenesisConfig, GenesisValidator,
 };
 use crate::native_pipeline::state::frontier::OwnedStateInput;
 use crate::native_pipeline::state::tree::read_state_value;
-use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
+use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_consensus::round_bft::journal::JournalBackend;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES};
-use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
 
 fn progress(
     journal: ValidatorJournal,
@@ -68,25 +68,16 @@ fn codec() -> DecodeLimits {
     }
 }
 
-fn structured_body(
-    context: BatchContext,
-    raw: &[Vec<u8>],
-    hints: &[(Account, Account)],
-) -> Result<Message> {
-    let hints = hints
-        .iter()
-        .map(|(a, b)| (a.as_bytes().to_vec(), b.as_bytes().to_vec()))
-        .collect::<Vec<_>>();
-    let batch = UcaSpendBatch::from_raw(
+fn structured_body(context: BatchContext, raw: &[Vec<u8>]) -> Result<Message> {
+    let batch = AssetSpendBatchV2::from_raw(
         raw,
-        &hints,
-        UcaSpendBatchLimits {
+        AssetSpendBatchLimitsV2 {
             transactions: codec().transactions,
             transaction_bytes: codec().transaction_bytes,
             body_bytes: codec().body_bytes,
         },
     )?;
-    let message = Message::UcaBody {
+    let message = Message::AssetBody {
         context,
         batch: Arc::new(batch),
     };
@@ -98,7 +89,7 @@ fn structured_body(
     let decoded = transport::decode(&wire, codec())?;
     ensure!(
         decoded == message,
-        "NUAS body roundtrip changed signed input/hints"
+        "NUAS body roundtrip changed signed input/accounts"
     );
     Ok(decoded)
 }
@@ -119,17 +110,19 @@ fn configuration(path: &Path, domain: Hash) -> Result<PipelineConfig> {
 fn intent(
     domain: Hash,
     key: &[u8],
-    payer: &str,
-    recipient: &str,
+    payer: &Account,
+    recipient: &Account,
     amount: u128,
-) -> Result<UcaSpendIntentV1> {
-    Ok(UcaSpendIntentV1 {
+) -> Result<AssetSpendIntentV2> {
+    Ok(AssetSpendIntentV2 {
+        asset: 1,
+        authority_update: None,
         chain_id: CHAIN,
         genesis: domain,
-        account_id: payer.into(),
+        payer: payer.as_bytes().to_vec(),
         authorization_epoch: 1,
         spend_key_ref: spend_key_ref_v1(key)?,
-        recipient_uca: recipient.into(),
+        recipient: recipient.as_bytes().to_vec(),
         amount,
         max_fee: 50,
         nonce: 0,
@@ -142,9 +135,8 @@ fn execute(
     pipeline: &CandidatePipeline,
     context: BatchContext,
     raw: &[Vec<u8>],
-    hints: &[(Account, Account)],
 ) -> Result<DurableCandidate> {
-    let body = structured_body(context, raw, hints)?;
+    let body = structured_body(context, raw)?;
     let request = transport::candidate_request(&body, &policy())?;
     let Submission::Accepted(mut ticket) = pipeline.try_submit(request)? else {
         bail!("empty UCA pipeline unexpectedly backpressured");
@@ -183,11 +175,10 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
     let facade = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
     // Explicit same packaged runtime; no alternate verifier or fallback suite.
     let runtime = &facade;
-    let management_signer = facade.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
-    let spender = facade.uca_spend_signer_v1()?;
+    let spender = facade.asset_spend_signer_v2()?;
     let keygen = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let mut keys = Vec::new();
-    for _ in 0..4 {
+    for _ in 0..5 {
         let pair = keygen.generate_keypair()?;
         keys.push((pair.public_key, pair.expanded_secret_key));
     }
@@ -196,7 +187,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
         Account::try_from(vec![11; 20]).unwrap(),
         Account::try_from(vec![12; 20]).unwrap(),
     ];
-    let mut manifest = UcaGenesisManifestV1 {
+    let mut manifest = UcaGenesisManifestV2 {
         genesis: GenesisConfig {
             chain_id: CHAIN,
             validator_epoch: 1,
@@ -218,16 +209,22 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             }],
             policy: policy(),
         },
+        identities: vec![UcaGenesisIdentityV2 {
+            uca_id: ids[0].into(),
+            identity_public_key: keys[4].0.clone(),
+        }],
         accounts: (0..2)
             .map(|i| {
-                Ok(UcaGenesisAccountV1 {
-                    uca_id: ids[i].into(),
+                Ok(UcaGenesisAccountV2 {
+                    uca_id: ids[0].into(),
                     asset_account: addresses[i].as_bytes().to_vec(),
                     management_public_key: keys[i].0.clone(),
-                    grants: vec![UcaGenesisGrantV1 {
+                    recovery_public_key: None,
+                    grants: vec![UcaGenesisGrantV2 {
                         spend_public_key: keys[i + 2].0.clone(),
-                        grant: SuppliedSpendGrantV1 {
-                            account_id: ids[i].into(),
+                        grant: SuppliedAssetSpendGrantV2 {
+                            asset: 1,
+                            account: addresses[i].as_bytes().to_vec(),
                             key_ref: spend_key_ref_v1(&keys[i + 2].0)?,
                             authorization_epoch: 1,
                             permits_nov_transfer: true,
@@ -244,19 +241,11 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
     };
     complete_test_supply(&mut manifest.genesis.allocations)?;
     let domain = manifest.signing_domain()?;
-    let approvals = (0..2)
-        .map(|i| {
-            Ok(UcaGenesisApprovalV1 {
-                uca_id: ids[i].into(),
-                signature: management_signer.sign(
-                    &keys[i].0,
-                    &keys[i].1,
-                    &manifest.canonical_bytes()?,
-                    INITIALIZATION_CONTEXT_V1,
-                )?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let approval_keys = keys
+        .iter()
+        .map(|(p, s)| (p.as_slice(), s.as_slice()))
+        .collect::<Vec<_>>();
+    let approvals = approve_manifest(&facade, &manifest, &approval_keys)?;
     ensure!(
         manifest.compile(runtime, domain, &approvals[..1]).is_err(),
         "missing owner approval admitted"
@@ -265,19 +254,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
     // ML-DSA approvals may be randomized. Re-sign the EXACT manifest using
     // the same management keys: verified initial state must not include those
     // variable signature bytes. Preserve both approval bundles for comparison.
-    let repeated_approvals = (0..2)
-        .map(|i| {
-            Ok(UcaGenesisApprovalV1 {
-                uca_id: ids[i].into(),
-                signature: management_signer.sign(
-                    &keys[i].0,
-                    &keys[i].1,
-                    &manifest.canonical_bytes()?,
-                    INITIALIZATION_CONTEXT_V1,
-                )?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let repeated_approvals = approve_manifest(&facade, &manifest, &approval_keys)?;
     let repeated_initial = manifest.compile(runtime, domain, &repeated_approvals)?;
     ensure!(
         repeated_initial.signing_domain() == initial.signing_domain()
@@ -391,20 +368,18 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             intent(
                 domain,
                 &keys[payer + 2].0,
-                ids[payer],
-                ids[recipient],
+                &addresses[payer],
+                &addresses[recipient],
                 amount,
             )?,
             &keys[payer + 2].0,
             &keys[payer + 2].1,
         )?;
         let mut raw = vec![signed.encode()?];
-        let mut hints = vec![(addresses[payer].clone(), addresses[recipient].clone())];
         if height == 1 {
             let mut replay = signed.intent.clone();
             replay.amount += 1; // Distinct signed body, same stable account nonce.
             raw.push(spender.sign(replay, &keys[2].0, &keys[2].1)?.encode()?);
-            hints.push(hints[0].clone());
         }
         let current = journals[0].as_ref().unwrap().context();
         let parent = journals[0].as_ref().unwrap().parent();
@@ -422,16 +397,25 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
         execution.slot = height - 1;
         execution.timestamp_unix_ms += height;
         if height == 1 {
-            let mut wrong_hints = hints.clone();
-            wrong_hints[0].0 = Account::try_from(vec![99; 20]).map_err(anyhow::Error::msg)?;
+            let mut changed_account = signed.clone();
+            changed_account.intent.payer = vec![99; 20];
+            let mut account_forgery = raw.clone();
+            account_forgery[0] = changed_account.encode()?;
             ensure!(
-                execute(&services.0[0], execution, &raw, &wrong_hints).is_err(),
-                "untrusted structural hint bypassed parent binding"
+                execute(&services.0[0], execution, &account_forgery).is_err(),
+                "changing the signed concrete payer bypassed signature binding"
+            );
+            changed_account = signed.clone();
+            changed_account.intent.recipient = vec![99; 20];
+            account_forgery[0] = changed_account.encode()?;
+            ensure!(
+                execute(&services.0[0], execution, &account_forgery).is_err(),
+                "changing the signed concrete recipient bypassed signature binding"
             );
             let mut forged = raw.clone();
             *forged[0].last_mut().unwrap() ^= 1;
             ensure!(
-                execute(&services.0[0], execution, &forged, &hints).is_err(),
+                execute(&services.0[0], execution, &forged).is_err(),
                 "structural signature corruption bypassed AOEM verifier"
             );
         }
@@ -469,13 +453,12 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
         let mut candidates = services
             .0
             .iter()
-            .map(|p| execute(p, execution, &raw, &hints))
+            .map(|p| execute(p, execution, &raw))
             .collect::<Result<Vec<_>>>()?;
         // Preserve raw NUAS as the existing candidate reference, not a second
         // product path. Exact locator equality includes all economics/receipts.
-        let Submission::Accepted(mut reference_ticket) = services.0[0].try_submit(
-            BatchRequest::from_uca(raw.clone(), hints.clone(), execution, policy())?,
-        )?
+        let Submission::Accepted(mut reference_ticket) =
+            services.0[0].try_submit(BatchRequest::from_uca(raw.clone(), execution, policy())?)?
         else {
             bail!("reference request backpressured");
         };
@@ -523,7 +506,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
                 &services.0[0],
             )?);
             assert_eq!(journals[0].as_ref().unwrap().head(), None);
-            candidates[0] = execute(&services.0[0], execution, &raw, &hints)?;
+            candidates[0] = execute(&services.0[0], execution, &raw)?;
         }
         let value =
             BlockStatement::from_executed(candidates[0].packet(), current, &set, &parent)?.hash();
@@ -555,7 +538,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
                     inflight: 1,
                 },
             )?;
-            let body = Arc::new(structured_body(execution, &raw, &hints)?);
+            let body = Arc::new(structured_body(execution, &raw)?);
             let id = transport::candidate_body_id(&body, codec())?;
             let old = Arc::new(Message::Body {
                 context: execution,
@@ -670,7 +653,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
                 progress.poll_acknowledgements(&services.0[0])?;
                 std::thread::yield_now();
             }
-            let message = structured_body(execution, &raw, &hints)?;
+            let message = structured_body(execution, &raw)?;
             let id = transport::candidate_body_id(&message, codec())?;
             ensure!(
                 progress.candidate_body(id).is_some_and(|m| *m == message)
@@ -689,7 +672,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
                 )?,
                 &services.0[0],
             )?);
-            candidates[0] = execute(&services.0[0], execution, &raw, &hints)?;
+            candidates[0] = execute(&services.0[0], execution, &raw)?;
         }
         for i in 0..4 {
             let journal = journals[i].as_mut().unwrap();
@@ -765,13 +748,13 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
                 "archive changed signed NUAS"
             );
             let archived_body = transport::stored_body(block.stored(), codec())?;
-            let live_body = structured_body(execution, &raw, &hints)?;
+            let live_body = structured_body(execution, &raw)?;
             ensure!(
                 transport::encode(&archived_body, codec())?
                     == transport::encode(&live_body, codec())?
                     && transport::candidate_body_id(&archived_body, codec())?
                         == transport::candidate_body_id(&live_body, codec())?,
-                "archive changed NUAS structure, locator hints or body identity"
+                "archive changed NUAS structure, signed concrete accounts or body identity"
             );
             let encoded = block.stored().receipt_bytes().to_vec();
             ensure!(
@@ -823,8 +806,8 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
         let store = CandidateStore::open(configuration(path, domain)?.store, OpenMode::Existing)?;
         let mut total = 0u128;
         for i in 0..2 {
-            let access = UcaSpendStateAccessV1::new(
-                intent(domain, &keys[i + 2].0, ids[i], ids[1 - i], 1)?,
+            let access = AssetSpendStateAccessV2::new(
+                intent(domain, &keys[i + 2].0, &addresses[i], &addresses[1 - i], 1)?,
                 addresses[i].clone(),
                 addresses[1 - i].clone(),
             )?;
@@ -836,7 +819,12 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             )?;
             let state = access.read(&captured, final_head.state_root)?;
             ensure!(
-                state.next_nonce() == 1 && state.grant().remaining_debit_budget == budgets[i],
+                state.next_nonce() == 1
+                    && state
+                        .grant()
+                        .context("cold spend grant missing")?
+                        .remaining_debit_budget
+                        == budgets[i],
                 "cold nonce/budget differs"
             );
             ensure!(

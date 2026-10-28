@@ -13,6 +13,7 @@ use super::statement::ParentPoint;
 use super::transport::Message;
 use super::wire::{
     Context as VoteContext, Hash, Phase, ValidatorSet, VerifiedProposal, VerifiedQuorum,
+    VerifiedVote, Vote,
 };
 use super::{DurableMessage, TimeoutStep, ValidatorJournal};
 use crate::native_pipeline::pipeline::{CandidatePipeline, DurableCandidate};
@@ -30,6 +31,8 @@ mod recovery;
 pub struct ProgressLimits {
     pub candidates: usize,
     pub candidate_bytes: usize,
+    /// Total vote custody: original collector plus the next-height ACK window.
+    /// Two entries per validator are taken FROM this budget, not added to it.
     pub votes: CollectorLimits,
 }
 
@@ -58,6 +61,95 @@ struct ReplayOffer {
     local: bool,
 }
 
+/// Extension of the original future-control custody, not a second collector.
+/// Each authenticated signer owns one next-height tip per phase; no weight,
+/// QC, timer, signing or publication decision is made before journal ACK.
+#[derive(Default)]
+struct FutureVotes {
+    tips: BTreeMap<(Hash, u8), Vote>,
+}
+
+impl FutureVotes {
+    fn retain(
+        &mut self,
+        current: VoteContext,
+        max_round_span: u64,
+        verified: &VerifiedVote,
+    ) -> Result<()> {
+        let vote = verified.vote();
+        ensure!(
+            current.height.checked_add(1) == Some(vote.context.height),
+            "future vote is not at the immediately next height"
+        );
+        ensure!(
+            vote.round <= max_round_span,
+            "next-height vote exceeds retained-round span"
+        );
+        // Use the signed validator, never the relaying transport peer. A peer
+        // cannot spend another signer's phase slot by relaying duplicates.
+        let key = (vote.validator_id, u8::from(vote.phase == Phase::Precommit));
+        if let Some(old) = self.tips.get(&key) {
+            ensure!(
+                old.context == vote.context,
+                "next-height validator signed conflicting contexts"
+            );
+            ensure!(vote.round >= old.round, "stale next-height vote tip");
+            if vote.round == old.round {
+                ensure!(
+                    old.value == vote.value,
+                    "next-height validator equivocation"
+                );
+                return Ok(());
+            }
+        }
+        self.tips.insert(key, vote.clone());
+        Ok(())
+    }
+
+    /// Only the existing journal ACK calls this with its new full context.
+    /// Removing custody first makes promotion one-shot. The original collector
+    /// re-verifies every exact-context vote, with its unchanged quorum rules.
+    fn promote(&mut self, collector: &mut VoteCollector) -> Result<()> {
+        for (_, vote) in std::mem::take(&mut self.tips) {
+            if vote.context == *collector.context() {
+                collector.insert(&vote)?;
+                crate::native_pipeline::profile::critical_event(
+                    crate::native_pipeline::profile::CriticalEvent::VoteReceived,
+                    vote.context.height,
+                    vote.round,
+                    vote.value,
+                    None,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+fn collector_limits_with_future_custody(
+    total: CollectorLimits,
+    validators: usize,
+) -> Result<CollectorLimits> {
+    let reserved = validators
+        .checked_mul(2)
+        .context("future vote budget overflow")?;
+    let collector = total
+        .max_votes
+        .checked_sub(reserved)
+        .context("vote budget cannot reserve next-height custody")?;
+    ensure!(
+        collector
+            >= validators
+                .checked_mul(5)
+                .context("collector budget overflow")?,
+        "vote budget cannot preserve current/future-round/witness reservations"
+    );
+    Ok(CollectorLimits {
+        max_votes: collector,
+        ..total
+    })
+}
+
 /// A single retained outbox slot applies backpressure before observing another
 /// journal ACK. The caller must retain a taken message until transport custody
 /// or an explicit retry/error; take_message is NOT delivery acknowledgement.
@@ -75,9 +167,11 @@ pub struct RoundProgress {
     // Native object completion is acknowledged once. An authenticated future
     // control must survive a pending local round/height ACK, not rely on
     // repeating a completed transport object. Only current/next height,
-    // one proposal and one decision per authenticated peer/height; never votes.
+    // one proposal and one decision per authenticated peer/height. Votes use
+    // the signer's separate bounded phase slots below, never relay-peer slots.
     // These are evidence hints, not another execution or publication owner.
     future_offers: BTreeMap<(u64, Hash, bool), Offered>,
+    future_votes: FutureVotes,
     proposed_round: Option<u64>,
     recovery_roots: BTreeMap<Hash, CandidateLocator>,
     recovery_offers: Vec<ReplayOffer>,
@@ -118,9 +212,11 @@ impl RoundProgress {
             protocol: context.protocol_commitment,
             validators: validators.clone(),
         };
+        let vote_limits =
+            collector_limits_with_future_custody(limits.votes, validators.members().len())?;
         let records = journal.take_replay_records();
         let mut this = Self {
-            collector: VoteCollector::new(context, validators, journal.round(), limits.votes)?,
+            collector: VoteCollector::new(context, validators, journal.round(), vote_limits)?,
             pacemaker: Pacemaker::new(timeouts)?,
             journal,
             domain,
@@ -131,6 +227,7 @@ impl RoundProgress {
             published: None,
             offers: BTreeMap::new(),
             future_offers: BTreeMap::new(),
+            future_votes: FutureVotes::default(),
             proposed_round: None,
             recovery_roots: BTreeMap::new(),
             recovery_offers: Vec::new(),
@@ -323,7 +420,7 @@ impl RoundProgress {
             "progress source is outside validator set"
         );
         match (message, message_evidence::verify(message, &self.domain)?) {
-            (Message::Vote(vote), VerifiedEvidence::Vote(_)) => {
+            (Message::Vote(vote), VerifiedEvidence::Vote(verified)) => {
                 if vote.context == self.context() {
                     self.collector.insert(vote)?;
                     crate::native_pipeline::profile::critical_event(
@@ -333,6 +430,12 @@ impl RoundProgress {
                         vote.value,
                         None,
                     );
+                } else if self.context().height.checked_add(1) == Some(vote.context.height) {
+                    self.future_votes.retain(
+                        self.context(),
+                        self.limits.votes.max_future_round_span,
+                        &verified,
+                    )?;
                 }
             }
             (
@@ -561,12 +664,13 @@ impl RoundProgress {
             }
             if self.context() != context {
                 self.collector.reset_context(self.context(), self.round())?;
+                self.future_votes.promote(&mut self.collector)?;
                 self.candidates.clear();
                 let height = self.context().height;
                 self.recovered_bodies.retain(|_, body| match body.as_ref() {
                     Message::Body { context, .. }
                     | Message::ApflBody { context, .. }
-                    | Message::UcaBody { context, .. } => {
+                    | Message::AssetBody { context, .. } => {
                         context.height.saturating_add(1) >= height
                     }
                     _ => false,
@@ -1000,6 +1104,271 @@ impl RoundProgress {
                 }
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod future_vote_tests {
+    use super::*;
+    use novovm_consensus::round_bft::{
+        test_vectors::{sign_vote, FixtureSigningKey},
+        wire::Validator,
+    };
+
+    struct Fixture {
+        keys: Vec<FixtureSigningKey>,
+        domain: MessageDomain,
+        parent: VoteContext,
+        child: VoteContext,
+    }
+
+    impl Fixture {
+        fn new() -> Result<Self> {
+            let keys: Vec<_> = (1..=4)
+                .map(|seed| FixtureSigningKey::from_bytes(&[seed; 32]))
+                .collect();
+            let members = keys
+                .iter()
+                .map(|key| Validator::new(key.verifying_key().to_bytes(), 1))
+                .collect::<Result<Vec<_>>>()?;
+            let set = Arc::new(ValidatorSet::new_for_test(7, 1, 1, members)?);
+            let parent = VoteContext {
+                chain_id: 7,
+                genesis_config_commitment: [1; 32],
+                protocol_commitment: [2; 32],
+                epoch: 1,
+                validator_set_hash: set.hash(),
+                height: 1,
+                parent_block_hash: [0; 32],
+                parent_decision_hash: [0; 32],
+            };
+            Ok(Self {
+                keys,
+                domain: MessageDomain {
+                    chain_id: 7,
+                    genesis: parent.genesis_config_commitment,
+                    protocol: parent.protocol_commitment,
+                    validators: set,
+                },
+                parent,
+                child: VoteContext {
+                    height: 2,
+                    parent_block_hash: [3; 32],
+                    parent_decision_hash: [4; 32],
+                    ..parent
+                },
+            })
+        }
+
+        fn vote(&self, signer: usize, context: VoteContext, round: u64, phase: Phase) -> Vote {
+            // Explicit consensus rule fixture, not actual ML-DSA qualification.
+            sign_vote(
+                context,
+                round,
+                phase,
+                Some([9; 32]),
+                &self.domain.validators,
+                &self.keys[signer],
+            )
+            .unwrap()
+        }
+
+        fn receive(&self, retained: &mut FutureVotes, vote: Vote) -> Result<()> {
+            let VerifiedEvidence::Vote(verified) =
+                message_evidence::verify(&Message::Vote(vote), &self.domain)?
+            else {
+                anyhow::bail!("vote fixture evidence mismatch");
+            };
+            retained.retain(self.parent, 32, &verified)
+        }
+
+        fn collector(&self, context: VoteContext) -> VoteCollector {
+            VoteCollector::new(
+                context,
+                self.domain.validators.clone(),
+                0,
+                collector_limits_with_future_custody(
+                    CollectorLimits {
+                        max_retained_rounds: 2,
+                        max_future_round_span: 32,
+                        max_votes: 28,
+                    },
+                    4,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        }
+    }
+
+    #[test]
+    fn future_vote_custody_rejects_invalid_domain_signer_signature_height_and_round() -> Result<()>
+    {
+        let f = Fixture::new()?;
+        let original = f.vote(0, f.child, 0, Phase::Prevote);
+        let mut retained = FutureVotes::default();
+        for field in 0..4 {
+            let mut vote = original.clone();
+            match field {
+                0 => vote.context.genesis_config_commitment = [17; 32],
+                1 => vote.context.protocol_commitment = [18; 32],
+                2 => vote.validator_id = [19; 32],
+                _ => vote.signature[0] ^= 1,
+            }
+            assert!(f.receive(&mut retained, vote).is_err());
+            assert!(retained.tips.is_empty());
+        }
+        for context in [
+            VoteContext {
+                genesis_config_commitment: [17; 32],
+                ..f.child
+            },
+            VoteContext {
+                protocol_commitment: [18; 32],
+                ..f.child
+            },
+        ] {
+            // A genuine signature under the same set cannot change the pinned
+            // local genesis/protocol domain at the existing receive boundary.
+            let foreign = f.vote(0, context, 0, Phase::Prevote);
+            assert!(foreign.verify(&f.domain.validators).is_ok());
+            assert!(f.receive(&mut retained, foreign).is_err());
+            assert!(retained.tips.is_empty());
+        }
+        // Even validly signed inputs cannot expand the one-height/round bound.
+        for (context, round) in [
+            (f.parent, 0),
+            (
+                VoteContext {
+                    height: 3,
+                    ..f.child
+                },
+                0,
+            ),
+            (f.child, 33),
+        ] {
+            assert!(f
+                .receive(&mut retained, f.vote(0, context, round, Phase::Prevote))
+                .is_err());
+            assert!(retained.tips.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn future_vote_custody_deduplicates_by_signed_context_signer_phase() -> Result<()> {
+        let f = Fixture::new()?;
+        let mut retained = FutureVotes::default();
+        let vote = f.vote(0, f.child, 0, Phase::Prevote);
+        for _ in 0..8 {
+            f.receive(&mut retained, vote.clone())?;
+        }
+        assert_eq!(retained.tips.len(), 1);
+        let conflict = sign_vote(
+            f.child,
+            0,
+            Phase::Prevote,
+            Some([10; 32]),
+            &f.domain.validators,
+            &f.keys[0],
+        )?;
+        assert!(f.receive(&mut retained, conflict).is_err());
+        assert!(f
+            .receive(
+                &mut retained,
+                f.vote(
+                    0,
+                    VoteContext {
+                        parent_decision_hash: [11; 32],
+                        ..f.child
+                    },
+                    1,
+                    Phase::Prevote,
+                )
+            )
+            .is_err());
+        assert_eq!(retained.tips.values().next(), Some(&vote));
+        f.receive(&mut retained, f.vote(0, f.child, 1, Phase::Prevote))?;
+        assert!(f.receive(&mut retained, vote).is_err());
+        f.receive(&mut retained, f.vote(0, f.child, 0, Phase::Precommit))?;
+        assert_eq!(retained.tips.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn future_vote_custody_preserves_current_quorum_within_original_total_budget() -> Result<()> {
+        let f = Fixture::new()?;
+        let total = CollectorLimits {
+            max_retained_rounds: 2,
+            max_future_round_span: 32,
+            max_votes: 28,
+        };
+        assert_eq!(
+            collector_limits_with_future_custody(total, 4)?.max_votes,
+            20
+        );
+        assert!(collector_limits_with_future_custody(
+            CollectorLimits {
+                max_votes: 27,
+                ..total
+            },
+            4
+        )
+        .is_err());
+        let mut retained = FutureVotes::default();
+        let mut current = f.collector(f.parent);
+        for round in 0..=32 {
+            for signer in 0..4 {
+                for phase in [Phase::Prevote, Phase::Precommit] {
+                    f.receive(&mut retained, f.vote(signer, f.child, round, phase))?;
+                }
+            }
+            assert_eq!(retained.tips.len(), 8);
+            assert!(current.vote_count() + retained.tips.len() <= total.max_votes);
+        }
+        for signer in 0..4 {
+            for phase in [Phase::Prevote, Phase::Precommit] {
+                current.insert(&f.vote(signer, f.parent, 0, phase))?;
+            }
+        }
+        assert!(current.quorum(0, Phase::Prevote, Some([9; 32]))?.is_some());
+        assert!(current
+            .quorum(0, Phase::Precommit, Some([9; 32]))?
+            .is_some());
+        assert!(current.vote_count() + retained.tips.len() <= total.max_votes);
+        Ok(())
+    }
+
+    #[test]
+    fn future_vote_custody_promotes_exact_parent_once_and_retires_other_branches() -> Result<()> {
+        let f = Fixture::new()?;
+        let mut retained = FutureVotes::default();
+        for signer in 0..3 {
+            f.receive(&mut retained, f.vote(signer, f.child, 0, Phase::Prevote))?;
+        }
+        let wrong = VoteContext {
+            parent_block_hash: [77; 32],
+            ..f.child
+        };
+        f.receive(&mut retained, f.vote(3, wrong, 0, Phase::Prevote))?;
+        let mut child = f.collector(f.child);
+        assert_eq!(child.vote_count(), 0);
+        retained.promote(&mut child)?;
+        assert_eq!(child.vote_count(), 3);
+        assert!(retained.tips.is_empty());
+        assert!(child.quorum(0, Phase::Prevote, Some([9; 32]))?.is_some());
+        retained.promote(&mut child)?;
+        assert_eq!(child.vote_count(), 3);
+        child.reset_context(
+            VoteContext {
+                height: 3,
+                ..f.child
+            },
+            0,
+        )?;
+        retained.promote(&mut child)?;
+        assert_eq!(child.vote_count(), 0);
         Ok(())
     }
 }

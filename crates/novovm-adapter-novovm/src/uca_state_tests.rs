@@ -148,7 +148,7 @@ fn authorization_and_revocation_move_nonce_together_without_mutating_parent() {
     let parent = parent();
     let original = parent.clone();
     let bytes = signed(&parent, &authorize(1), |_| {});
-    let update = prepare_uca_account_update_v1(&parent, &bytes, &domain()).unwrap();
+    let update = prepare_asset_spend_account_update_v1(&parent, &bytes, &domain()).unwrap();
     assert_eq!(parent, original);
     assert_eq!(update.next_record().next_nonce, 1);
     assert_eq!(update.next_record().authorizations.len(), 1);
@@ -156,14 +156,17 @@ fn authorization_and_revocation_move_nonce_together_without_mutating_parent() {
     assert!(update
         .require_unchanged_parent(update.next_record())
         .is_err());
-    assert!(prepare_uca_account_update_v1(update.next_record(), &bytes, &domain()).is_err());
+    assert!(
+        prepare_asset_spend_account_update_v1(update.next_record(), &bytes, &domain()).is_err()
+    );
     let next = update.next_record();
     let command = UcaDeviceCommandV1::Revoke {
         commitment: [1; 32],
         app_scope: [9; 32],
     };
     let revoked =
-        prepare_uca_account_update_v1(next, &signed(next, &command, |_| {}), &domain()).unwrap();
+        prepare_asset_spend_account_update_v1(next, &signed(next, &command, |_| {}), &domain())
+            .unwrap();
     assert_eq!(revoked.next_record().next_nonce, 2);
     assert!(revoked
         .next_record()
@@ -172,17 +175,24 @@ fn authorization_and_revocation_move_nonce_together_without_mutating_parent() {
         .all(|g| g.revoked));
     // A new valid root signature cannot reuse a still-live revoked commitment.
     let next = revoked.next_record();
-    assert!(
-        prepare_uca_account_update_v1(next, &signed(next, &authorize(1), |_| {}), &domain())
-            .is_err()
-    );
-    assert!(
-        prepare_uca_account_update_v1(next, &signed(next, &command, |_| {}), &domain()).is_err()
-    );
-    assert!(
-        prepare_uca_account_update_v1(next, &signed(next, &authorize(2), |_| {}), &domain())
-            .is_ok()
-    );
+    assert!(prepare_asset_spend_account_update_v1(
+        next,
+        &signed(next, &authorize(1), |_| {}),
+        &domain()
+    )
+    .is_err());
+    assert!(prepare_asset_spend_account_update_v1(
+        next,
+        &signed(next, &command, |_| {}),
+        &domain()
+    )
+    .is_err());
+    assert!(prepare_asset_spend_account_update_v1(
+        next,
+        &signed(next, &authorize(2), |_| {}),
+        &domain()
+    )
+    .is_ok());
 }
 
 #[test]
@@ -230,7 +240,7 @@ fn signed_wrong_commands_and_expiry_leave_every_parent_field_unchanged() {
         });
         let before = serde_json::to_vec(&parent).unwrap();
         assert!(
-            prepare_uca_account_update_v1(&parent, &bytes, &domain()).is_err(),
+            prepare_asset_spend_account_update_v1(&parent, &bytes, &domain()).is_err(),
             "case {case}"
         );
         assert_eq!(serde_json::to_vec(&parent).unwrap(), before);
@@ -241,7 +251,7 @@ fn signed_wrong_commands_and_expiry_leave_every_parent_field_unchanged() {
 fn account_state_nonce_epoch_root_and_status_cannot_be_substituted() {
     let parent = parent();
     let bytes = signed(&parent, &authorize(1), |_| {});
-    let update = prepare_uca_account_update_v1(&parent, &bytes, &domain()).unwrap();
+    let update = prepare_asset_spend_account_update_v1(&parent, &bytes, &domain()).unwrap();
     for case in 0..7 {
         let mut other = parent.clone();
         match case {
@@ -265,13 +275,13 @@ fn account_state_nonce_epoch_root_and_status_cannot_be_substituted() {
         }
         assert!(update.require_unchanged_parent(&other).is_err());
         assert!(
-            prepare_uca_account_update_v1(&other, &bytes, &domain()).is_err(),
+            prepare_asset_spend_account_update_v1(&other, &bytes, &domain()).is_err(),
             "case {case}"
         );
     }
     let mut exhausted = parent.clone();
     exhausted.next_nonce = u64::MAX;
-    assert!(prepare_uca_account_update_v1(
+    assert!(prepare_asset_spend_account_update_v1(
         &exhausted,
         &signed(&exhausted, &authorize(1), |_| {}),
         &domain()
@@ -295,14 +305,14 @@ fn capacity_counts_revoked_entries_and_only_expired_entries_are_reclaimed() {
     }
     let command = authorize(4);
     let bytes = signed(&parent, &command, |_| {});
-    assert!(prepare_uca_account_update_v1(&parent, &bytes, &domain()).is_err());
+    assert!(prepare_asset_spend_account_update_v1(&parent, &bytes, &domain()).is_err());
     parent
         .authorizations
         .values_mut()
         .next()
         .unwrap()
         .expires_at_height = 11;
-    let update = prepare_uca_account_update_v1(&parent, &bytes, &domain()).unwrap();
+    let update = prepare_asset_spend_account_update_v1(&parent, &bytes, &domain()).unwrap();
     assert_eq!(
         update.next_record().authorizations.len(),
         MAX_AUTHORIZATIONS_V1

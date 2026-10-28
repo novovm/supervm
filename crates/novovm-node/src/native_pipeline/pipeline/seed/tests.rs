@@ -72,7 +72,7 @@ fn executed(
     .execute_for_proof()
 }
 
-fn seed_fixture() -> Result<(PipelineConfig, PreparedCandidate, PostStateSeed)> {
+fn seed_fixture() -> Result<(PipelineConfig, PreparedCandidate, StateReadSeed)> {
     let config = config("unused-seed-accounting-fixture".into());
     let initial = initial_state()?;
     let memory = Memory(initial.nodes().clone());
@@ -108,6 +108,123 @@ fn maximum_reservation(config: &PipelineConfig) -> Result<usize> {
         config.authentication.body_bytes.min(config.plan.body_bytes),
         config,
     )
+}
+
+fn captured_fixture() -> Result<(
+    PipelineConfig,
+    BatchContext,
+    ParentPoint,
+    crate::native_pipeline::state::frontier::OwnedStateInput,
+)> {
+    use crate::native_pipeline::state::frontier::{DeclaredAccess, OwnedStateInput};
+    let mut config = config("unused-captured-seed-fixture".into());
+    config.max_retained_bytes = 256 * 1024 * 1024;
+    let initial = initial_state()?;
+    let memory = Memory(initial.nodes().clone());
+    let context = context(initial.root());
+    let parent = ParentPoint {
+        height: context.parent_height,
+        block_hash: context.parent_block_hash,
+        state_root: context.parent_state_root,
+        receipt_batch_commitment: context.parent_receipt_root,
+        state_version: context.parent_state_version,
+        decision_hash: [97; 32],
+    };
+    let declarations = [DeclaredAccess {
+        key: balance_key(&account(1)),
+        may_put: false,
+        may_delete: false,
+    }];
+    let input =
+        OwnedStateInput::capture(&memory, parent.state_root, &declarations, config.capture)?;
+    Ok((config, context, parent, input))
+}
+
+#[test]
+fn captured_seed_shared_slot_keeps_byte_lease_until_last_reader_and_checks_owner() -> Result<()> {
+    let (config, context, parent, input) = captured_fixture()?;
+    let (pipeline, _) = inert_pipeline(config.clone());
+    pipeline.retain_capture_read_seed(input, context, parent)?;
+    let bytes = usage(&pipeline.usage).1;
+    assert!(bytes > 0);
+    let lease = pipeline
+        .capture_read_seed(context, parent)
+        .context("seed missing")?;
+    assert!(pipeline
+        .read_seed_material(&lease, &context, &parent)
+        .is_some());
+    let (foreign, _) = inert_pipeline(config);
+    assert!(foreign
+        .read_seed_material(&lease, &context, &parent)
+        .is_none());
+    let retired = pipeline.seed.lock().unwrap().take();
+    drop(retired);
+    assert_eq!(
+        usage(&pipeline.usage).1,
+        bytes,
+        "reader still owns physical bytes"
+    );
+    drop(lease);
+    assert_eq!(usage(&pipeline.usage), (0, 0, 0));
+    Ok(())
+}
+
+#[test]
+fn captured_seed_requires_full_parent_and_domain_and_never_binds_another_head() -> Result<()> {
+    let (config, context, parent, input) = captured_fixture()?;
+    let (pipeline, _) = inert_pipeline(config);
+    pipeline.retain_capture_read_seed(input, context, parent)?;
+    for wrong in [
+        ParentPoint {
+            height: parent.height + 1,
+            ..parent
+        },
+        ParentPoint {
+            block_hash: [21; 32],
+            ..parent
+        },
+        ParentPoint {
+            state_root: [22; 32],
+            ..parent
+        },
+        ParentPoint {
+            receipt_batch_commitment: [23; 32],
+            ..parent
+        },
+        ParentPoint {
+            state_version: parent.state_version + 1,
+            ..parent
+        },
+        ParentPoint {
+            decision_hash: [24; 32],
+            ..parent
+        },
+    ] {
+        let mut claim = context;
+        claim.height = wrong.height + 1;
+        claim.parent_height = wrong.height;
+        claim.parent_block_hash = wrong.block_hash;
+        claim.parent_state_root = wrong.state_root;
+        claim.parent_receipt_root = wrong.receipt_batch_commitment;
+        claim.parent_state_version = wrong.state_version;
+        assert!(pipeline.capture_read_seed(claim, wrong).is_none());
+    }
+    let mut other_domain = context;
+    other_domain.genesis_config_commitment[0] ^= 1;
+    assert!(pipeline.capture_read_seed(other_domain, parent).is_none());
+    assert!(pipeline.capture_read_seed(context, parent).is_some());
+    Ok(())
+}
+
+#[test]
+fn captured_seed_pressure_is_an_optional_miss_without_batch_or_byte_leak() -> Result<()> {
+    let (mut config, context, parent, input) = captured_fixture()?;
+    config.max_retained_bytes = maximum_reservation(&config)?;
+    let (pipeline, _) = inert_pipeline(config);
+    pipeline.retain_capture_read_seed(input, context, parent)?;
+    assert!(pipeline.capture_read_seed(context, parent).is_none());
+    assert_eq!(usage(&pipeline.usage), (0, 0, 0));
+    Ok(())
 }
 
 fn usage(usage: &Arc<Mutex<Usage>>) -> (usize, usize, usize) {

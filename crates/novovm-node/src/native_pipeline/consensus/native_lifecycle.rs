@@ -575,7 +575,7 @@ impl NativeLifecycle {
                                 Message::RequestDecision { context } => context.height,
                                 Message::Body { context, .. }
                                 | Message::ApflBody { context, .. }
-                                | Message::UcaBody { context, .. } => context.height,
+                                | Message::AssetBody { context, .. } => context.height,
                                 _ => 0,
                             };
                             crate::native_pipeline::profile::delivery_event(
@@ -602,7 +602,7 @@ impl NativeLifecycle {
                     match received.message.as_ref() {
                         Message::Body { .. }
                         | Message::ApflBody { .. }
-                        | Message::UcaBody { .. } => {
+                        | Message::AssetBody { .. } => {
                             match self.bodies.offer(&received.message, false, &self.progress) {
                                 Ok(true) => {}
                                 Ok(false) => self.pending[lane] = Some(received),
@@ -630,7 +630,7 @@ impl NativeLifecycle {
                         }
                         Message::Transactions { .. }
                         | Message::ApflTransactions { .. }
-                        | Message::UcaTransactions { .. } => {
+                        | Message::AssetTransactions { .. } => {
                             // Native DONE means bounded custody, never signature admission.
                             // RPC consumes these originals via the resident auth owner.
                             if self.transactions[peer].len() < 2 {

@@ -4,36 +4,20 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     nonce_key, uca_effect_contract, uca_program_id, uca_receipt_codec,
 };
 use crate::native_pipeline::business::uca_spend_state::{
-    account_record_changes, grant_record_changes, UcaSpendAccountStateV1,
+    account_record_changes, grant_record_changes, AssetAccountAuthorityV2,
 };
 use crate::native_pipeline::pipeline::{admitted_uca_for_test, tests as pipeline_tests};
-use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedSpendGrantV1};
-use novovm_adapter_api::unified_account::{
-    BindingState, PersonaBinding, PersonaType, UcaAccount, UcaStatus,
-};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, UcaSpendIntentV1, MAX_SIGNED_SPEND_BYTES};
-use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
 
-fn account_record(id: &str, address: Vec<u8>) -> UcaSpendAccountStateV1 {
-    UcaSpendAccountStateV1 {
-        account: UcaAccount {
-            uca_id: id.into(),
-            primary_key_ref: vec![8; 32],
-            primary_key_binding: None,
-            status: UcaStatus::Active,
-            created_at: 1,
-            updated_at: 2,
-        },
-        binding: PersonaBinding {
-            uca_id: id.into(),
-            persona_type: PersonaType::Web30,
-            chain_id: domain().chain_id,
-            external_address: address,
-            binding_state: BindingState::Bound,
-            bound_at: 1,
-            revoked_at: None,
-            cooldown_until: None,
-        },
+fn account_record(address: Vec<u8>) -> AssetAccountAuthorityV2 {
+    AssetAccountAuthorityV2 {
+        account: address,
+        asset: 1,
+        active: true,
+        management_key_ref: [8; 32],
+        recovery_key_ref: None,
         current_spend_epoch: 1,
     }
 }
@@ -47,32 +31,33 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     let facade = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
     let keypair =
         facade.mldsa_keygen_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
-    let intent = UcaSpendIntentV1 {
+    let intent = AssetSpendIntentV2 {
+        asset: 1,
+        authority_update: None,
         chain_id: domain().chain_id,
         genesis: domain().genesis_config_commitment,
-        account_id: "uca:reuse-alice".into(),
+        payer: vec![1; 20],
         authorization_epoch: 1,
         spend_key_ref: spend_key_ref_v1(&keypair.public_key)?,
-        recipient_uca: "uca:reuse-bob".into(),
+        recipient: vec![2; 20],
         amount: 30,
         max_fee: 50,
         nonce: 0,
         not_before_height: 1,
         expires_at_height: 50,
     };
-    let signed = facade.uca_spend_signer_v1()?.sign(
+    let signed = facade.asset_spend_signer_v2()?.sign(
         intent.clone(),
         &keypair.public_key,
         &keypair.expanded_secret_key,
     )?;
     let raw = vec![signed.encode()?];
-    let hints = vec![(vec![1; 20], vec![2; 20])];
-    let limits = UcaSpendBatchLimits {
+    let limits = AssetSpendBatchLimitsV2 {
         transactions: 16,
         transaction_bytes: MAX_SIGNED_SPEND_BYTES,
         body_bytes: 65536,
     };
-    let source = Arc::new(UcaSpendBatch::from_raw(&raw, &hints, limits)?);
+    let source = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
     let mut pipeline_config = pipeline_tests::config("unused-uca-parent-reuse".into());
     pipeline_config.authentication.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
     pipeline_config.plan.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
@@ -94,8 +79,9 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     let token = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 0)?;
     let payer = Account::from([1; 20]);
     let recipient = Account::from([2; 20]);
-    let grant = SuppliedSpendGrantV1 {
-        account_id: intent.account_id.clone(),
+    let grant = SuppliedAssetSpendGrantV2 {
+        asset: 1,
+        account: intent.payer.clone(),
         key_ref: intent.spend_key_ref,
         authorization_epoch: 1,
         permits_nov_transfer: true,
@@ -105,7 +91,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         max_debit_per_intent: 100,
         remaining_debit_budget: 100,
     };
-    let payer_record = account_record(&intent.account_id, vec![1; 20]);
+    let payer_record = account_record(vec![1; 20]);
     let mut changes = fee_record_changes(&policy(), &FeeState::default())?;
     changes.extend(account_record_changes(
         intent.chain_id,
@@ -115,7 +101,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     changes.extend(account_record_changes(
         intent.chain_id,
         &intent.genesis,
-        &account_record(&intent.recipient_uca, vec![2; 20]),
+        &account_record(vec![2; 20]),
     )?);
     changes.extend(grant_record_changes(&intent, &grant)?);
     for (account, balance) in [(&payer, 1000u128), (&recipient, 7u128)] {
@@ -168,7 +154,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         let changed = stage_state_update(&memory, original.root(), &mutation)?;
         let mut parent = Memory(memory.0.clone());
         parent.0.extend(changed.nodes().clone());
-        let selected = Arc::new(UcaSpendBatch::from_raw(&raw, &hints, limits)?);
+        let selected = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
         let admitted = pipeline.rebind_admitted_uca(selected, &[&token])?;
         let body = authenticate(
             &mut session,
@@ -229,7 +215,6 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         AuthenticateRequest {
             raw_transactions: CandidateInput::Uca {
                 source: BatchSource::Uca(source),
-                hints: vec![(payer, recipient)],
             },
             policy: policy(),
         },

@@ -3,29 +3,57 @@
 //! rechecks and consumes at its exact parent/prefix in the original plan.
 use super::super::{Account, Hash, IoTicket};
 use crate::native_pipeline::business::uca_spend_state::{
-    CapturedUcaSpendStateV1, UcaSpendStateAccessV1,
+    AssetSpendStateAccessV2, CapturedAssetSpendStateV2,
 };
+use crate::native_pipeline::execution::plan::BatchContext;
 use crate::native_pipeline::persistence::io::NodeReadReply;
-use crate::native_pipeline::pipeline::CandidatePipeline;
+use crate::native_pipeline::pipeline::{CandidatePipeline, ReadSeedLease};
 use crate::native_pipeline::state::frontier::{
     BulkCapture, CaptureBudget, CaptureStep, DeclaredAccess, OwnedStateInput,
 };
 use anyhow::{ensure, Context, Result};
-use novovm_adapter_api::unified_account::UcaStatus;
-use novovm_protocol::native_query::{Answer, Query, QueryError, UcaSpendStateView, UcaState};
-use novovm_protocol::uca_spend::UcaSpendIntentV1;
+use novovm_consensus::round_bft::journal::ParentPoint;
+use novovm_protocol::native_query::{Answer, AssetSpendStateViewV2, AssetState, Query, QueryError};
+use novovm_protocol::uca_spend::AssetSpendIntentV2;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 pub(crate) enum UcaReadResult {
     Missing,
-    Present(Box<CapturedUcaSpendStateV1>),
+    Present(Box<CapturedAssetSpendStateV2>),
 }
 
 const MAX_BATCH_ROWS: usize = 1024;
 const KEYS_PER_ROW: usize = 80;
 const CAPTURE_QUANTUM: usize = 64;
 const DECODE_QUANTUM: usize = 8;
+const LOCAL_STEPS_PER_TURN: usize = 8;
+const LOCAL_TURN_BUDGET: Duration = Duration::from_micros(250);
+
+/// Spend only bounded local progress in this cooperative turn. I/O admission
+/// and completion are yield boundaries so another owner gets the next slot.
+/// The clock is checked between original steps, not a hard real-time deadline.
+fn poll_local_turn<T>(
+    mut step: impl FnMut() -> (Result<Option<T>>, bool, bool),
+    mut elapsed: impl FnMut() -> Duration,
+) -> (Result<Option<T>>, bool, usize) {
+    let mut progressed = false;
+    let mut local_steps = 0;
+    for index in 0..LOCAL_STEPS_PER_TURN {
+        let (result, step_progress, io_boundary) = step();
+        progressed |= step_progress;
+        local_steps += usize::from(step_progress && !io_boundary);
+        if !matches!(&result, Ok(None))
+            || !step_progress
+            || io_boundary
+            || index + 1 == LOCAL_STEPS_PER_TURN
+            || elapsed() >= LOCAL_TURN_BUDGET
+        {
+            return (result, progressed, local_steps);
+        }
+    }
+    unreachable!("nonzero local step bound")
+}
 
 /// Logical request work, not physical disk reads or unique transactions.
 #[derive(Clone, Copy, Debug, Default)]
@@ -34,6 +62,10 @@ pub(crate) struct UcaCaptureStats {
     pub(crate) unique_keys: usize,
     pub(crate) io_requests: usize,
     pub(crate) io_nodes: usize,
+    pub(crate) seed_nodes: usize,
+    pub(crate) poll_turns: usize,
+    /// Original steps making local progress, excluding I/O handoff boundaries.
+    pub(crate) local_steps: usize,
 }
 
 /// One exact-parent captured frontier for an ordered, bounded group of UCA
@@ -41,9 +73,10 @@ pub(crate) struct UcaCaptureStats {
 /// Nothing here reserves nonce/budget or grants authority to spend.
 pub(crate) struct UcaBatchStateRead {
     root: Hash,
-    accesses: Vec<Option<Result<UcaSpendStateAccessV1>>>,
+    accesses: Vec<Option<Result<AssetSpendStateAccessV2>>>,
     capture: Option<BulkCapture>,
     input: Option<OwnedStateInput>,
+    locality: Option<(ParentPoint, BatchContext, Option<ReadSeedLease>)>,
     keys: Vec<Vec<u8>>,
     values: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
     ticket: Option<IoTicket<NodeReadReply>>,
@@ -56,7 +89,7 @@ pub(crate) struct UcaBatchStateRead {
 impl UcaBatchStateRead {
     pub(crate) fn new(
         root: Hash,
-        inputs: Vec<(UcaSpendIntentV1, Account, Account)>,
+        inputs: Vec<(AssetSpendIntentV2, Account, Account)>,
         budget: CaptureBudget,
     ) -> Result<Self> {
         ensure!(
@@ -66,7 +99,7 @@ impl UcaBatchStateRead {
         let mut accesses = Vec::with_capacity(inputs.len());
         let mut access_bytes = 0usize;
         for (intent, payer, recipient) in inputs {
-            let access = UcaSpendStateAccessV1::new(intent, payer, recipient);
+            let access = AssetSpendStateAccessV2::new(intent, payer, recipient);
             if let Ok(access) = &access {
                 for declaration in access.declarations() {
                     access_bytes = access_bytes
@@ -85,7 +118,7 @@ impl UcaBatchStateRead {
 
     fn from_access(
         root: Hash,
-        accesses: Vec<Result<UcaSpendStateAccessV1>>,
+        accesses: Vec<Result<AssetSpendStateAccessV2>>,
         budget: CaptureBudget,
     ) -> Result<Self> {
         ensure!(root != [0; 32], "UCA read parent missing");
@@ -135,6 +168,7 @@ impl UcaBatchStateRead {
             accesses: accesses.into_iter().map(Some).collect(),
             capture,
             input: None,
+            locality: None,
             keys,
             values: BTreeMap::new(),
             ticket: None,
@@ -150,6 +184,32 @@ impl UcaBatchStateRead {
         self.stats
     }
 
+    /// The caller supplies the controller's full published parent, never an
+    /// external query's claimed root. The seed carries no authorization result.
+    pub(crate) fn with_read_locality(
+        mut self,
+        pipeline: &CandidatePipeline,
+        parent: ParentPoint,
+        mut context: BatchContext,
+    ) -> Result<Self> {
+        ensure!(
+            self.root == parent.state_root,
+            "UCA locality parent mismatch"
+        );
+        context.height = parent
+            .height
+            .checked_add(1)
+            .context("UCA height overflow")?;
+        context.parent_height = parent.height;
+        context.parent_block_hash = parent.block_hash;
+        context.parent_state_root = parent.state_root;
+        context.parent_receipt_root = parent.receipt_batch_commitment;
+        context.parent_state_version = parent.state_version;
+        let seed = pipeline.capture_read_seed(context, parent);
+        self.locality = Some((parent, context, seed));
+        Ok(self)
+    }
+
     pub(crate) fn made_progress(&self) -> bool {
         self.made_progress
     }
@@ -162,8 +222,23 @@ impl UcaBatchStateRead {
             !self.completed && !self.failed,
             "UCA capture already consumed or failed"
         );
-        self.made_progress = false;
-        let result = self.poll_inner(pipeline);
+        let started = Instant::now();
+        let (result, progressed, local_steps) = poll_local_turn(
+            || {
+                let had_ticket = self.ticket.is_some();
+                self.made_progress = false;
+                let result = self.poll_inner(pipeline);
+                (
+                    result,
+                    self.made_progress,
+                    had_ticket || self.ticket.is_some(),
+                )
+            },
+            || started.elapsed(),
+        );
+        self.made_progress = progressed;
+        self.stats.poll_turns = self.stats.poll_turns.saturating_add(1);
+        self.stats.local_steps = self.stats.local_steps.saturating_add(local_steps);
         if result.is_err() {
             self.failed = true;
         }
@@ -184,7 +259,14 @@ impl UcaBatchStateRead {
                 self.made_progress = true;
                 return Ok(None);
             }
-            match capture.advance(CAPTURE_QUANTUM)? {
+            let seed = self.locality.as_ref().and_then(|(parent, context, lease)| {
+                lease
+                    .as_ref()
+                    .and_then(|lease| pipeline.read_seed_material(lease, context, parent))
+            });
+            let step = capture.advance_with_seed(CAPTURE_QUANTUM, seed)?;
+            self.stats.seed_nodes = capture.seed_hits();
+            match step {
                 CaptureStep::More => {
                     self.made_progress = true;
                     return Ok(None);
@@ -213,10 +295,13 @@ impl UcaBatchStateRead {
                 }
             }
         }
-        self.poll_captured()
+        self.poll_captured(Some(pipeline))
     }
 
-    fn poll_captured(&mut self) -> Result<Option<Vec<Result<UcaReadResult>>>> {
+    fn poll_captured(
+        &mut self,
+        pipeline: Option<&CandidatePipeline>,
+    ) -> Result<Option<Vec<Result<UcaReadResult>>>> {
         // State-tree traversal here is memory-only, bounded per poll. Every
         // logical key is resolved once from the already authenticated frontier.
         if self.values.len() < self.keys.len() {
@@ -238,11 +323,16 @@ impl UcaBatchStateRead {
             }
             self.made_progress = true;
             if end == self.keys.len() {
-                // The authenticated frontier is no longer needed after all
-                // deduplicated logical values have been copied. Each retained
-                // layer has the explicit original capture-byte bound; this is
-                // not a claim about whole-process allocator/DB-cache memory.
-                self.input = None;
+                // Release the borrowed old seed before optionally moving these
+                // authenticated nodes into the SAME pipeline locality slot.
+                // No old read permissions or per-row approval is retained.
+                let input = self.input.take();
+                if let (Some(pipeline), Some(input), Some((parent, context, lease))) =
+                    (pipeline, input, self.locality.as_mut())
+                {
+                    *lease = None;
+                    pipeline.retain_capture_read_seed(input, *context, *parent)?;
+                }
             }
             return Ok(None);
         }
@@ -269,6 +359,7 @@ impl UcaBatchStateRead {
             return Ok(None);
         }
         self.input = None;
+        self.locality = None;
         self.completed = true;
         Ok(Some(std::mem::take(&mut self.rows)))
     }
@@ -276,23 +367,23 @@ impl UcaBatchStateRead {
 
 /// Single public-query observation uses the exact same captured implementation,
 /// not a second point-read path or an authoritative state cache.
-pub(crate) struct UcaStateRead {
+pub(crate) struct AssetStateRead {
     root: Hash,
-    access: Option<UcaSpendStateAccessV1>,
+    access: Option<AssetSpendStateAccessV2>,
     batch: Option<UcaBatchStateRead>,
     completed: bool,
 }
-impl UcaStateRead {
+impl AssetStateRead {
     pub(crate) fn new(
         root: Hash,
-        intent: UcaSpendIntentV1,
+        intent: AssetSpendIntentV2,
         payer: Account,
         recipient: Account,
     ) -> Result<Self> {
         ensure!(root != [0; 32], "UCA read parent missing");
         Ok(Self {
             root,
-            access: Some(UcaSpendStateAccessV1::new(intent, payer, recipient)?),
+            access: Some(AssetSpendStateAccessV2::new(intent, payer, recipient)?),
             batch: None,
             completed: false,
         })
@@ -321,7 +412,7 @@ struct Entry {
     root: Hash,
     height: u64,
     expires: Instant,
-    read: UcaStateRead,
+    read: AssetStateRead,
     answer: Option<Answer>,
 }
 
@@ -338,13 +429,13 @@ impl UcaQueries {
                 Ok(None) => None,
                 Err(_) => Some(Answer::Error(QueryError::Unavailable)),
                 Ok(Some(UcaReadResult::Missing)) => {
-                    Some(Answer::UcaSpendState(UcaState::Missing {
+                    Some(Answer::AssetSpendState(AssetState::Missing {
                         state_root: entry.root,
                         height: entry.height,
                     }))
                 }
-                Ok(Some(UcaReadResult::Present(state))) => Some(Answer::UcaSpendState(
-                    UcaState::Present(view(&state, entry.height)),
+                Ok(Some(UcaReadResult::Present(state))) => Some(Answer::AssetSpendState(
+                    AssetState::Present(Box::new(view(&state, entry.height))),
                 )),
             };
             self.0.push_back(entry);
@@ -356,27 +447,21 @@ impl UcaQueries {
             return if self.0[index].answer.is_some() {
                 self.0.remove(index).unwrap().answer.unwrap()
             } else {
-                Answer::UcaSpendState(UcaState::Pending)
+                Answer::AssetSpendState(AssetState::Pending)
             };
         }
         if self.0.len() >= 8 {
             return Answer::Error(QueryError::Busy);
         }
-        let Query::UcaSpendState {
-            intent,
-            payer_hint: payer,
-            recipient_hint: recipient,
-        } = &query
-        else {
+        let Query::AssetSpendState { intent } = &query else {
             return Answer::Error(QueryError::Unavailable);
         };
         let read = (|| {
-            UcaStateRead::new(
-                root,
-                intent.intent(),
-                Account::try_from(payer.as_bytes()).map_err(anyhow::Error::msg)?,
-                Account::try_from(recipient.as_bytes()).map_err(anyhow::Error::msg)?,
-            )
+            let intent = intent.intent();
+            let payer = Account::try_from(intent.payer.as_slice()).map_err(anyhow::Error::msg)?;
+            let recipient =
+                Account::try_from(intent.recipient.as_slice()).map_err(anyhow::Error::msg)?;
+            AssetStateRead::new(root, intent, payer, recipient)
         })();
         match read {
             Err(_) => Answer::Error(QueryError::Unavailable),
@@ -389,27 +474,30 @@ impl UcaQueries {
                     read,
                     answer: None,
                 });
-                Answer::UcaSpendState(UcaState::Pending)
+                Answer::AssetSpendState(AssetState::Pending)
             }
         }
     }
 }
 
-fn view(state: &CapturedUcaSpendStateV1, height: u64) -> UcaSpendStateView {
+fn view(state: &CapturedAssetSpendStateV2, height: u64) -> AssetSpendStateViewV2 {
     let grant = state.grant();
     let (payer_balance, recipient_balance) = state.balances();
-    UcaSpendStateView {
+    AssetSpendStateViewV2 {
         state_root: state.parent_root(),
         height,
-        account_active: state.payer().account.status == UcaStatus::Active,
+        account_active: state.payer().active,
         current_spend_epoch: state.payer().current_spend_epoch,
-        grant_epoch: grant.authorization_epoch,
-        permits_nov_transfer: grant.permits_nov_transfer,
-        revoked: grant.revoked,
-        not_before_height: grant.not_before_height,
-        expires_at_height: grant.expires_at_height,
-        max_debit_per_intent: grant.max_debit_per_intent,
-        remaining_debit_budget: grant.remaining_debit_budget,
+        management_key_ref: state.payer().management_key_ref,
+        recovery_key_ref: state.payer().recovery_key_ref,
+        grant_present: grant.is_some(),
+        grant_epoch: grant.map_or(0, |grant| grant.authorization_epoch),
+        permits_nov_transfer: grant.is_some_and(|grant| grant.permits_nov_transfer),
+        revoked: grant.is_some_and(|grant| grant.revoked),
+        not_before_height: grant.map_or(0, |grant| grant.not_before_height),
+        expires_at_height: grant.map_or(0, |grant| grant.expires_at_height),
+        max_debit_per_intent: grant.map_or(0, |grant| grant.max_debit_per_intent),
+        remaining_debit_budget: grant.map_or(0, |grant| grant.remaining_debit_budget),
         next_nonce: state.next_nonce(),
         payer_balance,
         recipient_balance,

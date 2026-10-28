@@ -5,8 +5,8 @@ use crate::cli::native_genesis::{NativeGenesisArgs, NativeGenesisCommand, Verify
 use crate::{error::CtlError, output};
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
 use novovm_node::native_pipeline::service::config::uca_genesis::{
-    UcaGenesisApprovalV1, UcaGenesisManifestV1, UcaInitializationConfigV1,
-    INITIALIZATION_CONTEXT_V1,
+    UcaGenesisApprovalV2, UcaGenesisManifestV2, UcaInitializationConfigV2,
+    INITIALIZATION_CONTEXT_V2,
 };
 use novovm_node::native_pipeline::service::config::MAX_STARTUP_DOCUMENT_BYTES;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -28,7 +28,7 @@ struct Review {
 #[derive(Serialize)]
 struct StartupFragment {
     genesis: novovm_node::native_pipeline::service::config::GenesisConfig,
-    uca_initialization: UcaInitializationConfigV1,
+    uca_initialization: UcaInitializationConfigV2,
 }
 
 pub fn run(args: NativeGenesisArgs) -> Result<(), CtlError> {
@@ -47,12 +47,13 @@ fn document<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, CtlError
 }
 
 fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
-    let path = match command {
-        NativeGenesisCommand::Prepare(args) => &args.manifest,
-        NativeGenesisCommand::VerifyApprovals(args) => &args.input.manifest,
+    let input = match command {
+        NativeGenesisCommand::Prepare(args) => args,
+        NativeGenesisCommand::VerifyApprovals(args) => &args.input,
     };
-    let bytes = read_bounded_document_v1(path, MAX_DOCUMENT_BYTES, "UCA genesis manifest")?;
-    let manifest: UcaGenesisManifestV1 = serde_json::from_slice(&bytes)
+    let bytes =
+        read_bounded_document_v1(&input.manifest, MAX_DOCUMENT_BYTES, "UCA genesis manifest")?;
+    let manifest: UcaGenesisManifestV2 = serde_json::from_slice(&bytes)
         .map_err(|e| CtlError::InvalidArgument(format!("UCA genesis manifest: {e}")))?;
     reject_ignored_grant_fields(&bytes, &manifest)?;
     let canonical = manifest.canonical_bytes().map_err(|error| {
@@ -61,20 +62,44 @@ fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
     let domain = manifest.signing_domain().map_err(|error| {
         CtlError::InvalidArgument(format!("original signing domain: {error:#}"))
     })?;
+    let required = manifest.required_approval_subjects();
+    let selected = match input.approval_index {
+        Some(index) => {
+            let (subject, public_key) = required.get(index).ok_or_else(|| {
+                CtlError::InvalidArgument(
+                    "approval index is outside this manifest's ordered subjects".into(),
+                )
+            })?;
+            let message = manifest.approval_signing_bytes(subject).map_err(|error| {
+                CtlError::InvalidArgument(format!("original approval transcript: {error:#}"))
+            })?;
+            Some(
+                json!({"index": index, "subject": subject, "public_key_hex": hex(public_key),
+                "signing_domain": hex(&domain), "signing_context_hex": hex(INITIALIZATION_CONTEXT_V2),
+                "signing_message_hex": hex(&message), "signing_message_bytes": message.len()}),
+            )
+        }
+        None => None,
+    };
+    let required_approvals = required.into_iter().enumerate().map(|(index, (subject, public_key))|
+        json!({"index": index, "subject": subject, "public_key_hex": hex(&public_key)})
+    ).collect::<Vec<_>>();
     let mut report = Review {
         metadata: json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "action": "prepare",
-            "source": "novovm-node/UcaGenesisManifestV1",
+            "source": "novovm-node/UcaGenesisManifestV2",
             "signing_algorithm": "ML-DSA-65",
             "signing_api": "AoemExecFacade::mldsa_signer_v1(MlDsa65).sign(public_key, expanded_secret_key, message, context)",
             "message_is_unframed": true,
-            "signing_context_hex": hex(INITIALIZATION_CONTEXT_V1),
-            "signing_message_hex": hex(&canonical),
-            "signing_message_bytes": canonical.len(),
+            "signing_context_hex": hex(INITIALIZATION_CONTEXT_V2),
+            "canonical_manifest_hex": hex(&canonical),
+            "canonical_manifest_bytes": canonical.len(),
             "observed_signing_domain": hex(&domain),
-            "required_management_approvals": manifest.accounts.iter().map(|a| &a.uca_id).collect::<Vec<_>>(),
-            "management_approvals_verified": false,
+            "required_approvals": required_approvals,
+            "signing_task_selected": selected.is_some(),
+            "selected_approval": selected,
+            "identity_and_asset_approvals_verified": false,
             "expected_domain_verified": false,
             "operator_launch_authorized": false,
             "existing_uca_authority_verified": false,
@@ -95,7 +120,7 @@ fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
 
 fn verify(
     args: &VerifyArgs,
-    manifest: &UcaGenesisManifestV1,
+    manifest: &UcaGenesisManifestV2,
     domain: [u8; 32],
     report: &mut Review,
 ) -> Result<(), CtlError> {
@@ -105,7 +130,8 @@ fn verify(
         ));
     }
     let expected_library = parse_digest(&args.library_sha256)?;
-    let approvals: Vec<UcaGenesisApprovalV1> = document(&args.approvals, "management approvals")?;
+    let approvals: Vec<UcaGenesisApprovalV2> =
+        document(&args.approvals, "identity and asset approvals")?;
     let library = args
         .library
         .canonicalize()
@@ -117,7 +143,7 @@ fn verify(
     }
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())
         .map_err(|error| CtlError::IntegrationFailed(format!("original AOEM loader: {error:#}")))?;
-    // Original compiler verifies all management signatures, purpose bindings,
+    // Original compiler verifies independent identity/asset purpose signatures,
     // policy, initial effects and root. No second encoding/tree implementation.
     let verified = manifest
         .compile(&runtime, domain, &approvals)
@@ -129,7 +155,8 @@ fn verify(
             "AOEM library changed during review".into(),
         ));
     }
-    let material = UcaInitializationConfigV1 {
+    let material = UcaInitializationConfigV2 {
+        identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
         approvals,
         expected_signing_domain: verified.signing_domain(),
@@ -142,7 +169,7 @@ fn verify(
         CtlError::IntegrationFailed(format!("original startup fragment validation: {error:#}"))
     })?;
     report.metadata["action"] = json!("verify-approvals");
-    report.metadata["management_approvals_verified"] = json!(true);
+    report.metadata["identity_and_asset_approvals_verified"] = json!(true);
     report.metadata["expected_domain_verified"] = json!(true);
     report.metadata["aoem_library"] = json!(library);
     report.metadata["aoem_library_sha256"] = json!(hex(&expected_library));
@@ -159,7 +186,7 @@ fn verify(
 
 fn reject_ignored_grant_fields(
     bytes: &[u8],
-    manifest: &UcaGenesisManifestV1,
+    manifest: &UcaGenesisManifestV2,
 ) -> Result<(), CtlError> {
     // Other original manifest records deny unknown fields. The shared grant
     // serves compatibility callers too, so tighten only this operator input.

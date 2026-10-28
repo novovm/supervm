@@ -330,7 +330,27 @@ fn branch(
         .map(|s| {
             s.grants
                 .iter()
-                .map(|(id, grant)| (*id, lit(grant.record.remaining_debit_budget)))
+                .map(|(id, grant)| {
+                    (
+                        *id,
+                        lit(grant
+                            .record
+                            .as_ref()
+                            .map_or(0, |grant| grant.remaining_debit_budget)),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut authority_versions = BTreeMap::<Account, V>::new();
+    let mut grant_presence: BTreeMap<_, _> = p
+        .spend
+        .as_ref()
+        .map(|spend| {
+            spend
+                .grants
+                .iter()
+                .map(|(id, grant)| (*id, lit(u128::from(grant.record.is_some()))))
                 .collect()
         })
         .unwrap_or_default();
@@ -343,17 +363,44 @@ fn branch(
         let (authorization_code, authorized, remaining_before) = if let Some(spend) = &p.spend {
             let entry = &spend.entries[i];
             let remaining = budgets.get(&entry.grant_id).copied().unwrap_or(lit(0));
-            let code = if let Some(error) = entry.static_failure {
-                lit(super::uca_effects::authorization_code(error))
+            let version = authority_versions
+                .get(&request.payer)
+                .copied()
+                .unwrap_or(lit(0));
+            let mut static_code = lit(super::uca_effects::authorization_code(entry.static_failure));
+            let mut absent_code = lit(super::uca_effects::authorization_code(
+                entry.authority_options[0].absent_failure,
+            ));
+            let mut limit = lit(entry.authority_options[0].limit);
+            for option in entry.authority_options.iter().skip(1) {
+                let selected = b.eq(&version, &lit(option.version as u128));
+                static_code = b.pick(
+                    &selected,
+                    &lit(super::uca_effects::authorization_code(option.failure)),
+                    &static_code,
+                );
+                absent_code = b.pick(
+                    &selected,
+                    &lit(super::uca_effects::authorization_code(
+                        option.absent_failure,
+                    )),
+                    &absent_code,
+                );
+                limit = b.pick(&selected, &lit(option.limit), &limit);
+            }
+            static_code = b.pick(&grant_presence[&entry.grant_id], &static_code, &absent_code);
+            let nonce_ok = b.eq(&lit(p.tx_nonces[i].into()), &nonce);
+            let budget_code = if entry.intent.authority_update.is_some() {
+                lit(0)
             } else {
-                let nonce_ok = b.eq(&lit(p.tx_nonces[i].into()), &nonce);
                 let budget_ok = b.le(&lit(entry.reserve), &remaining);
-                let limit = spend.grants[&entry.grant_id].record.max_debit_per_intent;
-                let per_intent = b.le(&lit(entry.reserve), &lit(limit));
+                let per_intent = b.le(&lit(entry.reserve), &limit);
                 let allowed = b.mul(&budget_ok, &per_intent);
-                let budget_code = b.pick(&allowed, &lit(0), &lit(21));
-                b.pick(&nonce_ok, &budget_code, &lit(20))
+                b.pick(&allowed, &lit(0), &lit(21))
             };
+            let dynamic_code = b.pick(&nonce_ok, &budget_code, &lit(20));
+            let static_ok = b.eq(&static_code, &lit(0));
+            let code = b.pick(&static_ok, &dynamic_code, &static_code);
             let allowed = b.eq(&code, &lit(0));
             (code, allowed, remaining)
         } else {
@@ -415,13 +462,37 @@ fn branch(
             after[2] = b.pick(&authorized, &after[2], &nonce);
         }
         let remaining = if let Some(spend) = &p.spend {
+            let entry = &spend.entries[i];
             let success = b.eq(&after[4], &lit(0));
             let success = b.mul(&authorized, &success);
-            let amount = b.mul(&success, &lit(request.amount));
-            let debit = b.add(&amount, &after[3]);
-            let remaining = b.sub(&remaining_before, &debit);
-            budgets.insert(spend.entries[i].grant_id, remaining);
-            remaining
+            if entry.intent.authority_update.is_some() {
+                let before = authority_versions
+                    .get(&request.payer)
+                    .copied()
+                    .unwrap_or(lit(0));
+                authority_versions.insert(
+                    request.payer.clone(),
+                    b.pick(&success, &lit((i + 1) as u128), &before),
+                );
+                for grant in super::uca_effects::update_grants(&entry.intent) {
+                    let id = super::uca_effects::grant_id(&entry.intent, &grant.key_ref)
+                        .expect("validated asset intent");
+                    let before = budgets[&id];
+                    let present = grant_presence[&id];
+                    grant_presence.insert(id, b.pick(&success, &lit(1), &present));
+                    budgets.insert(
+                        id,
+                        b.pick(&success, &lit(grant.remaining_debit_budget), &before),
+                    );
+                }
+                lit(0)
+            } else {
+                let amount = b.mul(&success, &lit(request.amount));
+                let debit = b.add(&amount, &after[3]);
+                let remaining = b.sub(&remaining_before, &debit);
+                budgets.insert(spend.entries[i].grant_id, remaining);
+                remaining
+            }
         } else {
             lit(0)
         };
@@ -472,6 +543,21 @@ fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compi
                 .all(|entry| entry.static_failure.is_some()
                     || spend.grants.contains_key(&entry.grant_id)),
             "missing admitted UCA grant"
+        );
+        ensure!(
+            spend.entries.iter().enumerate().all(|(index, entry)| entry
+                .authority_options
+                .first()
+                .is_some_and(|option| option.version == 0)
+                && entry
+                    .authority_options
+                    .iter()
+                    .all(|option| option.version <= index)
+                && entry
+                    .authority_options
+                    .windows(2)
+                    .all(|pair| pair[0].version < pair[1].version)),
+            "invalid asset authority prefix selections"
         );
     }
     let context = FeeQuotationContext::new(&p.policy, now)?;

@@ -326,8 +326,16 @@ fn client(
 }
 
 fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer> {
+    query_before(client, selector, Instant::now() + Duration::from_secs(5))
+}
+
+fn query_before(
+    client: &mut NativeApplicationClient,
+    selector: Query,
+    overall_deadline: Instant,
+) -> Result<Answer> {
     let request = client.prepare_query(selector.clone())?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = (Instant::now() + Duration::from_secs(5)).min(overall_deadline);
     let mut sent = false;
     loop {
         let now = Instant::now();
@@ -352,11 +360,9 @@ fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> R
         nodes.alive()?;
         let mut statuses = Vec::new();
         for client in clients.iter_mut() {
-            let Answer::Status(status) = query(client, Query::Status)? else {
-                bail!("native status missing");
-            };
-            ensure!(!status.projection_failed, "native projection failure");
-            statuses.push(status);
+            statuses.push(super::application::recovery_status(
+                nodes, client, deadline,
+            )?);
         }
         if statuses
             .iter()
@@ -488,7 +494,37 @@ fn drive(
     counts: &mut Counts,
     timeout: Duration,
 ) -> Result<Duration> {
-    let start = Instant::now();
+    drive_at(
+        nodes,
+        clients,
+        ingress,
+        inputs,
+        batch,
+        observations,
+        counts,
+        timeout,
+        Instant::now(),
+        false,
+    )
+}
+
+// Rolling NUAS windows reuse this SAME SDK/observer. A shared origin retains
+// wave preparation/signing/head-query time and one overall deadline. Draining
+// actual input DONEs between waves prevents a prior completion being attributed
+// to the next wave; receipt timestamps remain the measurement endpoint.
+#[allow(clippy::too_many_arguments)]
+fn drive_at(
+    nodes: &mut ProductNodes,
+    clients: &mut [NativeApplicationClient],
+    ingress: usize,
+    inputs: &[PreparedApplicationInput],
+    batch: usize,
+    observations: &mut [Observation],
+    counts: &mut Counts,
+    timeout: Duration,
+    start: Instant,
+    drain_inputs: bool,
+) -> Result<Duration> {
     let query_batch = env_count("NOVOVM_NATIVE_QUERY_BATCH", 1, MAX_RECEIPTS)?;
     let cold = inputs.is_empty();
     let mut dispatched = if cold { observations.len() } else { 0 };
@@ -499,7 +535,7 @@ fn drive(
     let mut delivered = BTreeSet::new();
     let ids: BTreeSet<_> = inputs.iter().map(PreparedApplicationInput::id).collect();
     let mut last_alive = Instant::now();
-    while complete < observations.len() {
+    while complete < observations.len() || (drain_inputs && delivered.len() < inputs.len()) {
         let now = Instant::now();
         if start.elapsed() >= timeout {
             counts.deadline_expirations += 1;
@@ -631,6 +667,10 @@ fn drive(
         }
         std::thread::yield_now();
     }
+    observed_duration(observations, cold)
+}
+
+fn observed_duration(observations: &[Observation], cold: bool) -> Result<Duration> {
     let completed_us = observations
         .iter()
         .flat_map(|row| row.receipt_query_observed_us.iter().flatten().copied())

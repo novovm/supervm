@@ -143,6 +143,32 @@ impl<T: NonceReadTicket> NonceCache<T> {
         self.insert(subject, nonce_after, false);
     }
 
+    /// Reuse an initialized nonce from the original exact-parent bulk capture.
+    /// The caller must first bind this cache to the current published parent;
+    /// an observation never changes that binding or advances a nonce itself.
+    pub(super) fn observe_present_at_parent(
+        &mut self,
+        parent: ParentPoint,
+        subject: Hash,
+        nonce: u64,
+    ) -> Result<()> {
+        ensure!(
+            self.parent == Some(parent),
+            "nonce observation parent changed"
+        );
+        if let Some(known) = self.values.get(&subject) {
+            ensure!(
+                !self.absent.contains(&subject) && *known == nonce,
+                "inconsistent exact-parent nonce observation"
+            );
+        }
+        // Retire only the redundant notification. Accepted I/O still drains in
+        // its original owner, so no permit or outstanding write is cancelled.
+        self.reads.retain(|read| read.subject != subject);
+        self.insert(subject, nonce, false);
+        Ok(())
+    }
+
     fn accept_read(
         &mut self,
         parent: ParentPoint,

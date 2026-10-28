@@ -99,7 +99,7 @@ impl RpcLifecycle {
                         Err(_) => Answer::Error(QueryError::Busy),
                     }
                 }
-                Query::UcaSpendState { intent, .. } => {
+                Query::AssetSpendState { intent, .. } => {
                     let intent_value = intent.intent();
                     if intent_value.chain_id != self.node.template.chain_id
                         || intent_value.genesis != self.node.template.genesis_config_commitment

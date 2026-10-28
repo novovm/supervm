@@ -1,7 +1,7 @@
 //! Incremental content-addressed frontier capture. No source handles, synchronous
 //! proxy reads, root replays after a miss, or whole-tree enumeration are used.
 
-use super::{CaptureBudget, DeclaredAccess, OwnedStateInput, PostStateSeed};
+use super::{CaptureBudget, DeclaredAccess, OwnedStateInput, StateReadSeed};
 use crate::native_pipeline::state::tree::{validate_state_node_bytes, CaptureCursor, NodeHash};
 use anyhow::{ensure, Context, Result};
 use std::collections::{BTreeMap, VecDeque};
@@ -104,7 +104,7 @@ impl BulkCapture {
     pub(crate) fn advance_with_seed(
         &mut self,
         max_edge_steps: usize,
-        seed: Option<&PostStateSeed>,
+        seed: Option<&StateReadSeed>,
     ) -> Result<CaptureStep> {
         let result = self.advance_inner(max_edge_steps, seed);
         if result.is_err() {
@@ -116,7 +116,7 @@ impl BulkCapture {
     fn advance_inner(
         &mut self,
         max_edge_steps: usize,
-        seed: Option<&PostStateSeed>,
+        seed: Option<&StateReadSeed>,
     ) -> Result<CaptureStep> {
         ensure!(!self.failed, "input capture already failed");
         ensure!(

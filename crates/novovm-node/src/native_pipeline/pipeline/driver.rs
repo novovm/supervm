@@ -2,7 +2,7 @@ use super::compute::{
     AuthenticateRequest, BindRequest, ComputeConfig, ComputeOwner, ComputeTicket,
     ComputedCandidate, PrepareRequest,
 };
-use super::seed::SeedCache;
+use super::seed::{SeedCache, SeedSlot};
 use super::*;
 use crate::native_pipeline::business::nov_transfer_batch::{
     NovCapturedInput, NovTransferBody, NovTransferCapture, NovTransferPlan,
@@ -10,7 +10,7 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 use crate::native_pipeline::ingress::batch::AdmissionRows;
 use crate::native_pipeline::persistence::io::NodeReadReply;
 use crate::native_pipeline::state::frontier::CaptureStep;
-use crate::native_pipeline::state::frontier::PostStateSeed;
+use crate::native_pipeline::state::frontier::StateReadSeed;
 use std::collections::VecDeque;
 
 pub(super) fn start(
@@ -20,6 +20,7 @@ pub(super) fn start(
     ready: mpsc::SyncSender<Result<Arc<IoService>>>,
     identity: Arc<()>,
     signatures: Arc<SignatureWork>,
+    seed: SeedSlot,
 ) -> Result<()> {
     let startup = (|| {
         let notify = Some(thread::current());
@@ -58,7 +59,7 @@ pub(super) fn start(
     if ready.send(Ok(io.clone())).is_err() {
         return compute.shutdown();
     }
-    run(&config, &io, &compute, receiver, &identity);
+    run(&config, &io, &compute, receiver, &identity, &seed);
     // I/O shutdown belongs to CandidatePipeline after this coordinator releases
     // its Arc. All admitted jobs (including lost replies) have drained here.
     compute.shutdown()
@@ -82,13 +83,13 @@ enum Stage {
     Persist {
         packet: Arc<PreparedCandidate>,
         observation: ExecutionObservation,
-        seed: Option<PostStateSeed>,
+        seed: Option<StateReadSeed>,
     },
     Persisting {
         packet: Arc<PreparedCandidate>,
         observation: ExecutionObservation,
         ticket: IoTicket<PersistedCandidate>,
-        seed: Option<PostStateSeed>,
+        seed: Option<StateReadSeed>,
     },
 }
 
@@ -200,7 +201,7 @@ fn advance(
     io: &IoService,
     compute: &ComputeOwner,
     identity: &Arc<()>,
-    locality: (&mut Option<SeedCache>, &Arc<Mutex<Usage>>),
+    locality: (&SeedSlot, &Arc<Mutex<Usage>>),
 ) -> Result<Advancement> {
     let (id, capture_observation) = progress;
     let (cache, usage) = locality;
@@ -256,33 +257,35 @@ fn advance(
                 Ok(pending(Stage::Preparing(ticket), false))
             }
         }
-        Stage::Capture(mut capture) => match capture.advance_with_seed(
-            config.capture_edge_quantum,
-            cache
-                .as_ref()
-                .and_then(|cache| cache.for_context(capture.context())),
-        )? {
-            CaptureStep::More => Ok(pending(Stage::Capture(capture), true)),
-            CaptureStep::Complete => {
-                capture_observation.seed_nodes = capture.seed_hits();
-                Ok(pending(Stage::Execute(Box::new(capture.finish()?)), true))
-            }
-            CaptureStep::NeedRead => {
-                let hashes = capture
-                    .next_request()?
-                    .context("capture needs a read without requested hashes")?;
-                // The response ticket never leaves this exact capture state.
-                // There is only one outstanding frontier request per job.
-                let count = hashes.len();
-                if let Some(ticket) = io.try_read_nodes(hashes)? {
-                    capture_observation.storage_requests += 1;
-                    capture_observation.storage_nodes += count;
-                    Ok(pending(Stage::Reading { capture, ticket }, true))
-                } else {
-                    Ok(pending(Stage::Capture(capture), false))
+        Stage::Capture(mut capture) => {
+            let seed = cache.try_lock().ok().and_then(|slot| slot.clone());
+            match capture.advance_with_seed(
+                config.capture_edge_quantum,
+                seed.as_ref()
+                    .and_then(|cache| cache.for_context(capture.context())),
+            )? {
+                CaptureStep::More => Ok(pending(Stage::Capture(capture), true)),
+                CaptureStep::Complete => {
+                    capture_observation.seed_nodes = capture.seed_hits();
+                    Ok(pending(Stage::Execute(Box::new(capture.finish()?)), true))
+                }
+                CaptureStep::NeedRead => {
+                    let hashes = capture
+                        .next_request()?
+                        .context("capture needs a read without requested hashes")?;
+                    // The response ticket never leaves this exact capture state.
+                    // There is only one outstanding frontier request per job.
+                    let count = hashes.len();
+                    if let Some(ticket) = io.try_read_nodes(hashes)? {
+                        capture_observation.storage_requests += 1;
+                        capture_observation.storage_nodes += count;
+                        Ok(pending(Stage::Reading { capture, ticket }, true))
+                    } else {
+                        Ok(pending(Stage::Capture(capture), false))
+                    }
                 }
             }
-        },
+        }
         Stage::Reading {
             mut capture,
             mut ticket,
@@ -360,9 +363,14 @@ fn advance(
                 );
                 // Successful content completion, not head finality. Replacing
                 // this one optional byte source never retains a parent slot.
-                *cache = None;
+                let retired = cache.try_lock().ok().and_then(|mut slot| slot.take());
+                drop(retired);
                 if let Some(seed) = seed {
-                    *cache = SeedCache::try_install(seed, &packet, config, usage)?;
+                    if let Some(next) = SeedCache::try_install(seed, &packet, config, usage)? {
+                        if let Ok(mut slot) = cache.try_lock() {
+                            *slot = Some(Arc::new(next));
+                        }
+                    }
                 }
                 Ok(Advancement::Complete(DurableBatch {
                     candidate: DurableCandidate {
@@ -395,10 +403,10 @@ pub(super) fn run(
     compute: &ComputeOwner,
     receiver: mpsc::Receiver<DriverMessage>,
     identity: &Arc<()>,
+    cache: &SeedSlot,
 ) {
     let mut jobs = VecDeque::<Job>::new();
     let mut connected = true;
-    let mut cache = None;
     while connected || !jobs.is_empty() {
         if jobs.is_empty() && connected {
             match receiver.recv() {
@@ -438,7 +446,7 @@ pub(super) fn run(
                 io,
                 compute,
                 identity,
-                (&mut cache, &_permit.usage),
+                (cache, &_permit.usage),
             ) {
                 Ok(Advancement::Admitted(rows)) => {
                     if let Reply::Admission(reply) = reply {

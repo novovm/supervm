@@ -179,7 +179,7 @@ impl CandidateBodies {
         let context = match message.as_ref() {
             Message::Body { context, .. }
             | Message::ApflBody { context, .. }
-            | Message::UcaBody { context, .. } => context,
+            | Message::AssetBody { context, .. } => context,
             _ => anyhow::bail!("candidate input must be an exact body"),
         };
         ensure!(
@@ -187,7 +187,7 @@ impl CandidateBodies {
             "body parent/business pins mismatch"
         );
         ensure!(
-            matches!(message.as_ref(), Message::UcaBody { .. })
+            matches!(message.as_ref(), Message::AssetBody { .. })
                 == (self.pin.business_program == uca_program_id()),
             "candidate body wire/profile mismatch"
         );
@@ -216,7 +216,7 @@ impl CandidateBodies {
             .context("body charge overflow")?;
         // Structured NUAS retains a dictionary plus expanded locator pairs in
         // the request. Charge canonical input as well; compression is not quota.
-        if let Message::UcaBody { batch, .. } = message.as_ref() {
+        if let Message::AssetBody { batch, .. } = message.as_ref() {
             charge = charge
                 .checked_add(batch.canonical_bytes())
                 .and_then(|n| batch.len().checked_mul(64).and_then(|h| n.checked_add(h)))
@@ -241,7 +241,7 @@ impl CandidateBodies {
                 }
                 None => BatchRequest::from_apfl(batch.clone(), *context, self.policy.clone())?,
             },
-            Message::UcaBody { batch, .. } => match admitted {
+            Message::AssetBody { batch, .. } => match admitted {
                 Some((pipeline, rows)) => {
                     let checked = pipeline.rebind_admitted_uca(batch.clone(), rows)?;
                     charge = charge

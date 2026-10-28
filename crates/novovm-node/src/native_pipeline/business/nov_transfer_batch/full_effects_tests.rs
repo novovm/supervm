@@ -441,9 +441,9 @@ fn resident_shared_and_unshared_complete_plans_match_every_export() -> Result<()
 }
 
 fn spend_prepared(count: usize, remaining: u128) -> Prepared {
-    use super::super::uca_effects::{SpendEntry, SpendGrant, SpendPlan};
-    use novovm_adapter_api::uca_spend_policy::SuppliedSpendGrantV1;
-    use novovm_protocol::uca_spend::UcaSpendIntentV1;
+    use super::super::uca_effects::{AuthorityOption, SpendEntry, SpendGrant, SpendPlan};
+    use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
+    use novovm_protocol::uca_spend::AssetSpendIntentV2;
     let mut p = prepared(count, false);
     let payer = p.requests[0].payer.clone();
     let identity = p.identities[0];
@@ -456,32 +456,45 @@ fn spend_prepared(count: usize, remaining: u128) -> Prepared {
         p.tx_nonces[i] = i as u64;
     }
     let grant_id = [17; 32];
+    let intent = AssetSpendIntentV2 {
+        chain_id: 7,
+        genesis: [8; 32],
+        payer: payer.as_bytes().to_vec(),
+        authorization_epoch: 1,
+        spend_key_ref: [9; 32],
+        recipient: payer.as_bytes().to_vec(),
+        asset: 1,
+        amount: 10,
+        max_fee: 1000,
+        nonce: 0,
+        not_before_height: 1,
+        expires_at_height: 100,
+        authority_update: None,
+    };
     p.spend = Some(SpendPlan {
         entries: (0..count)
             .map(|_| SpendEntry {
                 grant_id,
                 reserve: 1010,
                 static_failure: None,
+                intent: intent.clone(),
+                authority_options: vec![AuthorityOption {
+                    version: 0,
+                    failure: None,
+                    absent_failure: Some(
+                        novovm_adapter_api::uca_spend_policy::SpendPolicyError::StateUnavailable,
+                    ),
+                    limit: 1010,
+                }],
             })
             .collect(),
         grants: BTreeMap::from([(
             grant_id,
             SpendGrant {
-                intent: UcaSpendIntentV1 {
-                    chain_id: 7,
-                    genesis: [8; 32],
-                    account_id: "uca:test-payer".into(),
-                    authorization_epoch: 1,
-                    spend_key_ref: [9; 32],
-                    recipient_uca: "uca:test-payer".into(),
-                    amount: 10,
-                    max_fee: 1000,
-                    nonce: 0,
-                    not_before_height: 1,
-                    expires_at_height: 100,
-                },
-                record: SuppliedSpendGrantV1 {
-                    account_id: "uca:test-payer".into(),
+                intent,
+                record: Some(SuppliedAssetSpendGrantV2 {
+                    account: payer.as_bytes().to_vec(),
+                    asset: 1,
                     key_ref: [9; 32],
                     authorization_epoch: 1,
                     permits_nov_transfer: true,
@@ -490,7 +503,7 @@ fn spend_prepared(count: usize, remaining: u128) -> Prepared {
                     expires_at_height: 100,
                     max_debit_per_intent: 1010,
                     remaining_debit_budget: remaining,
-                },
+                }),
             },
         )]),
     });
@@ -633,7 +646,7 @@ fn resident_uca_authorization_guards_nonce_budget_and_diagnostics() -> Result<()
         .remove(&[17; 32])
         .unwrap();
     other.intent.spend_key_ref = [10; 32];
-    other.record.key_ref = [10; 32];
+    other.record.as_mut().unwrap().key_ref = [10; 32];
     let spend = p.spend.as_mut().unwrap();
     spend.grants.insert([18; 32], other);
     spend.entries[1].grant_id = [18; 32];

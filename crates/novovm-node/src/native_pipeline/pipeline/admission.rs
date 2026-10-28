@@ -23,7 +23,7 @@ impl AdmittedTransfer {
             .expect("V3 admission accessor requires V3 contract")
     }
 
-    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedUcaSpendV1> {
+    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedAssetSpendV2> {
         self.checked.uca()
     }
 
@@ -33,7 +33,7 @@ impl AdmittedTransfer {
 
     pub fn matches_uca_source(
         &self,
-        batch: &Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: &Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         index: usize,
     ) -> bool {
         matches!(self.checked.as_ref(), CheckedAdmission::Uca { batch: source, index: source_index, .. }
@@ -58,8 +58,7 @@ impl AdmittedTransfer {
                 let signed = checked.signed();
                 signed.public_key.capacity()
                     + signed.signature.capacity()
-                    + signed.intent.account_id.capacity()
-                    + signed.intent.recipient_uca.capacity()
+                    + signed.intent.retained_heap_bytes()
             })
     }
 }
@@ -83,7 +82,7 @@ pub(super) enum AdmittedSignatures {
     V3(SignatureCheckedBatch),
     Uca {
         source: BatchSource,
-        transactions: Vec<novovm_exec::uca_spend::SignatureCheckedUcaSpendV1>,
+        transactions: Vec<novovm_exec::uca_spend::SignatureCheckedAssetSpendV2>,
     },
 }
 
@@ -93,15 +92,14 @@ impl AdmittedBatch {
             AdmittedSignatures::V3(checked) => checked.retained_metadata_bytes(),
             AdmittedSignatures::Uca { transactions, .. } => {
                 transactions.capacity()
-                    * std::mem::size_of::<novovm_exec::uca_spend::SignatureCheckedUcaSpendV1>()
+                    * std::mem::size_of::<novovm_exec::uca_spend::SignatureCheckedAssetSpendV2>()
                     + transactions
                         .iter()
                         .map(|checked| {
                             let signed = checked.signed();
                             signed.public_key.capacity()
                                 + signed.signature.capacity()
-                                + signed.intent.account_id.capacity()
-                                + signed.intent.recipient_uca.capacity()
+                                + signed.intent.retained_heap_bytes()
                         })
                         .sum::<usize>()
             }
@@ -114,23 +112,6 @@ impl AdmittedBatch {
             AdmittedSignatures::V3(checked) => checked.source(),
             AdmittedSignatures::Uca { source, .. } => source,
         }
-    }
-
-    pub(super) fn uca_hint_bytes(&self) -> Result<usize> {
-        let AdmittedSignatures::Uca {
-            source: BatchSource::Uca(batch),
-            ..
-        } = &self.checked
-        else {
-            return Ok(0);
-        };
-        (0..batch.len()).try_fold(0usize, |bytes, index| {
-            let (payer, recipient) = batch.account_hints(index)?;
-            bytes
-                .checked_add(payer.len())
-                .and_then(|bytes| bytes.checked_add(recipient.len()))
-                .context("admitted UCA locator budget overflow")
-        })
     }
 
     pub(super) fn ensure_owner(&self, owner: &Arc<()>) -> Result<()> {
@@ -211,12 +192,12 @@ pub(crate) fn admitted_for_test(
 pub(crate) fn admitted_uca_for_test(
     owner: Arc<()>,
     facade: &novovm_exec::AoemExecFacade,
-    batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+    batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
     index: usize,
 ) -> Result<AdmittedTransfer> {
     let signed =
-        novovm_protocol::uca_spend::SignedUcaSpendV1::decode(&batch.raw_transaction(index)?)?;
-    let checked = facade.uca_spend_verifier_v1()?.verify(signed)?;
+        novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&batch.raw_transaction(index)?)?;
+    let checked = facade.asset_spend_verifier_v2()?.verify(signed)?;
     Ok(AdmittedTransfer {
         checked: Arc::new(CheckedAdmission::Uca {
             checked,
@@ -269,7 +250,9 @@ impl SignatureAdmissionRequest {
         )
     }
 
-    pub fn from_uca(batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>) -> Result<Self> {
+    pub fn from_uca(
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+    ) -> Result<Self> {
         Self::new(
             (0..batch.len())
                 .map(|index| AdmissionInput::Uca {
@@ -457,7 +440,7 @@ impl CandidatePipeline {
     /// authority: the candidate still captures and checks its actual parent.
     pub fn rebind_admitted_uca(
         &self,
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         admitted: &[&AdmittedTransfer],
     ) -> Result<AdmittedBatch> {
         let budget = self.config.authentication;
@@ -487,7 +470,7 @@ impl CandidatePipeline {
                     && checked.intent().genesis
                         == self.config.store.domain.genesis_config_commitment
                     && checked.signed().encode()? == raw
-                    && original.account_hints(*original_index)? == batch.account_hints(index)?
+                    && original.raw_transaction(*original_index)? == raw
                     && seen.insert(checked.intent().signing_bytes()?),
                 "admitted UCA signed row, order, locator or domain mismatch"
             );

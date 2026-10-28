@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Args)]
 #[command(
-    about = "Read-only original UCA genesis preparation; never creates keys, a chain or a service"
+    about = "Read-only identity and asset genesis preparation; never creates keys, a chain or a service"
 )]
 pub struct NativeGenesisArgs {
     #[command(subcommand)]
@@ -12,24 +12,28 @@ pub struct NativeGenesisArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum NativeGenesisCommand {
-    /// Emit original canonical signing bytes and observed domain, without approving them.
+    /// Review the manifest and optionally select one original approval transcript.
     Prepare(PrepareArgs),
-    /// Verify management signatures and derive review-only startup material; not launch approval.
+    /// Verify independent identity/asset approvals and derive review-only startup material; not launch approval.
     VerifyApprovals(VerifyArgs),
 }
 
 #[derive(Debug, Args)]
 pub struct PrepareArgs {
-    /// Public UcaGenesisManifestV1 JSON, with the old genesis commitment zeroed.
+    /// Public UcaGenesisManifestV2 JSON, with the old genesis commitment zeroed.
     #[arg(long)]
     pub manifest: PathBuf,
+    /// Select one subject from this manifest/domain's canonically ordered approval list.
+    /// Omit to review only: no signing task or per-subject message is selected.
+    #[arg(long)]
+    pub approval_index: Option<usize>,
 }
 
 #[derive(Debug, Args)]
 pub struct VerifyArgs {
     #[command(flatten)]
     pub input: PrepareArgs,
-    /// Public JSON array of original UcaGenesisApprovalV1 management signatures.
+    /// Public UcaGenesisApprovalV2 signatures for identity, asset management and configured recovery subjects.
     #[arg(long)]
     pub approvals: PathBuf,
     /// Independently reviewed domain, exactly 64 lowercase hex characters.

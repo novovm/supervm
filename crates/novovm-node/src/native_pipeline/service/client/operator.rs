@@ -22,7 +22,7 @@ use novovm_network::novorudp::{
 use novovm_protocol::{
     native_query::{self, Answer, Frame, Query},
     uca_spend::MAX_SIGNED_SPEND_BYTES,
-    uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits},
+    uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -203,7 +203,7 @@ fn read_client_config(path: &Path) -> Result<ClientConfig> {
 
 enum Operation {
     Query(Query),
-    Submit(Arc<UcaSpendBatch>),
+    Submit(Arc<AssetSpendBatchV2>),
 }
 
 fn receipt_view(state: native_query::ReceiptState) -> Value {
@@ -225,7 +225,7 @@ fn receipt_view(state: native_query::ReceiptState) -> Value {
 
 // Local presentation only. Never round or narrow monetary u128s through f64/u64.
 fn answer_view(answer: Answer) -> Value {
-    use native_query::UcaState;
+    use native_query::AssetState;
     match answer {
         Answer::Status(status) => json!({"Status":status}),
         Answer::Error(error) => json!({"Error":error}),
@@ -242,17 +242,19 @@ fn answer_view(answer: Answer) -> Value {
         }
         Answer::NovBalance(value) => json!({"NovBalance":value.map(|b|
             json!({"amount":b.amount.to_string(),"state_root":b.state_root,"height":b.height}))}),
-        Answer::UcaSpendState(UcaState::Present(s)) => json!({"UcaSpendState":{"Present":{
+        Answer::AssetSpendState(AssetState::Present(s)) => json!({"AssetSpendState":{"Present":{
             "state_root":s.state_root,"height":s.height,"account_active":s.account_active,
             "current_spend_epoch":s.current_spend_epoch,"grant_epoch":s.grant_epoch,
+            "management_key_ref":s.management_key_ref,"recovery_key_ref":s.recovery_key_ref,
+            "grant_present":s.grant_present,
             "permits_nov_transfer":s.permits_nov_transfer,"revoked":s.revoked,
             "not_before_height":s.not_before_height,"expires_at_height":s.expires_at_height,
             "max_debit_per_intent":s.max_debit_per_intent.to_string(),
             "remaining_debit_budget":s.remaining_debit_budget.to_string(),"next_nonce":s.next_nonce,
             "payer_balance":s.payer_balance.to_string(),"recipient_balance":s.recipient_balance.to_string()}}}),
-        Answer::UcaSpendState(UcaState::Pending) => json!({"UcaSpendState":"Pending"}),
-        Answer::UcaSpendState(UcaState::Missing { state_root, height }) => {
-            json!({"UcaSpendState":{"Missing":{"state_root":state_root,"height":height}}})
+        Answer::AssetSpendState(AssetState::Pending) => json!({"AssetSpendState":"Pending"}),
+        Answer::AssetSpendState(AssetState::Missing { state_root, height }) => {
+            json!({"AssetSpendState":{"Missing":{"state_root":state_root,"height":height}}})
         }
     }
 }
@@ -270,9 +272,9 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
             // The SDK supplies fresh session/sequence correlation, never replays it.
             Ok(Operation::Query(request.query))
         }
-        ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(UcaSpendBatch::decode(
+        ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(AssetSpendBatchV2::decode(
             &read_bounded(path, MAX_BYTES)?,
-            UcaSpendBatchLimits {
+            AssetSpendBatchLimitsV2 {
                 transactions: MAX_ROWS,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                 body_bytes: MAX_BYTES,
@@ -332,7 +334,7 @@ pub fn run(config_path: &Path, action: &str, input: Option<&Path>) -> Result<Val
         }
         Operation::Submit(batch) => {
             let rows = batch.len();
-            let prepared = client.prepare_uca(batch)?;
+            let prepared = client.prepare_asset_spend(batch)?;
             let mut sent = false;
             loop {
                 let now = Instant::now();
@@ -457,12 +459,15 @@ mod tests {
             block_hash: [2; 32],
         });
         assert_eq!(receipt["Finalized"]["charged_fee"], text);
-        let state = answer_view(Answer::UcaSpendState(native_query::UcaState::Present(
-            native_query::UcaSpendStateView {
+        let state = answer_view(Answer::AssetSpendState(native_query::AssetState::Present(
+            Box::new(native_query::AssetSpendStateViewV2 {
                 state_root: [3; 32],
                 height: 1,
                 account_active: true,
                 current_spend_epoch: 1,
+                management_key_ref: [6; 32],
+                recovery_key_ref: None,
+                grant_present: true,
                 grant_epoch: 1,
                 permits_nov_transfer: true,
                 revoked: false,
@@ -473,7 +478,7 @@ mod tests {
                 next_nonce: 1,
                 payer_balance: u128::MAX,
                 recipient_balance: u128::MAX,
-            },
+            }),
         )));
         for field in [
             "max_debit_per_intent",
@@ -481,7 +486,7 @@ mod tests {
             "payer_balance",
             "recipient_balance",
         ] {
-            assert_eq!(state["UcaSpendState"]["Present"][field], text);
+            assert_eq!(state["AssetSpendState"]["Present"][field], text);
         }
     }
 

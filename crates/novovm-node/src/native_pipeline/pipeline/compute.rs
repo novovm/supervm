@@ -8,7 +8,6 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     ExecutionObservation, NovCapturedInput, NovTransferBody, NovTransferPlan,
     ResidentTransferResources,
 };
-use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
 use crate::native_pipeline::ingress::batch::{
     admission_retained_bytes, admission_sizes, authenticate_admission_rows,
@@ -48,10 +47,7 @@ pub(crate) struct ComputeConfig {
 pub(crate) enum CandidateInput {
     Unverified(BatchSource),
     Admitted(super::AdmittedBatch),
-    Uca {
-        source: BatchSource,
-        hints: Vec<(Account, Account)>,
-    },
+    Uca { source: BatchSource },
 }
 
 impl CandidateInput {
@@ -136,7 +132,7 @@ pub(crate) struct BindRequest {
 pub(crate) struct ComputedCandidate {
     pub packet: PreparedCandidate,
     pub observation: ExecutionObservation,
-    pub seed: Option<crate::native_pipeline::state::frontier::PostStateSeed>,
+    pub seed: Option<crate::native_pipeline::state::frontier::StateReadSeed>,
 }
 
 /// Full means not admitted: return the exact owned input for a later attempt.
@@ -469,7 +465,7 @@ fn domain_matches(domain: StorageDomain, context: &BatchContext) -> Result<()> {
 
 fn prepare(
     session: &mut ComputeSession,
-    uca_facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
+    uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
     config: &ComputeConfig,
     request: PrepareRequest,
 ) -> Result<NovTransferPlan> {
@@ -488,7 +484,7 @@ fn prepare(
 
 fn authenticate(
     session: &mut ComputeSession,
-    uca_facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
+    uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
     config: &ComputeConfig,
     request: AuthenticateRequest,
 ) -> Result<NovTransferBody> {
@@ -496,11 +492,10 @@ fn authenticate(
         crate::native_pipeline::profile::Phase::Authentication,
     );
     let batch = match request.raw_transactions {
-        CandidateInput::Uca { source, hints } => {
+        CandidateInput::Uca { source } => {
             let (bytes, max) = source.sizes()?;
             ensure!(
                 !source.is_empty()
-                    && source.len() == hints.len()
                     && source.len() <= config.authentication.transactions
                     && max <= config.authentication.transaction_bytes
                     && bytes <= config.authentication.body_bytes,
@@ -525,7 +520,7 @@ fn authenticate(
                     }
                     BatchSource::Apfl(_) => unreachable!(),
                 };
-                let tx = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(wire)?;
+                let tx = novovm_protocol::uca_spend::SignedAssetSpendV2::decode(wire)?;
                 ensure!(
                     tx.intent.chain_id == config.domain.chain_id
                         && tx.intent.genesis == config.domain.genesis_config_commitment,
@@ -545,7 +540,7 @@ fn authenticate(
                 Ordering::Relaxed,
             );
             let signed = signed.into_iter().collect::<Result<Vec<_>>>()?;
-            return NovTransferBody::prepare_uca(signed, hints, request.policy, config.plan);
+            return NovTransferBody::prepare_asset_spend(signed, request.policy, config.plan);
         }
         CandidateInput::Unverified(source) => authenticate_source_batch_observed(
             session,
@@ -569,18 +564,9 @@ fn authenticate(
                     checked
                 }
                 super::admission::AdmittedSignatures::Uca {
-                    source: BatchSource::Uca(source),
+                    source: BatchSource::Uca(_),
                     transactions,
                 } => {
-                    let hints = (0..source.len())
-                        .map(|index| {
-                            let (payer, recipient) = source.account_hints(index)?;
-                            Ok((
-                                payer.try_into().map_err(anyhow::Error::msg)?,
-                                recipient.try_into().map_err(anyhow::Error::msg)?,
-                            ))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
                     config
                         .signatures
                         .reused
@@ -588,9 +574,8 @@ fn authenticate(
                     // Only signatures are reused. This original body compiler
                     // still captures the new exact parent and checks its UCA
                     // revocation, nonce, budget, balance and fee effects.
-                    return NovTransferBody::prepare_uca(
+                    return NovTransferBody::prepare_asset_spend(
                         transactions,
-                        hints,
                         request.policy,
                         config.plan,
                     );
@@ -605,7 +590,7 @@ fn authenticate(
 }
 
 fn ensure_uca_facade(
-    facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
+    facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
     config: &ComputeConfig,
 ) -> Result<()> {
     if facade.is_none() {
@@ -620,7 +605,7 @@ fn ensure_uca_facade(
         *facade = Some(
             selection
                 .open_wire_facade()?
-                .uca_spend_verifier_with_backend_v1(config.signature_backend)?,
+                .asset_spend_verifier_with_backend_v2(config.signature_backend)?,
         );
     }
     Ok(())
@@ -629,7 +614,7 @@ fn ensure_uca_facade(
 /// Reuses the candidate verifier on this resident owner. A bad external row is
 /// a row rejection, never an execution/session failure or an asset permission.
 fn admit_uca_rows(
-    facade: &mut Option<novovm_exec::uca_spend::UcaSpendVerifierV1>,
+    facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
     config: &ComputeConfig,
     inputs: Vec<AdmissionInput>,
 ) -> Result<AdmissionRows> {
@@ -659,7 +644,7 @@ fn admit_uca_rows(
             let AdmissionInput::Uca { batch, index } = input else {
                 unreachable!("checked contract");
             };
-            let signed = novovm_protocol::uca_spend::SignedUcaSpendV1::decode(
+            let signed = novovm_protocol::uca_spend::SignedAssetSpendV2::decode(
                 &batch.raw_transaction(*index)?,
             )?;
             ensure!(

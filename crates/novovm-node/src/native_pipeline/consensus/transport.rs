@@ -98,15 +98,15 @@ pub enum Message {
     },
     /// Explicit NUAS structural body (tag 14), not a V3 reinterpretation.
     /// Locator hints are untrusted; execution rechecks the exact parent state.
-    UcaBody {
+    AssetBody {
         context: BatchContext,
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
     },
     /// NUAS structural application input (tag 15). Transport custody is not
     /// signature admission or UCA spending authority.
-    UcaTransactions {
+    AssetTransactions {
         scope: TransactionsScope,
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
     },
 }
 
@@ -199,8 +199,8 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::ApflBody { .. } => 11,
         Message::ApflEarlyBody { .. } => 12,
         Message::ApflTransactions { .. } => 13,
-        Message::UcaBody { .. } => 14,
-        Message::UcaTransactions { .. } => 15,
+        Message::AssetBody { .. } => 14,
+        Message::AssetTransactions { .. } => 15,
     });
     match message {
         Message::Body {
@@ -272,10 +272,10 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::ApflTransactions { scope, batch } => {
             apfl::append_transactions(&mut out, scope, batch, limits)?;
         }
-        Message::UcaBody { context, batch } => {
+        Message::AssetBody { context, batch } => {
             uca::append_body(&mut out, context, batch, limits)?;
         }
-        Message::UcaTransactions { scope, batch } => {
+        Message::AssetTransactions { scope, batch } => {
             uca::append_transactions(&mut out, scope, batch, limits)?;
         }
     }
@@ -296,7 +296,7 @@ pub(crate) fn encode_recovery_reply(message: &Message, limits: DecodeLimits) -> 
         Message::Decision { .. } => 16,
         Message::Body { .. } => 17,
         Message::ApflBody { .. } => 18,
-        Message::UcaBody { .. } => 19,
+        Message::AssetBody { .. } => 19,
         _ => anyhow::bail!("recovery reply requires exact decision or body"),
     };
     let mut bytes = encode(message, limits)?;

@@ -216,7 +216,7 @@ impl PreparedUcaAccountUpdateV1 {
     }
 }
 
-pub fn prepare_uca_account_update_v1(
+pub fn prepare_asset_spend_account_update_v1(
     parent: &NativeUcaAccountRecordV1,
     wire: &[u8],
     domain: &UcaParentDomainV1,

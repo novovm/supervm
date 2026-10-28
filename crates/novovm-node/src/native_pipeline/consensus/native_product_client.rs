@@ -22,6 +22,17 @@ use std::net::UdpSocket;
 #[path = "native_product_queries.rs"]
 mod queries;
 
+// One typed readiness/recovery policy for the process fixtures. In particular,
+// the load fixture must not turn its first unanswered Status into early failure
+// or restart the caller's shared deadline. Asset/receipt reads remain strict.
+pub(super) fn recovery_status(
+    nodes: &mut ProductNodes,
+    client: &mut NativeApplicationClient,
+    deadline: Instant,
+) -> Result<novovm_protocol::native_query::Status> {
+    queries::recovery_status(nodes, client, deadline)
+}
+
 fn connect(
     nodes: &ProductNodes,
     ingress: usize,

@@ -382,3 +382,6 @@ fn native_successor_single_inflight_keeps_current_height_progress() -> Result<()
 
 #[path = "native_successor_drain_integration.rs"]
 mod drain;
+
+#[path = "native_successor_uca_integration.rs"]
+mod uca;

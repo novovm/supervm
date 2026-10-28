@@ -3,7 +3,7 @@
 //! signing or publication authority from its input representation.
 use super::*;
 use crate::native_pipeline::execution::plan::{BoundBatchCapture, OwnedBatchInput};
-use crate::native_pipeline::state::frontier::PostStateSeed;
+use crate::native_pipeline::state::frontier::StateReadSeed;
 
 pub(super) enum BodyInput {
     Reference(SignatureCheckedBatch),
@@ -107,7 +107,7 @@ impl CaptureInput {
     pub(super) fn advance_with_seed(
         &mut self,
         steps: usize,
-        seed: Option<&PostStateSeed>,
+        seed: Option<&StateReadSeed>,
     ) -> Result<CaptureStep> {
         match self {
             Self::Reference(v) => v.advance_with_seed(steps, seed),

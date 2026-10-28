@@ -7,13 +7,13 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 };
 use novovm_adapter_api::uca_spend_policy::SpendPolicyError;
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, SignedUcaSpendV1, UcaSpendIntentV1, MLDSA65_PUBLIC_KEY_BYTES,
+    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MLDSA65_PUBLIC_KEY_BYTES,
     MLDSA65_SIGNATURE_BYTES,
 };
 
 struct UcaFixture {
     base: Fixture,
-    signed: Vec<SignedUcaSpendV1>,
+    signed: Vec<SignedAssetSpendV2>,
     outputs: Vec<SpendOutput>,
 }
 
@@ -25,13 +25,15 @@ impl UcaFixture {
         let payer = Account::try_from(vec![7; 32]).unwrap();
         let recipient = Account::try_from(vec![8; 32]).unwrap();
         for index in 0..2 {
-            let intent = UcaSpendIntentV1 {
+            let intent = AssetSpendIntentV2 {
+                asset: 1,
+                authority_update: None,
                 chain_id: 9,
                 genesis: [1; 32],
-                account_id: "alice".into(),
+                payer: payer.as_bytes().to_vec(),
                 authorization_epoch: index + 1,
                 spend_key_ref: spend_key_ref_v1(&key).unwrap(),
-                recipient_uca: "bob".into(),
+                recipient: recipient.as_bytes().to_vec(),
                 amount: 5,
                 max_fee: 1,
                 nonce: 0,
@@ -52,7 +54,7 @@ impl UcaFixture {
                 receipt.fee_failure = None;
                 receipt.delta.nonce_after = 0;
             }
-            signed.push(SignedUcaSpendV1 {
+            signed.push(SignedAssetSpendV2 {
                 intent,
                 public_key: key.clone(),
                 signature: vec![11; MLDSA65_SIGNATURE_BYTES],
@@ -177,6 +179,8 @@ fn uca_packet_rejects_domain_relabel_old_document_and_missing_outputs() {
     let mut bytes = document(&packet);
     bytes[..8].copy_from_slice(DOCUMENT_MAGIC);
     assert!(decode_document(&bytes, packet.candidate_id(), PacketBudget::default()).is_err());
+    bytes[..8].copy_from_slice(b"NVCAND02");
+    assert!(decode_document(&bytes, packet.candidate_id(), PacketBudget::default()).is_err());
     let mut bytes = document(&packet);
     bytes.truncate(bytes.len() - 1);
     assert!(decode_document(&bytes, packet.candidate_id(), PacketBudget::default()).is_err());
@@ -215,4 +219,51 @@ fn uca_packet_enforces_signed_reservation_even_when_actual_fee_is_zero() {
     f.outputs[0].remaining = 5;
     f.outputs[1].remaining = 5;
     assert!(f.packet().is_err()); // amount 5 + signed cap 1 needs reserve 6.
+}
+
+#[test]
+fn asset_management_packet_rejects_budget_nonce_fee_and_signed_account_tampering() {
+    use novovm_protocol::uca_spend::AssetAuthorityUpdateV2;
+    let rejected_management = || {
+        let mut f = UcaFixture::new();
+        f.signed.truncate(1);
+        f.outputs.truncate(1);
+        f.base.receipts.truncate(1);
+        let intent = &mut f.signed[0].intent;
+        intent.recipient = intent.payer.clone();
+        intent.amount = 0;
+        intent.authority_update = Some(AssetAuthorityUpdateV2 {
+            use_recovery: false,
+            next_epoch: intent.authorization_epoch + 1,
+            active: true,
+            management_key_ref: [21; 32],
+            recovery_key_ref: None,
+            grants: vec![],
+        });
+        let hash = Sha256::digest(intent.signing_bytes().unwrap()).into();
+        let receipt = &mut f.base.receipts[0];
+        receipt.tx_hash = hash;
+        receipt.delta.tx_hash = hash;
+        receipt.delta.recipient = receipt.delta.payer.clone();
+        f.outputs[0].remaining = 0;
+        f.update_plan();
+        f
+    };
+    // Structural fixture only: a rejected action has no grant/nonce/money
+    // effects. Actual manager cryptography is tested by the original pipeline.
+    assert!(rejected_management().packet().is_ok());
+    let mut f = rejected_management();
+    f.outputs[0].remaining = 1;
+    assert!(f.packet().is_err());
+    let mut f = rejected_management();
+    f.base.receipts[0].delta.nonce_after += 1;
+    assert!(f.packet().is_err());
+    let mut f = rejected_management();
+    f.base.receipts[0].delta.fee_funding_delta = 1;
+    assert!(f.packet().is_err());
+    let mut f = rejected_management();
+    f.signed[0].intent.payer[0] ^= 1;
+    f.signed[0].intent.recipient = f.signed[0].intent.payer.clone();
+    f.update_plan();
+    assert!(f.packet().is_err());
 }
