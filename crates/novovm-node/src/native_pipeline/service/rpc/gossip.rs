@@ -121,6 +121,25 @@ impl RpcLifecycle {
             available.len() <= 64,
             "RPC repair peer mask exceeds profile limit"
         );
+        if self.gossip_repair.prefer_repair
+            && self
+                .gossip_offer
+                .as_ref()
+                .is_some_and(|offer| offer.repair_peer.is_none())
+            && self.gossip_repair.next_peer(&available).is_some()
+        {
+            // This fresh offer has no channel reservation. Reconsider the
+            // promised repair turn when its peer reopens, without losing or
+            // duplicating the fresh rows already owned by the original queue.
+            let offer = self.gossip_offer.take().expect("retained fresh offer");
+            for hash in offer.hashes.into_iter().rev() {
+                if self.pending.contains_key(&hash) {
+                    self.gossip_order.push_front(hash);
+                } else {
+                    self.gossip_queued.remove(&hash);
+                }
+            }
+        }
         if self.gossip_offer.as_ref().is_some_and(|offer| {
             offer.repair_peer.is_some_and(|peer| {
                 !available[peer]
@@ -192,10 +211,11 @@ impl RpcLifecycle {
                     hashes,
                     message,
                     repair_peer,
+                    profile_wait: false,
                 });
             }
         }
-        let Some(offer) = &self.gossip_offer else {
+        let Some(offer) = &mut self.gossip_offer else {
             return Ok(());
         };
         let requested: Vec<_> = (0..available.len())
@@ -206,8 +226,27 @@ impl RpcLifecycle {
             .controller
             .try_submit_transactions_to(&offer.message, &requested)?
         else {
+            if !offer.profile_wait && crate::native_pipeline::profile::asset_enabled() {
+                self.node
+                    .controller
+                    .profile_transactions_wait(&offer.message, &requested);
+                offer.profile_wait = true;
+            }
             return Ok(());
         };
+        if let Message::AssetTransactions { scope, .. } = offer.message.as_ref() {
+            crate::native_pipeline::profile::asset_event(
+                "gossip_offer_reserved",
+                self.node.controller.context().height,
+                || {
+                    json!({"session":scope.session,"sequence":scope.sequence,
+                        "repair_peer":offer.repair_peer,"wait_observed":offer.profile_wait,
+                        "requested":requested,"reserved":reserved,
+                        "repair_mask_before":self.gossip_repair.mask,
+                        "prefer_repair_before":self.gossip_repair.prefer_repair})
+                },
+            );
+        }
         let reserved = bits(&reserved);
         let omitted = bits(&requested) & !reserved;
         for hash in &offer.hashes {
@@ -239,6 +278,232 @@ impl RpcLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn open_first_peer_slot(nodes: &mut [RpcLifecycle]) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !nodes[0].node.controller.transactions_available_recipients()[0] {
+            ensure!(
+                Instant::now() < deadline,
+                "original UDP/DONE did not reopen peer slot"
+            );
+            // Only the first remote drains. Other recipients retain their real
+            // original handles; no synthetic completion or queue removal.
+            nodes[0].node.poll(Instant::now())?;
+            nodes[1].node.poll(Instant::now())?;
+            while nodes[1].node.controller.take_transactions().is_some() {}
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "real trusted AOEM; original asset admission, gossip owner and UDP/DONE, run alone"]
+    fn retained_fresh_offer_yields_reopened_slot_to_older_missing_input() -> Result<()> {
+        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
+            retained_fresh_offer_case(nodes, signed, false)
+        })
+    }
+
+    #[test]
+    #[ignore = "real trusted AOEM; original pool retirement and UDP/DONE, no fabricated finality, run alone"]
+    fn retained_fresh_offer_requeues_live_rows_in_order_without_reviving_retired_input(
+    ) -> Result<()> {
+        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
+            retained_fresh_offer_case(nodes, signed, true)
+        })
+    }
+
+    fn retained_fresh_offer_case(
+        nodes: &mut [RpcLifecycle],
+        signed: &[novovm_protocol::uca_spend::SignedAssetSpendV2],
+        retire_retained_row: bool,
+    ) -> Result<()> {
+        use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+        let hashes = signed.iter().map(uca::hash).collect::<Result<Vec<_>>>()?;
+        let bytes = signed
+            .iter()
+            .map(|row| row.encode())
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut sources = Vec::new();
+        for raw in &bytes {
+            let source = Arc::new(AssetSpendBatchV2::from_raw(
+                std::slice::from_ref(raw),
+                AssetSpendBatchLimitsV2 {
+                    transactions: 1,
+                    transaction_bytes: 8192,
+                    body_bytes: 8192,
+                },
+            )?);
+            let rpc = &mut nodes[0];
+            rpc.ingress_batch_boundary = false;
+            rpc.incoming_from_client = false;
+            rpc.incoming = Some((
+                rpc.node
+                    .controller
+                    .uca_transactions_message(source.clone())?,
+                0,
+            ));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while rpc.incoming.is_some() || rpc.admission.has_pending_native_admission() {
+                ensure!(
+                    Instant::now() < deadline,
+                    "original signed asset admission timeout"
+                );
+                rpc.poll_admission()?;
+                std::thread::yield_now();
+            }
+            sources.push(source);
+        }
+        let rpc = &mut nodes[0];
+        assert_eq!(rpc.pending.len(), signed.len());
+        assert!(rpc.gossip_order.is_empty());
+        rpc.batch_size = 1; // Keep one old and one new obligation distinct.
+        let mut retained_bytes = rpc.pending_retention.bytes;
+        assert_eq!(
+            rpc.node.controller.transactions_available_recipients(),
+            vec![true; 3]
+        );
+        for _ in 0..2 {
+            let blocker = rpc
+                .node
+                .controller
+                .uca_transactions_message(sources[0].clone())?;
+            assert_eq!(
+                rpc.node
+                    .controller
+                    .try_submit_transactions_to(&blocker, &[true, false, false])?,
+                Some(vec![true, false, false])
+            );
+        }
+        for hash in &hashes[..2] {
+            rpc.queue_gossip(*hash);
+            rpc.poll_gossip()?;
+            assert_eq!(rpc.pending[hash].gossip_missing, 1);
+        }
+        assert_eq!(rpc.gossip_repair.counts[0], 2);
+        assert!(rpc.gossip_repair.prefer_repair);
+        assert_eq!(
+            rpc.node.controller.transactions_available_recipients(),
+            vec![false; 3]
+        );
+        if retire_retained_row {
+            rpc.batch_size = 2;
+            rpc.queue_gossip(hashes[4]);
+        }
+        rpc.queue_gossip(hashes[2]);
+        rpc.poll_gossip()?;
+        let waiting = rpc
+            .gossip_offer
+            .as_ref()
+            .expect("fresh offer retained while all peers full");
+        assert_eq!(
+            waiting.hashes,
+            if retire_retained_row {
+                vec![hashes[4], hashes[2]]
+            } else {
+                vec![hashes[2]]
+            }
+        );
+        assert!(waiting.repair_peer.is_none());
+        assert!(rpc.gossip_order.is_empty());
+        assert!(rpc.gossip_queued.contains(&hashes[2]));
+
+        if retire_retained_row {
+            rpc.queue_gossip(hashes[2]); // Already owned by the retained offer.
+            rpc.queue_gossip(hashes[3]);
+            rpc.queue_gossip(hashes[3]);
+            assert_eq!(rpc.gossip_order, VecDeque::from([hashes[3]]));
+            // Model a changed published nonce projection, then exercise
+            // the real cleanup. This is a pool lifecycle condition, not
+            // a synthetic receipt, executed transaction or finality proof.
+            let stale = &rpc.pending[&hashes[4]];
+            let released = sources[4].retained_bytes()? + stale.retained_metadata_bytes();
+            rpc.nonces.published(stale.signer, stale.nonce + 1);
+            rpc.retire_stale_pending();
+            retained_bytes -= released;
+            assert_eq!(rpc.pending_retention.bytes, retained_bytes);
+            assert!(!rpc.pending.contains_key(&hashes[4]));
+            assert!(!rpc.gossip_queued.contains(&hashes[4]));
+        }
+
+        open_first_peer_slot(nodes)?;
+        let rpc = &mut nodes[0];
+        assert_eq!(
+            rpc.node.controller.transactions_available_recipients(),
+            vec![true, false, false]
+        );
+        rpc.poll_gossip()?;
+        assert_eq!(
+            rpc.gossip_repair.accepted_batches, 1,
+            "a retained fresh offer must not bypass the already selected repair turn"
+        );
+        assert_eq!(rpc.pending[&hashes[0]].gossip_missing, 0);
+        assert_eq!(
+            rpc.pending[&hashes[1]].gossip_missing,
+            if retire_retained_row { 0 } else { 1 }
+        );
+        let resumed = if retire_retained_row {
+            vec![hashes[2], hashes[3]]
+        } else {
+            vec![hashes[2]]
+        };
+        assert_eq!(rpc.gossip_order, VecDeque::from(resumed.clone()));
+        assert_eq!(rpc.gossip_queued, resumed.into_iter().collect());
+        assert!(rpc.gossip_offer.is_none());
+        assert!(!rpc.gossip_repair.prefer_repair);
+
+        // The next reopened opportunity belongs to new input even though
+        // another old repair remains: preemption must not starve fanout.
+        open_first_peer_slot(nodes)?;
+        nodes[0].poll_gossip()?;
+        let rpc = &mut nodes[0];
+        assert_eq!(rpc.gossip_repair.accepted_batches, 1);
+        assert!(rpc.gossip_queued.is_empty() && rpc.gossip_order.is_empty());
+        assert_eq!(rpc.pending[&hashes[2]].gossip_missing, 0b110);
+        assert_eq!(
+            rpc.pending[&hashes[1]].gossip_missing,
+            if retire_retained_row { 0 } else { 1 }
+        );
+        assert!(rpc.gossip_repair.prefer_repair);
+        if !retire_retained_row {
+            open_first_peer_slot(nodes)?;
+            nodes[0].poll_gossip()?;
+        }
+        let rpc = &nodes[0];
+        assert_eq!(
+            rpc.gossip_repair.accepted_batches,
+            if retire_retained_row { 1 } else { 2 }
+        );
+        assert_eq!(rpc.pending[&hashes[1]].gossip_missing, 0);
+        assert_eq!(
+            rpc.gossip_repair.counts[..3],
+            if retire_retained_row {
+                [0, 2, 2]
+            } else {
+                [0, 1, 1]
+            }
+        );
+        let retained = signed.len() - usize::from(retire_retained_row);
+        assert_eq!(rpc.pending.len(), retained);
+        assert_eq!(rpc.reservations.len(), retained);
+        assert_eq!(rpc.pending_retention.bytes, retained_bytes);
+        for (index, hash) in hashes.iter().enumerate() {
+            if retire_retained_row && index == 4 {
+                assert!(!rpc.pending.contains_key(hash));
+                continue;
+            }
+            let AdmissionInput::Uca { batch, index: row } = &rpc.pending[hash].input else {
+                panic!("signed asset source changed");
+            };
+            assert!(Arc::ptr_eq(batch, &sources[index]));
+            assert_eq!(batch.raw_transaction(*row)?, bytes[index]);
+        }
+        assert!(
+            rpc.node.controller.head().is_none(),
+            "delivery is not finality"
+        );
+        Ok(())
+    }
 
     #[test]
     fn hints_isolate_full_peer_without_retransmitting_reserved_recipients() {

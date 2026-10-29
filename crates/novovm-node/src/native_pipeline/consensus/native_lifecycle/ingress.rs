@@ -117,6 +117,73 @@ impl NativeLifecycle {
             .collect()
     }
 
+    /// One observation per retained caller offer, not one per failed poll.
+    pub(crate) fn profile_transactions_wait(&self, message: &Message, requested: &[bool]) {
+        if crate::native_pipeline::profile::asset_enabled() {
+            self.profile_transactions_reservation(
+                "input_fanout_wait",
+                message,
+                requested,
+                &self.transactions_available_recipients(),
+                None,
+                None,
+            );
+        }
+    }
+
+    fn profile_transactions_reservation(
+        &self,
+        event: &'static str,
+        message: &Message,
+        requested: &[bool],
+        available: &[bool],
+        reserved: Option<&[bool]>,
+        fragment: Option<Hash>,
+    ) {
+        let Message::AssetTransactions { scope, .. } = message else {
+            return;
+        };
+        crate::native_pipeline::profile::asset_event(event, self.context().height, || {
+            let peers: Vec<_> = self
+                .deliveries
+                .iter()
+                .enumerate()
+                .map(|(peer, queue)| {
+                    let input_count = queue.iter().filter(|d| d.prepared.lane() == 2).count();
+                    let is_reserved = reserved.is_some_and(|mask| mask[peer]);
+                    let handles: Vec<_> = queue
+                        .iter()
+                        .map(|delivery| {
+                            serde_json::json!({
+                                "fragment":delivery.prepared.fragment_id(),
+                                "lane":delivery.prepared.lane(),
+                                "bytes":delivery.prepared.byte_len(),
+                                "admitted":delivery.admitted,"retiring":delivery.retiring,
+                                "realtime":delivery.realtime,"archive":delivery.archive,
+                                "auxiliary":delivery.auxiliary
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "peer":peer,"validator":self.peers[peer],
+                        "requested":requested[peer],"available":available[peer],
+                        "reserved":is_reserved,"frozen":self.is_frozen(),
+                        "input_slots_full":input_count>=2,
+                        "delivery_count_full":queue.len()>=self.limits.messages_per_peer.saturating_sub(4),
+                        "delivery_bytes_full":self.bytes[peer]+self.codec.message_bytes>self.limits.bytes_per_peer/2,
+                        "exact_fit_omitted":reserved.map(|mask| requested[peer]&&available[peer]&&!mask[peer]),
+                        "charged_bytes":self.bytes[peer],"max_message_bytes":self.codec.message_bytes,
+                        "peer_byte_limit":self.limits.bytes_per_peer,
+                        "control_reserve_messages":self.control_reserve_messages,
+                        "control_reserve_bytes":self.control_reserve_bytes,"handles":handles
+                    })
+                })
+                .collect();
+            serde_json::json!({"session":scope.session,"sequence":scope.sequence,
+                "fragment":fragment,"peers":peers})
+        });
+    }
+
     /// Return an exact local reservation mask. Full peers are omitted from this
     /// best-effort fanout; existing RPC hints retain their original signed input.
     /// None transfers no ownership. Completed transport is not wallet admission.
@@ -142,8 +209,8 @@ impl NativeLifecycle {
         let available = self.transactions_available_recipients();
         let reserved: Vec<_> = requested
             .iter()
-            .zip(available)
-            .map(|(r, a)| *r && a)
+            .zip(&available)
+            .map(|(r, a)| *r && *a)
             .collect();
         if !reserved.iter().any(|r| *r) {
             return Ok(None);
@@ -161,6 +228,14 @@ impl NativeLifecycle {
         else {
             return Ok(None);
         };
+        self.profile_transactions_reservation(
+            "input_fanout_reserved",
+            message,
+            requested,
+            &available,
+            Some(&reserved),
+            Some(prepared.fragment_id()),
+        );
         for (peer, reserve) in reserved.iter().enumerate() {
             if *reserve {
                 ensure!(
@@ -187,7 +262,127 @@ impl NativeLifecycle {
 
 #[cfg(test)]
 mod tests {
-    use super::fitting_recipients;
+    use super::*;
+    use crate::native_pipeline::consensus::tests::progress_integration::{
+        with_delivery_live_body_for_test, with_delivery_peer_lifecycle_for_test,
+    };
+
+    #[test]
+    #[ignore = "real AOEM lifecycle; per-peer input reservation and height retirement"]
+    fn native_input_fanout_omits_only_full_peer_and_survives_height_advance() -> Result<()> {
+        with_delivery_live_body_for_test(|node, _, body| {
+            let Message::ApflBody { batch, .. } = body.as_ref() else {
+                anyhow::bail!("expected original APFL delivery fixture");
+            };
+            let only_first = [true, false, false];
+            for _ in 0..2 {
+                let message = node.apfl_transactions_message(batch.clone())?;
+                ensure!(
+                    node.try_submit_transactions_to(&message, &only_first)?
+                        == Some(only_first.to_vec())
+                );
+            }
+            let retained: Vec<_> = node.deliveries[0]
+                .iter()
+                .map(|delivery| delivery.prepared.fragment_id())
+                .collect();
+            let charged = node.bytes[0];
+            let third = node.apfl_transactions_message(batch.clone())?;
+            ensure!(
+                node.try_submit_transactions_to(&third, &[true; 3])?
+                    == Some(vec![false, true, true]),
+                "one full peer prevented independently available fanout"
+            );
+            ensure!(node.deliveries[0].len() == 2);
+            ensure!(node.deliveries[1].len() == 1 && node.deliveries[2].len() == 1);
+            node.height += 1;
+            node.round += 1;
+            node.retire_realtime()?;
+            ensure!(node.bytes[0] == charged);
+            ensure!(
+                node.deliveries[0]
+                    .iter()
+                    .map(|delivery| delivery.prepared.fragment_id())
+                    .eq(retained),
+                "input reservation vanished on control-context advance"
+            );
+            ensure!(node.deliveries[0]
+                .iter()
+                .all(|delivery| delivery.realtime && !delivery.retiring));
+            ensure!(node
+                .try_submit_transactions_to(&third, &only_first)?
+                .is_none());
+            Ok(())
+        })
+    }
+
+    #[test]
+    #[ignore = "real native UDP/DONE releases input reservation; no transaction authorization claim"]
+    fn native_input_full_peer_reopens_only_after_original_transport_done() -> Result<()> {
+        with_delivery_peer_lifecycle_for_test(|node, remote, _| {
+            let only_first = [true, false, false];
+            // Transport-only payloads never enter signature or spend admission.
+            // The original scope, lane, fragmentation and DONE owner are real.
+            let mut messages = Vec::new();
+            for value in 1..=3 {
+                messages.push(Arc::new(Message::Transactions {
+                    scope: node.next_transactions_scope()?,
+                    raw_transactions: vec![vec![value; 512]; 3],
+                }));
+            }
+            for message in &messages[..2] {
+                ensure!(
+                    node.try_submit_transactions_to(message, &only_first)?
+                        == Some(only_first.to_vec())
+                );
+            }
+            ensure!(node
+                .try_submit_transactions_to(&messages[2], &only_first)?
+                .is_none());
+            let start = Instant::now();
+            node.poll_io(1000, start)?;
+            ensure!(node.deliveries[0].iter().any(|delivery| delivery.admitted));
+            node.height += 1;
+            node.retire_realtime()?;
+            ensure!(node.deliveries[0].len() == 2);
+            ensure!(node.deliveries[0]
+                .iter()
+                .all(|delivery| delivery.realtime && !delivery.retiring));
+            let deadline = start + Duration::from_secs(3);
+            let mut received = BTreeSet::new();
+            while received.len() < 2 || !node.deliveries[0].is_empty() {
+                ensure!(
+                    Instant::now() < deadline,
+                    "original input delivery did not complete"
+                );
+                node.poll_io(1001 + start.elapsed().as_millis() as u64, Instant::now())?;
+                let report = remote.channel.poll_io(1001, Instant::now(), 64)?;
+                ensure!(report.rejected == 0 && report.backpressured == 0);
+                if let Some(event) = remote.channel.poll_receive_lane(2, Instant::now(), 64)? {
+                    match event {
+                        ReceiveEvent::Message(value) => {
+                            ensure!(messages[..2]
+                                .iter()
+                                .any(|message| **message == value.message));
+                            ensure!(
+                                received.insert(value.fragment_id),
+                                "duplicate application handoff"
+                            );
+                        }
+                        ReceiveEvent::Rejected { error, .. } => anyhow::bail!(error),
+                    }
+                }
+                std::thread::yield_now();
+            }
+            ensure!(node.bytes[0] == 0 && node.expired_sends == 0);
+            ensure!(
+                node.try_submit_transactions_to(&messages[2], &only_first)?
+                    == Some(only_first.to_vec()),
+                "returned DONE did not release the original peer reservation"
+            );
+            Ok(())
+        })
+    }
 
     #[test]
     fn auxiliary_full_is_backpressure_not_a_reservation() {

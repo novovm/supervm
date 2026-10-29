@@ -57,6 +57,7 @@ fn io_hint_tracks_new_fragments_sends_and_query_completion() -> Result<()> {
     hint.observe(&NativeLinkPoll {
         completed: vec![NativeSendCompletion {
             peer: 0,
+            diagnostic_tag: None,
             stream: novovm_protocol::native_query::STREAM,
             state: ObjectSendState::Delivered,
             body: Arc::new(OutgoingMessage::with_profile(

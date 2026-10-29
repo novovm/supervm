@@ -28,6 +28,7 @@ fn response_transport_completion_releases_only_its_exact_body() -> Result<()> {
         stream: STREAM,
         state: ObjectSendState::Cancelled,
         body: a.body.clone(),
+        diagnostic_tag: None,
     };
     assert!(a.transport_complete(&event));
     assert!(!b.transport_complete(&event));

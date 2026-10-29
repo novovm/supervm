@@ -253,6 +253,7 @@ struct GossipOffer {
     hashes: Vec<Hash>,
     message: Arc<Message>,
     repair_peer: Option<usize>,
+    profile_wait: bool,
 }
 
 /// Derived query/admission projection only. Rebuilt from verified archive on

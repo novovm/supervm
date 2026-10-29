@@ -2,6 +2,7 @@
 //! ownership adapter, not another listener, scheduler or execution authority.
 use super::{NetworkError, NodeId, ProtocolMessage, UdpIngressV1, UdpTransport};
 use crate::novorudp::{
+    diagnostics::NativeTransferDiagnosticsV1,
     endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
     fragments::{CompletedMessage, OutgoingMessage},
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
@@ -139,6 +140,10 @@ impl UdpTransport {
 }
 
 impl AuthenticatedUdpIngressV1 {
+    /// The original link's bounded local observer; no second ingress owner.
+    pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
+        self.link.set_diagnostics_v1(observer);
+    }
     pub fn accepts_clients(&self) -> bool {
         self.accepts_clients
     }

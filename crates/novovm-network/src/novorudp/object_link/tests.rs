@@ -112,6 +112,72 @@ fn pair_and_third() -> Result<(NativeObjectLink, NativeObjectLink, NativeObjectL
 }
 
 #[test]
+fn scoped_observer_separates_admission_writes_fragments_hash_and_done() -> Result<()> {
+    let (mut a, mut b, _) = pair_and_third()?;
+    let sent = Arc::new(NativeTransferDiagnosticsV1::for_stream(BODY));
+    let received = Arc::new(NativeTransferDiagnosticsV1::for_stream(BODY));
+    a.set_diagnostics_v1(sent.clone());
+    b.set_diagnostics_v1(received.clone());
+    let body = message(BODY, 3, 4096)?;
+    let control = message(CONTROL, 7, 64)?;
+    let tag = transfer_tag_v1(a.session_id(0).unwrap(), BODY, body.id());
+    let start = Instant::now();
+    assert!(a.try_send(0, CONTROL, &control, start)?);
+    assert!(a.try_send(0, BODY, &body, start)?);
+    let admitted = sent.snapshot_transfer(tag).unwrap();
+    assert!(admitted.send_admitted_us.is_some());
+    assert!(admitted.send.is_none());
+    assert_eq!(sent.snapshot().unwrap().objects.len(), 1);
+    assert!(received.snapshot().unwrap().objects.is_empty());
+
+    while received
+        .snapshot_transfer(tag)
+        .is_none_or(|record| record.fragments_complete_us.is_none())
+    {
+        ensure!(
+            start.elapsed() < Duration::from_secs(2),
+            "observed fragments"
+        );
+        let _ = a.poll(1000, Instant::now(), 8)?;
+        let _ = b.poll(1000, Instant::now(), 8)?;
+    }
+    let assembled = received.snapshot_transfer(tag).unwrap();
+    assert_eq!(assembled.fragments, body.frame_count() as u64);
+    assert!(assembled.first_hash_us.is_none());
+    assert!(assembled.verified_us.is_none());
+    assert_eq!(received.snapshot().unwrap().objects.len(), 1);
+    let mut complete = None;
+    while complete.is_none() {
+        complete = b.poll_complete(BODY, Instant::now(), 1)?;
+    }
+    assert_eq!(complete.unwrap().id, body.id());
+    let verified = received.snapshot_transfer(tag).unwrap();
+    assert_eq!(verified.hash_chunks, body.frame_count() as u64);
+    assert!(verified.fragments_complete_us <= verified.first_hash_us);
+    assert!(verified.last_hash_us <= verified.verified_us);
+    let mut done = None;
+    while done.is_none() {
+        ensure!(start.elapsed() < Duration::from_secs(2), "observed DONE");
+        let _ = b.poll(1000, Instant::now(), 8)?;
+        done = a
+            .poll(1000, Instant::now(), 8)?
+            .completed
+            .into_iter()
+            .find(|item| item.stream == BODY);
+    }
+    let done = done.unwrap();
+    assert_eq!(done.state, ObjectSendState::Delivered);
+    assert_eq!(done.diagnostic_tag, Some(tag));
+    let evidence = sent.snapshot_transfer(tag).unwrap();
+    assert_eq!(evidence.send_terminal_state, Some("delivered"));
+    let writes = evidence.send.unwrap();
+    assert_eq!(writes.initial_packets, body.frame_count() as u64);
+    assert!(writes.first_initial_us.is_some());
+    assert!(writes.initial_complete_us.is_some());
+    Ok(())
+}
+
+#[test]
 fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_identity(
 ) -> Result<()> {
     let identity = SigningKey::from_bytes(&[241; 32]);
@@ -538,6 +604,43 @@ fn operation_deadline_caps_repairs_without_resetting_a_live_send() -> Result<()>
     assert!(Arc::ptr_eq(&report.completed[0].body, &body));
     assert_eq!(report.data_sent, 0);
     assert_eq!(a.outbound_usage(BODY)?, (0, 0));
+    Ok(())
+}
+
+#[test]
+fn observer_separates_same_session_same_object_retry_from_live_dedup() -> Result<()> {
+    let (mut a, _b, _c) = pair_and_third()?;
+    let observer = Arc::new(NativeTransferDiagnosticsV1::for_stream(BODY));
+    a.set_diagnostics_v1(observer.clone());
+    let now = Instant::now();
+    let body = message(BODY, 11, 100)?;
+    let tag = transfer_tag_v1(a.session_id(0).unwrap(), BODY, body.id());
+    assert!(a.try_send_until(0, BODY, &body, now, now + Duration::from_millis(20))?);
+    let _ = a.poll(1000, now, 8)?;
+    let expired = a.poll(1030, now + Duration::from_millis(30), 8)?;
+    assert_eq!(expired.completed[0].state, ObjectSendState::Expired);
+    assert_eq!(expired.completed[0].diagnostic_tag, Some(tag));
+    let first = observer.snapshot_transfer(tag).unwrap();
+    assert_eq!(first.send_attempts_observed, 1);
+    assert_eq!(first.send_terminal_state, Some("expired"));
+    assert_eq!(first.send.as_ref().unwrap().initial_packets, 1);
+
+    let retry = now + Duration::from_millis(31);
+    assert!(a.try_send(0, BODY, &body, retry)?);
+    assert!(a.try_send(0, BODY, &body, retry + Duration::from_millis(1))?);
+    let second = observer.snapshot_transfer(tag).unwrap();
+    assert_eq!(second.send_attempts_observed, 2);
+    assert_eq!(second.send_admitted_us, Some(observer.elapsed_us(retry)));
+    assert!(second.send_terminal_state.is_none());
+    assert!(second.send_terminal_us.is_none());
+    assert!(second.transport_done_us.is_none());
+    assert_eq!(second.acknowledged_best, 0);
+    assert!(second.send.is_none());
+    assert_eq!(second.first_seen_us, first.first_seen_us);
+    assert_eq!(a.outbound_usage(BODY)?.0, 1);
+    // A previously exported snapshot remains that completed attempt.
+    assert_eq!(first.send_terminal_state, Some("expired"));
+    assert_eq!(first.send_attempts_observed, 1);
     Ok(())
 }
 

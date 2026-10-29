@@ -390,6 +390,19 @@ fn actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures() -
 }
 
 fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
+    run_native_uca_service_fixture_with(pool_pressure, None)
+}
+
+type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV2]) -> Result<()>;
+
+pub(super) fn with_uca_gossip_service_fixture(check: GossipServiceCheck) -> Result<()> {
+    run_native_uca_service_fixture_with(false, Some(check))
+}
+
+fn run_native_uca_service_fixture_with(
+    pool_pressure: bool,
+    gossip_check: Option<GossipServiceCheck>,
+) -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
             .context("explicit trusted library required")?,
@@ -588,6 +601,20 @@ fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
         prefix.push(signer.sign(next, &keys[2].0, &keys[2].1)?);
     }
     prefix.push(transfer.clone()); // Entire final chunk is an exact cache hit.
+    if let Some(check) = gossip_check {
+        let mut signed = vec![transfer.clone(), prefix[0].clone()];
+        for nonce in 2..4 {
+            let mut next = intent(0, 1, 1, 1)?;
+            next.nonce = nonce;
+            signed.push(signer.sign(next, &keys[2].0, &keys[2].1)?);
+        }
+        signed.push(signer.sign(intent(1, 0, 1, 1)?, &keys[3].0, &keys[3].1)?);
+        let checked = check(&mut nodes, &signed);
+        for node in nodes {
+            node.node.shutdown()?;
+        }
+        return checked;
+    }
     if pool_pressure {
         nodes[ingress].prepare_uca_pool_backpressure_for_test(
             make_batch(std::slice::from_ref(&transfer))?,

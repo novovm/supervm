@@ -75,6 +75,7 @@ pub struct NativeObjectSender {
     deadline: Instant,
     attempts: u64,
     acknowledged_best: u64,
+    diagnostic_progress: Option<diagnostics::NativeSendProgressV1>,
 }
 
 impl NativeObjectSender {
@@ -127,10 +128,17 @@ impl NativeObjectSender {
             deadline: now.checked_add(ttl).context("object TTL overflow")?,
             attempts: 0,
             acknowledged_best: 0,
+            diagnostic_progress: None,
         })
     }
     pub(crate) fn acknowledged_best_v1(&self) -> u64 {
         self.acknowledged_best
+    }
+    pub(crate) fn enable_diagnostics_v1(&mut self) {
+        self.diagnostic_progress = Some(diagnostics::NativeSendProgressV1::default());
+    }
+    pub(crate) fn diagnostic_progress_v1(&self) -> Option<diagnostics::NativeSendProgressV1> {
+        self.diagnostic_progress
     }
     pub fn status(&self) -> ObjectSendState {
         self.terminal
@@ -383,6 +391,27 @@ impl NativeObjectSender {
             }
             let pending = self.pending.take().expect("completed native frame");
             sent += 1;
+            if let Some(progress) = &mut self.diagnostic_progress {
+                let observed_at = Instant::now();
+                match &pending.cursor {
+                    PendingCursor::Initial { .. } => {
+                        progress.initial_packets = progress.initial_packets.saturating_add(1);
+                        progress.first_initial.get_or_insert(observed_at);
+                        progress.last_initial = Some(observed_at);
+                    }
+                    PendingCursor::Repair { index, .. } => {
+                        progress.repair_packets = progress.repair_packets.saturating_add(1);
+                        progress.first_repair.get_or_insert(observed_at);
+                        progress.last_repair = Some(observed_at);
+                        progress.last_repair_index = Some(*index);
+                    }
+                    PendingCursor::Probe => {
+                        progress.probe_packets = progress.probe_packets.saturating_add(1);
+                        progress.first_probe.get_or_insert(observed_at);
+                        progress.last_probe = Some(observed_at);
+                    }
+                }
+            }
             if self.retry_pending {
                 self.attempts = self.attempts.saturating_add(1);
                 self.retry_pending = false;
@@ -401,6 +430,11 @@ impl NativeObjectSender {
                     if self.copy == copies {
                         self.copy = 0;
                         self.initial += 1;
+                        if self.initial == self.body.frame_count() {
+                            if let Some(progress) = &mut self.diagnostic_progress {
+                                progress.initial_complete = progress.last_initial;
+                            }
+                        }
                     }
                 }
                 PendingCursor::Repair {

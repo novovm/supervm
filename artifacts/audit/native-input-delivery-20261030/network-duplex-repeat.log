@@ -1,0 +1,9 @@
+
+running 1 test
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay connection closed: peer closed connection without sending TLS close_notify: https://docs.rs/rustls/latest/rustls/manual/_03_howto/index.html#unexpected-eof
+product relay stopped: reason=external_request elapsed_ms=2182
+test duplex::byte_stream::tests::real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 896 filtered out; finished in 2.19s
+

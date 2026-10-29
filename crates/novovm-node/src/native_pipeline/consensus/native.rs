@@ -13,6 +13,7 @@ use ed25519_dalek::SigningKey;
 use novovm_network::novorudp::{endpoint::NativeEndpoint, object_link::NativeObjectLink};
 use novovm_network::{
     novorudp::{
+        diagnostics::{transfer_tag_v1, NativeTransferDiagnosticsV1},
         endpoint::{NativeHandshakeBudget, NativePeer},
         fragments::{CompletedMessage, FragmentProfile, OutgoingMessage, ReassemblyLimits},
         object_link::{NativeLaneConfig, NativeLinkPoll, NativeSendLimits, NativeSendPolicy},
@@ -185,6 +186,7 @@ pub struct NativeChannel {
     query_inbox: QueryInbox,
     ingress_observation: NativeIngressObservation,
     io_progress: IoProgressHint,
+    input_trace: Option<Arc<NativeTransferDiagnosticsV1>>,
 }
 impl NativeChannel {
     // Explicit deployment budgets and domains remain distinct at owner transfer.
@@ -337,13 +339,18 @@ impl NativeChannel {
     }
 
     fn with_link(
-        link: ChannelLink,
+        mut link: ChannelLink,
         domain: MessageDomain,
         bindings: ValidatorTransportBindings,
         codec: transport::DecodeLimits,
         applications: bool,
         control_send: NativeSendLimits,
     ) -> Self {
+        let input_trace = profile::asset_enabled().then(|| {
+            let observer = Arc::new(NativeTransferDiagnosticsV1::for_stream(STREAMS[2]));
+            link.set_diagnostics_v1(observer.clone());
+            observer
+        });
         Self {
             link,
             domain,
@@ -357,6 +364,7 @@ impl NativeChannel {
             query_inbox: QueryInbox::default(),
             ingress_observation: NativeIngressObservation::default(),
             io_progress: IoProgressHint::default(),
+            input_trace,
         }
     }
     pub fn ingress_observation(&self) -> NativeIngressObservation {
@@ -465,8 +473,24 @@ impl NativeChannel {
             Arc::ptr_eq(&message.owner, &self.owner),
             "foreign native channel prepared handle"
         );
-        self.link
-            .try_send(peer, message.stream, &message.object, now)
+        let admitted = self
+            .link
+            .try_send(peer, message.stream, &message.object, now)?;
+        if admitted && message.stream == STREAMS[2] {
+            if let (Some(observer), Some(session)) = (&self.input_trace, self.session_id(peer)) {
+                let tag = transfer_tag_v1(session, message.stream, message.fragment_id());
+                profile::asset_event("input_transport_admitted", 0, || {
+                    serde_json::json!({
+                        "peer": self.peer_id(peer).ok(), "peer_index":peer,
+                        "fragment":message.fragment_id(), "tag":tag,
+                        "observer_elapsed_us":observer.elapsed_us(Instant::now()),
+                        "retention":observer.snapshot_retention(),
+                        "evidence":observer.snapshot_transfer(tag)
+                    })
+                });
+            }
+        }
+        Ok(admitted)
     }
     pub fn poll_io(
         &mut self,
@@ -479,6 +503,22 @@ impl NativeChannel {
             protocol,
             rejected_protocol,
         } = self.link.poll(wall_ms, now, quantum)?;
+        if let Some(observer) = &self.input_trace {
+            for completion in &native.completed {
+                if let Some(tag) = completion.diagnostic_tag {
+                    profile::asset_event("input_transport_returned", 0, || {
+                        serde_json::json!({
+                            "peer":self.peer_id(completion.peer).ok(),"peer_index":completion.peer,
+                            "fragment":completion.body.id(), "tag":tag,
+                            "state":format!("{:?}",completion.state),
+                            "observer_elapsed_us":observer.elapsed_us(Instant::now()),
+                            "retention":observer.snapshot_retention(),
+                            "evidence":observer.snapshot_transfer(tag)
+                        })
+                    });
+                }
+            }
+        }
         // Observe before query completions leave the protocol report. Otherwise
         // a query-only turn can make real progress while appearing idle above.
         self.io_progress.observe(&native);
@@ -538,6 +578,23 @@ impl NativeChannel {
         let Some(complete) = self.poll_complete(stream, now, quantum)? else {
             return Ok(None);
         };
+        if stream == STREAMS[2] {
+            if let Some(observer) = &self.input_trace {
+                let peer = (0..self.peer_count())
+                    .find(|peer| self.peer_id(*peer).is_ok_and(|name| name == complete.peer));
+                if let Some(session) = peer.and_then(|peer| self.session_id(peer)) {
+                    let tag = transfer_tag_v1(session, stream, complete.id);
+                    profile::asset_event("input_transport_complete", 0, || {
+                        serde_json::json!({
+                            "peer":complete.peer,"peer_index":peer,"fragment":complete.id,"tag":tag,
+                            "observer_elapsed_us":observer.elapsed_us(Instant::now()),
+                            "retention":observer.snapshot_retention(),
+                            "evidence":observer.snapshot_transfer(tag)
+                        })
+                    });
+                }
+            }
+        }
         let started = profile::mark();
         let parsed = (|| -> Result<_> {
             let size = complete
@@ -632,6 +689,12 @@ enum ChannelLink {
 }
 #[cfg(test)]
 impl ChannelLink {
+    fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
+        match self {
+            Self::Original(link) => link.set_diagnostics_v1(observer),
+            Self::HistoricalFixture(link) => link.set_diagnostics_v1(observer),
+        }
+    }
     fn peer_count(&self) -> usize {
         match self {
             Self::Original(link) => link.peer_count(),

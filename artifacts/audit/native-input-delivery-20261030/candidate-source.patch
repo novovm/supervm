@@ -1,0 +1,1657 @@
+diff --git a/crates/novovm-network/src/mailbox_structured/native_session/tests.rs b/crates/novovm-network/src/mailbox_structured/native_session/tests.rs
+index 205fcb5f..84009504 100644
+--- a/crates/novovm-network/src/mailbox_structured/native_session/tests.rs
++++ b/crates/novovm-network/src/mailbox_structured/native_session/tests.rs
+@@ -28,6 +28,7 @@ fn response_transport_completion_releases_only_its_exact_body() -> Result<()> {
+         stream: STREAM,
+         state: ObjectSendState::Cancelled,
+         body: a.body.clone(),
++        diagnostic_tag: None,
+     };
+     assert!(a.transport_complete(&event));
+     assert!(!b.transport_complete(&event));
+diff --git a/crates/novovm-network/src/novorudp/diagnostics.rs b/crates/novovm-network/src/novorudp/diagnostics.rs
+index 995191a9..c036e157 100644
+--- a/crates/novovm-network/src/novorudp/diagnostics.rs
++++ b/crates/novovm-network/src/novorudp/diagnostics.rs
+@@ -72,6 +72,7 @@ pub fn transfer_tag_v1(session: [u8; 16], stream: u64, object: [u8; 32]) -> [u8;
+ 
+ #[derive(Clone, Copy)]
+ pub enum NativeProgressStageV1 {
++    SendAdmitted,
+     Fragment,
+     Hash,
+     Verified,
+@@ -91,7 +92,22 @@ pub struct NativeTransferEvidenceV1 {
+     pub transport_done_us: Option<u64>,
+     pub response_validated_us: Option<u64>,
+     pub fragments: u64,
++    pub total_fragments: Option<u64>,
++    pub first_fragment_us: Option<u64>,
++    pub last_fragment_us: Option<u64>,
++    pub fragments_complete_us: Option<u64>,
++    pub last_fragment_index: Option<u64>,
++    pub repair_fragments: u64,
+     pub hash_chunks: u64,
++    pub first_hash_us: Option<u64>,
++    pub last_hash_us: Option<u64>,
++    pub send_admitted_us: Option<u64>,
++    /// New sender jobs observed while this object record is retained. A live
++    /// duplicate enqueue does not start another attempt; eviction loses history.
++    pub send_attempts_observed: u64,
++    pub send_terminal_us: Option<u64>,
++    pub send_terminal_state: Option<&'static str>,
++    pub send: Option<NativeSendEvidenceV1>,
+     pub acknowledged_best: u64,
+     pub verified_us: Option<u64>,
+     pub work_entered_us: Option<u64>,
+@@ -100,9 +116,41 @@ pub struct NativeTransferEvidenceV1 {
+     pub response_queued_us: Option<u64>,
+     pub response_tag: Option<[u8; 32]>,
+ }
++/// Actual completed carrier writes, not queue admission or prepared frames.
++#[derive(Clone, Debug, Serialize)]
++pub struct NativeSendEvidenceV1 {
++    pub initial_packets: u64,
++    pub repair_packets: u64,
++    pub probe_packets: u64,
++    pub first_initial_us: Option<u64>,
++    pub last_initial_us: Option<u64>,
++    pub initial_complete_us: Option<u64>,
++    pub first_repair_us: Option<u64>,
++    pub last_repair_us: Option<u64>,
++    pub first_probe_us: Option<u64>,
++    pub last_probe_us: Option<u64>,
++    pub last_repair_index: Option<u64>,
++}
++/// Retained only by an explicitly observed sender. Publishing once per poll
++/// avoids taking the observer lock for every datagram in that send quantum.
++#[derive(Clone, Copy, Debug, Default)]
++pub(crate) struct NativeSendProgressV1 {
++    pub initial_packets: u64,
++    pub repair_packets: u64,
++    pub probe_packets: u64,
++    pub first_initial: Option<Instant>,
++    pub last_initial: Option<Instant>,
++    pub initial_complete: Option<Instant>,
++    pub first_repair: Option<Instant>,
++    pub last_repair: Option<Instant>,
++    pub first_probe: Option<Instant>,
++    pub last_probe: Option<Instant>,
++    pub last_repair_index: Option<u64>,
++}
+ #[derive(Clone, Debug, Serialize)]
+ pub struct NativeEvidenceSnapshotV1 {
+     pub scope: &'static str,
++    pub elapsed_us: u64,
+     pub rejection_names: [&'static str; 16],
+     pub rejections: NativeRejectCountsV1,
+     pub first_unattributed_reject_us: Option<u64>,
+@@ -112,12 +160,20 @@ pub struct NativeEvidenceSnapshotV1 {
+     pub expired_records: u64,
+     pub objects: Vec<NativeTransferEvidenceV1>,
+ }
++#[derive(Clone, Copy, Debug, Serialize)]
++pub struct NativeEvidenceRetentionV1 {
++    pub retained_records: usize,
++    pub omitted_records: u64,
++    pub evicted_records: u64,
++    pub expired_records: u64,
++}
+ struct State {
+     snapshot: NativeEvidenceSnapshotV1,
+     records: VecDeque<NativeTransferEvidenceV1>,
+ }
+ pub struct NativeTransferDiagnosticsV1 {
+     origin: Instant,
++    stream_filter: Option<u64>,
+     state: Mutex<State>,
+ }
+ impl State {
+@@ -130,12 +186,72 @@ impl State {
+             .expired_records
+             .saturating_add((before - self.records.len()) as u64);
+     }
++    fn record(&mut self, tag: [u8; 32], at: u64) -> Option<&mut NativeTransferEvidenceV1> {
++        self.expire(at);
++        let index = match self.records.iter().position(|r| r.tag == tag) {
++            Some(index) => index,
++            None => {
++                if self.records.len() == 256 {
++                    if let Some(index) = self.records.iter().position(|r| {
++                        r.transport_done_us.is_some()
++                            || r.send_terminal_us.is_some()
++                            || r.response_validated_us.is_some()
++                            || r.response_tag.is_some_and(|tag| {
++                                self.records.iter().any(|response| {
++                                    response.tag == tag && response.transport_done_us.is_some()
++                                })
++                            })
++                    }) {
++                        self.records.remove(index);
++                        self.snapshot.evicted_records =
++                            self.snapshot.evicted_records.saturating_add(1);
++                    } else {
++                        self.snapshot.omitted_records =
++                            self.snapshot.omitted_records.saturating_add(1);
++                        return None;
++                    }
++                }
++                self.records.push_back(NativeTransferEvidenceV1 {
++                    tag,
++                    first_seen_us: at,
++                    last_progress_us: at,
++                    transport_done_us: None,
++                    response_validated_us: None,
++                    fragments: 0,
++                    total_fragments: None,
++                    first_fragment_us: None,
++                    last_fragment_us: None,
++                    fragments_complete_us: None,
++                    last_fragment_index: None,
++                    repair_fragments: 0,
++                    hash_chunks: 0,
++                    first_hash_us: None,
++                    last_hash_us: None,
++                    send_admitted_us: None,
++                    send_attempts_observed: 0,
++                    send_terminal_us: None,
++                    send_terminal_state: None,
++                    send: None,
++                    acknowledged_best: 0,
++                    verified_us: None,
++                    work_entered_us: None,
++                    work_finished_us: None,
++                    stored_receipt_created_us: None,
++                    response_queued_us: None,
++                    response_tag: None,
++                });
++                self.records.len() - 1
++            }
++        };
++        self.records.get_mut(index)
++    }
+ }
+ impl NativeTransferDiagnosticsV1 {
+     pub fn new() -> Self {
+-        Self { origin: Instant::now(), state: Mutex::new(State {
++        Self { origin: Instant::now(), stream_filter: None, state: Mutex::new(State {
+             snapshot: NativeEvidenceSnapshotV1 {
+                 scope: "local monotonic clock; rejection association unknown; bounded test evidence",
++                elapsed_us: 0,
+                 rejection_names: ["wire_budget","oversize","handshake","unknown_source","no_session","secure_route","secure_nonce","secure_replay_pre_auth","secure_authentication","wire_or_frame","stream_denied","open_other","unknown_stream","ack_short","object_ack","object_fragment"],
+                 rejections: NativeRejectCountsV1::default(), first_unattributed_reject_us: None,
+                 last_unattributed_reject_us: None, omitted_records: 0,
+@@ -143,6 +259,20 @@ impl NativeTransferDiagnosticsV1 {
+             }, records: VecDeque::new(),
+         }) }
+     }
++    /// Scope a local observer before installation; excluded lanes perform no
++    /// tag hashing or record work and do not consume the fixed record budget.
++    pub fn for_stream(stream: u64) -> Self {
++        Self {
++            stream_filter: Some(stream),
++            ..Self::new()
++        }
++    }
++    pub(crate) fn tracks_stream(&self, stream: u64) -> bool {
++        self.stream_filter.is_none_or(|selected| selected == stream)
++    }
++    pub fn elapsed_us(&self, now: Instant) -> u64 {
++        self.micros(now)
++    }
+     fn micros(&self, now: Instant) -> u64 {
+         now.saturating_duration_since(self.origin)
+             .as_micros()
+@@ -172,54 +302,28 @@ impl NativeTransferDiagnosticsV1 {
+         };
+         let at = self.micros(now);
+         // Evidence retention never prolongs transport/business TTL or custody.
+-        s.expire(at);
+-        let index = match s.records.iter().position(|r| r.tag == tag) {
+-            Some(index) => index,
+-            None => {
+-                if s.records.len() == 256 {
+-                    if let Some(index) = s.records.iter().position(|r| {
+-                        r.transport_done_us.is_some()
+-                            || r.response_validated_us.is_some()
+-                            || r.response_tag.is_some_and(|tag| {
+-                                s.records.iter().any(|response| {
+-                                    response.tag == tag && response.transport_done_us.is_some()
+-                                })
+-                            })
+-                    }) {
+-                        s.records.remove(index);
+-                        s.snapshot.evicted_records = s.snapshot.evicted_records.saturating_add(1);
+-                    } else {
+-                        s.snapshot.omitted_records = s.snapshot.omitted_records.saturating_add(1);
+-                        return;
+-                    }
+-                }
+-                s.records.push_back(NativeTransferEvidenceV1 {
+-                    tag,
+-                    first_seen_us: at,
+-                    last_progress_us: at,
+-                    transport_done_us: None,
+-                    response_validated_us: None,
+-                    fragments: 0,
+-                    hash_chunks: 0,
+-                    acknowledged_best: 0,
+-                    verified_us: None,
+-                    work_entered_us: None,
+-                    work_finished_us: None,
+-                    stored_receipt_created_us: None,
+-                    response_queued_us: None,
+-                    response_tag: None,
+-                });
+-                s.records.len() - 1
+-            }
+-        };
+-        let r = &mut s.records[index];
++        let Some(r) = s.record(tag, at) else { return };
+         if matches!(stage, NativeProgressStageV1::AckProgress) && amount <= r.acknowledged_best {
+             return;
+         }
+         r.last_progress_us = at;
+         match stage {
++            NativeProgressStageV1::SendAdmitted => {
++                r.send_attempts_observed = r.send_attempts_observed.saturating_add(1);
++                r.send_admitted_us = Some(at);
++                r.send_terminal_us = None;
++                r.send_terminal_state = None;
++                r.send = None;
++                r.acknowledged_best = 0;
++                r.transport_done_us = None;
++                r.total_fragments.get_or_insert(amount);
++            }
+             NativeProgressStageV1::Fragment => r.fragments = r.fragments.saturating_add(1),
+-            NativeProgressStageV1::Hash => r.hash_chunks = r.hash_chunks.saturating_add(1),
++            NativeProgressStageV1::Hash => {
++                r.hash_chunks = r.hash_chunks.saturating_add(1);
++                r.first_hash_us.get_or_insert(at);
++                r.last_hash_us = Some(at);
++            }
+             NativeProgressStageV1::Verified => {
+                 r.verified_us.get_or_insert(at);
+             }
+@@ -244,6 +348,61 @@ impl NativeTransferDiagnosticsV1 {
+             }
+         }
+     }
++    pub(crate) fn fragment(
++        &self,
++        tag: [u8; 32],
++        total: u64,
++        index: u64,
++        repair: bool,
++        now: Instant,
++    ) {
++        let Ok(mut s) = self.state.lock() else { return };
++        let at = self.micros(now);
++        let Some(r) = s.record(tag, at) else { return };
++        r.last_progress_us = at;
++        r.fragments = r.fragments.saturating_add(1);
++        r.total_fragments.get_or_insert(total);
++        r.first_fragment_us.get_or_insert(at);
++        r.last_fragment_us = Some(at);
++        r.last_fragment_index = Some(index);
++        r.repair_fragments = r.repair_fragments.saturating_add(u64::from(repair));
++        if r.fragments == total {
++            r.fragments_complete_us.get_or_insert(at);
++        }
++    }
++    pub(crate) fn send_progress(&self, tag: [u8; 32], p: NativeSendProgressV1, now: Instant) {
++        let Ok(mut s) = self.state.lock() else { return };
++        let Some(r) = s.record(tag, self.micros(now)) else {
++            return;
++        };
++        if let Some(last) = [p.last_initial, p.last_repair, p.last_probe]
++            .into_iter()
++            .flatten()
++            .max()
++        {
++            r.last_progress_us = r.last_progress_us.max(self.micros(last));
++        }
++        r.send = Some(NativeSendEvidenceV1 {
++            initial_packets: p.initial_packets,
++            repair_packets: p.repair_packets,
++            probe_packets: p.probe_packets,
++            first_initial_us: p.first_initial.map(|at| self.micros(at)),
++            last_initial_us: p.last_initial.map(|at| self.micros(at)),
++            initial_complete_us: p.initial_complete.map(|at| self.micros(at)),
++            first_repair_us: p.first_repair.map(|at| self.micros(at)),
++            last_repair_us: p.last_repair.map(|at| self.micros(at)),
++            first_probe_us: p.first_probe.map(|at| self.micros(at)),
++            last_probe_us: p.last_probe.map(|at| self.micros(at)),
++            last_repair_index: p.last_repair_index,
++        });
++    }
++    pub(crate) fn send_finished(&self, tag: [u8; 32], state: &'static str, now: Instant) {
++        let Ok(mut s) = self.state.lock() else { return };
++        let at = self.micros(now);
++        let Some(r) = s.record(tag, at) else { return };
++        r.send_terminal_us.get_or_insert(at);
++        r.send_terminal_state.get_or_insert(state);
++    }
+     #[cfg(feature = "iroh-transport")]
+     pub(crate) fn response(&self, request: [u8; 32], response: [u8; 32], now: Instant) {
+         self.progress(request, NativeProgressStageV1::ResponseQueued, 0, now);
+@@ -256,10 +415,32 @@ impl NativeTransferDiagnosticsV1 {
+     pub fn snapshot(&self) -> Option<NativeEvidenceSnapshotV1> {
+         self.snapshot_at(Instant::now())
+     }
++    /// Read one retained record without refreshing its lifetime or expiring
++    /// unrelated records. The owner can export it at its normal handoff.
++    pub fn snapshot_transfer(&self, tag: [u8; 32]) -> Option<NativeTransferEvidenceV1> {
++        self.state
++            .lock()
++            .ok()?
++            .records
++            .iter()
++            .find(|record| record.tag == tag)
++            .cloned()
++    }
++    /// Scalar coverage evidence without cloning or changing the record set.
++    pub fn snapshot_retention(&self) -> Option<NativeEvidenceRetentionV1> {
++        let s = self.state.lock().ok()?;
++        Some(NativeEvidenceRetentionV1 {
++            retained_records: s.records.len(),
++            omitted_records: s.snapshot.omitted_records,
++            evicted_records: s.snapshot.evicted_records,
++            expired_records: s.snapshot.expired_records,
++        })
++    }
+     fn snapshot_at(&self, now: Instant) -> Option<NativeEvidenceSnapshotV1> {
+         let mut s = self.state.lock().ok()?;
+         s.expire(self.micros(now));
+         let mut snapshot = s.snapshot.clone();
++        snapshot.elapsed_us = self.micros(now);
+         snapshot.objects = s.records.iter().cloned().collect();
+         Some(snapshot)
+     }
+@@ -275,6 +456,50 @@ mod tests {
+     use super::*;
+     use std::time::Duration;
+     #[test]
++    fn fragment_completion_and_read_only_snapshot_keep_separate_boundaries() {
++        let d = NativeTransferDiagnosticsV1::for_stream(11);
++        let tag = [4; 32];
++        let now = d.origin;
++        assert!(d.tracks_stream(11));
++        assert!(!d.tracks_stream(12));
++        d.fragment(tag, 2, 1, false, now);
++        d.fragment(tag, 2, 0, true, now + Duration::from_millis(7));
++        let complete = d.snapshot_transfer(tag).unwrap();
++        assert_eq!(complete.first_fragment_us, Some(0));
++        assert_eq!(complete.fragments_complete_us, Some(7000));
++        assert_eq!(complete.last_fragment_index, Some(0));
++        assert_eq!(complete.repair_fragments, 1);
++        assert!(complete.first_hash_us.is_none());
++        d.progress(
++            tag,
++            NativeProgressStageV1::Hash,
++            1,
++            now + Duration::from_millis(8),
++        );
++        d.progress(
++            tag,
++            NativeProgressStageV1::Hash,
++            1,
++            now + Duration::from_millis(9),
++        );
++        d.progress(
++            tag,
++            NativeProgressStageV1::Verified,
++            0,
++            now + Duration::from_millis(10),
++        );
++        let verified = d.snapshot_transfer(tag).unwrap();
++        assert_eq!(verified.first_hash_us, Some(8000));
++        assert_eq!(verified.last_hash_us, Some(9000));
++        assert_eq!(verified.verified_us, Some(10000));
++        assert_eq!(d.snapshot_transfer(tag).unwrap().last_progress_us, 10000);
++        assert_eq!(d.state.lock().unwrap().snapshot.expired_records, 0);
++        let expired = d.snapshot_at(now + Duration::from_secs(120)).unwrap();
++        assert_eq!(expired.elapsed_us, 120_000_000);
++        assert_eq!(expired.expired_records, 1);
++        assert!(d.snapshot_transfer(tag).is_none());
++    }
++    #[test]
+     fn authenticated_session_salts_tags_and_progress_never_follows_repeat_ack() {
+         let a = transfer_tag_v1([1; 16], 7, [2; 32]);
+         assert_ne!(a, transfer_tag_v1([3; 16], 7, [2; 32]));
+diff --git a/crates/novovm-network/src/novorudp/object_link.rs b/crates/novovm-network/src/novorudp/object_link.rs
+index 188b78dd..de6e6edc 100644
+--- a/crates/novovm-network/src/novorudp/object_link.rs
++++ b/crates/novovm-network/src/novorudp/object_link.rs
+@@ -171,6 +171,9 @@ pub struct NativeSendCompletion {
+     pub stream: u64,
+     pub state: ObjectSendState,
+     pub body: Arc<OutgoingMessage>,
++    /// Optional local observer binding to the actual send job's session, which
++    /// may already have been replaced by the time completion is handed back.
++    pub diagnostic_tag: Option<[u8; 32]>,
+ }
+ #[must_use]
+ #[derive(Default)]
+@@ -300,7 +303,12 @@ impl NativeObjectLink {
+         id: [u8; 32],
+         now: Instant,
+     ) {
+-        if let (Some(d), Some(request)) = (&self.diagnostics, request) {
++        if let (Some(d), Some(request)) = (
++            self.diagnostics
++                .as_ref()
++                .filter(|d| d.tracks_stream(stream)),
++            request,
++        ) {
+             d.response(request, transfer_tag_v1(session, stream, id), now);
+         }
+     }
+@@ -313,6 +321,7 @@ impl NativeObjectLink {
+     ) -> Option<[u8; 32]> {
+         self.diagnostics
+             .as_ref()
++            .filter(|d| d.tracks_stream(stream))
+             .map(|_| transfer_tag_v1(session, stream, id))
+     }
+     #[cfg(feature = "iroh-transport")]
+@@ -521,7 +530,7 @@ impl NativeObjectLink {
+         {
+             return Ok(false);
+         }
+-        let sender = NativeObjectSender::new(
++        let mut sender = NativeObjectSender::new(
+             body.clone(),
+             session,
+             stream,
+@@ -530,6 +539,19 @@ impl NativeObjectLink {
+             now,
+             self.policy.ttl.min(deadline.duration_since(now)),
+         )?;
++        if let Some(d) = self
++            .diagnostics
++            .as_ref()
++            .filter(|d| d.tracks_stream(stream))
++        {
++            sender.enable_diagnostics_v1();
++            d.progress(
++                transfer_tag_v1(session, stream, body.id()),
++                NativeProgressStageV1::SendAdmitted,
++                body.frame_count() as u64,
++                now,
++            );
++        }
+         lane.usage.add(bytes);
+         lane.peers
+             .get_mut(&peer)
+@@ -699,7 +721,11 @@ impl NativeObjectLink {
+                                 .record(NativeRejectReasonV1::ObjectAck);
+                         } else if sender.acknowledged_best_v1() > before {
+                             report.ack_progress += 1;
+-                            if let Some(d) = &self.diagnostics {
++                            if let Some(d) = self
++                                .diagnostics
++                                .as_ref()
++                                .filter(|d| d.tracks_stream(stream))
++                            {
+                                 d.progress(
+                                     transfer_tag_v1(
+                                         sender.session_id(),
+@@ -708,7 +734,7 @@ impl NativeObjectLink {
+                                     ),
+                                     NativeProgressStageV1::AckProgress,
+                                     sender.acknowledged_best_v1(),
+-                                    now,
++                                    Instant::now(),
+                                 );
+                             }
+                         }
+@@ -720,16 +746,23 @@ impl NativeObjectLink {
+                     Ok(admission) => {
+                         if admission == FragmentAdmission::Accepted {
+                             report.accepted_fragments += 1;
+-                            if let Some(d) = &self.diagnostics {
+-                                d.progress(
++                            if let Some(d) = self
++                                .diagnostics
++                                .as_ref()
++                                .filter(|d| d.tracks_stream(stream))
++                            {
++                                d.fragment(
+                                     transfer_tag_v1(
+                                         frame.session_id,
+                                         stream,
+                                         frame.payload[40..72].try_into()?,
+                                     ),
+-                                    NativeProgressStageV1::Fragment,
+-                                    1,
+-                                    now,
++                                    u32::from_be_bytes(frame.payload[72..76].try_into()?)
++                                        .div_ceil(super::fragments::UDP_CHUNK_BYTES as u32)
++                                        as u64,
++                                    frame.sequence,
++                                    frame.kind == NovoRudpTransportFrameKindV0::Repair,
++                                    Instant::now(),
+                                 );
+                             }
+                         } else {
+@@ -773,10 +806,19 @@ impl NativeObjectLink {
+                 sender.cancel();
+             }
+             if sender.status() == ObjectSendState::Sending {
+-                match self
+-                    .endpoint
+-                    .poll_object(key.0, sender, now, quantum - report.data_sent)
++                let sent =
++                    self.endpoint
++                        .poll_object(key.0, sender, now, quantum - report.data_sent);
++                if let (Some(d), Some(progress)) =
++                    (&self.diagnostics, sender.diagnostic_progress_v1())
+                 {
++                    d.send_progress(
++                        transfer_tag_v1(sender.session_id(), key.1, key.2),
++                        progress,
++                        now,
++                    );
++                }
++                match sent {
+                     Ok(sent) => report.data_sent += sent,
+                     Err(error) if error.downcast_ref::<std::io::Error>().is_some() => {
+                         report.send_failures += 1
+@@ -824,13 +866,32 @@ impl NativeObjectLink {
+             let sender = self.jobs.remove(&key).expect("finished send job");
+             self.cancellations.remove(&key);
+             let state = sender.status();
++            let diagnostic_tag = self
++                .diagnostics
++                .as_ref()
++                .filter(|d| d.tracks_stream(key.1))
++                .map(|d| {
++                    let tag = transfer_tag_v1(sender.session_id(), key.1, key.2);
++                    d.send_finished(
++                        tag,
++                        match state {
++                            ObjectSendState::Sending => unreachable!("completed active sender"),
++                            ObjectSendState::Delivered => "delivered",
++                            ObjectSendState::Expired => "expired",
++                            ObjectSendState::SessionReplaced => "session_replaced",
++                            ObjectSendState::Cancelled => "cancelled",
++                        },
++                        Instant::now(),
++                    );
++                    tag
++                });
+             if state == ObjectSendState::Delivered {
+-                if let Some(d) = &self.diagnostics {
++                if let Some(d) = self.diagnostics.as_ref().filter(|d| d.tracks_stream(key.1)) {
+                     d.progress(
+                         transfer_tag_v1(sender.session_id(), key.1, key.2),
+                         NativeProgressStageV1::TransportDone,
+                         0,
+-                        now,
++                        Instant::now(),
+                     );
+                 }
+             }
+@@ -846,6 +907,7 @@ impl NativeObjectLink {
+                 stream: key.1,
+                 state,
+                 body,
++                diagnostic_tag,
+             });
+         }
+         // ACK-first alone can starve data, and data-first alone can starve ACKs.
+@@ -971,7 +1033,11 @@ impl NativeObjectLink {
+         quantum: usize,
+     ) -> Result<(Option<CompletedMessage>, bool)> {
+         let lane = self.lanes.get_mut(&stream).context("unknown native lane")?;
+-        let (item, progress) = if let Some(d) = &self.diagnostics {
++        let (item, progress) = if let Some(d) = self
++            .diagnostics
++            .as_ref()
++            .filter(|d| d.tracks_stream(stream))
++        {
+             let endpoint = &self.endpoint;
+             let peers = &self.peers;
+             lane.receiver
+@@ -981,7 +1047,7 @@ impl NativeObjectLink {
+                             transfer_tag_v1(session, stream, id),
+                             NativeProgressStageV1::Hash,
+                             1,
+-                            now,
++                            Instant::now(),
+                         );
+                     }
+                 })?
+@@ -994,12 +1060,17 @@ impl NativeObjectLink {
+                 .get(&item.peer)
+                 .context("completed unknown peer")?;
+             lane.feedback(peer, item.id);
+-            if let (Some(d), Some(session)) = (&self.diagnostics, self.endpoint.session_id(peer)) {
++            if let (Some(d), Some(session)) = (
++                self.diagnostics
++                    .as_ref()
++                    .filter(|d| d.tracks_stream(stream)),
++                self.endpoint.session_id(peer),
++            ) {
+                 d.progress(
+                     transfer_tag_v1(session, stream, item.id),
+                     NativeProgressStageV1::Verified,
+                     0,
+-                    now,
++                    Instant::now(),
+                 );
+             }
+         }
+diff --git a/crates/novovm-network/src/novorudp/object_link/tests.rs b/crates/novovm-network/src/novorudp/object_link/tests.rs
+index 5c2ba6fd..2a204b55 100644
+--- a/crates/novovm-network/src/novorudp/object_link/tests.rs
++++ b/crates/novovm-network/src/novorudp/object_link/tests.rs
+@@ -111,6 +111,72 @@ fn pair_and_third() -> Result<(NativeObjectLink, NativeObjectLink, NativeObjectL
+     Ok((a, b, c))
+ }
+ 
++#[test]
++fn scoped_observer_separates_admission_writes_fragments_hash_and_done() -> Result<()> {
++    let (mut a, mut b, _) = pair_and_third()?;
++    let sent = Arc::new(NativeTransferDiagnosticsV1::for_stream(BODY));
++    let received = Arc::new(NativeTransferDiagnosticsV1::for_stream(BODY));
++    a.set_diagnostics_v1(sent.clone());
++    b.set_diagnostics_v1(received.clone());
++    let body = message(BODY, 3, 4096)?;
++    let control = message(CONTROL, 7, 64)?;
++    let tag = transfer_tag_v1(a.session_id(0).unwrap(), BODY, body.id());
++    let start = Instant::now();
++    assert!(a.try_send(0, CONTROL, &control, start)?);
++    assert!(a.try_send(0, BODY, &body, start)?);
++    let admitted = sent.snapshot_transfer(tag).unwrap();
++    assert!(admitted.send_admitted_us.is_some());
++    assert!(admitted.send.is_none());
++    assert_eq!(sent.snapshot().unwrap().objects.len(), 1);
++    assert!(received.snapshot().unwrap().objects.is_empty());
++
++    while received
++        .snapshot_transfer(tag)
++        .is_none_or(|record| record.fragments_complete_us.is_none())
++    {
++        ensure!(
++            start.elapsed() < Duration::from_secs(2),
++            "observed fragments"
++        );
++        let _ = a.poll(1000, Instant::now(), 8)?;
++        let _ = b.poll(1000, Instant::now(), 8)?;
++    }
++    let assembled = received.snapshot_transfer(tag).unwrap();
++    assert_eq!(assembled.fragments, body.frame_count() as u64);
++    assert!(assembled.first_hash_us.is_none());
++    assert!(assembled.verified_us.is_none());
++    assert_eq!(received.snapshot().unwrap().objects.len(), 1);
++    let mut complete = None;
++    while complete.is_none() {
++        complete = b.poll_complete(BODY, Instant::now(), 1)?;
++    }
++    assert_eq!(complete.unwrap().id, body.id());
++    let verified = received.snapshot_transfer(tag).unwrap();
++    assert_eq!(verified.hash_chunks, body.frame_count() as u64);
++    assert!(verified.fragments_complete_us <= verified.first_hash_us);
++    assert!(verified.last_hash_us <= verified.verified_us);
++    let mut done = None;
++    while done.is_none() {
++        ensure!(start.elapsed() < Duration::from_secs(2), "observed DONE");
++        let _ = b.poll(1000, Instant::now(), 8)?;
++        done = a
++            .poll(1000, Instant::now(), 8)?
++            .completed
++            .into_iter()
++            .find(|item| item.stream == BODY);
++    }
++    let done = done.unwrap();
++    assert_eq!(done.state, ObjectSendState::Delivered);
++    assert_eq!(done.diagnostic_tag, Some(tag));
++    let evidence = sent.snapshot_transfer(tag).unwrap();
++    assert_eq!(evidence.send_terminal_state, Some("delivered"));
++    let writes = evidence.send.unwrap();
++    assert_eq!(writes.initial_packets, body.frame_count() as u64);
++    assert!(writes.first_initial_us.is_some());
++    assert!(writes.initial_complete_us.is_some());
++    Ok(())
++}
++
+ #[test]
+ fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_identity(
+ ) -> Result<()> {
+@@ -541,6 +607,43 @@ fn operation_deadline_caps_repairs_without_resetting_a_live_send() -> Result<()>
+     Ok(())
+ }
+ 
++#[test]
++fn observer_separates_same_session_same_object_retry_from_live_dedup() -> Result<()> {
++    let (mut a, _b, _c) = pair_and_third()?;
++    let observer = Arc::new(NativeTransferDiagnosticsV1::for_stream(BODY));
++    a.set_diagnostics_v1(observer.clone());
++    let now = Instant::now();
++    let body = message(BODY, 11, 100)?;
++    let tag = transfer_tag_v1(a.session_id(0).unwrap(), BODY, body.id());
++    assert!(a.try_send_until(0, BODY, &body, now, now + Duration::from_millis(20))?);
++    let _ = a.poll(1000, now, 8)?;
++    let expired = a.poll(1030, now + Duration::from_millis(30), 8)?;
++    assert_eq!(expired.completed[0].state, ObjectSendState::Expired);
++    assert_eq!(expired.completed[0].diagnostic_tag, Some(tag));
++    let first = observer.snapshot_transfer(tag).unwrap();
++    assert_eq!(first.send_attempts_observed, 1);
++    assert_eq!(first.send_terminal_state, Some("expired"));
++    assert_eq!(first.send.as_ref().unwrap().initial_packets, 1);
++
++    let retry = now + Duration::from_millis(31);
++    assert!(a.try_send(0, BODY, &body, retry)?);
++    assert!(a.try_send(0, BODY, &body, retry + Duration::from_millis(1))?);
++    let second = observer.snapshot_transfer(tag).unwrap();
++    assert_eq!(second.send_attempts_observed, 2);
++    assert_eq!(second.send_admitted_us, Some(observer.elapsed_us(retry)));
++    assert!(second.send_terminal_state.is_none());
++    assert!(second.send_terminal_us.is_none());
++    assert!(second.transport_done_us.is_none());
++    assert_eq!(second.acknowledged_best, 0);
++    assert!(second.send.is_none());
++    assert_eq!(second.first_seen_us, first.first_seen_us);
++    assert_eq!(a.outbound_usage(BODY)?.0, 1);
++    // A previously exported snapshot remains that completed attempt.
++    assert_eq!(first.send_terminal_state, Some("expired"));
++    assert_eq!(first.send_attempts_observed, 1);
++    Ok(())
++}
++
+ #[test]
+ fn cancelled_partial_send_releases_quota_without_resetting_healthy_session() -> Result<()> {
+     let (mut a, mut b, _c) = pair_and_third()?;
+diff --git a/crates/novovm-network/src/novorudp/object_sender.rs b/crates/novovm-network/src/novorudp/object_sender.rs
+index 32282846..14aba672 100644
+--- a/crates/novovm-network/src/novorudp/object_sender.rs
++++ b/crates/novovm-network/src/novorudp/object_sender.rs
+@@ -75,6 +75,7 @@ pub struct NativeObjectSender {
+     deadline: Instant,
+     attempts: u64,
+     acknowledged_best: u64,
++    diagnostic_progress: Option<diagnostics::NativeSendProgressV1>,
+ }
+ 
+ impl NativeObjectSender {
+@@ -127,11 +128,18 @@ impl NativeObjectSender {
+             deadline: now.checked_add(ttl).context("object TTL overflow")?,
+             attempts: 0,
+             acknowledged_best: 0,
++            diagnostic_progress: None,
+         })
+     }
+     pub(crate) fn acknowledged_best_v1(&self) -> u64 {
+         self.acknowledged_best
+     }
++    pub(crate) fn enable_diagnostics_v1(&mut self) {
++        self.diagnostic_progress = Some(diagnostics::NativeSendProgressV1::default());
++    }
++    pub(crate) fn diagnostic_progress_v1(&self) -> Option<diagnostics::NativeSendProgressV1> {
++        self.diagnostic_progress
++    }
+     pub fn status(&self) -> ObjectSendState {
+         self.terminal
+     }
+@@ -383,6 +391,27 @@ impl NativeObjectSender {
+             }
+             let pending = self.pending.take().expect("completed native frame");
+             sent += 1;
++            if let Some(progress) = &mut self.diagnostic_progress {
++                let observed_at = Instant::now();
++                match &pending.cursor {
++                    PendingCursor::Initial { .. } => {
++                        progress.initial_packets = progress.initial_packets.saturating_add(1);
++                        progress.first_initial.get_or_insert(observed_at);
++                        progress.last_initial = Some(observed_at);
++                    }
++                    PendingCursor::Repair { index, .. } => {
++                        progress.repair_packets = progress.repair_packets.saturating_add(1);
++                        progress.first_repair.get_or_insert(observed_at);
++                        progress.last_repair = Some(observed_at);
++                        progress.last_repair_index = Some(*index);
++                    }
++                    PendingCursor::Probe => {
++                        progress.probe_packets = progress.probe_packets.saturating_add(1);
++                        progress.first_probe.get_or_insert(observed_at);
++                        progress.last_probe = Some(observed_at);
++                    }
++                }
++            }
+             if self.retry_pending {
+                 self.attempts = self.attempts.saturating_add(1);
+                 self.retry_pending = false;
+@@ -401,6 +430,11 @@ impl NativeObjectSender {
+                     if self.copy == copies {
+                         self.copy = 0;
+                         self.initial += 1;
++                        if self.initial == self.body.frame_count() {
++                            if let Some(progress) = &mut self.diagnostic_progress {
++                                progress.initial_complete = progress.last_initial;
++                            }
++                        }
+                     }
+                 }
+                 PendingCursor::Repair {
+diff --git a/crates/novovm-network/src/novorudp/object_sender/tests.rs b/crates/novovm-network/src/novorudp/object_sender/tests.rs
+index 054c368a..8dada365 100644
+--- a/crates/novovm-network/src/novorudp/object_sender/tests.rs
++++ b/crates/novovm-network/src/novorudp/object_sender/tests.rs
+@@ -88,6 +88,8 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind()
+         now,
+         Duration::from_secs(5),
+     )?;
++    assert!(sender.diagnostic_progress_v1().is_none());
++    sender.enable_diagnostics_v1();
+     let peer = b.remote_peer_id().to_owned();
+     let mut objects = Reassembler::with_profile(
+         [1; 32],
+@@ -113,6 +115,10 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind()
+         }
+     }
+     let (total, missing) = objects.missing_ranges(&peer, body.id()).unwrap();
++    let observed = sender.diagnostic_progress_v1().unwrap();
++    assert_eq!(observed.initial_packets, 100);
++    assert_eq!(observed.repair_packets, 0);
++    assert!(observed.initial_complete.is_some());
+     let window = select_first_missing_window(&missing, total, &config).unwrap();
+     assert_eq!(window.range.start, 5); // Preserve original non-grid window rule.
+     let mut ack = NovoRudpAckFrame {
+@@ -148,6 +154,11 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind()
+         objects.push(&peer, &frame.payload, now)?;
+     }
+     assert_eq!(received, (5..=12).collect::<Vec<_>>());
++    let observed = sender.diagnostic_progress_v1().unwrap();
++    assert_eq!(observed.initial_packets, 100);
++    assert_eq!(observed.repair_packets, 8);
++    assert_eq!(observed.probe_packets, 0);
++    assert_eq!(observed.last_repair_index, Some(12));
+     assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 0);
+     let mut complete = None;
+     for _ in 0..=body.frame_count().div_ceil(64) {
+@@ -196,6 +207,7 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
+         now,
+         Duration::from_secs(5),
+     )?;
++    sender.enable_diagnostics_v1();
+     assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 1);
+     receive(&right, &mut b)?;
+     for ms in [10, 20] {
+@@ -208,6 +220,10 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
+             NovoRudpTransportFrameKindV0::Repair
+         );
+     }
++    let observed = sender.diagnostic_progress_v1().unwrap();
++    assert_eq!(observed.initial_packets, 1);
++    assert_eq!(observed.repair_packets, 0);
++    assert_eq!(observed.probe_packets, 2);
+     assert_eq!(
+         sender.poll_send(&left, &mut a, now + Duration::from_millis(30), 8)?,
+         0
+diff --git a/crates/novovm-network/src/transport/native_ingress.rs b/crates/novovm-network/src/transport/native_ingress.rs
+index f9e818a8..a22b2805 100644
+--- a/crates/novovm-network/src/transport/native_ingress.rs
++++ b/crates/novovm-network/src/transport/native_ingress.rs
+@@ -2,6 +2,7 @@
+ //! ownership adapter, not another listener, scheduler or execution authority.
+ use super::{NetworkError, NodeId, ProtocolMessage, UdpIngressV1, UdpTransport};
+ use crate::novorudp::{
++    diagnostics::NativeTransferDiagnosticsV1,
+     endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
+     fragments::{CompletedMessage, OutgoingMessage},
+     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
+@@ -139,6 +140,10 @@ impl UdpTransport {
+ }
+ 
+ impl AuthenticatedUdpIngressV1 {
++    /// The original link's bounded local observer; no second ingress owner.
++    pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
++        self.link.set_diagnostics_v1(observer);
++    }
+     pub fn accepts_clients(&self) -> bool {
+         self.accepts_clients
+     }
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native.rs b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+index 4acbc724..a5801ad4 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+@@ -13,6 +13,7 @@ use ed25519_dalek::SigningKey;
+ use novovm_network::novorudp::{endpoint::NativeEndpoint, object_link::NativeObjectLink};
+ use novovm_network::{
+     novorudp::{
++        diagnostics::{transfer_tag_v1, NativeTransferDiagnosticsV1},
+         endpoint::{NativeHandshakeBudget, NativePeer},
+         fragments::{CompletedMessage, FragmentProfile, OutgoingMessage, ReassemblyLimits},
+         object_link::{NativeLaneConfig, NativeLinkPoll, NativeSendLimits, NativeSendPolicy},
+@@ -185,6 +186,7 @@ pub struct NativeChannel {
+     query_inbox: QueryInbox,
+     ingress_observation: NativeIngressObservation,
+     io_progress: IoProgressHint,
++    input_trace: Option<Arc<NativeTransferDiagnosticsV1>>,
+ }
+ impl NativeChannel {
+     // Explicit deployment budgets and domains remain distinct at owner transfer.
+@@ -337,13 +339,18 @@ impl NativeChannel {
+     }
+ 
+     fn with_link(
+-        link: ChannelLink,
++        mut link: ChannelLink,
+         domain: MessageDomain,
+         bindings: ValidatorTransportBindings,
+         codec: transport::DecodeLimits,
+         applications: bool,
+         control_send: NativeSendLimits,
+     ) -> Self {
++        let input_trace = profile::asset_enabled().then(|| {
++            let observer = Arc::new(NativeTransferDiagnosticsV1::for_stream(STREAMS[2]));
++            link.set_diagnostics_v1(observer.clone());
++            observer
++        });
+         Self {
+             link,
+             domain,
+@@ -357,6 +364,7 @@ impl NativeChannel {
+             query_inbox: QueryInbox::default(),
+             ingress_observation: NativeIngressObservation::default(),
+             io_progress: IoProgressHint::default(),
++            input_trace,
+         }
+     }
+     pub fn ingress_observation(&self) -> NativeIngressObservation {
+@@ -465,8 +473,24 @@ impl NativeChannel {
+             Arc::ptr_eq(&message.owner, &self.owner),
+             "foreign native channel prepared handle"
+         );
+-        self.link
+-            .try_send(peer, message.stream, &message.object, now)
++        let admitted = self
++            .link
++            .try_send(peer, message.stream, &message.object, now)?;
++        if admitted && message.stream == STREAMS[2] {
++            if let (Some(observer), Some(session)) = (&self.input_trace, self.session_id(peer)) {
++                let tag = transfer_tag_v1(session, message.stream, message.fragment_id());
++                profile::asset_event("input_transport_admitted", 0, || {
++                    serde_json::json!({
++                        "peer": self.peer_id(peer).ok(), "peer_index":peer,
++                        "fragment":message.fragment_id(), "tag":tag,
++                        "observer_elapsed_us":observer.elapsed_us(Instant::now()),
++                        "retention":observer.snapshot_retention(),
++                        "evidence":observer.snapshot_transfer(tag)
++                    })
++                });
++            }
++        }
++        Ok(admitted)
+     }
+     pub fn poll_io(
+         &mut self,
+@@ -479,6 +503,22 @@ impl NativeChannel {
+             protocol,
+             rejected_protocol,
+         } = self.link.poll(wall_ms, now, quantum)?;
++        if let Some(observer) = &self.input_trace {
++            for completion in &native.completed {
++                if let Some(tag) = completion.diagnostic_tag {
++                    profile::asset_event("input_transport_returned", 0, || {
++                        serde_json::json!({
++                            "peer":self.peer_id(completion.peer).ok(),"peer_index":completion.peer,
++                            "fragment":completion.body.id(), "tag":tag,
++                            "state":format!("{:?}",completion.state),
++                            "observer_elapsed_us":observer.elapsed_us(Instant::now()),
++                            "retention":observer.snapshot_retention(),
++                            "evidence":observer.snapshot_transfer(tag)
++                        })
++                    });
++                }
++            }
++        }
+         // Observe before query completions leave the protocol report. Otherwise
+         // a query-only turn can make real progress while appearing idle above.
+         self.io_progress.observe(&native);
+@@ -538,6 +578,23 @@ impl NativeChannel {
+         let Some(complete) = self.poll_complete(stream, now, quantum)? else {
+             return Ok(None);
+         };
++        if stream == STREAMS[2] {
++            if let Some(observer) = &self.input_trace {
++                let peer = (0..self.peer_count())
++                    .find(|peer| self.peer_id(*peer).is_ok_and(|name| name == complete.peer));
++                if let Some(session) = peer.and_then(|peer| self.session_id(peer)) {
++                    let tag = transfer_tag_v1(session, stream, complete.id);
++                    profile::asset_event("input_transport_complete", 0, || {
++                        serde_json::json!({
++                            "peer":complete.peer,"peer_index":peer,"fragment":complete.id,"tag":tag,
++                            "observer_elapsed_us":observer.elapsed_us(Instant::now()),
++                            "retention":observer.snapshot_retention(),
++                            "evidence":observer.snapshot_transfer(tag)
++                        })
++                    });
++                }
++            }
++        }
+         let started = profile::mark();
+         let parsed = (|| -> Result<_> {
+             let size = complete
+@@ -632,6 +689,12 @@ enum ChannelLink {
+ }
+ #[cfg(test)]
+ impl ChannelLink {
++    fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
++        match self {
++            Self::Original(link) => link.set_diagnostics_v1(observer),
++            Self::HistoricalFixture(link) => link.set_diagnostics_v1(observer),
++        }
++    }
+     fn peer_count(&self) -> usize {
+         match self {
+             Self::Original(link) => link.peer_count(),
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native/tests.rs b/crates/novovm-node/src/native_pipeline/consensus/native/tests.rs
+index da53ac2f..244cadd7 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native/tests.rs
+@@ -57,6 +57,7 @@ fn io_hint_tracks_new_fragments_sends_and_query_completion() -> Result<()> {
+     hint.observe(&NativeLinkPoll {
+         completed: vec![NativeSendCompletion {
+             peer: 0,
++            diagnostic_tag: None,
+             stream: novovm_protocol::native_query::STREAM,
+             state: ObjectSendState::Delivered,
+             body: Arc::new(OutgoingMessage::with_profile(
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
+index ee7dddab..58303b7a 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
+@@ -117,6 +117,73 @@ impl NativeLifecycle {
+             .collect()
+     }
+ 
++    /// One observation per retained caller offer, not one per failed poll.
++    pub(crate) fn profile_transactions_wait(&self, message: &Message, requested: &[bool]) {
++        if crate::native_pipeline::profile::asset_enabled() {
++            self.profile_transactions_reservation(
++                "input_fanout_wait",
++                message,
++                requested,
++                &self.transactions_available_recipients(),
++                None,
++                None,
++            );
++        }
++    }
++
++    fn profile_transactions_reservation(
++        &self,
++        event: &'static str,
++        message: &Message,
++        requested: &[bool],
++        available: &[bool],
++        reserved: Option<&[bool]>,
++        fragment: Option<Hash>,
++    ) {
++        let Message::AssetTransactions { scope, .. } = message else {
++            return;
++        };
++        crate::native_pipeline::profile::asset_event(event, self.context().height, || {
++            let peers: Vec<_> = self
++                .deliveries
++                .iter()
++                .enumerate()
++                .map(|(peer, queue)| {
++                    let input_count = queue.iter().filter(|d| d.prepared.lane() == 2).count();
++                    let is_reserved = reserved.is_some_and(|mask| mask[peer]);
++                    let handles: Vec<_> = queue
++                        .iter()
++                        .map(|delivery| {
++                            serde_json::json!({
++                                "fragment":delivery.prepared.fragment_id(),
++                                "lane":delivery.prepared.lane(),
++                                "bytes":delivery.prepared.byte_len(),
++                                "admitted":delivery.admitted,"retiring":delivery.retiring,
++                                "realtime":delivery.realtime,"archive":delivery.archive,
++                                "auxiliary":delivery.auxiliary
++                            })
++                        })
++                        .collect();
++                    serde_json::json!({
++                        "peer":peer,"validator":self.peers[peer],
++                        "requested":requested[peer],"available":available[peer],
++                        "reserved":is_reserved,"frozen":self.is_frozen(),
++                        "input_slots_full":input_count>=2,
++                        "delivery_count_full":queue.len()>=self.limits.messages_per_peer.saturating_sub(4),
++                        "delivery_bytes_full":self.bytes[peer]+self.codec.message_bytes>self.limits.bytes_per_peer/2,
++                        "exact_fit_omitted":reserved.map(|mask| requested[peer]&&available[peer]&&!mask[peer]),
++                        "charged_bytes":self.bytes[peer],"max_message_bytes":self.codec.message_bytes,
++                        "peer_byte_limit":self.limits.bytes_per_peer,
++                        "control_reserve_messages":self.control_reserve_messages,
++                        "control_reserve_bytes":self.control_reserve_bytes,"handles":handles
++                    })
++                })
++                .collect();
++            serde_json::json!({"session":scope.session,"sequence":scope.sequence,
++                "fragment":fragment,"peers":peers})
++        });
++    }
++
+     /// Return an exact local reservation mask. Full peers are omitted from this
+     /// best-effort fanout; existing RPC hints retain their original signed input.
+     /// None transfers no ownership. Completed transport is not wallet admission.
+@@ -142,8 +209,8 @@ impl NativeLifecycle {
+         let available = self.transactions_available_recipients();
+         let reserved: Vec<_> = requested
+             .iter()
+-            .zip(available)
+-            .map(|(r, a)| *r && a)
++            .zip(&available)
++            .map(|(r, a)| *r && *a)
+             .collect();
+         if !reserved.iter().any(|r| *r) {
+             return Ok(None);
+@@ -161,6 +228,14 @@ impl NativeLifecycle {
+         else {
+             return Ok(None);
+         };
++        self.profile_transactions_reservation(
++            "input_fanout_reserved",
++            message,
++            requested,
++            &available,
++            Some(&reserved),
++            Some(prepared.fragment_id()),
++        );
+         for (peer, reserve) in reserved.iter().enumerate() {
+             if *reserve {
+                 ensure!(
+@@ -187,7 +262,127 @@ impl NativeLifecycle {
+ 
+ #[cfg(test)]
+ mod tests {
+-    use super::fitting_recipients;
++    use super::*;
++    use crate::native_pipeline::consensus::tests::progress_integration::{
++        with_delivery_live_body_for_test, with_delivery_peer_lifecycle_for_test,
++    };
++
++    #[test]
++    #[ignore = "real AOEM lifecycle; per-peer input reservation and height retirement"]
++    fn native_input_fanout_omits_only_full_peer_and_survives_height_advance() -> Result<()> {
++        with_delivery_live_body_for_test(|node, _, body| {
++            let Message::ApflBody { batch, .. } = body.as_ref() else {
++                anyhow::bail!("expected original APFL delivery fixture");
++            };
++            let only_first = [true, false, false];
++            for _ in 0..2 {
++                let message = node.apfl_transactions_message(batch.clone())?;
++                ensure!(
++                    node.try_submit_transactions_to(&message, &only_first)?
++                        == Some(only_first.to_vec())
++                );
++            }
++            let retained: Vec<_> = node.deliveries[0]
++                .iter()
++                .map(|delivery| delivery.prepared.fragment_id())
++                .collect();
++            let charged = node.bytes[0];
++            let third = node.apfl_transactions_message(batch.clone())?;
++            ensure!(
++                node.try_submit_transactions_to(&third, &[true; 3])?
++                    == Some(vec![false, true, true]),
++                "one full peer prevented independently available fanout"
++            );
++            ensure!(node.deliveries[0].len() == 2);
++            ensure!(node.deliveries[1].len() == 1 && node.deliveries[2].len() == 1);
++            node.height += 1;
++            node.round += 1;
++            node.retire_realtime()?;
++            ensure!(node.bytes[0] == charged);
++            ensure!(
++                node.deliveries[0]
++                    .iter()
++                    .map(|delivery| delivery.prepared.fragment_id())
++                    .eq(retained),
++                "input reservation vanished on control-context advance"
++            );
++            ensure!(node.deliveries[0]
++                .iter()
++                .all(|delivery| delivery.realtime && !delivery.retiring));
++            ensure!(node
++                .try_submit_transactions_to(&third, &only_first)?
++                .is_none());
++            Ok(())
++        })
++    }
++
++    #[test]
++    #[ignore = "real native UDP/DONE releases input reservation; no transaction authorization claim"]
++    fn native_input_full_peer_reopens_only_after_original_transport_done() -> Result<()> {
++        with_delivery_peer_lifecycle_for_test(|node, remote, _| {
++            let only_first = [true, false, false];
++            // Transport-only payloads never enter signature or spend admission.
++            // The original scope, lane, fragmentation and DONE owner are real.
++            let mut messages = Vec::new();
++            for value in 1..=3 {
++                messages.push(Arc::new(Message::Transactions {
++                    scope: node.next_transactions_scope()?,
++                    raw_transactions: vec![vec![value; 512]; 3],
++                }));
++            }
++            for message in &messages[..2] {
++                ensure!(
++                    node.try_submit_transactions_to(message, &only_first)?
++                        == Some(only_first.to_vec())
++                );
++            }
++            ensure!(node
++                .try_submit_transactions_to(&messages[2], &only_first)?
++                .is_none());
++            let start = Instant::now();
++            node.poll_io(1000, start)?;
++            ensure!(node.deliveries[0].iter().any(|delivery| delivery.admitted));
++            node.height += 1;
++            node.retire_realtime()?;
++            ensure!(node.deliveries[0].len() == 2);
++            ensure!(node.deliveries[0]
++                .iter()
++                .all(|delivery| delivery.realtime && !delivery.retiring));
++            let deadline = start + Duration::from_secs(3);
++            let mut received = BTreeSet::new();
++            while received.len() < 2 || !node.deliveries[0].is_empty() {
++                ensure!(
++                    Instant::now() < deadline,
++                    "original input delivery did not complete"
++                );
++                node.poll_io(1001 + start.elapsed().as_millis() as u64, Instant::now())?;
++                let report = remote.channel.poll_io(1001, Instant::now(), 64)?;
++                ensure!(report.rejected == 0 && report.backpressured == 0);
++                if let Some(event) = remote.channel.poll_receive_lane(2, Instant::now(), 64)? {
++                    match event {
++                        ReceiveEvent::Message(value) => {
++                            ensure!(messages[..2]
++                                .iter()
++                                .any(|message| **message == value.message));
++                            ensure!(
++                                received.insert(value.fragment_id),
++                                "duplicate application handoff"
++                            );
++                        }
++                        ReceiveEvent::Rejected { error, .. } => anyhow::bail!(error),
++                    }
++                }
++                std::thread::yield_now();
++            }
++            ensure!(node.bytes[0] == 0 && node.expired_sends == 0);
++            ensure!(
++                node.try_submit_transactions_to(&messages[2], &only_first)?
++                    == Some(only_first.to_vec()),
++                "returned DONE did not release the original peer reservation"
++            );
++            Ok(())
++        })
++    }
+ 
+     #[test]
+     fn auxiliary_full_is_backpressure_not_a_reservation() {
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc.rs b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+index b7d976ab..0c7dfe90 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+@@ -253,6 +253,7 @@ struct GossipOffer {
+     hashes: Vec<Hash>,
+     message: Arc<Message>,
+     repair_peer: Option<usize>,
++    profile_wait: bool,
+ }
+ 
+ /// Derived query/admission projection only. Rebuilt from verified archive on
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs b/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
+index 95134945..f5801148 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
+@@ -121,6 +121,25 @@ impl RpcLifecycle {
+             available.len() <= 64,
+             "RPC repair peer mask exceeds profile limit"
+         );
++        if self.gossip_repair.prefer_repair
++            && self
++                .gossip_offer
++                .as_ref()
++                .is_some_and(|offer| offer.repair_peer.is_none())
++            && self.gossip_repair.next_peer(&available).is_some()
++        {
++            // This fresh offer has no channel reservation. Reconsider the
++            // promised repair turn when its peer reopens, without losing or
++            // duplicating the fresh rows already owned by the original queue.
++            let offer = self.gossip_offer.take().expect("retained fresh offer");
++            for hash in offer.hashes.into_iter().rev() {
++                if self.pending.contains_key(&hash) {
++                    self.gossip_order.push_front(hash);
++                } else {
++                    self.gossip_queued.remove(&hash);
++                }
++            }
++        }
+         if self.gossip_offer.as_ref().is_some_and(|offer| {
+             offer.repair_peer.is_some_and(|peer| {
+                 !available[peer]
+@@ -192,10 +211,11 @@ impl RpcLifecycle {
+                     hashes,
+                     message,
+                     repair_peer,
++                    profile_wait: false,
+                 });
+             }
+         }
+-        let Some(offer) = &self.gossip_offer else {
++        let Some(offer) = &mut self.gossip_offer else {
+             return Ok(());
+         };
+         let requested: Vec<_> = (0..available.len())
+@@ -206,8 +226,27 @@ impl RpcLifecycle {
+             .controller
+             .try_submit_transactions_to(&offer.message, &requested)?
+         else {
++            if !offer.profile_wait && crate::native_pipeline::profile::asset_enabled() {
++                self.node
++                    .controller
++                    .profile_transactions_wait(&offer.message, &requested);
++                offer.profile_wait = true;
++            }
+             return Ok(());
+         };
++        if let Message::AssetTransactions { scope, .. } = offer.message.as_ref() {
++            crate::native_pipeline::profile::asset_event(
++                "gossip_offer_reserved",
++                self.node.controller.context().height,
++                || {
++                    json!({"session":scope.session,"sequence":scope.sequence,
++                        "repair_peer":offer.repair_peer,"wait_observed":offer.profile_wait,
++                        "requested":requested,"reserved":reserved,
++                        "repair_mask_before":self.gossip_repair.mask,
++                        "prefer_repair_before":self.gossip_repair.prefer_repair})
++                },
++            );
++        }
+         let reserved = bits(&reserved);
+         let omitted = bits(&requested) & !reserved;
+         for hash in &offer.hashes {
+@@ -240,6 +279,232 @@ impl RpcLifecycle {
+ mod tests {
+     use super::*;
+ 
++    fn open_first_peer_slot(nodes: &mut [RpcLifecycle]) -> Result<()> {
++        let deadline = Instant::now() + Duration::from_secs(10);
++        while !nodes[0].node.controller.transactions_available_recipients()[0] {
++            ensure!(
++                Instant::now() < deadline,
++                "original UDP/DONE did not reopen peer slot"
++            );
++            // Only the first remote drains. Other recipients retain their real
++            // original handles; no synthetic completion or queue removal.
++            nodes[0].node.poll(Instant::now())?;
++            nodes[1].node.poll(Instant::now())?;
++            while nodes[1].node.controller.take_transactions().is_some() {}
++            std::thread::sleep(Duration::from_millis(1));
++        }
++        Ok(())
++    }
++
++    #[test]
++    #[ignore = "real trusted AOEM; original asset admission, gossip owner and UDP/DONE, run alone"]
++    fn retained_fresh_offer_yields_reopened_slot_to_older_missing_input() -> Result<()> {
++        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
++            retained_fresh_offer_case(nodes, signed, false)
++        })
++    }
++
++    #[test]
++    #[ignore = "real trusted AOEM; original pool retirement and UDP/DONE, no fabricated finality, run alone"]
++    fn retained_fresh_offer_requeues_live_rows_in_order_without_reviving_retired_input(
++    ) -> Result<()> {
++        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
++            retained_fresh_offer_case(nodes, signed, true)
++        })
++    }
++
++    fn retained_fresh_offer_case(
++        nodes: &mut [RpcLifecycle],
++        signed: &[novovm_protocol::uca_spend::SignedAssetSpendV2],
++        retire_retained_row: bool,
++    ) -> Result<()> {
++        use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
++        let hashes = signed.iter().map(uca::hash).collect::<Result<Vec<_>>>()?;
++        let bytes = signed
++            .iter()
++            .map(|row| row.encode())
++            .collect::<Result<Vec<_>, _>>()?;
++        let mut sources = Vec::new();
++        for raw in &bytes {
++            let source = Arc::new(AssetSpendBatchV2::from_raw(
++                std::slice::from_ref(raw),
++                AssetSpendBatchLimitsV2 {
++                    transactions: 1,
++                    transaction_bytes: 8192,
++                    body_bytes: 8192,
++                },
++            )?);
++            let rpc = &mut nodes[0];
++            rpc.ingress_batch_boundary = false;
++            rpc.incoming_from_client = false;
++            rpc.incoming = Some((
++                rpc.node
++                    .controller
++                    .uca_transactions_message(source.clone())?,
++                0,
++            ));
++            let deadline = Instant::now() + Duration::from_secs(10);
++            while rpc.incoming.is_some() || rpc.admission.has_pending_native_admission() {
++                ensure!(
++                    Instant::now() < deadline,
++                    "original signed asset admission timeout"
++                );
++                rpc.poll_admission()?;
++                std::thread::yield_now();
++            }
++            sources.push(source);
++        }
++        let rpc = &mut nodes[0];
++        assert_eq!(rpc.pending.len(), signed.len());
++        assert!(rpc.gossip_order.is_empty());
++        rpc.batch_size = 1; // Keep one old and one new obligation distinct.
++        let mut retained_bytes = rpc.pending_retention.bytes;
++        assert_eq!(
++            rpc.node.controller.transactions_available_recipients(),
++            vec![true; 3]
++        );
++        for _ in 0..2 {
++            let blocker = rpc
++                .node
++                .controller
++                .uca_transactions_message(sources[0].clone())?;
++            assert_eq!(
++                rpc.node
++                    .controller
++                    .try_submit_transactions_to(&blocker, &[true, false, false])?,
++                Some(vec![true, false, false])
++            );
++        }
++        for hash in &hashes[..2] {
++            rpc.queue_gossip(*hash);
++            rpc.poll_gossip()?;
++            assert_eq!(rpc.pending[hash].gossip_missing, 1);
++        }
++        assert_eq!(rpc.gossip_repair.counts[0], 2);
++        assert!(rpc.gossip_repair.prefer_repair);
++        assert_eq!(
++            rpc.node.controller.transactions_available_recipients(),
++            vec![false; 3]
++        );
++        if retire_retained_row {
++            rpc.batch_size = 2;
++            rpc.queue_gossip(hashes[4]);
++        }
++        rpc.queue_gossip(hashes[2]);
++        rpc.poll_gossip()?;
++        let waiting = rpc
++            .gossip_offer
++            .as_ref()
++            .expect("fresh offer retained while all peers full");
++        assert_eq!(
++            waiting.hashes,
++            if retire_retained_row {
++                vec![hashes[4], hashes[2]]
++            } else {
++                vec![hashes[2]]
++            }
++        );
++        assert!(waiting.repair_peer.is_none());
++        assert!(rpc.gossip_order.is_empty());
++        assert!(rpc.gossip_queued.contains(&hashes[2]));
++
++        if retire_retained_row {
++            rpc.queue_gossip(hashes[2]); // Already owned by the retained offer.
++            rpc.queue_gossip(hashes[3]);
++            rpc.queue_gossip(hashes[3]);
++            assert_eq!(rpc.gossip_order, VecDeque::from([hashes[3]]));
++            // Model a changed published nonce projection, then exercise
++            // the real cleanup. This is a pool lifecycle condition, not
++            // a synthetic receipt, executed transaction or finality proof.
++            let stale = &rpc.pending[&hashes[4]];
++            let released = sources[4].retained_bytes()? + stale.retained_metadata_bytes();
++            rpc.nonces.published(stale.signer, stale.nonce + 1);
++            rpc.retire_stale_pending();
++            retained_bytes -= released;
++            assert_eq!(rpc.pending_retention.bytes, retained_bytes);
++            assert!(!rpc.pending.contains_key(&hashes[4]));
++            assert!(!rpc.gossip_queued.contains(&hashes[4]));
++        }
++
++        open_first_peer_slot(nodes)?;
++        let rpc = &mut nodes[0];
++        assert_eq!(
++            rpc.node.controller.transactions_available_recipients(),
++            vec![true, false, false]
++        );
++        rpc.poll_gossip()?;
++        assert_eq!(
++            rpc.gossip_repair.accepted_batches, 1,
++            "a retained fresh offer must not bypass the already selected repair turn"
++        );
++        assert_eq!(rpc.pending[&hashes[0]].gossip_missing, 0);
++        assert_eq!(
++            rpc.pending[&hashes[1]].gossip_missing,
++            if retire_retained_row { 0 } else { 1 }
++        );
++        let resumed = if retire_retained_row {
++            vec![hashes[2], hashes[3]]
++        } else {
++            vec![hashes[2]]
++        };
++        assert_eq!(rpc.gossip_order, VecDeque::from(resumed.clone()));
++        assert_eq!(rpc.gossip_queued, resumed.into_iter().collect());
++        assert!(rpc.gossip_offer.is_none());
++        assert!(!rpc.gossip_repair.prefer_repair);
++
++        // The next reopened opportunity belongs to new input even though
++        // another old repair remains: preemption must not starve fanout.
++        open_first_peer_slot(nodes)?;
++        nodes[0].poll_gossip()?;
++        let rpc = &mut nodes[0];
++        assert_eq!(rpc.gossip_repair.accepted_batches, 1);
++        assert!(rpc.gossip_queued.is_empty() && rpc.gossip_order.is_empty());
++        assert_eq!(rpc.pending[&hashes[2]].gossip_missing, 0b110);
++        assert_eq!(
++            rpc.pending[&hashes[1]].gossip_missing,
++            if retire_retained_row { 0 } else { 1 }
++        );
++        assert!(rpc.gossip_repair.prefer_repair);
++        if !retire_retained_row {
++            open_first_peer_slot(nodes)?;
++            nodes[0].poll_gossip()?;
++        }
++        let rpc = &nodes[0];
++        assert_eq!(
++            rpc.gossip_repair.accepted_batches,
++            if retire_retained_row { 1 } else { 2 }
++        );
++        assert_eq!(rpc.pending[&hashes[1]].gossip_missing, 0);
++        assert_eq!(
++            rpc.gossip_repair.counts[..3],
++            if retire_retained_row {
++                [0, 2, 2]
++            } else {
++                [0, 1, 1]
++            }
++        );
++        let retained = signed.len() - usize::from(retire_retained_row);
++        assert_eq!(rpc.pending.len(), retained);
++        assert_eq!(rpc.reservations.len(), retained);
++        assert_eq!(rpc.pending_retention.bytes, retained_bytes);
++        for (index, hash) in hashes.iter().enumerate() {
++            if retire_retained_row && index == 4 {
++                assert!(!rpc.pending.contains_key(hash));
++                continue;
++            }
++            let AdmissionInput::Uca { batch, index: row } = &rpc.pending[hash].input else {
++                panic!("signed asset source changed");
++            };
++            assert!(Arc::ptr_eq(batch, &sources[index]));
++            assert_eq!(batch.raw_transaction(*row)?, bytes[index]);
++        }
++        assert!(
++            rpc.node.controller.head().is_none(),
++            "delivery is not finality"
++        );
++        Ok(())
++    }
++
+     #[test]
+     fn hints_isolate_full_peer_without_retransmitting_reserved_recipients() {
+         let mut hints = RepairHints::default();
+diff --git a/crates/novovm-node/src/native_pipeline/service/uca_native_tests.rs b/crates/novovm-node/src/native_pipeline/service/uca_native_tests.rs
+index 98da9e8a..5fc2691a 100644
+--- a/crates/novovm-node/src/native_pipeline/service/uca_native_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/service/uca_native_tests.rs
+@@ -390,6 +390,19 @@ fn actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures() -
+ }
+ 
+ fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
++    run_native_uca_service_fixture_with(pool_pressure, None)
++}
++
++type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV2]) -> Result<()>;
++
++pub(super) fn with_uca_gossip_service_fixture(check: GossipServiceCheck) -> Result<()> {
++    run_native_uca_service_fixture_with(false, Some(check))
++}
++
++fn run_native_uca_service_fixture_with(
++    pool_pressure: bool,
++    gossip_check: Option<GossipServiceCheck>,
++) -> Result<()> {
+     let library = PathBuf::from(
+         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+             .context("explicit trusted library required")?,
+@@ -588,6 +601,20 @@ fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
+         prefix.push(signer.sign(next, &keys[2].0, &keys[2].1)?);
+     }
+     prefix.push(transfer.clone()); // Entire final chunk is an exact cache hit.
++    if let Some(check) = gossip_check {
++        let mut signed = vec![transfer.clone(), prefix[0].clone()];
++        for nonce in 2..4 {
++            let mut next = intent(0, 1, 1, 1)?;
++            next.nonce = nonce;
++            signed.push(signer.sign(next, &keys[2].0, &keys[2].1)?);
++        }
++        signed.push(signer.sign(intent(1, 0, 1, 1)?, &keys[3].0, &keys[3].1)?);
++        let checked = check(&mut nodes, &signed);
++        for node in nodes {
++            node.node.shutdown()?;
++        }
++        return checked;
++    }
+     if pool_pressure {
+         nodes[ingress].prepare_uca_pool_backpressure_for_test(
+             make_batch(std::slice::from_ref(&transfer))?,

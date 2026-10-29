@@ -88,6 +88,8 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind() 
         now,
         Duration::from_secs(5),
     )?;
+    assert!(sender.diagnostic_progress_v1().is_none());
+    sender.enable_diagnostics_v1();
     let peer = b.remote_peer_id().to_owned();
     let mut objects = Reassembler::with_profile(
         [1; 32],
@@ -113,6 +115,10 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind() 
         }
     }
     let (total, missing) = objects.missing_ranges(&peer, body.id()).unwrap();
+    let observed = sender.diagnostic_progress_v1().unwrap();
+    assert_eq!(observed.initial_packets, 100);
+    assert_eq!(observed.repair_packets, 0);
+    assert!(observed.initial_complete.is_some());
     let window = select_first_missing_window(&missing, total, &config).unwrap();
     assert_eq!(window.range.start, 5); // Preserve original non-grid window rule.
     let mut ack = NovoRudpAckFrame {
@@ -148,6 +154,11 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind() 
         objects.push(&peer, &frame.payload, now)?;
     }
     assert_eq!(received, (5..=12).collect::<Vec<_>>());
+    let observed = sender.diagnostic_progress_v1().unwrap();
+    assert_eq!(observed.initial_packets, 100);
+    assert_eq!(observed.repair_packets, 8);
+    assert_eq!(observed.probe_packets, 0);
+    assert_eq!(observed.last_repair_index, Some(12));
     assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 0);
     let mut complete = None;
     for _ in 0..=body.frame_count().div_ceil(64) {
@@ -196,6 +207,7 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
         now,
         Duration::from_secs(5),
     )?;
+    sender.enable_diagnostics_v1();
     assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 1);
     receive(&right, &mut b)?;
     for ms in [10, 20] {
@@ -208,6 +220,10 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
             NovoRudpTransportFrameKindV0::Repair
         );
     }
+    let observed = sender.diagnostic_progress_v1().unwrap();
+    assert_eq!(observed.initial_packets, 1);
+    assert_eq!(observed.repair_packets, 0);
+    assert_eq!(observed.probe_packets, 2);
     assert_eq!(
         sender.poll_send(&left, &mut a, now + Duration::from_millis(30), 8)?,
         0
