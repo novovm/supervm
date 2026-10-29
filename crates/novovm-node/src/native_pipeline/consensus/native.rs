@@ -55,6 +55,29 @@ fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
     }
 }
 
+fn profile_asset_message(event: &'static str, message: &transport::Message, fragment: [u8; 32]) {
+    match message {
+        transport::Message::AssetTransactions { scope, batch } => {
+            profile::asset_event(event, 0, || {
+                serde_json::json!({
+                    "kind":"asset_transactions", "source_ref":Arc::as_ptr(batch) as usize,
+                    "rows":batch.len(), "session":scope.session, "sequence":scope.sequence,
+                    "fragment":fragment
+                })
+            });
+        }
+        transport::Message::AssetBody { context, batch } => {
+            profile::asset_event(event, context.height, || {
+                serde_json::json!({
+                    "kind":"asset_body", "source_ref":Arc::as_ptr(batch) as usize,
+                    "rows":batch.len(), "fragment":fragment
+                })
+            });
+        }
+        _ => {}
+    }
+}
+
 #[derive(Clone)]
 pub struct LaneLimits {
     pub receive: ReassemblyLimits,
@@ -415,6 +438,7 @@ impl NativeChannel {
             None,
             Some(object.id()),
         );
+        profile_asset_message("asset_prepared", message, object.id());
         Ok(PreparedMessage {
             owner: self.owner.clone(),
             stream,
@@ -560,6 +584,9 @@ impl NativeChannel {
             None,
             Some(complete.id),
         );
+        if let Ok((message, _)) = &parsed {
+            profile_asset_message("asset_received", message, complete.id);
+        }
         Ok(Some(match parsed {
             Ok((message, evidence)) => ReceiveEvent::Message(Box::new(ReceivedMessage {
                 peer: complete.peer,

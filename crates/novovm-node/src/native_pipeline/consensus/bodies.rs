@@ -197,6 +197,13 @@ impl CandidateBodies {
         let identity_started = crate::native_pipeline::profile::mark();
         let (id, encoded_wire_len) =
             transport::candidate_body_id_and_wire_len(message, self.codec)?;
+        if let Message::AssetBody { batch, .. } = message.as_ref() {
+            crate::native_pipeline::profile::asset_event("body_identified", context.height, || {
+                serde_json::json!({
+                    "source_ref":Arc::as_ptr(batch) as usize,"body":id,"rows":batch.len(),"local":local
+                })
+            });
+        }
         crate::native_pipeline::profile::work(
             crate::native_pipeline::profile::Phase::BodyIdentity,
             identity_started,

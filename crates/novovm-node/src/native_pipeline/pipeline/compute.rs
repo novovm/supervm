@@ -785,6 +785,12 @@ fn run_owner(
                 reply,
             } => {
                 profile::elapsed(profile::Phase::QueueAdmission, queued);
+                let admission_profile = profile::asset_enabled()
+                    .then(|| super::admission::admission_input_profile(&inputs, false))
+                    .flatten();
+                if let Some(detail) = &admission_profile {
+                    profile::asset_event("signature_compute_begin", 0, || detail.clone());
+                }
                 let _span = crate::native_pipeline::profile::span(
                     crate::native_pipeline::profile::Phase::Admission,
                 );
@@ -804,6 +810,10 @@ fn run_owner(
                         Some(config.signatures.strict_verified.clone()),
                     )
                 });
+                if let Some(mut detail) = admission_profile {
+                    detail["ok"] = serde_json::json!(result.is_ok());
+                    profile::asset_event("signature_compute_reply_ready", 0, || detail);
+                }
                 let _ = reply.send(result);
             }
             Command::Authenticate {

@@ -1,0 +1,26 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Finished `release` profile [optimized] target(s) in 44.32s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_network-a7fd60f476af65e4.exe)
+
+running 1 test
+
+thread 'transport::tests::udp_receive_buffer_configuration_matches_kernel_and_runtime_summary' (25036) panicked at crates\novovm-network\src\transport.rs:16170:9:
+assertion `left == right` failed
+  left: None
+ right: Some(65536)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test transport::tests::udp_receive_buffer_configuration_matches_kernel_and_runtime_summary ... FAILED
+
+failures:
+
+failures:
+    transport::tests::udp_receive_buffer_configuration_matches_kernel_and_runtime_summary
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 894 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p novovm-network --lib`

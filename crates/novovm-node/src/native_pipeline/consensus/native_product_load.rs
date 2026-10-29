@@ -23,11 +23,15 @@ use novovm_protocol::native_query::{
     AccountId, Answer, Balance, Query, ReceiptState, Status, MAX_RECEIPTS, STREAM,
 };
 use serde::Serialize;
-use std::{collections::BTreeSet, net::UdpSocket};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    net::UdpSocket,
+};
 
 const WINDOW: usize = 8192;
 // Existing endpoint/object sender/reassembly contracts all cap a turn at 64.
 const IO_QUANTUM: usize = 64;
+const RECENT_QUERY_COMPLETIONS: usize = 8;
 
 #[path = "native_product_load/uca.rs"]
 mod uca;
@@ -392,7 +396,66 @@ struct Counts {
     rejected_nonce: usize,
     deadline_expirations: usize,
     maximum_outstanding: usize,
+    // Outbound query REQUEST completions, not replies or transaction finality.
+    // The matching response below retains that same request identity so a
+    // previous request still holding its one transport slot is distinguishable.
+    query_transport_recent: [VecDeque<QueryTransportObservation>; 4],
+    last_query_response: [Option<QueryResponseObservation>; 4],
+    query_timeout: Option<QueryTimeoutObservation>,
 }
+
+#[derive(Serialize)]
+struct QueryTransportObservation {
+    elapsed_us: u64,
+    fragment: Hash,
+    state: &'static str,
+}
+
+#[derive(Serialize)]
+struct QueryResponseObservation {
+    elapsed_us: u64,
+    sequence: u64,
+    fragment: Hash,
+}
+
+#[derive(Serialize)]
+struct QueryTimeoutObservation {
+    node: usize,
+    index: usize,
+    count: usize,
+    sent: bool,
+    elapsed_us: u64,
+    deadline_us: u64,
+    sequence: u64,
+    fragment: Hash,
+}
+
+impl Counts {
+    fn record_query_completion(
+        &mut self,
+        node: usize,
+        elapsed_us: u64,
+        fragment: Hash,
+        state: ObjectSendState,
+    ) {
+        let recent = &mut self.query_transport_recent[node];
+        if recent.len() == RECENT_QUERY_COMPLETIONS {
+            recent.pop_front();
+        }
+        recent.push_back(QueryTransportObservation {
+            elapsed_us,
+            fragment,
+            state: match state {
+                ObjectSendState::Sending => "sending",
+                ObjectSendState::Delivered => "delivered",
+                ObjectSendState::Expired => "expired",
+                ObjectSendState::SessionReplaced => "session_replaced",
+                ObjectSendState::Cancelled => "cancelled",
+            },
+        });
+    }
+}
+
 struct PendingRead {
     request: PreparedQuery,
     index: usize,
@@ -598,6 +661,12 @@ impl LoadDriver {
         for (node, client) in clients.iter_mut().enumerate() {
             for done in client.poll(wall, now, IO_QUANTUM)?.completed {
                 if done.stream == STREAM {
+                    counts.record_query_completion(
+                        node,
+                        now.saturating_duration_since(start).as_micros() as u64,
+                        done.body.id(),
+                        done.state,
+                    );
                     continue;
                 }
                 if node != ingress
@@ -664,6 +733,17 @@ impl LoadDriver {
                 continue;
             };
             if now >= read.deadline {
+                let (sequence, fragment) = read.request.diagnostic_identity();
+                counts.query_timeout = Some(QueryTimeoutObservation {
+                    node,
+                    index: read.index,
+                    count: read.count,
+                    sent: read.sent,
+                    elapsed_us: now.saturating_duration_since(start).as_micros() as u64,
+                    deadline_us: read.deadline.saturating_duration_since(start).as_micros() as u64,
+                    sequence,
+                    fragment,
+                });
                 clients[node].abandon_query(&read.request)?;
                 counts.deadline_expirations += 1;
                 bail!(
@@ -679,6 +759,12 @@ impl LoadDriver {
             };
             let index = read.index;
             let count = read.count;
+            let (sequence, fragment) = read.request.diagnostic_identity();
+            counts.last_query_response[node] = Some(QueryResponseObservation {
+                elapsed_us: now.saturating_duration_since(start).as_micros() as u64,
+                sequence,
+                fragment,
+            });
             self.reads[node] = None;
             let states = match response.answer {
                 Answer::Receipt { state, .. } if query_batch == 1 => vec![state],
@@ -1092,6 +1178,59 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         serde_json::to_vec_pretty(&evidence)?,
     )?;
     result
+}
+
+#[test]
+fn native_load_query_failure_evidence_is_bounded_and_keeps_exact_request_identity() -> Result<()> {
+    let mut counts = Counts::default();
+    for n in 0..12_u8 {
+        counts.record_query_completion(0, n as u64, [n; 32], ObjectSendState::Delivered);
+    }
+    counts.record_query_completion(1, 20, [20; 32], ObjectSendState::Expired);
+    assert_eq!(
+        counts.query_transport_recent[0].len(),
+        RECENT_QUERY_COMPLETIONS
+    );
+    assert_eq!(
+        counts.query_transport_recent[0].front().unwrap().fragment,
+        [4; 32]
+    );
+    assert_eq!(
+        counts.query_transport_recent[0].back().unwrap().fragment,
+        [11; 32]
+    );
+    assert!(counts.query_transport_recent[2].is_empty());
+    counts.last_query_response[0] = Some(QueryResponseObservation {
+        elapsed_us: 21,
+        sequence: 42,
+        fragment: [42; 32],
+    });
+    counts.query_timeout = Some(QueryTimeoutObservation {
+        node: 0,
+        index: 1024,
+        count: 128,
+        sent: false,
+        elapsed_us: 5_000_022,
+        deadline_us: 5_000_022,
+        sequence: 43,
+        fragment: [43; 32],
+    });
+    let report = serde_json::to_value(&counts)?;
+    assert_eq!(
+        report["query_transport_recent"][0]
+            .as_array()
+            .unwrap()
+            .len(),
+        8
+    );
+    assert_eq!(report["query_transport_recent"][1][0]["state"], "expired");
+    assert_eq!(report["last_query_response"][0]["sequence"], 42);
+    assert_eq!(report["query_timeout"]["sequence"], 43);
+    assert_eq!(report["query_timeout"]["fragment"], json!(vec![43; 32]));
+    assert_eq!(report["query_timeout"]["sent"], false);
+    assert_eq!(report["query_timeout"]["index"], 1024);
+    assert_eq!(counts.successful_transactions, 0);
+    Ok(())
 }
 
 #[test]

@@ -1,0 +1,127 @@
+{
+  "schema": "native-public-failure-v1",
+  "created_utc": "2026-10-29T18:44:42.2018479Z",
+  "source_report": "target\\native-product-load\\uca-14968-1793297573480155400\\report.json",
+  "files": [
+    {
+      "name": "report.json",
+      "bytes": 13379,
+      "sha256": "7ea070c01fe23003cf470b09a067a5905788d6e05f6be1bc90128f40bb345ae6"
+    },
+    {
+      "name": "create-0.progress.json",
+      "bytes": 1109086,
+      "sha256": "778ba5d5a1710e5337b843bfd685d5bdef0e63bb24c37f0cb44a7517eb8ab1c3"
+    },
+    {
+      "name": "create-1.progress.json",
+      "bytes": 1058009,
+      "sha256": "3368e833d646b03cae91fc9baaaf826a99101d11e305dbcdf115092a2084e847"
+    },
+    {
+      "name": "create-2.progress.json",
+      "bytes": 1106530,
+      "sha256": "04566f07c3b5df73bc20ce5a9bfe30558ebeef23e8765b315c695de22c8f737e"
+    },
+    {
+      "name": "create-3.progress.json",
+      "bytes": 1110955,
+      "sha256": "5f351775445ab399bbee431937a30db0ade30fc66127bda022934746a4288ea3"
+    }
+  ],
+  "archive": {
+    "name": "configured-failure-2.zip",
+    "bytes": 305972,
+    "sha256": "093cefee6ed748956ff61102a23b763027f555e949c471757cf56632ebe7a3d4"
+  },
+  "summary": {
+    "passed": false,
+    "error": "native receipt request deadline node=1 transaction=1024",
+    "binary_sha256": "0x4a1b9c56dfb93cfef9def756fd9e96cf7f9b5e04a03da81df955061b0f5556a6",
+    "elapsed_seconds": null,
+    "incomplete_seconds": 13.8410018,
+    "counts": {
+      "application_batches_sent": 9,
+      "application_batches_transport_delivered": 4,
+      "successful_transactions": 1024,
+      "deadline_expirations": 1,
+      "receipt_query_requests_by_node": [
+        5053,
+        42,
+        4986,
+        5053
+      ],
+      "receipt_query_rows_received_by_node": [
+        646656,
+        5248,
+        638080,
+        646656
+      ]
+    },
+    "query_timeout": null,
+    "latest_responses": [
+      null
+    ],
+    "recent_request_completions": [
+      {
+        "node": 0,
+        "available": false,
+        "events": []
+      },
+      {
+        "node": 1,
+        "available": false,
+        "events": []
+      },
+      {
+        "node": 2,
+        "available": false,
+        "events": []
+      },
+      {
+        "node": 3,
+        "available": false,
+        "events": []
+      }
+    ],
+    "nodes": [
+      {
+        "node": 0,
+        "head": 4,
+        "indexed": 4,
+        "execution_failures": 0,
+        "receiver_queue": null,
+        "asset_evicted": 0,
+        "query_events": []
+      },
+      {
+        "node": 1,
+        "head": 4,
+        "indexed": 4,
+        "execution_failures": 0,
+        "receiver_queue": null,
+        "asset_evicted": 0,
+        "query_events": []
+      },
+      {
+        "node": 2,
+        "head": 4,
+        "indexed": 4,
+        "execution_failures": 0,
+        "receiver_queue": null,
+        "asset_evicted": 0,
+        "query_events": []
+      },
+      {
+        "node": 3,
+        "head": 4,
+        "indexed": 4,
+        "execution_failures": 0,
+        "receiver_queue": null,
+        "asset_evicted": 0,
+        "query_events": []
+      }
+    ]
+  },
+  "limits": "Only five exact public JSON files; no configs, databases, keys or journals. Missing counters are unknown; query summary retains last 16 covered events per node."
+}

@@ -107,6 +107,56 @@ static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
 // from evicting the execution/consensus timeline. No payload or signing data.
 static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
 static CONTROL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+const ASSET_EVENTS: usize = 8192;
+static ASSET: std::sync::Mutex<(VecDeque<Value>, u64)> =
+    std::sync::Mutex::new((VecDeque::new(), 0));
+
+pub(crate) fn asset_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    enabled()
+        && critical_enabled()
+        && *ENABLED.get_or_init(|| {
+            std::env::var("NOVOVM_PROFILE_ASSET_TRACE").ok().as_deref() == Some("1")
+        })
+}
+
+pub(crate) fn asset_track(id: &[u8; 32]) -> bool {
+    asset_enabled() && id[0] == 0
+}
+
+/// Diagnostic identity of existing ordered transaction IDs, not signed bytes
+/// or a signature/authority cache key. Never participates in admission.
+pub(crate) fn asset_ids(ids: &[[u8; 32]]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    for id in ids {
+        digest.update(id);
+    }
+    hash(Some(digest.finalize().into()))
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+pub(crate) fn asset_event(event: &'static str, height: u64, detail: impl FnOnce() -> Value) {
+    if !asset_enabled() {
+        return;
+    }
+    let started = CRITICAL_START.get_or_init(Instant::now);
+    let elapsed_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+    let wall_unix_us = wall_unix_us();
+    let detail = detail();
+    if let Ok(mut buffer) = ASSET.lock() {
+        if buffer.0.len() == ASSET_EVENTS {
+            buffer.0.pop_front();
+            buffer.1 = buffer.1.saturating_add(1);
+        }
+        buffer.0.push_back(
+            json!({"event":event,"height":height,"elapsed_ns":elapsed_ns,
+            "wall_unix_us":wall_unix_us,"detail":detail}),
+        );
+    }
+}
 
 fn delivery_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -540,12 +590,42 @@ pub(crate) fn snapshot() -> Value {
     } else {
         json!({"enabled":false,"events":[]})
     };
-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control})
+    let asset = if asset_enabled() {
+        ASSET.lock().ok().map(|buffer| json!({
+            "enabled":true,"capacity":ASSET_EVENTS,"evicted":buffer.1,
+            "scope":"local source_ref is only the live Arc address, never global identity or authority; correlate its lifetime with scope/fragment/row; sampled row IDs have first byte zero; batch counts and ordered-ID digests cover full inputs; diagnostic metadata is not signature evidence",
+            "events":buffer.0
+        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
+    } else {
+        json!({"enabled":false,"events":[]})
+    };
+    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control,"asset_ingress":asset})
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn asset_ids_bind_existing_id_order_without_signed_payload() {
+        use sha2::{Digest, Sha256};
+        let ids = [[1; 32], [2; 32]];
+        let expected = Sha256::digest(ids.concat());
+        let expected: [u8; 32] = expected.into();
+        assert_eq!(asset_ids(&ids), hash(Some(expected)).as_str().unwrap());
+        assert_ne!(asset_ids(&ids), asset_ids(&[ids[1], ids[0]]));
+        assert_ne!(asset_ids(&ids), asset_ids(&ids[..1]));
+    }
+
+    #[test]
+    fn asset_trace_only_builds_details_when_explicitly_enabled() {
+        let called = std::cell::Cell::new(false);
+        asset_event("test_asset_detail", 0, || {
+            called.set(true);
+            json!({"test":true})
+        });
+        assert_eq!(called.get(), asset_enabled());
+    }
+
     #[test]
     fn counters_are_bounded_and_keep_maximum_without_overflow() {
         let counter = Counter::new();

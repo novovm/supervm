@@ -32,6 +32,14 @@ pub struct PreparedQuery {
     body: Arc<OutgoingMessage>,
 }
 
+#[cfg(test)]
+impl PreparedQuery {
+    /// Existing immutable request identity, not a receipt or delivery promise.
+    pub(crate) fn diagnostic_identity(&self) -> (u64, [u8; 32]) {
+        (self.request.sequence, self.body.id())
+    }
+}
+
 pub struct PreparedApplicationInput {
     owner: Arc<()>,
     body: Arc<OutgoingMessage>,

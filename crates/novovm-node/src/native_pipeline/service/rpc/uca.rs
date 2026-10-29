@@ -48,6 +48,18 @@ impl RpcLifecycle {
             "UCA input chain/signing domain mismatch"
         );
         let id = hash(&signed)?;
+        if crate::native_pipeline::profile::asset_track(&id) {
+            crate::native_pipeline::profile::asset_event(
+                "row_seen",
+                self.node.controller.context().height,
+                || {
+                    json!({
+                        "source_ref":Arc::as_ptr(batch) as usize,"index":index,"tx":hex(&id),
+                        "nonce":signed.intent.nonce,"payer":hex(&signed.intent.payer),"broadcast":broadcast
+                    })
+                },
+            );
+        }
         if let Some(entry) = self.pending.get(&id) {
             if let AdmissionInput::Uca {
                 batch: old,
@@ -159,6 +171,19 @@ impl RpcLifecycle {
             return Err(error);
         }
         self.pending_bytes += canonical_len;
+        if crate::native_pipeline::profile::asset_track(&id) {
+            crate::native_pipeline::profile::asset_event(
+                "row_pool_insert",
+                parent.height + 1,
+                || {
+                    json!({
+                        "source_ref":Arc::as_ptr(batch) as usize,"index":index,"tx":hex(&id),
+                        "nonce":nonce,"signer":hex(&signer),"parent_height":parent.height,
+                        "parent_root":hex(&parent.state_root),"parent_nonce":state.next_nonce()
+                    })
+                },
+            );
+        }
         self.pending.insert(
             id,
             Pending {

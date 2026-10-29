@@ -1,0 +1,836 @@
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+index ff15a960..4430db7a 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+@@ -197,6 +197,13 @@ impl CandidateBodies {
+         let identity_started = crate::native_pipeline::profile::mark();
+         let (id, encoded_wire_len) =
+             transport::candidate_body_id_and_wire_len(message, self.codec)?;
++        if let Message::AssetBody { batch, .. } = message.as_ref() {
++            crate::native_pipeline::profile::asset_event("body_identified", context.height, || {
++                serde_json::json!({
++                    "source_ref":Arc::as_ptr(batch) as usize,"body":id,"rows":batch.len(),"local":local
++                })
++            });
++        }
+         crate::native_pipeline::profile::work(
+             crate::native_pipeline::profile::Phase::BodyIdentity,
+             identity_started,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+index aeade4f9..50e0e088 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+@@ -508,6 +508,13 @@ impl CandidateBodies {
+         let identity_started = profile::mark();
+         let (id, encoded_wire_len) =
+             transport::candidate_body_id_and_wire_len(message, self.codec)?;
++        if let Message::AssetBody { batch, .. } = message.as_ref() {
++            profile::asset_event("body_identified", context.height, || {
++                serde_json::json!({
++                    "source_ref":Arc::as_ptr(batch) as usize,"body":id,"rows":batch.len(),"local":local_origin
++                })
++            });
++        }
+         profile::work(
+             profile::Phase::BodyIdentity,
+             identity_started,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native.rs b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+index 7e13066e..4acbc724 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+@@ -55,6 +55,29 @@ fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
+     }
+ }
+ 
++fn profile_asset_message(event: &'static str, message: &transport::Message, fragment: [u8; 32]) {
++    match message {
++        transport::Message::AssetTransactions { scope, batch } => {
++            profile::asset_event(event, 0, || {
++                serde_json::json!({
++                    "kind":"asset_transactions", "source_ref":Arc::as_ptr(batch) as usize,
++                    "rows":batch.len(), "session":scope.session, "sequence":scope.sequence,
++                    "fragment":fragment
++                })
++            });
++        }
++        transport::Message::AssetBody { context, batch } => {
++            profile::asset_event(event, context.height, || {
++                serde_json::json!({
++                    "kind":"asset_body", "source_ref":Arc::as_ptr(batch) as usize,
++                    "rows":batch.len(), "fragment":fragment
++                })
++            });
++        }
++        _ => {}
++    }
++}
++
+ #[derive(Clone)]
+ pub struct LaneLimits {
+     pub receive: ReassemblyLimits,
+@@ -415,6 +438,7 @@ impl NativeChannel {
+             None,
+             Some(object.id()),
+         );
++        profile_asset_message("asset_prepared", message, object.id());
+         Ok(PreparedMessage {
+             owner: self.owner.clone(),
+             stream,
+@@ -560,6 +584,9 @@ impl NativeChannel {
+             None,
+             Some(complete.id),
+         );
++        if let Ok((message, _)) = &parsed {
++            profile_asset_message("asset_received", message, complete.id);
++        }
+         Ok(Some(match parsed {
+             Ok((message, evidence)) => ReceiveEvent::Message(Box::new(ReceivedMessage {
+                 peer: complete.peer,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/admission.rs b/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
+index 8d2a5ad7..4853d5a3 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
+@@ -7,6 +7,56 @@ use crate::native_pipeline::ingress::batch::{
+     admission_retained_bytes, admission_sizes, AdmissionRows, CheckedAdmission,
+     SignatureCheckedBatch,
+ };
++use crate::native_pipeline::profile;
++
++/// Process-local diagnostic joins only. The original source Arc remains the
++/// authority/retention boundary; this address is neither a content identity nor
++/// stable across processes or after that source is released.
++pub(super) fn admission_input_profile<'a>(
++    inputs: impl IntoIterator<Item = &'a AdmissionInput>,
++    include_indices: bool,
++) -> Option<serde_json::Value> {
++    let mut rows = 0usize;
++    let mut source = None;
++    let mut first = None;
++    let mut last = None;
++    let mut multiple_sources = false;
++    let mut indices = include_indices.then(Vec::new);
++    for input in inputs {
++        rows += 1;
++        if let AdmissionInput::Uca { batch, index } = input {
++            let current = Arc::as_ptr(batch) as usize;
++            if let Some(source) = source {
++                multiple_sources |= source != current;
++            } else {
++                source = Some(current);
++                first = Some(*index);
++            }
++            last = Some(*index);
++            if let Some(indices) = &mut indices {
++                indices.push(*index);
++            }
++        }
++    }
++    source.map(|source| {
++        serde_json::json!({
++            "source_ref":source, "rows":rows, "first_index":first, "last_index":last,
++            "multiple_sources":multiple_sources, "indices":indices
++        })
++    })
++}
++
++fn profile_admission_inputs<'a>(
++    event: &'static str,
++    inputs: impl IntoIterator<Item = &'a AdmissionInput>,
++) {
++    if !profile::asset_enabled() {
++        return;
++    }
++    if let Some(detail) = admission_input_profile(inputs, false) {
++        profile::asset_event(event, 0, || detail);
++    }
++}
+ 
+ /// Immutable evidence from THIS pipeline's strict verifier. It grants neither
+ /// a nonce lease nor spend/publication authority. Its source must stay charged
+@@ -216,6 +266,10 @@ pub struct SignatureAdmissionRequest {
+ }
+ 
+ impl SignatureAdmissionRequest {
++    pub(crate) fn profile_event(&self, event: &'static str) {
++        profile_admission_inputs(event, &self.inputs);
++    }
++
+     pub fn new(inputs: Vec<AdmissionInput>) -> Result<Self> {
+         ensure!(!inputs.is_empty(), "empty signature admission request");
+         let uca = matches!(&inputs[0], AdmissionInput::Uca { .. });
+@@ -349,6 +403,10 @@ pub struct SignatureAdmissionOutput {
+ }
+ 
+ impl SignatureAdmissionOutput {
++    pub(crate) fn profile_event(&self, event: &'static str) {
++        profile_admission_inputs(event, self.rows.rows.iter().map(|row| &row.input));
++    }
++
+     /// Hand this result to the single bounded authority-capture stage, making
+     /// the existing signature slot available without releasing any source byte
+     /// charge. This is scheduling credit only, never asset authorization. The
+@@ -509,6 +567,9 @@ impl CandidatePipeline {
+             Err(error) => return Err(RejectedSignatureAdmissionSubmission { request, error }),
+         };
+         let (reply, receiver) = mpsc::channel();
++        let admission_profile = profile::asset_enabled()
++            .then(|| admission_input_profile(&request.inputs, true))
++            .flatten();
+         let command = AdmissionCommand {
+             request,
+             reply,
+@@ -517,6 +578,9 @@ impl CandidatePipeline {
+         match sender.try_send(DriverMessage::Admission(command)) {
+             Ok(()) => {
+                 worker.thread().unpark();
++                if let Some(detail) = admission_profile {
++                    profile::asset_event("signature_submit_accepted", 0, || detail);
++                }
+                 Ok(SignatureAdmissionSubmission::Accepted(
+                     SignatureAdmissionTicket {
+                         receiver,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+index 101f52d7..f357c3b8 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+@@ -785,6 +785,12 @@ fn run_owner(
+                 reply,
+             } => {
+                 profile::elapsed(profile::Phase::QueueAdmission, queued);
++                let admission_profile = profile::asset_enabled()
++                    .then(|| super::admission::admission_input_profile(&inputs, false))
++                    .flatten();
++                if let Some(detail) = &admission_profile {
++                    profile::asset_event("signature_compute_begin", 0, || detail.clone());
++                }
+                 let _span = crate::native_pipeline::profile::span(
+                     crate::native_pipeline::profile::Phase::Admission,
+                 );
+@@ -804,6 +810,10 @@ fn run_owner(
+                         Some(config.signatures.strict_verified.clone()),
+                     )
+                 });
++                if let Some(mut detail) = admission_profile {
++                    detail["ok"] = serde_json::json!(result.is_ok());
++                    profile::asset_event("signature_compute_reply_ready", 0, || detail);
++                }
+                 let _ = reply.send(result);
+             }
+             Command::Authenticate {
+diff --git a/crates/novovm-node/src/native_pipeline/profile.rs b/crates/novovm-node/src/native_pipeline/profile.rs
+index 7cad8ce6..66d6772c 100644
+--- a/crates/novovm-node/src/native_pipeline/profile.rs
++++ b/crates/novovm-node/src/native_pipeline/profile.rs
+@@ -107,6 +107,56 @@ static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
+ // from evicting the execution/consensus timeline. No payload or signing data.
+ static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+ static CONTROL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
++const ASSET_EVENTS: usize = 8192;
++static ASSET: std::sync::Mutex<(VecDeque<Value>, u64)> =
++    std::sync::Mutex::new((VecDeque::new(), 0));
++
++pub(crate) fn asset_enabled() -> bool {
++    static ENABLED: OnceLock<bool> = OnceLock::new();
++    enabled()
++        && critical_enabled()
++        && *ENABLED.get_or_init(|| {
++            std::env::var("NOVOVM_PROFILE_ASSET_TRACE").ok().as_deref() == Some("1")
++        })
++}
++
++pub(crate) fn asset_track(id: &[u8; 32]) -> bool {
++    asset_enabled() && id[0] == 0
++}
++
++/// Diagnostic identity of existing ordered transaction IDs, not signed bytes
++/// or a signature/authority cache key. Never participates in admission.
++pub(crate) fn asset_ids(ids: &[[u8; 32]]) -> String {
++    use sha2::{Digest, Sha256};
++    let mut digest = Sha256::new();
++    for id in ids {
++        digest.update(id);
++    }
++    hash(Some(digest.finalize().into()))
++        .as_str()
++        .unwrap()
++        .to_owned()
++}
++
++pub(crate) fn asset_event(event: &'static str, height: u64, detail: impl FnOnce() -> Value) {
++    if !asset_enabled() {
++        return;
++    }
++    let started = CRITICAL_START.get_or_init(Instant::now);
++    let elapsed_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
++    let wall_unix_us = wall_unix_us();
++    let detail = detail();
++    if let Ok(mut buffer) = ASSET.lock() {
++        if buffer.0.len() == ASSET_EVENTS {
++            buffer.0.pop_front();
++            buffer.1 = buffer.1.saturating_add(1);
++        }
++        buffer.0.push_back(
++            json!({"event":event,"height":height,"elapsed_ns":elapsed_ns,
++            "wall_unix_us":wall_unix_us,"detail":detail}),
++        );
++    }
++}
+ 
+ fn delivery_enabled() -> bool {
+     static ENABLED: OnceLock<bool> = OnceLock::new();
+@@ -540,12 +590,42 @@ pub(crate) fn snapshot() -> Value {
+     } else {
+         json!({"enabled":false,"events":[]})
+     };
+-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control})
++    let asset = if asset_enabled() {
++        ASSET.lock().ok().map(|buffer| json!({
++            "enabled":true,"capacity":ASSET_EVENTS,"evicted":buffer.1,
++            "scope":"local source_ref is only the live Arc address, never global identity or authority; correlate its lifetime with scope/fragment/row; sampled row IDs have first byte zero; batch counts and ordered-ID digests cover full inputs; diagnostic metadata is not signature evidence",
++            "events":buffer.0
++        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
++    } else {
++        json!({"enabled":false,"events":[]})
++    };
++    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control,"asset_ingress":asset})
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    #[test]
++    fn asset_ids_bind_existing_id_order_without_signed_payload() {
++        use sha2::{Digest, Sha256};
++        let ids = [[1; 32], [2; 32]];
++        let expected = Sha256::digest(ids.concat());
++        let expected: [u8; 32] = expected.into();
++        assert_eq!(asset_ids(&ids), hash(Some(expected)).as_str().unwrap());
++        assert_ne!(asset_ids(&ids), asset_ids(&[ids[1], ids[0]]));
++        assert_ne!(asset_ids(&ids), asset_ids(&ids[..1]));
++    }
++
++    #[test]
++    fn asset_trace_only_builds_details_when_explicitly_enabled() {
++        let called = std::cell::Cell::new(false);
++        asset_event("test_asset_detail", 0, || {
++            called.set(true);
++            json!({"test":true})
++        });
++        assert_eq!(called.get(), asset_enabled());
++    }
++
+     #[test]
+     fn counters_are_bounded_and_keep_maximum_without_overflow() {
+         let counter = Counter::new();
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc.rs b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+index 6babb952..96607983 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+@@ -235,6 +235,20 @@ struct Position {
+     source: Option<(VoteContext, u64)>,
+ }
+ 
++/// Last observation only: never consulted by selection, admission or execution.
++#[derive(Clone, Copy, PartialEq, Eq)]
++struct SelectionDiagnostic {
++    reason: &'static str,
++    position: Position,
++    indexed_height: u64,
++    window_len: usize,
++    selected: usize,
++    budget_full: Option<bool>,
++    boundary: bool,
++    awaiting_admission: bool,
++    pending: usize,
++}
++
+ struct GossipOffer {
+     hashes: Vec<Hash>,
+     message: Arc<Message>,
+@@ -257,6 +271,7 @@ pub struct RpcLifecycle {
+     // References into the existing pool, not a second transaction queue. A
+     // cold nonce cache must not turn a 1,024-row input into eight-row blocks.
+     nonce_window: Option<(Position, VecDeque<Hash>)>,
++    selection_diagnostic: Option<SelectionDiagnostic>,
+     receipts: BTreeMap<Hash, ReceiptState>,
+     recent: VecDeque<Hash>,
+     indexed_height: u64,
+@@ -306,6 +321,7 @@ impl RpcLifecycle {
+             nonces,
+             nonce_scan: 0,
+             nonce_window: None,
++            selection_diagnostic: None,
+             receipts: BTreeMap::new(),
+             recent: VecDeque::new(),
+             indexed_height: 0,
+@@ -370,11 +386,23 @@ impl RpcLifecycle {
+             self.poll_gossip()?;
+         }
+         if self.projection_error.is_some() || self.node.controller.is_recovering() {
++            self.record_selection_gate(
++                if self.projection_error.is_some() {
++                    "projection_error"
++                } else {
++                    "recovering"
++                },
++                None,
++                0,
++                None,
++                None,
++            );
+             return Ok(());
+         }
+         // The durable parent receipt overlay is meaningful only on top of this
+         // exact published projection. Neither it nor selection mutates nonces.
+         if self.indexed_height != self.node.controller.parent().height {
++            self.record_selection_gate("projection_pending", None, 0, None, None);
+             return Ok(());
+         }
+         let awaiting_admission = self.incoming.is_some()
+@@ -421,12 +449,15 @@ impl RpcLifecycle {
+             // checks all grants, balances, fees and nonce at that exact root,
+             // and promotion still requires the original parent journal ACK.
+             let Some(next_height) = current_height.checked_add(1) else {
++                self.record_selection_gate("height_exhausted", None, 0, None, None);
+                 return Ok(());
+             };
+             if self.node.controller.has_successor_target(next_height) {
++                self.record_selection_gate("successor_target_exists", None, 0, None, None);
+                 return Ok(());
+             }
+             let Some(selection) = self.node.controller.successor_selection()? else {
++                self.record_selection_gate("successor_unavailable", None, 0, None, None);
+                 return Ok(());
+             };
+             Some(selection)
+@@ -446,6 +477,7 @@ impl RpcLifecycle {
+             source: successor.as_ref().map(|s| (s.source, s.source_round)),
+         };
+         if self.offered == Some(position) {
++            self.record_selection_gate("position_offered", Some(position), 0, None, None);
+             return Ok(());
+         }
+         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
+@@ -474,6 +506,13 @@ impl RpcLifecycle {
+                 next,
+                 self.batch_size,
+             ) else {
++                self.record_selection_gate(
++                    "nonce_pending",
++                    Some(position),
++                    0,
++                    None,
++                    successor.as_ref().map(|selection| &selection.nonce_after),
++                );
+                 return Ok(());
+             };
+             let window_len = window.len();
+@@ -484,6 +523,13 @@ impl RpcLifecycle {
+             {
+                 // All reads for the old window are complete. Include newly
+                 // admitted suffix rows before releasing a whole-body turn.
++                self.record_selection_gate(
++                    "window_expand",
++                    Some(position),
++                    selected.len(),
++                    Some(budget_full),
++                    None,
++                );
+                 self.nonce_window = None;
+                 return Ok(());
+             }
+@@ -495,6 +541,13 @@ impl RpcLifecycle {
+                 // Do not turn the first 32-row authentication quantum of a
+                 // finite source into a small block. Only completed, ordered
+                 // pool rows count toward fullness, never raw pending count.
++                self.record_selection_gate(
++                    "source_boundary_pending",
++                    Some(position),
++                    selected.len(),
++                    Some(budget_full),
++                    None,
++                );
+                 return Ok(());
+             }
+             // Once per prepared window, not once per eight I/O completions.
+@@ -502,6 +555,13 @@ impl RpcLifecycle {
+             // needs a pool-wide cleanup. Publication retains its own cleanup.
+             self.retire_stale_pending();
+             if selected.is_empty() {
++                self.record_selection_gate(
++                    "no_ordered_rows",
++                    Some(position),
++                    0,
++                    Some(budget_full),
++                    None,
++                );
+                 self.ingress_batch_boundary = false;
+                 // All required reads are known: these are actual gaps/stale
+                 // entries, not temporary I/O. Try another finite window next
+@@ -534,6 +594,43 @@ impl RpcLifecycle {
+                     batch: selected_apfl_batch(&selected, &self.pending, self.batch_size)?,
+                 }
+             };
++            if crate::native_pipeline::profile::asset_enabled() {
++                if let Message::AssetBody { batch, .. } = &body {
++                    crate::native_pipeline::profile::asset_event(
++                        "selection_body_prepared",
++                        position.height,
++                        || {
++                            json!({"source_ref": Arc::as_ptr(batch) as usize,
++                                "rows": selected.len(), "round": position.round,
++                                "parent_height": parent.height,
++                                "parent_state_root": hex(&parent.state_root),
++                                "ordered_ids": crate::native_pipeline::profile::asset_ids(&selected),
++                                "budget_full": budget_full,
++                                "successor": position.source.is_some()})
++                        },
++                    );
++                    for hash in &selected {
++                        if !crate::native_pipeline::profile::asset_track(hash) {
++                            continue;
++                        }
++                        if let Some(entry) = self.pending.get(hash) {
++                            if let AdmissionInput::Uca { batch, index } = &entry.input {
++                                crate::native_pipeline::profile::asset_event(
++                                    "selection_row",
++                                    position.height,
++                                    || {
++                                        json!({"source_ref": Arc::as_ptr(batch) as usize,
++                                        "index": index, "tx": hex(hash),
++                                            "nonce": entry.nonce,
++                                        "signer": hex(&entry.signer),
++                                        "parent_state_root": hex(&parent.state_root)})
++                                    },
++                                );
++                            }
++                        }
++                    }
++                }
++            }
+             self.offer = Some((position, Arc::new(body)));
+         }
+         let message = &self.offer.as_ref().expect("prepared native body").1;
+@@ -563,9 +660,90 @@ impl RpcLifecycle {
+             // backpressure above must not erase an unserved opportunity.
+             self.ingress_batch_boundary = false;
+         }
++        self.record_selection_gate(
++            if accepted {
++                "body_owner_accepted"
++            } else {
++                "body_owner_backpressure"
++            },
++            Some(position),
++            match self.offer.as_ref().map(|(_, message)| message.as_ref()) {
++                Some(Message::AssetBody { batch, .. }) => batch.len(),
++                _ => 0,
++            },
++            None,
++            None,
++        );
+         Ok(())
+     }
+ 
++    fn record_selection_gate(
++        &mut self,
++        reason: &'static str,
++        position: Option<Position>,
++        selected: usize,
++        budget_full: Option<bool>,
++        nonce_after: Option<&BTreeMap<Hash, u64>>,
++    ) {
++        if !crate::native_pipeline::profile::asset_enabled() || !self.is_uca() {
++            return;
++        }
++        let position = position.unwrap_or(Position {
++            height: self.node.controller.context().height,
++            round: self.node.controller.round(),
++            parent: self.node.controller.parent(),
++            source: None,
++        });
++        let state = SelectionDiagnostic {
++            reason,
++            position,
++            indexed_height: self.indexed_height,
++            window_len: self.nonce_window.as_ref().map_or(0, |(_, rows)| rows.len()),
++            selected,
++            budget_full,
++            boundary: self.ingress_batch_boundary,
++            awaiting_admission: self.incoming.is_some()
++                || self.admission.has_pending_native_admission(),
++            pending: self.pending.len(),
++        };
++        if self.selection_diagnostic == Some(state) {
++            return;
++        }
++        self.selection_diagnostic = Some(state);
++        // Only a changed, enabled nonce-wait observation may inspect this
++        // existing bounded window. Do not recreate ordered selection or infer
++        // later rows' expected nonce from an unadvanced parent nonce.
++        let first_unknown = (reason == "nonce_pending")
++            .then(|| {
++                self.nonce_window.as_ref().and_then(|(_, window)| {
++                    window.iter().find_map(|hash| {
++                        let entry = self.pending.get(hash)?;
++                        (!self.nonces.values.contains_key(&entry.signer)
++                            && !nonce_after.is_some_and(|next| next.contains_key(&entry.signer)))
++                        .then_some((*hash, entry.nonce, entry.signer))
++                    })
++                })
++            })
++            .flatten();
++        crate::native_pipeline::profile::asset_event("selection_gate", position.height, || {
++            json!({"reason": reason, "round": position.round,
++                "parent_height": position.parent.height,
++                "parent_state_root": hex(&position.parent.state_root),
++                "parent_block_hash": hex(&position.parent.block_hash),
++                "parent_state_version": position.parent.state_version,
++                "successor": position.source.is_some(),
++                "indexed_height": state.indexed_height,
++                "window_len": state.window_len,
++                "window_first_tx": self.nonce_window.as_ref().and_then(|(_, rows)| rows.front()).map(|hash| hex(hash)),
++                "nonce_scan": self.nonce_scan, "selected": selected,
++                "budget_full": budget_full, "boundary": state.boundary,
++                "awaiting_admission": state.awaiting_admission, "pending": state.pending,
++                "first_unknown_nonce": first_unknown.map(|(hash, nonce, signer)|
++                    json!({"tx": hex(&hash), "actual": nonce, "expected": null,
++                        "signer": hex(&signer)}))})
++        });
++    }
++
+     fn poll_projection(&mut self) -> Result<()> {
+         let Some(head) = self.node.controller.head() else {
+             return Ok(());
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs b/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
+index 9f75283a..464d2fc0 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
+@@ -94,6 +94,28 @@ struct UcaWork {
+     complete_body: bool,
+     detached_body: bool,
+     broadcast: bool,
++    trace: Option<UcaTrace>,
++}
++
++struct UcaTrace {
++    source_ref: usize,
++    rows: usize,
++    accepted_results: usize,
++    rejected_results: usize,
++}
++
++impl UcaWork {
++    fn profile_event(&self, event: &'static str, parent: ParentPoint) {
++        let Some(trace) = &self.trace else { return };
++        crate::native_pipeline::profile::asset_event(event, parent.height + 1, || {
++            json!({
++                "source_ref":trace.source_ref,"rows":trace.rows,"remaining":self.rows.len(),
++                "accepted_results":trace.accepted_results,"rejected_results":trace.rejected_results,
++                "parent_height":parent.height,"parent_root":hex(&parent.state_root),
++                "pool_wait":self.pool_wait,"scope":"accepted results include exact duplicates; only row_pool_insert is a new pool insertion"
++            })
++        });
++    }
+ }
+ 
+ #[derive(Default)]
+@@ -726,6 +748,9 @@ impl RpcLifecycle {
+                         self.admission.work = Some(work);
+                     }
+                     output => {
++                        if let Ok(Some(output)) = &output {
++                            output.profile_event("signature_control_observed");
++                        }
+                         self.admission.made_progress = true;
+                         self.admission.completed_batches += 1;
+                         if self.admission.uca.is_some() {
+@@ -974,13 +999,15 @@ impl RpcLifecycle {
+             return Ok(None);
+         }
+         let rows = inputs.len();
++        let request = SignatureAdmissionRequest::new(inputs)?;
++        request.profile_event("signature_queued");
+         Ok(Some(Work {
+             target: Target::Gossip {
+                 complete_body,
+                 detached_body,
+                 broadcast: self.incoming_from_client,
+             },
+-            phase: Phase::Queued(SignatureAdmissionRequest::new(inputs)?),
++            phase: Phase::Queued(request),
+             rows,
+         }))
+     }
+@@ -1007,6 +1034,7 @@ impl RpcLifecycle {
+                 },
+                 Ok(mut output),
+             ) => {
++                output.profile_event("authority_queued");
+                 ensure!(rows <= self.batch_size, "UCA admission batch limit");
+                 ensure!(self.admission.uca.is_none(), "UCA authority slot occupied");
+                 output.park_for_authority()?;
+@@ -1026,6 +1054,19 @@ impl RpcLifecycle {
+                         }
+                     }
+                 }
++                let trace = if crate::native_pipeline::profile::asset_enabled() {
++                    checked_rows.front().and_then(|(input, _)| match input {
++                        AdmissionInput::Uca { batch, .. } => Some(UcaTrace {
++                            source_ref: Arc::as_ptr(batch) as usize,
++                            rows: checked_rows.len(),
++                            accepted_results: 0,
++                            rejected_results: 0,
++                        }),
++                        _ => None,
++                    })
++                } else {
++                    None
++                };
+                 self.admission.uca = Some(UcaWork {
+                     _output: output,
+                     rows: checked_rows,
+@@ -1037,6 +1078,7 @@ impl RpcLifecycle {
+                     complete_body: *complete_body,
+                     detached_body: *detached_body,
+                     broadcast: *broadcast,
++                    trace,
+                 });
+                 self.admission.record_retained_stages();
+                 return Ok(());
+@@ -1130,6 +1172,7 @@ impl RpcLifecycle {
+         let parent = self.node.controller.parent();
+         if work.parent != Some(parent) {
+             if work.parent.is_some() {
++                work.profile_event("authority_parent_retry", parent);
+                 self.admission.uca_capture.parent_restarts =
+                     self.admission.uca_capture.parent_restarts.saturating_add(1);
+             }
+@@ -1159,6 +1202,7 @@ impl RpcLifecycle {
+         if work.states.is_none() {
+             let result = (|| {
+                 if work.read.is_none() {
++                    work.profile_event("authority_capture_begin", parent);
+                     work.capture_started = crate::native_pipeline::profile::mark();
+                     let inputs = work
+                         .rows
+@@ -1191,11 +1235,16 @@ impl RpcLifecycle {
+                     return Ok(());
+                 }
+                 Ok(Some(states)) if states.len() == work.rows.len() => {
++                    work.profile_event("authority_state_ready", parent);
+                     work.states = Some(states.into());
+                 }
+                 // Missing/corrupt I/O or an invalid result shape rejects this
+                 // snapshot, never fabricates absent accounts or a prefix.
+                 _ => {
++                    if let Some(trace) = &mut work.trace {
++                        trace.rejected_results += work.rows.len();
++                    }
++                    work.profile_event("authority_capture_rejected", parent);
+                     self.gossip_rejected += work.rows.len() as u64;
+                     self.admission.rejected_rows += work.rows.len() as u64;
+                     work.rows.clear();
+@@ -1221,6 +1270,9 @@ impl RpcLifecycle {
+             };
+             match admitted {
+                 Ok(uca::UcaAdmission::Accepted) => {
++                    if let Some(trace) = &mut work.trace {
++                        trace.accepted_results += 1;
++                    }
+                     self.gossip_verified += 1;
+                 }
+                 Ok(uca::UcaAdmission::Backpressured(input, checked)) => {
+@@ -1235,6 +1287,7 @@ impl RpcLifecycle {
+                         self.pending_retention.bytes,
+                     ));
+                     self.admission.backpressured_polls += 1;
++                    work.profile_event("authority_pool_backpressure", parent);
+                     // A body boundary is a batching preference, not permission
+                     // to deadlock a full pool. Only its accepted prefix exists
+                     // in `pending`; the suffix retains its original permit.
+@@ -1243,6 +1296,9 @@ impl RpcLifecycle {
+                     return Ok(());
+                 }
+                 Err(_) => {
++                    if let Some(trace) = &mut work.trace {
++                        trace.rejected_results += 1;
++                    }
+                     self.gossip_rejected += 1;
+                     self.admission.rejected_rows += 1;
+                 }
+@@ -1253,6 +1309,7 @@ impl RpcLifecycle {
+     }
+ 
+     fn finish_uca_admission(&mut self, work: UcaWork) {
++        work.profile_event("authority_drained", self.node.controller.parent());
+         if self.admission.authority_body_completed(work.complete_body) {
+             if !work.detached_body && work.complete_body {
+                 self.incoming = None;
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs b/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
+index dc4cfb41..95134945 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
+@@ -175,6 +175,19 @@ impl RpcLifecycle {
+                             self.batch_size,
+                         )?)?
+                 };
++                if let Message::AssetTransactions { scope, batch } = message.as_ref() {
++                    crate::native_pipeline::profile::asset_event(
++                        "gossip_batch_prepared",
++                        self.node.controller.context().height,
++                        || {
++                            json!({"source_ref": Arc::as_ptr(batch) as usize,
++                            "rows": hashes.len(), "session": hex(&scope.session),
++                                "sequence": scope.sequence,
++                                "ordered_ids": crate::native_pipeline::profile::asset_ids(&hashes),
++                                "repair_peer": repair_peer})
++                        },
++                    );
++                }
+                 self.gossip_offer = Some(GossipOffer {
+                     hashes,
+                     message,
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs b/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
+index 9de0fa59..e607e02f 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
+@@ -48,6 +48,18 @@ impl RpcLifecycle {
+             "UCA input chain/signing domain mismatch"
+         );
+         let id = hash(&signed)?;
++        if crate::native_pipeline::profile::asset_track(&id) {
++            crate::native_pipeline::profile::asset_event(
++                "row_seen",
++                self.node.controller.context().height,
++                || {
++                    json!({
++                        "source_ref":Arc::as_ptr(batch) as usize,"index":index,"tx":hex(&id),
++                        "nonce":signed.intent.nonce,"payer":hex(&signed.intent.payer),"broadcast":broadcast
++                    })
++                },
++            );
++        }
+         if let Some(entry) = self.pending.get(&id) {
+             if let AdmissionInput::Uca {
+                 batch: old,
+@@ -159,6 +171,19 @@ impl RpcLifecycle {
+             return Err(error);
+         }
+         self.pending_bytes += canonical_len;
++        if crate::native_pipeline::profile::asset_track(&id) {
++            crate::native_pipeline::profile::asset_event(
++                "row_pool_insert",
++                parent.height + 1,
++                || {
++                    json!({
++                        "source_ref":Arc::as_ptr(batch) as usize,"index":index,"tx":hex(&id),
++                        "nonce":nonce,"signer":hex(&signer),"parent_height":parent.height,
++                        "parent_root":hex(&parent.state_root),"parent_nonce":state.next_nonce()
++                    })
++                },
++            );
++        }
+         self.pending.insert(
+             id,
+             Pending {

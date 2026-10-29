@@ -7,6 +7,56 @@ use crate::native_pipeline::ingress::batch::{
     admission_retained_bytes, admission_sizes, AdmissionRows, CheckedAdmission,
     SignatureCheckedBatch,
 };
+use crate::native_pipeline::profile;
+
+/// Process-local diagnostic joins only. The original source Arc remains the
+/// authority/retention boundary; this address is neither a content identity nor
+/// stable across processes or after that source is released.
+pub(super) fn admission_input_profile<'a>(
+    inputs: impl IntoIterator<Item = &'a AdmissionInput>,
+    include_indices: bool,
+) -> Option<serde_json::Value> {
+    let mut rows = 0usize;
+    let mut source = None;
+    let mut first = None;
+    let mut last = None;
+    let mut multiple_sources = false;
+    let mut indices = include_indices.then(Vec::new);
+    for input in inputs {
+        rows += 1;
+        if let AdmissionInput::Uca { batch, index } = input {
+            let current = Arc::as_ptr(batch) as usize;
+            if let Some(source) = source {
+                multiple_sources |= source != current;
+            } else {
+                source = Some(current);
+                first = Some(*index);
+            }
+            last = Some(*index);
+            if let Some(indices) = &mut indices {
+                indices.push(*index);
+            }
+        }
+    }
+    source.map(|source| {
+        serde_json::json!({
+            "source_ref":source, "rows":rows, "first_index":first, "last_index":last,
+            "multiple_sources":multiple_sources, "indices":indices
+        })
+    })
+}
+
+fn profile_admission_inputs<'a>(
+    event: &'static str,
+    inputs: impl IntoIterator<Item = &'a AdmissionInput>,
+) {
+    if !profile::asset_enabled() {
+        return;
+    }
+    if let Some(detail) = admission_input_profile(inputs, false) {
+        profile::asset_event(event, 0, || detail);
+    }
+}
 
 /// Immutable evidence from THIS pipeline's strict verifier. It grants neither
 /// a nonce lease nor spend/publication authority. Its source must stay charged
@@ -216,6 +266,10 @@ pub struct SignatureAdmissionRequest {
 }
 
 impl SignatureAdmissionRequest {
+    pub(crate) fn profile_event(&self, event: &'static str) {
+        profile_admission_inputs(event, &self.inputs);
+    }
+
     pub fn new(inputs: Vec<AdmissionInput>) -> Result<Self> {
         ensure!(!inputs.is_empty(), "empty signature admission request");
         let uca = matches!(&inputs[0], AdmissionInput::Uca { .. });
@@ -349,6 +403,10 @@ pub struct SignatureAdmissionOutput {
 }
 
 impl SignatureAdmissionOutput {
+    pub(crate) fn profile_event(&self, event: &'static str) {
+        profile_admission_inputs(event, self.rows.rows.iter().map(|row| &row.input));
+    }
+
     /// Hand this result to the single bounded authority-capture stage, making
     /// the existing signature slot available without releasing any source byte
     /// charge. This is scheduling credit only, never asset authorization. The
@@ -509,6 +567,9 @@ impl CandidatePipeline {
             Err(error) => return Err(RejectedSignatureAdmissionSubmission { request, error }),
         };
         let (reply, receiver) = mpsc::channel();
+        let admission_profile = profile::asset_enabled()
+            .then(|| admission_input_profile(&request.inputs, true))
+            .flatten();
         let command = AdmissionCommand {
             request,
             reply,
@@ -517,6 +578,9 @@ impl CandidatePipeline {
         match sender.try_send(DriverMessage::Admission(command)) {
             Ok(()) => {
                 worker.thread().unpark();
+                if let Some(detail) = admission_profile {
+                    profile::asset_event("signature_submit_accepted", 0, || detail);
+                }
                 Ok(SignatureAdmissionSubmission::Accepted(
                     SignatureAdmissionTicket {
                         receiver,

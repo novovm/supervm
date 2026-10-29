@@ -94,6 +94,28 @@ struct UcaWork {
     complete_body: bool,
     detached_body: bool,
     broadcast: bool,
+    trace: Option<UcaTrace>,
+}
+
+struct UcaTrace {
+    source_ref: usize,
+    rows: usize,
+    accepted_results: usize,
+    rejected_results: usize,
+}
+
+impl UcaWork {
+    fn profile_event(&self, event: &'static str, parent: ParentPoint) {
+        let Some(trace) = &self.trace else { return };
+        crate::native_pipeline::profile::asset_event(event, parent.height + 1, || {
+            json!({
+                "source_ref":trace.source_ref,"rows":trace.rows,"remaining":self.rows.len(),
+                "accepted_results":trace.accepted_results,"rejected_results":trace.rejected_results,
+                "parent_height":parent.height,"parent_root":hex(&parent.state_root),
+                "pool_wait":self.pool_wait,"scope":"accepted results include exact duplicates; only row_pool_insert is a new pool insertion"
+            })
+        });
+    }
 }
 
 #[derive(Default)]
@@ -726,6 +748,9 @@ impl RpcLifecycle {
                         self.admission.work = Some(work);
                     }
                     output => {
+                        if let Ok(Some(output)) = &output {
+                            output.profile_event("signature_control_observed");
+                        }
                         self.admission.made_progress = true;
                         self.admission.completed_batches += 1;
                         if self.admission.uca.is_some() {
@@ -974,13 +999,15 @@ impl RpcLifecycle {
             return Ok(None);
         }
         let rows = inputs.len();
+        let request = SignatureAdmissionRequest::new(inputs)?;
+        request.profile_event("signature_queued");
         Ok(Some(Work {
             target: Target::Gossip {
                 complete_body,
                 detached_body,
                 broadcast: self.incoming_from_client,
             },
-            phase: Phase::Queued(SignatureAdmissionRequest::new(inputs)?),
+            phase: Phase::Queued(request),
             rows,
         }))
     }
@@ -1007,6 +1034,7 @@ impl RpcLifecycle {
                 },
                 Ok(mut output),
             ) => {
+                output.profile_event("authority_queued");
                 ensure!(rows <= self.batch_size, "UCA admission batch limit");
                 ensure!(self.admission.uca.is_none(), "UCA authority slot occupied");
                 output.park_for_authority()?;
@@ -1026,6 +1054,19 @@ impl RpcLifecycle {
                         }
                     }
                 }
+                let trace = if crate::native_pipeline::profile::asset_enabled() {
+                    checked_rows.front().and_then(|(input, _)| match input {
+                        AdmissionInput::Uca { batch, .. } => Some(UcaTrace {
+                            source_ref: Arc::as_ptr(batch) as usize,
+                            rows: checked_rows.len(),
+                            accepted_results: 0,
+                            rejected_results: 0,
+                        }),
+                        _ => None,
+                    })
+                } else {
+                    None
+                };
                 self.admission.uca = Some(UcaWork {
                     _output: output,
                     rows: checked_rows,
@@ -1037,6 +1078,7 @@ impl RpcLifecycle {
                     complete_body: *complete_body,
                     detached_body: *detached_body,
                     broadcast: *broadcast,
+                    trace,
                 });
                 self.admission.record_retained_stages();
                 return Ok(());
@@ -1130,6 +1172,7 @@ impl RpcLifecycle {
         let parent = self.node.controller.parent();
         if work.parent != Some(parent) {
             if work.parent.is_some() {
+                work.profile_event("authority_parent_retry", parent);
                 self.admission.uca_capture.parent_restarts =
                     self.admission.uca_capture.parent_restarts.saturating_add(1);
             }
@@ -1159,6 +1202,7 @@ impl RpcLifecycle {
         if work.states.is_none() {
             let result = (|| {
                 if work.read.is_none() {
+                    work.profile_event("authority_capture_begin", parent);
                     work.capture_started = crate::native_pipeline::profile::mark();
                     let inputs = work
                         .rows
@@ -1191,11 +1235,16 @@ impl RpcLifecycle {
                     return Ok(());
                 }
                 Ok(Some(states)) if states.len() == work.rows.len() => {
+                    work.profile_event("authority_state_ready", parent);
                     work.states = Some(states.into());
                 }
                 // Missing/corrupt I/O or an invalid result shape rejects this
                 // snapshot, never fabricates absent accounts or a prefix.
                 _ => {
+                    if let Some(trace) = &mut work.trace {
+                        trace.rejected_results += work.rows.len();
+                    }
+                    work.profile_event("authority_capture_rejected", parent);
                     self.gossip_rejected += work.rows.len() as u64;
                     self.admission.rejected_rows += work.rows.len() as u64;
                     work.rows.clear();
@@ -1221,6 +1270,9 @@ impl RpcLifecycle {
             };
             match admitted {
                 Ok(uca::UcaAdmission::Accepted) => {
+                    if let Some(trace) = &mut work.trace {
+                        trace.accepted_results += 1;
+                    }
                     self.gossip_verified += 1;
                 }
                 Ok(uca::UcaAdmission::Backpressured(input, checked)) => {
@@ -1235,6 +1287,7 @@ impl RpcLifecycle {
                         self.pending_retention.bytes,
                     ));
                     self.admission.backpressured_polls += 1;
+                    work.profile_event("authority_pool_backpressure", parent);
                     // A body boundary is a batching preference, not permission
                     // to deadlock a full pool. Only its accepted prefix exists
                     // in `pending`; the suffix retains its original permit.
@@ -1243,6 +1296,9 @@ impl RpcLifecycle {
                     return Ok(());
                 }
                 Err(_) => {
+                    if let Some(trace) = &mut work.trace {
+                        trace.rejected_results += 1;
+                    }
                     self.gossip_rejected += 1;
                     self.admission.rejected_rows += 1;
                 }
@@ -1253,6 +1309,7 @@ impl RpcLifecycle {
     }
 
     fn finish_uca_admission(&mut self, work: UcaWork) {
+        work.profile_event("authority_drained", self.node.controller.parent());
         if self.admission.authority_body_completed(work.complete_body) {
             if !work.detached_body && work.complete_body {
                 self.incoming = None;

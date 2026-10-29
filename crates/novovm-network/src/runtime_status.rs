@@ -1872,6 +1872,34 @@ pub fn observe_network_runtime_receiver_recv_loop_iteration_v1(chain_id: u64) {
         state.receiver_recv_loop_iteration_count.saturating_add(1);
 }
 
+/// Numeric observation of the existing receiver owner; not a flow-control input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct NetworkRuntimeReceiverQueueV1 {
+    pub requested_bytes: Option<u64>,
+    pub effective_bytes: Option<u64>,
+    pub enqueued: u64,
+    pub dequeued: u64,
+    pub max_depth: u64,
+}
+
+/// Read only the existing observation map, without initialization, cleanup or a clock read.
+pub fn snapshot_network_runtime_receiver_queue_v1(
+    chain_id: u64,
+) -> Option<NetworkRuntimeReceiverQueueV1> {
+    let guard = NETWORK_RUNTIME_RECEIVER_DECODE_ATTRIBUTION
+        .get()?
+        .lock()
+        .ok()?;
+    let state = guard.get(&chain_id)?;
+    Some(NetworkRuntimeReceiverQueueV1 {
+        requested_bytes: state.receiver_rcvbuf_requested_bytes,
+        effective_bytes: state.receiver_rcvbuf_effective_bytes,
+        enqueued: state.receiver_drain_queue_enqueued_count,
+        dequeued: state.receiver_drain_queue_dequeued_count,
+        max_depth: state.receiver_drain_queue_max_depth,
+    })
+}
+
 pub fn observe_network_runtime_receiver_drain_first_config_v1(
     chain_id: u64,
     enabled: bool,
@@ -7909,6 +7937,49 @@ pub fn finish_network_runtime_native_sync(
 mod tests {
     use super::*;
     use novovm_protocol::NovTxKindV1;
+
+    #[test]
+    fn receiver_queue_snapshot_copies_existing_numbers_without_mutation() {
+        let chain_id = rand::random::<u64>();
+        assert_eq!(snapshot_network_runtime_receiver_queue_v1(chain_id), None);
+        observe_network_runtime_receiver_drain_first_config_v1(
+            chain_id,
+            true,
+            64,
+            Some(4096),
+            Some(8192),
+        );
+        observe_network_runtime_receiver_drain_first_enqueue_v1(chain_id, 3, 3);
+        observe_network_runtime_receiver_drain_first_dequeue_v1(chain_id);
+        let before = runtime_receiver_decode_attribution_map()
+            .lock()
+            .unwrap()
+            .get(&chain_id)
+            .unwrap()
+            .clone();
+        let expected = Some(NetworkRuntimeReceiverQueueV1 {
+            requested_bytes: Some(4096),
+            effective_bytes: Some(8192),
+            enqueued: 3,
+            dequeued: 1,
+            max_depth: 3,
+        });
+        assert_eq!(
+            snapshot_network_runtime_receiver_queue_v1(chain_id),
+            expected
+        );
+        assert_eq!(
+            snapshot_network_runtime_receiver_queue_v1(chain_id),
+            expected
+        );
+        assert_eq!(
+            runtime_receiver_decode_attribution_map()
+                .lock()
+                .unwrap()
+                .get(&chain_id),
+            Some(&before)
+        );
+    }
 
     fn build_native_repair_payload_for_test(chain_id: u64, sequence: u64) -> Vec<u8> {
         let tx = novovm_protocol::NovNativeTxWireV1 {

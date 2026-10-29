@@ -235,6 +235,20 @@ struct Position {
     source: Option<(VoteContext, u64)>,
 }
 
+/// Last observation only: never consulted by selection, admission or execution.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SelectionDiagnostic {
+    reason: &'static str,
+    position: Position,
+    indexed_height: u64,
+    window_len: usize,
+    selected: usize,
+    budget_full: Option<bool>,
+    boundary: bool,
+    awaiting_admission: bool,
+    pending: usize,
+}
+
 struct GossipOffer {
     hashes: Vec<Hash>,
     message: Arc<Message>,
@@ -257,6 +271,7 @@ pub struct RpcLifecycle {
     // References into the existing pool, not a second transaction queue. A
     // cold nonce cache must not turn a 1,024-row input into eight-row blocks.
     nonce_window: Option<(Position, VecDeque<Hash>)>,
+    selection_diagnostic: Option<SelectionDiagnostic>,
     receipts: BTreeMap<Hash, ReceiptState>,
     recent: VecDeque<Hash>,
     indexed_height: u64,
@@ -306,6 +321,7 @@ impl RpcLifecycle {
             nonces,
             nonce_scan: 0,
             nonce_window: None,
+            selection_diagnostic: None,
             receipts: BTreeMap::new(),
             recent: VecDeque::new(),
             indexed_height: 0,
@@ -370,11 +386,23 @@ impl RpcLifecycle {
             self.poll_gossip()?;
         }
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
+            self.record_selection_gate(
+                if self.projection_error.is_some() {
+                    "projection_error"
+                } else {
+                    "recovering"
+                },
+                None,
+                0,
+                None,
+                None,
+            );
             return Ok(());
         }
         // The durable parent receipt overlay is meaningful only on top of this
         // exact published projection. Neither it nor selection mutates nonces.
         if self.indexed_height != self.node.controller.parent().height {
+            self.record_selection_gate("projection_pending", None, 0, None, None);
             return Ok(());
         }
         let awaiting_admission = self.incoming.is_some()
@@ -421,12 +449,15 @@ impl RpcLifecycle {
             // checks all grants, balances, fees and nonce at that exact root,
             // and promotion still requires the original parent journal ACK.
             let Some(next_height) = current_height.checked_add(1) else {
+                self.record_selection_gate("height_exhausted", None, 0, None, None);
                 return Ok(());
             };
             if self.node.controller.has_successor_target(next_height) {
+                self.record_selection_gate("successor_target_exists", None, 0, None, None);
                 return Ok(());
             }
             let Some(selection) = self.node.controller.successor_selection()? else {
+                self.record_selection_gate("successor_unavailable", None, 0, None, None);
                 return Ok(());
             };
             Some(selection)
@@ -446,6 +477,7 @@ impl RpcLifecycle {
             source: successor.as_ref().map(|s| (s.source, s.source_round)),
         };
         if self.offered == Some(position) {
+            self.record_selection_gate("position_offered", Some(position), 0, None, None);
             return Ok(());
         }
         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
@@ -474,6 +506,13 @@ impl RpcLifecycle {
                 next,
                 self.batch_size,
             ) else {
+                self.record_selection_gate(
+                    "nonce_pending",
+                    Some(position),
+                    0,
+                    None,
+                    successor.as_ref().map(|selection| &selection.nonce_after),
+                );
                 return Ok(());
             };
             let window_len = window.len();
@@ -484,6 +523,13 @@ impl RpcLifecycle {
             {
                 // All reads for the old window are complete. Include newly
                 // admitted suffix rows before releasing a whole-body turn.
+                self.record_selection_gate(
+                    "window_expand",
+                    Some(position),
+                    selected.len(),
+                    Some(budget_full),
+                    None,
+                );
                 self.nonce_window = None;
                 return Ok(());
             }
@@ -495,6 +541,13 @@ impl RpcLifecycle {
                 // Do not turn the first 32-row authentication quantum of a
                 // finite source into a small block. Only completed, ordered
                 // pool rows count toward fullness, never raw pending count.
+                self.record_selection_gate(
+                    "source_boundary_pending",
+                    Some(position),
+                    selected.len(),
+                    Some(budget_full),
+                    None,
+                );
                 return Ok(());
             }
             // Once per prepared window, not once per eight I/O completions.
@@ -502,6 +555,13 @@ impl RpcLifecycle {
             // needs a pool-wide cleanup. Publication retains its own cleanup.
             self.retire_stale_pending();
             if selected.is_empty() {
+                self.record_selection_gate(
+                    "no_ordered_rows",
+                    Some(position),
+                    0,
+                    Some(budget_full),
+                    None,
+                );
                 self.ingress_batch_boundary = false;
                 // All required reads are known: these are actual gaps/stale
                 // entries, not temporary I/O. Try another finite window next
@@ -534,6 +594,43 @@ impl RpcLifecycle {
                     batch: selected_apfl_batch(&selected, &self.pending, self.batch_size)?,
                 }
             };
+            if crate::native_pipeline::profile::asset_enabled() {
+                if let Message::AssetBody { batch, .. } = &body {
+                    crate::native_pipeline::profile::asset_event(
+                        "selection_body_prepared",
+                        position.height,
+                        || {
+                            json!({"source_ref": Arc::as_ptr(batch) as usize,
+                                "rows": selected.len(), "round": position.round,
+                                "parent_height": parent.height,
+                                "parent_state_root": hex(&parent.state_root),
+                                "ordered_ids": crate::native_pipeline::profile::asset_ids(&selected),
+                                "budget_full": budget_full,
+                                "successor": position.source.is_some()})
+                        },
+                    );
+                    for hash in &selected {
+                        if !crate::native_pipeline::profile::asset_track(hash) {
+                            continue;
+                        }
+                        if let Some(entry) = self.pending.get(hash) {
+                            if let AdmissionInput::Uca { batch, index } = &entry.input {
+                                crate::native_pipeline::profile::asset_event(
+                                    "selection_row",
+                                    position.height,
+                                    || {
+                                        json!({"source_ref": Arc::as_ptr(batch) as usize,
+                                        "index": index, "tx": hex(hash),
+                                            "nonce": entry.nonce,
+                                        "signer": hex(&entry.signer),
+                                        "parent_state_root": hex(&parent.state_root)})
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             self.offer = Some((position, Arc::new(body)));
         }
         let message = &self.offer.as_ref().expect("prepared native body").1;
@@ -563,7 +660,88 @@ impl RpcLifecycle {
             // backpressure above must not erase an unserved opportunity.
             self.ingress_batch_boundary = false;
         }
+        self.record_selection_gate(
+            if accepted {
+                "body_owner_accepted"
+            } else {
+                "body_owner_backpressure"
+            },
+            Some(position),
+            match self.offer.as_ref().map(|(_, message)| message.as_ref()) {
+                Some(Message::AssetBody { batch, .. }) => batch.len(),
+                _ => 0,
+            },
+            None,
+            None,
+        );
         Ok(())
+    }
+
+    fn record_selection_gate(
+        &mut self,
+        reason: &'static str,
+        position: Option<Position>,
+        selected: usize,
+        budget_full: Option<bool>,
+        nonce_after: Option<&BTreeMap<Hash, u64>>,
+    ) {
+        if !crate::native_pipeline::profile::asset_enabled() || !self.is_uca() {
+            return;
+        }
+        let position = position.unwrap_or(Position {
+            height: self.node.controller.context().height,
+            round: self.node.controller.round(),
+            parent: self.node.controller.parent(),
+            source: None,
+        });
+        let state = SelectionDiagnostic {
+            reason,
+            position,
+            indexed_height: self.indexed_height,
+            window_len: self.nonce_window.as_ref().map_or(0, |(_, rows)| rows.len()),
+            selected,
+            budget_full,
+            boundary: self.ingress_batch_boundary,
+            awaiting_admission: self.incoming.is_some()
+                || self.admission.has_pending_native_admission(),
+            pending: self.pending.len(),
+        };
+        if self.selection_diagnostic == Some(state) {
+            return;
+        }
+        self.selection_diagnostic = Some(state);
+        // Only a changed, enabled nonce-wait observation may inspect this
+        // existing bounded window. Do not recreate ordered selection or infer
+        // later rows' expected nonce from an unadvanced parent nonce.
+        let first_unknown = (reason == "nonce_pending")
+            .then(|| {
+                self.nonce_window.as_ref().and_then(|(_, window)| {
+                    window.iter().find_map(|hash| {
+                        let entry = self.pending.get(hash)?;
+                        (!self.nonces.values.contains_key(&entry.signer)
+                            && !nonce_after.is_some_and(|next| next.contains_key(&entry.signer)))
+                        .then_some((*hash, entry.nonce, entry.signer))
+                    })
+                })
+            })
+            .flatten();
+        crate::native_pipeline::profile::asset_event("selection_gate", position.height, || {
+            json!({"reason": reason, "round": position.round,
+                "parent_height": position.parent.height,
+                "parent_state_root": hex(&position.parent.state_root),
+                "parent_block_hash": hex(&position.parent.block_hash),
+                "parent_state_version": position.parent.state_version,
+                "successor": position.source.is_some(),
+                "indexed_height": state.indexed_height,
+                "window_len": state.window_len,
+                "window_first_tx": self.nonce_window.as_ref().and_then(|(_, rows)| rows.front()).map(|hash| hex(hash)),
+                "nonce_scan": self.nonce_scan, "selected": selected,
+                "budget_full": budget_full, "boundary": state.boundary,
+                "awaiting_admission": state.awaiting_admission, "pending": state.pending,
+                "first_unknown_nonce": first_unknown.map(|(hash, nonce, signer)|
+                    json!({"tx": hex(&hash), "actual": nonce, "expected": null,
+                        "signer": hex(&signer)}))})
+        });
     }
 
     fn poll_projection(&mut self) -> Result<()> {
@@ -970,6 +1148,12 @@ impl RpcLifecycle {
             "asset_prepared_at_startup":asset_prepared_at_startup,"asset_startup_us":asset_startup_us,
             "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
+        if crate::native_pipeline::profile::asset_enabled() {
+            status["native_receiver_queue"] =
+                json!(novovm_network::snapshot_network_runtime_receiver_queue_v1(
+                    self.node.template.chain_id
+                ));
+        }
         status["archive_work"] = json!({
             "reads_started":core.archive_reads_started,
             "verified_material_reused":core.archive_cache_reused,

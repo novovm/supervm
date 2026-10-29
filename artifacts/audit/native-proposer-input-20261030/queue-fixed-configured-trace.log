@@ -1,0 +1,13 @@
+
+running 1 test
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-21708-1793299493931789700
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_final_receipts_and_cold_economics ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_final_receipts_and_cold_economics
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1775 filtered out; finished in 31.32s
+
+Error: native application completion mismatch/expiry: node=0, state=Expired

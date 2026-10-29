@@ -508,6 +508,13 @@ impl CandidateBodies {
         let identity_started = profile::mark();
         let (id, encoded_wire_len) =
             transport::candidate_body_id_and_wire_len(message, self.codec)?;
+        if let Message::AssetBody { batch, .. } = message.as_ref() {
+            profile::asset_event("body_identified", context.height, || {
+                serde_json::json!({
+                    "source_ref":Arc::as_ptr(batch) as usize,"body":id,"rows":batch.len(),"local":local_origin
+                })
+            });
+        }
         profile::work(
             profile::Phase::BodyIdentity,
             identity_started,

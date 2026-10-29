@@ -175,6 +175,19 @@ impl RpcLifecycle {
                             self.batch_size,
                         )?)?
                 };
+                if let Message::AssetTransactions { scope, batch } = message.as_ref() {
+                    crate::native_pipeline::profile::asset_event(
+                        "gossip_batch_prepared",
+                        self.node.controller.context().height,
+                        || {
+                            json!({"source_ref": Arc::as_ptr(batch) as usize,
+                            "rows": hashes.len(), "session": hex(&scope.session),
+                                "sequence": scope.sequence,
+                                "ordered_ids": crate::native_pipeline::profile::asset_ids(&hashes),
+                                "repair_peer": repair_peer})
+                        },
+                    );
+                }
                 self.gossip_offer = Some(GossipOffer {
                     hashes,
                     message,

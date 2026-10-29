@@ -1,0 +1,45 @@
+{
+  "source": "D:\\WorksArea\\SUPERVM\\target\\native-product-rpc\\uca-recovery-31524-1793300678431797700\\uca-recovery-report.json",
+  "source_sha256": "d495f1fc8192efb14cb33377996f5ce67ff156e0c3cd642c410d1f441b9fb448",
+  "archive": "accepted-fault.raw.zip",
+  "archive_sha256": "3e61590e1104cb98392ad862b4592bc2a02e501dbf0fe958abf18184069604c1",
+  "same_signed_corpus_and_initial_state": null,
+  "scope": "public reports only; full raw report compressed unchanged; per-round database and signing journal retained locally; no private-key files",
+  "rounds": [
+    {
+      "label": null,
+      "signature_backend": null,
+      "transactions": null,
+      "successful_tps": null,
+      "elapsed_seconds": null,
+      "latency_us": null,
+      "passed": null,
+      "cold_recovery_pass": null,
+      "full_fee_state_audited": null,
+      "input_hash": null,
+      "signing_domain": null,
+      "genesis_commitment": null,
+      "initial_root": null,
+      "binary_sha256": "0xa4db9b3e013af2c4dd9efec1dd1f1cf5cd4c21e016c3fed3a5864f7479ca659b",
+      "aoem_sha256": null,
+      "business_backend": null,
+      "counts": null,
+      "load_strategy": null,
+      "signature_generation_timed": null,
+      "timing": null,
+      "canonical_body_budget": null,
+      "wire_message_budget": null,
+      "grant_expires_at_height": null,
+      "static_intent_window": null,
+      "authority_with_schedule_metadata_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "cold_counts": null,
+      "heads": [
+        {
+          "node": null,
+          "matched": null,
+          "head": null
+        }
+      ]
+    }
+  ]
+}
