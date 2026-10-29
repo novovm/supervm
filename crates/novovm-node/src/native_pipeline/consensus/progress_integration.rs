@@ -289,8 +289,65 @@ fn with_delivery_fixture_for_test(
         &CandidatePipeline,
     ) -> Result<()>,
 ) -> Result<()> {
-    with_delivery_nodes_for_test(|nodes, leader, message, pipeline| {
-        check(&mut nodes[leader], message, pipeline)
+    with_delivery_nodes_for_test(|nodes, leader, message, pipelines| {
+        check(&mut nodes[leader], message, &pipelines[leader])
+    })
+}
+
+/// Publish through the original four-node sockets, independent execution and
+/// actual journal ACK before exposing an archive poll fixture. Unlike the
+/// delivery-only wrapper, no fixture-signed proposal/QC establishes this head.
+pub(crate) fn with_published_archive_lifecycle_for_test(
+    check: impl FnOnce(
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        &CandidatePipeline,
+        ConsensusContext,
+    ) -> Result<()>,
+) -> Result<()> {
+    with_delivery_nodes_for_test(|nodes, leader, _, pipelines| {
+        let now = Instant::now();
+        let deadline = now + DEADLINE;
+        // This fixture isolates archive work AFTER actual publication. Reuse
+        // the existing discovery deadline instead of starting and discarding
+        // setup archive reads/caches or fabricating a journal head.
+        for node in nodes.iter_mut() {
+            node.defer_archive_discovery_until_for_test(deadline);
+        }
+        let context = nodes[leader].progress.context();
+        let raw = super::chain_integration::raw_at(1)?;
+        let body = Arc::new(Message::ApflBody {
+            context: batch_context(nodes[leader].progress.parent().state_root),
+            batch: Arc::new(ApflTransferBatch::from_raw(
+                &raw,
+                ApflLimits {
+                    transactions: 8,
+                    transaction_bytes: 1024,
+                    body_bytes: 8192,
+                },
+            )?),
+        });
+        ensure!(nodes[leader].offer(&body)?, "archive fixture input full");
+        loop {
+            ensure!(Instant::now() < deadline, "archive fixture did not publish");
+            for (index, node) in nodes.iter_mut().enumerate() {
+                node.poll_io(1000 + now.elapsed().as_millis() as u64, Instant::now())?;
+                // This is not a deadline test: keep protocol time fixed while
+                // actual I/O/execution/journal work completes under the finite
+                // wall-clock guard, as in the existing preparation fixture.
+                node.poll(&pipelines[index], now)?;
+                ensure!(!node.is_frozen());
+            }
+            if nodes.iter().all(|node| {
+                node.progress.head().is_some_and(|head| head.height == 1)
+                    && node.pending_deliveries() == 0
+            }) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let head = nodes[leader].progress.head();
+        ensure!(nodes.iter().all(|node| node.progress.head() == head));
+        check(&mut nodes[leader], &pipelines[leader], context)
     })
 }
 
@@ -319,7 +376,7 @@ fn with_delivery_nodes_for_test(
         &mut [crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle],
         usize,
         Message,
-        &CandidatePipeline,
+        &[CandidatePipeline],
     ) -> Result<()>,
 ) -> Result<()> {
     use crate::native_pipeline::consensus::{
@@ -383,7 +440,7 @@ fn with_delivery_nodes_for_test(
             codec(),
         )?);
     }
-    check(&mut nodes, leader, message, &services.0[leader])?;
+    check(&mut nodes, leader, message, &services.0)?;
     drop(nodes);
     services.shutdown()
 }

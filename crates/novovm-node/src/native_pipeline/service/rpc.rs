@@ -970,6 +970,10 @@ impl RpcLifecycle {
             "asset_prepared_at_startup":asset_prepared_at_startup,"asset_startup_us":asset_startup_us,
             "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
+        status["archive_work"] = json!({
+            "reads_started":core.archive_reads_started,
+            "verified_material_reused":core.archive_cache_reused,
+            "scope":"original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"});
         let [auth, started, before_parent, promoted, discarded] = core.successor_metrics();
         status["successor"] = json!({"authentication_started":auth,"execution_started":started,
             "completed_before_parent":before_parent,"promoted":promoted,"discarded":discarded,

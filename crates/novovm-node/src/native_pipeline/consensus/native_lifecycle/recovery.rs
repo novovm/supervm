@@ -15,6 +15,18 @@ impl Cached {
     fn charge(&self) -> usize {
         self.body.byte_len() + self.decision.byte_len()
     }
+
+    fn for_peer(&self) -> Self {
+        Self {
+            context: self.context,
+            body_id: self.body_id,
+            body: self.body.clone(),
+            decision: self.decision.clone(),
+            // Immutable checked wire bytes are shared, never delivery credit.
+            // Only THIS peer's actual decision completion arms its body.
+            body_pending: false,
+        }
+    }
 }
 struct Reading {
     context: VoteContext,
@@ -36,6 +48,11 @@ impl ArchivePeer {
 }
 
 impl NativeLifecycle {
+    #[cfg(test)]
+    pub(crate) fn defer_archive_discovery_until_for_test(&mut self, due: Instant) {
+        self.decision_due = Some(due);
+    }
+
     // Retire the business obligation, not an already-admitted transport send.
     // Local cancellation has no remote reassembly-release message: abandoning
     // a partial object strands the peer's bounded slot until TTL. The SAME
@@ -164,18 +181,51 @@ impl NativeLifecycle {
         }
         let peer = self.archive_turn;
         self.archive_turn = (peer + 1) % self.peers.len();
+        if let (Some(context), Some(head)) = (self.archives[peer].requested, self.progress.head()) {
+            if context.height <= head.height
+                && !self.archives[peer]
+                    .cached
+                    .as_ref()
+                    .is_some_and(|cached| cached.context == context)
+            {
+                // poll_inner has checked this lifecycle's pipeline owner. The
+                // exact context binds chain/genesis/protocol/epoch/set/parents,
+                // and the actual ACKed head still bounds the requested height.
+                // Acquire BEFORE body response so an existing checked recovery
+                // wrapper is not needlessly re-encoded from a live body.
+                if let Some(cached) = self.archives.iter().find_map(|state| {
+                    state
+                        .cached
+                        .as_ref()
+                        .filter(|cached| cached.context == context)
+                        .map(Cached::for_peer)
+                }) {
+                    self.archives[peer].cached = Some(cached);
+                    self.archives[peer].decision_pending = true;
+                    self.archive_cache_reused += 1;
+                }
+            }
+        }
         self.poll_body_response(peer)?;
         if let Some(reading) = &mut self.archives[peer].reading {
             if let Some(result) = reading.read.poll(pipeline)? {
                 let context = reading.context;
                 self.archives[peer].reading = None;
                 if let Some(block) = result {
-                    if self.archives[peer].requested == Some(context) {
+                    if self
+                        .archives
+                        .iter()
+                        .any(|state| state.requested == Some(context))
+                    {
                         if block.context() != context {
                             // The peer's arbitrary parent is not our decided
                             // prefix. Never synthesize a response for it.
-                            self.rejected_messages += 1;
-                            self.archives[peer].requested = None;
+                            for state in &mut self.archives {
+                                if state.requested == Some(context) {
+                                    self.rejected_messages += 1;
+                                    state.requested = None;
+                                }
+                            }
                         } else {
                             let body = transport::stored_body(block.stored(), self.codec)?;
                             let body_id = transport::candidate_body_id(&body, self.codec)?;
@@ -200,8 +250,25 @@ impl NativeLifecycle {
                                 cached.charge() <= self.codec.message_bytes.saturating_mul(2),
                                 "archive exceeds peer cache budget"
                             );
-                            self.archives[peer].cached = Some(cached);
-                            self.archives[peer].decision_pending = true;
+                            // The original requester may already have advanced.
+                            // Its accepted read was still drained above; hand
+                            // the checked result to every remaining exact-context
+                            // waiter, without replacing another peer's ACK state
+                            // or abandoning an already accepted read ticket.
+                            for (index, state) in self.archives.iter_mut().enumerate() {
+                                if state.requested == Some(context)
+                                    && !state
+                                        .cached
+                                        .as_ref()
+                                        .is_some_and(|existing| existing.context == context)
+                                {
+                                    state.cached = Some(cached.for_peer());
+                                    state.decision_pending = true;
+                                    if index != peer {
+                                        self.archive_cache_reused += 1;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -235,6 +302,17 @@ impl NativeLifecycle {
         {
             return Ok(());
         }
+        if self.archives.iter().any(|state| {
+            state
+                .reading
+                .as_ref()
+                .is_some_and(|reading| reading.context == context)
+        }) {
+            // No extra queue or ticket: this peer retains its original request,
+            // and round-robin polling continues to drain the read's owner even
+            // when that owner's requested context changes in the meantime.
+            return Ok(());
+        }
         self.archives[peer].reading = Some(Reading {
             context,
             read: ArchiveRead::new(
@@ -244,6 +322,7 @@ impl NativeLifecycle {
                 Arc::new(self.validators.clone()),
             )?,
         });
+        self.archive_reads_started += 1;
         Ok(())
     }
 

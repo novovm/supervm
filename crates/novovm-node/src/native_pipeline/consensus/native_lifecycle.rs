@@ -116,6 +116,8 @@ pub struct NativeLifecycle {
     pub expired_sends: u64,
     pub retired_sends: u64,
     pub archive_decisions: u64,
+    pub archive_reads_started: u64,
+    pub archive_cache_reused: u64,
     /// Logical early-body delivery obligations accepted, not wire/retransmit bytes.
     pub successor_body_enqueued: u64,
     pub successor_body_bytes: u64,
@@ -259,6 +261,8 @@ impl NativeLifecycle {
             expired_sends: 0,
             retired_sends: 0,
             archive_decisions: 0,
+            archive_reads_started: 0,
+            archive_cache_reused: 0,
             successor_body_enqueued: 0,
             successor_body_bytes: 0,
         })

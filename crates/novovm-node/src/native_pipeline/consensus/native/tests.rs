@@ -85,6 +85,120 @@ fn io_hint_wrap_is_a_change_token_not_a_permit_counter() {
     assert_eq!(hint.0, 0);
 }
 
+#[test]
+fn io_hint_tracks_real_hash_continuation_but_not_missing_fragments() -> Result<()> {
+    use novovm_network::novorudp::fragments::UDP_CHUNK_BYTES;
+
+    let (keys, _, domain, _) = separated_material()?;
+    let mut mesh = Mesh::new(&keys, domain.clone())?;
+    // Real authenticated UDP fragments, deliberately NOT a valid business
+    // object. Hash progress must neither require full decoding nor authorize
+    // this payload; final protocol decoding below still rejects it.
+    let object = Arc::new(OutgoingMessage::with_profile(
+        transport::fragment_domain(domain.chain_id, domain.genesis, domain.protocol),
+        vec![0xa7; 65 * UDP_CHUNK_BYTES],
+        codec().message_bytes,
+        FragmentProfile::NativeUdpV2,
+    )?);
+    let frames = object.frame_count();
+    assert_eq!(frames, 65);
+    let prepared = PreparedMessage {
+        owner: mesh.channels[0].owner.clone(),
+        stream: STREAMS[1],
+        object,
+        window: None,
+        body_request: false,
+        durable_control: false,
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    assert!(mesh.channels[0].try_send(0, &prepared, Instant::now())?);
+    let report = mesh.channels[0].poll_io(
+        mesh.wall_base + mesh.start.elapsed().as_millis() as u64,
+        Instant::now(),
+        1,
+    )?;
+    assert_eq!(report.data_sent, 1);
+    let mut accepted = 0;
+    while accepted == 0 {
+        ensure!(Instant::now() < deadline, "first real fragment timed out");
+        let report = mesh.channels[1].poll_io(
+            mesh.wall_base + mesh.start.elapsed().as_millis() as u64,
+            Instant::now(),
+            64,
+        )?;
+        assert_eq!(report.rejected, 0);
+        accepted += report.accepted_fragments;
+        std::thread::yield_now();
+    }
+    assert_eq!(accepted, 1);
+    let before = mesh.channels[1].io_progress_generation();
+    assert!(mesh.channels[1]
+        .poll_receive_lane(1, Instant::now(), 1)?
+        .is_none());
+    assert_ne!(mesh.channels[1].io_progress_generation(), before);
+    let missing = mesh.channels[1].io_progress_generation();
+    for _ in 0..128 {
+        assert!(mesh.channels[1]
+            .poll_receive_lane(1, Instant::now(), 64)?
+            .is_none());
+        assert_eq!(mesh.channels[1].io_progress_generation(), missing);
+    }
+    // Deliver the remaining fragments without invoking assembly/hash polling.
+    // No fake clock, injected ACK, or direct reassembler state establishes it.
+    while accepted < frames {
+        ensure!(
+            Instant::now() < deadline,
+            "remaining real fragments timed out"
+        );
+        let sent = mesh.channels[0].poll_io(
+            mesh.wall_base + mesh.start.elapsed().as_millis() as u64,
+            Instant::now(),
+            64,
+        )?;
+        assert_eq!(sent.rejected, 0);
+        let report = mesh.channels[1].poll_io(
+            mesh.wall_base + mesh.start.elapsed().as_millis() as u64,
+            Instant::now(),
+            64,
+        )?;
+        assert_eq!(report.rejected, 0);
+        accepted += report.accepted_fragments;
+        std::thread::yield_now();
+    }
+    assert_eq!(accepted, frames);
+    let before = mesh.channels[1].io_progress_generation();
+    assert!(mesh.channels[1]
+        .poll_receive_lane(1, Instant::now(), 32)?
+        .is_none());
+    assert_ne!(mesh.channels[1].io_progress_generation(), before);
+    let before = mesh.channels[1].io_progress_generation();
+    assert!(matches!(
+        mesh.channels[1].poll_receive_lane(1, Instant::now(), 32)?,
+        Some(ReceiveEvent::Rejected { .. })
+    ));
+    assert_ne!(mesh.channels[1].io_progress_generation(), before);
+    let drained = mesh.channels[1].io_progress_generation();
+    for _ in 0..128 {
+        assert!(mesh.channels[1]
+            .poll_receive_lane(1, Instant::now(), 64)?
+            .is_none());
+        assert_eq!(mesh.channels[1].io_progress_generation(), drained);
+    }
+    // Finish the original sender through the real hash-checked transport DONE;
+    // this completion is explicitly not business acceptance or finality.
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "real sender completion timed out"
+        );
+        if mesh.pump()? != 0 {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    Ok(())
+}
+
 pub(crate) struct Mesh {
     pub channels: Vec<NativeChannel>,
     start: Instant,

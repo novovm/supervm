@@ -256,6 +256,20 @@ impl AuthenticatedUdpIngressV1 {
             .poll_complete(stream, now, quantum)
             .context("native object completion")
     }
+
+    /// The same bounded completion operation, with actual incremental hash
+    /// work reported to its assembly owner's existing idle policy. Retained
+    /// objects waiting for missing fragments do not constitute progress.
+    pub fn poll_complete_with_progress(
+        &mut self,
+        stream: u64,
+        now: Instant,
+        quantum: usize,
+    ) -> Result<(Option<CompletedMessage>, bool)> {
+        self.link
+            .poll_complete_with_progress(stream, now, quantum)
+            .context("native object completion")
+    }
 }
 
 #[cfg(test)]

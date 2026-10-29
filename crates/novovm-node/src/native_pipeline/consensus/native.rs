@@ -13,7 +13,7 @@ use novovm_network::novorudp::{endpoint::NativeEndpoint, object_link::NativeObje
 use novovm_network::{
     novorudp::{
         endpoint::{NativeHandshakeBudget, NativePeer},
-        fragments::{FragmentProfile, OutgoingMessage, ReassemblyLimits},
+        fragments::{CompletedMessage, FragmentProfile, OutgoingMessage, ReassemblyLimits},
         object_link::{NativeLaneConfig, NativeLinkPoll, NativeSendLimits, NativeSendPolicy},
     },
     product_overlay::peer_id_from_ed25519_public_key_v1,
@@ -496,7 +496,7 @@ impl NativeChannel {
         now: Instant,
         quantum: usize,
     ) -> Result<Option<ReceiveEvent>> {
-        let Some(complete) = self.link.poll_complete(stream, now, quantum)? else {
+        let Some(complete) = self.poll_complete(stream, now, quantum)? else {
             return Ok(None);
         };
         let parsed = (|| -> Result<_> {
@@ -544,6 +544,27 @@ impl NativeChannel {
                 error: error.to_string().chars().take(512).collect(),
             },
         }))
+    }
+
+    /// All native assembly consumers, including queries, share this existing
+    /// scheduling hint. Their independent custody and decoding rules stay at
+    /// the caller; missing fragments are never reported as completed work.
+    fn poll_complete(
+        &mut self,
+        stream: u64,
+        now: Instant,
+        quantum: usize,
+    ) -> Result<Option<CompletedMessage>> {
+        let (complete, hash_progress) = self
+            .link
+            .poll_complete_with_progress(stream, now, quantum)?;
+        if hash_progress {
+            // Hashing already-received fragments is real bounded work even
+            // when the full object is not yet ready. Preserve the original
+            // idle policy instead of parking between these continuation turns.
+            self.io_progress.advance();
+        }
+        Ok(complete)
     }
 }
 
@@ -609,15 +630,18 @@ impl ChannelLink {
             }),
         }
     }
-    fn poll_complete(
+    fn poll_complete_with_progress(
         &mut self,
         stream: u64,
         now: Instant,
         quantum: usize,
-    ) -> Result<Option<novovm_network::novorudp::fragments::CompletedMessage>> {
+    ) -> Result<(
+        Option<novovm_network::novorudp::fragments::CompletedMessage>,
+        bool,
+    )> {
         match self {
-            Self::Original(link) => link.poll_complete(stream, now, quantum),
-            Self::HistoricalFixture(link) => link.poll_complete(stream, now, quantum),
+            Self::Original(link) => link.poll_complete_with_progress(stream, now, quantum),
+            Self::HistoricalFixture(link) => link.poll_complete_with_progress(stream, now, quantum),
         }
     }
 }

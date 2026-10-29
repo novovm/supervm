@@ -964,7 +964,7 @@ impl NativeObjectLink {
     }
     /// An assembly owner can immediately continue real hash work without
     /// mistaking incomplete output for an idle transport. Missing input waits.
-    pub(crate) fn poll_complete_with_progress(
+    pub fn poll_complete_with_progress(
         &mut self,
         stream: u64,
         now: Instant,

@@ -97,8 +97,10 @@ impl NativeChannel {
         if !self.applications || self.query_replies.len() == QUERY_SLOTS {
             return Ok(None);
         }
-        let busy = |peer| self.query_replies.iter().any(|r| r.peer == peer);
-        if let Some(request) = self.query_inbox.take_ready(busy) {
+        if let Some(request) = self
+            .query_inbox
+            .take_ready(|peer| self.query_replies.iter().any(|r| r.peer == peer))
+        {
             self.io_progress.advance();
             return Ok(Some(request));
         }
@@ -107,7 +109,7 @@ impl NativeChannel {
         if !self.query_inbox.has_space() {
             return Ok(None);
         }
-        let Some(complete) = self.link.poll_complete(STREAM, now, 8)? else {
+        let Some(complete) = self.poll_complete(STREAM, now, 8)? else {
             return Ok(None);
         };
         let peer = (0..self.link.peer_count())
@@ -130,7 +132,9 @@ impl NativeChannel {
         };
         self.query_inbox.insert(peer, session, request, now)?;
         self.io_progress.advance();
-        Ok(self.query_inbox.take_ready(busy))
+        Ok(self
+            .query_inbox
+            .take_ready(|peer| self.query_replies.iter().any(|r| r.peer == peer)))
     }
     pub fn reply_query(&mut self, peer: usize, response: Response, now: Instant) -> Result<()> {
         let index = self

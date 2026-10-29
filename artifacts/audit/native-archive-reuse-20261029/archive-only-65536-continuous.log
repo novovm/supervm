@@ -1,0 +1,10 @@
+
+running 1 test
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-6588-1793235693368674500
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-6588-1793235730372859000
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-6588-1793235766984858700
+NUAS dynamic-window paired report=D:\WorksArea\SUPERVM\crates\novovm-node\../../target/native-product-load\continuous_8192_outstanding_receipt_anchored_windows-paired-6588-1793235804115.json
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_signature_cpu_gpu_cpu ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1769 filtered out; finished in 110.75s
+

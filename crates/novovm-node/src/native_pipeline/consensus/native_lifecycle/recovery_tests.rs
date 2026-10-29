@@ -4,7 +4,220 @@
 //! unit stimulus, NOT evidence of a real transport ACK, restart or finality.
 //! Actual sender completion and independent process recovery are separate gates.
 use super::*;
-use crate::native_pipeline::consensus::tests::progress_integration::with_archive_lifecycle_for_test;
+use crate::native_pipeline::consensus::tests::progress_integration::{
+    with_archive_lifecycle_for_test, with_published_archive_lifecycle_for_test,
+};
+
+fn require_fresh_published_archive_fixture(node: &NativeLifecycle) -> Result<()> {
+    ensure!(node.progress.head().is_some_and(|head| head.height == 1));
+    ensure!(node.pending_deliveries() == 0);
+    ensure!(node.archives.iter().all(|state| {
+        state.requested.is_none()
+            && state.reading.is_none()
+            && state.cached.is_none()
+            && !state.decision_pending
+            && state.body_request.is_none()
+    }));
+    Ok(())
+}
+
+fn poll_archives_until(
+    node: &mut NativeLifecycle,
+    pipeline: &CandidatePipeline,
+    done: impl Fn(&NativeLifecycle) -> bool,
+) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !done(node) {
+        ensure!(Instant::now() < deadline, "archive poll fixture timed out");
+        node.poll_archives(pipeline)?;
+        std::thread::yield_now();
+    }
+    Ok(())
+}
+
+fn poll_archive_peer(
+    node: &mut NativeLifecycle,
+    pipeline: &CandidatePipeline,
+    peer: usize,
+) -> Result<()> {
+    node.archive_turn = peer;
+    node.poll_archives(pipeline)
+}
+
+#[test]
+#[ignore = "real AOEM/four native nodes; shared verified archive read, not synthetic finality"]
+fn native_archive_poll_coalesces_same_context_across_peers() -> Result<()> {
+    with_published_archive_lifecycle_for_test(|node, pipeline, context| {
+        require_fresh_published_archive_fixture(node)?;
+        let head = node.progress.head();
+        let started = node.archive_reads_started;
+        let reused = node.archive_cache_reused;
+        ensure!(node.archives.len() == 3);
+        for peer in 0..node.archives.len() {
+            node.request_archive(peer, context)?;
+        }
+        poll_archive_peer(node, pipeline, 0)?;
+        poll_archive_peer(node, pipeline, 0)?;
+        // The original read has been polled against its actual I/O owner. The
+        // other two peers must retain requests, not start two more recoveries.
+        poll_archive_peer(node, pipeline, 1)?;
+        poll_archive_peer(node, pipeline, 2)?;
+        eprintln!(
+            "real archive starts={} reused={}",
+            node.archive_reads_started - started,
+            node.archive_cache_reused - reused
+        );
+        ensure!(node.archive_reads_started == started + 1);
+        ensure!(node.archives[0].reading.is_some());
+        ensure!(node.archives[1..]
+            .iter()
+            .all(|state| state.reading.is_none()));
+        poll_archives_until(node, pipeline, |node| {
+            node.archives.iter().all(|state| state.cached.is_some())
+        })?;
+        // One complete ArchiveRead traverses the original Head/Block/Outbox/
+        // Candidate stages, including exactly one candidate recovery. No mock
+        // read, fixture cache or fabricated head satisfies this assertion.
+        ensure!(node.archive_reads_started == started + 1);
+        ensure!(node.archive_cache_reused == reused + 2);
+        let first = node.archives[0].cached.as_ref().expect("checked archive");
+        let decision_id = first.decision.fragment_id();
+        let body_id = first.body.fragment_id();
+        for state in &node.archives {
+            let cached = state.cached.as_ref().expect("checked archive");
+            ensure!(cached.context == context && !cached.body_pending);
+            ensure!(cached.decision.fragment_id() == decision_id);
+            ensure!(cached.body.fragment_id() == body_id);
+            ensure!(cached.charge() <= node.codec.message_bytes.saturating_mul(2));
+        }
+        // Direct completion stimulus checks the original continuation boundary;
+        // it is NOT a claim that a fabricated transport ACK was observed.
+        node.archive_delivery_completed(0, decision_id);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        ensure!(node.archives[1..].iter().all(|state| !state
+            .cached
+            .as_ref()
+            .unwrap()
+            .body_pending));
+        node.archive_delivery_completed(1, body_id);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        ensure!(node.progress.head() == head);
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "real AOEM/four native nodes; drain read after requester advance and serve remaining peer"]
+fn native_archive_poll_drains_changed_requester_read_for_same_context_waiter() -> Result<()> {
+    with_published_archive_lifecycle_for_test(|node, pipeline, context| {
+        require_fresh_published_archive_fixture(node)?;
+        let started = node.archive_reads_started;
+        let reused = node.archive_cache_reused;
+        node.request_archive(0, context)?;
+        poll_archive_peer(node, pipeline, 0)?;
+        poll_archive_peer(node, pipeline, 0)?;
+        node.request_archive(1, context)?;
+        poll_archive_peer(node, pipeline, 1)?;
+        ensure!(node.archives[1].reading.is_none());
+        let next = node.progress.context();
+        ensure!(next.height > node.progress.head().unwrap().height);
+        node.request_archive(0, next)?;
+        ensure!(node.archives[0].reading.as_ref().unwrap().context == context);
+        poll_archives_until(node, pipeline, |node| {
+            node.archives[0].reading.is_none() && node.archives[1].cached.is_some()
+        })?;
+        ensure!(node.archives[0].requested == Some(next));
+        ensure!(node.archives[0].cached.is_none());
+        ensure!(node.archives[1].cached.as_ref().unwrap().context == context);
+        ensure!(node.archive_reads_started == started + 1);
+        ensure!(node.archive_cache_reused == reused + 1);
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "real AOEM/four native nodes; immutable reuse keeps per-peer ACK and auxiliary budget"]
+fn native_archive_poll_reuse_keeps_independent_pending_and_delivery_budget() -> Result<()> {
+    with_published_archive_lifecycle_for_test(|node, pipeline, context| {
+        require_fresh_published_archive_fixture(node)?;
+        node.request_archive(0, context)?;
+        poll_archives_until(node, pipeline, |node| node.archives[0].cached.is_some())?;
+        let started = node.archive_reads_started;
+        let reused = node.archive_cache_reused;
+        let first = node.archives[0].cached.as_ref().unwrap();
+        let decision = first.decision.fragment_id();
+        let canonical_body = first.body_id;
+        node.archive_delivery_completed(0, decision);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        // Fill the ORIGINAL auxiliary queue with unsent bounded requests.
+        // Existing real consensus deliveries/handles remain untouched.
+        for index in 0..=node.limits.messages_per_peer {
+            let mut body_id = [0x95; 32];
+            body_id[..8].copy_from_slice(&(index as u64).to_le_bytes());
+            let prepared = node.channel.prepare(&Message::RequestBody { body_id })?;
+            if !node.enqueue(1, prepared) {
+                break;
+            }
+        }
+        let bytes = node.bytes[1];
+        let count = node.deliveries[1].len();
+        node.request_archive(1, context)?;
+        node.remember_body_request(1, canonical_body);
+        poll_archive_peer(node, pipeline, 1)?;
+        ensure!(node.archive_reads_started == started);
+        ensure!(node.archive_cache_reused == reused + 1);
+        ensure!(node.archives[1].decision_pending);
+        ensure!(node.archives[1].body_request == Some(canonical_body));
+        ensure!(!node.archives[1].cached.as_ref().unwrap().body_pending);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        ensure!(node.bytes[1] == bytes && node.deliveries[1].len() == count);
+        poll_archive_peer(node, pipeline, 1)?;
+        ensure!(node.archives[1].decision_pending);
+        ensure!(node.archives[1].body_request == Some(canonical_body));
+        ensure!(node.bytes[1] == bytes && node.deliveries[1].len() == count);
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "real AOEM/four native nodes; same height alone cannot reuse a verified archive"]
+fn native_archive_poll_reuse_requires_full_context_and_published_height() -> Result<()> {
+    with_published_archive_lifecycle_for_test(|node, pipeline, context| {
+        require_fresh_published_archive_fixture(node)?;
+        node.request_archive(0, context)?;
+        poll_archives_until(node, pipeline, |node| node.archives[0].cached.is_some())?;
+        let started = node.archive_reads_started;
+        let reused = node.archive_cache_reused;
+        let rejected = node.rejected_messages;
+        let wrong = VoteContext {
+            genesis_config_commitment: [0xb7; 32],
+            ..context
+        };
+        node.request_archive(1, wrong)?;
+        poll_archive_peer(node, pipeline, 1)?;
+        ensure!(node.archives[1].cached.is_none());
+        ensure!(node.archive_reads_started == started + 1);
+        poll_archives_until(node, pipeline, |node| node.archives[1].requested.is_none())?;
+        ensure!(node.archives[1].cached.is_none());
+        ensure!(node.rejected_messages == rejected + 1);
+        let next = node.progress.context();
+        node.request_archive(2, next)?;
+        poll_archive_peer(node, pipeline, 2)?;
+        ensure!(node.archives[2].reading.is_none() && node.archives[2].cached.is_none());
+        node.request_archive(
+            2,
+            VoteContext {
+                epoch: next.epoch + 1,
+                ..next
+            },
+        )?;
+        ensure!(node.archives[2].requested == Some(next));
+        ensure!(node.rejected_messages == rejected + 2);
+        ensure!(node.archive_cache_reused == reused);
+        ensure!(node.archive_reads_started == started + 1);
+        Ok(())
+    })
+}
 
 fn install_cache(
     node: &mut NativeLifecycle,

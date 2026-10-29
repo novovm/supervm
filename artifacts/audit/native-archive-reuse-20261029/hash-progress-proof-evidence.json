@@ -1,0 +1,136 @@
+{
+  "schema": "novovm-native-hash-progress-proof/v1",
+  "status": "COMBINED_SOURCE_TARGETED_TESTS_PASSED_NORMAL_NODE_CLIENT_BUILD_PENDING_NO_PERFORMANCE_RESULT",
+  "reviewed_on": "2026-10-29",
+  "qualification": {
+    "source_patch": "combined-final-source.patch",
+    "source_patch_sha256": "59ecfe62f075cd7de770f3b54df5171151cea95183d4cd3bb6e02e2118dcea26",
+    "native_tests_sha256": "278d3f0e40b5c15a4d5113b58bc96415bd750f624458fb1736720947fd8479b8",
+    "network_tests_sha256": "b60283369018b02316579b7053944ed48d8b883b573cec6912f67a61827022d1",
+    "native_tests_snapshot": "target/native-archive-reuse-20261029/with-hash-progress/native-tests.exe",
+    "network_tests_snapshot": "target/native-archive-reuse-20261029/with-hash-progress/network-tests.exe",
+    "normal_node_binary_sha256": null,
+    "normal_client_binary_sha256": null,
+    "normal_node_client_build_status_at_record": "BUILDING; not qualified by this evidence",
+    "performance_status": "NOT_RUN",
+    "qualification_boundary": "Archive-only F286 performance belongs to archive-only-candidate-evidence.json. It does not qualify this combined archive-coalescing plus hash-progress propagation change."
+  },
+  "observed_gap": {
+    "consumer": "NativeChannel / ChannelLink completion polling",
+    "reusable_existing_capability": "NativeObjectLink::poll_complete_with_progress yields an Option<CompletedMessage> and a bounded-work progress flag.",
+    "old_behavior": "Native consensus consumer called the Option-only completion API. Hashing received fragments could do real work while returning None, without changing its existing io_progress generation hint.",
+    "thin_fix": "The existing NativeChannel shared completion helper consumes the progress-aware API and advances io_progress only on real hash progress. Complete object decoding and independent consumer custody still happen at the caller.",
+    "unchanged": "No timeout, quantum, signature check, protocol decode, quorum, missing-fragment completion, or authorization boundary is disabled.",
+    "source_provenance": {
+      "blame_reference_commit": "0897c596da3edf95ab6ab71f63d18222c7248a78",
+      "native_option_only_consumer": {
+        "commit": "f5c2fcd6c624e8d43691cf8fbc8d97f6b3c75815",
+        "date": "2026-10-16T04:48:21+08:00",
+        "subject": "feat: integrate native APFL closure into original node tick",
+        "reference_file": "crates/novovm-node/src/native_pipeline/consensus/native.rs",
+        "reference_lines": [
+          499,
+          612,
+          619,
+          620
+        ]
+      },
+      "network_progress_api": {
+        "commit": "7a8b22d8b6e4011e1223a220d572b65ac011c1b3",
+        "date": "2026-10-23T02:15:06+08:00",
+        "subject": "Keep native mailbox owner advancing bounded reassembly work"
+      },
+      "scope": "This establishes an old consumer missed an existing later network scheduling signal. It does not establish the cause of every historical slow round or quantify a TPS impact."
+    }
+  },
+  "counterexample": {
+    "name": "native_pipeline::consensus::native::tests::io_hint_tracks_real_hash_continuation_but_not_missing_fragments",
+    "setup": "Existing real authenticated UDP mesh sends a 65-fragment object. One received fragment can advance bounded hash state while object completion stays None. The payload is deliberately invalid as a business object, so eventual decoding must still reject it.",
+    "old_ignored_progress": {
+      "log": "old-hash-counterexample.log",
+      "build_log": "old-hash-counterexample-build.log",
+      "result": "EXPECTED_FAILURE",
+      "parent_recorded_exit_code": 101,
+      "passed": 0,
+      "failed": 1,
+      "assertion": "assert_ne!(mesh.channels[1].io_progress_generation(), before)",
+      "actual_before": 5,
+      "actual_after": 5,
+      "source_line_in_failed_log": 138,
+      "note": "Real hash continuation returned incomplete but did not advance the scheduling hint; no fake clock, injected ACK or direct reassembler state establishes this setup."
+    },
+    "old_build_warning": {
+      "category": "unused_must_use",
+      "count": 1,
+      "location": "crates/novovm-node/src/native_pipeline/consensus/native/tests.rs:153",
+      "detail": "The newly added test initially ignored NativeLinkPoll returned by sender poll_io.",
+      "resolution": "Restored new test captures the sent report and asserts sent.rejected == 0. The final combined test build log has no unused_must_use warning; original counterexample log is retained.",
+      "existing_cargo_warning": "The separate duplicate bin-source target warning is retained; it is not this test warning."
+    },
+    "restored_positive": {
+      "log": "hash-progress-real.log",
+      "result": "PASS",
+      "passed": 1,
+      "failed": 0,
+      "checks": [
+        "Real fragment hashing changes the existing io_progress generation even when incomplete.",
+        "128 polls with missing fragments do not invent progress.",
+        "After remaining fragments arrive, bounded continuation reports progress.",
+        "Final malformed business payload is rejected rather than authorized.",
+        "After work drains, empty polls do not manufacture progress."
+      ]
+    },
+    "no_safety_gate_removed": true
+  },
+  "combined_validation": {
+    "build_log": "combined-tests-build.log",
+    "archive_real": {
+      "log": "combined-archive-real.log",
+      "passed": 4,
+      "failed": 0,
+      "printed_coalesced_archive_reads_started": 1,
+      "printed_archive_reads_reused": 0
+    },
+    "successor_real": {
+      "log": "combined-successor-real.log",
+      "passed": 7,
+      "failed": 0,
+      "scope": "Original parent ACK, distinct parent, remote parent, owner-signature reuse, budget/nonce/fee/recovery, round-change scenarios."
+    },
+    "query_handoff": {
+      "log": "combined-query-handoff.log",
+      "name": "native_pipeline::consensus::native::query::tests::real_query_request_survives_delayed_previous_reply_done_handoff",
+      "passed": 1,
+      "failed": 0,
+      "scope": "Existing query/DONE handoff regression exercises the shared completion helper.",
+      "independent_large_query_multiturn_hash_test": false
+    },
+    "default_pipeline": {
+      "log": "combined-pipeline-unit.log",
+      "passed": 516,
+      "failed": 0,
+      "ignored": 119,
+      "filtered_out": 1136
+    },
+    "default_network": {
+      "log": "combined-network-default.log",
+      "passed": 883,
+      "failed": 0,
+      "ignored": 11,
+      "filtered_out": 0
+    },
+    "format": {
+      "log": "combined-final-fmt.log",
+      "bytes": 0,
+      "scope": "Saved log is empty; this review did not rerun format."
+    },
+    "strict_clippy_for_combined_candidate": "NOT_RECORDED_HERE; earlier archive-only clippy does not qualify changed source."
+  },
+  "limits": [
+    "Only the deterministic missed-progress window is proved by old failure/new pass; this is not proof it caused the prior roughly 17-second tail or all slow rounds.",
+    "The query consumer uses the same helper and its existing handoff test passes, but there is no independent large-query split/hash-continuation test in this evidence.",
+    "Normal node/client build was still running at this evidence checkpoint. No combined normal binary hash or performance result is invented.",
+    "No new performance run, source modification, database inspection, key/config copying, README edit or deployment was performed by this audit task.",
+    "Targeted/default local tests are not full CI, release acceptance, Linux packaging, four-machine acceptance or restoration of historical 12K TPS."
+  ]
+}

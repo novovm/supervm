@@ -1,0 +1,5 @@
+# Raw evidence hashes must survive Windows/Linux checkout without EOL rewriting.
+*.json -text
+*.log -text
+*.patch -text
+*.txt -text
