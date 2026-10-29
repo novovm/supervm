@@ -29,7 +29,9 @@ mod apfl;
 pub use apfl::{apfl_body_id, apfl_early_body_id};
 mod uca;
 pub use uca::uca_body_id;
-pub(crate) use uca::{candidate_body_id, candidate_request, stored_body};
+pub(crate) use uca::{
+    candidate_body_id, candidate_body_id_and_wire_len, candidate_request, stored_body,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {

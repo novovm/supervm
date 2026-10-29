@@ -194,7 +194,16 @@ impl CandidateBodies {
                 == (self.pin.business_program == uca_program_id()),
             "candidate body wire/profile mismatch"
         );
-        let id = transport::candidate_body_id(message, self.codec)?;
+        let identity_started = crate::native_pipeline::profile::mark();
+        let (id, encoded_wire_len) =
+            transport::candidate_body_id_and_wire_len(message, self.codec)?;
+        crate::native_pipeline::profile::work(
+            crate::native_pipeline::profile::Phase::BodyIdentity,
+            identity_started,
+            context.height,
+            Some(id),
+            None,
+        );
         ensure!(
             local || progress.missing_bodies().any(|(_, wanted)| wanted == id),
             "unsolicited body or different ordered input"
@@ -213,10 +222,19 @@ impl CandidateBodies {
         }
         // Charge canonical input plus a request copy. The pipeline separately
         // reserves its own execution/capture/output memory before taking work.
-        let mut charge = transport::encode(message, self.codec)?
-            .len()
-            .checked_mul(2)
-            .context("body charge overflow")?;
+        let charge_started = crate::native_pipeline::profile::mark();
+        let wire_bytes = match encoded_wire_len {
+            Some(len) => len,
+            None => transport::encode(message, self.codec)?.len(),
+        };
+        crate::native_pipeline::profile::work(
+            crate::native_pipeline::profile::Phase::BodyCharge,
+            charge_started,
+            context.height,
+            Some(id),
+            None,
+        );
+        let mut charge = wire_bytes.checked_mul(2).context("body charge overflow")?;
         // Structured NUAS retains a dictionary plus expanded locator pairs in
         // the request. Charge canonical input as well; compression is not quota.
         if let Message::AssetBody { batch, .. } = message.as_ref() {

@@ -1,0 +1,10 @@
+
+running 5 tests
+test native_pipeline::consensus::transport::uca::tests::nuas_body_identity_commits_order_signatures_signed_accounts_and_parent ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_identity_reuses_exact_wire_length_without_changing_transcript ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_profile_and_policy_cannot_reinterpret_v3 ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_uses_explicit_tag_and_existing_bounded_body_lane ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1767 filtered out; finished in 0.00s
+

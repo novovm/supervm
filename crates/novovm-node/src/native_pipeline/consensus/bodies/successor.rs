@@ -12,6 +12,7 @@ use crate::native_pipeline::pipeline::{
     AuthenticatedRequest, AuthenticatedSubmission, AuthenticationRequest, AuthenticationSubmission,
     AuthenticationTicket,
 };
+use crate::native_pipeline::profile;
 
 /// Local selection hint. Its nonce overrides are read from real executed
 /// receipts, never projected from pending transactions. Not a signing permit.
@@ -504,7 +505,16 @@ impl CandidateBodies {
             Message::ApflBody { context, .. } | Message::AssetBody { context, .. } => *context,
             _ => unreachable!("structured successor checked"),
         };
-        let id = transport::candidate_body_id(message, self.codec)?;
+        let identity_started = profile::mark();
+        let (id, encoded_wire_len) =
+            transport::candidate_body_id_and_wire_len(message, self.codec)?;
+        profile::work(
+            profile::Phase::BodyIdentity,
+            identity_started,
+            context.height,
+            Some(id),
+            None,
+        );
         if let Some(work) = &self.successor {
             return Ok(!work.retired
                 && work.id == id
@@ -540,8 +550,19 @@ impl CandidateBodies {
         if !pipeline.can_authenticate_background(&request)? {
             return Ok(false);
         }
-        let mut charge = transport::encode(message, self.codec)?
-            .len()
+        let charge_started = profile::mark();
+        let wire_bytes = match encoded_wire_len {
+            Some(len) => len,
+            None => transport::encode(message, self.codec)?.len(),
+        };
+        profile::work(
+            profile::Phase::BodyCharge,
+            charge_started,
+            context.height,
+            Some(id),
+            None,
+        );
+        let mut charge = wire_bytes
             .checked_mul(2)
             .and_then(|n| n.checked_add(selection.nonce_after.len().checked_mul(96)?))
             .and_then(|n| n.checked_add(metadata))

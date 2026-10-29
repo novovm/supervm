@@ -56,6 +56,8 @@ struct CriticalRecord {
     round: Option<u64>,
     value: Option<[u8; 32]>,
     body: Option<[u8; 32]>,
+    duration_ns: Option<u64>,
+    fragment: Option<[u8; 32]>,
 }
 
 struct CriticalBuffer {
@@ -104,6 +106,7 @@ static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
 // Reuse the same bounded record/clock implementation; keep delivery diagnostics
 // from evicting the execution/consensus timeline. No payload or signing data.
 static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+static CONTROL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
 
 fn delivery_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -137,6 +140,8 @@ pub(crate) fn delivery_event(
             round: Some(u64::from(purposes)),
             value: Some(peer),
             body: Some(fragment),
+            duration_ns: None,
+            fragment: None,
         });
     }
 }
@@ -173,6 +178,8 @@ pub(crate) fn critical_event(
             round: Some(round),
             value,
             body,
+            duration_ns: None,
+            fragment: None,
         });
     }
 }
@@ -199,6 +206,8 @@ pub(crate) fn critical_projection_visible(height: u64, value: [u8; 32]) {
             round: source.as_ref().and_then(|record| record.round),
             value: Some(value),
             body: source.and_then(|record| record.body),
+            duration_ns: None,
+            fragment: None,
         });
     }
 }
@@ -243,8 +252,15 @@ pub(crate) enum Phase {
     NativeAssembly,
     NativeQuery,
     NativeSelection,
+    NativePrepareEncode,
+    NativePrepareHash,
+    NativeDecode,
+    BodyIdentity,
+    BodyCharge,
+    NativeIoGap,
+    NativeIoPeriod,
 }
-const NAMES: [&str; 32] = [
+const NAMES: [&str; 39] = [
     "admission",
     "authentication",
     "bind",
@@ -277,6 +293,13 @@ const NAMES: [&str; 32] = [
     "native_assembly",
     "native_query",
     "native_selection",
+    "native_prepare_encode",
+    "native_prepare_hash",
+    "native_decode",
+    "body_identity",
+    "body_charge",
+    "native_io_gap",
+    "native_io_period",
 ];
 struct Counter {
     calls: AtomicU64,
@@ -365,7 +388,67 @@ pub(crate) fn enabled() -> bool {
 }
 pub(crate) struct Span(Phase, Option<Instant>);
 pub(crate) fn mark() -> Option<Instant> {
-    enabled().then(Instant::now)
+    enabled().then(|| {
+        CRITICAL_START.get_or_init(Instant::now);
+        Instant::now()
+    })
+}
+pub(crate) fn work(
+    phase: Phase,
+    start: Option<Instant>,
+    height: u64,
+    body: Option<[u8; 32]>,
+    fragment: Option<[u8; 32]>,
+) {
+    work_interval(phase, start, mark(), height, body, fragment);
+}
+
+pub(crate) fn work_interval(
+    phase: Phase,
+    start: Option<Instant>,
+    end: Option<Instant>,
+    height: u64,
+    body: Option<[u8; 32]>,
+    fragment: Option<[u8; 32]>,
+) {
+    let (Some(start), Some(end)) = (start, end) else {
+        return;
+    };
+    let duration_ns = end
+        .duration_since(start)
+        .as_nanos()
+        .min(u128::from(u64::MAX)) as u64;
+    COUNTERS[phase as usize].record(duration_ns);
+    if !critical_enabled() || duration_ns < 1_000_000 {
+        return;
+    }
+    let record = CriticalRecord {
+        seq: 0,
+        elapsed_ns: end
+            .duration_since(*CRITICAL_START.get_or_init(|| start))
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64,
+        wall_unix_us: wall_unix_us(),
+        event: NAMES[phase as usize],
+        height,
+        round: None,
+        value: None,
+        body,
+        duration_ns: Some(duration_ns),
+        fragment,
+    };
+    // Keep first-height synchronous work as well as a bounded latest window.
+    if height == 1
+        && (!matches!(phase, Phase::NativeIoGap | Phase::NativeIoPeriod)
+            || duration_ns >= 5_000_000)
+    {
+        if let Ok(mut buffer) = CRITICAL.lock() {
+            buffer.push(record.clone());
+        }
+    }
+    if let Ok(mut buffer) = CONTROL.lock() {
+        buffer.push_latest(record);
+    }
 }
 pub(crate) fn elapsed(phase: Phase, start: Option<Instant>) {
     drop(Span(phase, start));
@@ -422,6 +505,8 @@ pub(crate) fn snapshot() -> Value {
                     "round":record.round,
                     "value":hash(record.value),
                     "body":hash(record.body),
+                    "duration_ns":record.duration_ns,
+                    "fragment":hash(record.fragment),
                 })).collect::<Vec<_>>()
             })
         }).unwrap_or_else(|| json!({"enabled":true,"capacity":CRITICAL_EVENTS,"unavailable":"lock poisoned"}))
@@ -442,7 +527,20 @@ pub(crate) fn snapshot() -> Value {
     } else {
         json!({"enabled":false,"capacity":CRITICAL_EVENTS,"events":[]})
     };
-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery})
+    let control = if enabled() && critical_enabled() {
+        CONTROL.lock().ok().map(|buffer| json!({
+            "enabled":true, "capacity":CRITICAL_EVENTS, "evicted":buffer.dropped,
+            "scope":"latest synchronous work and IO intervals >=1ms; elapsed_ns is interval end; start=end-duration_ns; IO period includes IO, IO gap excludes previous IO; neither is CPU idle; fragment and body are distinct identifiers",
+            "events":buffer.records.iter().map(|record| json!({
+                "seq":record.seq,"elapsed_ns":record.elapsed_ns,"duration_ns":record.duration_ns,
+                "wall_unix_us":record.wall_unix_us,"event":record.event,"height":record.height,
+                "body":hash(record.body),"fragment":hash(record.fragment)
+            })).collect::<Vec<_>>()
+        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
+    } else {
+        json!({"enabled":false,"events":[]})
+    };
+    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control})
 }
 
 #[cfg(test)]
@@ -460,7 +558,7 @@ mod tests {
         counter.record(1);
         assert_eq!(counter.ns.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(counter.max_ns.load(Ordering::Relaxed), u64::MAX);
-        assert_eq!(Phase::NativeSelection as usize + 1, NAMES.len());
+        assert_eq!(Phase::NativeIoPeriod as usize + 1, NAMES.len());
     }
 
     #[test]
@@ -476,6 +574,8 @@ mod tests {
                 round: Some(0),
                 value: None,
                 body: None,
+                duration_ns: None,
+                fragment: None,
             });
         }
         assert_eq!(buffer.records.len(), CRITICAL_EVENTS);
@@ -495,6 +595,8 @@ mod tests {
                 round: Some(2),
                 value: None,
                 body: None,
+                duration_ns: None,
+                fragment: None,
             });
         }
         assert_eq!(buffer.records.len(), CRITICAL_EVENTS);

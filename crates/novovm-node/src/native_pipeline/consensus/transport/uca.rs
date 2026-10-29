@@ -68,17 +68,23 @@ pub fn uca_body_id(
     batch: &AssetSpendBatchV2,
     limits: DecodeLimits,
 ) -> Result<Hash> {
+    uca_body_id_and_wire_len(context, batch, limits).map(|(id, _)| id)
+}
+
+fn uca_body_id_and_wire_len(
+    context: &BatchContext,
+    batch: &AssetSpendBatchV2,
+    limits: DecodeLimits,
+) -> Result<(Hash, usize)> {
     let mut bytes = Vec::new();
     append_body(&mut bytes, context, batch, limits)?;
-    ensure!(
-        bytes.len().saturating_add(PREFIX_BYTES) <= limits.message_bytes,
-        "NUAS envelope budget"
-    );
+    let wire_len = bytes.len().saturating_add(PREFIX_BYTES);
+    ensure!(wire_len <= limits.message_bytes, "NUAS envelope budget");
     let mut digest = Sha256::new();
     digest.update(b"novovm-round-bft-transport/v1/nuas-body/2\0");
     digest.update((bytes.len() as u64).to_be_bytes());
     digest.update(bytes);
-    Ok(digest.finalize().into())
+    Ok((digest.finalize().into(), wire_len))
 }
 
 pub(super) fn decode(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Message> {
@@ -140,6 +146,19 @@ pub(crate) fn candidate_body_id(message: &Message, limits: DecodeLimits) -> Resu
         Message::ApflBody { context, batch } => apfl_body_id(context, batch, limits),
         Message::AssetBody { context, batch } => uca_body_id(context, batch, limits),
         _ => anyhow::bail!("candidate input must be an exact body"),
+    }
+}
+
+/// Reuse the full NUAS encoding already needed for its body identity. Other
+/// body formats retain their existing ID and later resource-charge path.
+pub(crate) fn candidate_body_id_and_wire_len(
+    message: &Message,
+    limits: DecodeLimits,
+) -> Result<(Hash, Option<usize>)> {
+    match message {
+        Message::AssetBody { context, batch } => uca_body_id_and_wire_len(context, batch, limits)
+            .map(|(id, wire_len)| (id, Some(wire_len))),
+        _ => candidate_body_id(message, limits).map(|id| (id, None)),
     }
 }
 

@@ -110,6 +110,7 @@ pub struct NativeLifecycle {
     validators: ValidatorSet,
     codec: DecodeLimits,
     frozen: bool,
+    profile_last_io: Option<(Instant, Instant)>,
     pub rejected_messages: u64,
     pub requested_bodies: u64,
     pub served_bodies: u64,
@@ -255,6 +256,7 @@ impl NativeLifecycle {
             validators: validators.clone(),
             codec,
             frozen: false,
+            profile_last_io: None,
             rejected_messages: 0,
             requested_bodies: 0,
             served_bodies: 0,
@@ -318,7 +320,31 @@ impl NativeLifecycle {
     /// waits on a body or durable storage, sessions/ACK/repair keep progressing.
     pub fn poll_io(&mut self, wall_ms: u64, now: Instant) -> Result<()> {
         ensure!(!self.is_frozen(), "native lifecycle frozen");
+        use crate::native_pipeline::profile::{self, Phase};
+        let start = profile::mark();
+        if let Some((previous_start, previous_end)) = self.profile_last_io {
+            let height = self.progress.context().height;
+            profile::work_interval(
+                Phase::NativeIoPeriod,
+                Some(previous_start),
+                start,
+                height,
+                None,
+                None,
+            );
+            profile::work_interval(
+                Phase::NativeIoGap,
+                Some(previous_end),
+                start,
+                height,
+                None,
+                None,
+            );
+        }
         let result = self.io_inner(wall_ms, now);
+        if let (Some(start), Some(end)) = (start, profile::mark()) {
+            self.profile_last_io = Some((start, end));
+        }
         if result.is_err() {
             self.frozen = true;
         }

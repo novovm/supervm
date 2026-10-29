@@ -137,6 +137,85 @@ fn nuas_body_uses_explicit_tag_and_existing_bounded_body_lane() -> Result<()> {
 }
 
 #[test]
+fn nuas_body_identity_reuses_exact_wire_length_without_changing_transcript() -> Result<()> {
+    let f = fixture()?;
+    for count in [1, f.raw.len()] {
+        let batch = Arc::new(AssetSpendBatchV2::from_raw(
+            &f.raw[..count],
+            batch_limits(f.limits),
+        )?);
+        let message = Message::AssetBody {
+            context: f.context,
+            batch: batch.clone(),
+        };
+        let encoded = encode(&message, f.limits)?;
+        let (id, wire_len) = candidate_body_id_and_wire_len(&message, f.limits)?;
+        assert_eq!(wire_len, Some(encoded.len()));
+        assert_eq!(id, candidate_body_id(&message, f.limits)?);
+        assert_eq!(id, uca_body_id(&f.context, &batch, f.limits)?);
+
+        // Derive the identity independently from the public wire encoder. Its
+        // transcript excludes the outer magic/version/tag, including its size.
+        let payload = &encoded[PREFIX_BYTES..];
+        let mut expected = Sha256::new();
+        expected.update(b"novovm-round-bft-transport/v1/nuas-body/2\0");
+        expected.update((payload.len() as u64).to_be_bytes());
+        expected.update(payload);
+        let expected: Hash = expected.finalize().into();
+        assert_eq!(id, expected);
+        let mut wrong_length = Sha256::new();
+        wrong_length.update(b"novovm-round-bft-transport/v1/nuas-body/2\0");
+        wrong_length.update((encoded.len() as u64).to_be_bytes());
+        wrong_length.update(payload);
+        let wrong_length: Hash = wrong_length.finalize().into();
+        assert_ne!(id, wrong_length);
+        let mut wrong_payload = Sha256::new();
+        wrong_payload.update(b"novovm-round-bft-transport/v1/nuas-body/2\0");
+        wrong_payload.update((encoded.len() as u64).to_be_bytes());
+        wrong_payload.update(&encoded);
+        let wrong_payload: Hash = wrong_payload.finalize().into();
+        assert_ne!(id, wrong_payload);
+
+        if count == 1 {
+            // One row has enough column framing to isolate the wire ceiling
+            // without violating the independent expanded-body budget first.
+            let exact = DecodeLimits {
+                transaction_bytes: batch.max_transaction_bytes(),
+                body_bytes: batch.canonical_bytes(),
+                message_bytes: encoded.len(),
+                ..f.limits
+            };
+            exact.validate()?;
+            assert_eq!(encode(&message, exact)?, encoded);
+            assert_eq!(
+                candidate_body_id_and_wire_len(&message, exact)?,
+                (id, Some(encoded.len()))
+            );
+            let short = DecodeLimits {
+                message_bytes: encoded.len() - 1,
+                ..exact
+            };
+            short.validate()?;
+            assert!(encode(&message, short).is_err());
+            assert!(candidate_body_id_and_wire_len(&message, short).is_err());
+            assert!(uca_body_id(&f.context, &batch, short).is_err());
+        }
+    }
+    let legacy = Message::Body {
+        context: super::super::tests::context(),
+        raw_transactions: vec![vec![1, 2], vec![3, 4, 5]],
+    };
+    let legacy_limits = super::super::tests::limits();
+    assert_eq!(
+        candidate_body_id_and_wire_len(&legacy, legacy_limits)?,
+        (candidate_body_id(&legacy, legacy_limits)?, None)
+    );
+    let non_body = Message::RequestBody { body_id: [1; 32] };
+    assert!(candidate_body_id_and_wire_len(&non_body, f.limits).is_err());
+    Ok(())
+}
+
+#[test]
 fn nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit() -> Result<()> {
     let f = fixture()?;
     let message = Message::AssetBody {

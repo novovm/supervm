@@ -6,6 +6,7 @@
 
 pub use super::message_evidence::{MessageDomain, VerifiedEvidence};
 use super::{message_evidence, transport};
+use crate::native_pipeline::profile::{self, Phase};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 #[cfg(test)]
@@ -38,6 +39,21 @@ const STREAMS: [u64; 3] = [
 /// Application inputs have an independent reassembly budget and cannot occupy
 /// validator control/body/input lanes. Payload is the existing APFL message.
 pub const APPLICATION_STREAM: u64 = u64::from_be_bytes(*b"NVAPP001");
+
+fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
+    match message {
+        transport::Message::Proposal { proposal, .. } => {
+            Some((proposal.context.height, Some(proposal.round)))
+        }
+        transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
+        transport::Message::Decision { proposal, .. } => Some((proposal.context.height, None)),
+        transport::Message::Body { context, .. }
+        | transport::Message::ApflBody { context, .. }
+        | transport::Message::AssetBody { context, .. } => Some((context.height, None)),
+        transport::Message::RequestDecision { context } => Some((context.height, None)),
+        _ => None,
+    }
+}
 
 #[derive(Clone)]
 pub struct LaneLimits {
@@ -371,12 +387,17 @@ impl NativeChannel {
         recovery_reply: bool,
     ) -> Result<PreparedMessage> {
         message_evidence::verify(message, &self.domain)?;
+        let window = message_window(message);
+        let height = window.map_or(0, |(height, _)| height);
+        let started = profile::mark();
         let bytes = if recovery_reply {
             transport::encode_recovery_reply(message, self.codec)?
         } else {
             transport::encode(message, self.codec)?
         };
+        profile::work(Phase::NativePrepareEncode, started, height, None, None);
         let stream = STREAMS[transport::message_lane(&bytes)?];
+        let started = profile::mark();
         let object = Arc::new(OutgoingMessage::with_profile(
             transport::fragment_domain(
                 self.domain.chain_id,
@@ -387,24 +408,18 @@ impl NativeChannel {
             self.codec.message_bytes,
             FragmentProfile::NativeUdpV2,
         )?);
+        profile::work(
+            Phase::NativePrepareHash,
+            started,
+            height,
+            None,
+            Some(object.id()),
+        );
         Ok(PreparedMessage {
             owner: self.owner.clone(),
             stream,
             object,
-            window: match message {
-                transport::Message::Proposal { proposal, .. } => {
-                    Some((proposal.context.height, Some(proposal.round)))
-                }
-                transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
-                transport::Message::Decision { proposal, .. } => {
-                    Some((proposal.context.height, None))
-                }
-                transport::Message::Body { context, .. }
-                | transport::Message::ApflBody { context, .. }
-                | transport::Message::AssetBody { context, .. } => Some((context.height, None)),
-                transport::Message::RequestDecision { context } => Some((context.height, None)),
-                _ => None,
-            },
+            window,
             body_request: matches!(message, transport::Message::RequestBody { .. }),
             durable_control: matches!(
                 message,
@@ -499,6 +514,7 @@ impl NativeChannel {
         let Some(complete) = self.poll_complete(stream, now, quantum)? else {
             return Ok(None);
         };
+        let started = profile::mark();
         let parsed = (|| -> Result<_> {
             let size = complete
                 .chunks
@@ -532,6 +548,18 @@ impl NativeChannel {
             let evidence = message_evidence::verify(&message, &self.domain)?;
             Ok((message, evidence))
         })();
+        let height = parsed
+            .as_ref()
+            .ok()
+            .and_then(|(message, _)| message_window(message))
+            .map_or(0, |(height, _)| height);
+        profile::work(
+            Phase::NativeDecode,
+            started,
+            height,
+            None,
+            Some(complete.id),
+        );
         Ok(Some(match parsed {
             Ok((message, evidence)) => ReceiveEvent::Message(Box::new(ReceivedMessage {
                 peer: complete.peer,
