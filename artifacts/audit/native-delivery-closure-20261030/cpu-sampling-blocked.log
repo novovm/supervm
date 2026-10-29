@@ -1,0 +1,16 @@
+2026-10-30; diagnostic attempt only; candidate3 node 18d5f1376d1b7459e4e674402fcb2609cf45a4db0c81b4b201144d3ceaccb157
+
+Before: wpr -status -> WPR is not recording.
+xperf -on PROC_THREAD+LOADER+PROFILE -stackwalk Profile -BufferSize 1024 -MinBuffers 64 -MaxBuffers 64 -MaxFile 256 -FileMode Circular -f <workspace>/target/native-delivery-closure-20261030/cpu-kernel.etl
+Result: NT Kernel Logger, invalid flags (0x3ec). No load started.
+
+After consulting installed WPR help/profiles:
+wpr -start CPU -filemode -recordtempto <workspace>/target/native-delivery-closure-20261030
+Result:
+Failed to enable the policy to profile system performance.
+Profile Id: CPU.Verbose.File
+Error code: 0xc5585011
+No load started. No policy/registry/privilege settings changed.
+
+After: wpr -status -> WPR is not recording.
+There is no CPU-sampled load result or sampled stack attribution for this round.

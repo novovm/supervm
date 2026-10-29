@@ -1,0 +1,15 @@
+
+running 1 test
+
+thread 'novorudp::object_sender::tests::progress::lost_early_repair_retries_while_unrelated_initial_progress_continues' (34820) panicked at crates\novovm-network\src\novorudp\object_sender\tests\progress.rs:95:5:
+unrelated initial/ACK progress must not postpone the original gap retry deadline
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test novorudp::object_sender::tests::progress::lost_early_repair_retries_while_unrelated_initial_progress_continues ... FAILED
+
+failures:
+
+failures:
+    novorudp::object_sender::tests::progress::lost_early_repair_retries_while_unrelated_initial_progress_continues
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 909 filtered out; finished in 0.00s
+

@@ -108,6 +108,8 @@ pub struct NativeTransferEvidenceV1 {
     pub send_terminal_us: Option<u64>,
     pub send_terminal_state: Option<&'static str>,
     pub send: Option<NativeSendEvidenceV1>,
+    pub feedback_sent: NativeFeedbackEvidenceV1,
+    pub feedback_received: NativeFeedbackEvidenceV1,
     pub acknowledged_best: u64,
     pub verified_us: Option<u64>,
     pub work_entered_us: Option<u64>,
@@ -115,6 +117,24 @@ pub struct NativeTransferEvidenceV1 {
     pub stored_receipt_created_us: Option<u64>,
     pub response_queued_us: Option<u64>,
     pub response_tag: Option<[u8; 32]>,
+}
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct NativeFeedbackEvidenceV1 {
+    pub packets: u64,
+    pub first_us: Option<u64>,
+    pub last_us: Option<u64>,
+    pub max_gap_us: u64,
+    pub omitted_windows: u64,
+    // One sample per 64-position advancement, plus the terminal ACK. Bounds
+    // remain independent of the number of feedback packets during loss.
+    pub windows: Vec<NativeFeedbackWindowV1>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct NativeFeedbackWindowV1 {
+    pub at_us: u64,
+    pub epoch: u64,
+    pub missing: u64,
+    pub first_missing: Option<u64>,
 }
 /// Actual completed carrier writes, not queue admission or prepared frames.
 #[derive(Clone, Debug, Serialize)]
@@ -126,6 +146,10 @@ pub struct NativeSendEvidenceV1 {
     pub last_initial_us: Option<u64>,
     pub initial_complete_us: Option<u64>,
     pub first_repair_us: Option<u64>,
+    pub first_repair_index: Option<u64>,
+    pub repair_retry_passes: u64,
+    pub first_repair_retry_us: Option<u64>,
+    pub first_repair_retry_index: Option<u64>,
     pub last_repair_us: Option<u64>,
     pub first_probe_us: Option<u64>,
     pub last_probe_us: Option<u64>,
@@ -142,6 +166,10 @@ pub(crate) struct NativeSendProgressV1 {
     pub last_initial: Option<Instant>,
     pub initial_complete: Option<Instant>,
     pub first_repair: Option<Instant>,
+    pub first_repair_index: Option<u64>,
+    pub repair_retry_passes: u64,
+    pub first_repair_retry: Option<Instant>,
+    pub first_repair_retry_index: Option<u64>,
     pub last_repair: Option<Instant>,
     pub first_probe: Option<Instant>,
     pub last_probe: Option<Instant>,
@@ -232,6 +260,8 @@ impl State {
                     send_terminal_us: None,
                     send_terminal_state: None,
                     send: None,
+                    feedback_sent: NativeFeedbackEvidenceV1::default(),
+                    feedback_received: NativeFeedbackEvidenceV1::default(),
                     acknowledged_best: 0,
                     verified_us: None,
                     work_entered_us: None,
@@ -314,6 +344,7 @@ impl NativeTransferDiagnosticsV1 {
                 r.send_terminal_us = None;
                 r.send_terminal_state = None;
                 r.send = None;
+                r.feedback_received = NativeFeedbackEvidenceV1::default();
                 r.acknowledged_best = 0;
                 r.transport_done_us = None;
                 r.total_fragments.get_or_insert(amount);
@@ -390,6 +421,10 @@ impl NativeTransferDiagnosticsV1 {
             last_initial_us: p.last_initial.map(|at| self.micros(at)),
             initial_complete_us: p.initial_complete.map(|at| self.micros(at)),
             first_repair_us: p.first_repair.map(|at| self.micros(at)),
+            first_repair_index: p.first_repair_index,
+            repair_retry_passes: p.repair_retry_passes,
+            first_repair_retry_us: p.first_repair_retry.map(|at| self.micros(at)),
+            first_repair_retry_index: p.first_repair_retry_index,
             last_repair_us: p.last_repair.map(|at| self.micros(at)),
             first_probe_us: p.first_probe.map(|at| self.micros(at)),
             last_probe_us: p.last_probe.map(|at| self.micros(at)),
@@ -402,6 +437,45 @@ impl NativeTransferDiagnosticsV1 {
         let Some(r) = s.record(tag, at) else { return };
         r.send_terminal_us.get_or_insert(at);
         r.send_terminal_state.get_or_insert(state);
+    }
+    pub(crate) fn feedback(
+        &self,
+        tag: [u8; 32],
+        sent: bool,
+        epoch: u64,
+        missing: u64,
+        first_missing: Option<u64>,
+        now: Instant,
+    ) {
+        let Ok(mut s) = self.state.lock() else { return };
+        let at = self.micros(now);
+        let Some(r) = s.record(tag, at) else { return };
+        let f = if sent {
+            &mut r.feedback_sent
+        } else {
+            &mut r.feedback_received
+        };
+        f.packets += 1;
+        f.first_us.get_or_insert(at);
+        if let Some(previous) = f.last_us {
+            f.max_gap_us = f.max_gap_us.max(at.saturating_sub(previous));
+        }
+        f.last_us = Some(at);
+        if f.windows
+            .last()
+            .is_none_or(|w| w.first_missing.map(|n| n / 64) != first_missing.map(|n| n / 64))
+        {
+            if f.windows.len() < 256 {
+                f.windows.push(NativeFeedbackWindowV1 {
+                    at_us: at,
+                    epoch,
+                    missing,
+                    first_missing,
+                });
+            } else {
+                f.omitted_windows += 1;
+            }
+        }
     }
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn response(&self, request: [u8; 32], response: [u8; 32], now: Instant) {
@@ -436,6 +510,10 @@ impl NativeTransferDiagnosticsV1 {
             expired_records: s.snapshot.expired_records,
         })
     }
+    /// Cumulative observer-wide rejection counters, not attributed to one object.
+    pub fn snapshot_rejections(&self) -> Option<NativeRejectCountsV1> {
+        Some(self.state.lock().ok()?.snapshot.rejections)
+    }
     fn snapshot_at(&self, now: Instant) -> Option<NativeEvidenceSnapshotV1> {
         let mut s = self.state.lock().ok()?;
         s.expire(self.micros(now));
@@ -455,6 +533,39 @@ impl Default for NativeTransferDiagnosticsV1 {
 mod tests {
     use super::*;
     use std::time::Duration;
+    #[test]
+    fn feedback_tracks_actual_window_progress_with_bounded_evidence() {
+        let d = NativeTransferDiagnosticsV1::new();
+        let tag = [6; 32];
+        for n in 0..300 {
+            d.feedback(
+                tag,
+                true,
+                n + 1,
+                20_000 - n * 64,
+                Some(n * 64),
+                d.origin + Duration::from_millis(n),
+            );
+        }
+        let record = d.snapshot_transfer(tag).unwrap();
+        assert_eq!(record.feedback_sent.packets, 300);
+        assert_eq!(record.feedback_sent.windows.len(), 256);
+        assert_eq!(record.feedback_sent.omitted_windows, 44);
+        assert_eq!(record.feedback_sent.max_gap_us, 1000);
+        assert_eq!(record.feedback_received.packets, 0);
+        d.feedback(
+            tag,
+            false,
+            2,
+            19_936,
+            Some(64),
+            d.origin + Duration::from_millis(350),
+        );
+        assert_eq!(
+            d.snapshot_transfer(tag).unwrap().feedback_received.windows[0].epoch,
+            2
+        );
+    }
     #[test]
     fn fragment_completion_and_read_only_snapshot_keep_separate_boundaries() {
         let d = NativeTransferDiagnosticsV1::for_stream(11);

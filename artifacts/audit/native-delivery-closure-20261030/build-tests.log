@@ -1,0 +1,21 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+error[E0433]: failed to resolve: use of undeclared type `NovoRudpSenderRepairDecision`
+   --> crates\novovm-network\src\novorudp\object_link.rs:724:84
+    |
+724 | ...                   if matches!(&decision, Ok(result) if !matches!(result, NovoRudpSenderRepairDecision::StaleAck { .. }))
+    |                                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ use of undeclared type `NovoRudpSenderRepairDecision`
+    |
+help: consider importing this enum through its public re-export
+    |
+  4 + use crate::NovoRudpSenderRepairDecision;
+    |
+
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `novovm-network` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `novovm-network` (lib test) due to 1 previous error

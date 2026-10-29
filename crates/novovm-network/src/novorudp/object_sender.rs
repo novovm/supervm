@@ -65,6 +65,11 @@ pub struct NativeObjectSender {
     copy: u64,
     repair: Option<RepairCursor>,
     repair_generation: u64,
+    // Keep successful writes in the current repair pass across ACK snapshots.
+    // The original retry wait, not a changing ACK, reopens already sent gaps.
+    repair_floor: u64,
+    retry_tail_end: Option<u64>,
+    repair_turn: bool,
     pending: Option<PendingSend>,
     last_plan: Option<NovoRudpRepairPlan>,
     last_missing: Option<u64>,
@@ -72,6 +77,9 @@ pub struct NativeObjectSender {
     next_send: Instant,
     deferred_batch_sent: usize,
     feedback_deadline: Instant,
+    // Already written repairs keep their original feedback wait even while
+    // unrelated initial fragments are still making progress.
+    repair_feedback_deadline: Option<Instant>,
     deadline: Instant,
     attempts: u64,
     acknowledged_best: u64,
@@ -118,6 +126,9 @@ impl NativeObjectSender {
             copy: 0,
             repair: None,
             repair_generation: 0,
+            repair_floor: 0,
+            retry_tail_end: None,
+            repair_turn: false,
             pending: None,
             last_plan: None,
             last_missing: None,
@@ -125,6 +136,7 @@ impl NativeObjectSender {
             next_send: now,
             deferred_batch_sent: 0,
             feedback_deadline: now,
+            repair_feedback_deadline: None,
             deadline: now.checked_add(ttl).context("object TTL overflow")?,
             attempts: 0,
             acknowledged_best: 0,
@@ -133,6 +145,13 @@ impl NativeObjectSender {
     }
     pub(crate) fn acknowledged_best_v1(&self) -> u64 {
         self.acknowledged_best
+    }
+    pub(crate) fn feedback_state_v1(&self) -> (u64, u64, Option<u64>) {
+        (
+            self.state.latest_ack_epoch,
+            self.last_missing.unwrap_or(self.body.frame_count() as u64),
+            self.state.active_window.map(|w| w.start),
+        )
     }
     pub(crate) fn enable_diagnostics_v1(&mut self) {
         self.diagnostic_progress = Some(diagnostics::NativeSendProgressV1::default());
@@ -211,43 +230,37 @@ impl NativeObjectSender {
                     .last_plan
                     .as_ref()
                     .is_some_and(|old| old.window == plan.window);
-                if !same {
-                    // Once ack_wait has armed a full tail repair, genuine ACK
-                    // progress must not turn its remaining tail back into an
-                    // unconfirmed/in-flight run. A trimmed internal-gap plan
-                    // also has a final window, so check the actual last range.
-                    let repairing_tail = self.initial == self.body.frame_count()
-                        && self.repair.as_ref().is_some_and(|repair| {
-                            repair
-                                .plan
-                                .window
-                                .missing_ranges
-                                .last()
-                                .is_some_and(|range| {
-                                    range.end_inclusive + 1 == self.body.frame_count() as u64
-                                })
-                        });
-                    self.repair_generation = self
-                        .repair_generation
-                        .checked_add(1)
-                        .context("native repair generation exhausted")?;
+                if !same || progress {
+                    let previous = self.repair.as_ref().map(|r| (r.index, r.copy));
+                    if let Some((index, copy)) = previous {
+                        if copy >= plan.packet_copies {
+                            self.repair_floor = self.repair_floor.max(index + 1);
+                        }
+                    }
+                    let previous_write = self
+                        .repair
+                        .as_ref()
+                        .map(|r| (r.index, r.copy, r.plan.packet_copies));
                     self.last_plan = Some(plan.clone());
-                    // UDP receivers ACK after almost every fragment, so the
-                    // final window's trailing missing run is usually still in
-                    // flight or not yet sent. Repair only gaps behind the
-                    // receiver's newest fragment now; the ack_wait retry
-                    // repairs a genuinely lost tail from the full last_plan.
-                    let next_plan = if repairing_tail {
-                        Some(plan.clone())
-                    } else {
-                        trim_unconfirmed_tail(plan, self.body.frame_count() as u64)
-                    };
-                    self.repair = next_plan.map(|plan| RepairCursor {
-                        index: plan.window.missing_ranges[0].start,
+                    self.repair = trim_unconfirmed_tail(
                         plan,
-                        range: 0,
-                        copy: 0,
-                    });
+                        self.body.frame_count() as u64,
+                        ack.missing_count,
+                        self.retry_tail_end,
+                    )
+                    .and_then(|plan| repair_cursor(plan, self.repair_floor, previous));
+                    let next_write = self
+                        .repair
+                        .as_ref()
+                        .map(|r| (r.index, r.copy, r.plan.packet_copies));
+                    // A held carrier frame still completes this exact cursor if
+                    // only later gaps changed. Do not discard its completion.
+                    if next_write != previous_write {
+                        self.repair_generation = self
+                            .repair_generation
+                            .checked_add(1)
+                            .context("native repair generation exhausted")?;
+                    }
                 }
             }
         }
@@ -256,6 +269,13 @@ impl NativeObjectSender {
             .acknowledged_best
             .max(self.body.frame_count() as u64 - ack.missing_count);
         self.last_missing = Some(ack.missing_count);
+        if ack
+            .current_window_missing_ranges
+            .first()
+            .is_none_or(|range| range.start >= self.repair_floor)
+        {
+            self.repair_feedback_deadline = None;
+        }
         if progress {
             self.attempts = 0;
             self.feedback_deadline = self.feedback_due(now);
@@ -299,27 +319,57 @@ impl NativeObjectSender {
             return Ok(0);
         }
         let initial = self.initial < self.body.frame_count();
-        let retry = self.pending.is_none() && !initial && self.repair.is_none();
-        if retry && now < self.feedback_deadline {
+        let idle_cursor = self.pending.is_none() && self.repair.is_none();
+        let ordinary_retry = idle_cursor && !initial && now >= self.feedback_deadline;
+        let gap_plan = if !ordinary_retry
+            && idle_cursor
+            && self.repair_feedback_deadline.is_some_and(|due| now >= due)
+        {
+            self.last_plan
+                .as_ref()
+                .and_then(|plan| {
+                    trim_unconfirmed_tail(
+                        plan,
+                        self.body.frame_count() as u64,
+                        self.last_missing.expect("repair ACK retained"),
+                        None,
+                    )
+                })
+                .filter(|plan| plan.window.missing_ranges[0].start < self.repair_floor)
+        } else {
+            None
+        };
+        let retry = ordinary_retry || gap_plan.is_some();
+        if idle_cursor && !initial && !retry {
             return Ok(0);
         }
-        if retry
-            && self.attempts >= self.config.max_window_retries
-            && (self.config.no_progress_backoff || self.pacing.no_progress_backoff)
-        {
+        let backoff = self.attempts >= self.config.max_window_retries
+            && (self.config.no_progress_backoff || self.pacing.no_progress_backoff);
+        if retry && backoff && !initial {
             // Suppress repeated no-progress work, not the retained intent.
             // Fresh progress reopens the cursor; only its explicit TTL expires it.
             return Ok(0);
         }
-        if retry {
+        if retry && !backoff {
             self.retry_pending = true;
+            self.repair_floor = 0;
+            self.retry_tail_end = None;
+            self.repair_feedback_deadline = None;
             if let Some(plan) = &self.last_plan {
-                self.repair = Some(RepairCursor {
-                    plan: plan.clone(),
-                    range: 0,
-                    index: plan.window.missing_ranges[0].start,
-                    copy: 0,
-                });
+                self.repair_generation = self
+                    .repair_generation
+                    .checked_add(1)
+                    .context("native repair generation exhausted")?;
+                let retry_plan = if ordinary_retry {
+                    self.retry_tail_end =
+                        plan.window.missing_ranges.last().map(|r| r.end_inclusive);
+                    Some(plan.clone())
+                } else {
+                    // A lost early repair may retry before initial completion;
+                    // that is not permission to send the unconfirmed tail early.
+                    gap_plan
+                };
+                self.repair = retry_plan.and_then(|plan| repair_cursor(plan, 0, None));
             }
         }
         let batch =
@@ -335,7 +385,11 @@ impl NativeObjectSender {
         let mut sent = 0;
         for _ in 0..budget.min(batch) {
             if self.pending.is_none() {
-                let (index, copies, kind) = if self.initial < self.body.frame_count() {
+                // Proven gaps need not wait for the whole multi-MiB initial
+                // body. Alternate the existing cursors within the same quantum.
+                let send_initial = self.initial < self.body.frame_count()
+                    && (!self.repair_turn || self.repair.is_none());
+                let (index, copies, kind) = if send_initial {
                     (
                         self.initial,
                         self.config.packet_copies.max(self.pacing.packet_copies),
@@ -367,7 +421,7 @@ impl NativeObjectSender {
                     self.state.latest_ack_epoch,
                     self.body.frame(index)?,
                 );
-                let cursor = if self.initial < self.body.frame_count() {
+                let cursor = if send_initial {
                     PendingCursor::Initial {
                         index: self.initial,
                         copy: self.copy,
@@ -391,6 +445,7 @@ impl NativeObjectSender {
             }
             let pending = self.pending.take().expect("completed native frame");
             sent += 1;
+            self.repair_turn = matches!(pending.cursor, PendingCursor::Initial { .. });
             if let Some(progress) = &mut self.diagnostic_progress {
                 let observed_at = Instant::now();
                 match &pending.cursor {
@@ -402,6 +457,13 @@ impl NativeObjectSender {
                     PendingCursor::Repair { index, .. } => {
                         progress.repair_packets = progress.repair_packets.saturating_add(1);
                         progress.first_repair.get_or_insert(observed_at);
+                        progress.first_repair_index.get_or_insert(*index);
+                        if self.retry_pending {
+                            progress.repair_retry_passes =
+                                progress.repair_retry_passes.saturating_add(1);
+                            progress.first_repair_retry.get_or_insert(observed_at);
+                            progress.first_repair_retry_index.get_or_insert(*index);
+                        }
                         progress.last_repair = Some(observed_at);
                         progress.last_repair_index = Some(*index);
                     }
@@ -412,7 +474,7 @@ impl NativeObjectSender {
                     }
                 }
             }
-            if self.retry_pending {
+            if self.retry_pending && !matches!(pending.cursor, PendingCursor::Initial { .. }) {
                 self.attempts = self.attempts.saturating_add(1);
                 self.retry_pending = false;
             }
@@ -449,6 +511,9 @@ impl NativeObjectSender {
                         }
                         continue;
                     }
+                    // Wait after the last actual repair write in this bounded
+                    // pass; unrelated initial writes/ACKs cannot extend it.
+                    self.repair_feedback_deadline = Some(self.feedback_due(now));
                     let repair = self.repair.as_mut().expect("current repair cursor");
                     ensure!(
                         repair.index == index && repair.copy == copy,
@@ -458,6 +523,7 @@ impl NativeObjectSender {
                     if repair.copy == copies {
                         repair.copy = 0;
                         repair.index += 1;
+                        self.repair_floor = repair.index;
                         if repair.index
                             > repair.plan.window.missing_ranges[repair.range].end_inclusive
                         {
@@ -516,18 +582,26 @@ impl NativeObjectSender {
     }
 }
 
-/// In the object's final window, drop the trailing missing run: fragments after
-/// the receiver's newest one are not yet known lost. Earlier gaps are kept, and
-/// non-final windows are unchanged. `None` means no gap needs repair now.
-fn trim_unconfirmed_tail(plan: &NovoRudpRepairPlan, total: u64) -> Option<NovoRudpRepairPlan> {
+/// Trim unconfirmed trailing data in any window, not just the object's final
+/// window. Preserve the unsent tail already armed by the original retry wait.
+fn trim_unconfirmed_tail(
+    plan: &NovoRudpRepairPlan,
+    total: u64,
+    missing: u64,
+    armed_end: Option<u64>,
+) -> Option<NovoRudpRepairPlan> {
     let ranges = &plan.window.missing_ranges;
     let last = ranges.last()?;
-    if plan.window.range.end_inclusive.saturating_add(1) != total
-        || last.end_inclusive.saturating_add(1) != total
+    let after_window = total - plan.window.range.end_inclusive - 1;
+    if last.end_inclusive != plan.window.range.end_inclusive
+        || missing.saturating_sub(plan.window.missing_count) != after_window
     {
         return Some(plan.clone());
     }
-    let gaps = ranges[..ranges.len() - 1].to_vec();
+    let mut gaps = ranges[..ranges.len() - 1].to_vec();
+    if let Some(end) = armed_end.filter(|end| *end >= last.start) {
+        gaps.push(NovoRudpRange::new(last.start, last.end_inclusive.min(end)));
+    }
     if gaps.is_empty() {
         return None;
     }
@@ -535,6 +609,28 @@ fn trim_unconfirmed_tail(plan: &NovoRudpRepairPlan, total: u64) -> Option<NovoRu
     trimmed.window.missing_count = missing_count(&gaps);
     trimmed.window.missing_ranges = gaps;
     Some(trimmed)
+}
+
+fn repair_cursor(
+    mut plan: NovoRudpRepairPlan,
+    floor: u64,
+    previous: Option<(u64, u64)>,
+) -> Option<RepairCursor> {
+    plan.window.missing_ranges.retain_mut(|range| {
+        range.start = range.start.max(floor);
+        range.start <= range.end_inclusive
+    });
+    let index = plan.window.missing_ranges.first()?.start;
+    plan.window.missing_count = missing_count(&plan.window.missing_ranges);
+    let copy = previous
+        .filter(|(old, _)| *old == index)
+        .map_or(0, |(_, copy)| copy);
+    Some(RepairCursor {
+        plan,
+        range: 0,
+        index,
+        copy,
+    })
 }
 
 #[cfg(test)]

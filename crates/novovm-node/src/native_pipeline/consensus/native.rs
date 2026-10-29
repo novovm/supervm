@@ -485,6 +485,7 @@ impl NativeChannel {
                         "fragment":message.fragment_id(), "tag":tag,
                         "observer_elapsed_us":observer.elapsed_us(Instant::now()),
                         "retention":observer.snapshot_retention(),
+                        "rejections_cumulative":observer.snapshot_rejections(),
                         "evidence":observer.snapshot_transfer(tag)
                     })
                 });
@@ -513,6 +514,7 @@ impl NativeChannel {
                             "state":format!("{:?}",completion.state),
                             "observer_elapsed_us":observer.elapsed_us(Instant::now()),
                             "retention":observer.snapshot_retention(),
+                            "rejections_cumulative":observer.snapshot_rejections(),
                             "evidence":observer.snapshot_transfer(tag)
                         })
                     });
@@ -589,6 +591,7 @@ impl NativeChannel {
                             "peer":complete.peer,"peer_index":peer,"fragment":complete.id,"tag":tag,
                             "observer_elapsed_us":observer.elapsed_us(Instant::now()),
                             "retention":observer.snapshot_retention(),
+                            "rejections_cumulative":observer.snapshot_rejections(),
                             "evidence":observer.snapshot_transfer(tag)
                         })
                     });

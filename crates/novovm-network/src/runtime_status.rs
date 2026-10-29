@@ -1663,9 +1663,15 @@ fn network_runtime_native_repair_sequence_ranges_sample_v1(
 
 const RECEIVER_DECODE_ATTRIBUTION_SAMPLE_LIMIT_V1: usize = 16;
 
-fn receiver_decode_attribution_sample_push_v1<T>(sample: &mut Vec<T>, value: T) {
+fn receiver_decode_attribution_sample_push_v1<T>(
+    sample: &mut Vec<T>,
+    value: impl FnOnce() -> T,
+) -> bool {
     if sample.len() < RECEIVER_DECODE_ATTRIBUTION_SAMPLE_LIMIT_V1 {
-        sample.push(value);
+        sample.push(value());
+        true
+    } else {
+        false
     }
 }
 
@@ -1715,16 +1721,21 @@ fn receiver_decode_attribution_observe_packet_sample_v1(
     );
     receiver_decode_attribution_sample_push_v1(
         &mut state.receiver_udp_packet_source_addr_sample,
-        source.to_string(),
+        || source.to_string(),
     );
-    receiver_decode_attribution_sample_push_v1(&mut state.receiver_udp_packet_len_samples, len);
+    if receiver_decode_attribution_sample_push_v1(
+        &mut state.receiver_udp_packet_len_samples,
+        || len,
+    ) {
+        receiver_decode_attribution_refresh_len_percentiles_v1(state);
+    }
     receiver_decode_attribution_sample_push_v1(
         &mut state.receiver_udp_packet_first_bytes_hex_sample,
-        receiver_decode_attribution_first_bytes_hex_v1(packet),
+        || receiver_decode_attribution_first_bytes_hex_v1(packet),
     );
     receiver_decode_attribution_sample_push_v1(
         &mut state.receiver_udp_packet_decode_stage_sample,
-        stage.to_string(),
+        || stage.to_string(),
     );
 }
 
@@ -1834,7 +1845,12 @@ pub fn observe_network_runtime_receiver_udp_packet_recv_v1(
     let now_ms = network_runtime_now_ms_v1();
     if let Some(previous_ms) = state.receiver_last_recv_ms {
         let gap_ms = now_ms.saturating_sub(previous_ms);
-        receiver_decode_attribution_sample_push_v1(&mut state.receiver_recv_gap_samples_ms, gap_ms);
+        if receiver_decode_attribution_sample_push_v1(
+            &mut state.receiver_recv_gap_samples_ms,
+            || gap_ms,
+        ) {
+            receiver_decode_attribution_refresh_recv_gap_percentiles_v1(state);
+        }
         state.receiver_recv_gap_max_ms = Some(
             state
                 .receiver_recv_gap_max_ms
@@ -1844,7 +1860,6 @@ pub fn observe_network_runtime_receiver_udp_packet_recv_v1(
         if state.receiver_repair_window_active && gap_ms >= 100 {
             state.receiver_udp_drop_or_overrun_suspected = true;
         }
-        receiver_decode_attribution_refresh_recv_gap_percentiles_v1(state);
     }
     state.receiver_last_recv_ms = Some(now_ms);
     if state.receiver_repair_window_active {
@@ -1860,7 +1875,6 @@ pub fn observe_network_runtime_receiver_udp_packet_recv_v1(
         .receiver_udp_packet_recv_bytes_total
         .saturating_add(packet.len().try_into().unwrap_or(u64::MAX));
     receiver_decode_attribution_observe_packet_sample_v1(state, source, packet, "udp_recv");
-    receiver_decode_attribution_refresh_len_percentiles_v1(state);
 }
 
 pub fn observe_network_runtime_receiver_recv_loop_iteration_v1(chain_id: u64) {
@@ -2041,10 +2055,9 @@ pub fn observe_network_runtime_receiver_udp_packet_decode_error_v1(
     receiver_decode_attribution_observe_packet_sample_v1(state, source, packet, "decode_error");
     receiver_decode_attribution_sample_push_v1(
         &mut state.receiver_udp_packet_drop_reason_sample,
-        error.to_string(),
+        || error.to_string(),
     );
     receiver_decode_attribution_classify_decode_error_v1(state, error);
-    receiver_decode_attribution_refresh_len_percentiles_v1(state);
 }
 
 pub fn observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
@@ -2105,9 +2118,8 @@ pub fn observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
     receiver_decode_attribution_observe_packet_sample_v1(state, source, packet, reason);
     receiver_decode_attribution_sample_push_v1(
         &mut state.receiver_udp_packet_drop_reason_sample,
-        reason.to_string(),
+        || reason.to_string(),
     );
-    receiver_decode_attribution_refresh_len_percentiles_v1(state);
 }
 
 pub fn observe_network_runtime_receiver_transaction_frame_auth_drop_v1(
@@ -2121,7 +2133,7 @@ pub fn observe_network_runtime_receiver_transaction_frame_auth_drop_v1(
     receiver_decode_attribution_classify_decode_error_v1(state, reason);
     receiver_decode_attribution_sample_push_v1(
         &mut state.receiver_udp_packet_drop_reason_sample,
-        reason.to_string(),
+        || reason.to_string(),
     );
 }
 
@@ -7937,6 +7949,109 @@ pub fn finish_network_runtime_native_sync(
 mod tests {
     use super::*;
     use novovm_protocol::NovTxKindV1;
+
+    #[test]
+    fn receiver_full_sample_does_not_construct_discarded_values() {
+        let mut samples = Vec::new();
+        for value in 0..RECEIVER_DECODE_ATTRIBUTION_SAMPLE_LIMIT_V1 {
+            assert!(receiver_decode_attribution_sample_push_v1(
+                &mut samples,
+                || value
+            ));
+        }
+        assert!(!receiver_decode_attribution_sample_push_v1(
+            &mut samples,
+            || { panic!("a full diagnostic sample must not build a discarded value") }
+        ));
+        assert_eq!(samples, (0..16).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn receiver_full_samples_keep_counters_and_error_classification_live() {
+        let chain_id = rand::random::<u64>();
+        let source: SocketAddr = "127.0.0.1:43210".parse().unwrap();
+        for len in 1..=34 {
+            observe_network_runtime_receiver_udp_packet_recv_v1(chain_id, source, &vec![7; len]);
+        }
+        let before = {
+            let mut guard = runtime_receiver_decode_attribution_map().lock().unwrap();
+            let state = guard.get_mut(&chain_id).unwrap();
+            state.receiver_repair_window_active = true;
+            state.receiver_last_recv_ms = Some(network_runtime_now_ms_v1().saturating_sub(150));
+            state.clone()
+        };
+        observe_network_runtime_receiver_udp_packet_recv_v1(chain_id, source, &[9; 100]);
+        observe_network_runtime_receiver_udp_packet_decode_error_v1(
+            chain_id,
+            source,
+            &[8; 200],
+            "magic mismatch",
+        );
+        observe_network_runtime_receiver_udp_packet_predecode_drop_v1(
+            chain_id,
+            source,
+            &[],
+            "too_short",
+        );
+        observe_network_runtime_receiver_transaction_frame_auth_drop_v1(chain_id, "auth key");
+        let guard = runtime_receiver_decode_attribution_map().lock().unwrap();
+        let state = guard.get(&chain_id).unwrap();
+        assert_eq!(state.receiver_udp_packet_recv_count, 35);
+        assert_eq!(
+            state.receiver_udp_packet_recv_bytes_total,
+            (1..=34).sum::<u64>() + 100
+        );
+        assert_eq!(state.receiver_udp_packet_len_min, Some(0));
+        assert_eq!(state.receiver_udp_packet_len_max, Some(200));
+        assert!(state.receiver_recv_gap_max_ms.unwrap() >= 150);
+        assert!(state.receiver_udp_drop_or_overrun_suspected);
+        assert_eq!(state.receiver_repair_window_socket_recv_count, 1);
+        assert_eq!(state.receiver_recv_success_during_repair_window_count, 1);
+        assert_eq!(
+            state.receiver_udp_packet_len_samples,
+            before.receiver_udp_packet_len_samples
+        );
+        assert_eq!(
+            state.receiver_udp_packet_len_p50,
+            before.receiver_udp_packet_len_p50
+        );
+        assert_eq!(
+            state.receiver_udp_packet_len_p90,
+            before.receiver_udp_packet_len_p90
+        );
+        assert_eq!(
+            state.receiver_recv_gap_samples_ms,
+            before.receiver_recv_gap_samples_ms
+        );
+        assert_eq!(
+            state.receiver_recv_gap_p95_ms,
+            before.receiver_recv_gap_p95_ms
+        );
+        assert_eq!(
+            state.receiver_udp_packet_source_addr_sample,
+            before.receiver_udp_packet_source_addr_sample
+        );
+        assert_eq!(
+            state.receiver_udp_packet_first_bytes_hex_sample,
+            before.receiver_udp_packet_first_bytes_hex_sample
+        );
+        assert_eq!(
+            state.receiver_udp_packet_decode_stage_sample,
+            before.receiver_udp_packet_decode_stage_sample
+        );
+        assert_eq!(state.receiver_udp_packet_decode_error_count, 1);
+        assert_eq!(state.receiver_frame_magic_mismatch_count, 1);
+        assert_eq!(state.receiver_udp_packet_predecode_drop_count, 1);
+        assert_eq!(
+            state.receiver_udp_packet_predecode_drop_reason_too_short_count,
+            1
+        );
+        assert_eq!(state.receiver_frame_auth_key_mismatch_count, 1);
+        assert_eq!(
+            state.receiver_udp_packet_drop_reason_sample,
+            ["magic mismatch", "too_short", "auth key"]
+        );
+    }
 
     #[test]
     fn receiver_queue_snapshot_copies_existing_numbers_without_mutation() {

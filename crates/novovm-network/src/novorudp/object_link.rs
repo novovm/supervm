@@ -16,8 +16,8 @@ use super::{
     object_ack::{encode_object_ack, OBJECT_WINDOW},
     object_receiver::NativeObjectReceiver,
     object_sender::{NativeObjectSender, ObjectSendState},
-    NovoRudpPacingProfile, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
-    NovoRudpWindowConfig,
+    NovoRudpPacingProfile, NovoRudpSenderRepairDecision, NovoRudpTransportFrameKindV0,
+    NovoRudpTransportFrameV0, NovoRudpWindowConfig,
 };
 use anyhow::{ensure, Context, Result};
 use std::{
@@ -139,6 +139,7 @@ impl NativeSendCancellation {
 struct PendingFeedback {
     frame: NovoRudpTransportFrameV0,
     dirty: bool,
+    evidence: Option<(u64, u64, Option<u64>)>,
 }
 struct Lane {
     config: NativeLaneConfig,
@@ -714,7 +715,30 @@ impl NativeObjectLink {
                     }
                     if sender.status() == ObjectSendState::Sending {
                         let before = sender.acknowledged_best_v1();
-                        if sender.on_ack(frame, now).is_err() {
+                        let decision = sender.on_ack(frame, now);
+                        if let Some(d) = self
+                            .diagnostics
+                            .as_ref()
+                            .filter(|d| d.tracks_stream(stream))
+                        {
+                            if matches!(&decision, Ok(result) if !matches!(result, NovoRudpSenderRepairDecision::StaleAck { .. }))
+                            {
+                                let (epoch, missing, first_missing) = sender.feedback_state_v1();
+                                d.feedback(
+                                    transfer_tag_v1(
+                                        sender.session_id(),
+                                        stream,
+                                        sender.body().id(),
+                                    ),
+                                    false,
+                                    epoch,
+                                    missing,
+                                    first_missing,
+                                    Instant::now(),
+                                );
+                            }
+                        }
+                        if decision.is_err() {
                             report.rejected += 1;
                             report
                                 .rejection_reasons
@@ -979,6 +1003,17 @@ impl NativeObjectLink {
                 entry.insert(PendingFeedback {
                     frame: encode_object_ack(id, stream, &ack)?,
                     dirty: false,
+                    evidence: self
+                        .diagnostics
+                        .as_ref()
+                        .filter(|d| d.tracks_stream(stream))
+                        .map(|_| {
+                            (
+                                ack.header.epoch,
+                                ack.missing_count,
+                                ack.current_window.map(|w| w.start),
+                            )
+                        }),
                 });
             }
             let pending = lane
@@ -992,6 +1027,18 @@ impl NativeObjectLink {
                         .pending_feedback
                         .remove(&key)
                         .expect("completed native ACK");
+                    if let (Some(d), Some((epoch, missing, first_missing))) =
+                        (&self.diagnostics, pending.evidence)
+                    {
+                        d.feedback(
+                            transfer_tag_v1(session, stream, id),
+                            true,
+                            epoch,
+                            missing,
+                            first_missing,
+                            Instant::now(),
+                        );
+                    }
                     if pending.dirty {
                         lane.feedback(peer, id);
                     }

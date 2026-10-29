@@ -1,0 +1,29 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Finished `release` profile [optimized] target(s) in 44.45s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_network-a7fd60f476af65e4.exe)
+
+running 1 test
+test novorudp::object_sender::tests::progress::proven_internal_gaps_progress_before_whole_initial_body_finishes ... FAILED
+
+failures:
+
+---- novorudp::object_sender::tests::progress::proven_internal_gaps_progress_before_whole_initial_body_finishes stdout ----
+
+thread 'novorudp::object_sender::tests::progress::proven_internal_gaps_progress_before_whole_initial_body_finishes' (10420) panicked at crates\novovm-network\src\novorudp\object_sender\tests\progress.rs:274:9:
+assertion `left == right` failed: confirmed gaps cannot wait for the other 120 initial frames
+  left: []
+ right: [1, 3, 5]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    novorudp::object_sender::tests::progress::proven_internal_gaps_progress_before_whole_initial_body_finishes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 906 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p novovm-network --lib`

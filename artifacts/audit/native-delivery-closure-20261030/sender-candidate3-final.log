@@ -1,0 +1,34 @@
+
+running 29 tests
+test novorudp::object_sender::tests::blocked_initial_write_keeps_exact_frame_across_new_ack_epoch ... ok
+test novorudp::object_sender::tests::blocked_repair_completion_does_not_skip_replacement_cursor ... ok
+test novorudp::object_sender::tests::bounded_no_feedback_retries_return_original_body_without_fake_delivery ... ok
+test novorudp::object_sender::tests::deferred_writer_paces_a_batch_not_each_completed_frame ... ok
+test novorudp::object_sender::tests::diagnostic_ack_high_water_requires_new_verified_information ... ok
+test novorudp::object_sender::tests::final_window_repairs_gaps_now_and_unconfirmed_tail_only_after_ack_wait ... ok
+test novorudp::object_sender::tests::invalid_and_stale_feedback_cannot_deliver_or_rewrite_repair_state ... ok
+test novorudp::object_sender::tests::native_read_request_recovers_after_initial_loss_with_both_backoff_flags_disabled ... ok
+test novorudp::object_sender::tests::one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind ... ok
+test novorudp::object_sender::tests::progress::changed_ack_keeps_completion_of_same_blocked_cursor ... ok
+test novorudp::object_sender::tests::progress::changed_ack_keeps_partial_copy_progress ... ok
+test novorudp::object_sender::tests::progress::early_blocked_repair_keeps_pending_ownership_across_ack_and_deadline ... ok
+test novorudp::object_sender::tests::progress::early_repair_backoff_keeps_initial_data_moving ... ok
+test novorudp::object_sender::tests::progress::lost_early_repair_retries_while_unrelated_initial_progress_continues ... ok
+test novorudp::object_sender::tests::progress::lost_repair_reopens_only_at_original_feedback_deadline ... ok
+test novorudp::object_sender::tests::progress::nonfinal_retry_pass_survives_progress_without_reopening_sent_prefix ... ok
+test novorudp::object_sender::tests::progress::nonfinal_window_unconfirmed_tail_waits_without_delaying_proven_gap ... ok
+test novorudp::object_sender::tests::progress::ongoing_initial_never_arms_an_unconfirmed_tail_as_early_repair ... ok
+test novorudp::object_sender::tests::progress::progressing_ack_does_not_resend_repairs_still_in_flight ... ok
+test novorudp::object_sender::tests::progress::proven_internal_gaps_progress_before_whole_initial_body_finishes ... ok
+test novorudp::object_sender::tests::progress::reduced_copy_target_cannot_stall_existing_partial_cursor ... ok
+test novorudp::object_sender::tests::progress::repair_pass_waits_for_its_last_actual_write_before_reopening ... ok
+test novorudp::object_sender::tests::tail::blocked_tail_write_retains_exact_frame_and_resumes_original_cursor ... ok
+test novorudp::object_sender::tests::tail::budget_wait_retains_exact_tail_frame_without_spending_retry_or_cursor ... ok
+test novorudp::object_sender::tests::tail::lost_five_tail_fragments_repair_after_original_feedback_wait ... ok
+test novorudp::object_sender::tests::tail::progress_ack_during_blocked_tail_copy_preserves_new_repair_cursor ... ok
+test novorudp::object_sender::tests::tail::progress_ack_must_not_cancel_an_active_five_fragment_tail_repair ... ok
+test novorudp::object_sender::tests::tail::progress_during_internal_gap_repair_does_not_promote_unconfirmed_tail ... ok
+test novorudp::object_sender::tests::udp_small_poll_keeps_existing_pause_policy ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 885 filtered out; finished in 5.43s
+
