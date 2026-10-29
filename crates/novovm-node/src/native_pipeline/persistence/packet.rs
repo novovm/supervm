@@ -573,13 +573,19 @@ fn prepare_with_spend(
         }
     }
     let document = document.bytes;
-    // The codec's independent recovery validator also checks structural receipt
-    // relations, not business execution. Preparation never manufactures success.
-    decode_document(&document, plan.commitment(), budget)?;
-    let receipt_projection = receipts
-        .iter()
-        .map(|bytes| ReceiptProjection::decode(bytes))
-        .collect::<Result<Vec<_>>>()?;
+    // The immutable plan already owns its canonical body/access commitment.
+    // Validate the same receipt/economic relations as cold recovery without
+    // decoding a second full plan from bytes that this function just encoded.
+    let mut receipt_projection = Vec::with_capacity(receipts.len());
+    validate_effects(
+        plan,
+        root,
+        receipts,
+        spend_outputs,
+        (receipt_commitment, statement_commitment),
+        budget,
+        Some(&mut receipt_projection),
+    )?;
     let digest = document_hash(&document);
     let mut records = BTreeMap::new();
     for (hash, bytes) in nodes {
@@ -906,23 +912,15 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         None
     };
     input.finish()?;
-    if let Some(outputs) = &spend_outputs {
-        uca::validate_receipts(&plan, &receipts, outputs, budget)?;
-    } else {
-        validate_receipts(&plan, &receipts, budget)?;
-    }
-    ensure!(
-        uca::receipt_hash_with_spend(
-            plan.context().receipt_codec,
-            &receipts,
-            spend_outputs.as_deref()
-        ) == receipt_commitment,
-        "candidate ordered receipt commitment mismatch"
-    );
-    ensure!(
-        statement_hash(id, state_root, receipt_commitment) == statement_commitment,
-        "candidate execution statement mismatch"
-    );
+    validate_effects(
+        &plan,
+        state_root,
+        &receipts,
+        spend_outputs.as_deref(),
+        (receipt_commitment, statement_commitment),
+        budget,
+        None,
+    )?;
     Ok(Decoded {
         plan,
         state_root,
@@ -932,6 +930,53 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         receipts,
         spend_outputs,
     })
+}
+
+// Shared structural/economic checks, not signature verification or authority.
+// Recovery reaches this only after independently decoding and hashing the plan;
+// preparation carries the original immutable plan produced by execution.
+fn validate_effects(
+    plan: &BatchPlan,
+    state_root: NodeHash,
+    receipts: &[Vec<u8>],
+    spend_outputs: Option<&[SpendOutput]>,
+    commitments: (NodeHash, NodeHash),
+    budget: PacketBudget,
+    projection: Option<&mut Vec<ReceiptProjection>>,
+) -> Result<()> {
+    let (receipt_commitment, statement_commitment) = commitments;
+    let context = plan.context();
+    let is_uca = uca::is_profile(context);
+    ensure!(
+        is_uca
+            || (context.business_program == program_id()
+                && context.receipt_codec == receipt_codec()
+                && context.semantic_version == SEMANTIC_VERSION),
+        "unsupported candidate business/receipt profile"
+    );
+    ensure!(
+        is_uca == spend_outputs.is_some(),
+        "candidate document/profile mismatch"
+    );
+    ensure!(
+        state_root != [0; 32],
+        "candidate output root must be nonzero"
+    );
+    if let Some(outputs) = spend_outputs {
+        uca::validate_receipts(plan, receipts, outputs, budget, projection)?;
+    } else {
+        validate_receipts(plan, receipts, budget, projection)?;
+    }
+    ensure!(
+        uca::receipt_hash_with_spend(plan.context().receipt_codec, receipts, spend_outputs)
+            == receipt_commitment,
+        "candidate ordered receipt commitment mismatch"
+    );
+    ensure!(
+        statement_hash(plan.commitment(), state_root, receipt_commitment) == statement_commitment,
+        "candidate execution statement mismatch"
+    );
+    Ok(())
 }
 
 /// Read-only projection; never execution, publication or signing authority.
@@ -945,16 +990,21 @@ pub(crate) struct ReceiptProjection {
     pub charged_fee: u128,
 }
 impl ReceiptProjection {
+    #[cfg(test)]
     fn decode(bytes: &[u8]) -> Result<Self> {
         let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
         ensure!(tail.is_empty(), "trailing executed receipt bytes");
-        Ok(Self {
+        Ok(Self::from_receipt(&receipt))
+    }
+
+    fn from_receipt(receipt: &ReceiptRef<'_>) -> Self {
+        Self {
             tx_hash: receipt.tx_hash,
             signer_identity: receipt.signer_identity,
             nonce_after: receipt.delta.nonce_after,
             success: receipt.failure.is_none() && receipt.fee_failure.is_none(),
             charged_fee: receipt.delta.fee_funding_delta,
-        })
+        }
     }
 }
 
@@ -1053,7 +1103,12 @@ fn identity_hex(identity: &NodeHash) -> String {
     value
 }
 
-fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudget) -> Result<()> {
+fn validate_receipts(
+    plan: &BatchPlan,
+    receipts: &[Vec<u8>],
+    budget: PacketBudget,
+    mut projection: Option<&mut Vec<ReceiptProjection>>,
+) -> Result<()> {
     let mut hashes = BTreeSet::new();
     let mut nonces = BTreeMap::new();
     let mut journal_seq: Option<u64> = None;
@@ -1137,6 +1192,9 @@ fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudge
             plan.context(),
             &mut journal_seq,
         )?;
+        if let Some(projection) = projection.as_deref_mut() {
+            projection.push(ReceiptProjection::from_receipt(&receipt));
+        }
     }
     Ok(())
 }

@@ -1,0 +1,1972 @@
+{
+  "schema": "novovm.native-critical-path.final-65536-continuous-evidence.v1",
+  "date": "2026-10-29",
+  "qualification": "FINAL_STAGE2_65536_FUNCTIONAL_PASS_PERFORMANCE_RECOVERY_NOT_COMPLETE",
+  "raw_report": {
+    "source": "target/native-product-load/continuous_8192_outstanding_receipt_anchored_windows-paired-18624-1793233436144.json",
+    "copy": "final-65536-continuous-paired.json",
+    "sha256": "0a6250dcd0035e8524e36fe1677c321277732dd9a30d5df9828ed68c89a5986c"
+  },
+  "artifacts": {
+    "node_sha256": "861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+    "client_sha256": "6603c105ffb35288aaca8f111d394c5cf1aeca93baa597d9c41ac690e0c3df04",
+    "node_tests_sha256": "0152953a2dd8c308605d0ec9817e9a8d642c94dab84c8ab0e6000212a63d4b2b",
+    "network_tests_sha256": "3fb19b9dd92dca27e7b2218550c5a55a4a836f22612ddb72a11113b036d38568",
+    "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+    "baseline_node_sha256": "b2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+    "stage1_node_sha256_not_this_candidate": "307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b"
+  },
+  "source_snapshot": {
+    "path": "final-stage2-source.patch",
+    "sha256": "5ad500e1d27f141b5d077695969f0091bd2f939686b425f3b7f0d198b2be99be"
+  },
+  "measurement_contract": {
+    "transactions": 65536,
+    "actual_finalized_heights": 64,
+    "all_actual_candidates_have_rows": 1024,
+    "initial_signed_rows": 8192,
+    "outstanding_limit": 8192,
+    "signer_workers": 4,
+    "refill_rows": 1024,
+    "signing_window_height_span": 256,
+    "input_policy_allows_different_signed_bytes": true,
+    "observed_all_three_signed_corpus_hashes_identical": true,
+    "observed_corpus_sha256": "0x76dd8b48937e45553cc744f829793065153fb6d29900813c9f289e309d9aeca2",
+    "same_initial_root_signing_domain_genesis": true,
+    "one_unpaused_clock": true,
+    "post_first_submit_signing_and_frame_preparation_included": true,
+    "endpoint": "Every one of 65536 successful transactions observed through the original receipt query by all four original processes. Startup and initial 8192 signing excluded; post-start preparation overlaps polling but is not subtracted. Untimed full economics and cold recovery mandatory.",
+    "signature": "ML-DSA-65",
+    "business_backend": "cpu_callbacks",
+    "signature_order": [
+      "cpu",
+      "gpu_required",
+      "cpu"
+    ],
+    "real_processes": 4,
+    "real_machines": 1,
+    "diagnostics": false
+  },
+  "rounds": [
+    {
+      "metrics": {
+        "transactions": 65536,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2490.169234691687,
+        "elapsed_seconds": 26.31789,
+        "latency_us": {
+          "p50": 3119431,
+          "p95": 4169760,
+          "p99": 4727761,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x76dd8b48937e45553cc744f829793065153fb6d29900813c9f289e309d9aeca2",
+        "initial_root": "0x165413dc8bbc940d1e4371478d5dadcfaa5c87c0d9143831ccb6d75764127f3b",
+        "signing_domain": "0x9e1721946732c12c1b156ca1efe7351dc77083c26448283f5496bd8e4afaf322",
+        "genesis_commitment": "0x7e34667b72e8eb3080ee8f805ed4199d7b004aa32e30da4f293c8c17461632f3",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 8192,
+        "initial_signed_corpus_preparation_us": 326619,
+        "four_process_startup_ready_seconds": 0.2571363,
+        "startup_through_four_receipts_seconds": 26.8846838,
+        "first_height_all_receipt_queries_observed_us": 1927418,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 51188,
+          "receipt_query_requests_by_node": [
+            3610,
+            17159,
+            14885,
+            15534
+          ],
+          "observation_rows_received": 6552064,
+          "receipt_query_rows_received_by_node": [
+            462080,
+            2196352,
+            1905280,
+            1988352
+          ],
+          "observation_not_final": 6289920,
+          "receipt_query_not_final_by_node": [
+            396544,
+            2130816,
+            1839744,
+            1922816
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "continuous_signer_workers": 4,
+        "continuous_generation_batch_rows": 1024,
+        "continuous_timed_generation_task_us": 2552838,
+        "continuous_timed_structure_preparation_us": 620129,
+        "continuous_generator_starved_poll_us": 21252201,
+        "continuous_no_outstanding_poll_us": 155,
+        "continuous_outstanding_row_poll_us": 186045309696,
+        "continuous_phase_timing_scope": "generation task wall overlaps original SDK polling; phase times are not additive and never subtracted from TPS; poll starvation excludes yield scheduling",
+        "continuous_prepared_transactions": 65536,
+        "continuous_single_clock": true,
+        "canonical_signed_input_bytes": 357040128
+      },
+      "generation_window_count": 57,
+      "generation_window_first": {
+        "first_transaction": 0,
+        "transactions": 8192,
+        "not_before_height": 1,
+        "expires_at_height_exclusive": 257
+      },
+      "generation_window_last": {
+        "first_transaction": 64512,
+        "transactions": 1024,
+        "not_before_height": 57,
+        "expires_at_height_exclusive": 313
+      },
+      "candidate_rows": [
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024
+      ],
+      "fee_state": {
+        "accounting": {
+          "treasury_reserve_nov": 2949120,
+          "settled_nov_total": 2949120,
+          "settled_by_asset_nov": 2949120,
+          "reserve_bucket_nov": 2031616,
+          "fee_bucket_nov": 589824,
+          "risk_buffer_nov": 327680,
+          "settlements": 65536,
+          "journal_next_seq": 65536,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "diagnostics": {
+          "quote_max_pay_exceeded": 0,
+          "settlement_policy_fallback": 0,
+          "settlement_paused": 0,
+          "settlement_amount_overflow": 0,
+          "clearing_quote_expired": 0,
+          "clearing_insufficient_user_balance": 0,
+          "last_quote": {
+            "quote_id": "q-d2b07ab7b306-1ba60d33840",
+            "pay_asset": "NOV",
+            "nov_amount": 45,
+            "quoted_pay_amount": 45,
+            "quoted_pay_amount_with_slippage": 45,
+            "max_pay_amount": 50,
+            "slippage_bps": 0,
+            "quoted_at_unix_ms": 1900000000064,
+            "expires_at_unix_ms": 1900000015064,
+            "rate_ppm": 1000000,
+            "oracle_updated_at_unix_ms": 1900000000064,
+            "route": "direct_nov",
+            "quote_contract": "novovm-exec-fee-quote/v1",
+            "price_source": "direct_nov"
+          },
+          "last_quote_failure": null,
+          "last_clearing_failure": null,
+          "last_clearing_candidates": []
+        }
+      },
+      "archived_transactions": 65536,
+      "all_four_fee_pages_match": true
+    },
+    {
+      "metrics": {
+        "transactions": 65536,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2748.5291284282275,
+        "elapsed_seconds": 23.844026,
+        "latency_us": {
+          "p50": 2799016,
+          "p95": 3850723,
+          "p99": 4163322,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x76dd8b48937e45553cc744f829793065153fb6d29900813c9f289e309d9aeca2",
+        "initial_root": "0x165413dc8bbc940d1e4371478d5dadcfaa5c87c0d9143831ccb6d75764127f3b",
+        "signing_domain": "0x9e1721946732c12c1b156ca1efe7351dc77083c26448283f5496bd8e4afaf322",
+        "genesis_commitment": "0x7e34667b72e8eb3080ee8f805ed4199d7b004aa32e30da4f293c8c17461632f3",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 8192,
+        "initial_signed_corpus_preparation_us": 326652,
+        "four_process_startup_ready_seconds": 3.4642935,
+        "startup_through_four_receipts_seconds": 27.6226787,
+        "first_height_all_receipt_queries_observed_us": 1375601,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 65612,
+          "receipt_query_requests_by_node": [
+            2769,
+            19588,
+            20908,
+            22347
+          ],
+          "observation_rows_received": 8398336,
+          "receipt_query_rows_received_by_node": [
+            354432,
+            2507264,
+            2676224,
+            2860416
+          ],
+          "observation_not_final": 8136192,
+          "receipt_query_not_final_by_node": [
+            288896,
+            2441728,
+            2610688,
+            2794880
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "continuous_signer_workers": 4,
+        "continuous_generation_batch_rows": 1024,
+        "continuous_timed_generation_task_us": 2444786,
+        "continuous_timed_structure_preparation_us": 616125,
+        "continuous_generator_starved_poll_us": 20285494,
+        "continuous_no_outstanding_poll_us": 87,
+        "continuous_outstanding_row_poll_us": 170081402112,
+        "continuous_phase_timing_scope": "generation task wall overlaps original SDK polling; phase times are not additive and never subtracted from TPS; poll starvation excludes yield scheduling",
+        "continuous_prepared_transactions": 65536,
+        "continuous_single_clock": true,
+        "canonical_signed_input_bytes": 357040128
+      },
+      "generation_window_count": 57,
+      "generation_window_first": {
+        "first_transaction": 0,
+        "transactions": 8192,
+        "not_before_height": 1,
+        "expires_at_height_exclusive": 257
+      },
+      "generation_window_last": {
+        "first_transaction": 64512,
+        "transactions": 1024,
+        "not_before_height": 57,
+        "expires_at_height_exclusive": 313
+      },
+      "candidate_rows": [
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024
+      ],
+      "fee_state": {
+        "accounting": {
+          "treasury_reserve_nov": 2949120,
+          "settled_nov_total": 2949120,
+          "settled_by_asset_nov": 2949120,
+          "reserve_bucket_nov": 2031616,
+          "fee_bucket_nov": 589824,
+          "risk_buffer_nov": 327680,
+          "settlements": 65536,
+          "journal_next_seq": 65536,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "diagnostics": {
+          "quote_max_pay_exceeded": 0,
+          "settlement_policy_fallback": 0,
+          "settlement_paused": 0,
+          "settlement_amount_overflow": 0,
+          "clearing_quote_expired": 0,
+          "clearing_insufficient_user_balance": 0,
+          "last_quote": {
+            "quote_id": "q-d2b07ab7b306-1ba60d33840",
+            "pay_asset": "NOV",
+            "nov_amount": 45,
+            "quoted_pay_amount": 45,
+            "quoted_pay_amount_with_slippage": 45,
+            "max_pay_amount": 50,
+            "slippage_bps": 0,
+            "quoted_at_unix_ms": 1900000000064,
+            "expires_at_unix_ms": 1900000015064,
+            "rate_ppm": 1000000,
+            "oracle_updated_at_unix_ms": 1900000000064,
+            "route": "direct_nov",
+            "quote_contract": "novovm-exec-fee-quote/v1",
+            "price_source": "direct_nov"
+          },
+          "last_quote_failure": null,
+          "last_clearing_failure": null,
+          "last_clearing_candidates": []
+        }
+      },
+      "archived_transactions": 65536,
+      "all_four_fee_pages_match": true
+    },
+    {
+      "metrics": {
+        "transactions": 65536,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 1496.538478366369,
+        "elapsed_seconds": 43.791724,
+        "latency_us": {
+          "p50": 3186047,
+          "p95": 17017242,
+          "p99": 17325802,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x76dd8b48937e45553cc744f829793065153fb6d29900813c9f289e309d9aeca2",
+        "initial_root": "0x165413dc8bbc940d1e4371478d5dadcfaa5c87c0d9143831ccb6d75764127f3b",
+        "signing_domain": "0x9e1721946732c12c1b156ca1efe7351dc77083c26448283f5496bd8e4afaf322",
+        "genesis_commitment": "0x7e34667b72e8eb3080ee8f805ed4199d7b004aa32e30da4f293c8c17461632f3",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 8192,
+        "initial_signed_corpus_preparation_us": 326903,
+        "four_process_startup_ready_seconds": 0.2427319,
+        "startup_through_four_receipts_seconds": 44.3443752,
+        "first_height_all_receipt_queries_observed_us": 2398620,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 170755,
+          "receipt_query_requests_by_node": [
+            48874,
+            42326,
+            42580,
+            36975
+          ],
+          "observation_rows_received": 21856640,
+          "receipt_query_rows_received_by_node": [
+            6255872,
+            5417728,
+            5450240,
+            4732800
+          ],
+          "observation_not_final": 21594496,
+          "receipt_query_not_final_by_node": [
+            6190336,
+            5352192,
+            5384704,
+            4667264
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "continuous_signer_workers": 4,
+        "continuous_generation_batch_rows": 1024,
+        "continuous_timed_generation_task_us": 2487921,
+        "continuous_timed_structure_preparation_us": 624674,
+        "continuous_generator_starved_poll_us": 33563263,
+        "continuous_no_outstanding_poll_us": 104,
+        "continuous_outstanding_row_poll_us": 299074659456,
+        "continuous_phase_timing_scope": "generation task wall overlaps original SDK polling; phase times are not additive and never subtracted from TPS; poll starvation excludes yield scheduling",
+        "continuous_prepared_transactions": 65536,
+        "continuous_single_clock": true,
+        "canonical_signed_input_bytes": 357040128
+      },
+      "generation_window_count": 57,
+      "generation_window_first": {
+        "first_transaction": 0,
+        "transactions": 8192,
+        "not_before_height": 1,
+        "expires_at_height_exclusive": 257
+      },
+      "generation_window_last": {
+        "first_transaction": 64512,
+        "transactions": 1024,
+        "not_before_height": 57,
+        "expires_at_height_exclusive": 313
+      },
+      "candidate_rows": [
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024,
+        1024
+      ],
+      "fee_state": {
+        "accounting": {
+          "treasury_reserve_nov": 2949120,
+          "settled_nov_total": 2949120,
+          "settled_by_asset_nov": 2949120,
+          "reserve_bucket_nov": 2031616,
+          "fee_bucket_nov": 589824,
+          "risk_buffer_nov": 327680,
+          "settlements": 65536,
+          "journal_next_seq": 65536,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "diagnostics": {
+          "quote_max_pay_exceeded": 0,
+          "settlement_policy_fallback": 0,
+          "settlement_paused": 0,
+          "settlement_amount_overflow": 0,
+          "clearing_quote_expired": 0,
+          "clearing_insufficient_user_balance": 0,
+          "last_quote": {
+            "quote_id": "q-d2b07ab7b306-1ba60d33840",
+            "pay_asset": "NOV",
+            "nov_amount": 45,
+            "quoted_pay_amount": 45,
+            "quoted_pay_amount_with_slippage": 45,
+            "max_pay_amount": 50,
+            "slippage_bps": 0,
+            "quoted_at_unix_ms": 1900000000064,
+            "expires_at_unix_ms": 1900000015064,
+            "rate_ppm": 1000000,
+            "oracle_updated_at_unix_ms": 1900000000064,
+            "route": "direct_nov",
+            "quote_contract": "novovm-exec-fee-quote/v1",
+            "price_source": "direct_nov"
+          },
+          "last_quote_failure": null,
+          "last_clearing_failure": null,
+          "last_clearing_candidates": []
+        }
+      },
+      "archived_transactions": 65536,
+      "all_four_fee_pages_match": true
+    }
+  ],
+  "derived_comparisons": {
+    "cpu_repeat_vs_cpu_first_tps_percent": -39.90213767331928,
+    "gpu_vs_cpu_first_tps_percent": 10.37519418910211,
+    "cpu_repeat_p99_vs_cpu_first_percent": 266.4694979293581,
+    "no_12k_qualification": true
+  },
+  "slow_cpu_observations": {
+    "source": "target/native-product-load/uca-18624-1793233374917135700/observations.json",
+    "sha256": "e4a6c25dac5c92f5c4be1fa5dee4a5f966a2f6386293964f29d3c9943b943bbb",
+    "summary_scope": "All 65536 original client observations reduced by finalized height. No database was opened and no internal stage diagnosis is inferred.",
+    "first_submission_us": 79,
+    "last_all_four_observed_us": 43791803,
+    "last_minus_first_submission_us": 43791724,
+    "equals_report_elapsed_seconds": true,
+    "heights": [
+      {
+        "height": 1,
+        "rows": 1024,
+        "first_submit_min_us": 79,
+        "first_submit_max_us": 79,
+        "node_first_observed_us": [
+          2325752,
+          2317760,
+          2393809,
+          2324117
+        ],
+        "node_last_observed_us": [
+          2345026,
+          2319744,
+          2398620,
+          2326748
+        ],
+        "all_four_last_observed_us": 2398620,
+        "gap_from_previous_height_all_four_last_us": null
+      },
+      {
+        "height": 2,
+        "rows": 1024,
+        "first_submit_min_us": 490,
+        "first_submit_max_us": 490,
+        "node_first_observed_us": [
+          2577931,
+          2553539,
+          2567568,
+          2538430
+        ],
+        "node_last_observed_us": [
+          2663677,
+          2616526,
+          2657958,
+          2564615
+        ],
+        "all_four_last_observed_us": 2663677,
+        "gap_from_previous_height_all_four_last_us": 265057
+      },
+      {
+        "height": 3,
+        "rows": 1024,
+        "first_submit_min_us": 863,
+        "first_submit_max_us": 863,
+        "node_first_observed_us": [
+          3462336,
+          3453080,
+          3450316,
+          3451858
+        ],
+        "node_last_observed_us": [
+          3481488,
+          3456306,
+          3454730,
+          3479347
+        ],
+        "all_four_last_observed_us": 3481488,
+        "gap_from_previous_height_all_four_last_us": 817811
+      },
+      {
+        "height": 4,
+        "rows": 1024,
+        "first_submit_min_us": 1229,
+        "first_submit_max_us": 1229,
+        "node_first_observed_us": [
+          3542502,
+          3545627,
+          3586535,
+          3556369
+        ],
+        "node_last_observed_us": [
+          3792859,
+          3596892,
+          3632494,
+          3578873
+        ],
+        "all_four_last_observed_us": 3792859,
+        "gap_from_previous_height_all_four_last_us": 311371
+      },
+      {
+        "height": 5,
+        "rows": 1024,
+        "first_submit_min_us": 1597,
+        "first_submit_max_us": 1597,
+        "node_first_observed_us": [
+          3807640,
+          3707171,
+          3709166,
+          3711743
+        ],
+        "node_last_observed_us": [
+          4073133,
+          3737074,
+          3752832,
+          3775290
+        ],
+        "all_four_last_observed_us": 4073133,
+        "gap_from_previous_height_all_four_last_us": 280274
+      },
+      {
+        "height": 6,
+        "rows": 1024,
+        "first_submit_min_us": 1962,
+        "first_submit_max_us": 1962,
+        "node_first_observed_us": [
+          4133062,
+          3830099,
+          3822455,
+          3831849
+        ],
+        "node_last_observed_us": [
+          4344643,
+          3901414,
+          3855042,
+          3893420
+        ],
+        "all_four_last_observed_us": 4344643,
+        "gap_from_previous_height_all_four_last_us": 271510
+      },
+      {
+        "height": 7,
+        "rows": 1024,
+        "first_submit_min_us": 2326,
+        "first_submit_max_us": 2326,
+        "node_first_observed_us": [
+          4377212,
+          3968856,
+          3958440,
+          3954460
+        ],
+        "node_last_observed_us": [
+          4542824,
+          4012260,
+          3986072,
+          3981432
+        ],
+        "all_four_last_observed_us": 4542824,
+        "gap_from_previous_height_all_four_last_us": 198181
+      },
+      {
+        "height": 8,
+        "rows": 1024,
+        "first_submit_min_us": 2689,
+        "first_submit_max_us": 2689,
+        "node_first_observed_us": [
+          4547346,
+          4095696,
+          4079701,
+          4073338
+        ],
+        "node_last_observed_us": [
+          4646413,
+          4159192,
+          4100032,
+          4097792
+        ],
+        "all_four_last_observed_us": 4646413,
+        "gap_from_previous_height_all_four_last_us": 103589
+      },
+      {
+        "height": 9,
+        "rows": 1024,
+        "first_submit_min_us": 2459002,
+        "first_submit_max_us": 2459002,
+        "node_first_observed_us": [
+          4673900,
+          4183421,
+          4181407,
+          4187049
+        ],
+        "node_last_observed_us": [
+          4761332,
+          4200773,
+          4185552,
+          4215699
+        ],
+        "all_four_last_observed_us": 4761332,
+        "gap_from_previous_height_all_four_last_us": 114919
+      },
+      {
+        "height": 10,
+        "rows": 1024,
+        "first_submit_min_us": 2716511,
+        "first_submit_max_us": 2716511,
+        "node_first_observed_us": [
+          5092856,
+          5132585,
+          5095491,
+          5090449
+        ],
+        "node_last_observed_us": [
+          5177243,
+          5136515,
+          5098682,
+          5094116
+        ],
+        "all_four_last_observed_us": 5177243,
+        "gap_from_previous_height_all_four_last_us": 415911
+      },
+      {
+        "height": 11,
+        "rows": 1024,
+        "first_submit_min_us": 3542170,
+        "first_submit_max_us": 3542170,
+        "node_first_observed_us": [
+          5800742,
+          5794582,
+          5793760,
+          5792236
+        ],
+        "node_last_observed_us": [
+          5838359,
+          5803321,
+          5801200,
+          5806300
+        ],
+        "all_four_last_observed_us": 5838359,
+        "gap_from_previous_height_all_four_last_us": 661116
+      },
+      {
+        "height": 12,
+        "rows": 1024,
+        "first_submit_min_us": 3847768,
+        "first_submit_max_us": 3847768,
+        "node_first_observed_us": [
+          6461163,
+          6456155,
+          6790871,
+          6452212
+        ],
+        "node_last_observed_us": [
+          6508658,
+          6477073,
+          6806127,
+          6469390
+        ],
+        "all_four_last_observed_us": 6806127,
+        "gap_from_previous_height_all_four_last_us": 967768
+      },
+      {
+        "height": 13,
+        "rows": 1024,
+        "first_submit_min_us": 4132639,
+        "first_submit_max_us": 4132639,
+        "node_first_observed_us": [
+          6970701,
+          6964081,
+          6968596,
+          6965247
+        ],
+        "node_last_observed_us": [
+          7049330,
+          6993999,
+          6986280,
+          6974512
+        ],
+        "all_four_last_observed_us": 7049330,
+        "gap_from_previous_height_all_four_last_us": 243203
+      },
+      {
+        "height": 14,
+        "rows": 1024,
+        "first_submit_min_us": 4394406,
+        "first_submit_max_us": 4394406,
+        "node_first_observed_us": [
+          7255542,
+          7149980,
+          7138424,
+          8127854
+        ],
+        "node_last_observed_us": [
+          7439496,
+          7188584,
+          7161010,
+          8145515
+        ],
+        "all_four_last_observed_us": 8145515,
+        "gap_from_previous_height_all_four_last_us": 1096185
+      },
+      {
+        "height": 15,
+        "rows": 1024,
+        "first_submit_min_us": 4592586,
+        "first_submit_max_us": 4592586,
+        "node_first_observed_us": [
+          7451126,
+          7302378,
+          7309822,
+          8228304
+        ],
+        "node_last_observed_us": [
+          7586250,
+          7325286,
+          7340207,
+          8271915
+        ],
+        "all_four_last_observed_us": 8271915,
+        "gap_from_previous_height_all_four_last_us": 126400
+      },
+      {
+        "height": 16,
+        "rows": 1024,
+        "first_submit_min_us": 4695919,
+        "first_submit_max_us": 4695919,
+        "node_first_observed_us": [
+          7594178,
+          7479664,
+          7475283,
+          8506591
+        ],
+        "node_last_observed_us": [
+          7642216,
+          7483498,
+          7486835,
+          8606888
+        ],
+        "all_four_last_observed_us": 8606888,
+        "gap_from_previous_height_all_four_last_us": 334973
+      },
+      {
+        "height": 17,
+        "rows": 1024,
+        "first_submit_min_us": 4811824,
+        "first_submit_max_us": 4811824,
+        "node_first_observed_us": [
+          8538860,
+          8536131,
+          8541893,
+          8607447
+        ],
+        "node_last_observed_us": [
+          8563016,
+          8546756,
+          8588334,
+          8623172
+        ],
+        "all_four_last_observed_us": 8623172,
+        "gap_from_previous_height_all_four_last_us": 16284
+      },
+      {
+        "height": 18,
+        "rows": 1024,
+        "first_submit_min_us": 5230850,
+        "first_submit_max_us": 5230850,
+        "node_first_observed_us": [
+          8652750,
+          8620623,
+          8643905,
+          8688383
+        ],
+        "node_last_observed_us": [
+          8882778,
+          8652631,
+          8739852,
+          8729930
+        ],
+        "all_four_last_observed_us": 8882778,
+        "gap_from_previous_height_all_four_last_us": 259606
+      },
+      {
+        "height": 19,
+        "rows": 1024,
+        "first_submit_min_us": 5894221,
+        "first_submit_max_us": 5894221,
+        "node_first_observed_us": [
+          8904131,
+          8777884,
+          8789046,
+          8771856
+        ],
+        "node_last_observed_us": [
+          9138248,
+          8848739,
+          8863209,
+          8796718
+        ],
+        "all_four_last_observed_us": 9138248,
+        "gap_from_previous_height_all_four_last_us": 255470
+      },
+      {
+        "height": 20,
+        "rows": 1024,
+        "first_submit_min_us": 6868700,
+        "first_submit_max_us": 6868700,
+        "node_first_observed_us": [
+          9157561,
+          8909318,
+          8937385,
+          8933082
+        ],
+        "node_last_observed_us": [
+          9306447,
+          8985572,
+          8977868,
+          8969027
+        ],
+        "all_four_last_observed_us": 9306447,
+        "gap_from_previous_height_all_four_last_us": 168199
+      },
+      {
+        "height": 21,
+        "rows": 1024,
+        "first_submit_min_us": 7103399,
+        "first_submit_max_us": 7103399,
+        "node_first_observed_us": [
+          9737550,
+          9726474,
+          9740923,
+          9745297
+        ],
+        "node_last_observed_us": [
+          9771432,
+          9729505,
+          9753217,
+          9757518
+        ],
+        "all_four_last_observed_us": 9771432,
+        "gap_from_previous_height_all_four_last_us": 464985
+      },
+      {
+        "height": 22,
+        "rows": 1024,
+        "first_submit_min_us": 8203078,
+        "first_submit_max_us": 8203078,
+        "node_first_observed_us": [
+          9939975,
+          9885818,
+          9892204,
+          10360186
+        ],
+        "node_last_observed_us": [
+          10064319,
+          9919918,
+          9916389,
+          10366170
+        ],
+        "all_four_last_observed_us": 10366170,
+        "gap_from_previous_height_all_four_last_us": 594738
+      },
+      {
+        "height": 23,
+        "rows": 1024,
+        "first_submit_min_us": 8323454,
+        "first_submit_max_us": 8323454,
+        "node_first_observed_us": [
+          10802543,
+          10804961,
+          10840243,
+          10811956
+        ],
+        "node_last_observed_us": [
+          10816368,
+          10812465,
+          10843282,
+          10834000
+        ],
+        "all_four_last_observed_us": 10843282,
+        "gap_from_previous_height_all_four_last_us": 477112
+      },
+      {
+        "height": 24,
+        "rows": 1024,
+        "first_submit_min_us": 8664966,
+        "first_submit_max_us": 8664966,
+        "node_first_observed_us": [
+          10866874,
+          10873333,
+          10868046,
+          10884012
+        ],
+        "node_last_observed_us": [
+          10887234,
+          10950044,
+          10917532,
+          10959639
+        ],
+        "all_four_last_observed_us": 10959639,
+        "gap_from_previous_height_all_four_last_us": 116357
+      },
+      {
+        "height": 25,
+        "rows": 1024,
+        "first_submit_min_us": 8725246,
+        "first_submit_max_us": 8725246,
+        "node_first_observed_us": [
+          11342862,
+          11721296,
+          11326247,
+          11340510
+        ],
+        "node_last_observed_us": [
+          11427375,
+          11734099,
+          11351053,
+          11358591
+        ],
+        "all_four_last_observed_us": 11734099,
+        "gap_from_previous_height_all_four_last_us": 774460
+      },
+      {
+        "height": 26,
+        "rows": 1024,
+        "first_submit_min_us": 8932800,
+        "first_submit_max_us": 8932800,
+        "node_first_observed_us": [
+          11793588,
+          11798389,
+          11768921,
+          11763384
+        ],
+        "node_last_observed_us": [
+          11949197,
+          11831237,
+          11805936,
+          11767608
+        ],
+        "all_four_last_observed_us": 11949197,
+        "gap_from_previous_height_all_four_last_us": 215098
+      },
+      {
+        "height": 27,
+        "rows": 1024,
+        "first_submit_min_us": 9192354,
+        "first_submit_max_us": 9192354,
+        "node_first_observed_us": [
+          11988850,
+          11978469,
+          11953385,
+          12546635
+        ],
+        "node_last_observed_us": [
+          12299458,
+          12024584,
+          12027495,
+          12598263
+        ],
+        "all_four_last_observed_us": 12598263,
+        "gap_from_previous_height_all_four_last_us": 649066
+      },
+      {
+        "height": 28,
+        "rows": 1024,
+        "first_submit_min_us": 9361944,
+        "first_submit_max_us": 9361944,
+        "node_first_observed_us": [
+          12317895,
+          12168434,
+          12156210,
+          12621772
+        ],
+        "node_last_observed_us": [
+          12439294,
+          12195722,
+          12163077,
+          12683946
+        ],
+        "all_four_last_observed_us": 12683946,
+        "gap_from_previous_height_all_four_last_us": 85683
+      },
+      {
+        "height": 29,
+        "rows": 1024,
+        "first_submit_min_us": 9833625,
+        "first_submit_max_us": 9833625,
+        "node_first_observed_us": [
+          13392630,
+          13385040,
+          13391023,
+          13384128
+        ],
+        "node_last_observed_us": [
+          13416558,
+          13388000,
+          13441769,
+          13387775
+        ],
+        "all_four_last_observed_us": 13441769,
+        "gap_from_previous_height_all_four_last_us": 757823
+      },
+      {
+        "height": 30,
+        "rows": 1024,
+        "first_submit_min_us": 10421738,
+        "first_submit_max_us": 10421738,
+        "node_first_observed_us": [
+          13579765,
+          13522775,
+          13529703,
+          13527196
+        ],
+        "node_last_observed_us": [
+          13697861,
+          13563173,
+          13609128,
+          13561052
+        ],
+        "all_four_last_observed_us": 13697861,
+        "gap_from_previous_height_all_four_last_us": 256092
+      },
+      {
+        "height": 31,
+        "rows": 1024,
+        "first_submit_min_us": 10909262,
+        "first_submit_max_us": 10909262,
+        "node_first_observed_us": [
+          13704574,
+          14095309,
+          13651725,
+          13631883
+        ],
+        "node_last_observed_us": [
+          13882284,
+          14115351,
+          13687204,
+          13680799
+        ],
+        "all_four_last_observed_us": 14115351,
+        "gap_from_previous_height_all_four_last_us": 417490
+      },
+      {
+        "height": 32,
+        "rows": 1024,
+        "first_submit_min_us": 11023297,
+        "first_submit_max_us": 11023297,
+        "node_first_observed_us": [
+          14246007,
+          14263917,
+          14235386,
+          14235685
+        ],
+        "node_last_observed_us": [
+          14322847,
+          14271577,
+          14256854,
+          14239118
+        ],
+        "all_four_last_observed_us": 14322847,
+        "gap_from_previous_height_all_four_last_us": 207496
+      },
+      {
+        "height": 33,
+        "rows": 1024,
+        "first_submit_min_us": 11793274,
+        "first_submit_max_us": 11793274,
+        "node_first_observed_us": [
+          14392157,
+          14475408,
+          14394263,
+          14399643
+        ],
+        "node_last_observed_us": [
+          14616944,
+          14519063,
+          14418708,
+          14452599
+        ],
+        "all_four_last_observed_us": 14616944,
+        "gap_from_previous_height_all_four_last_us": 294097
+      },
+      {
+        "height": 34,
+        "rows": 1024,
+        "first_submit_min_us": 12003884,
+        "first_submit_max_us": 12003884,
+        "node_first_observed_us": [
+          14627641,
+          14911374,
+          14600174,
+          14581752
+        ],
+        "node_last_observed_us": [
+          14719003,
+          14925796,
+          14616959,
+          14601434
+        ],
+        "all_four_last_observed_us": 14925796,
+        "gap_from_previous_height_all_four_last_us": 308852
+      },
+      {
+        "height": 35,
+        "rows": 1024,
+        "first_submit_min_us": 12654466,
+        "first_submit_max_us": 12654466,
+        "node_first_observed_us": [
+          15474720,
+          15469166,
+          15473922,
+          15479751
+        ],
+        "node_last_observed_us": [
+          15515389,
+          15474026,
+          15476992,
+          15530606
+        ],
+        "all_four_last_observed_us": 15530606,
+        "gap_from_previous_height_all_four_last_us": 604810
+      },
+      {
+        "height": 36,
+        "rows": 1024,
+        "first_submit_min_us": 12733293,
+        "first_submit_max_us": 12733293,
+        "node_first_observed_us": [
+          15633143,
+          15639350,
+          15601458,
+          15616615
+        ],
+        "node_last_observed_us": [
+          15802090,
+          15727779,
+          15644354,
+          15668280
+        ],
+        "all_four_last_observed_us": 15802090,
+        "gap_from_previous_height_all_four_last_us": 271484
+      },
+      {
+        "height": 37,
+        "rows": 1024,
+        "first_submit_min_us": 13500731,
+        "first_submit_max_us": 13500731,
+        "node_first_observed_us": [
+          15822055,
+          15757762,
+          15762019,
+          15751997
+        ],
+        "node_last_observed_us": [
+          16103454,
+          15815386,
+          15815959,
+          15833587
+        ],
+        "all_four_last_observed_us": 16103454,
+        "gap_from_previous_height_all_four_last_us": 301364
+      },
+      {
+        "height": 38,
+        "rows": 1024,
+        "first_submit_min_us": 13752433,
+        "first_submit_max_us": 13752433,
+        "node_first_observed_us": [
+          16122099,
+          15866880,
+          15883451,
+          15866896
+        ],
+        "node_last_observed_us": [
+          16261061,
+          16045958,
+          15925778,
+          15933192
+        ],
+        "all_four_last_observed_us": 16261061,
+        "gap_from_previous_height_all_four_last_us": 157607
+      },
+      {
+        "height": 39,
+        "rows": 1024,
+        "first_submit_min_us": 14170070,
+        "first_submit_max_us": 14170070,
+        "node_first_observed_us": [
+          16278898,
+          16894185,
+          16034800,
+          16031428
+        ],
+        "node_last_observed_us": [
+          16419592,
+          16928164,
+          16084204,
+          16062677
+        ],
+        "all_four_last_observed_us": 16928164,
+        "gap_from_previous_height_all_four_last_us": 667103
+      },
+      {
+        "height": 40,
+        "rows": 1024,
+        "first_submit_min_us": 14379034,
+        "first_submit_max_us": 14379034,
+        "node_first_observed_us": [
+          16961445,
+          16957654,
+          16946763,
+          16946475
+        ],
+        "node_last_observed_us": [
+          17051552,
+          16996542,
+          16965285,
+          16959764
+        ],
+        "all_four_last_observed_us": 17051552,
+        "gap_from_previous_height_all_four_last_us": 123388
+      },
+      {
+        "height": 41,
+        "rows": 1024,
+        "first_submit_min_us": 14671812,
+        "first_submit_max_us": 14671812,
+        "node_first_observed_us": [
+          21499101,
+          19907544,
+          19858671,
+          19907064
+        ],
+        "node_last_observed_us": [
+          21520071,
+          19909593,
+          19860892,
+          19933190
+        ],
+        "all_four_last_observed_us": 21520071,
+        "gap_from_previous_height_all_four_last_us": 4468519
+      },
+      {
+        "height": 42,
+        "rows": 1024,
+        "first_submit_min_us": 14979916,
+        "first_submit_max_us": 14979916,
+        "node_first_observed_us": [
+          31045008,
+          31089914,
+          31089076,
+          31089127
+        ],
+        "node_last_observed_us": [
+          31059757,
+          31092532,
+          31091818,
+          31097516
+        ],
+        "all_four_last_observed_us": 31097516,
+        "gap_from_previous_height_all_four_last_us": 9577445
+      },
+      {
+        "height": 43,
+        "rows": 1024,
+        "first_submit_min_us": 15601094,
+        "first_submit_max_us": 15601094,
+        "node_first_observed_us": [
+          31750107,
+          32042882,
+          31737442,
+          31736654
+        ],
+        "node_last_observed_us": [
+          31765710,
+          32045114,
+          31739557,
+          31789491
+        ],
+        "all_four_last_observed_us": 32045114,
+        "gap_from_previous_height_all_four_last_us": 947598
+      },
+      {
+        "height": 44,
+        "rows": 1024,
+        "first_submit_min_us": 15866630,
+        "first_submit_max_us": 15866630,
+        "node_first_observed_us": [
+          33155242,
+          33158622,
+          33148453,
+          32955352
+        ],
+        "node_last_observed_us": [
+          33199638,
+          33163268,
+          33160516,
+          32957539
+        ],
+        "all_four_last_observed_us": 33199638,
+        "gap_from_previous_height_all_four_last_us": 1154524
+      },
+      {
+        "height": 45,
+        "rows": 1024,
+        "first_submit_min_us": 16155766,
+        "first_submit_max_us": 16155766,
+        "node_first_observed_us": [
+          33207848,
+          33196201,
+          33306156,
+          33353625
+        ],
+        "node_last_observed_us": [
+          33309662,
+          33236676,
+          33318665,
+          33379374
+        ],
+        "all_four_last_observed_us": 33379374,
+        "gap_from_previous_height_all_four_last_us": 179736
+      },
+      {
+        "height": 46,
+        "rows": 1024,
+        "first_submit_min_us": 16316651,
+        "first_submit_max_us": 16316651,
+        "node_first_observed_us": [
+          33502884,
+          33464916,
+          33445841,
+          33448008
+        ],
+        "node_last_observed_us": [
+          33728596,
+          33609071,
+          33471137,
+          33493982
+        ],
+        "all_four_last_observed_us": 33728596,
+        "gap_from_previous_height_all_four_last_us": 349222
+      },
+      {
+        "height": 47,
+        "rows": 1024,
+        "first_submit_min_us": 16984296,
+        "first_submit_max_us": 16984296,
+        "node_first_observed_us": [
+          33741753,
+          33702542,
+          33583389,
+          33596783
+        ],
+        "node_last_observed_us": [
+          33955244,
+          33929923,
+          33646048,
+          33613114
+        ],
+        "all_four_last_observed_us": 33955244,
+        "gap_from_previous_height_all_four_last_us": 226648
+      },
+      {
+        "height": 48,
+        "rows": 1024,
+        "first_submit_min_us": 17104367,
+        "first_submit_max_us": 17104367,
+        "node_first_observed_us": [
+          33970346,
+          33930315,
+          33694883,
+          33700684
+        ],
+        "node_last_observed_us": [
+          34135840,
+          33952792,
+          33715280,
+          33736440
+        ],
+        "all_four_last_observed_us": 34135840,
+        "gap_from_previous_height_all_four_last_us": 180596
+      },
+      {
+        "height": 49,
+        "rows": 1024,
+        "first_submit_min_us": 21571575,
+        "first_submit_max_us": 21571575,
+        "node_first_observed_us": [
+          34148437,
+          33957429,
+          33884577,
+          33906522
+        ],
+        "node_last_observed_us": [
+          34295625,
+          34022591,
+          33901485,
+          33918408
+        ],
+        "all_four_last_observed_us": 34295625,
+        "gap_from_previous_height_all_four_last_us": 159785
+      },
+      {
+        "height": 50,
+        "rows": 1024,
+        "first_submit_min_us": 31147687,
+        "first_submit_max_us": 31147687,
+        "node_first_observed_us": [
+          34304142,
+          34038252,
+          34002403,
+          34019600
+        ],
+        "node_last_observed_us": [
+          34429562,
+          34069241,
+          34077236,
+          34049694
+        ],
+        "all_four_last_observed_us": 34429562,
+        "gap_from_previous_height_all_four_last_us": 133937
+      },
+      {
+        "height": 51,
+        "rows": 1024,
+        "first_submit_min_us": 32093864,
+        "first_submit_max_us": 32093864,
+        "node_first_observed_us": [
+          34739787,
+          34742648,
+          34730349,
+          34730679
+        ],
+        "node_last_observed_us": [
+          34819042,
+          34757102,
+          34733090,
+          34744105
+        ],
+        "all_four_last_observed_us": 34819042,
+        "gap_from_previous_height_all_four_last_us": 389480
+      },
+      {
+        "height": 52,
+        "rows": 1024,
+        "first_submit_min_us": 33257344,
+        "first_submit_max_us": 33257344,
+        "node_first_observed_us": [
+          34987017,
+          34973268,
+          34959971,
+          34980018
+        ],
+        "node_last_observed_us": [
+          35101934,
+          35047371,
+          34974757,
+          35012652
+        ],
+        "all_four_last_observed_us": 35101934,
+        "gap_from_previous_height_all_four_last_us": 282892
+      },
+      {
+        "height": 53,
+        "rows": 1024,
+        "first_submit_min_us": 33440521,
+        "first_submit_max_us": 33440521,
+        "node_first_observed_us": [
+          36026687,
+          36026816,
+          36019555,
+          36025062
+        ],
+        "node_last_observed_us": [
+          36053053,
+          36032469,
+          36033810,
+          36028330
+        ],
+        "all_four_last_observed_us": 36053053,
+        "gap_from_previous_height_all_four_last_us": 951119
+      },
+      {
+        "height": 54,
+        "rows": 1024,
+        "first_submit_min_us": 33791829,
+        "first_submit_max_us": 33791829,
+        "node_first_observed_us": [
+          36179048,
+          36142879,
+          36135799,
+          36136599
+        ],
+        "node_last_observed_us": [
+          36256745,
+          36174768,
+          36185127,
+          36166575
+        ],
+        "all_four_last_observed_us": 36256745,
+        "gap_from_previous_height_all_four_last_us": 203692
+      },
+      {
+        "height": 55,
+        "rows": 1024,
+        "first_submit_min_us": 34019034,
+        "first_submit_max_us": 34019034,
+        "node_first_observed_us": [
+          36639189,
+          36636274,
+          36635038,
+          36646875
+        ],
+        "node_last_observed_us": [
+          36682705,
+          36652823,
+          36649907,
+          36661742
+        ],
+        "all_four_last_observed_us": 36682705,
+        "gap_from_previous_height_all_four_last_us": 425960
+      },
+      {
+        "height": 56,
+        "rows": 1024,
+        "first_submit_min_us": 34186889,
+        "first_submit_max_us": 34186889,
+        "node_first_observed_us": [
+          36852146,
+          36831837,
+          36816943,
+          36841094
+        ],
+        "node_last_observed_us": [
+          36978842,
+          36854139,
+          36860236,
+          36888998
+        ],
+        "all_four_last_observed_us": 36978842,
+        "gap_from_previous_height_all_four_last_us": 296137
+      },
+      {
+        "height": 57,
+        "rows": 1024,
+        "first_submit_min_us": 34345660,
+        "first_submit_max_us": 34345660,
+        "node_first_observed_us": [
+          37131682,
+          37107256,
+          37390095,
+          37121771
+        ],
+        "node_last_observed_us": [
+          37252742,
+          37119852,
+          37402724,
+          37141358
+        ],
+        "all_four_last_observed_us": 37402724,
+        "gap_from_previous_height_all_four_last_us": 423882
+      },
+      {
+        "height": 58,
+        "rows": 1024,
+        "first_submit_min_us": 34478799,
+        "first_submit_max_us": 34478799,
+        "node_first_observed_us": [
+          37307335,
+          37262718,
+          37526102,
+          37262999
+        ],
+        "node_last_observed_us": [
+          37399262,
+          37300977,
+          37643162,
+          37280765
+        ],
+        "all_four_last_observed_us": 37643162,
+        "gap_from_previous_height_all_four_last_us": 240438
+      },
+      {
+        "height": 59,
+        "rows": 1024,
+        "first_submit_min_us": 34878500,
+        "first_submit_max_us": 34878500,
+        "node_first_observed_us": [
+          37743078,
+          37761311,
+          37742033,
+          37732821
+        ],
+        "node_last_observed_us": [
+          37805445,
+          37764693,
+          37818402,
+          37755592
+        ],
+        "all_four_last_observed_us": 37818402,
+        "gap_from_previous_height_all_four_last_us": 175240
+      },
+      {
+        "height": 60,
+        "rows": 1024,
+        "first_submit_min_us": 35155039,
+        "first_submit_max_us": 35155039,
+        "node_first_observed_us": [
+          37944633,
+          37919010,
+          37932042,
+          38617020
+        ],
+        "node_last_observed_us": [
+          38074479,
+          37966832,
+          37978579,
+          38637811
+        ],
+        "all_four_last_observed_us": 38637811,
+        "gap_from_previous_height_all_four_last_us": 819409
+      },
+      {
+        "height": 61,
+        "rows": 1024,
+        "first_submit_min_us": 36112589,
+        "first_submit_max_us": 36112589,
+        "node_first_observed_us": [
+          40354275,
+          40410523,
+          40402620,
+          41610408
+        ],
+        "node_last_observed_us": [
+          40356379,
+          40412635,
+          40404547,
+          41643035
+        ],
+        "all_four_last_observed_us": 41643035,
+        "gap_from_previous_height_all_four_last_us": 3005224
+      },
+      {
+        "height": 62,
+        "rows": 1024,
+        "first_submit_min_us": 36310561,
+        "first_submit_max_us": 36310561,
+        "node_first_observed_us": [
+          41515321,
+          41560903,
+          41561186,
+          41870935
+        ],
+        "node_last_observed_us": [
+          41563867,
+          41563501,
+          41563643,
+          41873853
+        ],
+        "all_four_last_observed_us": 41873853,
+        "gap_from_previous_height_all_four_last_us": 230818
+      },
+      {
+        "height": 63,
+        "rows": 1024,
+        "first_submit_min_us": 36748905,
+        "first_submit_max_us": 36748905,
+        "node_first_observed_us": [
+          42780065,
+          42825729,
+          42825776,
+          43138829
+        ],
+        "node_last_observed_us": [
+          42781892,
+          42870426,
+          42856274,
+          43141070
+        ],
+        "all_four_last_observed_us": 43141070,
+        "gap_from_previous_height_all_four_last_us": 1267217
+      },
+      {
+        "height": 64,
+        "rows": 1024,
+        "first_submit_min_us": 37030514,
+        "first_submit_max_us": 37030514,
+        "node_first_observed_us": [
+          43539859,
+          43490144,
+          43538011,
+          43789926
+        ],
+        "node_last_observed_us": [
+          43541363,
+          43492021,
+          43543965,
+          43791803
+        ],
+        "all_four_last_observed_us": 43791803,
+        "gap_from_previous_height_all_four_last_us": 650733
+      }
+    ]
+  },
+  "conclusions": [
+    "All three rounds passed 65536 receipts, balances, account authority, fees, nonce and original cold recovery. Each used 64 delivered input frames and 64 finalized 1024-row candidates with no recorded transport/nonce/business failure.",
+    "The repeated CPU run is a preserved negative: 1496.538478 TPS and P95/P99 17.017242/17.325802 seconds, versus first CPU 2490.169235 TPS and 4.169760/4.727761 seconds. Functional pass is not stable performance acceptance.",
+    "GPU-required 2748.529128 TPS is only one observed sample, not 12K recovery or a universal GPU win. Its startup-through-four-receipts wall is 27.6226787 seconds versus first CPU 26.8846838 seconds despite shorter transaction timing.",
+    "The generic dynamic driver does not promise same bytes across runs, but these three final raw hashes, genesis and initial roots actually match. Report the observed identity without converting it into a future driver guarantee.",
+    "Slow CPU all-four observation gaps concentrate at h41 (4.468519 seconds after h40) and h42 (9.577445 seconds after h41); h42 was first submitted at 14.979916 seconds and first observed across four nodes at approximately 31.045-31.090 seconds. This is an observation window, not proof that journal or consensus itself paused for that entire duration.",
+    "Diagnostics were off. Internal execution, proposal/QC, publication and query visibility cannot be separated for this slow 65K run. Do not blame the signing algorithm, early-body fanout, disk or query observer without further evidence.",
+    "continuous_generator_starved_poll_us counts full original SDK poll turns whenever prepared input is exhausted and more rows remain, including when the outstanding ceiling prevents starting another generator. It is not pure signer idle time. Generation task and poll timings overlap and cannot be added or subtracted from total TPS.",
+    "Stage1 continuous samples used another corpus/domain and separate sessions. Comparisons to stage1 are descriptive, not a same-input before/after isolation; the separate strict 4096 phase1/phase2 fixture is the controlled comparison.",
+    "No final static 65536 run was performed in this phase. Real multihost, physical wire/retransmission/peak-memory measurements, full candidate CI and formal deployment remain outside this acceptance."
+  ]
+}

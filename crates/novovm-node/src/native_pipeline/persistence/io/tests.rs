@@ -299,6 +299,7 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
             Some(waiters[0].thread().clone()),
             Some(waiters[1].thread().clone()),
         ],
+        None,
     )?;
     let accounting = service.usage.clone();
     let nodes = admit_real(|| service.try_read_nodes(hashes.clone()))?;
@@ -332,5 +333,96 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
     let still_live = admit_real(|| service.try_read_value(update.root(), b"io/0037".to_vec()))?;
     assert_eq!(still_live.wait()?, Some(vec![37; 256]));
     service.shutdown()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; real owner startup and damaged genesis rejection, not deployment"]
+fn real_io_startup_installs_once_and_existing_rejects_missing_or_altered_genesis() -> Result<()> {
+    use crate::native_pipeline::persistence::packet::node_key;
+    use novovm_exec::resident::StorageWrite;
+
+    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY is required")?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/io-tests")
+        .join(format!("startup-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let config = StoreConfig {
+        library: library.into(),
+        database: directory.join("state.rocksdb"),
+        domain: StorageDomain {
+            chain_id: 391,
+            genesis_config_commitment: [11; 32],
+            protocol_commitment: [12; 32],
+        },
+        storage: StorageConfig::default(),
+        packet_budget: PacketBudget::default(),
+    };
+    let initial = || {
+        stage_state_update(
+            &Empty,
+            empty_root(),
+            &[StateChange::Put {
+                key: b"genesis/account".to_vec(),
+                value: vec![7; 32],
+            }],
+        )
+    };
+    let root = initial()?.root();
+    let start = |config: StoreConfig, mode| {
+        IoService::start_with_notify(
+            config,
+            mode,
+            IoBudget::default(),
+            [None, None],
+            Some(initial()?),
+        )
+    };
+    let service = start(config.clone(), OpenMode::CreateNew)?;
+    // Readiness includes the real installation and exact pinned-node check;
+    // this request reads through that same still-open native owner.
+    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
+    assert_eq!(value.wait()?, Some(vec![7; 32]));
+    service.shutdown()?;
+    let service = start(config.clone(), OpenMode::Existing)?;
+    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
+    assert_eq!(value.wait()?, Some(vec![7; 32]));
+    service.shutdown()?;
+
+    let mut missing = config.clone();
+    missing.database = directory.join("missing.rocksdb");
+    drop(CandidateStore::open(missing.clone(), OpenMode::CreateNew)?);
+    let error = start(missing.clone(), OpenMode::Existing)
+        .err()
+        .context("existing mode must not install absent pinned genesis")?;
+    assert!(format!("{error:#}").contains("pinned genesis content missing or altered"));
+    let store = CandidateStore::open(missing, OpenMode::Existing)?;
+    assert_eq!(
+        store.read_node(&root)?,
+        None,
+        "failed startup repaired state"
+    );
+    drop(store);
+
+    let store = CandidateStore::open(config.clone(), OpenMode::Existing)?;
+    let key = store.scoped_key(&node_key(root));
+    let corrupted = vec![0; initial()?.nodes()[&root].len()];
+    store
+        .storage
+        .borrow_mut()
+        .atomic_write_batch(&[StorageWrite::Put {
+            key: key.clone(),
+            value: corrupted.clone(),
+        }])?;
+    drop(store);
+    assert!(start(config.clone(), OpenMode::Existing).is_err());
+    let store = CandidateStore::open(config, OpenMode::Existing)?;
+    assert_eq!(
+        store.storage.borrow_mut().get(&key)?,
+        Some(corrupted),
+        "failed startup overwrote corrupted state"
+    );
     Ok(())
 }

@@ -98,6 +98,8 @@ pub struct NativeLifecycle {
     transaction_session: Hash,
     transaction_sequence: u64,
     outbox: Option<Fanout>,
+    successor_outbox: Option<(Hash, Fanout)>,
+    successor_announced: Option<Hash>,
     requested: BTreeSet<(Hash, Hash)>,
     height: u64,
     round: u64,
@@ -114,6 +116,9 @@ pub struct NativeLifecycle {
     pub expired_sends: u64,
     pub retired_sends: u64,
     pub archive_decisions: u64,
+    /// Logical early-body delivery obligations accepted, not wire/retransmit bytes.
+    pub successor_body_enqueued: u64,
+    pub successor_body_bytes: u64,
 }
 impl NativeLifecycle {
     #[cfg(test)]
@@ -234,6 +239,8 @@ impl NativeLifecycle {
             transaction_session: rand::random(),
             transaction_sequence: 0,
             outbox: None,
+            successor_outbox: None,
+            successor_announced: None,
             requested: BTreeSet::new(),
             height,
             round,
@@ -252,6 +259,8 @@ impl NativeLifecycle {
             expired_sends: 0,
             retired_sends: 0,
             archive_decisions: 0,
+            successor_body_enqueued: 0,
+            successor_body_bytes: 0,
         })
     }
 
@@ -534,6 +543,8 @@ impl NativeLifecycle {
     fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
         self.progress
             .poll_recovery(pipeline, &self.policy, self.codec)?;
+        self.bodies
+            .qualify_remote_successor(&self.progress, &self.validators)?;
         self.bodies.poll(pipeline, &mut self.progress)?;
         self.progress.poll_acknowledgements(pipeline)?;
         if self.height != self.progress.context().height || self.round != self.progress.round() {
@@ -611,6 +622,26 @@ impl NativeLifecycle {
                 if let Some(received) = self.pending[lane].take() {
                     let peer = received.peer;
                     match received.message.as_ref() {
+                        Message::AssetBody { context, .. }
+                            if context.height > self.progress.context().height =>
+                        {
+                            // Optional future input must never monopolize the
+                            // sole body handoff and block its own parent. The
+                            // original bounded body owner either takes one
+                            // future input or declines it. Real proposal/body
+                            // recovery remains available if optional capacity
+                            // was unavailable; no finality obligation is lost.
+                            match self.bodies.offer_remote_successor(
+                                &received.message,
+                                self.peers[peer],
+                                pipeline,
+                                &self.progress,
+                                &self.validators,
+                            ) {
+                                Ok(true) => {}
+                                Ok(false) | Err(_) => self.rejected_messages += 1,
+                            }
+                        }
                         Message::Body { .. }
                         | Message::ApflBody { .. }
                         | Message::AssetBody { .. } => {
@@ -706,6 +737,7 @@ impl NativeLifecycle {
                 self.requested_bodies += 1;
             }
         }
+        self.fanout_successor()?;
         #[cfg(test)]
         for peer in 0..self.peers.len() {
             ensure!(

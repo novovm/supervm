@@ -373,6 +373,7 @@ impl Fixture {
             workers: 4,
             execution_backend: Default::default(),
             signature_backend: Default::default(),
+            prepare_asset_signatures: false,
             max_batches: 2,
             max_retained_bytes: 256 * 1024 * 1024,
             authentication: AuthenticationBudget {

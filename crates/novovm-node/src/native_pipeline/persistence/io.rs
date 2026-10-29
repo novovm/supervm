@@ -12,7 +12,9 @@ use super::store::{PersistProgress, BULK_KEYS};
 use super::{
     CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig, StoredCandidate,
 };
-use crate::native_pipeline::state::tree::{read_state_value, validate_state_node_bytes, NodeHash};
+use crate::native_pipeline::state::tree::{
+    read_state_value, validate_state_node_bytes, NodeHash, StagedStateUpdate, StateNodeReader,
+};
 use anyhow::{ensure, Context, Result};
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
@@ -294,7 +296,7 @@ impl IoService {
     /// Blocking initialization on a new thread; call before activating network
     /// service. Opening never transfers a live native handle across threads.
     pub fn start(config: StoreConfig, mode: OpenMode, budget: IoBudget) -> Result<Self> {
-        Self::start_with_notify(config, mode, budget, [None, None])
+        Self::start_with_notify(config, mode, budget, [None, None], None)
     }
 
     /// Completion wakeups for the pipeline and its control thread. Notification
@@ -304,6 +306,7 @@ impl IoService {
         mode: OpenMode,
         budget: IoBudget,
         notify: [Option<thread::Thread>; 2],
+        initial: Option<StagedStateUpdate>,
     ) -> Result<Self> {
         ensure!(
             budget.requests > 0 && budget.requests <= 65_536 && budget.bytes > 0,
@@ -323,20 +326,44 @@ impl IoService {
         }));
         let worker = thread::Builder::new()
             .name("novovm-candidate-io".into())
-            .spawn(move || match CandidateStore::open(config, mode) {
-                Ok(store) => {
-                    if ready_tx.send(Ok(())).is_ok() {
-                        run_owner(store, receiver, notify);
+            .spawn(move || {
+                let opened = (|| {
+                    let store = CandidateStore::open(config, mode)?;
+                    if let Some(initial) = initial {
+                        if mode == OpenMode::CreateNew {
+                            store.install_unpublished_state(&initial)?;
+                        }
+                        for (hash, expected) in initial.nodes() {
+                            ensure!(
+                                store.read_node(hash)?.as_ref() == Some(expected),
+                                "pinned genesis content missing or altered; explicit recovery required"
+                            );
+                        }
                     }
-                }
-                Err(error) => {
-                    let _ = ready_tx.send(Err(error));
+                    Ok::<_, anyhow::Error>(store)
+                })();
+                match opened {
+                    Ok(store) => {
+                        if ready_tx.send(Ok(())).is_ok() {
+                            run_owner(store, receiver, notify);
+                        }
+                    }
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error));
+                    }
                 }
             })
             .context("start candidate I/O owner")?;
-        ready_rx
+        if let Err(error) = ready_rx
             .recv()
-            .context("candidate I/O owner failed during startup")??;
+            .context("candidate I/O owner failed during startup")
+            .and_then(|result| result)
+        {
+            // A failed startup must finish relinquishing the native owner
+            // before its caller can attempt a separate recovery operation.
+            let _ = worker.join();
+            return Err(error);
+        }
         Ok(Self {
             sender,
             worker,

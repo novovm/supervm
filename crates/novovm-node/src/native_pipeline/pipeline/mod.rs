@@ -44,7 +44,7 @@ use crate::native_pipeline::persistence::{
     OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig,
 };
 use crate::native_pipeline::state::frontier::CaptureBudget;
-use crate::native_pipeline::state::tree::NodeHash;
+use crate::native_pipeline::state::tree::{NodeHash, StagedStateUpdate};
 use anyhow::{ensure, Context, Result};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
@@ -68,6 +68,9 @@ pub struct PipelineConfig {
     pub workers: u32,
     pub execution_backend: ExecutionBackend,
     pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
+    /// Required capability of this consumer, qualified before startup readiness.
+    /// Reference V3 pipelines do not open an unused asset verifier.
+    pub prepare_asset_signatures: bool,
     pub max_batches: usize,
     pub max_retained_bytes: usize,
     pub authentication: AuthenticationBudget,
@@ -488,6 +491,8 @@ pub(crate) struct SignatureWork {
     strict_verified: Arc<AtomicU64>,
     reused: AtomicU64,
     uca_batch_calls: AtomicU64,
+    asset_prepared_at_startup: AtomicBool,
+    asset_startup_us: AtomicU64,
 }
 
 pub struct CandidatePipeline {
@@ -517,6 +522,15 @@ impl CandidatePipeline {
     pub fn signature_batch_calls(&self) -> u64 {
         self.signatures.uca_batch_calls.load(Ordering::Relaxed)
     }
+    /// Startup qualification is separate from timed business verification calls.
+    pub fn signature_startup(&self) -> (bool, u64) {
+        (
+            self.signatures
+                .asset_prepared_at_startup
+                .load(Ordering::Relaxed),
+            self.signatures.asset_startup_us.load(Ordering::Relaxed),
+        )
+    }
     pub fn execution_backend(&self) -> ExecutionBackend {
         self.config.execution_backend
     }
@@ -524,6 +538,24 @@ impl CandidatePipeline {
     /// Blocking startup before network activation. Each native session is opened
     /// once inside its dedicated owner. No engine is initialized in try_submit.
     pub fn start(config: PipelineConfig, mode: OpenMode) -> Result<Self> {
+        Self::start_inner(config, mode, None)
+    }
+
+    /// Verify pinned genesis content on the eventual I/O owner before readiness,
+    /// retaining that same open store for all later reads and durable writes.
+    pub(crate) fn start_with_initial_state(
+        config: PipelineConfig,
+        mode: OpenMode,
+        initial: StagedStateUpdate,
+    ) -> Result<Self> {
+        Self::start_inner(config, mode, Some(initial))
+    }
+
+    fn start_inner(
+        config: PipelineConfig,
+        mode: OpenMode,
+        initial: Option<StagedStateUpdate>,
+    ) -> Result<Self> {
         config.validate()?;
         let (sender, receiver) = mpsc::sync_channel(config.max_batches + 1);
         let (ready, ready_receiver) = mpsc::sync_channel(1);
@@ -540,7 +572,7 @@ impl CandidatePipeline {
             .spawn(move || {
                 driver::start(
                     worker_config,
-                    mode,
+                    (mode, initial),
                     receiver,
                     ready,
                     worker_identity,

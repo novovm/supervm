@@ -149,6 +149,107 @@ fn uca_packet_roundtrip_preserves_authorization_budget_and_unchanged_nonce() {
 }
 
 #[test]
+fn asset_structural_packet_reuses_plan_and_matches_independent_cold_decoder() {
+    use crate::native_pipeline::ingress::batch::BatchSource;
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    use std::sync::Arc;
+
+    let mut f = UcaFixture::new();
+    let expected = f.packet().unwrap();
+    let raw = f.base.plan.canonical_transactions_for_test();
+    let batch = Arc::new(
+        AssetSpendBatchV2::from_raw(
+            &raw,
+            AssetSpendBatchLimitsV2 {
+                transactions: 1024,
+                transaction_bytes: 8192,
+                body_bytes: 8 * 1024 * 1024,
+            },
+        )
+        .unwrap(),
+    );
+    f.base.plan = BatchPlan::from_source(
+        *f.base.plan.context(),
+        BatchSource::Uca(Arc::clone(&batch)),
+        f.base.plan.declared_access().to_vec(),
+        PacketBudget::default().plan(),
+    )
+    .unwrap();
+    assert!(f.base.plan.raw_transactions_if_materialized().is_none());
+    let actual = f.packet().unwrap();
+    assert_eq!(actual.records(), expected.records());
+    assert_eq!(actual.retained_bytes(), expected.retained_bytes());
+    assert_eq!(actual.receipt_projection(), expected.receipt_projection());
+    assert!(f.base.plan.raw_transactions_if_materialized().is_none());
+    assert_eq!(Arc::strong_count(&batch), 2);
+
+    let cold = load(&actual, actual.records(), PacketBudget::default())
+        .unwrap()
+        .unwrap();
+    assert!(actual.matches(&cold));
+    assert_eq!(cold.raw_transactions(), raw);
+    assert_eq!(cold.spend_outputs(), Some(f.outputs.as_slice()));
+    for (index, projection) in actual.receipt_projection().iter().enumerate() {
+        let view = cold.receipt_view(index).unwrap();
+        assert_eq!(projection.tx_hash, view.tx_hash);
+        assert_eq!(projection.signer_identity, view.signer_identity);
+        assert_eq!(projection.nonce_after, view.nonce_after);
+        assert_eq!(projection.success, view.success);
+        assert_eq!(projection.charged_fee.to_string(), view.charged_fee);
+    }
+}
+
+#[test]
+fn typed_asset_preparation_keeps_commitment_root_and_writable_access_checks() {
+    let f = UcaFixture::new();
+    let good = f.packet().unwrap();
+    let receipts = f
+        .base
+        .receipts
+        .iter()
+        .map(|receipt| postcard::to_allocvec(receipt).unwrap())
+        .collect::<Vec<_>>();
+    let prepare = |root, receipt, statement| {
+        prepare_with_spend(
+            &f.base.plan,
+            root,
+            &receipts,
+            &f.base.nodes,
+            receipt,
+            statement,
+            PacketBudget::default(),
+            Some(&f.outputs),
+        )
+    };
+    assert!(prepare(
+        [0; 32],
+        good.receipt_batch_commitment(),
+        good.statement_commitment()
+    )
+    .is_err());
+    assert!(prepare(f.base.root, [91; 32], good.statement_commitment()).is_err());
+    assert!(prepare(f.base.root, good.receipt_batch_commitment(), [92; 32]).is_err());
+
+    let mut f = UcaFixture::new();
+    let mut access = f.base.plan.declared_access().to_vec();
+    for entry in &mut access {
+        entry.may_put = false;
+    }
+    f.base.plan = BatchPlan::new(
+        *f.base.plan.context(),
+        f.base.plan.canonical_transactions_for_test(),
+        access,
+        PacketBudget::default().plan(),
+    )
+    .unwrap();
+    assert!(f.packet().is_err());
+
+    let mut f = UcaFixture::new();
+    f.base.receipts[1].delta.recipient.after = 1;
+    assert!(f.packet().is_err());
+}
+
+#[test]
 fn uca_packet_rejects_authorization_effects_and_budget_prefix_changes() {
     let mut f = UcaFixture::new();
     f.base.receipts[0].delta.nonce_after = 1;

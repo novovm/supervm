@@ -1,0 +1,5 @@
+Error: open AOEM after candidate pre-open guard
+
+Caused by:
+    AOEM storage provider rejected operation: status=-4: open failed: Failed to open RocksDB at D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230894699440700\validator-0.rocksdb: IO error: Failed to rename: D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230894699440700\validator-0.rocksdb/000031.dbtmp to: D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230894699440700\validator-0.rocksdb/CURRENT: �ܾ����ʡ�
+    

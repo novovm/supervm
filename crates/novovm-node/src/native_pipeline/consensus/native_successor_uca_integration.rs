@@ -323,6 +323,392 @@ fn native_successor_uca_complete_state_waits_for_ack_and_recovers() -> Result<()
 }
 
 #[test]
+#[ignore = "real AOEM; local durable asset preparation overlaps the missing parent proposal without signing"]
+fn native_successor_uca_local_ready_prepares_before_parent_proposal() -> Result<()> {
+    run_local_ready_successor(false)
+}
+
+#[test]
+#[ignore = "real AOEM/native sockets; one next-leader body prepares all followers before exact parent ACK"]
+fn native_successor_uca_remote_body_waits_for_own_parent_without_blocking_current_body(
+) -> Result<()> {
+    let mut u = UcaFixture::new()?;
+    let f = &mut u.native;
+    let first = f.leader(1)?;
+    let next = f.leader(2)?;
+    ensure!(first != next);
+    let parent = Arc::new(Message::AssetBody {
+        context: uca_context(f.base.anchor, 1)?,
+        batch: u.parent_batch.clone(),
+    });
+    ensure!(f.nodes[next].offer(&parent)?);
+    f.until(&[next], "next leader own parent ready", |nodes| {
+        nodes[next].executed() == 1
+    })?;
+    let selection = f.nodes[next]
+        .successor_selection()?
+        .context("missing local parent")?;
+    let child = Arc::new(Message::AssetBody {
+        context: uca_context(selection.parent, 2)?,
+        batch: u.child_batch.clone(),
+    });
+    let child_id = transport::candidate_body_id(&child, uca_codec())?;
+    ensure!(f.nodes[next].offer_successor(&child, &selection, &f.base.services.0[next])?);
+    // No follower has the parent yet. Native AssetBody reception must transfer
+    // its one optional future object to CandidateBodies, releasing pending[1].
+    f.until(
+        &[0, 1, 2, 3],
+        "future body retained without trusting its parent",
+        |nodes| {
+            nodes
+                .iter()
+                .enumerate()
+                .all(|(i, node)| i == next || node.remote_successor_waiting_for_test(child_id))
+        },
+    )?;
+    ensure!(
+        f.nodes
+            .iter()
+            .enumerate()
+            .all(|(i, node)| i == next
+                || (node.executed() == 0 && node.successor_metrics() == [0; 5]))
+    );
+    ensure!(f.nodes[next].successor_body_enqueued == 3);
+    ensure!(
+        f.nodes[next].successor_body_bytes
+            == 3 * transport::encode(&child, uca_codec())?.len() as u64
+    );
+    // Reuse only this receiver's existing capability, even though decoding the
+    // network body created a different dictionary Arc. Other receivers below
+    // deliberately keep the ordinary strict authentication path.
+    let reused = (0..4)
+        .find(|i| *i != first && *i != next)
+        .context("missing reuse follower")?;
+    let input = f.nodes[reused]
+        .remote_successor_authentication_input()
+        .context("missing remote authentication input")?;
+    let foreign = (0..u.child_batch.len())
+        .map(|index| {
+            admitted_uca_for_test(
+                f.base.services.0[next].owner_identity(),
+                &u.facade,
+                u.child_batch.clone(),
+                index,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(f.nodes[reused]
+        .reuse_remote_successor_admitted(
+            &input,
+            &f.base.services.0[reused],
+            &foreign.iter().collect::<Vec<_>>()
+        )
+        .is_err());
+    let admitted = (0..u.child_batch.len())
+        .map(|index| {
+            admitted_uca_for_test(
+                f.base.services.0[reused].owner_identity(),
+                &u.facade,
+                u.child_batch.clone(),
+                index,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(f.nodes[reused].reuse_remote_successor_admitted(
+        &input,
+        &f.base.services.0[reused],
+        &admitted.iter().collect::<Vec<_>>()
+    )?);
+    ensure!(f.nodes[reused]
+        .remote_successor_authentication_input()
+        .is_none());
+    ensure!(!f.nodes[reused].reuse_remote_successor_admitted(
+        &input,
+        &f.base.services.0[reused],
+        &admitted.iter().collect::<Vec<_>>()
+    )?);
+    // Each non-proposer uses its OWN parent execution; no child is locally
+    // selected, copied from a database, or supplied by the test to followers.
+    for i in 0..4 {
+        if i != first && i != next {
+            ensure!(f.nodes[i].offer(&parent)?);
+        }
+    }
+    let followers = (0..4).filter(|i| *i != first).collect::<Vec<_>>();
+    f.until(
+        &followers,
+        "three followers privately finish the same child",
+        |nodes| {
+            nodes
+                .iter()
+                .enumerate()
+                .all(|(i, node)| i == first || node.successor_metrics()[2] == 1)
+        },
+    )?;
+    ensure!(f
+        .nodes
+        .iter()
+        .all(|node| node.progress.head().is_none() && !node.progress.retains_body(child_id)));
+    ensure!(f.nodes[first].remote_successor_waiting_for_test(child_id));
+    // Let the current proposer execute, but pause all voting peers. Its early
+    // child must also complete without a quorum or a durable parent ACK.
+    ensure!(f.nodes[first].offer(&parent)?);
+    f.until(
+        &[first],
+        "current proposer privately finishes child before quorum",
+        |nodes| nodes[first].successor_metrics()[2] == 1,
+    )?;
+    ensure!(f.nodes.iter().all(|node| node.progress.head().is_none()
+        && !node.progress.retains_body(child_id)
+        && node.successor_metrics() == [1, 1, 1, 0, 0]));
+    for (i, node) in f.nodes.iter().enumerate() {
+        let journal = open_journal(
+            ValidatorJournal::open(
+                &f.base.services.0[i],
+                f.base.genesis,
+                f.base.anchor,
+                f.base.set.clone(),
+                f.base.keys[i].clone(),
+            )?,
+            &f.base.services.0[i],
+        )?;
+        ensure!(journal.head().is_none() && journal.context().height == 1);
+        ensure!(node.executed() == 2);
+    }
+    f.await_height(2)?;
+    ensure!(f
+        .nodes
+        .iter()
+        .all(|node| node.executed() == 2 && node.successor_metrics() == [1, 1, 1, 1, 0]));
+    drop(std::mem::take(&mut f.nodes));
+    f.base.services.shutdown()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "real AOEM; a different real parent decision discards the private local-ready successor"]
+fn native_successor_uca_local_ready_discards_different_decided_parent() -> Result<()> {
+    run_local_ready_successor(true)
+}
+
+#[test]
+#[ignore = "real AOEM/native sockets; remote successor source/domain and independently reproduced parent are mandatory"]
+fn native_successor_uca_remote_wrong_parent_never_executes_and_real_body_recovers() -> Result<()> {
+    let mut u = UcaFixture::new()?;
+    let f = &mut u.native;
+    let first = f.leader(1)?;
+    let next = f.leader(2)?;
+    let target = (0..4)
+        .find(|i| *i != first && *i != next)
+        .context("missing follower")?;
+    let parent = Arc::new(Message::AssetBody {
+        context: uca_context(f.base.anchor, 1)?,
+        batch: u.parent_batch.clone(),
+    });
+    ensure!(f.nodes[next].offer(&parent)?);
+    f.until(&[next], "own parent basis", |nodes| {
+        nodes[next].executed() == 1
+    })?;
+    let selection = f.nodes[next]
+        .successor_selection()?
+        .context("missing next leader basis")?;
+    let context = uca_context(selection.parent, 2)?;
+    let child = Arc::new(Message::AssetBody {
+        context,
+        batch: u.child_batch.clone(),
+    });
+    let source = f.base.ids[next];
+    ensure!(!f.nodes[target].offer_remote_successor_for_test(
+        &child,
+        f.base.ids[first],
+        &f.base.services.0[target]
+    )?);
+    for field in 0..5 {
+        let mut wrong = context;
+        match field {
+            0 => wrong.chain_id += 1,
+            1 => wrong.protocol_commitment[0] ^= 1,
+            2 => wrong.business_program[0] ^= 1,
+            3 => wrong.height += 1,
+            _ => wrong.parent_height += 1,
+        }
+        let wrong = Arc::new(Message::AssetBody {
+            context: wrong,
+            batch: u.child_batch.clone(),
+        });
+        ensure!(
+            !f.nodes[target].offer_remote_successor_for_test(
+                &wrong,
+                source,
+                &f.base.services.0[target]
+            )?,
+            "invalid future scope {field}"
+        );
+    }
+    // Correctly scoped transport is still not proof of a state root. Retain
+    // exactly one claim; duplicates share it, conflicting bodies cannot add a
+    // slot, and even a real local Ready must match EVERY parent field.
+    let mut wrong = context;
+    wrong.parent_state_root[0] ^= 1;
+    let wrong = Arc::new(Message::AssetBody {
+        context: wrong,
+        batch: u.child_batch.clone(),
+    });
+    let wrong_id = transport::candidate_body_id(&wrong, uca_codec())?;
+    ensure!(f.nodes[target].offer_remote_successor_for_test(
+        &wrong,
+        source,
+        &f.base.services.0[target]
+    )?);
+    ensure!(f.nodes[target].offer_remote_successor_for_test(
+        &wrong,
+        source,
+        &f.base.services.0[target]
+    )?);
+    ensure!(!f.nodes[target].offer_remote_successor_for_test(
+        &child,
+        source,
+        &f.base.services.0[target]
+    )?);
+    ensure!(f.nodes[target].offer(&parent)?);
+    f.until(
+        &[target],
+        "wrong remote root is not own durable root",
+        |nodes| nodes[target].executed() == 1,
+    )?;
+    for _ in 0..32 {
+        f.nodes[target].poll(&f.base.services.0[target], Instant::now())?;
+    }
+    ensure!(f.nodes[target].remote_successor_waiting_for_test(wrong_id));
+    ensure!(
+        f.nodes[target].successor_metrics() == [0; 5] && f.nodes[target].progress.head().is_none()
+    );
+    ensure!(f.nodes[next].offer_successor(&child, &selection, &f.base.services.0[next])?);
+    ensure!(f.nodes[first].offer(&parent)?);
+    f.await_height(2)?;
+    ensure!(
+        f.nodes[target].executed() == 2 && f.nodes[target].successor_metrics() == [0, 0, 0, 0, 1]
+    );
+    ensure!(!f.nodes[target].progress.retains_body(wrong_id));
+    drop(std::mem::take(&mut f.nodes));
+    f.base.services.shutdown()?;
+    Ok(())
+}
+
+fn run_local_ready_successor(different_parent: bool) -> Result<()> {
+    let mut u = UcaFixture::new()?;
+    let f = &mut u.native;
+    let first = f.leader(1)?;
+    let next = f.leader(2)?;
+    ensure!(first != next, "fixture needs a follower as next proposer");
+    let context = uca_context(f.base.anchor, 1)?;
+    let parent = Arc::new(Message::AssetBody {
+        context,
+        batch: u.parent_batch.clone(),
+    });
+    let parent_id = transport::candidate_body_id(&parent, uca_codec())?;
+    // No input goes to the current proposer. Only the independently admitted
+    // follower can execute; no fixture proposal/QC/registration is supplied.
+    ensure!(f.nodes[next].offer(&parent)?);
+    ensure!(
+        f.nodes[next].successor_selection()?.is_none(),
+        "unexecuted input supplied a speculative parent"
+    );
+    f.until(&[next], "local parent ready without proposal", |nodes| {
+        nodes[next].executed() == 1
+    })?;
+    ensure!(
+        !f.nodes[next].progress.retains_body(parent_id)
+            && f.nodes[next].progress.pending_message().is_none(),
+        "local preparation registered or signed without a proposal"
+    );
+    let selected = f.nodes[next]
+        .successor_selection()?
+        .context("durable local Ready unnecessarily waited for parent proposal")?;
+    let child = Arc::new(Message::AssetBody {
+        context: uca_context(selected.parent, 2)?,
+        batch: u.child_batch.clone(),
+    });
+    let child_id = transport::candidate_body_id(&child, uca_codec())?;
+    reject_altered_pins(
+        &mut f.nodes[next],
+        &f.base.services.0[next],
+        &child,
+        &selected,
+    )?;
+    ensure!(f.nodes[next].offer_successor(&child, &selected, &f.base.services.0[next])?);
+    f.until(
+        &[next],
+        "private child ready without parent proposal",
+        |nodes| nodes[next].successor_metrics()[2] == 1,
+    )?;
+    ensure!(
+        f.nodes[next].successor_metrics() == [1, 1, 1, 0, 0]
+            && !f.nodes[next].progress.retains_body(parent_id)
+            && !f.nodes[next].progress.retains_body(child_id)
+            && f.nodes[next].progress.pending_message().is_none()
+            && f.nodes.iter().all(|node| node.progress.head().is_none()),
+        "private durable results acquired proposal/vote/head authority"
+    );
+    let journal = open_journal(
+        ValidatorJournal::open(
+            &f.base.services.0[next],
+            f.base.genesis,
+            f.base.anchor,
+            f.base.set.clone(),
+            f.base.keys[next].clone(),
+        )?,
+        &f.base.services.0[next],
+    )?;
+    ensure!(
+        journal.head().is_none() && journal.context().height == 1,
+        "private successor published a durable head"
+    );
+    drop(journal);
+
+    // Only now let the real proposer execute and the four original journals
+    // reach quorum. Changing a signed candidate coordinate gives a different
+    // valid parent decision, even when its business effects happen to agree.
+    let mut actual_context = context;
+    actual_context.timestamp_unix_ms += u64::from(different_parent);
+    let actual = Arc::new(Message::AssetBody {
+        context: actual_context,
+        batch: u.parent_batch.clone(),
+    });
+    ensure!(f.nodes[first].offer(&actual)?);
+    if different_parent {
+        let head = f.await_height(1)?;
+        ensure!(
+            head != selected.parent,
+            "fixture failed to change decided parent"
+        );
+        f.until(
+            &[0, 1, 2, 3],
+            "wrong-parent private child drained",
+            |nodes| nodes[next].successor_metrics()[4] == 1,
+        )?;
+        ensure!(
+            f.nodes[next].successor_metrics() == [1, 1, 1, 0, 1]
+                && !f.nodes[next].progress.retains_body(child_id)
+                && f.nodes
+                    .iter()
+                    .all(|node| node.progress.head() == Some(head)),
+            "unselected private branch was promoted or published"
+        );
+    } else {
+        f.await_height(2)?;
+        ensure!(
+            f.nodes[next].successor_metrics() == [1, 1, 1, 1, 0]
+                && f.nodes.iter().all(|node| node.executed() == 2),
+            "exact real parent ACK did not reuse one private execution"
+        );
+    }
+    drop(f.nodes.drain(..));
+    f.base.services.shutdown()?;
+    Ok(())
+}
+
+#[test]
 #[ignore = "real AOEM and native sockets; reused signature facts recapture full UCA successor state"]
 fn native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery() -> Result<()> {
     run_uca_successor(true)

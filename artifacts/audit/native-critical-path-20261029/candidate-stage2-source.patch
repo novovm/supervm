@@ -1,0 +1,2421 @@
+diff --git a/crates/novovm-network/src/novorudp/object_sender/tests.rs b/crates/novovm-network/src/novorudp/object_sender/tests.rs
+index e299cf0e..054c368a 100644
+--- a/crates/novovm-network/src/novorudp/object_sender/tests.rs
++++ b/crates/novovm-network/src/novorudp/object_sender/tests.rs
+@@ -222,6 +222,135 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
+     Ok(())
+ }
+ 
++#[test]
++fn native_read_request_recovers_after_initial_loss_with_both_backoff_flags_disabled() -> Result<()>
++{
++    use super::super::fragments::{Reassembler, ReassemblyLimits};
++    use novovm_protocol::native_query::{self as query, Frame, Query, Request};
++
++    // Reproduce the old process fixture's window default / pacing override,
++    // then the service/operator's explicit two-flag policy. No changed retry
++    // count, ACK interval, operation deadline, object TTL or sender algorithm.
++    for window_backoff in [true, false] {
++        let (left, right, mut a, mut b) = link()?;
++        let now = Instant::now();
++        let request = Frame::Request(Request {
++            session: [9; 32],
++            sequence: 40,
++            query: Query::Receipt { hash: [4; 32] },
++        });
++        let bytes = query::encode(request.clone()).map_err(anyhow::Error::msg)?;
++        let body = Arc::new(OutgoingMessage::with_profile(
++            [1; 32],
++            bytes.clone(),
++            query::MAX_BYTES,
++            FragmentProfile::NativeUdpV2,
++        )?);
++        assert_eq!(body.frame_count(), 1);
++        let config = NovoRudpWindowConfig {
++            packet_copies: 1,
++            tail_packet_copies: 1,
++            batch_size: 32,
++            batch_pause_ms: 0,
++            ack_wait_ms: 10,
++            no_progress_backoff: window_backoff,
++            ..Default::default()
++        };
++        assert_eq!(config.max_window_retries, 8);
++        let pacing = NovoRudpPacingProfile {
++            packet_copies: 1,
++            tail_packet_copies: 1,
++            batch_size: 32,
++            batch_pause_ms: 0,
++            ack_wait_ms: 10,
++            no_progress_backoff: false,
++        };
++        let mut sender = NativeObjectSender::new(
++            body.clone(),
++            a.session_id(),
++            query::STREAM,
++            config,
++            pacing,
++            now,
++            Duration::from_secs(30),
++        )?;
++        // Drop actual authenticated packets before they reach reassembly.
++        // Supplying monotonic timestamps makes the loss window deterministic,
++        // without sleeping or fabricating transport success/ACK progress.
++        for attempt in 0..=8 {
++            let at = now + Duration::from_millis(attempt * 10);
++            assert_eq!(sender.poll_send(&left, &mut a, at, 64)?, 1);
++            let dropped = receive(&right, &mut b)?;
++            assert_eq!(dropped.stream_id, query::STREAM);
++            assert_eq!(sender.status(), ObjectSendState::Sending);
++        }
++        let recovered_at = now + Duration::from_millis(90);
++        assert!(recovered_at < now + Duration::from_secs(5));
++        if window_backoff {
++            // A false pacing flag does not undo a true window flag: no more
++            // request packets arrive even after the network recovers.
++            for at in [recovered_at, now + Duration::from_secs(5)] {
++                assert_eq!(sender.poll_send(&left, &mut a, at, 64)?, 0);
++                assert_eq!(sender.status(), ObjectSendState::Sending);
++            }
++            assert_eq!(
++                sender.poll_send(&left, &mut a, now + Duration::from_secs(30), 64)?,
++                0
++            );
++            assert_eq!(sender.status(), ObjectSendState::Expired);
++            assert!(Arc::ptr_eq(&sender.into_body(), &body));
++            continue;
++        }
++        assert_eq!(sender.poll_send(&left, &mut a, recovered_at, 64)?, 1);
++        let received = receive(&right, &mut b)?;
++        let peer = b.remote_peer_id().to_owned();
++        let mut objects = Reassembler::with_profile(
++            [1; 32],
++            vec![peer.clone()],
++            ReassemblyLimits {
++                max_message_bytes: query::MAX_BYTES,
++                messages: 1,
++                bytes: query::MAX_BYTES,
++                peer_messages: 1,
++                peer_bytes: query::MAX_BYTES,
++                ttl: Duration::from_secs(5),
++            },
++            FragmentProfile::NativeUdpV2,
++        )?;
++        objects.push(&peer, &received.payload, recovered_at)?;
++        let complete = objects
++            .poll_complete(recovered_at, 64)?
++            .context("recovered original query missing")?;
++        let decoded = complete.chunks.concat();
++        assert_eq!(decoded, bytes);
++        assert_eq!(
++            query::decode(&decoded).map_err(anyhow::Error::msg)?,
++            request
++        );
++        assert_eq!(sender.status(), ObjectSendState::Sending);
++        let ack = NovoRudpAckFrame {
++            header: NovoRudpFrameHeader {
++                version: 1,
++                kind: NovoRudpFrameKind::Ack,
++                session_id: a.session_id(),
++                epoch: 1,
++                sequence: None,
++                window_id: None,
++            },
++            expected_total: 1,
++            receiver_done: true,
++            missing_count: 0,
++            current_window: None,
++            current_window_missing_ranges: vec![],
++        };
++        assert!(b.try_send(&right, &encode_object_ack(body.id(), query::STREAM, &ack)?)?);
++        sender.on_ack(&receive(&left, &mut a)?, recovered_at)?;
++        assert_eq!(sender.status(), ObjectSendState::Delivered);
++        assert!(Arc::ptr_eq(&sender.into_body(), &body));
++    }
++    Ok(())
++}
++
+ #[test]
+ fn invalid_and_stale_feedback_cannot_deliver_or_rewrite_repair_state() -> Result<()> {
+     let (_, _, a, _) = link()?;
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+index 2c3e491b..4e0e4127 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+@@ -54,6 +54,9 @@ struct Body {
+ /// Bounded input ownership only. A peer body is accepted only for an existing
+ /// verified proposal/decision hint, with the exact requested body ID and parent.
+ /// No arbitrary peer can fill the queue with unsolicited speculative candidates.
++/// The sole optional Lookahead additionally accepts the scheduled next leader's
++/// exact AssetBody, but uses only this owner's reproduced parent and never
++/// registers or publishes before the ordinary exact parent journal ACK.
+ pub struct CandidateBodies {
+     owner: Arc<()>,
+     pin: BatchContext,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+index ef5a1dcc..1e5b7276 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+@@ -1,4 +1,4 @@
+-//! One optional local successor on the ORIGINAL body/pipeline owner.
++//! One optional successor on the ORIGINAL body/pipeline owner.
+ //! Adapted from controller/{early_body,successor}; no old controller, sender,
+ //! journal or authority is activated. A durable parent is a computation basis,
+ //! not a decided parent. Only the existing journal ACK permits promotion.
+@@ -83,9 +83,23 @@ pub(super) struct Lookahead {
+     charge: usize,
+     phase: Phase,
+     retired: bool,
++    local_origin: bool,
++    parent_qualified: bool,
++    signature_reused: bool,
+ }
+ 
+ impl CandidateBodies {
++    #[cfg(test)]
++    pub(crate) fn remote_successor_waiting_for_test(&self, id: Hash) -> bool {
++        self.successor.as_ref().is_some_and(|work| {
++            !work.local_origin
++                && work.id == id
++                && !work.retired
++                && !work.parent_qualified
++                && matches!(work.phase, Phase::Authenticate(_))
++        })
++    }
++
+     pub(super) fn successor_inflight(&self) -> bool {
+         self.successor
+             .as_ref()
+@@ -108,6 +122,72 @@ impl CandidateBodies {
+         self.successor_metrics
+     }
+ 
++    pub(crate) fn remote_successor_authentication_input(
++        &self,
++        progress: &RoundProgress,
++    ) -> Option<Arc<Message>> {
++        self.successor
++            .as_ref()
++            .filter(|work| {
++                !work.local_origin
++                    && !work.signature_reused
++                    && !work.retired
++                    && !self.frozen
++                    && !progress.is_frozen()
++                    && matches!(work.phase, Phase::Authenticate(_))
++                    && Pin::from_selection(&work.selection).live(
++                        progress.context(),
++                        progress.round(),
++                        progress.is_recovering(),
++                    )
++            })
++            .map(|work| work.message.clone())
++    }
++
++    pub(crate) fn reuse_remote_successor_admitted(
++        &mut self,
++        message: &Arc<Message>,
++        pipeline: &CandidatePipeline,
++        progress: &RoundProgress,
++        admitted: &[&AdmittedTransfer],
++    ) -> Result<bool> {
++        ensure!(
++            Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
++            "successor execution owner changed"
++        );
++        let Some(input) = self.remote_successor_authentication_input(progress) else {
++            return Ok(false);
++        };
++        if !Arc::ptr_eq(&input, message) {
++            return Ok(false);
++        }
++        let Message::AssetBody { batch, .. } = input.as_ref() else {
++            return Ok(false);
++        };
++        // Same owner/domain and every immutable intent/key/signature row are
++        // checked by the original rebind. A hash or transport claim is not a
++        // signature capability; authorization still uses the real parent.
++        let checked = pipeline.rebind_admitted_uca(batch.clone(), admitted)?;
++        let extra = checked.retained_metadata_bytes();
++        let reserve = self.codec.message_bytes.saturating_mul(2);
++        if extra
++            .checked_add(reserve)
++            .is_none_or(|n| n > self.limits.bytes.saturating_sub(self.bytes))
++        {
++            return Ok(false);
++        }
++        let request = AuthenticationRequest::from_authenticated(checked, self.policy.clone())?;
++        if !pipeline.can_authenticate_background(&request)? {
++            return Ok(false);
++        }
++        let work = self.successor.as_mut().expect("same pending successor");
++        work.phase = Phase::Authenticate(Some(request));
++        work.signature_reused = true;
++        work.charge += extra;
++        self.bytes += extra;
++        Ok(true)
++    }
++
+     pub(crate) fn successor_selection(
+         &self,
+         progress: &RoundProgress,
+@@ -145,13 +225,37 @@ impl CandidateBodies {
+         }) {
+             return Ok(None);
+         }
+-        for (id, body) in &self.bodies {
+-            // Only an already registered actual execution, not arbitrary peer
+-            // roots or a merely prepared/failed body, supplies the next basis.
+-            let Work::Registered(candidate) = &body.work else {
+-                continue;
+-            };
+-            if !matches_context(&body.context, &self.pin, progress) || !progress.retains_body(*id) {
++        self.executed_successor_selection(progress, validators, None)
++    }
++
++    fn executed_successor_selection(
++        &self,
++        progress: &RoundProgress,
++        validators: &ValidatorSet,
++        expected: Option<ParentPoint>,
++    ) -> Result<Option<SuccessorSelection>> {
++        // Prefer the real proposal's registered execution if it is available.
++        let registered = self.bodies.iter().filter_map(|(id, body)| {
++            if let Work::Registered(candidate) = &body.work {
++                progress.retains_body(*id).then_some((body, candidate))
++            } else {
++                None
++            }
++        });
++        // Like the original controller's successor_basis, private preparation
++        // may use this owner's completed local execution BEFORE a proposal
++        // names it. Follower registration remains proposal-gated in bodies.rs;
++        // this does not register the parent/child or grant a vote. The exact
++        // decided parent and journal ACK are still required by Pin::promoted.
++        let prepared = self.bodies.values().filter_map(|body| {
++            if let Work::Ready(candidate) = &body.work {
++                (body.local_round == Some(progress.round())).then_some((body, candidate))
++            } else {
++                None
++            }
++        });
++        for (body, candidate) in registered.chain(prepared) {
++            if !matches_context(&body.context, &self.pin, progress) {
+                 continue;
+             }
+             let packet = candidate.bind_to(&self.owner)?;
+@@ -169,6 +273,9 @@ impl CandidateBodies {
+                 state_version: statement.state_version(),
+                 decision_hash: decision_id(&progress.context(), statement.hash()),
+             };
++            if expected.is_some_and(|wanted| wanted != parent) {
++                continue;
++            }
+             return Ok(Some(SuccessorSelection {
+                 source: progress.context(),
+                 source_round: progress.round(),
+@@ -179,16 +286,140 @@ impl CandidateBodies {
+                 // rejected authority rows retain the current prefix nonce.
+                 // Unmentioned published nonces are unchanged. This remains a
+                 // local selection hint, never a grant/balance state overlay.
+-                nonce_after: packet
+-                    .receipt_projection()
+-                    .iter()
+-                    .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
+-                    .collect(),
++                nonce_after: if expected.is_some() {
++                    // Remote qualification does not select transactions. Do
++                    // not rebuild a nonce-selection map that it never uses.
++                    BTreeMap::new()
++                } else {
++                    packet
++                        .receipt_projection()
++                        .iter()
++                        .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
++                        .collect()
++                },
+             }));
+         }
+         Ok(None)
+     }
+ 
++    /// A future AssetBody is only a computation input from the scheduled next
++    /// proposer. Its declared parent is NOT trusted until this owner's durable
++    /// execution independently reproduces every field. One original Lookahead
++    /// slot owns the input even while the parent body has not arrived yet.
++    pub(crate) fn offer_remote_successor(
++        &mut self,
++        message: &Arc<Message>,
++        source: Hash,
++        pipeline: &CandidatePipeline,
++        progress: &RoundProgress,
++        validators: &ValidatorSet,
++    ) -> Result<bool> {
++        ensure!(
++            Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
++            "successor execution owner changed"
++        );
++        let Message::AssetBody { context, .. } = message.as_ref() else {
++            return Ok(false);
++        };
++        if self.frozen
++            || progress.is_frozen()
++            || progress.is_recovering()
++            || self.limits.inflight < 2
++            || self.limits.bodies < 2
++            || progress.context().height.checked_add(1) != Some(context.height)
++            || validators.leader(context.height, 0)? != source
++            || source == progress.local_validator()
++        {
++            return Ok(false);
++        }
++        let selection = SuccessorSelection {
++            source: progress.context(),
++            // The wire body is not a vote and carries no source-round claim.
++            // This pin belongs to the receiving owner's CURRENT generation;
++            // it is retired on a round change, never promoted across rounds.
++            source_round: progress.round(),
++            parent: ParentPoint {
++                height: context.parent_height,
++                block_hash: context.parent_block_hash,
++                state_root: context.parent_state_root,
++                receipt_batch_commitment: context.parent_receipt_root,
++                state_version: context.parent_state_version,
++                decision_hash: decision_id(&progress.context(), context.parent_block_hash),
++            },
++            nonce_after: BTreeMap::new(),
++        };
++        let pin = Pin::from_selection(&selection);
++        if context.parent_height != progress.context().height
++            || self.pin.business_program != uca_program_id()
++            || !matches_successor_context(context, &self.pin, pin)?
++        {
++            return Ok(false);
++        }
++        if self.successor.is_none()
++            && self
++                .successor_attempt
++                .is_some_and(|previous| previous.live(progress.context(), progress.round(), false))
++        {
++            return Ok(false);
++        }
++        self.retain_successor(message, selection, pipeline, None, false)
++    }
++
++    pub(crate) fn qualify_remote_successor(
++        &mut self,
++        progress: &RoundProgress,
++        validators: &ValidatorSet,
++    ) -> Result<()> {
++        let Some(work) = &self.successor else {
++            return Ok(());
++        };
++        let pin = Pin::from_selection(&work.selection);
++        if work.retired
++            || work.parent_qualified
++            || !pin.live(
++                progress.context(),
++                progress.round(),
++                progress.is_recovering(),
++            )
++            || progress.is_frozen()
++        {
++            return Ok(());
++        }
++        if self
++            .executed_successor_selection(progress, validators, Some(pin.parent))?
++            .is_some()
++        {
++            self.successor
++                .as_mut()
++                .expect("retained successor")
++                .parent_qualified = true;
++        }
++        Ok(())
++    }
++
++    /// Only the next proposer publishes its chosen immutable input; receivers
++    /// never independently select or re-fanout another speculative candidate.
++    pub(crate) fn successor_announcement(
++        &self,
++        progress: &RoundProgress,
++    ) -> Option<(Hash, Arc<Message>)> {
++        self.successor
++            .as_ref()
++            .filter(|work| {
++                work.local_origin
++                    && !work.retired
++                    && !self.frozen
++                    && !progress.is_frozen()
++                    && matches!(work.message.as_ref(), Message::AssetBody { .. })
++                    && Pin::from_selection(&work.selection).live(
++                        progress.context(),
++                        progress.round(),
++                        progress.is_recovering(),
++                    )
++            })
++            .map(|work| (work.id, work.message.clone()))
++    }
++
+     pub(crate) fn offer_successor(
+         &mut self,
+         message: &Arc<Message>,
+@@ -257,6 +488,22 @@ impl CandidateBodies {
+             matches_successor_context(context, &self.pin, pin)?,
+             "successor parent/business pins mismatch"
+         );
++        self.retain_successor(message, actual, pipeline, admitted, true)
++    }
++
++    fn retain_successor(
++        &mut self,
++        message: &Arc<Message>,
++        selection: SuccessorSelection,
++        pipeline: &CandidatePipeline,
++        admitted: Option<&[&AdmittedTransfer]>,
++        local_origin: bool,
++    ) -> Result<bool> {
++        let pin = Pin::from_selection(&selection);
++        let context = match message.as_ref() {
++            Message::ApflBody { context, .. } | Message::AssetBody { context, .. } => *context,
++            _ => unreachable!("structured successor checked"),
++        };
+         let id = transport::candidate_body_id(message, self.codec)?;
+         if let Some(work) = &self.successor {
+             return Ok(!work.retired
+@@ -296,7 +543,7 @@ impl CandidateBodies {
+         let mut charge = transport::encode(message, self.codec)?
+             .len()
+             .checked_mul(2)
+-            .and_then(|n| n.checked_add(actual.nonce_after.len().checked_mul(96)?))
++            .and_then(|n| n.checked_add(selection.nonce_after.len().checked_mul(96)?))
+             .and_then(|n| n.checked_add(metadata))
+             .context("successor retained charge overflow")?;
+         // Match ordinary NUAS retention: the original structural dictionary and
+@@ -324,13 +571,16 @@ impl CandidateBodies {
+         self.bytes += charge;
+         self.successor_attempt = Some(pin);
+         self.successor = Some(Lookahead {
+-            selection: actual,
++            selection,
+             id,
+             message: message.clone(),
+-            context: *context,
++            context,
+             charge,
+             phase: Phase::Authenticate(Some(request)),
+             retired: false,
++            local_origin,
++            parent_qualified: local_origin,
++            signature_reused: admitted.is_some(),
+         });
+         Ok(true)
+     }
+@@ -445,6 +695,13 @@ impl CandidateBodies {
+                     self.integer_rows += done.observation.gpu_rows as u64;
+                     self.integer_plans += done.observation.gpu_waves as u64;
+                     self.apfl_rows += done.observation.apfl_view_transactions as u64;
++                    crate::native_pipeline::profile::critical_event(
++                        crate::native_pipeline::profile::CriticalEvent::CandidateExecutionDone,
++                        work.context.height,
++                        0,
++                        None,
++                        Some(work.id),
++                    );
+                     if work.retired {
+                         return Ok(true);
+                     }
+@@ -484,6 +741,11 @@ impl CandidateBodies {
+         if work.retired {
+             return Ok(true);
+         }
++        // An exact real parent ACK is also sufficient. Otherwise a peer's root
++        // claim alone must never start capture, authentication or execution.
++        if !work.parent_qualified && !promoted {
++            return Ok(false);
++        }
+         if promoted && !matches!(work.phase, Phase::Authenticate(_)) {
+             return self.promote_successor(work);
+         }
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/controller/successor/tests.rs b/crates/novovm-node/src/native_pipeline/consensus/controller/successor/tests.rs
+index b1b7b91a..dce3138d 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/controller/successor/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/controller/successor/tests.rs
+@@ -373,6 +373,7 @@ impl Fixture {
+             workers: 4,
+             execution_backend: Default::default(),
+             signature_backend: Default::default(),
++            prepare_asset_signatures: false,
+             max_batches: 2,
+             max_retained_bytes: 256 * 1024 * 1024,
+             authentication: AuthenticationBudget {
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
+index efef71c4..ef051ec6 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
+@@ -98,6 +98,8 @@ pub struct NativeLifecycle {
+     transaction_session: Hash,
+     transaction_sequence: u64,
+     outbox: Option<Fanout>,
++    successor_outbox: Option<(Hash, Fanout)>,
++    successor_announced: Option<Hash>,
+     requested: BTreeSet<(Hash, Hash)>,
+     height: u64,
+     round: u64,
+@@ -114,6 +116,9 @@ pub struct NativeLifecycle {
+     pub expired_sends: u64,
+     pub retired_sends: u64,
+     pub archive_decisions: u64,
++    /// Logical early-body delivery obligations accepted, not wire/retransmit bytes.
++    pub successor_body_enqueued: u64,
++    pub successor_body_bytes: u64,
+ }
+ impl NativeLifecycle {
+     #[cfg(test)]
+@@ -234,6 +239,8 @@ impl NativeLifecycle {
+             transaction_session: rand::random(),
+             transaction_sequence: 0,
+             outbox: None,
++            successor_outbox: None,
++            successor_announced: None,
+             requested: BTreeSet::new(),
+             height,
+             round,
+@@ -252,6 +259,8 @@ impl NativeLifecycle {
+             expired_sends: 0,
+             retired_sends: 0,
+             archive_decisions: 0,
++            successor_body_enqueued: 0,
++            successor_body_bytes: 0,
+         })
+     }
+ 
+@@ -534,6 +543,8 @@ impl NativeLifecycle {
+     fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
+         self.progress
+             .poll_recovery(pipeline, &self.policy, self.codec)?;
++        self.bodies
++            .qualify_remote_successor(&self.progress, &self.validators)?;
+         self.bodies.poll(pipeline, &mut self.progress)?;
+         self.progress.poll_acknowledgements(pipeline)?;
+         if self.height != self.progress.context().height || self.round != self.progress.round() {
+@@ -611,6 +622,26 @@ impl NativeLifecycle {
+                 if let Some(received) = self.pending[lane].take() {
+                     let peer = received.peer;
+                     match received.message.as_ref() {
++                        Message::AssetBody { context, .. }
++                            if context.height > self.progress.context().height =>
++                        {
++                            // Optional future input must never monopolize the
++                            // sole body handoff and block its own parent. The
++                            // original bounded body owner either takes one
++                            // future input or declines it. Real proposal/body
++                            // recovery remains available if optional capacity
++                            // was unavailable; no finality obligation is lost.
++                            match self.bodies.offer_remote_successor(
++                                &received.message,
++                                self.peers[peer],
++                                pipeline,
++                                &self.progress,
++                                &self.validators,
++                            ) {
++                                Ok(true) => {}
++                                Ok(false) | Err(_) => self.rejected_messages += 1,
++                            }
++                        }
+                         Message::Body { .. }
+                         | Message::ApflBody { .. }
+                         | Message::AssetBody { .. } => {
+@@ -706,6 +737,7 @@ impl NativeLifecycle {
+                 self.requested_bodies += 1;
+             }
+         }
++        self.fanout_successor()?;
+         #[cfg(test)]
+         for peer in 0..self.peers.len() {
+             ensure!(
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/successor.rs b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/successor.rs
+index 40272622..bc7c1b26 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/successor.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/successor.rs
+@@ -1,8 +1,91 @@
+-//! Optional local execution lookahead on this lifecycle's existing body owner.
++//! Optional execution lookahead on this lifecycle's existing body owner.
+ use super::*;
+ pub use crate::native_pipeline::consensus::bodies::SuccessorSelection;
+ 
+ impl NativeLifecycle {
++    /// The selected input travels in the existing AssetBody lane, once, using
++    /// existing per-peer delivery reservations. It is not a proposal or a vote.
++    /// Control/archive/request traffic gets its turn before this optional work.
++    pub(super) fn fanout_successor(&mut self) -> Result<()> {
++        let Some((id, message)) = self.bodies.successor_announcement(&self.progress) else {
++            self.successor_outbox = None;
++            self.successor_announced = None;
++            return Ok(());
++        };
++        if self
++            .successor_outbox
++            .as_ref()
++            .is_some_and(|(old, _)| *old != id)
++        {
++            self.successor_outbox = None;
++        }
++        if self.successor_announced == Some(id) {
++            return Ok(());
++        }
++        if self.successor_outbox.is_none() {
++            self.successor_outbox = Some((
++                id,
++                Fanout {
++                    prepared: self.channel.prepare(&message)?,
++                    pending: vec![true; self.peers.len()],
++                },
++            ));
++        }
++        let (id, mut fanout) = self.successor_outbox.take().expect("successor fanout");
++        for peer in 0..self.peers.len() {
++            if fanout.pending[peer] && self.enqueue(peer, fanout.prepared.clone()) {
++                fanout.pending[peer] = false;
++                self.successor_body_enqueued = self.successor_body_enqueued.saturating_add(1);
++                self.successor_body_bytes = self
++                    .successor_body_bytes
++                    .saturating_add(fanout.prepared.byte_len() as u64);
++            }
++        }
++        if fanout.pending.iter().any(|pending| *pending) {
++            self.successor_outbox = Some((id, fanout));
++        } else {
++            self.successor_announced = Some(id);
++        }
++        Ok(())
++    }
++
++    #[cfg(test)]
++    pub(crate) fn remote_successor_waiting_for_test(&self, id: Hash) -> bool {
++        self.pending[1].is_none() && self.bodies.remote_successor_waiting_for_test(id)
++    }
++
++    #[cfg(test)]
++    pub(crate) fn offer_remote_successor_for_test(
++        &mut self,
++        message: &Arc<Message>,
++        source: Hash,
++        pipeline: &CandidatePipeline,
++    ) -> Result<bool> {
++        self.bodies.offer_remote_successor(
++            message,
++            source,
++            pipeline,
++            &self.progress,
++            &self.validators,
++        )
++    }
++
++    pub(crate) fn remote_successor_authentication_input(&self) -> Option<Arc<Message>> {
++        self.bodies
++            .remote_successor_authentication_input(&self.progress)
++    }
++
++    pub(crate) fn reuse_remote_successor_admitted(
++        &mut self,
++        message: &Arc<Message>,
++        pipeline: &CandidatePipeline,
++        admitted: &[&crate::native_pipeline::pipeline::AdmittedTransfer],
++    ) -> Result<bool> {
++        ensure!(!self.is_frozen(), "native lifecycle frozen");
++        self.bodies
++            .reuse_remote_successor_admitted(message, pipeline, &self.progress, admitted)
++    }
++
+     pub fn successor_selection(&self) -> Result<Option<SuccessorSelection>> {
+         if self.is_frozen() {
+             return Ok(None);
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_product_client.rs b/crates/novovm-node/src/native_pipeline/consensus/native_product_client.rs
+index 47ee9a43..efefb3e4 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_product_client.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_product_client.rs
+@@ -81,30 +81,49 @@ fn connect(
+                 peer_bytes: 2 * message_bytes,
+             },
+         },
+-        NativeSendPolicy {
+-            window: NovoRudpWindowConfig {
+-                packet_copies: 1,
+-                tail_packet_copies: 1,
+-                batch_size: 32,
+-                batch_pause_ms: 0,
+-                ack_wait_ms: 10,
+-                ..Default::default()
+-            },
+-            pacing: NovoRudpPacingProfile {
+-                packet_copies: 1,
+-                tail_packet_copies: 1,
+-                batch_size: 32,
+-                batch_pause_ms: 0,
+-                ack_wait_ms: 10,
+-                no_progress_backoff: false,
+-            },
+-            ttl: Duration::from_secs(30),
+-        },
++        client_policy(),
+         SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
+         Instant::now(),
+     )
+ }
+ 
++// One configuration for the real fixture consumer and its policy regression.
++fn client_policy() -> NativeSendPolicy {
++    NativeSendPolicy {
++        window: NovoRudpWindowConfig {
++            packet_copies: 1,
++            tail_packet_copies: 1,
++            batch_size: 32,
++            batch_pause_ms: 0,
++            ack_wait_ms: 10,
++            no_progress_backoff: false,
++            ..Default::default()
++        },
++        pacing: NovoRudpPacingProfile {
++            packet_copies: 1,
++            tail_packet_copies: 1,
++            batch_size: 32,
++            batch_pause_ms: 0,
++            ack_wait_ms: 10,
++            no_progress_backoff: false,
++        },
++        ttl: Duration::from_secs(30),
++    }
++}
++
++#[test]
++fn native_recovery_client_retains_bounded_repair_until_original_deadline() {
++    let policy = client_policy();
++    assert!(!policy.window.no_progress_backoff);
++    assert!(!policy.pacing.no_progress_backoff);
++    assert_eq!(policy.window.max_window_retries, 8);
++    assert_eq!(policy.window.ack_wait_ms, 10);
++    assert_eq!(policy.pacing.ack_wait_ms, 10);
++    assert_eq!(policy.window.batch_size, 32);
++    assert_eq!(policy.pacing.batch_size, 32);
++    assert_eq!(policy.ttl, Duration::from_secs(30));
++}
++
+ fn send(client: &mut NativeApplicationClient, raw: &[Vec<u8>]) -> Result<()> {
+     let batch = Arc::new(ApflTransferBatch::from_raw(
+         raw,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+index 86ed6541..90025d6a 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+@@ -654,6 +654,7 @@ fn run_native_uca_load_mode(
+         evidence["single_submission_node"] = json!(ingress);
+         evidence["first_proposer_is_submission_node"] = json!(false);
+         phase = "start four original nodes";
++        let startup_started = Instant::now();
+         for i in 0..4 {
+             nodes.start(i, "create")?;
+         }
+@@ -661,6 +662,8 @@ fn run_native_uca_load_mode(
+             .map(|i| client(&nodes, i, set.clone(), CONFIGURED_BATCH))
+             .collect::<Result<Vec<_>>>()?;
+         let initial = ready(&mut nodes, &mut clients)?;
++        evidence["four_process_startup_ready_seconds"] =
++            json!(startup_started.elapsed().as_secs_f64());
+         ensure!(
+             initial.iter().all(|s| s.height == 0),
+             "NUAS load requires fresh genesis"
+@@ -727,6 +730,8 @@ fn run_native_uca_load_mode(
+             )?
+         });
+         timed_attempt = None;
++        evidence["startup_through_four_receipts_seconds"] =
++            json!(startup_started.elapsed().as_secs_f64());
+         let workload_hash: Hash = workload_hash.finalize().into();
+         if mode.dynamic_windows() {
+             corpus.rolling_identity = Some((domain, material.expected_initial_root));
+@@ -952,7 +957,7 @@ fn run_native_uca_load_mode(
+         "p99":percentile(&latency,99),"sample_count":latency.len(),
+         "definition":"first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"});
+     evidence["timing"] = json!(if mode == LoadMode::Continuous {
+-        "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not byte-identical across backend runs"
++        "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not guaranteed byte-identical across backend runs; compare the actual signed_workload_sha256"
+     } else if mode.is_rolling() {
+         "same native load observer: first SDK submission attempt through final unique four-node receipt observation on ONE unpaused clock; all intervening signing/structure/head queries/transport drains included; startup/keygen/first-wave preparation/final audit/cold recovery excluded; not an 8192-inflight static-input comparison"
+     } else {
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_product_uca_recovery.rs b/crates/novovm-node/src/native_pipeline/consensus/native_product_uca_recovery.rs
+index 9b0f555b..5681ba6d 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_product_uca_recovery.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_product_uca_recovery.rs
+@@ -352,11 +352,21 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
+     };
+     let mut configured_genesis = manifest.genesis;
+     configured_genesis.genesis_config_commitment = domain;
+-    for path in &nodes.configs {
++    let missing = (0..4)
++        .max_by_key(|index| validator_key(*index).public_key().to_vec())
++        .unwrap();
++    for (index, path) in nodes.configs.iter().enumerate() {
+         let mut value: Value = serde_json::from_slice(&fs::read(path)?)?;
+         value["rpc_addr"] = Value::Null;
+         value["profile"] = json!(ORIGINAL_PROFILE);
+         value["native_client_limit"] = json!(2);
++        // A smaller local proposal target must still accept and recover the
++        // common 1,024-row capacity selected by another validator.
++        value["batch_size"] = json!(if index == missing {
++            64
++        } else {
++            LARGE_BODY_ROWS
++        });
+         value["genesis"] = serde_json::to_value(&configured_genesis)?;
+         value["uca_initialization"] = serde_json::to_value(&material)?;
+         fs::write(path, serde_json::to_vec_pretty(&value)?)?;
+@@ -386,9 +396,6 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
+         .into_iter()
+         .flatten()
+         .collect::<Vec<_>>();
+-    let missing = (0..4)
+-        .max_by_key(|index| validator_key(*index).public_key().to_vec())
+-        .unwrap();
+     let healthy = (0..4).filter(|i| *i != missing).collect::<Vec<_>>();
+     let signer = runtime.asset_spend_signer_v2()?;
+     let intent = |payer: usize, nonce, amount| -> Result<AssetSpendIntentV2> {
+@@ -411,6 +418,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
+     let mut evidence = json!({"completed":false,"scope":"four_original_node_processes_one_host_nuas_recovery",
+         "real_processes":4,"real_machines":1,"http_listeners":0,"fixed_quorum":3,"shared_identity_distinct_asset_accounts":true,
+         "missing_validator":missing,"offline_heights":OFFLINE_HEIGHTS,"mainnet":false,"tps_acceptance":false,
++        "late_validator_local_proposal_target":64,"common_validation_rows":LARGE_BODY_ROWS,
+         "offline_transactions":OFFLINE_TRANSACTIONS,"total_transactions":OFFLINE_TRANSACTIONS+1,
+         "large_body_height":OFFLINE_HEIGHTS,"large_body_rows":LARGE_BODY_ROWS,
+         "wallet_replay_to_laggard":false,"database_copy":false,"business_proof_verified":false,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs b/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs
+index 64f433ec..54a4c9c6 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs
+@@ -322,6 +322,392 @@ fn native_successor_uca_complete_state_waits_for_ack_and_recovers() -> Result<()
+     run_uca_successor(false)
+ }
+ 
++#[test]
++#[ignore = "real AOEM; local durable asset preparation overlaps the missing parent proposal without signing"]
++fn native_successor_uca_local_ready_prepares_before_parent_proposal() -> Result<()> {
++    run_local_ready_successor(false)
++}
++
++#[test]
++#[ignore = "real AOEM/native sockets; one next-leader body prepares all followers before exact parent ACK"]
++fn native_successor_uca_remote_body_waits_for_own_parent_without_blocking_current_body(
++) -> Result<()> {
++    let mut u = UcaFixture::new()?;
++    let f = &mut u.native;
++    let first = f.leader(1)?;
++    let next = f.leader(2)?;
++    ensure!(first != next);
++    let parent = Arc::new(Message::AssetBody {
++        context: uca_context(f.base.anchor, 1)?,
++        batch: u.parent_batch.clone(),
++    });
++    ensure!(f.nodes[next].offer(&parent)?);
++    f.until(&[next], "next leader own parent ready", |nodes| {
++        nodes[next].executed() == 1
++    })?;
++    let selection = f.nodes[next]
++        .successor_selection()?
++        .context("missing local parent")?;
++    let child = Arc::new(Message::AssetBody {
++        context: uca_context(selection.parent, 2)?,
++        batch: u.child_batch.clone(),
++    });
++    let child_id = transport::candidate_body_id(&child, uca_codec())?;
++    ensure!(f.nodes[next].offer_successor(&child, &selection, &f.base.services.0[next])?);
++    // No follower has the parent yet. Native AssetBody reception must transfer
++    // its one optional future object to CandidateBodies, releasing pending[1].
++    f.until(
++        &[0, 1, 2, 3],
++        "future body retained without trusting its parent",
++        |nodes| {
++            nodes
++                .iter()
++                .enumerate()
++                .all(|(i, node)| i == next || node.remote_successor_waiting_for_test(child_id))
++        },
++    )?;
++    ensure!(
++        f.nodes
++            .iter()
++            .enumerate()
++            .all(|(i, node)| i == next
++                || (node.executed() == 0 && node.successor_metrics() == [0; 5]))
++    );
++    ensure!(f.nodes[next].successor_body_enqueued == 3);
++    ensure!(
++        f.nodes[next].successor_body_bytes
++            == 3 * transport::encode(&child, uca_codec())?.len() as u64
++    );
++    // Reuse only this receiver's existing capability, even though decoding the
++    // network body created a different dictionary Arc. Other receivers below
++    // deliberately keep the ordinary strict authentication path.
++    let reused = (0..4)
++        .find(|i| *i != first && *i != next)
++        .context("missing reuse follower")?;
++    let input = f.nodes[reused]
++        .remote_successor_authentication_input()
++        .context("missing remote authentication input")?;
++    let foreign = (0..u.child_batch.len())
++        .map(|index| {
++            admitted_uca_for_test(
++                f.base.services.0[next].owner_identity(),
++                &u.facade,
++                u.child_batch.clone(),
++                index,
++            )
++        })
++        .collect::<Result<Vec<_>>>()?;
++    ensure!(f.nodes[reused]
++        .reuse_remote_successor_admitted(
++            &input,
++            &f.base.services.0[reused],
++            &foreign.iter().collect::<Vec<_>>()
++        )
++        .is_err());
++    let admitted = (0..u.child_batch.len())
++        .map(|index| {
++            admitted_uca_for_test(
++                f.base.services.0[reused].owner_identity(),
++                &u.facade,
++                u.child_batch.clone(),
++                index,
++            )
++        })
++        .collect::<Result<Vec<_>>>()?;
++    ensure!(f.nodes[reused].reuse_remote_successor_admitted(
++        &input,
++        &f.base.services.0[reused],
++        &admitted.iter().collect::<Vec<_>>()
++    )?);
++    ensure!(f.nodes[reused]
++        .remote_successor_authentication_input()
++        .is_none());
++    ensure!(!f.nodes[reused].reuse_remote_successor_admitted(
++        &input,
++        &f.base.services.0[reused],
++        &admitted.iter().collect::<Vec<_>>()
++    )?);
++    // Each non-proposer uses its OWN parent execution; no child is locally
++    // selected, copied from a database, or supplied by the test to followers.
++    for i in 0..4 {
++        if i != first && i != next {
++            ensure!(f.nodes[i].offer(&parent)?);
++        }
++    }
++    let followers = (0..4).filter(|i| *i != first).collect::<Vec<_>>();
++    f.until(
++        &followers,
++        "three followers privately finish the same child",
++        |nodes| {
++            nodes
++                .iter()
++                .enumerate()
++                .all(|(i, node)| i == first || node.successor_metrics()[2] == 1)
++        },
++    )?;
++    ensure!(f
++        .nodes
++        .iter()
++        .all(|node| node.progress.head().is_none() && !node.progress.retains_body(child_id)));
++    ensure!(f.nodes[first].remote_successor_waiting_for_test(child_id));
++    // Let the current proposer execute, but pause all voting peers. Its early
++    // child must also complete without a quorum or a durable parent ACK.
++    ensure!(f.nodes[first].offer(&parent)?);
++    f.until(
++        &[first],
++        "current proposer privately finishes child before quorum",
++        |nodes| nodes[first].successor_metrics()[2] == 1,
++    )?;
++    ensure!(f.nodes.iter().all(|node| node.progress.head().is_none()
++        && !node.progress.retains_body(child_id)
++        && node.successor_metrics() == [1, 1, 1, 0, 0]));
++    for (i, node) in f.nodes.iter().enumerate() {
++        let journal = open_journal(
++            ValidatorJournal::open(
++                &f.base.services.0[i],
++                f.base.genesis,
++                f.base.anchor,
++                f.base.set.clone(),
++                f.base.keys[i].clone(),
++            )?,
++            &f.base.services.0[i],
++        )?;
++        ensure!(journal.head().is_none() && journal.context().height == 1);
++        ensure!(node.executed() == 2);
++    }
++    f.await_height(2)?;
++    ensure!(f
++        .nodes
++        .iter()
++        .all(|node| node.executed() == 2 && node.successor_metrics() == [1, 1, 1, 1, 0]));
++    drop(std::mem::take(&mut f.nodes));
++    f.base.services.shutdown()?;
++    Ok(())
++}
++
++#[test]
++#[ignore = "real AOEM; a different real parent decision discards the private local-ready successor"]
++fn native_successor_uca_local_ready_discards_different_decided_parent() -> Result<()> {
++    run_local_ready_successor(true)
++}
++
++#[test]
++#[ignore = "real AOEM/native sockets; remote successor source/domain and independently reproduced parent are mandatory"]
++fn native_successor_uca_remote_wrong_parent_never_executes_and_real_body_recovers() -> Result<()> {
++    let mut u = UcaFixture::new()?;
++    let f = &mut u.native;
++    let first = f.leader(1)?;
++    let next = f.leader(2)?;
++    let target = (0..4)
++        .find(|i| *i != first && *i != next)
++        .context("missing follower")?;
++    let parent = Arc::new(Message::AssetBody {
++        context: uca_context(f.base.anchor, 1)?,
++        batch: u.parent_batch.clone(),
++    });
++    ensure!(f.nodes[next].offer(&parent)?);
++    f.until(&[next], "own parent basis", |nodes| {
++        nodes[next].executed() == 1
++    })?;
++    let selection = f.nodes[next]
++        .successor_selection()?
++        .context("missing next leader basis")?;
++    let context = uca_context(selection.parent, 2)?;
++    let child = Arc::new(Message::AssetBody {
++        context,
++        batch: u.child_batch.clone(),
++    });
++    let source = f.base.ids[next];
++    ensure!(!f.nodes[target].offer_remote_successor_for_test(
++        &child,
++        f.base.ids[first],
++        &f.base.services.0[target]
++    )?);
++    for field in 0..5 {
++        let mut wrong = context;
++        match field {
++            0 => wrong.chain_id += 1,
++            1 => wrong.protocol_commitment[0] ^= 1,
++            2 => wrong.business_program[0] ^= 1,
++            3 => wrong.height += 1,
++            _ => wrong.parent_height += 1,
++        }
++        let wrong = Arc::new(Message::AssetBody {
++            context: wrong,
++            batch: u.child_batch.clone(),
++        });
++        ensure!(
++            !f.nodes[target].offer_remote_successor_for_test(
++                &wrong,
++                source,
++                &f.base.services.0[target]
++            )?,
++            "invalid future scope {field}"
++        );
++    }
++    // Correctly scoped transport is still not proof of a state root. Retain
++    // exactly one claim; duplicates share it, conflicting bodies cannot add a
++    // slot, and even a real local Ready must match EVERY parent field.
++    let mut wrong = context;
++    wrong.parent_state_root[0] ^= 1;
++    let wrong = Arc::new(Message::AssetBody {
++        context: wrong,
++        batch: u.child_batch.clone(),
++    });
++    let wrong_id = transport::candidate_body_id(&wrong, uca_codec())?;
++    ensure!(f.nodes[target].offer_remote_successor_for_test(
++        &wrong,
++        source,
++        &f.base.services.0[target]
++    )?);
++    ensure!(f.nodes[target].offer_remote_successor_for_test(
++        &wrong,
++        source,
++        &f.base.services.0[target]
++    )?);
++    ensure!(!f.nodes[target].offer_remote_successor_for_test(
++        &child,
++        source,
++        &f.base.services.0[target]
++    )?);
++    ensure!(f.nodes[target].offer(&parent)?);
++    f.until(
++        &[target],
++        "wrong remote root is not own durable root",
++        |nodes| nodes[target].executed() == 1,
++    )?;
++    for _ in 0..32 {
++        f.nodes[target].poll(&f.base.services.0[target], Instant::now())?;
++    }
++    ensure!(f.nodes[target].remote_successor_waiting_for_test(wrong_id));
++    ensure!(
++        f.nodes[target].successor_metrics() == [0; 5] && f.nodes[target].progress.head().is_none()
++    );
++    ensure!(f.nodes[next].offer_successor(&child, &selection, &f.base.services.0[next])?);
++    ensure!(f.nodes[first].offer(&parent)?);
++    f.await_height(2)?;
++    ensure!(
++        f.nodes[target].executed() == 2 && f.nodes[target].successor_metrics() == [0, 0, 0, 0, 1]
++    );
++    ensure!(!f.nodes[target].progress.retains_body(wrong_id));
++    drop(std::mem::take(&mut f.nodes));
++    f.base.services.shutdown()?;
++    Ok(())
++}
++
++fn run_local_ready_successor(different_parent: bool) -> Result<()> {
++    let mut u = UcaFixture::new()?;
++    let f = &mut u.native;
++    let first = f.leader(1)?;
++    let next = f.leader(2)?;
++    ensure!(first != next, "fixture needs a follower as next proposer");
++    let context = uca_context(f.base.anchor, 1)?;
++    let parent = Arc::new(Message::AssetBody {
++        context,
++        batch: u.parent_batch.clone(),
++    });
++    let parent_id = transport::candidate_body_id(&parent, uca_codec())?;
++    // No input goes to the current proposer. Only the independently admitted
++    // follower can execute; no fixture proposal/QC/registration is supplied.
++    ensure!(f.nodes[next].offer(&parent)?);
++    ensure!(
++        f.nodes[next].successor_selection()?.is_none(),
++        "unexecuted input supplied a speculative parent"
++    );
++    f.until(&[next], "local parent ready without proposal", |nodes| {
++        nodes[next].executed() == 1
++    })?;
++    ensure!(
++        !f.nodes[next].progress.retains_body(parent_id)
++            && f.nodes[next].progress.pending_message().is_none(),
++        "local preparation registered or signed without a proposal"
++    );
++    let selected = f.nodes[next]
++        .successor_selection()?
++        .context("durable local Ready unnecessarily waited for parent proposal")?;
++    let child = Arc::new(Message::AssetBody {
++        context: uca_context(selected.parent, 2)?,
++        batch: u.child_batch.clone(),
++    });
++    let child_id = transport::candidate_body_id(&child, uca_codec())?;
++    reject_altered_pins(
++        &mut f.nodes[next],
++        &f.base.services.0[next],
++        &child,
++        &selected,
++    )?;
++    ensure!(f.nodes[next].offer_successor(&child, &selected, &f.base.services.0[next])?);
++    f.until(
++        &[next],
++        "private child ready without parent proposal",
++        |nodes| nodes[next].successor_metrics()[2] == 1,
++    )?;
++    ensure!(
++        f.nodes[next].successor_metrics() == [1, 1, 1, 0, 0]
++            && !f.nodes[next].progress.retains_body(parent_id)
++            && !f.nodes[next].progress.retains_body(child_id)
++            && f.nodes[next].progress.pending_message().is_none()
++            && f.nodes.iter().all(|node| node.progress.head().is_none()),
++        "private durable results acquired proposal/vote/head authority"
++    );
++    let journal = open_journal(
++        ValidatorJournal::open(
++            &f.base.services.0[next],
++            f.base.genesis,
++            f.base.anchor,
++            f.base.set.clone(),
++            f.base.keys[next].clone(),
++        )?,
++        &f.base.services.0[next],
++    )?;
++    ensure!(
++        journal.head().is_none() && journal.context().height == 1,
++        "private successor published a durable head"
++    );
++    drop(journal);
++
++    // Only now let the real proposer execute and the four original journals
++    // reach quorum. Changing a signed candidate coordinate gives a different
++    // valid parent decision, even when its business effects happen to agree.
++    let mut actual_context = context;
++    actual_context.timestamp_unix_ms += u64::from(different_parent);
++    let actual = Arc::new(Message::AssetBody {
++        context: actual_context,
++        batch: u.parent_batch.clone(),
++    });
++    ensure!(f.nodes[first].offer(&actual)?);
++    if different_parent {
++        let head = f.await_height(1)?;
++        ensure!(
++            head != selected.parent,
++            "fixture failed to change decided parent"
++        );
++        f.until(
++            &[0, 1, 2, 3],
++            "wrong-parent private child drained",
++            |nodes| nodes[next].successor_metrics()[4] == 1,
++        )?;
++        ensure!(
++            f.nodes[next].successor_metrics() == [1, 1, 1, 0, 1]
++                && !f.nodes[next].progress.retains_body(child_id)
++                && f.nodes
++                    .iter()
++                    .all(|node| node.progress.head() == Some(head)),
++            "unselected private branch was promoted or published"
++        );
++    } else {
++        f.await_height(2)?;
++        ensure!(
++            f.nodes[next].successor_metrics() == [1, 1, 1, 1, 0]
++                && f.nodes.iter().all(|node| node.executed() == 2),
++            "exact real parent ACK did not reuse one private execution"
++        );
++    }
++    drop(f.nodes.drain(..));
++    f.base.services.shutdown()?;
++    Ok(())
++}
++
+ #[test]
+ #[ignore = "real AOEM and native sockets; reused signature facts recapture full UCA successor state"]
+ fn native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery() -> Result<()> {
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/tests.rs b/crates/novovm-node/src/native_pipeline/consensus/tests.rs
+index dafc94a5..c4dcc609 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/tests.rs
+@@ -127,6 +127,7 @@ fn pipeline_config(directory: &Path) -> Result<PipelineConfig> {
+         workers: 4,
+         execution_backend: Default::default(),
+         signature_backend: Default::default(),
++        prepare_asset_signatures: false,
+         max_batches: 2,
+         max_retained_bytes: 256 * 1024 * 1024,
+         authentication: AuthenticationBudget {
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/io.rs b/crates/novovm-node/src/native_pipeline/persistence/io.rs
+index b3d09bd8..511713ab 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/io.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/io.rs
+@@ -12,7 +12,9 @@ use super::store::{PersistProgress, BULK_KEYS};
+ use super::{
+     CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig, StoredCandidate,
+ };
+-use crate::native_pipeline::state::tree::{read_state_value, validate_state_node_bytes, NodeHash};
++use crate::native_pipeline::state::tree::{
++    read_state_value, validate_state_node_bytes, NodeHash, StagedStateUpdate, StateNodeReader,
++};
+ use anyhow::{ensure, Context, Result};
+ use std::collections::VecDeque;
+ use std::sync::{mpsc, Arc, Mutex, TryLockError};
+@@ -294,7 +296,7 @@ impl IoService {
+     /// Blocking initialization on a new thread; call before activating network
+     /// service. Opening never transfers a live native handle across threads.
+     pub fn start(config: StoreConfig, mode: OpenMode, budget: IoBudget) -> Result<Self> {
+-        Self::start_with_notify(config, mode, budget, [None, None])
++        Self::start_with_notify(config, mode, budget, [None, None], None)
+     }
+ 
+     /// Completion wakeups for the pipeline and its control thread. Notification
+@@ -304,6 +306,7 @@ impl IoService {
+         mode: OpenMode,
+         budget: IoBudget,
+         notify: [Option<thread::Thread>; 2],
++        initial: Option<StagedStateUpdate>,
+     ) -> Result<Self> {
+         ensure!(
+             budget.requests > 0 && budget.requests <= 65_536 && budget.bytes > 0,
+@@ -323,20 +326,44 @@ impl IoService {
+         }));
+         let worker = thread::Builder::new()
+             .name("novovm-candidate-io".into())
+-            .spawn(move || match CandidateStore::open(config, mode) {
+-                Ok(store) => {
+-                    if ready_tx.send(Ok(())).is_ok() {
+-                        run_owner(store, receiver, notify);
++            .spawn(move || {
++                let opened = (|| {
++                    let store = CandidateStore::open(config, mode)?;
++                    if let Some(initial) = initial {
++                        if mode == OpenMode::CreateNew {
++                            store.install_unpublished_state(&initial)?;
++                        }
++                        for (hash, expected) in initial.nodes() {
++                            ensure!(
++                                store.read_node(hash)?.as_ref() == Some(expected),
++                                "pinned genesis content missing or altered; explicit recovery required"
++                            );
++                        }
++                    }
++                    Ok::<_, anyhow::Error>(store)
++                })();
++                match opened {
++                    Ok(store) => {
++                        if ready_tx.send(Ok(())).is_ok() {
++                            run_owner(store, receiver, notify);
++                        }
++                    }
++                    Err(error) => {
++                        let _ = ready_tx.send(Err(error));
+                     }
+-                }
+-                Err(error) => {
+-                    let _ = ready_tx.send(Err(error));
+                 }
+             })
+             .context("start candidate I/O owner")?;
+-        ready_rx
++        if let Err(error) = ready_rx
+             .recv()
+-            .context("candidate I/O owner failed during startup")??;
++            .context("candidate I/O owner failed during startup")
++            .and_then(|result| result)
++        {
++            // A failed startup must finish relinquishing the native owner
++            // before its caller can attempt a separate recovery operation.
++            let _ = worker.join();
++            return Err(error);
++        }
+         Ok(Self {
+             sender,
+             worker,
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/io/tests.rs b/crates/novovm-node/src/native_pipeline/persistence/io/tests.rs
+index b77b1703..9661bcf1 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/io/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/io/tests.rs
+@@ -299,6 +299,7 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
+             Some(waiters[0].thread().clone()),
+             Some(waiters[1].thread().clone()),
+         ],
++        None,
+     )?;
+     let accounting = service.usage.clone();
+     let nodes = admit_real(|| service.try_read_nodes(hashes.clone()))?;
+@@ -334,3 +335,94 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
+     service.shutdown()?;
+     Ok(())
+ }
++
++#[test]
++#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; real owner startup and damaged genesis rejection, not deployment"]
++fn real_io_startup_installs_once_and_existing_rejects_missing_or_altered_genesis() -> Result<()> {
++    use crate::native_pipeline::persistence::packet::node_key;
++    use novovm_exec::resident::StorageWrite;
++
++    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
++        .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY is required")?;
++    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
++    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../target/runtime-rebuild/io-tests")
++        .join(format!("startup-{}-{stamp}", std::process::id()));
++    std::fs::create_dir_all(&directory)?;
++    let config = StoreConfig {
++        library: library.into(),
++        database: directory.join("state.rocksdb"),
++        domain: StorageDomain {
++            chain_id: 391,
++            genesis_config_commitment: [11; 32],
++            protocol_commitment: [12; 32],
++        },
++        storage: StorageConfig::default(),
++        packet_budget: PacketBudget::default(),
++    };
++    let initial = || {
++        stage_state_update(
++            &Empty,
++            empty_root(),
++            &[StateChange::Put {
++                key: b"genesis/account".to_vec(),
++                value: vec![7; 32],
++            }],
++        )
++    };
++    let root = initial()?.root();
++    let start = |config: StoreConfig, mode| {
++        IoService::start_with_notify(
++            config,
++            mode,
++            IoBudget::default(),
++            [None, None],
++            Some(initial()?),
++        )
++    };
++    let service = start(config.clone(), OpenMode::CreateNew)?;
++    // Readiness includes the real installation and exact pinned-node check;
++    // this request reads through that same still-open native owner.
++    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
++    assert_eq!(value.wait()?, Some(vec![7; 32]));
++    service.shutdown()?;
++    let service = start(config.clone(), OpenMode::Existing)?;
++    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
++    assert_eq!(value.wait()?, Some(vec![7; 32]));
++    service.shutdown()?;
++
++    let mut missing = config.clone();
++    missing.database = directory.join("missing.rocksdb");
++    drop(CandidateStore::open(missing.clone(), OpenMode::CreateNew)?);
++    let error = start(missing.clone(), OpenMode::Existing)
++        .err()
++        .context("existing mode must not install absent pinned genesis")?;
++    assert!(format!("{error:#}").contains("pinned genesis content missing or altered"));
++    let store = CandidateStore::open(missing, OpenMode::Existing)?;
++    assert_eq!(
++        store.read_node(&root)?,
++        None,
++        "failed startup repaired state"
++    );
++    drop(store);
++
++    let store = CandidateStore::open(config.clone(), OpenMode::Existing)?;
++    let key = store.scoped_key(&node_key(root));
++    let corrupted = vec![0; initial()?.nodes()[&root].len()];
++    store
++        .storage
++        .borrow_mut()
++        .atomic_write_batch(&[StorageWrite::Put {
++            key: key.clone(),
++            value: corrupted.clone(),
++        }])?;
++    drop(store);
++    assert!(start(config.clone(), OpenMode::Existing).is_err());
++    let store = CandidateStore::open(config, OpenMode::Existing)?;
++    assert_eq!(
++        store.storage.borrow_mut().get(&key)?,
++        Some(corrupted),
++        "failed startup overwrote corrupted state"
++    );
++    Ok(())
++}
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/packet.rs b/crates/novovm-node/src/native_pipeline/persistence/packet.rs
+index 64191e51..4dddefcf 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/packet.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/packet.rs
+@@ -573,13 +573,19 @@ fn prepare_with_spend(
+         }
+     }
+     let document = document.bytes;
+-    // The codec's independent recovery validator also checks structural receipt
+-    // relations, not business execution. Preparation never manufactures success.
+-    decode_document(&document, plan.commitment(), budget)?;
+-    let receipt_projection = receipts
+-        .iter()
+-        .map(|bytes| ReceiptProjection::decode(bytes))
+-        .collect::<Result<Vec<_>>>()?;
++    // The immutable plan already owns its canonical body/access commitment.
++    // Validate the same receipt/economic relations as cold recovery without
++    // decoding a second full plan from bytes that this function just encoded.
++    let mut receipt_projection = Vec::with_capacity(receipts.len());
++    validate_effects(
++        plan,
++        root,
++        receipts,
++        spend_outputs,
++        (receipt_commitment, statement_commitment),
++        budget,
++        Some(&mut receipt_projection),
++    )?;
+     let digest = document_hash(&document);
+     let mut records = BTreeMap::new();
+     for (hash, bytes) in nodes {
+@@ -906,23 +912,15 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
+         None
+     };
+     input.finish()?;
+-    if let Some(outputs) = &spend_outputs {
+-        uca::validate_receipts(&plan, &receipts, outputs, budget)?;
+-    } else {
+-        validate_receipts(&plan, &receipts, budget)?;
+-    }
+-    ensure!(
+-        uca::receipt_hash_with_spend(
+-            plan.context().receipt_codec,
+-            &receipts,
+-            spend_outputs.as_deref()
+-        ) == receipt_commitment,
+-        "candidate ordered receipt commitment mismatch"
+-    );
+-    ensure!(
+-        statement_hash(id, state_root, receipt_commitment) == statement_commitment,
+-        "candidate execution statement mismatch"
+-    );
++    validate_effects(
++        &plan,
++        state_root,
++        &receipts,
++        spend_outputs.as_deref(),
++        (receipt_commitment, statement_commitment),
++        budget,
++        None,
++    )?;
+     Ok(Decoded {
+         plan,
+         state_root,
+@@ -934,6 +932,53 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
+     })
+ }
+ 
++// Shared structural/economic checks, not signature verification or authority.
++// Recovery reaches this only after independently decoding and hashing the plan;
++// preparation carries the original immutable plan produced by execution.
++fn validate_effects(
++    plan: &BatchPlan,
++    state_root: NodeHash,
++    receipts: &[Vec<u8>],
++    spend_outputs: Option<&[SpendOutput]>,
++    commitments: (NodeHash, NodeHash),
++    budget: PacketBudget,
++    projection: Option<&mut Vec<ReceiptProjection>>,
++) -> Result<()> {
++    let (receipt_commitment, statement_commitment) = commitments;
++    let context = plan.context();
++    let is_uca = uca::is_profile(context);
++    ensure!(
++        is_uca
++            || (context.business_program == program_id()
++                && context.receipt_codec == receipt_codec()
++                && context.semantic_version == SEMANTIC_VERSION),
++        "unsupported candidate business/receipt profile"
++    );
++    ensure!(
++        is_uca == spend_outputs.is_some(),
++        "candidate document/profile mismatch"
++    );
++    ensure!(
++        state_root != [0; 32],
++        "candidate output root must be nonzero"
++    );
++    if let Some(outputs) = spend_outputs {
++        uca::validate_receipts(plan, receipts, outputs, budget, projection)?;
++    } else {
++        validate_receipts(plan, receipts, budget, projection)?;
++    }
++    ensure!(
++        uca::receipt_hash_with_spend(plan.context().receipt_codec, receipts, spend_outputs)
++            == receipt_commitment,
++        "candidate ordered receipt commitment mismatch"
++    );
++    ensure!(
++        statement_hash(plan.commitment(), state_root, receipt_commitment) == statement_commitment,
++        "candidate execution statement mismatch"
++    );
++    Ok(())
++}
++
+ /// Read-only projection; never execution, publication or signing authority.
+ /// Retains no strings or separate nonce vector. Amounts preserve all 128 bits.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -945,16 +990,21 @@ pub(crate) struct ReceiptProjection {
+     pub charged_fee: u128,
+ }
+ impl ReceiptProjection {
++    #[cfg(test)]
+     fn decode(bytes: &[u8]) -> Result<Self> {
+         let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
+         ensure!(tail.is_empty(), "trailing executed receipt bytes");
+-        Ok(Self {
++        Ok(Self::from_receipt(&receipt))
++    }
++
++    fn from_receipt(receipt: &ReceiptRef<'_>) -> Self {
++        Self {
+             tx_hash: receipt.tx_hash,
+             signer_identity: receipt.signer_identity,
+             nonce_after: receipt.delta.nonce_after,
+             success: receipt.failure.is_none() && receipt.fee_failure.is_none(),
+             charged_fee: receipt.delta.fee_funding_delta,
+-        })
++        }
+     }
+ }
+ 
+@@ -1053,7 +1103,12 @@ fn identity_hex(identity: &NodeHash) -> String {
+     value
+ }
+ 
+-fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudget) -> Result<()> {
++fn validate_receipts(
++    plan: &BatchPlan,
++    receipts: &[Vec<u8>],
++    budget: PacketBudget,
++    mut projection: Option<&mut Vec<ReceiptProjection>>,
++) -> Result<()> {
+     let mut hashes = BTreeSet::new();
+     let mut nonces = BTreeMap::new();
+     let mut journal_seq: Option<u64> = None;
+@@ -1137,6 +1192,9 @@ fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudge
+             plan.context(),
+             &mut journal_seq,
+         )?;
++        if let Some(projection) = projection.as_deref_mut() {
++            projection.push(ReceiptProjection::from_receipt(&receipt));
++        }
+     }
+     Ok(())
+ }
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs b/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs
+index a1ba3c2e..8903dc61 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs
+@@ -582,8 +582,14 @@ fn receipt_codec_refuses_trailing_bytes_and_unknown_variants() {
+     let fixture = Fixture::new(&[0], 0, 1);
+     let mut receipt = postcard::to_allocvec(&fixture.receipts[0]).unwrap();
+     receipt.push(0);
+-    assert!(validate_receipts(&fixture.plan, &[receipt], PacketBudget::default()).is_err());
+-    assert!(validate_receipts(&fixture.plan, &[vec![255; 128]], PacketBudget::default()).is_err());
++    assert!(validate_receipts(&fixture.plan, &[receipt], PacketBudget::default(), None).is_err());
++    assert!(validate_receipts(
++        &fixture.plan,
++        &[vec![255; 128]],
++        PacketBudget::default(),
++        None
++    )
++    .is_err());
+ }
+ 
+ #[test]
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/packet/uca.rs b/crates/novovm-node/src/native_pipeline/persistence/packet/uca.rs
+index 94656cd6..2c40ab70 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/packet/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/packet/uca.rs
+@@ -47,6 +47,7 @@ pub(super) fn validate_receipts(
+     receipts: &[Vec<u8>],
+     outputs: &[SpendOutput],
+     budget: PacketBudget,
++    mut projection: Option<&mut Vec<ReceiptProjection>>,
+ ) -> Result<()> {
+     ensure!(
+         is_profile(plan.context()),
+@@ -241,6 +242,9 @@ pub(super) fn validate_receipts(
+                 receipt.delta.recipient.account.to_vec(),
+                 receipt.delta.recipient.after,
+             );
++            if let Some(projection) = projection.as_deref_mut() {
++                projection.push(ReceiptProjection::from_receipt(&receipt));
++            }
+             continue;
+         }
+         // Grant identity intentionally excludes submitted epoch, as the captured
+@@ -283,6 +287,9 @@ pub(super) fn validate_receipts(
+             receipt.delta.recipient.account.to_vec(),
+             receipt.delta.recipient.after,
+         );
++        if let Some(projection) = projection.as_deref_mut() {
++            projection.push(ReceiptProjection::from_receipt(&receipt));
++        }
+     }
+     Ok(())
+ }
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/packet/uca_tests.rs b/crates/novovm-node/src/native_pipeline/persistence/packet/uca_tests.rs
+index f1a7684f..a204734e 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/packet/uca_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/packet/uca_tests.rs
+@@ -148,6 +148,107 @@ fn uca_packet_roundtrip_preserves_authorization_budget_and_unchanged_nonce() {
+     assert_eq!(cold.raw_transactions()[0], f.signed[0].encode().unwrap());
+ }
+ 
++#[test]
++fn asset_structural_packet_reuses_plan_and_matches_independent_cold_decoder() {
++    use crate::native_pipeline::ingress::batch::BatchSource;
++    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
++    use std::sync::Arc;
++
++    let mut f = UcaFixture::new();
++    let expected = f.packet().unwrap();
++    let raw = f.base.plan.canonical_transactions_for_test();
++    let batch = Arc::new(
++        AssetSpendBatchV2::from_raw(
++            &raw,
++            AssetSpendBatchLimitsV2 {
++                transactions: 1024,
++                transaction_bytes: 8192,
++                body_bytes: 8 * 1024 * 1024,
++            },
++        )
++        .unwrap(),
++    );
++    f.base.plan = BatchPlan::from_source(
++        *f.base.plan.context(),
++        BatchSource::Uca(Arc::clone(&batch)),
++        f.base.plan.declared_access().to_vec(),
++        PacketBudget::default().plan(),
++    )
++    .unwrap();
++    assert!(f.base.plan.raw_transactions_if_materialized().is_none());
++    let actual = f.packet().unwrap();
++    assert_eq!(actual.records(), expected.records());
++    assert_eq!(actual.retained_bytes(), expected.retained_bytes());
++    assert_eq!(actual.receipt_projection(), expected.receipt_projection());
++    assert!(f.base.plan.raw_transactions_if_materialized().is_none());
++    assert_eq!(Arc::strong_count(&batch), 2);
++
++    let cold = load(&actual, actual.records(), PacketBudget::default())
++        .unwrap()
++        .unwrap();
++    assert!(actual.matches(&cold));
++    assert_eq!(cold.raw_transactions(), raw);
++    assert_eq!(cold.spend_outputs(), Some(f.outputs.as_slice()));
++    for (index, projection) in actual.receipt_projection().iter().enumerate() {
++        let view = cold.receipt_view(index).unwrap();
++        assert_eq!(projection.tx_hash, view.tx_hash);
++        assert_eq!(projection.signer_identity, view.signer_identity);
++        assert_eq!(projection.nonce_after, view.nonce_after);
++        assert_eq!(projection.success, view.success);
++        assert_eq!(projection.charged_fee.to_string(), view.charged_fee);
++    }
++}
++
++#[test]
++fn typed_asset_preparation_keeps_commitment_root_and_writable_access_checks() {
++    let f = UcaFixture::new();
++    let good = f.packet().unwrap();
++    let receipts = f
++        .base
++        .receipts
++        .iter()
++        .map(|receipt| postcard::to_allocvec(receipt).unwrap())
++        .collect::<Vec<_>>();
++    let prepare = |root, receipt, statement| {
++        prepare_with_spend(
++            &f.base.plan,
++            root,
++            &receipts,
++            &f.base.nodes,
++            receipt,
++            statement,
++            PacketBudget::default(),
++            Some(&f.outputs),
++        )
++    };
++    assert!(prepare(
++        [0; 32],
++        good.receipt_batch_commitment(),
++        good.statement_commitment()
++    )
++    .is_err());
++    assert!(prepare(f.base.root, [91; 32], good.statement_commitment()).is_err());
++    assert!(prepare(f.base.root, good.receipt_batch_commitment(), [92; 32]).is_err());
++
++    let mut f = UcaFixture::new();
++    let mut access = f.base.plan.declared_access().to_vec();
++    for entry in &mut access {
++        entry.may_put = false;
++    }
++    f.base.plan = BatchPlan::new(
++        *f.base.plan.context(),
++        f.base.plan.canonical_transactions_for_test(),
++        access,
++        PacketBudget::default().plan(),
++    )
++    .unwrap();
++    assert!(f.packet().is_err());
++
++    let mut f = UcaFixture::new();
++    f.base.receipts[1].delta.recipient.after = 1;
++    assert!(f.packet().is_err());
++}
++
+ #[test]
+ fn uca_packet_rejects_authorization_effects_and_budget_prefix_changes() {
+     let mut f = UcaFixture::new();
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+index 9acdd59a..101f52d7 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+@@ -31,6 +31,7 @@ pub(crate) struct ComputeConfig {
+     pub workers: u32,
+     pub execution_backend: super::ExecutionBackend,
+     pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
++    pub prepare_asset_signatures: bool,
+     pub queue_capacity: usize,
+     pub authentication: AuthenticationBudget,
+     pub plan: PlanBudget,
+@@ -319,10 +320,34 @@ impl ComputeOwner {
+                 // Unexpected unwinding/disconnection must wake control as well.
+                 let notification = Notification(notify);
+                 let _fault = lanes::UnwindLatch(Arc::clone(&failed));
+-                match ComputeSession::open(&config.library, config.workers) {
+-                    Ok(mut session) => {
++                let initialized = (|| {
++                    let session = ComputeSession::open(&config.library, config.workers)?;
++                    let mut facade = None;
++                    if config.prepare_asset_signatures {
++                        let started = Instant::now();
++                        ensure_uca_facade(&mut facade, &config)?;
++                        config.signatures.asset_startup_us.store(
++                            started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
++                            Ordering::Relaxed,
++                        );
++                        config
++                            .signatures
++                            .asset_prepared_at_startup
++                            .store(true, Ordering::Relaxed);
++                    }
++                    Ok::<_, anyhow::Error>((session, facade))
++                })();
++                match initialized {
++                    Ok((mut session, facade)) => {
+                         if ready_tx.send(Ok(())).is_ok() {
+-                            run_owner(&mut session, &config, receiver, &notification, &failed);
++                            run_owner(
++                                &mut session,
++                                facade,
++                                &config,
++                                receiver,
++                                &notification,
++                                &failed,
++                            );
+                         }
+                     }
+                     Err(error) => {
+@@ -743,14 +768,14 @@ fn packet(
+ 
+ fn run_owner(
+     session: &mut ComputeSession,
++    mut uca_facade: Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
+     config: &ComputeConfig,
+     receiver: mpsc::Receiver<lanes::Queued>,
+     notification: &Notification,
+     failed: &AtomicBool,
+ ) {
+-    // The qualified original unified verifier lives on this compute owner; it
+-    // owns no database or permissions. Reference-only runs open none.
+-    let mut uca_facade = None;
++    // The required verifier was qualified on this same owner before ready.
++    // Reference-only pipelines retain lazy qualification if a test submits UCA.
+     while let Ok(queued) = receiver.recv() {
+         let command = queued.into_command();
+         match command {
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
+index 18baf44b..74015d46 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests.rs
+@@ -293,6 +293,7 @@ fn real_integer_lane_does_not_block_authentication_and_drains_accepted_work() ->
+         workers: cfg.workers,
+         execution_backend: super::super::ExecutionBackend::AoemIntegerV7,
+         signature_backend: Default::default(),
++        prepare_asset_signatures: false,
+         queue_capacity: 2,
+         authentication: cfg.authentication,
+         plan: cfg.plan,
+@@ -415,6 +416,7 @@ fn real_resident_owner_authenticates_and_executes_repeated_owned_captures() -> R
+         workers: 2,
+         execution_backend: Default::default(),
+         signature_backend: Default::default(),
++        prepare_asset_signatures: false,
+         queue_capacity: 2,
+         authentication: AuthenticationBudget {
+             transactions: 16,
+@@ -496,6 +498,7 @@ fn real_compute_owner_gpu_selection_rejects_old_library_without_cpu_fallback() -
+         workers: cfg.workers,
+         execution_backend: crate::native_pipeline::pipeline::ExecutionBackend::AoemIntegerV7,
+         signature_backend: Default::default(),
++        prepare_asset_signatures: false,
+         queue_capacity: cfg.max_batches,
+         authentication: cfg.authentication,
+         plan: cfg.plan,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs
+index a422c3d0..34d066a4 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs
+@@ -66,6 +66,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
+         workers: 2,
+         execution_backend: Default::default(),
+         signature_backend: Default::default(),
++        prepare_asset_signatures: false,
+         queue_capacity: 2,
+         authentication: pipeline_config.authentication,
+         plan: pipeline_config.plan,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/driver.rs b/crates/novovm-node/src/native_pipeline/pipeline/driver.rs
+index 08027ee5..e93a13b7 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/driver.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/driver.rs
+@@ -15,7 +15,7 @@ use std::collections::VecDeque;
+ 
+ pub(super) fn start(
+     config: PipelineConfig,
+-    mode: OpenMode,
++    (mode, initial): (OpenMode, Option<StagedStateUpdate>),
+     receiver: mpsc::Receiver<DriverMessage>,
+     ready: mpsc::SyncSender<Result<Arc<IoService>>>,
+     identity: Arc<()>,
+@@ -25,18 +25,20 @@ pub(super) fn start(
+     let (seed, control) = seed_and_control;
+     let startup = (|| {
+         let notify = Some(thread::current());
+-        let io = Arc::new(IoService::start_with_notify(
++        let io = IoService::start_with_notify(
+             config.store.clone(),
+             mode,
+             config.io,
+             [notify.clone(), Some(control.clone())],
+-        )?);
+-        let compute = ComputeOwner::start(
++            initial,
++        )?;
++        let compute = match ComputeOwner::start(
+             ComputeConfig {
+                 library: config.store.library.clone(),
+                 workers: config.workers,
+                 execution_backend: config.execution_backend,
+                 signature_backend: config.signature_backend,
++                prepare_asset_signatures: config.prepare_asset_signatures,
+                 queue_capacity: config.max_batches,
+                 authentication: config.authentication,
+                 plan: config.plan,
+@@ -47,8 +49,14 @@ pub(super) fn start(
+                 signatures,
+             },
+             notify,
+-        )?;
+-        Ok::<_, anyhow::Error>((io, compute))
++        ) {
++            Ok(compute) => compute,
++            Err(error) => {
++                io.shutdown()?;
++                return Err(error);
++            }
++        };
++        Ok::<_, anyhow::Error>((Arc::new(io), compute))
+     })();
+     let (io, compute) = match startup {
+         Ok(owners) => owners,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/mod.rs b/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
+index 99baf8ec..67fbfdf5 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
+@@ -44,7 +44,7 @@ use crate::native_pipeline::persistence::{
+     OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig,
+ };
+ use crate::native_pipeline::state::frontier::CaptureBudget;
+-use crate::native_pipeline::state::tree::NodeHash;
++use crate::native_pipeline::state::tree::{NodeHash, StagedStateUpdate};
+ use anyhow::{ensure, Context, Result};
+ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+ use std::sync::{mpsc, Arc, Mutex, TryLockError};
+@@ -68,6 +68,9 @@ pub struct PipelineConfig {
+     pub workers: u32,
+     pub execution_backend: ExecutionBackend,
+     pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
++    /// Required capability of this consumer, qualified before startup readiness.
++    /// Reference V3 pipelines do not open an unused asset verifier.
++    pub prepare_asset_signatures: bool,
+     pub max_batches: usize,
+     pub max_retained_bytes: usize,
+     pub authentication: AuthenticationBudget,
+@@ -488,6 +491,8 @@ pub(crate) struct SignatureWork {
+     strict_verified: Arc<AtomicU64>,
+     reused: AtomicU64,
+     uca_batch_calls: AtomicU64,
++    asset_prepared_at_startup: AtomicBool,
++    asset_startup_us: AtomicU64,
+ }
+ 
+ pub struct CandidatePipeline {
+@@ -517,6 +522,15 @@ impl CandidatePipeline {
+     pub fn signature_batch_calls(&self) -> u64 {
+         self.signatures.uca_batch_calls.load(Ordering::Relaxed)
+     }
++    /// Startup qualification is separate from timed business verification calls.
++    pub fn signature_startup(&self) -> (bool, u64) {
++        (
++            self.signatures
++                .asset_prepared_at_startup
++                .load(Ordering::Relaxed),
++            self.signatures.asset_startup_us.load(Ordering::Relaxed),
++        )
++    }
+     pub fn execution_backend(&self) -> ExecutionBackend {
+         self.config.execution_backend
+     }
+@@ -524,6 +538,24 @@ impl CandidatePipeline {
+     /// Blocking startup before network activation. Each native session is opened
+     /// once inside its dedicated owner. No engine is initialized in try_submit.
+     pub fn start(config: PipelineConfig, mode: OpenMode) -> Result<Self> {
++        Self::start_inner(config, mode, None)
++    }
++
++    /// Verify pinned genesis content on the eventual I/O owner before readiness,
++    /// retaining that same open store for all later reads and durable writes.
++    pub(crate) fn start_with_initial_state(
++        config: PipelineConfig,
++        mode: OpenMode,
++        initial: StagedStateUpdate,
++    ) -> Result<Self> {
++        Self::start_inner(config, mode, Some(initial))
++    }
++
++    fn start_inner(
++        config: PipelineConfig,
++        mode: OpenMode,
++        initial: Option<StagedStateUpdate>,
++    ) -> Result<Self> {
+         config.validate()?;
+         let (sender, receiver) = mpsc::sync_channel(config.max_batches + 1);
+         let (ready, ready_receiver) = mpsc::sync_channel(1);
+@@ -540,7 +572,7 @@ impl CandidatePipeline {
+             .spawn(move || {
+                 driver::start(
+                     worker_config,
+-                    mode,
++                    (mode, initial),
+                     receiver,
+                     ready,
+                     worker_identity,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/tests.rs
+index 321033fe..da455baa 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/tests.rs
+@@ -28,6 +28,7 @@ pub(super) fn config(database: PathBuf) -> PipelineConfig {
+         workers: 2,
+         execution_backend: Default::default(),
+         signature_backend: Default::default(),
++        prepare_asset_signatures: false,
+         max_batches: 1,
+         max_retained_bytes: 128 * 1024 * 1024,
+         authentication: AuthenticationBudget {
+@@ -485,6 +486,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
+             workers: cfg.workers,
+             execution_backend: cfg.execution_backend,
+             signature_backend: cfg.signature_backend,
++            prepare_asset_signatures: cfg.prepare_asset_signatures,
+             queue_capacity: cfg.max_batches,
+             authentication: cfg.authentication,
+             plan: cfg.plan,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs
+index e86cf705..7e490691 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs
+@@ -216,6 +216,7 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
+             .join("state.rocksdb"),
+     );
+     config.store.library = library.clone();
++    config.prepare_asset_signatures = true;
+     config.authentication.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
+     config.plan.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
+     std::fs::create_dir_all(config.store.database.parent().unwrap())?;
+@@ -267,6 +268,17 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
+     .is_err());
+     let (foreign, _receiver) = tests::inert_pipeline(config.clone());
+     let pipeline = CandidatePipeline::start(config, OpenMode::CreateNew)?;
++    let startup = pipeline.signature_startup();
++    assert!(
++        startup.0 && startup.1 > 0,
++        "ready preceded verifier qualification"
++    );
++    assert_eq!(pipeline.signature_counts(), (0, 0));
++    assert_eq!(
++        pipeline.signature_batch_calls(),
++        0,
++        "KAT is not a business batch"
++    );
+     // Repeated rows are individual authentication facts, not nonce reservations;
+     // the one control-owned pool must reject duplicate/same-nonce admissions.
+     let request = SignatureAdmissionRequest::new(vec![
+@@ -344,6 +356,11 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
+         std::thread::yield_now();
+     }
+     assert_eq!(pipeline.signature_batch_calls(), 2);
++    assert_eq!(
++        pipeline.signature_startup(),
++        startup,
++        "batch reopened verifier"
++    );
+     pipeline.shutdown()?;
+     Ok(())
+ }
+diff --git a/crates/novovm-node/src/native_pipeline/service.rs b/crates/novovm-node/src/native_pipeline/service.rs
+index a5e71ee2..d6296b00 100644
+--- a/crates/novovm-node/src/native_pipeline/service.rs
++++ b/crates/novovm-node/src/native_pipeline/service.rs
+@@ -27,10 +27,10 @@ use super::consensus::{
+ use super::execution::plan::{BatchContext, PlanBudget};
+ use super::ingress::batch::AuthenticationBudget;
+ use super::persistence::io::IoBudget;
+-use super::persistence::{CandidateStore, OpenMode, PacketBudget, StorageDomain, StoreConfig};
++use super::persistence::{OpenMode, PacketBudget, StorageDomain, StoreConfig};
+ use super::pipeline::{CandidatePipeline, PipelineConfig};
+ use super::state::frontier::CaptureBudget;
+-use super::state::tree::{empty_root, StateNodeReader};
++use super::state::tree::empty_root;
+ use anyhow::{ensure, Context, Result};
+ pub use config::{
+     GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, NodeKeyStorage,
+@@ -111,24 +111,6 @@ impl ResidentNode {
+             identities,
+         } = prepared;
+         let pipeline_config = pipeline_config(&config);
+-        {
+-            let store = CandidateStore::open(
+-                pipeline_config.store.clone(),
+-                match mode {
+-                    StartMode::CreateNew => OpenMode::CreateNew,
+-                    StartMode::Existing => OpenMode::Existing,
+-                },
+-            )?;
+-            if mode == StartMode::CreateNew {
+-                store.install_unpublished_state(&initial)?;
+-            }
+-            for (hash, expected) in initial.nodes() {
+-                ensure!(
+-                    store.read_node(hash)?.as_ref() == Some(expected),
+-                    "pinned genesis content missing or altered; explicit recovery required"
+-                );
+-            }
+-        }
+         let template = BatchContext {
+             chain_id: config.genesis.chain_id,
+             genesis_config_commitment: config.genesis.genesis_config_commitment,
+@@ -158,7 +140,14 @@ impl ResidentNode {
+             slot: 0,
+             timestamp_unix_ms: config.genesis.timestamp_unix_ms,
+         };
+-        let pipeline = CandidatePipeline::start(pipeline_config, OpenMode::Existing)?;
++        let pipeline = CandidatePipeline::start_with_initial_state(
++            pipeline_config,
++            match mode {
++                StartMode::CreateNew => OpenMode::CreateNew,
++                StartMode::Existing => OpenMode::Existing,
++            },
++            initial,
++        )?;
+         let result = start_native(
+             &config,
+             &pipeline,
+@@ -328,21 +317,34 @@ fn body_byte_limit(batch_size: usize) -> usize {
+ }
+ 
+ // Expanded signed inputs, distinct from the APFL encoded network object.
++const NATIVE_ASSET_MAX_ROWS: usize = 1024;
++const NATIVE_ASSET_ROW_BYTES: usize = 8192;
++
+ fn uca_body_byte_limit(batch_size: usize) -> usize {
+-    batch_size * 8192
++    batch_size * NATIVE_ASSET_ROW_BYTES
+ }
+ 
+-/// Shared original node/client capacity policy. Callers already validate the
+-/// configured row count (1..=1024); no alternative transaction or wire format.
++/// Shared original node/client acceptance capacity. An asset node's local
++/// proposal target must not reject a larger valid candidate from another node.
++/// The historical V3 reference keeps its configured bounds.
+ pub(crate) fn native_decode_limits(batch_size: usize, asset_accounts: bool) -> DecodeLimits {
++    let rows = if asset_accounts {
++        NATIVE_ASSET_MAX_ROWS
++    } else {
++        batch_size
++    };
+     let body_bytes = if asset_accounts {
+-        uca_body_byte_limit(batch_size)
++        uca_body_byte_limit(rows)
+     } else {
+-        body_byte_limit(batch_size)
++        body_byte_limit(rows)
+     };
+     DecodeLimits {
+-        transactions: batch_size,
+-        transaction_bytes: if asset_accounts { 8192 } else { 1024 },
++        transactions: rows,
++        transaction_bytes: if asset_accounts {
++            NATIVE_ASSET_ROW_BYTES
++        } else {
++            1024
++        },
+         body_bytes,
+         // Fourteen APFL columns add at most two u32 fields per cell, plus
+         // dictionary counts and the existing frame/context header. At 1024
+@@ -382,11 +384,15 @@ fn native_body_retention_limit(codec: DecodeLimits) -> usize {
+ }
+ 
+ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
+-    let size = config.batch_size;
+     // Arbitrary RPC transfers may have three distinct keys each (payer,
+     // recipient and signer nonce), not the load fixture's shared recipient.
+     let uca = config.uca_initialization.is_some();
+-    let row_bytes = if uca { 8192 } else { 1024 };
++    let size = if uca {
++        NATIVE_ASSET_MAX_ROWS
++    } else {
++        config.batch_size
++    };
++    let row_bytes = if uca { NATIVE_ASSET_ROW_BYTES } else { 1024 };
+     let body_bytes = if uca {
+         uca_body_byte_limit(size)
+     } else {
+@@ -412,6 +418,7 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
+         workers: config.workers,
+         execution_backend: config.execution_backend,
+         signature_backend: config.signature_backend,
++        prepare_asset_signatures: uca,
+         max_batches: 2,
+         max_retained_bytes: 256 * 1024 * 1024,
+         authentication: AuthenticationBudget {
+diff --git a/crates/novovm-node/src/native_pipeline/service/config/uca_startup_tests.rs b/crates/novovm-node/src/native_pipeline/service/config/uca_startup_tests.rs
+index 87dbf87f..48034be5 100644
+--- a/crates/novovm-node/src/native_pipeline/service/config/uca_startup_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/service/config/uca_startup_tests.rs
+@@ -291,7 +291,22 @@ fn actual_uca_startup_with_custody() -> Result<()> {
+         }
+         assert!(!path.exists(), "rejected initializer opened a DB: {case}");
+     }
++    let database = config.database.clone();
++    let log_generations = || -> Result<usize> {
++        Ok(std::fs::read_dir(&database)?
++            .collect::<std::io::Result<Vec<_>>>()?
++            .iter()
++            .filter(|entry| {
++                let name = entry.file_name();
++                let name = name.to_string_lossy();
++                name == "LOG" || name.starts_with("LOG.old.")
++            })
++            .count())
++    };
+     let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;
++    // The real RocksDB logger rotates once per open. Initial verification must
++    // not open/drop the store before the original pipeline opens it again.
++    assert_eq!(log_generations()?, 1, "fresh startup opened the DB twice");
+     assert_eq!(first.template.genesis_config_commitment, domain);
+     assert_eq!(first.template.parent_state_root, verified.state().root());
+     assert_eq!(first.template.business_program, uca_program_id());
+@@ -331,7 +346,9 @@ fn actual_uca_startup_with_custody() -> Result<()> {
+     for bad in invalid {
+         assert!(ResidentNode::start(bad, StartMode::Existing).is_err());
+     }
++    assert_eq!(log_generations()?, 1, "pre-open rejection opened the DB");
+     let reopened = ResidentNode::start(config, StartMode::Existing)?;
++    assert_eq!(log_generations()?, 2, "cold startup reopened the DB twice");
+     assert_eq!(reopened.controller.parent(), parent);
+     assert!(reopened.controller.head().is_none());
+     assert_eq!(reopened.controller.context().height, 1);
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc.rs b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+index ce52cc2e..24a8e7aa 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+@@ -336,6 +336,18 @@ impl RpcLifecycle {
+         let _span = crate::native_pipeline::profile::span(
+             crate::native_pipeline::profile::Phase::Lifecycle,
+         );
++        // A future body received on the preceding turn is still in the original
++        // bounded Lookahead. Rebind complete pool-owned signed rows before its
++        // authentication request is submitted; missing rows keep strict verification.
++        if let Some(message) = self.node.controller.remote_successor_authentication_input() {
++            if let Some(admitted) = admitted_for_body(&message, &self.pending)? {
++                self.node.controller.reuse_remote_successor_admitted(
++                    &message,
++                    &self.node.pipeline,
++                    &admitted,
++                )?;
++            }
++        }
+         self.node.poll(now)?;
+         self.poll_balances()?;
+         if self.projection_error.is_none() {
+@@ -952,14 +964,18 @@ impl RpcLifecycle {
+             json!(self.pending_retention.metadata_bytes);
+         status["pending_retained_total_bytes"] = json!(self.pending_retention.bytes);
+         status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
++        let (asset_prepared_at_startup, asset_startup_us) = self.node.pipeline.signature_startup();
+         status["signature_work"] = json!({"strict_verified_rows":strict_verified_rows,
+             "reused_rows":reused_rows,"uca_batch_calls":self.node.pipeline.signature_batch_calls(),
++            "asset_prepared_at_startup":asset_prepared_at_startup,"asset_startup_us":asset_startup_us,
+             "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
+         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
+         let [auth, started, before_parent, promoted, discarded] = core.successor_metrics();
+         status["successor"] = json!({"authentication_started":auth,"execution_started":started,
+             "completed_before_parent":before_parent,"promoted":promoted,"discarded":discarded,
+-            "scope":"local_next_proposer_after_durable_parent_candidate"});
++            "early_body_enqueued_peer_obligations":core.successor_body_enqueued,
++            "early_body_enqueued_bytes":core.successor_body_bytes,
++            "scope":"same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"});
+         status
+     }
+ 
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs b/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs
+index a963cf17..01949105 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs
+@@ -117,7 +117,7 @@ fn asset_selection_1024_rows_at_8m_preserves_queued_nonce_suffix() -> Result<()>
+     );
+     assert_eq!(later.len(), 64);
+     // Lower configured row limits still win; low load need not wait for 1024.
+-    for rows in [32, 64] {
++    for rows in [1, 32, 64, 1024] {
+         assert_eq!(
+             select_pending_batch(&order, &pending, &known, BTreeMap::new(), rows).len(),
+             rows
+diff --git a/crates/novovm-node/src/native_pipeline/service/tests.rs b/crates/novovm-node/src/native_pipeline/service/tests.rs
+index e875393e..f89010a4 100644
+--- a/crates/novovm-node/src/native_pipeline/service/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/service/tests.rs
+@@ -395,8 +395,8 @@ fn native_asset_capacity_covers_1024_rows_without_growing_control_or_ttl() -> Re
+     assert_eq!(control.send.peer_bytes, 2 * 1024 * 1024);
+     for rows in [1, 8, 64, 1024] {
+         let codec = native_decode_limits(rows, true);
+-        assert_eq!(codec.transactions, rows);
+-        assert_eq!(codec.body_bytes, rows * 8192);
++        assert_eq!(codec.transactions, 1024);
++        assert_eq!(codec.body_bytes, 8 * 1024 * 1024);
+         assert!(codec.message_bytes >= codec.body_bytes + 128 * 1024);
+         encode(&Message::RequestBody { body_id: [1; 32] }, codec)?;
+         let lane = native_lane_limits(codec.message_bytes);
+@@ -422,3 +422,38 @@ fn native_asset_capacity_covers_1024_rows_without_growing_control_or_ttl() -> Re
+     );
+     Ok(())
+ }
++
++#[test]
++fn asset_local_proposal_target_does_not_reduce_peer_validation_or_capture_capacity() {
++    use super::config::uca_genesis::UcaInitializationConfigV2;
++
++    for target in [1, 64, 1024] {
++        let mut selected = config(target);
++        // Budget construction only; this deliberately unsigned initializer
++        // cannot activate a node or confer asset authority.
++        selected.uca_initialization = Some(UcaInitializationConfigV2 {
++            identities: Vec::new(),
++            accounts: Vec::new(),
++            approvals: Vec::new(),
++            expected_signing_domain: [0; 32],
++            expected_initial_root: [0; 32],
++            expected_final_commitment: [0; 32],
++        });
++        let codec = native_decode_limits(selected.batch_size, true);
++        let pipeline = pipeline_config(&selected);
++        assert_eq!(
++            selected.batch_size, target,
++            "local selection target changed"
++        );
++        assert_eq!(codec.transactions, 1024);
++        assert_eq!(codec.body_bytes, 8 * 1024 * 1024);
++        assert_eq!(pipeline.authentication.transactions, codec.transactions);
++        assert_eq!(pipeline.authentication.body_bytes, codec.body_bytes);
++        assert_eq!(pipeline.plan.transactions, codec.transactions);
++        assert_eq!(pipeline.plan.body_bytes, codec.body_bytes);
++        assert_eq!(pipeline.plan.access_keys, 31 * 1024 + 42);
++        assert_eq!(pipeline.capture.keys, pipeline.plan.access_keys);
++        assert_eq!(pipeline.capture.nodes, 65_536);
++        assert_eq!(pipeline.capture.bytes, 16 * 1024 * 1024);
++    }
++}
+diff --git a/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md b/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
+index 304232a2..8a969a10 100644
+--- a/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
++++ b/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
+@@ -1,5 +1,14 @@
+ # UCA、首发签名与服务经济：双机分工及实施顺序
+ 
++## 2026-10-29 A 认领：固定容量后的关键路径收口
++
++已 fetch 并核对 `94da21e2` 与远端一致。固定具体资产账户、APFL、1,024 行／8 MiB
++预算及原四方回执计时终点，不再扩大块或改超时。A/root 负责原 compute owner 的
++验签资格就绪、集成和唯一构建／性能槽；三个只读分工分别定位查询投递生命周期、
++候选打包／持久化及后继重叠。实施前说明被替换的实际等待，沿原 owner 修改。
++保留两次查询超时、旧 CPU 回退和所有负向轮次；启动时间单列，不隐藏预热。
++中间检查点仍不合 main、不替换正式库、不交 D 部署。
++
+ ## 2026-10-29 A 认领 APFL 千笔容量适配
+ 
+ 已 fetch 并固定输入 `acba3b2f`。用户授权最多 1,024 笔 ML-DSA 原资产交易，

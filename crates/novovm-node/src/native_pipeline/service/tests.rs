@@ -395,8 +395,8 @@ fn native_asset_capacity_covers_1024_rows_without_growing_control_or_ttl() -> Re
     assert_eq!(control.send.peer_bytes, 2 * 1024 * 1024);
     for rows in [1, 8, 64, 1024] {
         let codec = native_decode_limits(rows, true);
-        assert_eq!(codec.transactions, rows);
-        assert_eq!(codec.body_bytes, rows * 8192);
+        assert_eq!(codec.transactions, 1024);
+        assert_eq!(codec.body_bytes, 8 * 1024 * 1024);
         assert!(codec.message_bytes >= codec.body_bytes + 128 * 1024);
         encode(&Message::RequestBody { body_id: [1; 32] }, codec)?;
         let lane = native_lane_limits(codec.message_bytes);
@@ -421,4 +421,39 @@ fn native_asset_capacity_covers_1024_rows_without_growing_control_or_ttl() -> Re
         130 * 1024 * 1024
     );
     Ok(())
+}
+
+#[test]
+fn asset_local_proposal_target_does_not_reduce_peer_validation_or_capture_capacity() {
+    use super::config::uca_genesis::UcaInitializationConfigV2;
+
+    for target in [1, 64, 1024] {
+        let mut selected = config(target);
+        // Budget construction only; this deliberately unsigned initializer
+        // cannot activate a node or confer asset authority.
+        selected.uca_initialization = Some(UcaInitializationConfigV2 {
+            identities: Vec::new(),
+            accounts: Vec::new(),
+            approvals: Vec::new(),
+            expected_signing_domain: [0; 32],
+            expected_initial_root: [0; 32],
+            expected_final_commitment: [0; 32],
+        });
+        let codec = native_decode_limits(selected.batch_size, true);
+        let pipeline = pipeline_config(&selected);
+        assert_eq!(
+            selected.batch_size, target,
+            "local selection target changed"
+        );
+        assert_eq!(codec.transactions, 1024);
+        assert_eq!(codec.body_bytes, 8 * 1024 * 1024);
+        assert_eq!(pipeline.authentication.transactions, codec.transactions);
+        assert_eq!(pipeline.authentication.body_bytes, codec.body_bytes);
+        assert_eq!(pipeline.plan.transactions, codec.transactions);
+        assert_eq!(pipeline.plan.body_bytes, codec.body_bytes);
+        assert_eq!(pipeline.plan.access_keys, 31 * 1024 + 42);
+        assert_eq!(pipeline.capture.keys, pipeline.plan.access_keys);
+        assert_eq!(pipeline.capture.nodes, 65_536);
+        assert_eq!(pipeline.capture.bytes, 16 * 1024 * 1024);
+    }
 }

@@ -1,0 +1,16 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+    Checking novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+    Checking novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+    Checking novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+    Checking novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `release` profile [optimized] target(s) in 31.85s

@@ -1,0 +1,16 @@
+
+running 1 test
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230878357413700
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230883237886100
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230887417120100
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230894699440700
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_bulk_authority_before_after ... FAILED
+Error: product node 0 exited; logs=D:\WorksArea\SUPERVM\target\native-product-load\uca-11184-1793230894699440700
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_bulk_authority_before_after
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1761 filtered out; finished in 20.03s
+

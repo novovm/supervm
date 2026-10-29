@@ -1,0 +1,10 @@
+
+running 5 tests
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_complete_state_waits_for_ack_and_recovers ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_local_ready_discards_different_decided_parent ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_local_ready_prepares_before_parent_proposal ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_round_change_drains_auth_and_execution_without_publication ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1757 filtered out; finished in 2.70s
+

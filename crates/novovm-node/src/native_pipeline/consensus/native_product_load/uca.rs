@@ -654,6 +654,7 @@ fn run_native_uca_load_mode(
         evidence["single_submission_node"] = json!(ingress);
         evidence["first_proposer_is_submission_node"] = json!(false);
         phase = "start four original nodes";
+        let startup_started = Instant::now();
         for i in 0..4 {
             nodes.start(i, "create")?;
         }
@@ -661,6 +662,8 @@ fn run_native_uca_load_mode(
             .map(|i| client(&nodes, i, set.clone(), CONFIGURED_BATCH))
             .collect::<Result<Vec<_>>>()?;
         let initial = ready(&mut nodes, &mut clients)?;
+        evidence["four_process_startup_ready_seconds"] =
+            json!(startup_started.elapsed().as_secs_f64());
         ensure!(
             initial.iter().all(|s| s.height == 0),
             "NUAS load requires fresh genesis"
@@ -727,6 +730,8 @@ fn run_native_uca_load_mode(
             )?
         });
         timed_attempt = None;
+        evidence["startup_through_four_receipts_seconds"] =
+            json!(startup_started.elapsed().as_secs_f64());
         let workload_hash: Hash = workload_hash.finalize().into();
         if mode.dynamic_windows() {
             corpus.rolling_identity = Some((domain, material.expected_initial_root));
@@ -952,7 +957,7 @@ fn run_native_uca_load_mode(
         "p99":percentile(&latency,99),"sample_count":latency.len(),
         "definition":"first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"});
     evidence["timing"] = json!(if mode == LoadMode::Continuous {
-        "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not byte-identical across backend runs"
+        "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not guaranteed byte-identical across backend runs; compare the actual signed_workload_sha256"
     } else if mode.is_rolling() {
         "same native load observer: first SDK submission attempt through final unique four-node receipt observation on ONE unpaused clock; all intervening signing/structure/head queries/transport drains included; startup/keygen/first-wave preparation/final audit/cold recovery excluded; not an 8192-inflight static-input comparison"
     } else {

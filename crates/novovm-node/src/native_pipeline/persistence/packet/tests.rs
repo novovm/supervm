@@ -582,8 +582,14 @@ fn receipt_codec_refuses_trailing_bytes_and_unknown_variants() {
     let fixture = Fixture::new(&[0], 0, 1);
     let mut receipt = postcard::to_allocvec(&fixture.receipts[0]).unwrap();
     receipt.push(0);
-    assert!(validate_receipts(&fixture.plan, &[receipt], PacketBudget::default()).is_err());
-    assert!(validate_receipts(&fixture.plan, &[vec![255; 128]], PacketBudget::default()).is_err());
+    assert!(validate_receipts(&fixture.plan, &[receipt], PacketBudget::default(), None).is_err());
+    assert!(validate_receipts(
+        &fixture.plan,
+        &[vec![255; 128]],
+        PacketBudget::default(),
+        None
+    )
+    .is_err());
 }
 
 #[test]

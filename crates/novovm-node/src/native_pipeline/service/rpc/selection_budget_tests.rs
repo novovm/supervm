@@ -117,7 +117,7 @@ fn asset_selection_1024_rows_at_8m_preserves_queued_nonce_suffix() -> Result<()>
     );
     assert_eq!(later.len(), 64);
     // Lower configured row limits still win; low load need not wait for 1024.
-    for rows in [32, 64] {
+    for rows in [1, 32, 64, 1024] {
         assert_eq!(
             select_pending_batch(&order, &pending, &known, BTreeMap::new(), rows).len(),
             rows

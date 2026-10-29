@@ -54,6 +54,9 @@ struct Body {
 /// Bounded input ownership only. A peer body is accepted only for an existing
 /// verified proposal/decision hint, with the exact requested body ID and parent.
 /// No arbitrary peer can fill the queue with unsolicited speculative candidates.
+/// The sole optional Lookahead additionally accepts the scheduled next leader's
+/// exact AssetBody, but uses only this owner's reproduced parent and never
+/// registers or publishes before the ordinary exact parent journal ACK.
 pub struct CandidateBodies {
     owner: Arc<()>,
     pin: BatchContext,

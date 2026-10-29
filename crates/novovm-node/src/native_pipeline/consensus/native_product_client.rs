@@ -81,28 +81,47 @@ fn connect(
                 peer_bytes: 2 * message_bytes,
             },
         },
-        NativeSendPolicy {
-            window: NovoRudpWindowConfig {
-                packet_copies: 1,
-                tail_packet_copies: 1,
-                batch_size: 32,
-                batch_pause_ms: 0,
-                ack_wait_ms: 10,
-                ..Default::default()
-            },
-            pacing: NovoRudpPacingProfile {
-                packet_copies: 1,
-                tail_packet_copies: 1,
-                batch_size: 32,
-                batch_pause_ms: 0,
-                ack_wait_ms: 10,
-                no_progress_backoff: false,
-            },
-            ttl: Duration::from_secs(30),
-        },
+        client_policy(),
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
         Instant::now(),
     )
+}
+
+// One configuration for the real fixture consumer and its policy regression.
+fn client_policy() -> NativeSendPolicy {
+    NativeSendPolicy {
+        window: NovoRudpWindowConfig {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+            ..Default::default()
+        },
+        pacing: NovoRudpPacingProfile {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+        },
+        ttl: Duration::from_secs(30),
+    }
+}
+
+#[test]
+fn native_recovery_client_retains_bounded_repair_until_original_deadline() {
+    let policy = client_policy();
+    assert!(!policy.window.no_progress_backoff);
+    assert!(!policy.pacing.no_progress_backoff);
+    assert_eq!(policy.window.max_window_retries, 8);
+    assert_eq!(policy.window.ack_wait_ms, 10);
+    assert_eq!(policy.pacing.ack_wait_ms, 10);
+    assert_eq!(policy.window.batch_size, 32);
+    assert_eq!(policy.pacing.batch_size, 32);
+    assert_eq!(policy.ttl, Duration::from_secs(30));
 }
 
 fn send(client: &mut NativeApplicationClient, raw: &[Vec<u8>]) -> Result<()> {

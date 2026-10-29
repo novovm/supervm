@@ -291,7 +291,22 @@ fn actual_uca_startup_with_custody() -> Result<()> {
         }
         assert!(!path.exists(), "rejected initializer opened a DB: {case}");
     }
+    let database = config.database.clone();
+    let log_generations = || -> Result<usize> {
+        Ok(std::fs::read_dir(&database)?
+            .collect::<std::io::Result<Vec<_>>>()?
+            .iter()
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name == "LOG" || name.starts_with("LOG.old.")
+            })
+            .count())
+    };
     let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;
+    // The real RocksDB logger rotates once per open. Initial verification must
+    // not open/drop the store before the original pipeline opens it again.
+    assert_eq!(log_generations()?, 1, "fresh startup opened the DB twice");
     assert_eq!(first.template.genesis_config_commitment, domain);
     assert_eq!(first.template.parent_state_root, verified.state().root());
     assert_eq!(first.template.business_program, uca_program_id());
@@ -331,7 +346,9 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     for bad in invalid {
         assert!(ResidentNode::start(bad, StartMode::Existing).is_err());
     }
+    assert_eq!(log_generations()?, 1, "pre-open rejection opened the DB");
     let reopened = ResidentNode::start(config, StartMode::Existing)?;
+    assert_eq!(log_generations()?, 2, "cold startup reopened the DB twice");
     assert_eq!(reopened.controller.parent(), parent);
     assert!(reopened.controller.head().is_none());
     assert_eq!(reopened.controller.context().height, 1);

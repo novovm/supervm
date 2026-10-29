@@ -216,6 +216,7 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
             .join("state.rocksdb"),
     );
     config.store.library = library.clone();
+    config.prepare_asset_signatures = true;
     config.authentication.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
     config.plan.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
     std::fs::create_dir_all(config.store.database.parent().unwrap())?;
@@ -267,6 +268,17 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
     .is_err());
     let (foreign, _receiver) = tests::inert_pipeline(config.clone());
     let pipeline = CandidatePipeline::start(config, OpenMode::CreateNew)?;
+    let startup = pipeline.signature_startup();
+    assert!(
+        startup.0 && startup.1 > 0,
+        "ready preceded verifier qualification"
+    );
+    assert_eq!(pipeline.signature_counts(), (0, 0));
+    assert_eq!(
+        pipeline.signature_batch_calls(),
+        0,
+        "KAT is not a business batch"
+    );
     // Repeated rows are individual authentication facts, not nonce reservations;
     // the one control-owned pool must reject duplicate/same-nonce admissions.
     let request = SignatureAdmissionRequest::new(vec![
@@ -344,6 +356,11 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
         std::thread::yield_now();
     }
     assert_eq!(pipeline.signature_batch_calls(), 2);
+    assert_eq!(
+        pipeline.signature_startup(),
+        startup,
+        "batch reopened verifier"
+    );
     pipeline.shutdown()?;
     Ok(())
 }

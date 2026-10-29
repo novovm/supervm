@@ -352,11 +352,21 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
     };
     let mut configured_genesis = manifest.genesis;
     configured_genesis.genesis_config_commitment = domain;
-    for path in &nodes.configs {
+    let missing = (0..4)
+        .max_by_key(|index| validator_key(*index).public_key().to_vec())
+        .unwrap();
+    for (index, path) in nodes.configs.iter().enumerate() {
         let mut value: Value = serde_json::from_slice(&fs::read(path)?)?;
         value["rpc_addr"] = Value::Null;
         value["profile"] = json!(ORIGINAL_PROFILE);
         value["native_client_limit"] = json!(2);
+        // A smaller local proposal target must still accept and recover the
+        // common 1,024-row capacity selected by another validator.
+        value["batch_size"] = json!(if index == missing {
+            64
+        } else {
+            LARGE_BODY_ROWS
+        });
         value["genesis"] = serde_json::to_value(&configured_genesis)?;
         value["uca_initialization"] = serde_json::to_value(&material)?;
         fs::write(path, serde_json::to_vec_pretty(&value)?)?;
@@ -386,9 +396,6 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
-    let missing = (0..4)
-        .max_by_key(|index| validator_key(*index).public_key().to_vec())
-        .unwrap();
     let healthy = (0..4).filter(|i| *i != missing).collect::<Vec<_>>();
     let signer = runtime.asset_spend_signer_v2()?;
     let intent = |payer: usize, nonce, amount| -> Result<AssetSpendIntentV2> {
@@ -411,6 +418,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
     let mut evidence = json!({"completed":false,"scope":"four_original_node_processes_one_host_nuas_recovery",
         "real_processes":4,"real_machines":1,"http_listeners":0,"fixed_quorum":3,"shared_identity_distinct_asset_accounts":true,
         "missing_validator":missing,"offline_heights":OFFLINE_HEIGHTS,"mainnet":false,"tps_acceptance":false,
+        "late_validator_local_proposal_target":64,"common_validation_rows":LARGE_BODY_ROWS,
         "offline_transactions":OFFLINE_TRANSACTIONS,"total_transactions":OFFLINE_TRANSACTIONS+1,
         "large_body_height":OFFLINE_HEIGHTS,"large_body_rows":LARGE_BODY_ROWS,
         "wallet_replay_to_laggard":false,"database_copy":false,"business_proof_verified":false,

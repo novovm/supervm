@@ -66,6 +66,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         workers: 2,
         execution_backend: Default::default(),
         signature_backend: Default::default(),
+        prepare_asset_signatures: false,
         queue_capacity: 2,
         authentication: pipeline_config.authentication,
         plan: pipeline_config.plan,

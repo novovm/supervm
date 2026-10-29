@@ -27,10 +27,10 @@ use super::consensus::{
 use super::execution::plan::{BatchContext, PlanBudget};
 use super::ingress::batch::AuthenticationBudget;
 use super::persistence::io::IoBudget;
-use super::persistence::{CandidateStore, OpenMode, PacketBudget, StorageDomain, StoreConfig};
+use super::persistence::{OpenMode, PacketBudget, StorageDomain, StoreConfig};
 use super::pipeline::{CandidatePipeline, PipelineConfig};
 use super::state::frontier::CaptureBudget;
-use super::state::tree::{empty_root, StateNodeReader};
+use super::state::tree::empty_root;
 use anyhow::{ensure, Context, Result};
 pub use config::{
     GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, NodeKeyStorage,
@@ -111,24 +111,6 @@ impl ResidentNode {
             identities,
         } = prepared;
         let pipeline_config = pipeline_config(&config);
-        {
-            let store = CandidateStore::open(
-                pipeline_config.store.clone(),
-                match mode {
-                    StartMode::CreateNew => OpenMode::CreateNew,
-                    StartMode::Existing => OpenMode::Existing,
-                },
-            )?;
-            if mode == StartMode::CreateNew {
-                store.install_unpublished_state(&initial)?;
-            }
-            for (hash, expected) in initial.nodes() {
-                ensure!(
-                    store.read_node(hash)?.as_ref() == Some(expected),
-                    "pinned genesis content missing or altered; explicit recovery required"
-                );
-            }
-        }
         let template = BatchContext {
             chain_id: config.genesis.chain_id,
             genesis_config_commitment: config.genesis.genesis_config_commitment,
@@ -158,7 +140,14 @@ impl ResidentNode {
             slot: 0,
             timestamp_unix_ms: config.genesis.timestamp_unix_ms,
         };
-        let pipeline = CandidatePipeline::start(pipeline_config, OpenMode::Existing)?;
+        let pipeline = CandidatePipeline::start_with_initial_state(
+            pipeline_config,
+            match mode {
+                StartMode::CreateNew => OpenMode::CreateNew,
+                StartMode::Existing => OpenMode::Existing,
+            },
+            initial,
+        )?;
         let result = start_native(
             &config,
             &pipeline,
@@ -328,21 +317,34 @@ fn body_byte_limit(batch_size: usize) -> usize {
 }
 
 // Expanded signed inputs, distinct from the APFL encoded network object.
+const NATIVE_ASSET_MAX_ROWS: usize = 1024;
+const NATIVE_ASSET_ROW_BYTES: usize = 8192;
+
 fn uca_body_byte_limit(batch_size: usize) -> usize {
-    batch_size * 8192
+    batch_size * NATIVE_ASSET_ROW_BYTES
 }
 
-/// Shared original node/client capacity policy. Callers already validate the
-/// configured row count (1..=1024); no alternative transaction or wire format.
+/// Shared original node/client acceptance capacity. An asset node's local
+/// proposal target must not reject a larger valid candidate from another node.
+/// The historical V3 reference keeps its configured bounds.
 pub(crate) fn native_decode_limits(batch_size: usize, asset_accounts: bool) -> DecodeLimits {
-    let body_bytes = if asset_accounts {
-        uca_body_byte_limit(batch_size)
+    let rows = if asset_accounts {
+        NATIVE_ASSET_MAX_ROWS
     } else {
-        body_byte_limit(batch_size)
+        batch_size
+    };
+    let body_bytes = if asset_accounts {
+        uca_body_byte_limit(rows)
+    } else {
+        body_byte_limit(rows)
     };
     DecodeLimits {
-        transactions: batch_size,
-        transaction_bytes: if asset_accounts { 8192 } else { 1024 },
+        transactions: rows,
+        transaction_bytes: if asset_accounts {
+            NATIVE_ASSET_ROW_BYTES
+        } else {
+            1024
+        },
         body_bytes,
         // Fourteen APFL columns add at most two u32 fields per cell, plus
         // dictionary counts and the existing frame/context header. At 1024
@@ -382,11 +384,15 @@ fn native_body_retention_limit(codec: DecodeLimits) -> usize {
 }
 
 fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
-    let size = config.batch_size;
     // Arbitrary RPC transfers may have three distinct keys each (payer,
     // recipient and signer nonce), not the load fixture's shared recipient.
     let uca = config.uca_initialization.is_some();
-    let row_bytes = if uca { 8192 } else { 1024 };
+    let size = if uca {
+        NATIVE_ASSET_MAX_ROWS
+    } else {
+        config.batch_size
+    };
+    let row_bytes = if uca { NATIVE_ASSET_ROW_BYTES } else { 1024 };
     let body_bytes = if uca {
         uca_body_byte_limit(size)
     } else {
@@ -412,6 +418,7 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
         workers: config.workers,
         execution_backend: config.execution_backend,
         signature_backend: config.signature_backend,
+        prepare_asset_signatures: uca,
         max_batches: 2,
         max_retained_bytes: 256 * 1024 * 1024,
         authentication: AuthenticationBudget {

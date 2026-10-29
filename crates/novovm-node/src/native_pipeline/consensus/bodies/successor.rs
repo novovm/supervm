@@ -1,4 +1,4 @@
-//! One optional local successor on the ORIGINAL body/pipeline owner.
+//! One optional successor on the ORIGINAL body/pipeline owner.
 //! Adapted from controller/{early_body,successor}; no old controller, sender,
 //! journal or authority is activated. A durable parent is a computation basis,
 //! not a decided parent. Only the existing journal ACK permits promotion.
@@ -83,9 +83,23 @@ pub(super) struct Lookahead {
     charge: usize,
     phase: Phase,
     retired: bool,
+    local_origin: bool,
+    parent_qualified: bool,
+    signature_reused: bool,
 }
 
 impl CandidateBodies {
+    #[cfg(test)]
+    pub(crate) fn remote_successor_waiting_for_test(&self, id: Hash) -> bool {
+        self.successor.as_ref().is_some_and(|work| {
+            !work.local_origin
+                && work.id == id
+                && !work.retired
+                && !work.parent_qualified
+                && matches!(work.phase, Phase::Authenticate(_))
+        })
+    }
+
     pub(super) fn successor_inflight(&self) -> bool {
         self.successor
             .as_ref()
@@ -106,6 +120,72 @@ impl CandidateBodies {
     }
     pub(crate) fn successor_metrics(&self) -> [u64; 5] {
         self.successor_metrics
+    }
+
+    pub(crate) fn remote_successor_authentication_input(
+        &self,
+        progress: &RoundProgress,
+    ) -> Option<Arc<Message>> {
+        self.successor
+            .as_ref()
+            .filter(|work| {
+                !work.local_origin
+                    && !work.signature_reused
+                    && !work.retired
+                    && !self.frozen
+                    && !progress.is_frozen()
+                    && matches!(work.phase, Phase::Authenticate(_))
+                    && Pin::from_selection(&work.selection).live(
+                        progress.context(),
+                        progress.round(),
+                        progress.is_recovering(),
+                    )
+            })
+            .map(|work| work.message.clone())
+    }
+
+    pub(crate) fn reuse_remote_successor_admitted(
+        &mut self,
+        message: &Arc<Message>,
+        pipeline: &CandidatePipeline,
+        progress: &RoundProgress,
+        admitted: &[&AdmittedTransfer],
+    ) -> Result<bool> {
+        ensure!(
+            Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
+            "successor execution owner changed"
+        );
+        let Some(input) = self.remote_successor_authentication_input(progress) else {
+            return Ok(false);
+        };
+        if !Arc::ptr_eq(&input, message) {
+            return Ok(false);
+        }
+        let Message::AssetBody { batch, .. } = input.as_ref() else {
+            return Ok(false);
+        };
+        // Same owner/domain and every immutable intent/key/signature row are
+        // checked by the original rebind. A hash or transport claim is not a
+        // signature capability; authorization still uses the real parent.
+        let checked = pipeline.rebind_admitted_uca(batch.clone(), admitted)?;
+        let extra = checked.retained_metadata_bytes();
+        let reserve = self.codec.message_bytes.saturating_mul(2);
+        if extra
+            .checked_add(reserve)
+            .is_none_or(|n| n > self.limits.bytes.saturating_sub(self.bytes))
+        {
+            return Ok(false);
+        }
+        let request = AuthenticationRequest::from_authenticated(checked, self.policy.clone())?;
+        if !pipeline.can_authenticate_background(&request)? {
+            return Ok(false);
+        }
+        let work = self.successor.as_mut().expect("same pending successor");
+        work.phase = Phase::Authenticate(Some(request));
+        work.signature_reused = true;
+        work.charge += extra;
+        self.bytes += extra;
+        Ok(true)
     }
 
     pub(crate) fn successor_selection(
@@ -145,13 +225,37 @@ impl CandidateBodies {
         }) {
             return Ok(None);
         }
-        for (id, body) in &self.bodies {
-            // Only an already registered actual execution, not arbitrary peer
-            // roots or a merely prepared/failed body, supplies the next basis.
-            let Work::Registered(candidate) = &body.work else {
-                continue;
-            };
-            if !matches_context(&body.context, &self.pin, progress) || !progress.retains_body(*id) {
+        self.executed_successor_selection(progress, validators, None)
+    }
+
+    fn executed_successor_selection(
+        &self,
+        progress: &RoundProgress,
+        validators: &ValidatorSet,
+        expected: Option<ParentPoint>,
+    ) -> Result<Option<SuccessorSelection>> {
+        // Prefer the real proposal's registered execution if it is available.
+        let registered = self.bodies.iter().filter_map(|(id, body)| {
+            if let Work::Registered(candidate) = &body.work {
+                progress.retains_body(*id).then_some((body, candidate))
+            } else {
+                None
+            }
+        });
+        // Like the original controller's successor_basis, private preparation
+        // may use this owner's completed local execution BEFORE a proposal
+        // names it. Follower registration remains proposal-gated in bodies.rs;
+        // this does not register the parent/child or grant a vote. The exact
+        // decided parent and journal ACK are still required by Pin::promoted.
+        let prepared = self.bodies.values().filter_map(|body| {
+            if let Work::Ready(candidate) = &body.work {
+                (body.local_round == Some(progress.round())).then_some((body, candidate))
+            } else {
+                None
+            }
+        });
+        for (body, candidate) in registered.chain(prepared) {
+            if !matches_context(&body.context, &self.pin, progress) {
                 continue;
             }
             let packet = candidate.bind_to(&self.owner)?;
@@ -169,6 +273,9 @@ impl CandidateBodies {
                 state_version: statement.state_version(),
                 decision_hash: decision_id(&progress.context(), statement.hash()),
             };
+            if expected.is_some_and(|wanted| wanted != parent) {
+                continue;
+            }
             return Ok(Some(SuccessorSelection {
                 source: progress.context(),
                 source_round: progress.round(),
@@ -179,14 +286,138 @@ impl CandidateBodies {
                 // rejected authority rows retain the current prefix nonce.
                 // Unmentioned published nonces are unchanged. This remains a
                 // local selection hint, never a grant/balance state overlay.
-                nonce_after: packet
-                    .receipt_projection()
-                    .iter()
-                    .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
-                    .collect(),
+                nonce_after: if expected.is_some() {
+                    // Remote qualification does not select transactions. Do
+                    // not rebuild a nonce-selection map that it never uses.
+                    BTreeMap::new()
+                } else {
+                    packet
+                        .receipt_projection()
+                        .iter()
+                        .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
+                        .collect()
+                },
             }));
         }
         Ok(None)
+    }
+
+    /// A future AssetBody is only a computation input from the scheduled next
+    /// proposer. Its declared parent is NOT trusted until this owner's durable
+    /// execution independently reproduces every field. One original Lookahead
+    /// slot owns the input even while the parent body has not arrived yet.
+    pub(crate) fn offer_remote_successor(
+        &mut self,
+        message: &Arc<Message>,
+        source: Hash,
+        pipeline: &CandidatePipeline,
+        progress: &RoundProgress,
+        validators: &ValidatorSet,
+    ) -> Result<bool> {
+        ensure!(
+            Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
+            "successor execution owner changed"
+        );
+        let Message::AssetBody { context, .. } = message.as_ref() else {
+            return Ok(false);
+        };
+        if self.frozen
+            || progress.is_frozen()
+            || progress.is_recovering()
+            || self.limits.inflight < 2
+            || self.limits.bodies < 2
+            || progress.context().height.checked_add(1) != Some(context.height)
+            || validators.leader(context.height, 0)? != source
+            || source == progress.local_validator()
+        {
+            return Ok(false);
+        }
+        let selection = SuccessorSelection {
+            source: progress.context(),
+            // The wire body is not a vote and carries no source-round claim.
+            // This pin belongs to the receiving owner's CURRENT generation;
+            // it is retired on a round change, never promoted across rounds.
+            source_round: progress.round(),
+            parent: ParentPoint {
+                height: context.parent_height,
+                block_hash: context.parent_block_hash,
+                state_root: context.parent_state_root,
+                receipt_batch_commitment: context.parent_receipt_root,
+                state_version: context.parent_state_version,
+                decision_hash: decision_id(&progress.context(), context.parent_block_hash),
+            },
+            nonce_after: BTreeMap::new(),
+        };
+        let pin = Pin::from_selection(&selection);
+        if context.parent_height != progress.context().height
+            || self.pin.business_program != uca_program_id()
+            || !matches_successor_context(context, &self.pin, pin)?
+        {
+            return Ok(false);
+        }
+        if self.successor.is_none()
+            && self
+                .successor_attempt
+                .is_some_and(|previous| previous.live(progress.context(), progress.round(), false))
+        {
+            return Ok(false);
+        }
+        self.retain_successor(message, selection, pipeline, None, false)
+    }
+
+    pub(crate) fn qualify_remote_successor(
+        &mut self,
+        progress: &RoundProgress,
+        validators: &ValidatorSet,
+    ) -> Result<()> {
+        let Some(work) = &self.successor else {
+            return Ok(());
+        };
+        let pin = Pin::from_selection(&work.selection);
+        if work.retired
+            || work.parent_qualified
+            || !pin.live(
+                progress.context(),
+                progress.round(),
+                progress.is_recovering(),
+            )
+            || progress.is_frozen()
+        {
+            return Ok(());
+        }
+        if self
+            .executed_successor_selection(progress, validators, Some(pin.parent))?
+            .is_some()
+        {
+            self.successor
+                .as_mut()
+                .expect("retained successor")
+                .parent_qualified = true;
+        }
+        Ok(())
+    }
+
+    /// Only the next proposer publishes its chosen immutable input; receivers
+    /// never independently select or re-fanout another speculative candidate.
+    pub(crate) fn successor_announcement(
+        &self,
+        progress: &RoundProgress,
+    ) -> Option<(Hash, Arc<Message>)> {
+        self.successor
+            .as_ref()
+            .filter(|work| {
+                work.local_origin
+                    && !work.retired
+                    && !self.frozen
+                    && !progress.is_frozen()
+                    && matches!(work.message.as_ref(), Message::AssetBody { .. })
+                    && Pin::from_selection(&work.selection).live(
+                        progress.context(),
+                        progress.round(),
+                        progress.is_recovering(),
+                    )
+            })
+            .map(|work| (work.id, work.message.clone()))
     }
 
     pub(crate) fn offer_successor(
@@ -257,6 +488,22 @@ impl CandidateBodies {
             matches_successor_context(context, &self.pin, pin)?,
             "successor parent/business pins mismatch"
         );
+        self.retain_successor(message, actual, pipeline, admitted, true)
+    }
+
+    fn retain_successor(
+        &mut self,
+        message: &Arc<Message>,
+        selection: SuccessorSelection,
+        pipeline: &CandidatePipeline,
+        admitted: Option<&[&AdmittedTransfer]>,
+        local_origin: bool,
+    ) -> Result<bool> {
+        let pin = Pin::from_selection(&selection);
+        let context = match message.as_ref() {
+            Message::ApflBody { context, .. } | Message::AssetBody { context, .. } => *context,
+            _ => unreachable!("structured successor checked"),
+        };
         let id = transport::candidate_body_id(message, self.codec)?;
         if let Some(work) = &self.successor {
             return Ok(!work.retired
@@ -296,7 +543,7 @@ impl CandidateBodies {
         let mut charge = transport::encode(message, self.codec)?
             .len()
             .checked_mul(2)
-            .and_then(|n| n.checked_add(actual.nonce_after.len().checked_mul(96)?))
+            .and_then(|n| n.checked_add(selection.nonce_after.len().checked_mul(96)?))
             .and_then(|n| n.checked_add(metadata))
             .context("successor retained charge overflow")?;
         // Match ordinary NUAS retention: the original structural dictionary and
@@ -324,13 +571,16 @@ impl CandidateBodies {
         self.bytes += charge;
         self.successor_attempt = Some(pin);
         self.successor = Some(Lookahead {
-            selection: actual,
+            selection,
             id,
             message: message.clone(),
-            context: *context,
+            context,
             charge,
             phase: Phase::Authenticate(Some(request)),
             retired: false,
+            local_origin,
+            parent_qualified: local_origin,
+            signature_reused: admitted.is_some(),
         });
         Ok(true)
     }
@@ -445,6 +695,13 @@ impl CandidateBodies {
                     self.integer_rows += done.observation.gpu_rows as u64;
                     self.integer_plans += done.observation.gpu_waves as u64;
                     self.apfl_rows += done.observation.apfl_view_transactions as u64;
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::CandidateExecutionDone,
+                        work.context.height,
+                        0,
+                        None,
+                        Some(work.id),
+                    );
                     if work.retired {
                         return Ok(true);
                     }
@@ -483,6 +740,11 @@ impl CandidateBodies {
         }
         if work.retired {
             return Ok(true);
+        }
+        // An exact real parent ACK is also sufficient. Otherwise a peer's root
+        // claim alone must never start capture, authentication or execution.
+        if !work.parent_qualified && !promoted {
+            return Ok(false);
         }
         if promoted && !matches!(work.phase, Phase::Authenticate(_)) {
             return self.promote_successor(work);

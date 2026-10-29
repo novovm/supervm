@@ -47,6 +47,7 @@ pub(super) fn validate_receipts(
     receipts: &[Vec<u8>],
     outputs: &[SpendOutput],
     budget: PacketBudget,
+    mut projection: Option<&mut Vec<ReceiptProjection>>,
 ) -> Result<()> {
     ensure!(
         is_profile(plan.context()),
@@ -241,6 +242,9 @@ pub(super) fn validate_receipts(
                 receipt.delta.recipient.account.to_vec(),
                 receipt.delta.recipient.after,
             );
+            if let Some(projection) = projection.as_deref_mut() {
+                projection.push(ReceiptProjection::from_receipt(&receipt));
+            }
             continue;
         }
         // Grant identity intentionally excludes submitted epoch, as the captured
@@ -283,6 +287,9 @@ pub(super) fn validate_receipts(
             receipt.delta.recipient.account.to_vec(),
             receipt.delta.recipient.after,
         );
+        if let Some(projection) = projection.as_deref_mut() {
+            projection.push(ReceiptProjection::from_receipt(&receipt));
+        }
     }
     Ok(())
 }

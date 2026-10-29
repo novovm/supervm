@@ -31,6 +31,7 @@ pub(crate) struct ComputeConfig {
     pub workers: u32,
     pub execution_backend: super::ExecutionBackend,
     pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
+    pub prepare_asset_signatures: bool,
     pub queue_capacity: usize,
     pub authentication: AuthenticationBudget,
     pub plan: PlanBudget,
@@ -319,10 +320,34 @@ impl ComputeOwner {
                 // Unexpected unwinding/disconnection must wake control as well.
                 let notification = Notification(notify);
                 let _fault = lanes::UnwindLatch(Arc::clone(&failed));
-                match ComputeSession::open(&config.library, config.workers) {
-                    Ok(mut session) => {
+                let initialized = (|| {
+                    let session = ComputeSession::open(&config.library, config.workers)?;
+                    let mut facade = None;
+                    if config.prepare_asset_signatures {
+                        let started = Instant::now();
+                        ensure_uca_facade(&mut facade, &config)?;
+                        config.signatures.asset_startup_us.store(
+                            started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64,
+                            Ordering::Relaxed,
+                        );
+                        config
+                            .signatures
+                            .asset_prepared_at_startup
+                            .store(true, Ordering::Relaxed);
+                    }
+                    Ok::<_, anyhow::Error>((session, facade))
+                })();
+                match initialized {
+                    Ok((mut session, facade)) => {
                         if ready_tx.send(Ok(())).is_ok() {
-                            run_owner(&mut session, &config, receiver, &notification, &failed);
+                            run_owner(
+                                &mut session,
+                                facade,
+                                &config,
+                                receiver,
+                                &notification,
+                                &failed,
+                            );
                         }
                     }
                     Err(error) => {
@@ -743,14 +768,14 @@ fn packet(
 
 fn run_owner(
     session: &mut ComputeSession,
+    mut uca_facade: Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
     config: &ComputeConfig,
     receiver: mpsc::Receiver<lanes::Queued>,
     notification: &Notification,
     failed: &AtomicBool,
 ) {
-    // The qualified original unified verifier lives on this compute owner; it
-    // owns no database or permissions. Reference-only runs open none.
-    let mut uca_facade = None;
+    // The required verifier was qualified on this same owner before ready.
+    // Reference-only pipelines retain lazy qualification if a test submits UCA.
     while let Ok(queued) = receiver.recv() {
         let command = queued.into_command();
         match command {

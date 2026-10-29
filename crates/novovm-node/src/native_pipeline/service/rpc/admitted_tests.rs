@@ -363,6 +363,14 @@ fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Res
             .nonce,
         1
     );
+    // Both rows individually have real valid signature evidence in this pool,
+    // but repeating the same intent must decline optional reuse. Otherwise a
+    // remote successor reaches rebind's duplicate rejection as a poll error.
+    let duplicate = message(make(&[raws[0].clone(), raws[0].clone()])?);
+    assert!(
+        admitted_for_body(&duplicate, &pending)?.is_none(),
+        "duplicate signed rows must remain on the original strict path"
+    );
     let mut tampered = signed[0].clone();
     tampered.signature[0] ^= 1;
     assert_eq!(

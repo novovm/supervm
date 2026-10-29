@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 
 pub(super) fn start(
     config: PipelineConfig,
-    mode: OpenMode,
+    (mode, initial): (OpenMode, Option<StagedStateUpdate>),
     receiver: mpsc::Receiver<DriverMessage>,
     ready: mpsc::SyncSender<Result<Arc<IoService>>>,
     identity: Arc<()>,
@@ -25,18 +25,20 @@ pub(super) fn start(
     let (seed, control) = seed_and_control;
     let startup = (|| {
         let notify = Some(thread::current());
-        let io = Arc::new(IoService::start_with_notify(
+        let io = IoService::start_with_notify(
             config.store.clone(),
             mode,
             config.io,
             [notify.clone(), Some(control.clone())],
-        )?);
-        let compute = ComputeOwner::start(
+            initial,
+        )?;
+        let compute = match ComputeOwner::start(
             ComputeConfig {
                 library: config.store.library.clone(),
                 workers: config.workers,
                 execution_backend: config.execution_backend,
                 signature_backend: config.signature_backend,
+                prepare_asset_signatures: config.prepare_asset_signatures,
                 queue_capacity: config.max_batches,
                 authentication: config.authentication,
                 plan: config.plan,
@@ -47,8 +49,14 @@ pub(super) fn start(
                 signatures,
             },
             notify,
-        )?;
-        Ok::<_, anyhow::Error>((io, compute))
+        ) {
+            Ok(compute) => compute,
+            Err(error) => {
+                io.shutdown()?;
+                return Err(error);
+            }
+        };
+        Ok::<_, anyhow::Error>((Arc::new(io), compute))
     })();
     let (io, compute) = match startup {
         Ok(owners) => owners,

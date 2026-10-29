@@ -28,6 +28,7 @@ pub(super) fn config(database: PathBuf) -> PipelineConfig {
         workers: 2,
         execution_backend: Default::default(),
         signature_backend: Default::default(),
+        prepare_asset_signatures: false,
         max_batches: 1,
         max_retained_bytes: 128 * 1024 * 1024,
         authentication: AuthenticationBudget {
@@ -485,6 +486,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
             workers: cfg.workers,
             execution_backend: cfg.execution_backend,
             signature_backend: cfg.signature_backend,
+            prepare_asset_signatures: cfg.prepare_asset_signatures,
             queue_capacity: cfg.max_batches,
             authentication: cfg.authentication,
             plan: cfg.plan,

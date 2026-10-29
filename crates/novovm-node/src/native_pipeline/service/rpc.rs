@@ -336,6 +336,18 @@ impl RpcLifecycle {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::Lifecycle,
         );
+        // A future body received on the preceding turn is still in the original
+        // bounded Lookahead. Rebind complete pool-owned signed rows before its
+        // authentication request is submitted; missing rows keep strict verification.
+        if let Some(message) = self.node.controller.remote_successor_authentication_input() {
+            if let Some(admitted) = admitted_for_body(&message, &self.pending)? {
+                self.node.controller.reuse_remote_successor_admitted(
+                    &message,
+                    &self.node.pipeline,
+                    &admitted,
+                )?;
+            }
+        }
         self.node.poll(now)?;
         self.poll_balances()?;
         if self.projection_error.is_none() {
@@ -952,14 +964,18 @@ impl RpcLifecycle {
             json!(self.pending_retention.metadata_bytes);
         status["pending_retained_total_bytes"] = json!(self.pending_retention.bytes);
         status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
+        let (asset_prepared_at_startup, asset_startup_us) = self.node.pipeline.signature_startup();
         status["signature_work"] = json!({"strict_verified_rows":strict_verified_rows,
             "reused_rows":reused_rows,"uca_batch_calls":self.node.pipeline.signature_batch_calls(),
+            "asset_prepared_at_startup":asset_prepared_at_startup,"asset_startup_us":asset_startup_us,
             "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
         let [auth, started, before_parent, promoted, discarded] = core.successor_metrics();
         status["successor"] = json!({"authentication_started":auth,"execution_started":started,
             "completed_before_parent":before_parent,"promoted":promoted,"discarded":discarded,
-            "scope":"local_next_proposer_after_durable_parent_candidate"});
+            "early_body_enqueued_peer_obligations":core.successor_body_enqueued,
+            "early_body_enqueued_bytes":core.successor_body_bytes,
+            "scope":"same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"});
         status
     }
 
@@ -1171,9 +1187,16 @@ fn admitted_for_body<'a>(
     if let Message::AssetBody { batch, .. } = message {
         use sha2::{Digest, Sha256};
         let mut admitted = Vec::with_capacity(batch.len());
+        let mut seen = BTreeSet::new();
         for index in 0..batch.len() {
             let view = batch.view(index)?;
             let hash: Hash = Sha256::digest(view.signing_bytes()?).into();
+            // A peer may repeat an otherwise valid pool row. It is not a
+            // reusable batch: let original strict authentication reject it,
+            // rather than propagate rebind's duplicate error out of RPC poll.
+            if !seen.insert(hash) {
+                return Ok(None);
+            }
             let Some(entry) = pending.get(&hash) else {
                 return Ok(None);
             };

@@ -1,0 +1,12 @@
+
+running 1 test
+Error: invalid manifest format: missing entries array
+test native_pipeline::pipeline::uca_input_tests::actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::pipeline::uca_input_tests::actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1761 filtered out; finished in 0.01s
+

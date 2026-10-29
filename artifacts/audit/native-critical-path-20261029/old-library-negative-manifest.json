@@ -1,0 +1,12 @@
+{
+  "scope": "Negative startup fixture only; authenticates the unchanged packaged legacy core, not qualification for native asset verification",
+  "entries": [
+    {
+      "name": "core",
+      "dll": "aoem/windows/core/bin/aoem_ffi.dll",
+      "sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+      "abi_expected": 1,
+      "capabilities_required": { "execute_ops_v2": true }
+    }
+  ]
+}
