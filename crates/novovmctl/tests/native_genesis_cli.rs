@@ -7,7 +7,7 @@ use novovm_node::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_
 use novovm_node::native_pipeline::service::config::uca_genesis::{
     UcaGenesisAccountV2, UcaGenesisApprovalV2, UcaGenesisGrantV2, UcaGenesisIdentityV2,
     UcaGenesisManifestV2, UcaInitializationConfigV2, INITIALIZATION_CONTEXT_V2,
-    MAX_INITIAL_GRANTS_PER_ACCOUNT, MAX_INITIAL_UCA_ACCOUNTS,
+    MAX_INITIAL_GRANTS_PER_ACCOUNT,
 };
 use novovm_node::native_pipeline::service::config::{
     protocol_commitment, GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig,
@@ -289,11 +289,21 @@ fn assert_required_approvals(value: &Value, manifest: &UcaGenesisManifestV2) -> 
         .as_array()
         .ok_or("required approvals missing")?;
     let required = manifest.required_approval_subjects();
-    assert_eq!(transcripts.len(), required.len());
-    for (index, (actual, (subject, public_key))) in transcripts.iter().zip(required).enumerate() {
-        assert_eq!(actual["index"], index);
-        assert_eq!(actual["subject"], serde_json::to_value(&subject)?);
-        assert_eq!(actual["public_key_hex"], hex(&public_key));
+    assert_eq!(value["required_approvals_total"], required.len());
+    let offset = value["approval_offset"]
+        .as_u64()
+        .ok_or("approval offset missing")? as usize;
+    let limit = value["approval_limit"]
+        .as_u64()
+        .ok_or("approval limit missing")? as usize;
+    let end = offset.saturating_add(limit).min(required.len());
+    assert_eq!(transcripts.len(), end - offset);
+    for (index, (actual, (subject, public_key))) in
+        transcripts.iter().zip(&required[offset..end]).enumerate()
+    {
+        assert_eq!(actual["index"], offset + index);
+        assert_eq!(actual["subject"], serde_json::to_value(subject)?);
+        assert_eq!(actual["public_key_hex"], hex(public_key));
         assert!(actual.get("signing_message_hex").is_none());
     }
     assert_eq!(value["signing_task_selected"], false);
@@ -326,7 +336,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
         })
         .collect();
     let template = input.accounts[0].clone();
-    input.accounts = (0..MAX_INITIAL_UCA_ACCOUNTS)
+    input.accounts = (0..32)
         .map(|index| {
             let mut account = template.clone();
             account.uca_id = format!("uca:maximum-pretty-fixture-{index}");
@@ -380,6 +390,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
         })
         .collect();
     let initialization = UcaInitializationConfigV2 {
+        pages: vec![],
         identities: input.identities.clone(),
         accounts: input.accounts.clone(),
         approvals,
@@ -433,10 +444,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
     let decoded: ResidentConfig = serde_json::from_slice(&with_peers_and_initialization)?;
     assert_eq!(decoded.genesis.validators.len(), 64);
     assert_eq!(decoded.peers.len(), 63);
-    assert_eq!(
-        decoded.uca_initialization.unwrap().accounts.len(),
-        MAX_INITIAL_UCA_ACCOUNTS
-    );
+    assert_eq!(decoded.uca_initialization.unwrap().accounts.len(), 32);
     document["uca_initialization"] = Value::Null;
     let with_peers = serde_json::to_vec_pretty(&document)?;
     assert!(with_peers_and_initialization.len() < MAX_STARTUP_DOCUMENT_BYTES);
@@ -473,13 +481,85 @@ fn prepare_matches_original_canonical_domain_without_authorizing_or_writing() ->
     assert_eq!(observed["signing_algorithm"], "ML-DSA-65");
     assert_eq!(observed["consensus_signature_algorithm"], "ML-DSA-65");
     assert_eq!(observed["transport_signature_algorithm"], "Ed25519");
-    assert_eq!(observed["schema_version"], 2);
+    assert_eq!(observed["schema_version"], 3);
     assert_eq!(observed["identity_and_asset_approvals_verified"], false);
     assert!(observed.get("signing_message_hex").is_none());
     assert_required_approvals(&observed, &input)?;
     assert_eq!(observed["expected_domain_verified"], false);
     assert!(observed["review_only_startup_fragment"].is_null());
     assert_non_activation(&observed);
+    Ok(())
+}
+
+#[test]
+fn prepare_reads_paged_manifest_above_32_accounts_without_rounding_money() -> TestResult {
+    let fixture = Fixture::new("paged-65-accounts")?;
+    let mut input = manifest()?;
+    let template = input.accounts[0].clone();
+    input.accounts = (0u64..65)
+        .map(|index| {
+            let mut account = template.clone();
+            account.asset_account[12..].copy_from_slice(&index.to_be_bytes());
+            account.management_public_key = vec![70; MLDSA65_PUBLIC_KEY_BYTES];
+            account.management_public_key[..8].copy_from_slice(&index.to_be_bytes());
+            account.recovery_public_key = None;
+            account.grants[0].spend_public_key = vec![90; MLDSA65_PUBLIC_KEY_BYTES];
+            account.grants[0].spend_public_key[..8].copy_from_slice(&index.to_be_bytes());
+            account.grants[0].grant.account = account.asset_account.clone();
+            account.grants[0].grant.key_ref =
+                spend_key_ref_v1(&account.grants[0].spend_public_key).unwrap();
+            account
+        })
+        .collect();
+    let expected = input.signing_domain()?;
+    let header = input.write_pages(&fixture.root.join("public-pages"), 16)?;
+    fs::write(&fixture.manifest, serde_json::to_vec(&header)?)?;
+    let observed = data(&fixture.prepare("paged-prepare")?)?;
+    assert_eq!(observed["observed_signing_domain"], hex(&expected));
+    assert_eq!(
+        observed["canonical_manifest_format"],
+        "v3-ordered-record-commitments"
+    );
+    assert_eq!(observed["required_approvals"].as_array().unwrap().len(), 64);
+    assert_eq!(
+        observed["required_approvals_total"],
+        65 + input.identities.len()
+    );
+    assert_eq!(observed["approval_next_offset"], 64);
+    assert_non_activation(&observed);
+    let second = data(&fixture.invoke(
+        "paged-second",
+        &[
+            "prepare".into(),
+            "--manifest".into(),
+            fixture.manifest.to_string_lossy().into_owned(),
+            "--approval-offset".into(),
+            "64".into(),
+            "--approval-index".into(),
+            "0".into(),
+        ],
+    )?)?;
+    assert_eq!(
+        second["required_approvals"].as_array().unwrap().len(),
+        1 + input.identities.len()
+    );
+    assert_eq!(second["required_approvals"][0]["index"], 64);
+    assert!(second["approval_next_offset"].is_null());
+    assert_eq!(second["selected_approval"]["index"], 0);
+    assert_eq!(second["observed_signing_domain"], hex(&expected));
+    for limit in [0, 129] {
+        let rejected_page = fixture.invoke(
+            &format!("invalid-list-limit-{limit}"),
+            &[
+                "prepare".into(),
+                "--manifest".into(),
+                fixture.manifest.to_string_lossy().into_owned(),
+                "--approval-limit".into(),
+                limit.to_string(),
+            ],
+        )?;
+        rejected(&rejected_page, "approval listing limit");
+    }
     Ok(())
 }
 

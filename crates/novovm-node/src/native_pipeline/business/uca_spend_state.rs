@@ -217,6 +217,79 @@ pub fn grant_record_changes(
     )
 }
 
+/// Reuses the account's ordinary grant/nonce namespace. No funding or identity
+/// authority is introduced by this descriptor location.
+pub(crate) fn creation_location(intent: &AssetSpendIntentV2) -> AssetSpendIntentV2 {
+    let mut location = intent.clone();
+    location.payer = intent.recipient.clone();
+    location.authority_update = None;
+    location.recipient_creation = None;
+    location.authorization_epoch = 1;
+    location
+}
+
+pub(crate) fn creation_authority(intent: &AssetSpendIntentV2) -> Option<AssetAccountAuthorityV2> {
+    intent
+        .recipient_creation
+        .as_ref()
+        .map(|creation| AssetAccountAuthorityV2 {
+            account: intent.recipient.clone(),
+            asset: intent.asset,
+            active: true,
+            current_spend_epoch: 1,
+            management_key_ref: creation.management_key_ref,
+            recovery_key_ref: creation.recovery_key_ref,
+        })
+}
+
+pub(crate) fn creation_grants(intent: &AssetSpendIntentV2) -> Vec<SuppliedAssetSpendGrantV2> {
+    intent
+        .recipient_creation
+        .as_ref()
+        .map_or_else(Vec::new, |creation| {
+            creation
+                .grants
+                .iter()
+                .map(|grant| SuppliedAssetSpendGrantV2 {
+                    account: intent.recipient.clone(),
+                    asset: intent.asset,
+                    key_ref: grant.key_ref,
+                    authorization_epoch: 1,
+                    permits_nov_transfer: grant.permits_nov_transfer,
+                    revoked: false,
+                    not_before_height: grant.not_before_height,
+                    expires_at_height: grant.expires_at_height,
+                    max_debit_per_intent: grant.max_debit_per_intent,
+                    remaining_debit_budget: grant.remaining_debit_budget,
+                })
+                .collect()
+        })
+}
+
+pub(crate) fn creation_declarations(intent: &AssetSpendIntentV2) -> Result<Vec<DeclaredAccess>> {
+    if intent.recipient_creation.is_none() {
+        return Ok(Vec::new());
+    }
+    let mut location = creation_location(intent);
+    let account = Account::try_from(intent.recipient.as_slice()).map_err(anyhow::Error::msg)?;
+    let mut declarations = account_write_declarations(intent.chain_id, &intent.genesis, &account)?;
+    for grant in creation_grants(intent) {
+        location.spend_key_ref = grant.key_ref;
+        declarations.extend(grant_write_declarations(&location)?);
+    }
+    for key in [
+        nov_transfer_batch::balance_key(&account),
+        nov_transfer_batch::nonce_key(&location.nonce_identity()?),
+    ] {
+        declarations.push(DeclaredAccess {
+            key,
+            may_put: true,
+            may_delete: false,
+        });
+    }
+    Ok(declarations)
+}
+
 /// Access declarations for signed concrete asset accounts. The supplied Account
 /// values are checked copies of signed bytes, never unsigned address hints.
 pub struct AssetSpendStateAccessV2 {
@@ -264,6 +337,11 @@ impl AssetSpendStateAccessV2 {
                 may_delete: false,
             },
         );
+        for mut declaration in creation_declarations(&intent)? {
+            declaration.may_put = false;
+            declaration.may_delete = false;
+            declarations.insert(declaration.key.clone(), declaration);
+        }
         Ok(Self {
             intent,
             payer,
@@ -349,7 +427,7 @@ impl AssetSpendStateAccessV2 {
         ensure!(expected_parent != [0; 32], "UCA input parent missing");
         // Absence means a complete required record range is absent. Partial
         // records or orphan tail pages remain errors, never an absent account.
-        for (prefix, bytes) in [
+        for (index, (prefix, bytes)) in [
             (
                 account_prefix(self.intent.chain_id, &self.intent.genesis, &self.payer)?,
                 ACCOUNT_BYTES,
@@ -358,13 +436,18 @@ impl AssetSpendStateAccessV2 {
                 account_prefix(self.intent.chain_id, &self.intent.genesis, &self.recipient)?,
                 ACCOUNT_BYTES,
             ),
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let declarations = record_pages::declarations(&prefix, bytes, false)?;
             if read(&declarations[0].key)?.is_none() {
                 for declaration in declarations.iter().skip(1) {
                     ensure!(read(&declaration.key)?.is_none(), "orphan UCA record page");
                 }
-                return Ok(None);
+                if index == 0 || self.intent.recipient_creation.is_none() {
+                    return Ok(None);
+                }
             }
         }
         let state = self.read_with(expected_parent, read)?;
@@ -387,7 +470,28 @@ impl AssetSpendStateAccessV2 {
         ensure!(expected_parent != [0; 32], "UCA input parent missing");
         let mut accounts = Vec::new();
         let mut balances = Vec::new();
+        let mut creates_recipient = false;
         for address in [&self.payer, &self.recipient] {
+            let prefix = account_prefix(self.intent.chain_id, &self.intent.genesis, address)?;
+            let declarations = record_pages::declarations(&prefix, ACCOUNT_BYTES, false)?;
+            if address == &self.recipient
+                && self.intent.recipient_creation.is_some()
+                && read(&declarations[0].key)?.is_none()
+            {
+                // Only the explicit opening purpose can consume proved absence.
+                // A partial record/balance/nonce/grant must never be reset.
+                for declaration in creation_declarations(&self.intent)? {
+                    ensure!(
+                        read(&declaration.key)?.is_none(),
+                        "asset opening has existing or orphan state"
+                    );
+                }
+                accounts
+                    .push(creation_authority(&self.intent).context("missing opening descriptor")?);
+                balances.push(0);
+                creates_recipient = true;
+                continue;
+            }
             let record: AssetAccountAuthorityV2 = decode(&record_pages::read_with(
                 &mut read,
                 &account_prefix(self.intent.chain_id, &self.intent.genesis, address)?,
@@ -430,6 +534,7 @@ impl AssetSpendStateAccessV2 {
             next_nonce,
             payer_balance: balances[0],
             recipient_balance: balances[1],
+            creates_recipient,
         })
     }
 }
@@ -445,6 +550,7 @@ pub struct CapturedAssetSpendStateV2 {
     next_nonce: u64,
     payer_balance: u128,
     recipient_balance: u128,
+    creates_recipient: bool,
 }
 
 impl CapturedAssetSpendStateV2 {
@@ -481,6 +587,10 @@ impl CapturedAssetSpendStateV2 {
     }
     pub fn balances(&self) -> (u128, u128) {
         (self.payer_balance, self.recipient_balance)
+    }
+
+    pub(crate) fn creates_recipient(&self) -> bool {
+        self.creates_recipient
     }
 
     pub fn preflight(

@@ -15,6 +15,7 @@ fn intent() -> AssetSpendIntentV2 {
         not_before_height: 100,
         expires_at_height: 200,
         authority_update: None,
+        recipient_creation: None,
     }
 }
 
@@ -46,6 +47,59 @@ fn signed() -> SignedAssetSpendV2 {
         // Codec acceptance does not establish cryptographic validity.
         signature: vec![0x53; MLDSA65_SIGNATURE_BYTES],
     }
+}
+
+#[test]
+fn funded_account_opening_has_explicit_purpose_and_binds_complete_permissions() {
+    let ordinary = signed().encode().unwrap();
+    let mut signed = signed();
+    let creation = AssetAccountCreationV2 {
+        management_key_ref: [0x71; 32],
+        recovery_key_ref: Some([0x72; 32]),
+        grants: update().grants,
+    };
+    signed.intent.recipient = creation
+        .account(signed.intent.chain_id, &signed.intent.genesis)
+        .unwrap()
+        .to_vec();
+    signed.intent.recipient_creation = Some(creation.clone());
+    let raw = signed.encode().unwrap();
+    assert!(raw.starts_with(CREATE_HEADER));
+    assert!(SignedAssetSpendV2::decode(&raw).unwrap() == signed);
+    let mut wrong_purpose = raw.clone();
+    wrong_purpose[6] = 1;
+    assert!(SignedAssetSpendV2::decode(&wrong_purpose).is_err());
+    for field in 0..8 {
+        let mut changed = signed.intent.clone();
+        let descriptor = changed.recipient_creation.as_mut().unwrap();
+        match field {
+            0 => descriptor.management_key_ref[0] ^= 1,
+            1 => descriptor.recovery_key_ref.as_mut().unwrap()[0] ^= 1,
+            2 => descriptor.grants[0].key_ref[0] ^= 1,
+            3 => descriptor.grants[0].remaining_debit_budget += 1,
+            4 => descriptor.grants[0].expires_at_height += 1,
+            5 => descriptor.grants[0].permits_nov_transfer = false,
+            6 => changed.chain_id += 1,
+            7 => changed.genesis[0] ^= 1,
+            _ => unreachable!(),
+        }
+        assert!(
+            changed.signing_bytes().is_err(),
+            "unbound creation field {field}"
+        );
+    }
+    let limits = crate::uca_spend_batch::AssetSpendBatchLimitsV2 {
+        transactions: 2,
+        transaction_bytes: 8192,
+        body_bytes: 16384,
+    };
+    let batch =
+        crate::uca_spend_batch::AssetSpendBatchV2::from_raw(&[raw.clone(), ordinary], limits)
+            .unwrap();
+    let decoded =
+        crate::uca_spend_batch::AssetSpendBatchV2::decode(&batch.encode().unwrap(), limits)
+            .unwrap();
+    assert_eq!(decoded.raw_transaction(0).unwrap(), raw);
 }
 
 fn hex_bytes(hex: &str) -> Vec<u8> {

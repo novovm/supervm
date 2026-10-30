@@ -470,6 +470,7 @@ fn spend_prepared(count: usize, remaining: u128) -> Prepared {
         not_before_height: 1,
         expires_at_height: 100,
         authority_update: None,
+        recipient_creation: None,
     };
     p.spend = Some(SpendPlan {
         entries: (0..count)
@@ -478,6 +479,7 @@ fn spend_prepared(count: usize, remaining: u128) -> Prepared {
                 reserve: 1010,
                 static_failure: None,
                 intent: intent.clone(),
+                creates_recipient: false,
                 authority_options: vec![AuthorityOption {
                     version: 0,
                     failure: None,

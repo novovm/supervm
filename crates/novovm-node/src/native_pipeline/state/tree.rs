@@ -19,7 +19,9 @@ use std::collections::{BTreeMap, BTreeSet};
 mod batch;
 #[cfg(test)]
 mod batch_conformance;
+mod initial;
 mod read_batch;
+pub(crate) use initial::InitialStateBuilder;
 
 #[cfg(test)]
 // Retained for the historical controller workload comparison; native tree

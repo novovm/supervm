@@ -68,6 +68,7 @@ fn fixture() -> Result<Fixture> {
                 intent: AssetSpendIntentV2 {
                     asset: 1,
                     authority_update: None,
+                    recipient_creation: None,
                     chain_id: context.chain_id,
                     genesis: context.genesis_config_commitment,
                     payer: vec![1; 20],

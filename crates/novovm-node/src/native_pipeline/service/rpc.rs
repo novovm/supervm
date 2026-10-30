@@ -34,6 +34,8 @@ const MAX_POOL_BYTES: usize = 64 * 1024 * 1024;
 const RECENT_RECEIPTS: usize = 65_536;
 // Cache working set, not a lifetime limit on chain accounts/nonce subjects.
 const NONCE_CACHE_ENTRIES: usize = MAX_POOL;
+// The SAME original plan/capture budget used by service::pipeline_config.
+pub(super) const ASSET_PLAN_ACCESS_KEYS: usize = 31 * super::NATIVE_ASSET_MAX_ROWS + 42;
 
 /// The original binary tick shares the node's opt-in stage counters.
 pub enum TickStage {
@@ -135,6 +137,75 @@ impl Pending {
                 (bytes == self.canonical_len).then_some(bytes)
             }
             AdmissionInput::Raw(_) | AdmissionInput::Apfl { .. } => Some(self.canonical_len),
+        }
+    }
+
+    fn selection_access_keys(&self) -> Option<usize> {
+        let AdmissionInput::Uca { batch, index } = &self.input else {
+            return Some(0);
+        };
+        let count = |intent: &novovm_protocol::uca_spend::AssetSpendIntentV2| -> Result<usize> {
+            if intent.authority_update.is_none() && intent.recipient_creation.is_none() {
+                // Two authority ranges, two balances, one grant range and nonce.
+                return Ok(10);
+            }
+            use crate::native_pipeline::business::uca_spend_state as state;
+            let payer = Account::try_from(intent.payer.as_slice()).map_err(anyhow::Error::msg)?;
+            let recipient =
+                Account::try_from(intent.recipient.as_slice()).map_err(anyhow::Error::msg)?;
+            let access =
+                state::AssetSpendStateAccessV2::new(intent.clone(), payer.clone(), recipient)?;
+            let mut keys = access
+                .declarations()
+                .iter()
+                .map(|d| d.key.clone())
+                .collect::<BTreeSet<_>>();
+            keys.extend(
+                state::grant_write_declarations(intent)?
+                    .into_iter()
+                    .map(|d| d.key),
+            );
+            keys.extend(
+                state::creation_declarations(intent)?
+                    .into_iter()
+                    .map(|d| d.key),
+            );
+            if let Some(update) = &intent.authority_update {
+                keys.extend(
+                    state::account_write_declarations(intent.chain_id, &intent.genesis, &payer)?
+                        .into_iter()
+                        .map(|d| d.key),
+                );
+                let mut location = intent.clone();
+                location.authority_update = None;
+                location.authorization_epoch = update.next_epoch;
+                for grant in &update.grants {
+                    location.spend_key_ref = grant.key_ref;
+                    keys.extend(
+                        state::grant_write_declarations(&location)?
+                            .into_iter()
+                            .map(|d| d.key),
+                    );
+                }
+            }
+            Ok(keys.len())
+        };
+        if let Some(checked) = self
+            .admitted
+            .as_ref()
+            .and_then(AdmittedTransfer::checked_uca)
+        {
+            return count(checked.intent()).ok();
+        }
+        // Structural selection fixtures carry no cryptographic capability.
+        #[cfg(test)]
+        {
+            count(&batch.row(*index).ok()?.intent).ok()
+        }
+        #[cfg(not(test))]
+        {
+            let _ = (batch, index);
+            None
         }
     }
 
@@ -1589,6 +1660,7 @@ fn select_pending_batch_with_budget(
     let mut selected = Vec::new();
     let mut raw_bytes = 0usize;
     let mut budget_full = false;
+    let mut access_keys = 42;
     let body_limit = if pending
         .values()
         .next()
@@ -1617,11 +1689,17 @@ fn select_pending_batch_with_budget(
             let Some(row_bytes) = entry.selection_input_bytes() else {
                 break;
             };
-            if row_bytes > body_limit.saturating_sub(raw_bytes) {
+            let Some(row_keys) = entry.selection_access_keys() else {
+                break;
+            };
+            if row_bytes > body_limit.saturating_sub(raw_bytes)
+                || row_keys > ASSET_PLAN_ACCESS_KEYS.saturating_sub(access_keys)
+            {
                 budget_full = true;
                 break;
             }
             raw_bytes += row_bytes;
+            access_keys += row_keys;
             selected.push(*hash);
             *expected += 1;
             if selected.len() == batch_size || raw_bytes == body_limit {

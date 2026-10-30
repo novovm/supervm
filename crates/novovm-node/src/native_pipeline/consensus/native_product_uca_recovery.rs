@@ -15,6 +15,9 @@ use novovm_protocol::{
     uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
 };
 
+#[path = "native_product_uca_opening.rs"]
+mod runtime_opening;
+
 const ID: &str = "uca:process-owner";
 const ADDRESS: [[u8; 20]; 2] = [[11; 20], [12; 20]];
 const OFFLINE_HEIGHTS: u64 = 40;
@@ -343,6 +346,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
     let approvals = approve_manifest(&runtime, &manifest, &approval_keys)?;
     let initial = manifest.compile(&runtime, domain, &approvals)?;
     let material = UcaInitializationConfigV2 {
+        pages: vec![],
         identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
         approvals,
@@ -402,6 +406,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         Ok(AssetSpendIntentV2 {
             asset: 1,
             authority_update: None,
+            recipient_creation: None,
             chain_id: CHAIN,
             genesis: domain,
             payer: ADDRESS[payer].to_vec(),
@@ -724,6 +729,16 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
                 "validator or transport key changed during recovery"
             );
         }
+        evidence["runtime_account_opening"] = json!({"completed":false});
+        runtime_opening::run(
+            &mut nodes,
+            &mut clients,
+            set.clone(),
+            &runtime,
+            (&keys[2].0, &keys[2].1),
+            alice_intent,
+            &mut evidence["runtime_account_opening"],
+        )?;
         nodes.stop_all()?;
         evidence["same_config_and_signing_outbox_preserved"] = json!(true);
         evidence["cold_reopen_verified"] = json!(true);

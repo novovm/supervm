@@ -153,6 +153,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     assert_eq!(verified.state().root(), repeated.state().root());
     assert_eq!(verified.final_commitment(), repeated.final_commitment());
     let material = UcaInitializationConfigV2 {
+        pages: vec![],
         identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
         approvals,
@@ -334,6 +335,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
                 not_before_height: 1,
                 expires_at_height: 100,
                 authority_update: None,
+                recipient_creation: None,
             },
             &spend.public_key,
             &spend.expanded_secret_key,

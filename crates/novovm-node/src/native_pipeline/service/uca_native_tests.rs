@@ -502,6 +502,7 @@ fn run_native_uca_service_fixture_with(
     let approvals = approve_manifest(&runtime, &manifest, &approval_keys)?;
     let initial = manifest.compile(&runtime, domain, &approvals)?;
     let material = UcaInitializationConfigV2 {
+        pages: vec![],
         identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
         approvals,
@@ -565,6 +566,7 @@ fn run_native_uca_service_fixture_with(
             Ok(AssetSpendIntentV2 {
                 asset: 1,
                 authority_update: None,
+                recipient_creation: None,
                 chain_id: genesis.chain_id,
                 genesis: domain,
                 payer: ADDRESSES[payer].to_vec(),

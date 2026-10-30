@@ -220,6 +220,7 @@ fn signed_rows(
                 not_before_height: 1,
                 expires_at_height: 100,
                 authority_update: None,
+                recipient_creation: None,
             },
             &key.public_key,
             &key.expanded_secret_key,

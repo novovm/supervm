@@ -12,21 +12,23 @@ pub(crate) fn approve_manifest(
     keys: &[(&[u8], &[u8])],
 ) -> Result<Vec<UcaGenesisApprovalV2>> {
     let signer = facade.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
-    manifest
-        .required_approval_subjects()
-        .into_iter()
+    let plan = manifest.prepare_approvals()?;
+    let keys: std::collections::BTreeMap<_, _> = keys.iter().copied().collect();
+    plan.subjects()
         .map(|(subject, public_key)| {
-            let (_, secret) = keys
-                .iter()
-                .find(|(public, _)| *public == public_key.as_slice())
+            let secret = keys
+                .get(public_key)
                 .context("fixture lacks the exact subject-purpose signing key")?;
             let signature = signer.sign(
-                &public_key,
+                public_key,
                 secret,
-                &manifest.approval_signing_bytes(&subject)?,
+                &plan.signing_bytes(subject)?,
                 INITIALIZATION_CONTEXT_V2,
             )?;
-            Ok(UcaGenesisApprovalV2 { subject, signature })
+            Ok(UcaGenesisApprovalV2 {
+                subject: subject.clone(),
+                signature,
+            })
         })
         .collect()
 }

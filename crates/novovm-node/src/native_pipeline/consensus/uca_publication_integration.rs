@@ -117,6 +117,7 @@ fn intent(
     Ok(AssetSpendIntentV2 {
         asset: 1,
         authority_update: None,
+        recipient_creation: None,
         chain_id: CHAIN,
         genesis: domain,
         payer: payer.as_bytes().to_vec(),

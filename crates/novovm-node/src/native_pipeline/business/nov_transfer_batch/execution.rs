@@ -584,6 +584,7 @@ pub(super) fn stage_results(
         prepared.spend.is_some() == spend_outputs.is_some(),
         "UCA effect output missing/unexpected"
     );
+    let mut opened = BTreeMap::new();
     if let (Some(spend), Some(outputs)) = (&prepared.spend, &spend_outputs) {
         ensure!(
             outputs.len() == spend.entries.len() && receipts.len() == spend.entries.len(),
@@ -603,6 +604,13 @@ pub(super) fn stage_results(
         for ((entry, output), receipt) in spend.entries.iter().zip(outputs).zip(&receipts) {
             if output.failure.is_some() {
                 continue;
+            }
+            if entry.creates_recipient && receipt.failure.is_none() && receipt.fee_failure.is_none()
+            {
+                // A creation address commits the whole initial descriptor.
+                // Concurrent identical openings only initialize once; subsequent
+                // deposits never reset an existing account's keys or nonce.
+                opened.insert(receipt.delta.recipient.account.clone(), &entry.intent);
             }
             if let Some(authority) = super::uca_effects::update_authority(&entry.intent) {
                 // Project the already executed success bit; do not re-run
@@ -638,6 +646,33 @@ pub(super) fn stage_results(
                 )?,
             );
         }
+        for intent in opened.values() {
+            let authority =
+                crate::native_pipeline::business::uca_spend_state::creation_authority(intent)
+                    .context("successful opening descriptor missing")?;
+            changes.extend(
+                crate::native_pipeline::business::uca_spend_state::account_record_changes(
+                    intent.chain_id,
+                    &intent.genesis,
+                    &authority,
+                )?,
+            );
+            let mut location =
+                crate::native_pipeline::business::uca_spend_state::creation_location(intent);
+            changes.push(StateChange::Put {
+                key: nonce_key(&location.nonce_identity()?),
+                value: 0u64.to_le_bytes().to_vec(),
+            });
+            for grant in crate::native_pipeline::business::uca_spend_state::creation_grants(intent)
+            {
+                location.spend_key_ref = grant.key_ref;
+                changes.extend(
+                    crate::native_pipeline::business::uca_spend_state::grant_record_changes(
+                        &location, &grant,
+                    )?,
+                );
+            }
+        }
         for (id, (intent, record)) in final_grants {
             if spend
                 .grants
@@ -654,7 +689,7 @@ pub(super) fn stage_results(
         }
     }
     for (account, after) in balances {
-        if after != prepared.balances[&account] {
+        if after != prepared.balances[&account] || opened.contains_key(&account) {
             changes.push(StateChange::Put {
                 key: balance_key(&account),
                 value: after

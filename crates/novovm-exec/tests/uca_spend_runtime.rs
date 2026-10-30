@@ -48,6 +48,7 @@ fn intent(public_key: &[u8]) -> AssetSpendIntentV2 {
         not_before_height: 100,
         expires_at_height: 120,
         authority_update: None,
+        recipient_creation: None,
     }
 }
 

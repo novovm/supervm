@@ -12,6 +12,9 @@ use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
 use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2};
 use std::time::Duration;
 
+#[path = "uca_creation_tests.rs"]
+mod creation_tests;
+
 #[derive(Default)]
 struct Memory(BTreeMap<NodeHash, Vec<u8>>);
 impl StateNodeReader for Memory {
@@ -131,6 +134,7 @@ fn asset_authority_metadata_is_bounded_before_prefix_allocation() -> Result<()> 
         not_before_height: 10,
         expires_at_height: 20,
         authority_update: None,
+        recipient_creation: None,
     };
     super::uca_effects::validate_authority_metadata(71, |_| &intent, 384 * 1024)?;
     assert!(super::uca_effects::validate_authority_metadata(1, |_| &intent, 1).is_err());
@@ -209,6 +213,7 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
             not_before_height: 10,
             expires_at_height: 20,
             authority_update: None,
+            recipient_creation: None,
         };
         let policy = super::body_tests::policy();
         let mut cpu_session = ComputeSession::open(&path, 4)?;
@@ -581,6 +586,7 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
         }
         run_asset_management_cases(&path, &facade, compare_integer)?;
         run_asset_component_cases(&path, &facade, compare_integer)?;
+        creation_tests::run_asset_creation_cases(&path, &facade, compare_integer)?;
         Ok(())
     })();
     secret.fill(0); // Ephemeral test key, including ordinary error returns.
@@ -630,6 +636,7 @@ fn run_asset_component_cases(
                         not_before_height: 10,
                         expires_at_height: 20,
                         authority_update: None,
+                        recipient_creation: None,
                     })
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -781,6 +788,7 @@ fn run_asset_management_cases(
             not_before_height: 10,
             expires_at_height: 20,
             authority_update: None,
+            recipient_creation: None,
         };
         let policy = super::body_tests::policy();
         let mut session = ComputeSession::open(path, 4)?;

@@ -6,9 +6,7 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::consensus::native::ValidatorTransportBindings;
 use crate::native_pipeline::consensus::wire::{Hash, Validator, ValidatorSet};
-use crate::native_pipeline::state::tree::{
-    empty_root, stage_state_update, StagedStateUpdate, StateChange, StateNodeReader,
-};
+use crate::native_pipeline::state::tree::{InitialStateBuilder, StagedStateUpdate, StateChange};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,6 +15,8 @@ use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+type ValidatedGenesisAllocations = Vec<(Account, u128)>;
 
 #[cfg(test)]
 pub(crate) mod test_asset_genesis;
@@ -29,10 +29,8 @@ pub const PROFILE: &str = "native-resident-udp-v1";
 pub const ORIGINAL_PROFILE: &str = "native_execution_tick";
 
 /// Bounded local JSON document, not canonical wire or an economic capacity
-/// limit. Includes 64 ML-DSA validator keys, their routes, and the existing
-/// bounded 32-account/8-grant UCA initialization plus management approvals.
-/// Pretty JSON arrays expand these binary keys; canonical manifest limits and
-/// all member/authorization bounds remain independently enforced.
+/// limit. Large initialization material uses bounded external pages instead of
+/// enlarging this deployment document or imposing a total-account ceiling.
 pub const MAX_STARTUP_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Local deployment settings do not enter the genesis commitment.
@@ -176,6 +174,9 @@ impl ResidentConfig {
         ] {
             resolve_relative(base, target);
         }
+        if let Some(initialization) = &mut config.uca_initialization {
+            initialization.hydrate_pages_with_genesis(base, &mut config.genesis)?;
+        }
         config.normalize_native_paths();
         config.validate()?;
         Ok(config)
@@ -308,13 +309,6 @@ pub(crate) fn native_path(path: &Path) -> PathBuf {
     }
 }
 
-struct Empty;
-impl StateNodeReader for Empty {
-    fn read_node(&self, _: &Hash) -> Result<Option<Vec<u8>>> {
-        Ok(None)
-    }
-}
-
 impl GenesisConfig {
     /// Call when authoring the genesis file, then independently distribute/pin
     /// this value on every node. The claimed genesis field is excluded from its
@@ -355,6 +349,23 @@ impl GenesisConfig {
     }
 
     pub(super) fn prepare(&self) -> Result<(Arc<ValidatorSet>, StagedStateUpdate)> {
+        let (set, allocations) = self.validated_allocations()?;
+        let mut initial = InitialStateBuilder::new();
+        initial.extend(fee_record_changes(&self.policy, &FeeState::default())?)?;
+        for (account, amount) in allocations {
+            initial.extend([StateChange::Put {
+                key: balance_key(&account),
+                value: amount.to_le_bytes().to_vec(),
+            }])?;
+        }
+        Ok((set, initial.finish()?))
+    }
+
+    /// Shared pure validation for manifest commitments and actual staging.
+    /// Reviewing a manifest must not construct the entire allocation tree.
+    pub(super) fn validated_allocations(
+        &self,
+    ) -> Result<(Arc<ValidatorSet>, ValidatedGenesisAllocations)> {
         ensure!(self.protocol_commitment == protocol_commitment(), "resident protocol pin mismatch; old V3 and arbitrary protocol domains are not accepted");
         ensure!(
             self.chain_id != 0 && self.validator_epoch != 0 && self.timestamp_unix_ms > 0,
@@ -365,8 +376,8 @@ impl GenesisConfig {
             "resident profile requires 4..64 explicitly configured validators"
         );
         ensure!(
-            !self.allocations.is_empty() && self.allocations.len() <= 8192,
-            "resident genesis allocation count out of range"
+            !self.allocations.is_empty(),
+            "resident genesis allocations missing"
         );
         self.policy.validate()?;
         let set = Arc::new(ValidatorSet::new(
@@ -379,7 +390,7 @@ impl GenesisConfig {
                 .collect::<Result<Vec<_>>>()?,
         )?);
         self.transport_bindings(&set)?;
-        let mut changes = fee_record_changes(&self.policy, &FeeState::default())?;
+        let mut allocations = Vec::with_capacity(self.allocations.len());
         let mut accounts = BTreeSet::new();
         let mut supply = 0u128;
         for allocation in &self.allocations {
@@ -400,14 +411,10 @@ impl GenesisConfig {
             supply = supply
                 .checked_add(amount)
                 .context("genesis allocation supply overflow")?;
-            changes.push(StateChange::Put {
-                key: balance_key(&account),
-                value: amount.to_le_bytes().to_vec(),
-            });
+            allocations.push((account, amount));
         }
         crate::native_pipeline::business::fixed_supply::validate_genesis_supply([supply])?;
-        let state = stage_state_update(&Empty, empty_root(), &changes)?;
-        Ok((set, state))
+        Ok((set, allocations))
     }
 }
 

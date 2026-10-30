@@ -34,6 +34,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     let intent = AssetSpendIntentV2 {
         asset: 1,
         authority_update: None,
+        recipient_creation: None,
         chain_id: domain().chain_id,
         genesis: domain().genesis_config_commitment,
         payer: vec![1; 20],

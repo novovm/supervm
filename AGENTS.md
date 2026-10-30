@@ -1,5 +1,22 @@
 # Agent Highest Law
 
+## 2026-10-31 permissionless asset accounts and bounded initialization
+
+The user authorizes scalable initialization and normal runtime asset-account
+creation on the existing native account/tree/execution/journal owners. Remove
+the arbitrary 32-account TOTAL restriction; bound each preparation/read/write
+operation instead. 65,536 accounts is an acceptance workload, not a new chain
+capacity ceiling. Users generate their own purpose keys and account descriptors;
+no platform, founder, administrator or genesis allowlist grants account eligibility.
+Genesis subject signatures prove each holder's authority, not central approval.
+Runtime creation must not mint NOV or reset existing authority, budget or nonce;
+funding and fees follow the existing signed transfer policy. Retain ordinary
+missing-account rejection except for the explicit signed opening contract.
+Measure 1,024-payer and 65,536-payer workloads with distinct actual accounts,
+keys and declared recipient distributions; do not substitute the 16-account
+hotspot or reuse its TPS as the new result. Main, shipped libraries and deployment
+remain unchanged. Initialization and runtime account creation are separate gates.
+
 ## 2026-10-29 authorized ML-DSA capacity adaptation
 
 The user now authorizes coordinated capacity adaptation on the existing APFL /

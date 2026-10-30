@@ -33,6 +33,7 @@ fn intent() -> AssetSpendIntentV2 {
         not_before_height: 10,
         expires_at_height: 20,
         authority_update: None,
+        recipient_creation: None,
     }
 }
 fn account(address: &[u8]) -> AssetAccountAuthorityV2 {

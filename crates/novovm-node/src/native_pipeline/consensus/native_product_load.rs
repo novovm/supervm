@@ -342,7 +342,10 @@ fn query_before(
     }
 }
 fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> Result<Vec<Status>> {
-    let deadline = Instant::now() + Duration::from_secs(90);
+    // Untimed fixture preparation, not a node/transport/consensus timeout.
+    // Large independently approved initial states may take longer to install.
+    let seconds = env_count("NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS", 90, 3600)?;
+    let deadline = Instant::now() + Duration::from_secs(seconds as u64);
     loop {
         nodes.alive()?;
         let mut statuses = Vec::new();

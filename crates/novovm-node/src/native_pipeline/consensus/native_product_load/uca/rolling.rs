@@ -114,6 +114,7 @@ pub(super) fn append_signed_rows(
     count: usize,
     window: SpendWindow,
     fee: u128,
+    shape: WorkloadShape,
     make_signed: &impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2>,
 ) -> Result<()> {
     let first = raw.len();
@@ -124,6 +125,7 @@ pub(super) fn append_signed_rows(
         (first..first + count).map(|index| make_signed(index, window)),
         window,
         fee,
+        shape,
     )
 }
 
@@ -134,6 +136,7 @@ pub(super) fn append_generated_rows(
     rows: impl IntoIterator<Item = Result<SignedAssetSpendV2>>,
     window: SpendWindow,
     fee: u128,
+    shape: WorkloadShape,
 ) -> Result<()> {
     ensure!(
         raw.len() == observations.len(),
@@ -143,9 +146,9 @@ pub(super) fn append_generated_rows(
         let index = raw.len();
         let signed = signed?;
         ensure!(
-            signed.intent.payer == account_bytes(index % SENDERS)
-                && signed.intent.recipient == account_bytes(SENDERS)
-                && signed.intent.nonce == (index / SENDERS) as u64
+            signed.intent.payer == account_bytes(index % shape.payers)
+                && signed.intent.recipient == account_bytes(shape.recipient(index))
+                && signed.intent.nonce == (index / shape.payers) as u64
                 && signed.intent.amount == 1
                 && signed.intent.max_fee == 50
                 && signed.intent.not_before_height == window.not_before
@@ -161,7 +164,7 @@ pub(super) fn append_generated_rows(
             first_submit_us: None,
             receipt_query_observed_us: [None; 4],
             receipt: None,
-            expected_nonce: (index / SENDERS) as u64 + 1,
+            expected_nonce: (index / shape.payers) as u64 + 1,
             expected_fee: fee,
         });
         raw.push(bytes);
@@ -242,6 +245,7 @@ pub(super) fn drive_rolling(
     timeout: Duration,
     count: usize,
     fee: u128,
+    shape: WorkloadShape,
     make_signed: &impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2>,
     evidence: &mut Value,
 ) -> Result<Duration> {
@@ -335,6 +339,7 @@ pub(super) fn drive_rolling(
                 WAVE_ROWS,
                 window,
                 fee,
+                shape,
                 make_signed,
             )?;
             timed_signing_us += signing_started.elapsed().as_micros() as u64;
@@ -413,6 +418,7 @@ pub(super) fn drive_continuous(
     timeout: Duration,
     count: usize,
     fee: u128,
+    shape: WorkloadShape,
     make_signed: &(impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2> + Sync),
     evidence: &mut Value,
 ) -> Result<Duration> {
@@ -474,6 +480,7 @@ pub(super) fn drive_continuous(
                     rows.into_iter().map(Ok),
                     window,
                     fee,
+                    shape,
                 )?;
                 let prepared =
                     prepare_inputs(&mut clients[ingress], &raw[first..], first, frame_rows)?;
@@ -700,6 +707,7 @@ fn native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash() -> Result
             intent: AssetSpendIntentV2 {
                 asset: 1,
                 authority_update: None,
+                recipient_creation: None,
                 chain_id: CHAIN,
                 genesis: [1; 32],
                 payer: account_bytes(index % SENDERS).to_vec(),
@@ -738,6 +746,7 @@ fn native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash() -> Result
             SENDERS,
             SpendWindow::after(parent)?,
             2,
+            WorkloadShape::hotspot(),
             &make_signed,
         )?;
     }
@@ -766,6 +775,7 @@ fn native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash() -> Result
         1,
         SpendWindow::after(5)?,
         2,
+        WorkloadShape::hotspot(),
         &wrong_nonce,
     )
     .is_err());
@@ -805,6 +815,7 @@ fn native_asset_1024_apfl_frame_sizes_and_lossless_roundtrip() -> Result<()> {
                         not_before_height: 1,
                         expires_at_height: 257,
                         authority_update: None,
+                        recipient_creation: None,
                     },
                     public_key,
                     signature: vec![index as u8; MLDSA65_SIGNATURE_BYTES],

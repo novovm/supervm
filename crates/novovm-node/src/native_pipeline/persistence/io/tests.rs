@@ -337,8 +337,8 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
 }
 
 #[test]
-#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; real owner startup and damaged genesis rejection, not deployment"]
-fn real_io_startup_installs_once_and_existing_rejects_missing_or_altered_genesis() -> Result<()> {
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; real bounded initialization resume and conflict rejection, not process-kill acceptance"]
+fn real_io_startup_resumes_pinned_initial_content_but_rejects_conflicts() -> Result<()> {
     use crate::native_pipeline::persistence::packet::node_key;
     use novovm_exec::resident::StorageWrite;
 
@@ -349,7 +349,7 @@ fn real_io_startup_installs_once_and_existing_rejects_missing_or_altered_genesis
         .join("../../target/runtime-rebuild/io-tests")
         .join(format!("startup-{}-{stamp}", std::process::id()));
     std::fs::create_dir_all(&directory)?;
-    let config = StoreConfig {
+    let mut config = StoreConfig {
         library: library.into(),
         database: directory.join("state.rocksdb"),
         domain: StorageDomain {
@@ -360,15 +360,20 @@ fn real_io_startup_installs_once_and_existing_rejects_missing_or_altered_genesis
         storage: StorageConfig::default(),
         packet_budget: PacketBudget::default(),
     };
+    config.packet_budget.max_nodes = 32;
+    config.packet_budget.max_bytes = 4096;
     let initial = || {
-        stage_state_update(
-            &Empty,
-            empty_root(),
-            &[StateChange::Put {
-                key: b"genesis/account".to_vec(),
-                value: vec![7; 32],
-            }],
-        )
+        let mut changes = (0u32..130)
+            .map(|index| StateChange::Put {
+                key: index.to_be_bytes().to_vec(),
+                value: index.to_le_bytes().to_vec(),
+            })
+            .collect::<Vec<_>>();
+        changes.push(StateChange::Put {
+            key: b"genesis/account".to_vec(),
+            value: vec![7; 32],
+        });
+        stage_state_update(&Empty, empty_root(), &changes)
     };
     let root = initial()?.root();
     let start = |config: StoreConfig, mode| {
@@ -393,16 +398,29 @@ fn real_io_startup_installs_once_and_existing_rejects_missing_or_altered_genesis
 
     let mut missing = config.clone();
     missing.database = directory.join("missing.rocksdb");
-    drop(CandidateStore::open(missing.clone(), OpenMode::CreateNew)?);
-    let error = start(missing.clone(), OpenMode::Existing)
-        .err()
-        .context("existing mode must not install absent pinned genesis")?;
-    assert!(format!("{error:#}").contains("pinned genesis content missing or altered"));
+    let partial = CandidateStore::open(missing.clone(), OpenMode::CreateNew)?;
+    let written_chunk = initial()?
+        .nodes()
+        .iter()
+        .take(32)
+        .map(|(hash, value)| StorageWrite::Put {
+            key: partial.scoped_key(&node_key(*hash)),
+            value: value.clone(),
+        })
+        .collect::<Vec<_>>();
+    partial
+        .storage
+        .borrow_mut()
+        .atomic_write_batch(&written_chunk)?;
+    drop(partial);
+    let service = start(missing.clone(), OpenMode::Existing)?;
+    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
+    assert_eq!(value.wait()?, Some(vec![7; 32]));
+    service.shutdown()?;
     let store = CandidateStore::open(missing, OpenMode::Existing)?;
     assert_eq!(
-        store.read_node(&root)?,
-        None,
-        "failed startup repaired state"
+        store.read_node(&root)?.as_ref(),
+        initial()?.nodes().get(&root)
     );
     drop(store);
 

@@ -14,6 +14,7 @@ fn asset_authentication_retains_signed_accounts_and_charges_them_once() -> Resul
         intent: AssetSpendIntentV2 {
             asset: 1,
             authority_update: None,
+            recipient_creation: None,
             chain_id: domain().chain_id,
             genesis: domain().genesis_config_commitment,
             payer: vec![1; 20],

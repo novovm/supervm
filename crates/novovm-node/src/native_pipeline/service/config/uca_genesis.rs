@@ -18,7 +18,7 @@ use crate::native_pipeline::business::uca_spend_state::{
     identity_record_changes, AssetAccountAuthorityV2,
 };
 use crate::native_pipeline::state::tree::{
-    empty_root, stage_state_update, NodeHash, StagedStateUpdate, StateChange,
+    InitialStateBuilder, NodeHash, StagedStateUpdate, StateChange,
 };
 use anyhow::{ensure, Context, Result};
 use novovm_adapter_api::uca_key_binding::derive_primary_key_ref_from_binding_v1;
@@ -36,10 +36,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const INITIALIZATION_CONTEXT_V2: &[u8] = b"NOVOVM/identity-and-asset/genesis-init/v2";
-pub const MAX_INITIAL_UCA_ACCOUNTS: usize = 32;
+// The Rust data structures remain shared with existing callers. The signed
+// contract is explicitly v3: a bounded transcript commits the entire manifest.
+pub const INITIALIZATION_CONTEXT_V2: &[u8] = b"NOVOVM/identity-and-asset/genesis-init/v3";
 pub const MAX_INITIAL_GRANTS_PER_ACCOUNT: usize = 8;
-const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+mod pages;
+pub use pages::UcaGenesisManifestPagesV3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,8 +82,7 @@ pub struct UcaGenesisManifestV2 {
 pub struct UcaGenesisApprovalV2 {
     pub subject: UcaGenesisApprovalSubjectV2,
     // Local JSON metadata, not the signed transcript or native wire. Compact
-    // text avoids pretty-printing 96 ML-DSA signatures as deeply indented byte
-    // arrays. The existing document and canonical manifest bounds are unchanged.
+    // text avoids expanding every ML-DSA approval into a numeric byte array.
     #[serde(with = "approval_signature")]
     pub signature: Vec<u8>,
 }
@@ -138,9 +139,16 @@ pub enum UcaGenesisApprovalSubjectV2 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UcaInitializationConfigV2 {
+    #[serde(default)]
     pub identities: Vec<UcaGenesisIdentityV2>,
+    #[serde(default)]
     pub accounts: Vec<UcaGenesisAccountV2>,
+    #[serde(default)]
     pub approvals: Vec<UcaGenesisApprovalV2>,
+    /// Bounded local preparation pages, hydrated before validation. These paths
+    /// confer no authority: all records remain bound by the three exact pins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pages: Vec<std::path::PathBuf>,
     pub expected_signing_domain: NodeHash,
     pub expected_initial_root: NodeHash,
     pub expected_final_commitment: NodeHash,
@@ -156,17 +164,15 @@ impl UcaInitializationConfigV2 {
             "UCA initialization requires explicit domain/root/final pins"
         );
         ensure!(
-            !self.identities.is_empty()
-                && self.identities.len() <= MAX_INITIAL_UCA_ACCOUNTS
+            self.pages.is_empty()
+                && !self.identities.is_empty()
                 && self
                     .identities
                     .iter()
                     .all(|identity| identity.uca_id.len() <= MAX_UCA_ID_BYTES
                         && identity.identity_public_key.len() == MLDSA65_PUBLIC_KEY_BYTES)
                 && !self.accounts.is_empty()
-                && self.accounts.len() <= MAX_INITIAL_UCA_ACCOUNTS
                 && genesis.validators.len() <= 64
-                && genesis.allocations.len() <= 1024
                 && self
                     .accounts
                     .iter()
@@ -250,7 +256,7 @@ impl VerifiedUcaGenesisV2 {
 }
 
 impl UcaGenesisManifestV2 {
-    /// Full bounded canonical bytes signed separately by EVERY identity,
+    /// Compact v3 canonical commitment signed separately by EVERY identity,
     /// account-management and configured account-recovery key. Identity
     /// ownership does not replace either concrete account's approval.
     /// Proofs, the resulting root and the old claimed final pin are absent.
@@ -259,15 +265,12 @@ impl UcaGenesisManifestV2 {
         ensure!(
             self.genesis.genesis_config_commitment == [0; 32]
                 && !self.identities.is_empty()
-                && self.identities.len() <= MAX_INITIAL_UCA_ACCOUNTS
-                && !self.accounts.is_empty()
-                && self.accounts.len() <= MAX_INITIAL_UCA_ACCOUNTS
-                && self.genesis.allocations.len() <= 1024,
+                && !self.accounts.is_empty(),
             "UCA initialization manifest bounds/old genesis pin"
         );
         // Original validator, allocation, policy and overflow validation. This
         // pure preparation neither reads nor writes an existing database.
-        let (validators, _) = self.genesis.prepare()?;
+        let (validators, allocations) = self.genesis.validated_allocations()?;
         let mut identities = BTreeMap::new();
         let mut identity_keys = BTreeSet::new();
         for identity in &self.identities {
@@ -344,7 +347,7 @@ impl UcaGenesisManifestV2 {
                 && validator_keys.is_disjoint(&spend_keys),
             "validator signing keys must not authorize identity or asset operations"
         );
-        let mut out = b"NOVOVM/identity-and-asset/initial-manifest/v2\0".to_vec();
+        let mut out = b"NOVOVM/identity-and-asset/initial-manifest/v3\0".to_vec();
         out.extend_from_slice(&self.genesis.chain_id.to_be_bytes());
         out.extend_from_slice(&self.genesis.validator_epoch.to_be_bytes());
         out.extend_from_slice(&self.genesis.timestamp_unix_ms.to_be_bytes());
@@ -361,44 +364,59 @@ impl UcaGenesisManifestV2 {
         out.extend_from_slice(&uca_receipt_codec());
         out.extend_from_slice(&uca_effect_contract(&self.genesis.policy)?);
         append(&mut out, &postcard::to_allocvec(&self.genesis.policy)?)?;
-        let allocations = self
-            .genesis
-            .allocations
-            .iter()
-            .map(|a| Ok((decode_hex(&a.account_hex)?, a.amount.parse::<u128>()?)))
-            .collect::<Result<BTreeMap<_, _>>>()?;
-        append(&mut out, &postcard::to_allocvec(&allocations)?)?;
-        out.extend_from_slice(&(identities.len() as u32).to_be_bytes());
-        for identity in identities.values() {
-            append(&mut out, identity.uca_id.as_bytes())?;
-            append(&mut out, &identity.identity_public_key)?;
+        let allocations = allocations
+            .into_iter()
+            .map(|(account, amount)| (account.as_bytes().to_vec(), amount))
+            .collect::<BTreeMap<_, _>>();
+        let mut allocation_hash = Sha256::new();
+        for (account, amount) in &allocations {
+            let mut record = Vec::new();
+            append(&mut record, account)?;
+            record.extend_from_slice(&amount.to_be_bytes());
+            allocation_hash.update(record);
         }
-        out.extend_from_slice(&(accounts.len() as u32).to_be_bytes());
+        out.extend_from_slice(&(allocations.len() as u64).to_be_bytes());
+        out.extend_from_slice(&allocation_hash.finalize());
+        out.extend_from_slice(&(identities.len() as u64).to_be_bytes());
+        let mut identity_hash = Sha256::new();
+        for identity in identities.values() {
+            let mut record = Vec::new();
+            append(&mut record, identity.uca_id.as_bytes())?;
+            append(&mut record, &identity.identity_public_key)?;
+            identity_hash.update(record);
+        }
+        out.extend_from_slice(&identity_hash.finalize());
+        out.extend_from_slice(&(accounts.len() as u64).to_be_bytes());
+        let mut account_hash = Sha256::new();
         for account in accounts.values() {
-            append(&mut out, account.uca_id.as_bytes())?;
-            append(&mut out, &account.asset_account)?;
-            append(&mut out, &account.management_public_key)?;
+            let mut record = Vec::new();
+            append(&mut record, account.uca_id.as_bytes())?;
+            append(&mut record, &account.asset_account)?;
+            append(&mut record, &account.management_public_key)?;
             match &account.recovery_public_key {
                 Some(key) => {
-                    out.push(1);
-                    append(&mut out, key)?;
+                    record.push(1);
+                    append(&mut record, key)?;
                 }
-                None => out.push(0),
+                None => record.push(0),
             }
             // Initial spend epoch=1 and stable account nonce=0 are explicit.
-            out.extend_from_slice(&1u64.to_be_bytes());
-            out.extend_from_slice(&0u64.to_be_bytes());
+            record.extend_from_slice(&1u64.to_be_bytes());
+            record.extend_from_slice(&0u64.to_be_bytes());
             let grants = account
                 .grants
                 .iter()
                 .map(|g| (g.grant.key_ref, g))
                 .collect::<BTreeMap<_, _>>();
-            out.extend_from_slice(&(grants.len() as u32).to_be_bytes());
+            record.extend_from_slice(&(grants.len() as u32).to_be_bytes());
             for entry in grants.values() {
-                append(&mut out, &entry.spend_public_key)?;
-                append(&mut out, &postcard::to_allocvec(&entry.grant)?)?;
+                append(&mut record, &entry.spend_public_key)?;
+                append(&mut record, &postcard::to_allocvec(&entry.grant)?)?;
             }
+            account_hash.update((record.len() as u64).to_be_bytes());
+            account_hash.update(record);
         }
+        out.extend_from_slice(&account_hash.finalize());
         Ok(out)
     }
 
@@ -418,13 +436,13 @@ impl UcaGenesisManifestV2 {
         expected_domain: NodeHash,
         approvals: &[UcaGenesisApprovalV2],
     ) -> Result<VerifiedUcaGenesisV2> {
-        let bytes = self.canonical_bytes()?;
-        let domain: NodeHash = Sha256::digest(&bytes).into();
+        let plan = self.prepare_approvals()?;
+        let domain = plan.domain();
         ensure!(
             domain == expected_domain && domain != [0; 32],
             "UCA initialization pin mismatch"
         );
-        let expected: BTreeMap<_, _> = self.required_approval_subjects().into_iter().collect();
+        let expected = &plan.subjects;
         ensure!(
             approvals.len() == expected.len(),
             "missing/extra identity or asset approval"
@@ -443,24 +461,28 @@ impl UcaGenesisManifestV2 {
         let verifier = runtime.mldsa_verifier_v1(AoemMldsaParameterSet::MlDsa65)?;
         for (subject, public_key) in expected {
             verifier.verify(
-                &public_key,
-                &self.approval_signing_bytes(&subject)?,
+                public_key,
+                &plan.signing_bytes(subject)?,
                 INITIALIZATION_CONTEXT_V2,
                 signatures
-                    .get(&subject)
+                    .get(subject)
                     .context("missing identity/asset purpose approval")?,
             )?;
         }
-        let mut changes = fee_record_changes(&self.genesis.policy, &FeeState::default())?;
+        let mut state = InitialStateBuilder::new();
+        state.extend(fee_record_changes(
+            &self.genesis.policy,
+            &FeeState::default(),
+        )?)?;
         let mut funded = BTreeSet::new();
         for allocation in &self.genesis.allocations {
             let address = decode_hex(&allocation.account_hex)?;
             funded.insert(address.clone());
             let account = Account::try_from(address).map_err(anyhow::Error::msg)?;
-            changes.push(StateChange::Put {
+            state.extend([StateChange::Put {
                 key: balance_key(&account),
                 value: allocation.amount.parse::<u128>()?.to_le_bytes().to_vec(),
-            });
+            }])?;
         }
         for identity in &self.identities {
             let record = UcaAccount {
@@ -474,7 +496,7 @@ impl UcaGenesisManifestV2 {
                     public_key: identity.identity_public_key.clone(),
                     proof_type: UcaKeyProofType::GenesisInitializationV1,
                     proof_payload: verified_initialization_commitment(
-                        &bytes,
+                        &domain,
                         &identity.identity_public_key,
                     )
                     .to_vec(),
@@ -484,11 +506,11 @@ impl UcaGenesisManifestV2 {
                 created_at: self.genesis.timestamp_unix_ms,
                 updated_at: self.genesis.timestamp_unix_ms,
             };
-            changes.extend(identity_record_changes(
+            state.extend(identity_record_changes(
                 self.genesis.chain_id,
                 &domain,
                 &record,
-            )?);
+            )?)?;
         }
         for account in &self.accounts {
             let record = AssetAccountAuthorityV2 {
@@ -503,24 +525,24 @@ impl UcaGenesisManifestV2 {
                     .map(|key| spend_key_ref_v1(key))
                     .transpose()?,
             };
-            changes.extend(account_record_changes(
+            state.extend(account_record_changes(
                 self.genesis.chain_id,
                 &domain,
                 &record,
-            )?);
-            changes.extend(identity_association_changes(
+            )?)?;
+            state.extend(identity_association_changes(
                 self.genesis.chain_id,
                 &domain,
                 &account.uca_id,
                 &Account::try_from(account.asset_account.as_slice()).map_err(anyhow::Error::msg)?,
-            )?);
+            )?)?;
             if !funded.contains(&account.asset_account) {
                 let address = Account::try_from(account.asset_account.as_slice())
                     .map_err(anyhow::Error::msg)?;
-                changes.push(StateChange::Put {
+                state.extend([StateChange::Put {
                     key: balance_key(&address),
                     value: 0u128.to_le_bytes().to_vec(),
-                });
+                }])?;
             }
             // One stable nonce per concrete account, never per identity/key.
             let mut first = true;
@@ -539,24 +561,21 @@ impl UcaGenesisManifestV2 {
                     not_before_height: 0,
                     expires_at_height: 1,
                     authority_update: None,
+                    recipient_creation: None,
                 };
                 if first {
-                    changes.push(StateChange::Put {
+                    state.extend([StateChange::Put {
                         key: nonce_key(&intent.nonce_identity()?),
                         value: 0u64.to_le_bytes().to_vec(),
-                    });
+                    }])?;
                     first = false;
                 }
-                changes.extend(grant_record_changes(&intent, &entry.grant)?);
+                state.extend(grant_record_changes(&intent, &entry.grant)?)?;
             }
         }
-        ensure!(
-            changes.len() <= 4096,
-            "initial UCA tree update exceeds original batch bound"
-        );
-        let state = stage_state_update(&super::Empty, empty_root(), &changes)?;
+        let state = state.finish()?;
         let mut final_hash = Sha256::new();
-        final_hash.update(b"NOVOVM/identity-and-asset/initial-final-commitment/v2\0");
+        final_hash.update(b"NOVOVM/identity-and-asset/initial-final-commitment/v3\0");
         final_hash.update(domain);
         final_hash.update(state.root());
         Ok(VerifiedUcaGenesisV2 {
@@ -569,20 +588,14 @@ impl UcaGenesisManifestV2 {
     /// The one canonical approval transcript consumed by node, CLI and clients.
     /// The explicit subject prevents reuse across identities/accounts/purposes.
     pub fn approval_signing_bytes(&self, subject: &UcaGenesisApprovalSubjectV2) -> Result<Vec<u8>> {
-        let manifest = self.canonical_bytes()?;
-        ensure!(
-            self.required_approval_subjects()
-                .iter()
-                .any(|(required, _)| required == subject),
-            "unknown identity/asset approval subject"
-        );
-        let mut bytes = b"NOVOVM/identity-and-asset/approval/v2\0".to_vec();
-        let subject = postcard::to_allocvec(subject)?;
-        bytes.extend_from_slice(&(subject.len() as u32).to_be_bytes());
-        bytes.extend_from_slice(&subject);
-        bytes.extend_from_slice(&(manifest.len() as u64).to_be_bytes());
-        bytes.extend_from_slice(&manifest);
-        Ok(bytes)
+        self.prepare_approvals()?.signing_bytes(subject)
+    }
+
+    pub fn prepare_approvals(&self) -> Result<UcaGenesisApprovalPlanV3> {
+        Ok(UcaGenesisApprovalPlanV3 {
+            domain: self.signing_domain()?,
+            subjects: self.required_approval_subjects().into_iter().collect(),
+        })
     }
 
     /// Deterministically ordered required approvals. The canonical manifest
@@ -611,6 +624,36 @@ impl UcaGenesisManifestV2 {
     }
 }
 
+/// Prepared immutable approval transcript. Computing the full manifest once
+/// avoids quadratic canonicalization/signing when initializing many accounts.
+pub struct UcaGenesisApprovalPlanV3 {
+    domain: NodeHash,
+    subjects: BTreeMap<UcaGenesisApprovalSubjectV2, Vec<u8>>,
+}
+
+impl UcaGenesisApprovalPlanV3 {
+    pub fn domain(&self) -> NodeHash {
+        self.domain
+    }
+
+    pub fn subjects(&self) -> impl Iterator<Item = (&UcaGenesisApprovalSubjectV2, &[u8])> {
+        self.subjects
+            .iter()
+            .map(|(subject, key)| (subject, key.as_slice()))
+    }
+
+    pub fn signing_bytes(&self, subject: &UcaGenesisApprovalSubjectV2) -> Result<Vec<u8>> {
+        ensure!(
+            self.subjects.contains_key(subject),
+            "unknown identity/asset approval subject"
+        );
+        let mut bytes = b"NOVOVM/identity-and-asset/approval/v3\0".to_vec();
+        bytes.extend_from_slice(&self.domain);
+        append(&mut bytes, &postcard::to_allocvec(subject)?)?;
+        Ok(bytes)
+    }
+}
+
 fn valid_uca_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_UCA_ID_BYTES
@@ -623,7 +666,7 @@ fn valid_uca_id(value: &str) -> bool {
 /// pass; the separate proof type prevents treating this digest as SignatureV1.
 fn verified_initialization_commitment(manifest: &[u8], identity_key: &[u8]) -> NodeHash {
     let mut h = Sha256::new();
-    h.update(b"NOVOVM/identity-and-asset/verified-initialization-commitment/v2\0");
+    h.update(b"NOVOVM/identity-and-asset/verified-initialization-commitment/v3\0");
     h.update((manifest.len() as u64).to_be_bytes());
     h.update(manifest);
     h.update((identity_key.len() as u32).to_be_bytes());
@@ -633,11 +676,13 @@ fn verified_initialization_commitment(manifest: &[u8], identity_key: &[u8]) -> N
 
 fn append(out: &mut Vec<u8>, field: &[u8]) -> Result<()> {
     ensure!(
-        out.len()
-            .checked_add(field.len())
-            .and_then(|n| n.checked_add(4))
-            .is_some_and(|n| n <= MAX_MANIFEST_BYTES),
-        "UCA initialization manifest exceeds byte bound"
+        u32::try_from(field.len()).is_ok()
+            && out
+                .len()
+                .checked_add(field.len())
+                .and_then(|n| n.checked_add(4))
+                .is_some(),
+        "UCA initialization field size overflow"
     );
     out.extend_from_slice(&(field.len() as u32).to_be_bytes());
     out.extend_from_slice(field);
@@ -829,7 +874,7 @@ mod tests {
                 8 => {
                     bad.accounts[0].management_public_key.truncate(1);
                 }
-                9 => bad.accounts = vec![bad.accounts[0].clone(); MAX_INITIAL_UCA_ACCOUNTS + 1],
+                9 => bad.accounts = vec![bad.accounts[0].clone(); 33],
                 10 => bad.identities.push(bad.identities[0].clone()),
                 11 => {
                     bad.accounts[0].grants[0].grant.account = bad.accounts[1].asset_account.clone()
@@ -932,5 +977,218 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("validator signing keys"));
+    }
+
+    fn many_accounts(count: usize) -> UcaGenesisManifestV2 {
+        let mut manifest = manifest();
+        let template = manifest.accounts[0].clone();
+        manifest.accounts = (0..count)
+            .map(|index| {
+                let mut account = template.clone();
+                account.asset_account[12..].copy_from_slice(&(index as u64).to_be_bytes());
+                account.management_public_key = vec![70; MLDSA65_PUBLIC_KEY_BYTES];
+                account.management_public_key[..8].copy_from_slice(&(index as u64).to_be_bytes());
+                account.recovery_public_key = None;
+                let spend = &mut account.grants[0];
+                spend.spend_public_key = vec![90; MLDSA65_PUBLIC_KEY_BYTES];
+                spend.spend_public_key[..8].copy_from_slice(&(index as u64).to_be_bytes());
+                spend.grant.account = account.asset_account.clone();
+                spend.grant.key_ref = spend_key_ref_v1(&spend.spend_public_key).unwrap();
+                account
+            })
+            .collect();
+        manifest
+    }
+
+    #[test]
+    fn initialization_has_no_32_account_ceiling_and_approval_work_is_linear() {
+        for count in [33, 1025] {
+            let manifest = many_accounts(count);
+            let plan = manifest.prepare_approvals().unwrap();
+            assert_eq!(plan.subjects().count(), count + manifest.identities.len());
+            assert!(manifest.canonical_bytes().unwrap().len() < 4096);
+            let subject = UcaGenesisApprovalSubjectV2::AssetManagement(
+                manifest.accounts[count - 1].asset_account.clone(),
+            );
+            let bytes = plan.signing_bytes(&subject).unwrap();
+            assert!(bytes.starts_with(b"NOVOVM/identity-and-asset/approval/v3\0"));
+            assert!(bytes.len() < 256);
+            let mut changed = manifest.clone();
+            changed.accounts[0].grants[0].grant.remaining_debit_budget += 1;
+            assert_ne!(plan.domain(), changed.signing_domain().unwrap());
+            let mut reversed = manifest;
+            reversed.accounts.reverse();
+            assert_eq!(plan.domain(), reversed.signing_domain().unwrap());
+        }
+    }
+
+    #[test]
+    fn paged_initialization_preserves_pins_and_rejects_mixed_or_tampered_material() -> Result<()> {
+        let manifest = many_accounts(65);
+        let material = UcaInitializationConfigV2 {
+            pages: vec![],
+            identities: manifest.identities.clone(),
+            accounts: manifest.accounts.clone(),
+            approvals: vec![],
+            expected_signing_domain: manifest.signing_domain()?,
+            expected_initial_root: [7; 32],
+            expected_final_commitment: [8; 32],
+        };
+        let directory = std::env::temp_dir().join(format!(
+            "novovm-genesis-page-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let header = material.write_pages(&directory, 32)?;
+        assert_eq!(header.pages.len(), 4);
+        assert!(header.accounts.is_empty());
+        let mut mixed = header.clone();
+        mixed.accounts.push(manifest.accounts[0].clone());
+        assert!(mixed
+            .hydrate_pages_with_genesis(&directory, &mut manifest.genesis.clone())
+            .is_err());
+        let mut decoded = header;
+        decoded.hydrate_pages_with_genesis(&directory, &mut manifest.genesis.clone())?;
+        assert!(decoded.pages.is_empty());
+        assert_eq!(decoded.accounts.len(), 65);
+        assert_eq!(
+            decoded.expected_signing_domain,
+            material.expected_signing_domain
+        );
+        let reconstructed = UcaGenesisManifestV2 {
+            genesis: manifest.genesis,
+            identities: decoded.identities,
+            accounts: decoded.accounts,
+        };
+        assert_eq!(
+            reconstructed.signing_domain()?,
+            material.expected_signing_domain
+        );
+        let mut altered = reconstructed;
+        altered.accounts[0].grants[0].grant.max_debit_per_intent += 1;
+        assert_ne!(altered.signing_domain()?, material.expected_signing_domain);
+        Ok(())
+    }
+
+    #[test]
+    fn allocated_accounts_page_out_of_header_and_round_trip_without_changing_domain() -> Result<()>
+    {
+        let mut manifest = many_accounts(65);
+        let supply = crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
+        manifest.genesis.allocations = manifest
+            .accounts
+            .iter()
+            .enumerate()
+            .map(|(index, account)| super::super::GenesisAllocation {
+                account_hex: account
+                    .asset_account
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
+                amount: if index == 64 {
+                    (supply - 64).to_string()
+                } else {
+                    "1".into()
+                },
+            })
+            .collect();
+        let domain = manifest.signing_domain()?;
+        let directory = std::env::temp_dir().join(format!(
+            "novovm-allocation-page-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let header = manifest.write_pages(&directory.join("manifest"), 32)?;
+        assert!(header.genesis.allocations.is_empty());
+        let header_file = directory.join("public-manifest.json");
+        std::fs::write(&header_file, serde_json::to_vec(&header)?)?;
+        let loaded = UcaGenesisManifestV2::read_file(&header_file)?;
+        assert_eq!(loaded.genesis.allocations.len(), 65);
+        assert_eq!(loaded.signing_domain()?, domain);
+        let material = UcaInitializationConfigV2 {
+            identities: loaded.identities.clone(),
+            accounts: loaded.accounts.clone(),
+            approvals: vec![],
+            pages: vec![],
+            expected_signing_domain: domain,
+            expected_initial_root: [7; 32],
+            expected_final_commitment: [8; 32],
+        };
+        let mut genesis = loaded.genesis.clone();
+        let mut material_header =
+            material.write_pages_with_genesis(&mut genesis, &directory.join("startup"), 32)?;
+        assert!(genesis.allocations.is_empty());
+        let mut mixed = material_header.clone();
+        assert!(mixed
+            .hydrate_pages_with_genesis(&directory, &mut loaded.genesis.clone())
+            .is_err());
+        material_header.hydrate_pages_with_genesis(&directory, &mut genesis)?;
+        assert_eq!(genesis.allocations.len(), 65);
+        assert_eq!(material_header.expected_signing_domain, domain);
+        let mut changed = UcaGenesisManifestV2 {
+            genesis,
+            identities: material_header.identities,
+            accounts: material_header.accounts,
+        };
+        assert_eq!(changed.signing_domain()?, domain);
+        changed.genesis.allocations[0].amount = "2".into();
+        changed.genesis.allocations[64].amount = (supply - 65).to_string();
+        assert_ne!(changed.signing_domain()?, domain);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; genuine independent ML-DSA approvals above 32 accounts, not deployment"]
+    fn actual_65_account_initialization_requires_independent_approvals() -> Result<()> {
+        let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .context("explicit trusted AOEM library required")?;
+        let runtime = AoemExecFacade::open(
+            std::path::Path::new(&library),
+            novovm_exec::AoemExecOpenOptions::default(),
+        )?;
+        let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
+        let mut manifest = many_accounts(65);
+        let mut keys = Vec::new();
+        for identity in &mut manifest.identities {
+            let key = keygen.generate_keypair()?;
+            identity.identity_public_key = key.public_key.clone();
+            keys.push((key.public_key, key.expanded_secret_key));
+        }
+        for account in &mut manifest.accounts {
+            let management = keygen.generate_keypair()?;
+            account.management_public_key = management.public_key.clone();
+            keys.push((management.public_key, management.expanded_secret_key));
+            let spending = keygen.generate_keypair()?;
+            account.grants[0].grant.key_ref = spend_key_ref_v1(&spending.public_key)?;
+            account.grants[0].spend_public_key = spending.public_key;
+        }
+        let references = keys
+            .iter()
+            .map(|(public, secret)| (public.as_slice(), secret.as_slice()))
+            .collect::<Vec<_>>();
+        let approvals =
+            crate::native_pipeline::service::config::test_asset_genesis::approve_manifest(
+                &runtime,
+                &manifest,
+                &references,
+            )?;
+        let domain = manifest.signing_domain()?;
+        let verified = manifest.compile(&runtime, domain, &approvals)?;
+        assert_ne!(
+            verified.state().root(),
+            crate::native_pipeline::state::tree::empty_root()
+        );
+        assert!(verified.state().nodes().len() > 65);
+        let mut forged = approvals.clone();
+        forged[0].signature[0] ^= 1;
+        assert!(manifest.compile(&runtime, domain, &forged).is_err());
+        let mut changed = manifest;
+        changed.accounts[0].grants[0].grant.remaining_debit_budget += 1;
+        assert!(changed.compile(&runtime, domain, &approvals).is_err());
+        Ok(())
     }
 }

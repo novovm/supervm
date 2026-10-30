@@ -359,34 +359,50 @@ impl CandidateStore {
             "initial content must start from empty state"
         );
         ensure!(
-            update.nodes().len() <= self.budget.max_nodes,
-            "initial state node limit exceeded"
-        );
-        ensure!(
             update.root() == empty_root() || update.nodes().contains_key(&update.root()),
             "initial root missing"
         );
-        let mut bytes = 0usize;
-        let mut records = Vec::with_capacity(update.nodes().len());
+        ensure!(
+            self.budget.max_nodes > 0,
+            "initial state empty operation budget"
+        );
         for (hash, value) in update.nodes() {
             validate_state_node_bytes(hash, value)?;
-            ensure!(
-                value.len() <= self.budget.max_value_bytes,
-                "initial state value limit exceeded"
-            );
             let key = node_key(*hash);
-            bytes = bytes
-                .checked_add(key.len() + value.len())
-                .context("initial state size overflow")?;
             ensure!(
-                bytes <= self.budget.max_bytes,
-                "initial state byte limit exceeded"
+                self.scoped_key(&key)
+                    .len()
+                    .checked_add(value.len())
+                    .is_some_and(|bytes| bytes <= self.budget.max_bytes)
+                    && value.len() <= self.budget.max_value_bytes,
+                "initial state value exceeds operation budget"
             );
-            records.push((key, value));
         }
-        let mut writes = Vec::new();
-        for chunk in records.chunks(BULK_KEYS) {
+        let mut remaining = update.nodes().iter().peekable();
+        while remaining.peek().is_some() {
+            let mut chunk = Vec::new();
+            let mut bytes = 0usize;
+            while let Some((hash, value)) = remaining.peek() {
+                let key = node_key(**hash);
+                let next = self
+                    .scoped_key(&key)
+                    .len()
+                    .checked_add(value.len())
+                    .context("initial state size overflow")?;
+                if !chunk.is_empty()
+                    && (chunk.len() >= BULK_KEYS.min(self.budget.max_nodes)
+                        || bytes
+                            .checked_add(next)
+                            .is_none_or(|n| n > self.budget.max_bytes))
+                {
+                    break;
+                }
+                let (_, value) = remaining.next().expect("peeked initial node");
+                chunk.push((key, value));
+                bytes += next;
+            }
             let keys: Vec<_> = chunk.iter().map(|(key, _)| key.clone()).collect();
+            let mut writes = Vec::new();
             for ((key, expected), actual) in chunk.iter().zip(self.read_relative(&keys)?) {
                 match actual {
                     Some(value) => {
@@ -398,12 +414,11 @@ impl CandidateStore {
                     }),
                 }
             }
-        }
-        if !writes.is_empty() {
-            self.storage.borrow_mut().atomic_write_batch(&writes)?;
-        }
-        for chunk in records.chunks(BULK_KEYS) {
-            let keys: Vec<_> = chunk.iter().map(|(key, _)| key.clone()).collect();
+            // Immutable content can be resumed after interruption; this does
+            // not write a chain head, genesis pin or candidate marker.
+            if !writes.is_empty() {
+                self.storage.borrow_mut().atomic_write_batch(&writes)?;
+            }
             for ((_, expected), actual) in chunk.iter().zip(self.read_relative(&keys)?) {
                 if actual.as_ref() != Some(*expected) {
                     self.write_frozen.set(true);

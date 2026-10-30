@@ -399,10 +399,15 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
         size * 1024
     };
     // Asset transactions do not read UCA identity mappings. The largest
-    // account-management row declares 31 keys; policy/fee keys add 42 per batch.
+    // Ordinary account-management fits 31 keys; policy/fee adds 42 per batch.
+    // Rich opening rows select fewer rows within this SAME common key budget.
     // Charge actual supported access, not 128 old identity pages per row: the
     // latter would unnecessarily consume the second candidate's reservation.
-    let keys = if uca { 31 * size + 42 } else { 3 * size + 128 };
+    let keys = if uca {
+        rpc::ASSET_PLAN_ACCESS_KEYS
+    } else {
+        3 * size + 128
+    };
     PipelineConfig {
         store: StoreConfig {
             library: config.library.clone(),

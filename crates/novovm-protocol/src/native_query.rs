@@ -434,6 +434,7 @@ mod tests {
         crate::uca_spend::AssetSpendIntentV2 {
             asset: 1,
             authority_update: None,
+            recipient_creation: None,
             chain_id: 7,
             genesis: [2; 32],
             payer: vec![1; 20],

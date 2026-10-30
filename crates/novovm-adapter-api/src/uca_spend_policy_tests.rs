@@ -16,6 +16,7 @@ fn fixture() -> (AssetSpendIntentV2, Vec<u8>, SuppliedAssetSpendGrantV2) {
             not_before_height: 10,
             expires_at_height: 20,
             authority_update: None,
+            recipient_creation: None,
         },
         vec![1; 32],
         SuppliedAssetSpendGrantV2 {

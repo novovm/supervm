@@ -432,6 +432,7 @@ fn asset_local_proposal_target_does_not_reduce_peer_validation_or_capture_capaci
         // Budget construction only; this deliberately unsigned initializer
         // cannot activate a node or confer asset authority.
         selected.uca_initialization = Some(UcaInitializationConfigV2 {
+            pages: vec![],
             identities: Vec::new(),
             accounts: Vec::new(),
             approvals: Vec::new(),

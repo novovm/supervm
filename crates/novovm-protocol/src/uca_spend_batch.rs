@@ -2,7 +2,7 @@
 //! are signed fields, not external hints. This is not signature/authority proof.
 use crate::apfl_column::Column;
 use crate::uca_spend::{
-    decode_authority_update_v2, encode_authority_update_v2, AssetSpendIntentV2, SignedAssetSpendV2,
+    decode_asset_action_v2, encode_asset_action_v2, AssetSpendIntentV2, SignedAssetSpendV2,
     SpendEncodingError, MAX_SIGNED_SPEND_BYTES, MIN_SIGNED_SPEND_BYTES, MLDSA65_PUBLIC_KEY_BYTES,
     MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
 };
@@ -66,6 +66,7 @@ impl AssetSpendViewV2<'_> {
     fn intent(&self) -> Result<AssetSpendIntentV2> {
         let cell = |field: usize| self.cells[field];
         let array8 = |field| cell(field).try_into().map_err(|_| SpendEncodingError);
+        let (authority_update, recipient_creation) = decode_asset_action_v2(cell(13))?;
         Ok(AssetSpendIntentV2 {
             chain_id: u64::from_be_bytes(array8(0)?),
             genesis: cell(1).try_into().map_err(|_| SpendEncodingError)?,
@@ -79,7 +80,8 @@ impl AssetSpendViewV2<'_> {
             nonce: u64::from_be_bytes(array8(8)?),
             not_before_height: u64::from_be_bytes(array8(9)?),
             expires_at_height: u64::from_be_bytes(array8(10)?),
-            authority_update: decode_authority_update_v2(cell(13))?,
+            authority_update,
+            recipient_creation,
         })
     }
 
@@ -105,7 +107,8 @@ impl AssetSpendViewV2<'_> {
             && self.cells[10] == i.expires_at_height.to_be_bytes()
             && self.cells[11] == signed.public_key
             && self.cells[12] == [i.asset]
-            && self.cells[13] == encode_authority_update_v2(&i.authority_update)?
+            && self.cells[13]
+                == encode_asset_action_v2(&i.authority_update, &i.recipient_creation)?
             && self.signature == signed.signature)
     }
 
@@ -179,7 +182,7 @@ impl AssetSpendBatchV2 {
                 i.expires_at_height.to_be_bytes().to_vec(),
                 tx.public_key,
                 vec![i.asset],
-                encode_authority_update_v2(&i.authority_update)?,
+                encode_asset_action_v2(&i.authority_update, &i.recipient_creation)?,
             ];
             for (field, cell) in cells.into_iter().enumerate() {
                 validate_cell(field, &cell)?;
@@ -389,7 +392,7 @@ fn validate_cell(field: usize, cell: &[u8]) -> Result<()> {
         2 | 5 => matches!(cell.len(), 20 | 32),
         11 => cell.len() == MLDSA65_PUBLIC_KEY_BYTES,
         12 => cell == [NATIVE_NOV_ASSET],
-        13 => decode_authority_update_v2(cell).is_ok(),
+        13 => decode_asset_action_v2(cell).is_ok(),
         _ => false,
     };
     if valid {
@@ -489,6 +492,7 @@ mod tests {
                         not_before_height: 1,
                         expires_at_height: 10,
                         authority_update: None,
+                        recipient_creation: None,
                     },
                     public_key: key.clone(),
                     signature: vec![nonce as u8; MLDSA65_SIGNATURE_BYTES],

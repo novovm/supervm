@@ -73,6 +73,7 @@ fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<(
             AssetSpendIntentV2 {
                 asset: 1,
                 authority_update: None,
+                recipient_creation: None,
                 chain_id: 717,
                 genesis: [1; 32],
                 payer: vec![1; 20],
@@ -227,6 +228,7 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
         AssetSpendIntentV2 {
             asset: 1,
             authority_update: None,
+            recipient_creation: None,
             chain_id: config.store.domain.chain_id,
             genesis: config.store.domain.genesis_config_commitment,
             payer: vec![1; 20],

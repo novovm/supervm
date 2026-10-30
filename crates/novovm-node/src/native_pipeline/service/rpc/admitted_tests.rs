@@ -294,6 +294,7 @@ fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Res
             AssetSpendIntentV2 {
                 asset: 1,
                 authority_update: None,
+                recipient_creation: None,
                 chain_id: 71,
                 genesis: [1; 32],
                 payer: vec![1; 20],

@@ -24,9 +24,14 @@ use novovm_protocol::{
 use std::collections::BTreeMap;
 
 const CONFIGURED_BATCH: usize = 1024;
-// Preserve the existing 32-account initialization bound, including recipient.
 const SENDERS: usize = 16;
 const FUNDING: u128 = 1_000_000;
+
+#[path = "uca/distribution.rs"]
+mod distribution;
+use distribution::WorkloadShape;
+#[path = "uca/account_audit.rs"]
+mod account_audit;
 
 #[path = "uca/rolling.rs"]
 mod rolling;
@@ -41,7 +46,7 @@ type CorpusKeyPair = (Vec<u8>, zeroize::Zeroizing<Vec<u8>>);
 
 #[derive(Default)]
 struct PairedCorpus {
-    keys: Option<Vec<CorpusKeyPair>>,
+    keys: Option<Arc<Vec<CorpusKeyPair>>>,
     approvals: Option<Vec<UcaGenesisApprovalV2>>,
     signed: Option<Vec<Vec<u8>>>,
     identity: Option<(Hash, Hash, Hash)>,
@@ -200,6 +205,7 @@ fn audit_fee_pages(
     head: Status,
     raw: &[Vec<u8>],
     observations: &[Observation],
+    shape: WorkloadShape,
 ) -> Result<Value> {
     let config = ResidentConfig::load(&nodes.configs[0])?;
     let by_hash: BTreeMap<_, _> = observations
@@ -211,8 +217,9 @@ fn audit_fee_pages(
     let mut seen = BTreeSet::new();
     let mut actual_batch_sizes = Vec::new();
     let mut fees = FeeState::default();
-    let mut balances = [FUNDING; SENDERS];
-    let mut nonces = [0u64; SENDERS];
+    let mut balances = vec![FUNDING; shape.payers];
+    let mut nonces = vec![0u64; shape.payers];
+    let mut recipient_credits = vec![0u128; shape.recipients()];
     let store = stopped_store(nodes, 0)?;
     for height in 1..=head.height {
         let record = store
@@ -236,10 +243,11 @@ fn audit_fee_pages(
                 seen.insert(hash) && bytes == &raw[index],
                 "NUAS archive changed or duplicated input"
             );
-            let payer = index % SENDERS;
+            let payer = index % shape.payers;
+            let recipient = shape.recipient(index);
             ensure!(
                 signed.intent.payer == account_bytes(payer)
-                    && signed.intent.recipient == account_bytes(SENDERS)
+                    && signed.intent.recipient == account_bytes(recipient)
                     && signed.intent.nonce == nonces[payer],
                 "NUAS archive payer/nonce order"
             );
@@ -247,7 +255,7 @@ fn audit_fee_pages(
                 &TransferFeeRequest {
                     tx_hash: hash,
                     payer: account_bytes(payer).into(),
-                    recipient: account_bytes(SENDERS).into(),
+                    recipient: account_bytes(recipient).into(),
                     asset: "NOV".into(),
                     amount: signed.intent.amount,
                     pay_asset: "NOV".into(),
@@ -272,6 +280,7 @@ fn audit_fee_pages(
                 .checked_sub(signed.intent.amount)
                 .context("NUAS oracle amount underflow")?;
             nonces[payer] += 1;
+            recipient_credits[recipient - shape.payers] += signed.intent.amount;
             fees = settled.after_fee_state;
         }
     }
@@ -279,6 +288,10 @@ fn audit_fee_pages(
     ensure!(
         seen.len() == raw.len(),
         "NUAS archive omitted finalized input"
+    );
+    ensure!(
+        recipient_credits == shape.credits(raw.len()),
+        "NUAS archive recipient distribution differs from submitted workload"
     );
     let expected = fee_record_changes(&config.genesis.policy, &fees)?;
     for index in 0..4 {
@@ -301,7 +314,8 @@ fn audit_fee_pages(
     Ok(
         json!({"actual_candidate_rows":actual_batch_sizes,"fee_state":fees,
         "archived_transactions":seen.len(),"oracle_sender_balances":balances,
-        "oracle_sender_nonces":nonces,"all_four_fee_pages_match":true}),
+        "oracle_sender_nonces":nonces,"oracle_recipient_credits":recipient_credits,
+        "all_four_fee_pages_match":true}),
     )
 }
 
@@ -336,12 +350,14 @@ fn run_native_uca_load_mode(
         65_536,
     )?;
     let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, CONFIGURED_BATCH)?;
+    let shape = WorkloadShape::from_environment(count)?;
+    let account_count = shape.accounts();
     let codec = native_decode_limits(CONFIGURED_BATCH, true);
     ensure!(
-        count % SENDERS == 0 && count % frame_rows == 0,
+        count % shape.payers == 0 && count % frame_rows == 0,
         "NUAS load must contain whole sender rounds and wire frames"
     );
-    let rounds = count / SENDERS;
+    let rounds = count / shape.payers;
     mode.validate_count(count, frame_rows)?;
     let grant_expiry = mode.grant_expiry(count)?;
     ensure!(
@@ -395,13 +411,17 @@ fn run_native_uca_load_mode(
         "NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND",
         "NOVOVM_RESIDENT_TEST_SIGNATURE_BACKEND",
         "NOVOVM_NATIVE_LOAD_SIGNERS",
+        "NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS",
+        "NOVOVM_NATIVE_UCA_PAYERS",
+        "NOVOVM_NATIVE_UCA_RECIPIENT_DISTRIBUTION",
     ]
     .into_iter()
     .map(|name| (name, std::env::var(name).ok()))
     .collect::<BTreeMap<_, _>>();
     let mut evidence = json!({"scope":"one_host_four_original_processes_bounded_nuas_load",
         "transactions":count,"configured_candidate_batch_limit":CONFIGURED_BATCH,"wire_frame_rows":frame_rows,
-        "senders":SENDERS,"window":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
+        "senders":shape.payers,"account_distribution":shape.description(count),
+        "window":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
         "original_sdk_outstanding_ceiling":WINDOW,"sdk_io_quantum":IO_QUANTUM,"canonical_body_budget":codec.body_bytes,
         "wire_message_budget":codec.message_bytes,"query_batch":env_count("NOVOVM_NATIVE_QUERY_BATCH",1,MAX_RECEIPTS)?,
         "backend":test_execution_backend()?,"binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
@@ -441,23 +461,30 @@ fn run_native_uca_load_mode(
     let mut timed_attempt = None;
     let mut phase = "prepare approved NUAS fixture and signed workload";
     let result = (|| -> Result<()> {
+        let account_preparation_started = Instant::now();
         let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
         let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
         let keys = match &corpus.keys {
             Some(keys) => keys.clone(),
             None => {
-                let keys = (0..2 * (SENDERS + 1) + 1)
-                    .map(|_| {
-                        let pair = keygen.generate_keypair()?;
-                        Ok((pair.public_key, pair.expanded_secret_key))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                let keys = Arc::new(
+                    (0..2 * account_count + 1)
+                        .map(|_| {
+                            let pair = keygen.generate_keypair()?;
+                            Ok((pair.public_key, pair.expanded_secret_key))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                );
                 corpus.keys = Some(keys.clone());
                 keys
             }
         };
+        ensure!(
+            keys.len() == 2 * account_count + 1,
+            "paired account distribution changed"
+        );
         let mut genesis = genesis()?;
-        genesis.allocations = (0..SENDERS)
+        genesis.allocations = (0..shape.payers)
             .map(|i| GenesisAllocation {
                 account_hex: hex(&account_bytes(i)),
                 amount: FUNDING.to_string(),
@@ -476,9 +503,9 @@ fn run_native_uca_load_mode(
             genesis,
             identities: vec![UcaGenesisIdentityV2 {
                 uca_id: account_name(0),
-                identity_public_key: keys[2 * (SENDERS + 1)].0.clone(),
+                identity_public_key: keys[2 * account_count].0.clone(),
             }],
-            accounts: (0..=SENDERS)
+            accounts: (0..account_count)
                 .map(|i| {
                     Ok(UcaGenesisAccountV2 {
                         uca_id: account_name(0),
@@ -486,11 +513,11 @@ fn run_native_uca_load_mode(
                         management_public_key: keys[i].0.clone(),
                         recovery_public_key: None,
                         grants: vec![UcaGenesisGrantV2 {
-                            spend_public_key: keys[SENDERS + 1 + i].0.clone(),
+                            spend_public_key: keys[account_count + i].0.clone(),
                             grant: SuppliedAssetSpendGrantV2 {
                                 asset: 1,
                                 account: account_bytes(i).to_vec(),
-                                key_ref: spend_key_ref_v1(&keys[SENDERS + 1 + i].0)?,
+                                key_ref: spend_key_ref_v1(&keys[account_count + i].0)?,
                                 authorization_epoch: 1,
                                 permits_nov_transfer: true,
                                 revoked: false,
@@ -518,15 +545,30 @@ fn run_native_uca_load_mode(
             }
         };
         let initial = manifest.compile(&runtime, domain, &approvals)?;
+        let UcaGenesisManifestV2 {
+            mut genesis,
+            identities,
+            accounts,
+        } = manifest;
         let material = UcaInitializationConfigV2 {
-            identities: manifest.identities.clone(),
-            accounts: manifest.accounts.clone(),
+            identities,
+            accounts,
             approvals,
             expected_signing_domain: domain,
             expected_initial_root: initial.state().root(),
             expected_final_commitment: initial.final_commitment(),
+            pages: vec![],
         };
-        let mut genesis = manifest.genesis;
+        drop(initial);
+        let material_header = material.write_pages_with_genesis(
+            &mut genesis,
+            &directory.join("initialization-pages"),
+            64,
+        )?;
+        evidence["initialization_pages"] = json!(material_header.pages.len());
+        evidence["account_preparation_seconds"] =
+            json!(account_preparation_started.elapsed().as_secs_f64());
+        evidence["account_preparation_timing"] = json!("independent key generation, approved manifest compilation and public initialization pages excluded from transfer TPS; all accounts and NOV funding exist before first transfer submission");
         genesis.genesis_config_commitment = domain;
         for path in &nodes.configs {
             let mut config: Value = serde_json::from_slice(&fs::read(path)?)?;
@@ -534,7 +576,7 @@ fn run_native_uca_load_mode(
             config["profile"] = json!(ORIGINAL_PROFILE);
             config["native_client_limit"] = json!(2);
             config["genesis"] = serde_json::to_value(&genesis)?;
-            config["uca_initialization"] = serde_json::to_value(&material)?;
+            config["uca_initialization"] = serde_json::to_value(&material_header)?;
             if let Some(backend) = signature_override {
                 config["signature_backend"] = serde_json::to_value(backend)?;
             }
@@ -544,29 +586,33 @@ fn run_native_uca_load_mode(
         evidence["initial_root"] = json!(hex(&material.expected_initial_root));
         evidence["genesis_commitment"] = json!(hex(&material.expected_final_commitment));
         let signer = runtime.asset_spend_signer_v2()?;
-        let make_intent =
-            |payer: usize, nonce: u64, window: SpendWindow| -> Result<AssetSpendIntentV2> {
-                Ok(AssetSpendIntentV2 {
-                    asset: 1,
-                    authority_update: None,
-                    chain_id: CHAIN,
-                    genesis: domain,
-                    payer: account_bytes(payer).to_vec(),
-                    authorization_epoch: 1,
-                    spend_key_ref: spend_key_ref_v1(&keys[SENDERS + 1 + payer].0)?,
-                    recipient: account_bytes(SENDERS).to_vec(),
-                    amount: 1,
-                    max_fee: 50,
-                    nonce,
-                    not_before_height: window.not_before,
-                    expires_at_height: window.expires,
-                })
-            };
+        let make_intent = |payer: usize,
+                           recipient: usize,
+                           nonce: u64,
+                           window: SpendWindow|
+         -> Result<AssetSpendIntentV2> {
+            Ok(AssetSpendIntentV2 {
+                asset: 1,
+                authority_update: None,
+                recipient_creation: None,
+                chain_id: CHAIN,
+                genesis: domain,
+                payer: account_bytes(payer).to_vec(),
+                authorization_epoch: 1,
+                spend_key_ref: spend_key_ref_v1(&keys[account_count + payer].0)?,
+                recipient: account_bytes(recipient).to_vec(),
+                amount: 1,
+                max_fee: 50,
+                nonce,
+                not_before_height: window.not_before,
+                expires_at_height: window.expires,
+            })
+        };
         let fee = quote_transfer(
             &TransferFeeRequest {
                 tx_hash: [0; 32],
                 payer: account_bytes(0).into(),
-                recipient: account_bytes(SENDERS).into(),
+                recipient: account_bytes(shape.payers).into(),
                 asset: "NOV".into(),
                 amount: 1,
                 pay_asset: "NOV".into(),
@@ -586,15 +632,20 @@ fn run_native_uca_load_mode(
         let mut workload_hash = Sha256::new();
         workload_hash.update(b"novovm/nuas-load/ordered-signed-inputs/v1\0");
         let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
-            let payer = index % SENDERS;
-            let nonce = (index / SENDERS) as u64;
-            let key = &keys[SENDERS + 1 + payer];
+            let payer = index % shape.payers;
+            let nonce = (index / shape.payers) as u64;
+            let recipient = shape.recipient(index);
+            let key = &keys[account_count + payer];
             let signed = match corpus.signed.as_ref().filter(|_| !mode.dynamic_windows()) {
                 Some(raw) => SignedAssetSpendV2::decode(&raw[index])?,
-                None => signer.sign(make_intent(payer, nonce, window)?, &key.0, &key.1)?,
+                None => signer.sign(
+                    make_intent(payer, recipient, nonce, window)?,
+                    &key.0,
+                    &key.1,
+                )?,
             };
             ensure!(
-                signed.intent == make_intent(payer, nonce, window)?,
+                signed.intent == make_intent(payer, recipient, nonce, window)?,
                 "paired corpus intent changed"
             );
             Ok(signed)
@@ -616,6 +667,7 @@ fn run_native_uca_load_mode(
                 generated.into_iter().map(Ok),
                 SpendWindow::after(0)?,
                 fee,
+                shape,
             )?;
         } else {
             rolling::append_signed_rows(
@@ -625,6 +677,7 @@ fn run_native_uca_load_mode(
                 first_count,
                 SpendWindow::after(0)?,
                 fee,
+                shape,
                 &make_signed,
             )?;
         }
@@ -703,6 +756,7 @@ fn run_native_uca_load_mode(
                 timeout,
                 count,
                 fee,
+                shape,
                 &make_signed,
                 &mut evidence,
             )?
@@ -720,6 +774,7 @@ fn run_native_uca_load_mode(
                 timeout,
                 count,
                 fee,
+                shape,
                 &make_signed,
                 &mut evidence,
             )?
@@ -798,33 +853,49 @@ fn run_native_uca_load_mode(
         let remaining = FUNDING
             .checked_sub(rounds as u128 * debit)
             .context("NUAS funding exhausted")?;
-        let mut expected = (0..SENDERS)
+        let recipient_credits = shape.credits(count);
+        let mut expected = (0..shape.payers)
             .map(|i| (Account::from(account_bytes(i)), remaining))
             .collect::<Vec<_>>();
-        expected.push((account_bytes(SENDERS).into(), count as u128));
+        expected.extend(
+            recipient_credits
+                .iter()
+                .enumerate()
+                .map(|(index, credit)| (account_bytes(shape.payers + index).into(), *credit)),
+        );
         expected.push((
             [0xfe; 20].into(),
             crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
-                - FUNDING * SENDERS as u128,
+                - FUNDING * shape.payers as u128,
         ));
         phase = "authoritative UCA balances budgets and nonce";
-        let balances = verify_balances(&mut clients, &expected, before[0])?;
+        let online_accounts = shape.online_accounts();
+        let mut online_balances = online_accounts
+            .iter()
+            .map(|index| expected[*index].clone())
+            .collect::<Vec<_>>();
+        online_balances.push(expected.last().unwrap().clone());
+        let balances = verify_balances(&mut clients, &online_balances, before[0])?;
         let mut authority = Vec::new();
         for client in &mut clients {
             let mut states = Vec::new();
-            for payer in 0..=SENDERS {
+            for &payer in &online_accounts {
                 let view = read_uca_state(
                     client,
-                    &make_intent(payer, rounds as u64, query_window)?,
+                    &make_intent(payer, shape.payers, rounds as u64, query_window)?,
                     payer,
                 )?;
-                let expected_nonce = if payer == SENDERS { 0 } else { rounds as u64 };
-                let expected_budget = if payer == SENDERS { FUNDING } else { remaining };
-                let expected_balance = if payer == SENDERS {
-                    count as u128
+                let expected_nonce = if payer < shape.payers {
+                    rounds as u64
                 } else {
-                    remaining
+                    0
                 };
+                let expected_budget = if payer < shape.payers {
+                    remaining
+                } else {
+                    FUNDING
+                };
+                let expected_balance = expected[payer].1;
                 ensure!(
                     view.state_root == before[0].state_root
                         && view.height == before[0].height
@@ -839,7 +910,7 @@ fn run_native_uca_load_mode(
                         && view.next_nonce == expected_nonce
                         && view.remaining_debit_budget == expected_budget
                         && view.payer_balance == expected_balance
-                        && view.recipient_balance == count as u128,
+                        && view.recipient_balance == recipient_credits[0],
                     "NUAS authoritative account/budget/nonce mismatch: {view:?}"
                 );
                 states.push(view);
@@ -852,6 +923,9 @@ fn run_native_uca_load_mode(
         );
         evidence["balances"] = json!(balances);
         evidence["authority"] = json!(authority[0]);
+        evidence["online_account_indices"] = json!(online_accounts);
+        evidence["authority_coverage"] = json!({"online_sample_accounts":online_accounts.len(),
+            "total_asset_accounts":account_count,"all_account_checks":"complete four-store authenticated batch reads before and after cold restart; online sample is API consistency only"});
         phase = "untimed final local progress capture";
         evidence["final_local_progress"] = collect_final_progress(&mut nodes, before[0])?;
         let old_pids = nodes
@@ -863,7 +937,22 @@ fn run_native_uca_load_mode(
         drop(clients);
         nodes.stop_all()?;
         phase = "stopped original stores ordered fee audit";
-        evidence["durable_economics"] = audit_fee_pages(&nodes, before[0], &raw, &observations)?;
+        let audit_started = Instant::now();
+        evidence["durable_economics"] =
+            audit_fee_pages(&nodes, before[0], &raw, &observations, shape)?;
+        evidence["all_account_authority"] = account_audit::audit_all_accounts(
+            &nodes,
+            before[0],
+            shape,
+            &expected,
+            &material.accounts,
+            rounds as u64,
+            remaining,
+            grant_expiry,
+            &|account| make_intent(account, shape.payers, rounds as u64, query_window),
+        )?;
+        evidence["untimed_full_economics_audit_seconds"] =
+            json!(audit_started.elapsed().as_secs_f64());
         evidence["full_fee_state_audited"] = json!(true);
         phase = "cold restart all receipts balances and authorizations";
         for i in 0..4 {
@@ -901,16 +990,19 @@ fn run_native_uca_load_mode(
         )?;
         ensure!(
             cold_counts.successful_transactions == count
-                && verify_balances(&mut clients, &expected, before[0])? == balances,
+                && verify_balances(&mut clients, &online_balances, before[0])? == balances,
             "NUAS cold receipts/balances changed"
         );
-        ensure!(authority[0].len() == SENDERS + 1, "NUAS authority coverage");
+        ensure!(
+            authority[0].len() == online_accounts.len(),
+            "NUAS online authority coverage"
+        );
         for client in &mut clients {
-            for (payer, expected_authority) in authority[0].iter().enumerate() {
+            for (&payer, expected_authority) in online_accounts.iter().zip(&authority[0]) {
                 ensure!(
                     read_uca_state(
                         client,
-                        &make_intent(payer, rounds as u64, query_window)?,
+                        &make_intent(payer, shape.payers, rounds as u64, query_window)?,
                         payer
                     )? == *expected_authority,
                     "NUAS cold authorization/nonce changed"
@@ -918,11 +1010,28 @@ fn run_native_uca_load_mode(
             }
         }
         nodes.stop_all()?;
+        let cold_audit_started = Instant::now();
         ensure!(
-            audit_fee_pages(&nodes, before[0], &raw, &observations)?
+            audit_fee_pages(&nodes, before[0], &raw, &observations, shape)?
                 == evidence["durable_economics"],
             "NUAS cold durable fee state changed"
         );
+        ensure!(
+            account_audit::audit_all_accounts(
+                &nodes,
+                before[0],
+                shape,
+                &expected,
+                &material.accounts,
+                rounds as u64,
+                remaining,
+                grant_expiry,
+                &|account| make_intent(account, shape.payers, rounds as u64, query_window)
+            )? == evidence["all_account_authority"],
+            "NUAS cold complete account state changed"
+        );
+        evidence["untimed_cold_economics_audit_seconds"] =
+            json!(cold_audit_started.elapsed().as_secs_f64());
         evidence["recovered"] = json!(recovered);
         evidence["cold_counts"] = json!(cold_counts);
         evidence["cold_receipt_observation_seconds"] = json!(elapsed.as_secs_f64());
@@ -1050,7 +1159,14 @@ fn authority_economics(report: &Value) -> Result<Value> {
         .as_array()
         .context("paired authority missing")?
         .clone();
-    ensure!(authority.len() == SENDERS + 1, "paired authority coverage");
+    let online_accounts = report
+        .pointer("/authority_coverage/online_sample_accounts")
+        .and_then(Value::as_u64)
+        .map_or(SENDERS + 1, |count| count as usize);
+    ensure!(
+        authority.len() == online_accounts,
+        "paired online authority coverage"
+    );
     for state in &mut authority {
         let state = state.as_object_mut().context("paired authority shape")?;
         // Independent schedules can commit the same funded effects at different
@@ -1065,6 +1181,9 @@ fn authority_economics(report: &Value) -> Result<Value> {
         "authority":authority,
         "oracle_balances":report.pointer("/durable_economics/oracle_sender_balances"),
         "oracle_nonces":report.pointer("/durable_economics/oracle_sender_nonces"),
+        "oracle_recipient_credits":report.pointer("/durable_economics/oracle_recipient_credits"),
+        "all_account_authority":report.get("all_account_authority"),
+        "account_distribution":report.get("account_distribution"),
         "archived_transactions":report.pointer("/durable_economics/archived_transactions")
     }))
 }
@@ -1169,6 +1288,11 @@ fn paired_authority_comparison_excludes_only_schedule_metadata() -> Result<()> {
     first["authority"][0]["next_nonce"] = json!(64);
     first["authority"][0]["revoked"] = json!(true);
     assert_ne!(expected, authority_economics(&first)?);
+    first["authority"][0]["revoked"] = json!(false);
+    first["all_account_authority"] = json!({"economic_state_sha256":"full-state-a"});
+    let all_accounts = authority_economics(&first)?;
+    first["all_account_authority"]["economic_state_sha256"] = json!("full-state-b");
+    assert_ne!(all_accounts, authority_economics(&first)?);
     first["authority"][0]
         .as_object_mut()
         .unwrap()

@@ -22,6 +22,7 @@ pub(super) struct SpendEntry {
     pub reserve: u128,
     pub static_failure: Option<SpendPolicyError>,
     pub intent: AssetSpendIntentV2,
+    pub creates_recipient: bool,
     /// Zero selects the captured authority; a positive value selects the
     /// successful earlier management row at (value - 1). Selection is executed,
     /// never presumed merely because an update was submitted.
@@ -218,18 +219,19 @@ pub(super) fn rejected_receipt(
 }
 
 pub fn uca_program_id() -> NodeHash {
-    Sha256::digest(b"novovm/nov-transfer-asset-complete-effects/v2").into()
+    Sha256::digest(b"novovm/nov-transfer-asset-complete-effects/v3").into()
 }
 pub fn uca_receipt_codec() -> NodeHash {
     Sha256::digest(b"novovm/nov-asset-receipt/authorization-budget/v2").into()
 }
 pub fn uca_effect_contract(policy: &DirectNovFeePolicy) -> Result<NodeHash> {
     let mut h = Sha256::new();
-    h.update(b"novovm/asset-spend-effects/v2\0");
+    h.update(b"novovm/asset-spend-effects/v3\0");
     h.update(effect_contract(policy)?);
     h.update(uca_program_id());
     h.update(uca_receipt_codec());
     h.update(b"auth-reject:no-fee-no-nonce;success:amount+actual-fee;business-failure:actual-fee;self:gross;stable-asset-nonce;ordered-authority-and-grant-prefix;management:actual-fee-no-spend-budget");
+    h.update(b"opening:funded-recipient-full-descriptor-address;absent-only-initialize-on-success;existing-never-reset");
     Ok(h.finalize().into())
 }
 
@@ -311,6 +313,9 @@ impl NovTransferBody {
             // Ordinary spending mutates only budget, balance and nonce. A signed
             // management operation additionally declares its bounded replacement.
             for d in uca_spend_state::grant_write_declarations(i)? {
+                declarations.insert(d.key.clone(), d);
+            }
+            for d in uca_spend_state::creation_declarations(i)? {
                 declarations.insert(d.key.clone(), d);
             }
             if i.authority_update.is_some() {
@@ -495,6 +500,7 @@ impl UcaMetadata {
                     .context("UCA reserve overflow")?,
                 static_failure: initial_failure,
                 intent: i.clone(),
+                creates_recipient: state.creates_recipient(),
                 authority_options,
             });
             // The first row may carry an obsolete signed epoch. The record

@@ -330,9 +330,10 @@ impl IoService {
                 let opened = (|| {
                     let store = CandidateStore::open(config, mode)?;
                     if let Some(initial) = initial {
-                        if mode == OpenMode::CreateNew {
-                            store.install_unpublished_state(&initial)?;
-                        }
+                        // Reinstall only the immutable content of the fully
+                        // approved/pinned initializer. This resumes a partial
+                        // startup write, never replaces a journal or chain head.
+                        store.install_unpublished_state(&initial)?;
                         for (hash, expected) in initial.nodes() {
                             ensure!(
                                 store.read_node(hash)?.as_ref() == Some(expected),
