@@ -681,8 +681,12 @@ pub(super) fn stage_results(
                 != Some(&record)
             {
                 changes.extend(
-                    crate::native_pipeline::business::uca_spend_state::grant_record_changes(
-                        &intent, &record,
+                    crate::native_pipeline::business::uca_spend_state::grant_record_changes_from_parent(
+                        &intent,
+                        &record,
+                        spend.grants.get(&id).and_then(|previous| {
+                            previous.record.as_ref().map(|record| (&previous.intent, record))
+                        }),
                     )?,
                 );
             }

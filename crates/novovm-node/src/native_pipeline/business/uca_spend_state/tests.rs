@@ -4,6 +4,9 @@ use super::*;
 use crate::native_pipeline::state::frontier::CaptureBudget;
 use crate::native_pipeline::state::tree::{empty_root, stage_state_update, StateNodeReader};
 
+#[path = "page_delta_tests.rs"]
+mod page_delta_tests;
+
 #[derive(Default)]
 struct Memory(BTreeMap<NodeHash, Vec<u8>>);
 impl StateNodeReader for Memory {
