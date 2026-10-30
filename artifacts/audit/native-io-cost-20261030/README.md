@@ -1,5 +1,8 @@
 # 原网络成本与旧优化迁接核对
 
+后续代码与新测量：见[2026-10-31原APFL资产正文引用实现及完整对照](../native-apfl-reference-20261031/README.md)。
+本页保持原历史样本，不将后续收益回填为本轮已解决。
+
 基线 `444133b78863a4593ac1850f5a5d9758aadee308`，开发分支
 `dev/mldsa65-identity-closure`。原入口仍是
 `native_execution_tick → NativeChannel → NativeObjectLink → NativeUdpSession`。
