@@ -1,0 +1,16 @@
+
+running 1 test
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu ... FAILED
+
+failures:
+
+---- native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu stdout ----
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-31592-1793391637710041200
+Error: state update exceeds staged-node budget
+
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1799 filtered out; finished in 97.70s
+

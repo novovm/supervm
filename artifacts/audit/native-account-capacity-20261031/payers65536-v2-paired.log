@@ -1,0 +1,20 @@
+
+running 1 test
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu ... FAILED
+
+failures:
+
+---- native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu stdout ----
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-9268-1793392753904470400
+Error: native status readiness deadline exhausted
+
+Caused by:
+    0: query transport: elapsed_ms=4851 sent=false poll_max_us=67 completions[sending,delivered,expired,session_replaced,cancelled]=[0, 0, 0, 0, 0]
+    1: native query timeout: Status
+
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1800 filtered out; finished in 1029.33s
+

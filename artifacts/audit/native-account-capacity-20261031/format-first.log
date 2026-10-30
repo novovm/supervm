@@ -1,0 +1,13 @@
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service.rs:403:
+     // Rich opening rows select fewer rows within this SAME common key budget.
+     // Charge actual supported access, not 128 old identity pages per row: the
+     // latter would unnecessarily consume the second candidate's reservation.
+-    let keys = if uca { rpc::ASSET_PLAN_ACCESS_KEYS } else { 3 * size + 128 };
++    let keys = if uca {
++        rpc::ASSET_PLAN_ACCESS_KEYS
++    } else {
++        3 * size + 128
++    };
+     PipelineConfig {
+         store: StoreConfig {
+             library: config.library.clone(),
