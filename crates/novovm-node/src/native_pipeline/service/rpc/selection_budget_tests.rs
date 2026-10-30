@@ -70,6 +70,71 @@ fn pending_uca(rows: usize) -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)>
 }
 
 #[test]
+fn asset_successor_window_fills_past_queued_predecessor_rows_without_nonce_credit() -> Result<()> {
+    let (order, pending) = pending_uca(1536)?;
+    let known = BTreeMap::from([([3; 32], 0)]);
+    let successor = BTreeMap::from([([3; 32], 512)]);
+    let old = nonce_selection_window(&order, 0, 1024);
+    let (partial, _) =
+        select_prepared_nonce_window(&old, &pending, &known, successor.clone(), 1024).unwrap();
+    assert_eq!(partial.len(), 512);
+    let window = asset_nonce_selection_window(&order, &pending, &known, successor.clone(), 0, 1024);
+    assert_eq!(
+        window,
+        order.iter().skip(512).copied().collect::<VecDeque<_>>()
+    );
+    let (selected, full) =
+        select_prepared_nonce_window(&window, &pending, &known, successor, 1024).unwrap();
+    assert_eq!(selected.len(), 1024);
+    assert!(full);
+    assert_eq!(order.len(), 1536);
+    assert_eq!(pending.len(), 1536);
+
+    let empty = BTreeMap::new();
+    let unknown = asset_nonce_selection_window(&order, &pending, &empty, empty.clone(), 0, 1024);
+    assert!(
+        select_prepared_nonce_window(&unknown, &pending, &empty, empty.clone(), 1024).is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn asset_full_known_stream_does_not_skip_an_older_unknown_nonce_subject() -> Result<()> {
+    let (order, mut pending) = pending_uca(1025)?;
+    // Selection-only fixture: distinguish the older subject without granting
+    // it a read result or passing this shaped row to execution.
+    pending.get_mut(&order[0]).unwrap().signer = [4; 32];
+    let known = BTreeMap::from([([3; 32], 1)]);
+    let (available, _) =
+        select_pending_batch_with_budget(&order, &pending, &known, BTreeMap::new(), 1024);
+    assert_eq!(available.len(), 1024);
+    let window = asset_nonce_selection_window(&order, &pending, &known, BTreeMap::new(), 0, 1024);
+    assert_eq!(window, nonce_selection_window(&order, 0, 1024));
+    assert_eq!(window.front(), order.front());
+    assert!(
+        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 1024).is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn asset_nonce_window_keeps_low_load_and_missing_predecessor_behavior() -> Result<()> {
+    let (order, mut pending) = pending_uca(64)?;
+    let known = BTreeMap::from([([3; 32], 0)]);
+    let window = asset_nonce_selection_window(&order, &pending, &known, BTreeMap::new(), 0, 1024);
+    let (selected, full) =
+        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 1024).unwrap();
+    assert_eq!(selected.len(), 64);
+    assert!(!full);
+    pending.remove(&order[0]);
+    let window = asset_nonce_selection_window(&order, &pending, &known, BTreeMap::new(), 0, 1024);
+    let (selected, _) =
+        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 1024).unwrap();
+    assert!(selected.is_empty(), "a known nonce gap cannot be skipped");
+    Ok(())
+}
+
+#[test]
 fn asset_selection_1024_rows_at_8m_preserves_queued_nonce_suffix() -> Result<()> {
     let (order, pending) = pending_uca(1024 + 64)?;
     let limit = super::super::uca_body_byte_limit(1024);

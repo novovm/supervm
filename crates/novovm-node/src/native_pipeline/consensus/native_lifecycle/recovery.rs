@@ -9,11 +9,14 @@ struct Cached {
     body_id: Hash,
     body: PreparedMessage,
     decision: PreparedMessage,
+    precommitters: Arc<[Hash]>,
     body_pending: bool,
 }
 impl Cached {
     fn charge(&self) -> usize {
-        self.body.byte_len() + self.decision.byte_len()
+        self.body.byte_len()
+            + self.decision.byte_len()
+            + std::mem::size_of_val(self.precommitters.as_ref())
     }
 
     fn for_peer(&self) -> Self {
@@ -22,6 +25,7 @@ impl Cached {
             body_id: self.body_id,
             body: self.body.clone(),
             decision: self.decision.clone(),
+            precommitters: self.precommitters.clone(),
             // Immutable checked wire bytes are shared, never delivery credit.
             // Only THIS peer's actual decision completion arms its body.
             body_pending: false,
@@ -249,6 +253,13 @@ impl NativeLifecycle {
                                 body_id,
                                 body,
                                 decision,
+                                precommitters: block
+                                    .certificate()
+                                    .votes
+                                    .iter()
+                                    .map(|vote| vote.validator_id)
+                                    .collect::<Vec<_>>()
+                                    .into(),
                                 body_pending: false,
                             };
                             // One cache per peer has a separate, explicit bound
@@ -364,6 +375,13 @@ impl NativeLifecycle {
         if fragment == cached.body.fragment_id() {
             cached.body_pending = false;
         } else if fragment == cached.decision.fragment_id() {
+            // This exact checked PRECOMMIT proves the peer already persisted
+            // the candidate before voting. Decision delivery alone proves no
+            // such possession. Explicit RequestBody still serves full bytes,
+            // including after a voter restarts and needs its original store.
+            if cached.precommitters.contains(&self.peers[peer]) {
+                return;
+            }
             // Each actual decision completion renews this bounded continuation.
             // Do not cache "body delivered forever" across receiver restarts.
             cached.body_pending = true;

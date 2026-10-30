@@ -1,0 +1,29 @@
+
+running 24 tests
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_cancel_drain_keeps_auxiliary_budget_charge ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_inflight_takeover_retains_original_handle ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_new_request_preserves_current_realtime_obligation ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_promotion_respects_auxiliary_byte_budget ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_promotion_respects_auxiliary_message_budget ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_realtime_duplicate_preserves_archive_and_bytes ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_requested_live_body_survives_advance_and_first_archive_request ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_retiring_object_refuses_takeover_until_returned ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_same_height_context_refresh_preserves_archive_only_reply ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_unsent_takeover_survives_realtime_retirement ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_coalesces_before_queue_handoff ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_context_replacement_retires_old_cache ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_rearms_after_previous_body_completion ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_requires_exact_current_decision ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_retains_responsibility_when_auxiliary_full ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_survives_competing_body_hint ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_nonvoter_retained_decision_requires_completion_then_gets_full_body ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_coalesces_same_context_across_peers ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_drains_changed_requester_read_for_same_context_waiter ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_reuse_keeps_independent_pending_and_delivery_budget ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_reuse_requires_full_context_and_published_height ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_request_older_completion_cannot_replace_newer_responsibility ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_request_same_height_parent_and_invalid_context_keep_original_checks ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_verified_precommit_skips_automatic_body_but_serves_explicit_request ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 1783 filtered out; finished in 6.08s
+

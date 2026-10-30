@@ -88,19 +88,21 @@ fn native_archive_poll_coalesces_same_context_across_peers() -> Result<()> {
             ensure!(cached.context == context && !cached.body_pending);
             ensure!(cached.decision.fragment_id() == decision_id);
             ensure!(cached.body.fragment_id() == body_id);
+            ensure!(Arc::ptr_eq(&first.precommitters, &cached.precommitters));
             ensure!(cached.charge() <= node.codec.message_bytes.saturating_mul(2));
         }
+        let needs_body = !first.precommitters.contains(&node.peers[0]);
         // Direct completion stimulus checks the original continuation boundary;
         // it is NOT a claim that a fabricated transport ACK was observed.
         node.archive_delivery_completed(0, decision_id);
-        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending == needs_body);
         ensure!(node.archives[1..].iter().all(|state| !state
             .cached
             .as_ref()
             .unwrap()
             .body_pending));
         node.archive_delivery_completed(1, body_id);
-        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending == needs_body);
         ensure!(node.progress.head() == head);
         Ok(())
     })
@@ -147,8 +149,9 @@ fn native_archive_poll_reuse_keeps_independent_pending_and_delivery_budget() -> 
         let first = node.archives[0].cached.as_ref().unwrap();
         let decision = first.decision.fragment_id();
         let canonical_body = first.body_id;
+        let needs_body = !first.precommitters.contains(&node.peers[0]);
         node.archive_delivery_completed(0, decision);
-        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending == needs_body);
         // Fill the ORIGINAL auxiliary queue with unsent bounded requests.
         // Existing real consensus deliveries/handles remain untouched.
         for index in 0..=node.limits.messages_per_peer {
@@ -169,7 +172,7 @@ fn native_archive_poll_reuse_keeps_independent_pending_and_delivery_budget() -> 
         ensure!(node.archives[1].decision_pending);
         ensure!(node.archives[1].body_request == Some(canonical_body));
         ensure!(!node.archives[1].cached.as_ref().unwrap().body_pending);
-        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending);
+        ensure!(node.archives[0].cached.as_ref().unwrap().body_pending == needs_body);
         ensure!(node.bytes[1] == bytes && node.deliveries[1].len() == count);
         poll_archive_peer(node, pipeline, 1)?;
         ensure!(node.archives[1].decision_pending);
@@ -219,6 +222,68 @@ fn native_archive_poll_reuse_requires_full_context_and_published_height() -> Res
     })
 }
 
+#[test]
+#[ignore = "real AOEM/four native nodes; verified archive voters reuse durable input, explicit requests stay full"]
+fn native_archive_verified_precommit_skips_automatic_body_but_serves_explicit_request() -> Result<()>
+{
+    with_published_archive_lifecycle_for_test(|node, pipeline, context| {
+        require_fresh_published_archive_fixture(node)?;
+        let head = node.progress.head();
+        for peer in 0..node.archives.len() {
+            node.request_archive(peer, context)?;
+        }
+        poll_archives_until(node, pipeline, |node| {
+            node.archives.iter().all(|state| state.cached.is_some())
+        })?;
+        let peer = node
+            .peers
+            .iter()
+            .position(|id| {
+                node.archives[0]
+                    .cached
+                    .as_ref()
+                    .unwrap()
+                    .precommitters
+                    .contains(id)
+            })
+            .context("published quorum lacks a remote precommit voter")?;
+        let cached = node.archives[peer].cached.as_ref().unwrap();
+        ensure!(cached.context == context && !cached.body_pending);
+        let decision = cached.decision.fragment_id();
+        let fragment = cached.body.fragment_id();
+        let body_id = cached.body_id;
+        let served = node.served_bodies;
+        let count = node.deliveries[peer].len();
+        let bytes = node.bytes[peer];
+        // The fixture's original ArchiveRead checked the actual published QC.
+        // This direct event stimulus only tests its continuation policy, not a
+        // new network ACK or new publication.
+        node.archive_delivery_completed(peer, decision);
+        node.poll_archive_body(peer);
+        ensure!(!node.archives[peer].cached.as_ref().unwrap().body_pending);
+        ensure!(node.served_bodies == served);
+        ensure!(node.deliveries[peer].len() == count && node.bytes[peer] == bytes);
+        ensure!(node.deliveries[peer]
+            .iter()
+            .all(|delivery| delivery.prepared.fragment_id() != fragment));
+
+        // Voter possession is not a permanent remote cache promise. A concrete
+        // RequestBody still obtains the full original recovery object.
+        node.remember_body_request(peer, body_id);
+        node.poll_body_response(peer)?;
+        ensure!(node.archives[peer].body_request.is_none());
+        ensure!(node.served_bodies == served + 1);
+        let delivery = node.deliveries[peer]
+            .iter()
+            .find(|delivery| delivery.prepared.fragment_id() == fragment)
+            .context("explicit voter request did not retain full body")?;
+        ensure!(delivery.archive && !delivery.realtime);
+        ensure!(delivery.prepared.byte_len() > 0);
+        ensure!(node.progress.head() == head);
+        Ok(())
+    })
+}
+
 fn install_cache(
     node: &mut NativeLifecycle,
     decision: &Message,
@@ -243,6 +308,9 @@ fn install_cache(
         body_id: *body_id,
         body,
         decision,
+        // This delivery-only fixture has no verified ArchiveRead. Its signed
+        // Decision is not an executed block and grants no possession credit.
+        precommitters: Arc::from([]),
         body_pending: false,
     };
     ensure!(cached.charge() <= node.codec.message_bytes.saturating_mul(2));
@@ -256,6 +324,35 @@ fn pending(node: &NativeLifecycle) -> bool {
         .cached
         .as_ref()
         .is_some_and(|cached| cached.body_pending)
+}
+
+#[test]
+#[ignore = "real AOEM delivery fixture; no verified voter possession, no body before decision completion"]
+fn native_archive_nonvoter_retained_decision_requires_completion_then_gets_full_body() -> Result<()>
+{
+    with_archive_lifecycle_for_test(|node, decision, body| {
+        let (_, decision_id, body_fragment) = install_cache(node, &decision, &body)?;
+        let prepared = node.archives[0].cached.as_ref().unwrap().decision.clone();
+        ensure!(node.enqueue_kind(0, prepared, true));
+        ensure!(!node.deliveries[0][0].admitted);
+        node.poll_archive_body(0);
+        ensure!(!pending(node));
+        ensure!(node.deliveries[0].len() == 1 && node.served_bodies == 0);
+        node.archive_delivery_completed(0, [0xd3; 32]);
+        ensure!(!pending(node));
+
+        node.archive_delivery_completed(0, decision_id);
+        ensure!(pending(node));
+        node.poll_archive_body(0);
+        ensure!(!pending(node));
+        ensure!(node.deliveries[0].len() == 2 && node.served_bodies == 1);
+        let delivery = node.deliveries[0]
+            .iter()
+            .find(|delivery| delivery.prepared.fragment_id() == body_fragment)
+            .context("nonvoter continuation lost full body")?;
+        ensure!(delivery.archive && !delivery.realtime && !delivery.admitted);
+        Ok(())
+    })
 }
 
 #[test]

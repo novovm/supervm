@@ -45,6 +45,39 @@ fn frame(session: [u8; 16], sequence: u64, payload: Vec<u8>) -> NovoRudpTranspor
 }
 
 #[test]
+fn owned_and_borrowed_open_share_source_authentication_and_replay_state() -> Result<()> {
+    let address = "127.0.0.1:12345".parse()?;
+    let (a, b) = channels();
+    let mut sender = NativeUdpSession::new(a, address)?;
+    let mut receiver = NativeUdpSession::new(b, address)?;
+    let expected = frame(sender.session_id(), 0, vec![8; 848]);
+    let wire = sender.encode(&expected)?;
+    assert!(receiver
+        .open_route_owned(NativeRoute::Udp("127.0.0.1:12346".parse()?), wire.clone())
+        .is_err());
+    let mut tampered = wire.clone();
+    *tampered.last_mut().unwrap() ^= 1;
+    assert!(receiver
+        .open_route_owned(NativeRoute::Udp(address), tampered.clone())
+        .is_err());
+    assert!(receiver.open(address, &tampered).is_err());
+    assert_eq!(
+        receiver.open_route_owned(NativeRoute::Udp(address), wire.clone())?,
+        expected
+    );
+    assert!(receiver.open(address, &wire).is_err());
+    assert!(receiver
+        .open_route_owned(NativeRoute::Udp(address), wire)
+        .is_err());
+    let repair = sender.encode(&expected)?;
+    assert_eq!(receiver.open(address, &repair)?, expected);
+    assert!(receiver
+        .open_route_owned(NativeRoute::Udp(address), repair)
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn completed_send_reports_exact_secure_wire_bytes_not_payload_or_budget_denial() -> Result<()> {
     let (a, b) = channels();
     let tx = UdpSocket::bind("127.0.0.1:0")?;

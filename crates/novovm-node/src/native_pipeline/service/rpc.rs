@@ -595,19 +595,28 @@ impl RpcLifecycle {
             return Ok(());
         }
         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
+            let next = successor
+                .as_ref()
+                .map_or_else(BTreeMap::new, |s| s.nonce_after.clone());
             if self
                 .nonce_window
                 .as_ref()
                 .is_none_or(|(old, _)| *old != position)
             {
-                self.nonce_window = Some((
-                    position,
-                    nonce_selection_window(&self.order, self.nonce_scan, self.batch_size),
-                ));
+                let window = if self.is_uca() {
+                    asset_nonce_selection_window(
+                        &self.order,
+                        &self.pending,
+                        &self.nonces.values,
+                        next.clone(),
+                        self.nonce_scan,
+                        self.batch_size,
+                    )
+                } else {
+                    nonce_selection_window(&self.order, self.nonce_scan, self.batch_size)
+                };
+                self.nonce_window = Some((position, window));
             }
-            let next = successor
-                .as_ref()
-                .map_or_else(BTreeMap::new, |s| s.nonce_after.clone());
             // Keep this bounded candidate window while the original I/O owner
             // resolves its exact-parent nonces. Eight read slots are an I/O
             // budget, not a smaller consensus/transaction batch size.
@@ -1612,6 +1621,37 @@ fn advance_nonce_window(start: usize, count: usize, remaining: usize) -> usize {
         0
     } else {
         (start.min(remaining) + count) % remaining
+    }
+}
+
+/// Current-height rows remain queued until publication even while preparing a
+/// successor. Do not let those stale-for-successor rows consume its entire
+/// bounded read window when a full executable group is already known. The
+/// ordinary nonce poll and ordered selection still recheck this window.
+fn asset_nonce_selection_window(
+    order: &VecDeque<Hash>,
+    pending: &BTreeMap<Hash, Pending>,
+    nonces: &BTreeMap<Hash, u64>,
+    next: BTreeMap<Hash, u64>,
+    start: usize,
+    batch_size: usize,
+) -> VecDeque<Hash> {
+    let ordinary = nonce_selection_window(order, start, batch_size);
+    // Preserve the original window's nonce reads before skipping any rows.
+    // Otherwise a continuous full known stream could starve an older subject
+    // whose nonce was evicted or invalidated by a parent change.
+    if ordinary.iter().any(|hash| {
+        pending.get(hash).is_some_and(|entry| {
+            !next.contains_key(&entry.signer) && !nonces.contains_key(&entry.signer)
+        })
+    }) {
+        return ordinary;
+    }
+    let (selected, _) = select_pending_batch_with_budget(order, pending, nonces, next, batch_size);
+    if selected.len() == batch_size {
+        selected.into()
+    } else {
+        ordinary
     }
 }
 

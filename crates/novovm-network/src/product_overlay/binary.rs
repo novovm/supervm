@@ -64,6 +64,25 @@ impl<'a> Cursor<'a> {
 }
 
 pub fn decode(wire: &[u8], limit: usize) -> Result<SecureNovoRudpEnvelopeV1> {
+    let (mut envelope, ciphertext) = decode_header(wire, limit)?;
+    envelope.ciphertext = wire[ciphertext].to_vec();
+    Ok(envelope)
+}
+
+pub(crate) fn decode_owned(mut wire: Vec<u8>, limit: usize) -> Result<SecureNovoRudpEnvelopeV1> {
+    let (mut envelope, ciphertext) = decode_header(&wire, limit)?;
+    let length = ciphertext.len();
+    // Reuse the transport's packet allocation for in-place authenticated open.
+    wire.copy_within(ciphertext, 0);
+    wire.truncate(length);
+    envelope.ciphertext = wire;
+    Ok(envelope)
+}
+
+fn decode_header(
+    wire: &[u8],
+    limit: usize,
+) -> Result<(SecureNovoRudpEnvelopeV1, std::ops::Range<usize>)> {
     ensure!(wire.len() <= limit, "binary envelope exceeds carrier limit");
     let mut cursor = Cursor(wire);
     ensure!(
@@ -78,15 +97,19 @@ pub fn decode(wire: &[u8], limit: usize) -> Result<SecureNovoRudpEnvelopeV1> {
     let nonce = cursor.array()?;
     let ciphertext = cursor.variable()?;
     ensure!(cursor.0.is_empty(), "trailing binary envelope bytes");
-    Ok(SecureNovoRudpEnvelopeV1 {
-        version,
-        session_id,
-        sender_peer_id: sender.to_owned(),
-        recipient_peer_id: recipient.to_owned(),
-        sequence,
-        nonce,
-        ciphertext: ciphertext.to_vec(),
-    })
+    let range = wire.len() - ciphertext.len()..wire.len();
+    Ok((
+        SecureNovoRudpEnvelopeV1 {
+            version,
+            session_id,
+            sender_peer_id: sender.to_owned(),
+            recipient_peer_id: recipient.to_owned(),
+            sequence,
+            nonce,
+            ciphertext: Vec::new(),
+        },
+        range,
+    ))
 }
 
 #[cfg(test)]
@@ -114,20 +137,33 @@ mod tests {
         expected.extend([5; 17]);
         assert_eq!(wire, expected);
         assert_eq!(decode(&wire, 1200).unwrap(), envelope);
+        let mut owned = wire.clone();
+        owned.reserve(32);
+        let allocation = owned.as_ptr();
+        let capacity = owned.capacity();
+        let decoded = decode_owned(owned, 1200).unwrap();
+        assert_eq!(decoded, envelope);
+        assert_eq!(decoded.ciphertext.as_ptr(), allocation);
+        assert_eq!(decoded.ciphertext.capacity(), capacity);
         for end in 0..wire.len() {
             assert!(decode(&wire[..end], 1200).is_err());
+            assert!(decode_owned(wire[..end].to_vec(), 1200).is_err());
         }
         assert!(encode(&envelope, wire.len() - 1).is_err());
         assert!(decode(&wire, wire.len() - 1).is_err());
+        assert!(decode_owned(wire.clone(), wire.len() - 1).is_err());
         let mut bad = wire.clone();
         bad.push(0);
         assert!(decode(&bad, 1200).is_err());
+        assert!(decode_owned(bad.clone(), 1200).is_err());
         bad = wire.clone();
         bad[8] = 2;
         assert!(decode(&bad, 1200).is_err());
+        assert!(decode_owned(bad.clone(), 1200).is_err());
         bad = wire;
         bad[27..31].fill(255);
         assert!(decode(&bad, 1200).is_err());
+        assert!(decode_owned(bad, 1200).is_err());
         assert!(decode(br#"{"kind":"data"}"#, 1200).is_err());
     }
 }

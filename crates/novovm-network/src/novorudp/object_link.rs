@@ -631,6 +631,22 @@ impl NativeObjectLink {
         self.process_poll(received, now, quantum)
     }
 
+    pub fn poll_with_owned_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        receiver: F,
+    ) -> Result<NativeLinkPoll>
+    where
+        F: FnMut() -> std::io::Result<Option<(Vec<u8>, SocketAddr)>>,
+    {
+        let received = self
+            .endpoint
+            .poll_with_owned_receiver(wall_ms, now, quantum, receiver)?;
+        self.process_poll(received, now, quantum)
+    }
+
     fn process_poll(
         &mut self,
         received: NativePoll,

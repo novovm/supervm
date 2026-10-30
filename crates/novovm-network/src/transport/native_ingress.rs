@@ -213,18 +213,14 @@ impl AuthenticatedUdpIngressV1 {
         let mut rejected_protocol = 0;
         let native = self
             .link
-            .poll_with_receiver(wall_ms, now, quantum, |buffer| {
+            .poll_with_owned_receiver(wall_ms, now, quantum, || {
                 let Some((packet, source)) = transport.receive_packet_v1()? else {
                     return Err(io::ErrorKind::WouldBlock.into());
                 };
                 // Reserve whole wire families, including invalid versions. The
                 // existing endpoint applies its own strict codec/authentication.
                 if packet.starts_with(b"NVHSHK") || packet.starts_with(b"NVRLY") {
-                    if packet.len() > buffer.len() {
-                        return Err(io::Error::other("UDP datagram exceeds receive buffer"));
-                    }
-                    buffer[..packet.len()].copy_from_slice(&packet);
-                    return Ok(Some((packet.len(), source)));
+                    return Ok(Some((packet, source)));
                 }
                 // Native-only mode rejects before the legacy decoder can learn
                 // peers, write pending work, advance observations or send sync.

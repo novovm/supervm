@@ -127,13 +127,34 @@ impl NativeUdpSession {
         source: NativeRoute,
         wire: &[u8],
     ) -> Result<NovoRudpTransportFrameV0> {
+        self.open_decoded(source, wire.len(), || {
+            binary::decode(wire, MAX_DATAGRAM_BYTES)
+        })
+    }
+
+    pub(crate) fn open_route_owned(
+        &mut self,
+        source: NativeRoute,
+        wire: Vec<u8>,
+    ) -> Result<NovoRudpTransportFrameV0> {
+        self.open_decoded(source, wire.len(), || {
+            binary::decode_owned(wire, MAX_DATAGRAM_BYTES)
+        })
+    }
+
+    fn open_decoded(
+        &mut self,
+        source: NativeRoute,
+        wire_bytes: usize,
+        decode: impl FnOnce() -> Result<crate::product_overlay::SecureNovoRudpEnvelopeV1>,
+    ) -> Result<NovoRudpTransportFrameV0> {
         if source != self.remote {
             return Err(anyhow::anyhow!("native packet source mismatch")
                 .context(NativeRejectReasonV1::SecureRoute));
         }
         let envelope = {
             let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::EnvelopeDecode);
-            binary::decode(wire, MAX_DATAGRAM_BYTES).context(NativeRejectReasonV1::WireOrFrame)?
+            decode().context(NativeRejectReasonV1::WireOrFrame)?
         };
         let frame = match &mut self.channel {
             NativeChannel::Udp(channel) => channel.open_novorudp_frame_owned(envelope)?,
@@ -157,7 +178,7 @@ impl NativeUdpSession {
         super::diagnostics::frame_traffic(
             super::diagnostics::Traffic::AuthenticatedReceived,
             &frame,
-            wire.len(),
+            wire_bytes,
         );
         Ok(frame)
     }

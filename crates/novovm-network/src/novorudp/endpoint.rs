@@ -80,6 +80,11 @@ struct OpenAdmission {
     retire_clients: bool,
 }
 
+enum ReceivedDatagram {
+    Borrowed(usize, NativeRoute),
+    Owned(Vec<u8>, NativeRoute),
+}
+
 /// A fresh authenticated generation replaced the old one. Application owners
 /// must retire old operations as unknown, never relabel them as new requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -825,10 +830,46 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
         quantum: usize,
-        receiver: F,
+        mut receiver: F,
     ) -> Result<NativePoll>
     where
         F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>>,
+    {
+        self.poll_with_packet_receiver(wall_ms, now, quantum, |wire| {
+            receiver(wire).map(|packet| {
+                packet.map(|(length, source)| ReceivedDatagram::Borrowed(length, source))
+            })
+        })
+    }
+
+    /// Transfer the original socket owner's allocation through the same bounded
+    /// authentication path; this does not accept already-authenticated frames.
+    pub fn poll_with_owned_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        mut receiver: F,
+    ) -> Result<NativePoll>
+    where
+        F: FnMut() -> std::io::Result<Option<(Vec<u8>, SocketAddr)>>,
+    {
+        self.poll_with_packet_receiver(wall_ms, now, quantum, |_| {
+            receiver().map(|packet| {
+                packet.map(|(wire, source)| ReceivedDatagram::Owned(wire, NativeRoute::Udp(source)))
+            })
+        })
+    }
+
+    fn poll_with_packet_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        receiver: F,
+    ) -> Result<NativePoll>
+    where
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<ReceivedDatagram>>,
     {
         ensure!(
             (1..=64).contains(&quantum),
@@ -852,7 +893,7 @@ impl NativeEndpoint {
         wire: &mut [u8],
     ) -> Result<NativePoll>
     where
-        F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>>,
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<ReceivedDatagram>>,
     {
         ensure!(
             wire.len() == 65536,
@@ -873,7 +914,7 @@ impl NativeEndpoint {
             .keys()
             .all(|route| matches!(route, NativeRoute::Udp(_)));
         for _ in 0..quantum {
-            let (length, source) = match receiver(wire) {
+            let packet = match receiver(wire) {
                 Ok(Some(value)) => value,
                 Ok(None) => continue,
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
@@ -901,6 +942,10 @@ impl NativeEndpoint {
                 }
                 Err(error) => return Err(error.into()),
             };
+            let (length, source) = match &packet {
+                ReceivedDatagram::Borrowed(length, source) => (*length, *source),
+                ReceivedDatagram::Owned(bytes, source) => (bytes.len(), *source),
+            };
             // Keep the original budget-first short circuit: rejected oversized
             // datagrams are still charged before their shape is examined.
             let wire_refused = self
@@ -916,9 +961,13 @@ impl NativeEndpoint {
                 });
                 continue;
             }
-            if wire[..length].starts_with(handshake_continuation::MAGIC) {
+            let bytes = match &packet {
+                ReceivedDatagram::Borrowed(..) => &wire[..length],
+                ReceivedDatagram::Owned(bytes, _) => bytes.as_slice(),
+            };
+            if bytes.starts_with(handshake_continuation::MAGIC) {
                 if self
-                    .receive_continuation(source, &wire[..length], wall_ms, now, &mut result)
+                    .receive_continuation(source, bytes, wall_ms, now, &mut result)
                     .is_err()
                 {
                     result.rejected_datagrams += 1;
@@ -928,11 +977,8 @@ impl NativeEndpoint {
                 }
                 continue;
             }
-            if wire[..length].starts_with(b"NVHSHK01") {
-                if self
-                    .receive_handshake(source, &wire[..length], wall_ms, now)
-                    .is_err()
-                {
+            if bytes.starts_with(b"NVHSHK01") {
+                if self.receive_handshake(source, bytes, wall_ms, now).is_err() {
                     result.rejected_datagrams += 1;
                     result
                         .rejection_reasons
@@ -940,7 +986,7 @@ impl NativeEndpoint {
                 }
                 continue;
             }
-            if let Some((frame, change)) = self.confirm_reconnect(source, &wire[..length], now) {
+            if let Some((frame, change)) = self.confirm_reconnect(source, bytes, now) {
                 result.frames.push(frame);
                 result.session_changes.extend(change);
                 continue;
@@ -954,7 +1000,11 @@ impl NativeEndpoint {
             };
             let peer = self.peers.get_mut(&index).expect("known native peer");
             if let Some(session) = &mut peer.session {
-                match session.open_route(source, &wire[..length]) {
+                let opened = match packet {
+                    ReceivedDatagram::Borrowed(..) => session.open_route(source, &wire[..length]),
+                    ReceivedDatagram::Owned(bytes, _) => session.open_route_owned(source, bytes),
+                };
+                match opened {
                     Ok(frame)
                         if peer
                             .streams
