@@ -19,8 +19,13 @@ impl StateNodeReader for InitialStateBuilder {
     }
 }
 
+const _: () = assert!(InitialStateBuilder::CHANGES_PER_BATCH * 258 < MAX_STAGED_NODES);
+
 impl InitialStateBuilder {
-    const CHANGES_PER_BATCH: usize = 4096;
+    // The original planner may retain intermediate ancestors for mixed or
+    // repeated changes. A 256-bit path uses at most 256 branches, one leaf and
+    // one collapse survivor: 128 * 258 < its unchanged 65,536-node budget.
+    const CHANGES_PER_BATCH: usize = 128;
 
     pub(crate) fn new() -> Self {
         Self {
@@ -120,5 +125,71 @@ mod tests {
             result.max_batched_puts(),
             InitialStateBuilder::CHANGES_PER_BATCH
         );
+    }
+
+    #[test]
+    fn large_mixed_initialization_matches_original_planner_chunks() -> Result<()> {
+        const LEAVES: u64 = 131_072;
+        let key = |kind: u8, index: u64| {
+            let mut bytes = vec![kind];
+            bytes.extend_from_slice(&index.to_be_bytes());
+            bytes
+        };
+        let mut changes = Vec::new();
+        for index in 0..LEAVES {
+            changes.push(StateChange::Put {
+                key: key(0, index),
+                value: index.to_le_bytes().to_vec(),
+            });
+            if index.is_multiple_of(16) {
+                changes.push(StateChange::Put {
+                    key: key(1, index),
+                    value: vec![7],
+                });
+                changes.push(StateChange::Delete { key: key(1, index) });
+                changes.push(StateChange::Put {
+                    key: key(0, index),
+                    value: (index ^ 0xff).to_le_bytes().to_vec(),
+                });
+            }
+        }
+        let mut builder = InitialStateBuilder::new();
+        builder.extend(changes.iter().cloned())?;
+        let actual = builder.finish()?;
+
+        struct OriginalNodes(BTreeMap<NodeHash, Vec<u8>>);
+        impl StateNodeReader for OriginalNodes {
+            fn read_node(&self, hash: &NodeHash) -> Result<Option<Vec<u8>>> {
+                Ok(self.0.get(hash).cloned())
+            }
+        }
+        let mut reference = OriginalNodes(BTreeMap::new());
+        let mut expected_root = empty_root();
+        for chunk in changes.chunks(64) {
+            let staged = stage_state_update(&reference, expected_root, chunk)?;
+            expected_root = staged.root();
+            reference.0.extend(staged.nodes);
+        }
+        assert_eq!(actual.root(), expected_root);
+        assert_eq!(actual.nodes().len() as u64, LEAVES * 2 - 1);
+        assert!(actual.nodes().len() > MAX_STAGED_NODES);
+        assert!(actual.max_batched_puts() <= InitialStateBuilder::CHANGES_PER_BATCH);
+        let actual_nodes = OriginalNodes(actual.nodes);
+        for index in [0, 17, 65_535, 65_536, LEAVES - 1] {
+            let expected = if index.is_multiple_of(16) {
+                index ^ 0xff
+            } else {
+                index
+            };
+            assert_eq!(
+                read_state_value(&actual_nodes, expected_root, &key(0, index))?,
+                Some(expected.to_le_bytes().to_vec())
+            );
+            assert_eq!(
+                read_state_value(&actual_nodes, expected_root, &key(1, index))?,
+                None
+            );
+        }
+        Ok(())
     }
 }
