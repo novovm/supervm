@@ -4,7 +4,8 @@ use super::{
     datagram::NativeUdpSession,
     endpoint::NativeReceivedFrame,
     fragments::{
-        CompletedMessage, FragmentAdmission, FragmentProfile, Reassembler, ReassemblyLimits,
+        CompletedMessage, FragmentAdmission, FragmentObservation, FragmentProfile, Reassembler,
+        ReassemblyLimits,
     },
     NovoRudpAckFrame, NovoRudpFrameHeader, NovoRudpFrameKind, NovoRudpTransportFrameKindV0,
     NovoRudpTransportFrameV0, NovoRudpWindowConfig,
@@ -86,6 +87,23 @@ impl NativeObjectReceiver {
         frame: &NovoRudpTransportFrameV0,
         now: Instant,
     ) -> Result<FragmentAdmission> {
+        self.accept_open_frame_observed(peer, frame, now, |_| {})
+    }
+    pub(crate) fn accept_received_observed(
+        &mut self,
+        received: &NativeReceivedFrame,
+        now: Instant,
+        observe: impl FnOnce(FragmentObservation),
+    ) -> Result<FragmentAdmission> {
+        self.accept_open_frame_observed(received.peer_id(), received.frame(), now, observe)
+    }
+    fn accept_open_frame_observed(
+        &mut self,
+        peer: &str,
+        frame: &NovoRudpTransportFrameV0,
+        now: Instant,
+        observe: impl FnOnce(FragmentObservation),
+    ) -> Result<FragmentAdmission> {
         ensure!(
             frame.stream_id == self.stream
                 && matches!(
@@ -101,7 +119,8 @@ impl NativeObjectReceiver {
                     == u64::from(u32::from_be_bytes(frame.payload[76..80].try_into()?)),
             "object/index binding mismatch"
         );
-        self.objects.push(peer, &frame.payload, now)
+        self.objects
+            .push_observed(peer, &frame.payload, now, observe)
     }
     /// Caller reserves an output slot before taking custody of the owned chunks.
     pub fn poll_complete(

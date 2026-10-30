@@ -19,6 +19,69 @@ fn request(node: &NativeLifecycle, index: u64) -> Result<PreparedMessage> {
 }
 
 #[test]
+#[ignore = "real AOEM/native sender; new send admission refreshes idle hint once"]
+fn native_delivery_admission_refreshes_idle_hint_once() -> Result<()> {
+    use crate::native_pipeline::service::rpc::IdleBackoff;
+    with_delivery_lifecycle_for_test(|node, _| {
+        let start = Instant::now();
+        let now = start + Duration::from_micros(250);
+        let mut idle = IdleBackoff::new(start);
+        ensure!(idle.should_sleep(now, false));
+        let quiet = node.channel.poll_io(1000, now, 64)?;
+        ensure!(
+            quiet.accepted_fragments == 0
+                && quiet.data_sent == 0
+                && quiet.completed.is_empty()
+                && quiet.session_changes.is_empty(),
+            "fixture I/O not drained before admission observation"
+        );
+        ensure!(node.pending_deliveries() == 0);
+        let wire = request(node, 0x535041)?;
+        ensure!(wire.byte_len() <= novovm_network::novorudp::fragments::UDP_CHUNK_BYTES);
+        ensure!(node.enqueue(0, wire.clone()));
+        ensure!(!node.deliveries[0][0].admitted);
+        let count = node.pending_deliveries();
+        let before = node.io_progress_generation();
+        node.poll_io(1000, now)?;
+        ensure!(
+            node.deliveries[0][0].admitted,
+            "no original native send handle"
+        );
+        ensure!(node.pending_deliveries() == count, "queue size changed");
+        let after = node.io_progress_generation();
+        ensure!(
+            !idle.should_sleep(now, before != after),
+            "new runnable send was classified idle before its first packet"
+        );
+        ensure!(
+            after == before.wrapping_add(1),
+            "admission is one bounded transition"
+        );
+        let sent = node.channel.poll_io(1000, now, 64)?;
+        ensure!(
+            sent.data_sent > 0,
+            "new handle had no immediately runnable first send"
+        );
+        ensure!(
+            sent.completed.is_empty(),
+            "unpolled peer fabricated completion"
+        );
+        let waiting = node.io_progress_generation();
+        for _ in 0..64 {
+            ensure!(node.enqueue(0, wire.clone()));
+            node.poll_io(1000, now)?;
+            ensure!(node.pending_deliveries() == count);
+            ensure!(
+                node.io_progress_generation() == waiting,
+                "pending/deduplicated handle sustained fake progress"
+            );
+        }
+        ensure!(idle.should_sleep(now + Duration::from_micros(250), false));
+        Ok(())
+    })
+}
+
+#[test]
 fn native_control_reserve_tracks_signed_evidence_not_expanded_body_capacity() -> Result<()> {
     let small = DecodeLimits {
         transactions: 1024,

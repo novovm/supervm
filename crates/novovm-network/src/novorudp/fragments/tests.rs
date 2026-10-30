@@ -679,6 +679,56 @@ fn duplicate_and_new_chunks_do_not_extend_original_ttl() {
 }
 
 #[test]
+fn observed_reassembly_does_not_combine_expired_generations_or_count_duplicates() {
+    use super::super::diagnostics::NativeTransferDiagnosticsV1;
+    let now = Instant::now();
+    let outgoing = message(CHUNK_BYTES * 2 + 17, 1);
+    let mut receiver = receiver().with_completion_history();
+    let observer = NativeTransferDiagnosticsV1::new();
+    let tag = outgoing.id();
+    let mut accept = |index, at, repair| {
+        receiver
+            .push_observed(PEERS[0], &outgoing.frame(index).unwrap(), at, |fact| {
+                observer.fragment(tag, fact, index as u64, repair, at)
+            })
+            .unwrap()
+    };
+    assert_eq!(accept(0, now, false), FragmentAdmission::Accepted);
+    assert_eq!(accept(0, now, true), FragmentAdmission::Duplicate);
+    let later = now + limits().ttl;
+    assert_eq!(accept(1, later, false), FragmentAdmission::Accepted);
+    assert_eq!(accept(2, later, false), FragmentAdmission::Accepted);
+    let partial = observer.snapshot_transfer(tag).unwrap();
+    assert_eq!(partial.assemblies_started, 2);
+    assert_eq!(partial.fragments, 2);
+    assert_eq!(partial.duplicate_repair, 1);
+    assert!(partial.fragments_complete_us.is_none());
+    assert_eq!(accept(0, later, true), FragmentAdmission::Accepted);
+    assert_eq!(accept(0, later, false), FragmentAdmission::Duplicate);
+    let complete = observer.snapshot_transfer(tag).unwrap();
+    assert_eq!(complete.fragments, 3);
+    assert_eq!(complete.repair_fragments, 1);
+    assert_eq!(complete.duplicate_data, 1);
+    assert!(complete.fragments_complete_us.is_some());
+    assert!(receiver.poll_complete(later, 64).unwrap().is_some());
+    assert_eq!(
+        receiver
+            .push_observed(PEERS[0], &outgoing.frame(1).unwrap(), later, |fact| {
+                observer.fragment(tag, fact, 1, true, later)
+            })
+            .unwrap(),
+        FragmentAdmission::Duplicate
+    );
+    assert_eq!(
+        observer
+            .snapshot_transfer(tag)
+            .unwrap()
+            .completed_history_hits,
+        1
+    );
+}
+
+#[test]
 fn expiration_releases_only_expired_messages_and_push_reclaims_capacity() {
     let now = Instant::now();
     let ttl = limits().ttl;

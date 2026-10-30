@@ -3,6 +3,11 @@
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 
+#[cfg(windows)]
+mod poll_timer;
+#[cfg(windows)]
+pub use poll_timer::NativePollTimer;
+
 #[cfg(target_os = "linux")]
 use std::mem;
 #[cfg(target_os = "linux")]

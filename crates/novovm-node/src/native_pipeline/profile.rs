@@ -309,8 +309,12 @@ pub(crate) enum Phase {
     BodyCharge,
     NativeIoGap,
     NativeIoPeriod,
+    TickStatus,
+    TickEncode,
+    TickWrite,
+    TickOutput,
 }
-const NAMES: [&str; 39] = [
+const NAMES: [&str; 43] = [
     "admission",
     "authentication",
     "bind",
@@ -350,6 +354,10 @@ const NAMES: [&str; 39] = [
     "body_charge",
     "native_io_gap",
     "native_io_period",
+    "tick_status",
+    "tick_encode",
+    "tick_write",
+    "tick_output",
 ];
 struct Counter {
     calls: AtomicU64,
@@ -638,7 +646,7 @@ mod tests {
         counter.record(1);
         assert_eq!(counter.ns.load(Ordering::Relaxed), u64::MAX);
         assert_eq!(counter.max_ns.load(Ordering::Relaxed), u64::MAX);
-        assert_eq!(Phase::NativeIoPeriod as usize + 1, NAMES.len());
+        assert_eq!(Phase::TickOutput as usize + 1, NAMES.len());
     }
 
     #[test]

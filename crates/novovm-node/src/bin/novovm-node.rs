@@ -44207,6 +44207,14 @@ fn run_native_execution_tick_node_mode_v1(
     let product_run_ms = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_RUN_MS")
         .map(|v| v.parse::<u64>())
         .transpose()?;
+    // Keep the original park/unpark owner and watchdog. The Windows CPU path
+    // measured about 11 ms for a requested 1 ms park, unlike the GPU process.
+    #[cfg(windows)]
+    let _native_poll_timer = if configured_product {
+        Some(novovm_udp_batch::NativePollTimer::new()?)
+    } else {
+        None
+    };
     // Parse every setting before activating the signer and resident owners.
     let mut udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
     if configured_product {
@@ -44231,15 +44239,23 @@ fn run_native_execution_tick_node_mode_v1(
             if last_progress_report_at.elapsed()
                 >= Duration::from_millis(progress_report_interval_ms)
             {
-                let mut status = product.status();
+                use novovm_node::native_pipeline::service::rpc::{observe_tick, TickStage};
+                let mut status = observe_tick(TickStage::Status, || product.status());
                 status["entry"] = serde_json::json!("original_native_execution_tick");
                 status["ticks"] = serde_json::json!(ticks);
                 if let Some(path) = &progress_report_path {
                     let saved = (|| -> Result<()> {
-                        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                            fs::create_dir_all(parent)?;
-                        }
-                        fs::write(path, serde_json::to_vec_pretty(&status)?)?;
+                        let encoded =
+                            observe_tick(TickStage::Encode, || serde_json::to_vec_pretty(&status))?;
+                        observe_tick(TickStage::Write, || -> Result<()> {
+                            if let Some(parent) =
+                                path.parent().filter(|p| !p.as_os_str().is_empty())
+                            {
+                                fs::create_dir_all(parent)?;
+                            }
+                            fs::write(path, encoded)?;
+                            Ok(())
+                        })?;
                         Ok(())
                     })();
                     if let Err(error) = saved {
@@ -44251,7 +44267,7 @@ fn run_native_execution_tick_node_mode_v1(
                     }
                 }
                 if verbose {
-                    println!("{}", status);
+                    observe_tick(TickStage::Output, || println!("{}", status));
                 }
                 last_progress_report_at = Instant::now();
             }
@@ -44265,9 +44281,15 @@ fn run_native_execution_tick_node_mode_v1(
             if product_idle.should_sleep(Instant::now(), progressed) {
                 // Existing owner completions unpark the original tick. Network
                 // arrivals still get the same bounded 1ms polling watchdog.
-                std::thread::park_timeout(Duration::from_millis(1));
+                novovm_node::native_pipeline::service::rpc::observe_tick(
+                    novovm_node::native_pipeline::service::rpc::TickStage::Idle,
+                    || std::thread::park_timeout(Duration::from_millis(1)),
+                );
             } else if !progressed {
-                std::thread::yield_now();
+                novovm_node::native_pipeline::service::rpc::observe_tick(
+                    novovm_node::native_pipeline::service::rpc::TickStage::Yield,
+                    std::thread::yield_now,
+                );
             }
             continue;
         }

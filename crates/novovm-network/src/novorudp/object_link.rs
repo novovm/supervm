@@ -765,30 +765,35 @@ impl NativeObjectLink {
                     }
                 }
             } else {
-                match lane.receiver.accept_received(&received, now) {
-                    Ok(FragmentAdmission::Backpressure) => report.backpressured += 1,
-                    Ok(admission) => {
-                        if admission == FragmentAdmission::Accepted {
-                            report.accepted_fragments += 1;
+                let admission =
+                    lane.receiver
+                        .accept_received_observed(&received, now, |observation| {
                             if let Some(d) = self
                                 .diagnostics
                                 .as_ref()
                                 .filter(|d| d.tracks_stream(stream))
                             {
+                                // The callback only runs after the original binding/shape checks.
                                 d.fragment(
                                     transfer_tag_v1(
                                         frame.session_id,
                                         stream,
-                                        frame.payload[40..72].try_into()?,
+                                        frame.payload[40..72]
+                                            .try_into()
+                                            .expect("validated fragment"),
                                     ),
-                                    u32::from_be_bytes(frame.payload[72..76].try_into()?)
-                                        .div_ceil(super::fragments::UDP_CHUNK_BYTES as u32)
-                                        as u64,
+                                    observation,
                                     frame.sequence,
                                     frame.kind == NovoRudpTransportFrameKindV0::Repair,
                                     Instant::now(),
                                 );
                             }
+                        });
+                match admission {
+                    Ok(FragmentAdmission::Backpressure) => report.backpressured += 1,
+                    Ok(admission) => {
+                        if admission == FragmentAdmission::Accepted {
+                            report.accepted_fragments += 1;
                         } else {
                             report.duplicate_fragments += 1;
                         }
@@ -819,7 +824,10 @@ impl NativeObjectLink {
         }
         self.poll_feedback(now, quantum, &mut report)?;
         // Fair across retained jobs, with no per-object wait for an ACK.
+        let queued = self.order.len();
+        let mut visited = 0;
         for _ in 0..quantum.min(self.order.len()) {
+            visited += 1;
             let key = self.order.pop_front().expect("bounded job count");
             let sender = self.jobs.get_mut(&key).expect("retained send job");
             let cancelled = self
@@ -935,6 +943,15 @@ impl NativeObjectLink {
             });
         }
         // ACK-first alone can starve data, and data-first alone can starve ACKs.
+        if let Some(d) = &self.diagnostics {
+            d.send_poll(
+                queued,
+                visited,
+                quantum,
+                report.data_sent,
+                self.endpoint.uses_deferred_writes(),
+            );
+        }
         // A deferred completion releases one slot: give feedback one bounded
         // opportunity after data completion instead of queuing another body.
         if self.endpoint.uses_deferred_writes()

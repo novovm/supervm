@@ -344,7 +344,7 @@ impl NativeChannel {
             }
         }
         if admitted {
-            self.io_progress.advance();
+            self.note_send_admission();
         }
         Ok(report)
     }

@@ -312,6 +312,16 @@ impl NativeLifecycle {
     pub fn io_progress_generation(&self) -> u64 {
         self.channel.io_progress_generation()
     }
+    pub(crate) fn send_poll_evidence(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeLinkPollEvidenceV1> {
+        self.channel.send_poll_evidence()
+    }
+    pub(crate) fn receive_totals(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeReceiveTotalsV1> {
+        self.channel.receive_totals()
+    }
     pub fn is_frozen(&self) -> bool {
         self.frozen || self.progress.is_frozen() || self.bodies.is_frozen()
     }
@@ -441,6 +451,7 @@ impl NativeLifecycle {
                 attempted[lane] = true;
                 if self.channel.try_send(peer, &delivery.prepared, now)? {
                     delivery.admitted = true;
+                    self.channel.note_send_admission();
                     crate::native_pipeline::profile::delivery_event(
                         "admitted",
                         delivery.prepared.height().unwrap_or(0),

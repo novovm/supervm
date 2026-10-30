@@ -1,0 +1,7 @@
+
+running 1 test
+native actual AAB artifacts=D:\WorksArea\SUPERVM\target\native-product-rpc\native-aab-25916-1793323325948733100
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::aab::native_only_a_a_b_real_honest_signers_recover_and_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1780 filtered out; finished in 17.40s
+

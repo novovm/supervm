@@ -35,6 +35,36 @@ const RECENT_RECEIPTS: usize = 65_536;
 // Cache working set, not a lifetime limit on chain accounts/nonce subjects.
 const NONCE_CACHE_ENTRIES: usize = MAX_POOL;
 
+/// The original binary tick shares the node's opt-in stage counters.
+pub enum TickStage {
+    Status,
+    Encode,
+    Write,
+    Output,
+    Idle,
+    Yield,
+}
+
+pub fn observe_tick<T>(stage: TickStage, run: impl FnOnce() -> T) -> T {
+    use crate::native_pipeline::profile::{self, Phase};
+    let phase = match stage {
+        TickStage::Status => Phase::TickStatus,
+        TickStage::Encode => Phase::TickEncode,
+        TickStage::Write => Phase::TickWrite,
+        TickStage::Output => Phase::TickOutput,
+        TickStage::Idle => Phase::Idle,
+        TickStage::Yield => Phase::Yield,
+    };
+    let start = profile::mark();
+    let result = run();
+    if matches!(stage, TickStage::Idle | TickStage::Yield) {
+        profile::elapsed(phase, start);
+    } else {
+        profile::work(phase, start, 0, None, None);
+    }
+    result
+}
+
 /// Bounded cooperative handoff after real progress, then the original sleep.
 /// Pending work alone cannot refresh the bound (offline peers/nonce gaps/slow
 /// native owners must not cause an indefinite busy loop).
@@ -1150,6 +1180,8 @@ impl RpcLifecycle {
             "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
         if crate::native_pipeline::profile::asset_enabled() {
+            status["native_send_polls"] = json!(core.send_poll_evidence());
+            status["native_receive_totals"] = json!(core.receive_totals());
             status["native_receiver_queue"] =
                 json!(novovm_network::snapshot_network_runtime_receiver_queue_v1(
                     self.node.template.chain_id

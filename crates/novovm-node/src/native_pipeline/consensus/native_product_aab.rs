@@ -36,6 +36,7 @@ struct Observation {
     sessions: usize,
     votes: BTreeMap<String, Vote>,
     error: Option<String>,
+    delivery: VecDeque<Value>,
 }
 
 struct FaultPeer {
@@ -146,6 +147,17 @@ impl FaultPeer {
                     },
                 )?;
                 let mut pending: VecDeque<(usize, PreparedMessage)> = VecDeque::new();
+                let origin = Instant::now();
+                let record = |event: Value| -> Result<()> {
+                    let mut observation = state
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("fault observer poisoned"))?;
+                    if observation.delivery.len() == 128 {
+                        observation.delivery.pop_front();
+                    }
+                    observation.delivery.push_back(event);
+                    Ok(())
+                };
                 // Same configured-peer possession boundary as the product:
                 // ordinary AEAD traffic confirms responders. Do not wait for
                 // every session before sending on already-ready initiators.
@@ -162,9 +174,18 @@ impl FaultPeer {
                             break;
                         };
                         ensure!(pending.len() < 32, "fault fixture outbound budget");
-                        pending.push_back((peer, channel.prepare(&message)?));
+                        let prepared = channel.prepare(&message)?;
+                        record(json!({"stage":"prepared","peer":peer,
+                            "lane":prepared.lane(),"fragment":prepared.fragment_id(),
+                            "us":origin.elapsed().as_micros()}))?;
+                        pending.push_back((peer, prepared));
                     }
-                    let _ = channel.poll_io(wall_ms()?, now, 64)?;
+                    let report = channel.poll_io(wall_ms()?, now, 64)?;
+                    for completion in report.completed {
+                        record(json!({"stage":"terminal","peer":completion.peer,
+                            "fragment":completion.body.id(),"state":format!("{:?}",completion.state),
+                            "us":origin.elapsed().as_micros()}))?;
+                    }
                     state
                         .lock()
                         .map_err(|_| anyhow::anyhow!("fault observer poisoned"))?
@@ -175,6 +196,10 @@ impl FaultPeer {
                         let (peer, prepared) = pending.pop_front().unwrap();
                         if !channel.try_send(peer, &prepared, now)? {
                             pending.push_back((peer, prepared));
+                        } else {
+                            record(json!({"stage":"admitted","peer":peer,
+                                "lane":prepared.lane(),"fragment":prepared.fragment_id(),
+                                "us":origin.elapsed().as_micros()}))?;
                         }
                     }
                     for _ in 0..24 {
@@ -230,7 +255,11 @@ impl FaultPeer {
                                         })
                                         .context("body requester unknown")?;
                                     ensure!(pending.len() < 32, "fault fixture body budget");
-                                    pending.push_back((peer, channel.prepare(body)?));
+                                    let reply = channel.prepare_recovery_reply(body)?;
+                                    record(json!({"stage":"requested_body","peer":peer,
+                                        "body":body_id,"fragment":reply.fragment_id(),
+                                        "us":origin.elapsed().as_micros()}))?;
+                                    pending.push_back((peer, reply));
                                 }
                             }
                             _ => {} // No faulty vote, journal, decision or QC.
@@ -691,6 +720,34 @@ fn native_only_a_a_b_real_honest_signers_recover_and_restart() -> Result<()> {
             evidence["phase"] = json!("inject_original_round_zero_equivocation");
             let selected = usize::from(peer == 2);
             fault.send(peer, &bodies[selected].2)?;
+            // Deliberately finish the unsolicited regular body first. Its
+            // transport DONE is not application admission; the later proposal
+            // must obtain the same body through the original recovery reply.
+            let body_deadline = Instant::now() + Duration::from_secs(4);
+            loop {
+                nodes.alive()?;
+                let observed = fault.snapshot()?;
+                let delivered = observed.delivery.iter().any(|prepared| {
+                    prepared["stage"] == "prepared"
+                        && prepared["peer"] == peer
+                        && prepared["lane"] == 1
+                        && observed.delivery.iter().any(|terminal| {
+                            terminal["stage"] == "terminal"
+                                && terminal["peer"] == peer
+                                && terminal["state"] == "Delivered"
+                                && terminal["fragment"] == prepared["fragment"]
+                        })
+                });
+                if delivered {
+                    break;
+                }
+                ensure!(
+                    Instant::now() < body_deadline,
+                    "AAB unsolicited body not delivered"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let body_delivered_ms = started.elapsed().as_millis();
             fault.send(peer, &proposals[selected])?;
             let injection_queued_ms = started.elapsed().as_millis();
             let deadline = Instant::now() + Duration::from_secs(4);
@@ -714,6 +771,7 @@ fn native_only_a_a_b_real_honest_signers_recover_and_restart() -> Result<()> {
                             "node":index,"peer":peer,"before":before,
                             "ready_from_spawn_ms":ready_ms,
                             "wallet_delivered_from_spawn_ms":wallet_delivered_ms,
+                            "unsolicited_body_delivered_from_spawn_ms":body_delivered_ms,
                             "injection_queued_from_spawn_ms":injection_queued_ms,
                             "elapsed_from_spawn_ms":started.elapsed().as_millis(),
                             "wallet_b_supplied_before_proposal":true,"prevote":vote
@@ -893,13 +951,15 @@ fn native_only_a_a_b_real_honest_signers_recover_and_restart() -> Result<()> {
             json!(fault.snapshot()?.votes.values().collect::<Vec<_>>());
         evidence["completed"] = json!(true);
         evidence["phase"] = json!("complete");
+        evidence["fault_delivery"] = json!(fault.snapshot()?.delivery);
         Ok(())
     })();
     if let Err(error) = &result {
         evidence["failure"] = json!(format!("{error:#}"));
         evidence["last_fault_observation"] = match fault.snapshot() {
             Ok(value) => {
-                json!({"sessions":value.sessions,"honest_votes":value.votes.values().collect::<Vec<_>>()})
+                json!({"sessions":value.sessions,"honest_votes":value.votes.values().collect::<Vec<_>>(),
+                    "delivery":value.delivery})
             }
             Err(error) => json!({"error":format!("{error:#}")}),
         };

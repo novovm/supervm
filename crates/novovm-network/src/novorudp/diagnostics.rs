@@ -92,6 +92,13 @@ pub struct NativeTransferEvidenceV1 {
     pub transport_done_us: Option<u64>,
     pub response_validated_us: Option<u64>,
     pub fragments: u64,
+    pub assemblies_started: u64,
+    pub assembly_start_observed: bool,
+    /// Cumulative over the retained tag, unlike the current assembly's fragments.
+    pub duplicate_data: u64,
+    pub duplicate_repair: u64,
+    /// Shape-checked completed-history hits, not a bytewise payload comparison.
+    pub completed_history_hits: u64,
     pub total_fragments: Option<u64>,
     pub first_fragment_us: Option<u64>,
     pub last_fragment_us: Option<u64>,
@@ -139,6 +146,7 @@ pub struct NativeFeedbackWindowV1 {
 /// Actual completed carrier writes, not queue admission or prepared frames.
 #[derive(Clone, Debug, Serialize)]
 pub struct NativeSendEvidenceV1 {
+    pub polls: NativeSendPollEvidenceV1,
     pub initial_packets: u64,
     pub repair_packets: u64,
     pub probe_packets: u64,
@@ -155,10 +163,48 @@ pub struct NativeSendEvidenceV1 {
     pub last_probe_us: Option<u64>,
     pub last_repair_index: Option<u64>,
 }
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct NativeSendPollEvidenceV1 {
+    pub calls: u64,
+    pub offered_budget: u64,
+    pub initial_calls: u64,
+    pub initial_max_gap_us: u64,
+    pub pacing_wait: u64,
+    pub feedback_wait: u64,
+    pub backoff_wait: u64,
+    pub send_blocked: u64,
+    pub udp_would_block: u64,
+    pub batch_limited: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct NativeLinkPollEvidenceV1 {
+    pub active_calls: u64,
+    pub offered_budget: u64,
+    pub reported_data_writes: u64,
+    pub jobs_visited: u64,
+    pub jobs_unvisited: u64,
+    pub budget_exhausted: u64,
+    pub deferred_yield: u64,
+    pub visit_cap: u64,
+    pub one_pass_end: u64,
+}
+/// Counts continue after object handoff and are not truncated by object eviction.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct NativeReceiveTotalsV1 {
+    pub accepted_data: u64,
+    pub accepted_repair: u64,
+    pub duplicate_data: u64,
+    pub duplicate_repair: u64,
+    pub history_data: u64,
+    pub history_repair: u64,
+}
 /// Retained only by an explicitly observed sender. Publishing once per poll
 /// avoids taking the observer lock for every datagram in that send quantum.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct NativeSendProgressV1 {
+    pub polls: NativeSendPollEvidenceV1,
+    pub last_poll: Option<Instant>,
     pub initial_packets: u64,
     pub repair_packets: u64,
     pub probe_packets: u64,
@@ -187,6 +233,9 @@ pub struct NativeEvidenceSnapshotV1 {
     pub evicted_records: u64,
     pub expired_records: u64,
     pub objects: Vec<NativeTransferEvidenceV1>,
+    /// All link lanes, independent of the per-object stream filter.
+    pub send_polls: NativeLinkPollEvidenceV1,
+    pub receive_totals: NativeReceiveTotalsV1,
 }
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct NativeEvidenceRetentionV1 {
@@ -246,6 +295,11 @@ impl State {
                     transport_done_us: None,
                     response_validated_us: None,
                     fragments: 0,
+                    assemblies_started: 0,
+                    assembly_start_observed: false,
+                    duplicate_data: 0,
+                    duplicate_repair: 0,
+                    completed_history_hits: 0,
                     total_fragments: None,
                     first_fragment_us: None,
                     last_fragment_us: None,
@@ -286,6 +340,8 @@ impl NativeTransferDiagnosticsV1 {
                 rejections: NativeRejectCountsV1::default(), first_unattributed_reject_us: None,
                 last_unattributed_reject_us: None, omitted_records: 0,
                 evicted_records: 0, expired_records: 0, objects: Vec::new(),
+                send_polls: NativeLinkPollEvidenceV1::default(),
+                receive_totals: NativeReceiveTotalsV1::default(),
             }, records: VecDeque::new(),
         }) }
     }
@@ -318,6 +374,36 @@ impl NativeTransferDiagnosticsV1 {
             s.snapshot.first_unattributed_reject_us.get_or_insert(at);
             s.snapshot.last_unattributed_reject_us = Some(at);
             s.snapshot.rejections.merge(counts);
+        }
+    }
+    pub(crate) fn send_poll(
+        &self,
+        queued: usize,
+        visited: usize,
+        budget: usize,
+        written: usize,
+        deferred: bool,
+    ) {
+        if queued == 0 {
+            return;
+        }
+        let Ok(mut s) = self.state.lock() else { return };
+        let p = &mut s.snapshot.send_polls;
+        p.active_calls = p.active_calls.saturating_add(1);
+        p.offered_budget = p.offered_budget.saturating_add(budget as u64);
+        p.reported_data_writes = p.reported_data_writes.saturating_add(written as u64);
+        p.jobs_visited = p.jobs_visited.saturating_add(visited as u64);
+        p.jobs_unvisited = p
+            .jobs_unvisited
+            .saturating_add(queued.saturating_sub(visited) as u64);
+        if written == budget {
+            p.budget_exhausted = p.budget_exhausted.saturating_add(1);
+        } else if deferred && written > 0 {
+            p.deferred_yield = p.deferred_yield.saturating_add(1);
+        } else if visited < queued {
+            p.visit_cap = p.visit_cap.saturating_add(1);
+        } else {
+            p.one_pass_end = p.one_pass_end.saturating_add(1);
         }
     }
     pub(crate) fn progress(
@@ -382,22 +468,68 @@ impl NativeTransferDiagnosticsV1 {
     pub(crate) fn fragment(
         &self,
         tag: [u8; 32],
-        total: u64,
+        observation: super::fragments::FragmentObservation,
         index: u64,
         repair: bool,
         now: Instant,
     ) {
         let Ok(mut s) = self.state.lock() else { return };
         let at = self.micros(now);
+        use super::fragments::FragmentObservation;
+        let totals = &mut s.snapshot.receive_totals;
+        let count = match (observation, repair) {
+            (FragmentObservation::Accepted { .. }, false) => &mut totals.accepted_data,
+            (FragmentObservation::Accepted { .. }, true) => &mut totals.accepted_repair,
+            (FragmentObservation::Duplicate { completed: false }, false) => {
+                &mut totals.duplicate_data
+            }
+            (FragmentObservation::Duplicate { completed: false }, true) => {
+                &mut totals.duplicate_repair
+            }
+            (FragmentObservation::Duplicate { completed: true }, false) => &mut totals.history_data,
+            (FragmentObservation::Duplicate { completed: true }, true) => {
+                &mut totals.history_repair
+            }
+        };
+        *count = count.saturating_add(1);
         let Some(r) = s.record(tag, at) else { return };
+        let super::fragments::FragmentObservation::Accepted {
+            started,
+            received,
+            total,
+        } = observation
+        else {
+            if matches!(
+                observation,
+                super::fragments::FragmentObservation::Duplicate { completed: true }
+            ) {
+                r.completed_history_hits = r.completed_history_hits.saturating_add(1);
+            } else if repair {
+                r.duplicate_repair = r.duplicate_repair.saturating_add(1);
+            } else {
+                r.duplicate_data = r.duplicate_data.saturating_add(1);
+            }
+            return;
+        };
+        if started {
+            r.assemblies_started = r.assemblies_started.saturating_add(1);
+            r.assembly_start_observed = true;
+            r.first_fragment_us = None;
+            r.fragments_complete_us = None;
+            r.repair_fragments = 0;
+            r.hash_chunks = 0;
+            r.first_hash_us = None;
+            r.last_hash_us = None;
+            r.verified_us = None;
+        }
         r.last_progress_us = at;
-        r.fragments = r.fragments.saturating_add(1);
-        r.total_fragments.get_or_insert(total);
+        r.fragments = received as u64;
+        r.total_fragments = Some(total as u64);
         r.first_fragment_us.get_or_insert(at);
         r.last_fragment_us = Some(at);
         r.last_fragment_index = Some(index);
         r.repair_fragments = r.repair_fragments.saturating_add(u64::from(repair));
-        if r.fragments == total {
+        if received == total {
             r.fragments_complete_us.get_or_insert(at);
         }
     }
@@ -414,6 +546,7 @@ impl NativeTransferDiagnosticsV1 {
             r.last_progress_us = r.last_progress_us.max(self.micros(last));
         }
         r.send = Some(NativeSendEvidenceV1 {
+            polls: p.polls,
             initial_packets: p.initial_packets,
             repair_packets: p.repair_packets,
             probe_packets: p.probe_packets,
@@ -514,6 +647,12 @@ impl NativeTransferDiagnosticsV1 {
     pub fn snapshot_rejections(&self) -> Option<NativeRejectCountsV1> {
         Some(self.state.lock().ok()?.snapshot.rejections)
     }
+    pub fn snapshot_send_polls(&self) -> Option<NativeLinkPollEvidenceV1> {
+        Some(self.state.lock().ok()?.snapshot.send_polls.clone())
+    }
+    pub fn snapshot_receive_totals(&self) -> Option<NativeReceiveTotalsV1> {
+        Some(self.state.lock().ok()?.snapshot.receive_totals)
+    }
     fn snapshot_at(&self, now: Instant) -> Option<NativeEvidenceSnapshotV1> {
         let mut s = self.state.lock().ok()?;
         s.expire(self.micros(now));
@@ -573,8 +712,29 @@ mod tests {
         let now = d.origin;
         assert!(d.tracks_stream(11));
         assert!(!d.tracks_stream(12));
-        d.fragment(tag, 2, 1, false, now);
-        d.fragment(tag, 2, 0, true, now + Duration::from_millis(7));
+        use super::super::fragments::FragmentObservation::Accepted;
+        d.fragment(
+            tag,
+            Accepted {
+                started: true,
+                received: 1,
+                total: 2,
+            },
+            1,
+            false,
+            now,
+        );
+        d.fragment(
+            tag,
+            Accepted {
+                started: false,
+                received: 2,
+                total: 2,
+            },
+            0,
+            true,
+            now + Duration::from_millis(7),
+        );
         let complete = d.snapshot_transfer(tag).unwrap();
         assert_eq!(complete.first_fragment_us, Some(0));
         assert_eq!(complete.fragments_complete_us, Some(7000));
@@ -609,6 +769,22 @@ mod tests {
         assert_eq!(expired.elapsed_us, 120_000_000);
         assert_eq!(expired.expired_records, 1);
         assert!(d.snapshot_transfer(tag).is_none());
+        // Completed-history packets arrive after the first handoff snapshot;
+        // stream totals must retain them even after the object record expires.
+        use super::super::fragments::FragmentObservation::Duplicate;
+        d.fragment(
+            tag,
+            Duplicate { completed: true },
+            0,
+            true,
+            now + Duration::from_secs(121),
+        );
+        let totals = d.snapshot_receive_totals().unwrap();
+        assert_eq!(totals.accepted_data, 1);
+        assert_eq!(totals.accepted_repair, 1);
+        assert_eq!(totals.history_repair, 1);
+        assert_eq!(totals.duplicate_repair, 0);
+        assert_eq!(complete.completed_history_hits, 0);
     }
     #[test]
     fn authenticated_session_salts_tags_and_progress_never_follows_repeat_ack() {

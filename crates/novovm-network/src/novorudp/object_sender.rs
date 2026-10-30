@@ -308,6 +308,21 @@ impl NativeObjectSender {
             session.session_id() == self.session,
             "object sender session changed"
         );
+        if let Some(p) = &mut self.diagnostic_progress {
+            p.polls.calls = p.polls.calls.saturating_add(1);
+            p.polls.offered_budget = p.polls.offered_budget.saturating_add(budget as u64);
+            if self.initial < self.body.frame_count() {
+                p.polls.initial_calls = p.polls.initial_calls.saturating_add(1);
+                if let Some(last) = p.last_poll {
+                    p.polls.initial_max_gap_us = p.polls.initial_max_gap_us.max(
+                        now.saturating_duration_since(last)
+                            .as_micros()
+                            .min(u128::from(u64::MAX)) as u64,
+                    );
+                }
+            }
+            p.last_poll = Some(now);
+        }
         if self.terminal != ObjectSendState::Sending {
             return Ok(0);
         }
@@ -316,6 +331,9 @@ impl NativeObjectSender {
             return Ok(0);
         }
         if now < self.next_send {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.pacing_wait = p.polls.pacing_wait.saturating_add(1);
+            }
             return Ok(0);
         }
         let initial = self.initial < self.body.frame_count();
@@ -341,11 +359,17 @@ impl NativeObjectSender {
         };
         let retry = ordinary_retry || gap_plan.is_some();
         if idle_cursor && !initial && !retry {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.feedback_wait = p.polls.feedback_wait.saturating_add(1);
+            }
             return Ok(0);
         }
         let backoff = self.attempts >= self.config.max_window_retries
             && (self.config.no_progress_backoff || self.pacing.no_progress_backoff);
         if retry && backoff && !initial {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.backoff_wait = p.polls.backoff_wait.saturating_add(1);
+            }
             // Suppress repeated no-progress work, not the retained intent.
             // Fresh progress reopens the cursor; only its explicit TTL expires it.
             return Ok(0);
@@ -441,6 +465,12 @@ impl NativeObjectSender {
             }
             let pending = self.pending.as_ref().expect("prepared native frame");
             if !session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())? {
+                if let Some(p) = &mut self.diagnostic_progress {
+                    p.polls.send_blocked = p.polls.send_blocked.saturating_add(1);
+                    if wire_budget.is_none() && !io.deferred_writes() {
+                        p.polls.udp_would_block = p.polls.udp_would_block.saturating_add(1);
+                    }
+                }
                 break;
             }
             let pending = self.pending.take().expect("completed native frame");
@@ -543,6 +573,11 @@ impl NativeObjectSender {
             // pending feedback can run before this object queues another frame.
             if io.deferred_writes() {
                 break;
+            }
+        }
+        if sent == batch && batch < budget {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.batch_limited = p.polls.batch_limited.saturating_add(1);
             }
         }
         if sent > 0 {

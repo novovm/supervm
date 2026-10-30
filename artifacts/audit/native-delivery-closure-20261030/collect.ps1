@@ -1,4 +1,5 @@
-param([Parameter(Mandatory)][string]$Report,[Parameter(Mandatory)][string]$Name)
+param([Parameter(Mandatory)][string]$Report,[Parameter(Mandatory)][string]$Name,
+    [string]$OutputDirectory = $PSScriptRoot)
 $ErrorActionPreference = 'Stop'
 $path = (Resolve-Path -LiteralPath $Report).Path
 $raw = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json
@@ -15,11 +16,26 @@ $rounds = foreach ($row in $rows) {
         timing=$r.timing;canonical_body_budget=$r.canonical_body_budget;wire_message_budget=$r.wire_message_budget;
         grant_expires_at_height=$r.grant_expires_at_height;static_intent_window=$r.static_intent_window;
         cold_counts=$r.cold_counts;recovered=@($r.recovered)
+        diagnostic_counters=$(if ($r.final_local_progress) {
+            [ordered]@{
+                status=$r.final_local_progress.status;scope=$r.final_local_progress.scope;
+                nodes=@(foreach ($n in $r.final_local_progress.nodes) {
+                    [ordered]@{
+                        node_index=$n.node_index;matched_final_head=$n.matched_final_head;
+                        phase_scope=$n.snapshot.stage_profile.scope;
+                        phases=$n.snapshot.stage_profile.phases;
+                        send_polls=$n.snapshot.native_send_polls;
+                        receive_totals=$n.snapshot.native_receive_totals
+                    }
+                })
+            }
+        })
     }
 }
-$zip = Join-Path $PSScriptRoot "$Name.raw.zip"
+$evidenceRoot = (Resolve-Path -LiteralPath $OutputDirectory).Path
+$zip = Join-Path $evidenceRoot "$Name.raw.zip"
 if (Test-Path -LiteralPath $zip) {
-    $previous = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot "$Name.json") | ConvertFrom-Json
+    $previous = Get-Content -Raw -LiteralPath (Join-Path $evidenceRoot "$Name.json") | ConvertFrom-Json
     if ($previous.source_sha256 -ne (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -or
         $previous.archive_sha256 -ne (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()) {
         throw 'Existing evidence differs; use a new name.'
@@ -39,5 +55,5 @@ if (Test-Path -LiteralPath $zip) {
     });
     scope='public reports only; raw report compressed unchanged; per-round database and signing journal retained locally; no private-key files';
     rounds=@($rounds)
-} | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath (Join-Path $PSScriptRoot "$Name.json") -Encoding utf8NoBOM
+} | ConvertTo-Json -Depth 25 | Set-Content -LiteralPath (Join-Path $evidenceRoot "$Name.json") -Encoding utf8NoBOM
 Get-Item -LiteralPath $zip | Select-Object Name,Length

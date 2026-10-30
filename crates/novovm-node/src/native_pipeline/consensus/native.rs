@@ -376,6 +376,20 @@ impl NativeChannel {
     pub fn io_progress_generation(&self) -> u64 {
         self.io_progress.0
     }
+    // Only the owner's false -> true handoff counts; duplicate try_send success does not.
+    pub(super) fn note_send_admission(&mut self) {
+        self.io_progress.advance();
+    }
+    pub(super) fn send_poll_evidence(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeLinkPollEvidenceV1> {
+        self.input_trace.as_ref()?.snapshot_send_polls()
+    }
+    pub(super) fn receive_totals(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeReceiveTotalsV1> {
+        self.input_trace.as_ref()?.snapshot_receive_totals()
+    }
     pub fn peer_count(&self) -> usize {
         self.link.peer_count()
     }
