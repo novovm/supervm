@@ -1,10 +1,8 @@
+use crate::novorudp::diagnostics::{io_span, IoPhase};
 use crate::novorudp::{NovoRudpTransportFrameDecodeErrorV0, NovoRudpTransportFrameV0};
 pub mod binary;
 pub mod handshake_wire;
-use chacha20poly1305::{
-    aead::{Aead, Payload},
-    ChaCha20Poly1305, KeyInit, Nonce,
-};
+use chacha20poly1305::{aead::AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use k256::elliptic_curve::Generate;
@@ -489,6 +487,7 @@ impl E2eSecureChannelV1 {
         &mut self,
         frame: &NovoRudpTransportFrameV0,
     ) -> Result<SecureNovoRudpEnvelopeV1, ProductOverlayErrorV1> {
+        let _cost = io_span(IoPhase::SecureSeal);
         let sequence = self.outbound_sequence;
         self.outbound_sequence = self
             .outbound_sequence
@@ -506,15 +505,16 @@ impl E2eSecureChannelV1 {
         };
         let aad = secure_frame_aad_v1(&envelope);
         let cipher = ChaCha20Poly1305::new((&self.outbound_key).into());
-        envelope.ciphertext = cipher
-            .encrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: &frame.encode(),
-                    aad: &aad,
-                },
-            )
-            .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)?;
+        envelope.ciphertext = {
+            let _cost = io_span(IoPhase::FrameEncode);
+            frame.encode_for_aead()
+        };
+        {
+            let _cost = io_span(IoPhase::SealAead);
+            cipher
+                .encrypt_in_place(Nonce::from_slice(&nonce), &aad, &mut envelope.ciphertext)
+                .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)?;
+        }
         Ok(envelope)
     }
 
@@ -522,6 +522,23 @@ impl E2eSecureChannelV1 {
         &mut self,
         envelope: &SecureNovoRudpEnvelopeV1,
     ) -> Result<NovoRudpTransportFrameV0, ProductOverlayErrorV1> {
+        self.open_novorudp_frame_buffer(envelope, || envelope.ciphertext.clone())
+    }
+
+    pub(crate) fn open_novorudp_frame_owned(
+        &mut self,
+        mut envelope: SecureNovoRudpEnvelopeV1,
+    ) -> Result<NovoRudpTransportFrameV0, ProductOverlayErrorV1> {
+        let ciphertext = std::mem::take(&mut envelope.ciphertext);
+        self.open_novorudp_frame_buffer(&envelope, || ciphertext)
+    }
+
+    fn open_novorudp_frame_buffer(
+        &mut self,
+        envelope: &SecureNovoRudpEnvelopeV1,
+        ciphertext: impl FnOnce() -> Vec<u8>,
+    ) -> Result<NovoRudpTransportFrameV0, ProductOverlayErrorV1> {
+        let _cost = io_span(IoPhase::SecureOpen);
         if envelope.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 {
             return Err(ProductOverlayErrorV1::UnsupportedVersion(envelope.version));
         }
@@ -540,18 +557,19 @@ impl E2eSecureChannelV1 {
         }
         let aad = secure_frame_aad_v1(envelope);
         let cipher = ChaCha20Poly1305::new((&self.inbound_key).into());
-        let plaintext = cipher
-            .decrypt(
-                Nonce::from_slice(&envelope.nonce),
-                Payload {
-                    msg: &envelope.ciphertext,
-                    aad: &aad,
-                },
-            )
-            .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)?;
+        // Borrowed callers copy only ciphertext, after route/nonce/replay
+        // checks. The native owner passes its existing buffer without a copy.
+        let mut plaintext = ciphertext();
+        {
+            let _cost = io_span(IoPhase::OpenAead);
+            cipher
+                .decrypt_in_place(Nonce::from_slice(&envelope.nonce), &aad, &mut plaintext)
+                .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)?;
+        }
         if !self.inbound_replay.mark_authenticated(envelope.sequence) {
             return Err(ProductOverlayErrorV1::SecureFrameReplay);
         }
+        let _cost = io_span(IoPhase::FrameDecode);
         Ok(NovoRudpTransportFrameV0::decode(&plaintext)?)
     }
 }
@@ -794,6 +812,7 @@ fn hex_lower_v1(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use crate::novorudp::NovoRudpTransportFrameKindV0;
+    use chacha20poly1305::aead::{Aead, Payload};
 
     #[test]
     fn secp256k1_ecdh_sec1_fixed_wire_vector_survives_dependency_upgrade() {
@@ -874,6 +893,45 @@ mod tests {
             9,
             format!("sealed-payload-{sequence}").into_bytes(),
         )
+    }
+
+    #[test]
+    fn in_place_frames_match_allocating_aead_and_preserve_rejection_state() {
+        let (mut sending, mut receiving) = channels();
+        for (sequence, len) in [0, 1, 64, 767, 1088].into_iter().enumerate() {
+            let mut input = frame(sequence as u64);
+            // Public frames remain mutable: encoding must refresh the checksum.
+            input.payload = vec![sequence as u8; len];
+            let expected_bytes = input.encode();
+            assert_eq!(input.encode_for_aead(), expected_bytes);
+            let envelope = sending.seal_novorudp_frame(&input).unwrap();
+            let expected_ciphertext = ChaCha20Poly1305::new((&sending.outbound_key).into())
+                .encrypt(
+                    Nonce::from_slice(&envelope.nonce),
+                    Payload {
+                        msg: &expected_bytes,
+                        aad: &secure_frame_aad_v1(&envelope),
+                    },
+                )
+                .unwrap();
+            assert_eq!(envelope.ciphertext, expected_ciphertext);
+            let mut corrupted = envelope.clone();
+            *corrupted.ciphertext.last_mut().unwrap() ^= 1;
+            assert!(matches!(
+                receiving.open_novorudp_frame_owned(corrupted),
+                Err(ProductOverlayErrorV1::SecureFrameAuthenticationFailed)
+            ));
+            let opened = receiving
+                .open_novorudp_frame_owned(envelope.clone())
+                .unwrap();
+            assert_eq!(opened.encode(), expected_bytes);
+            assert!(matches!(
+                receiving.open_novorudp_frame_buffer(&envelope, || {
+                    panic!("replay rejection must precede plaintext buffer acquisition")
+                }),
+                Err(ProductOverlayErrorV1::SecureFrameReplay)
+            ));
+        }
     }
 
     #[test]

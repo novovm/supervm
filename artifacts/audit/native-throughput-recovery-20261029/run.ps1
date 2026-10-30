@@ -7,6 +7,7 @@ param(
     [int]$Transactions = 4096,
     [int]$FrameRows = 64,
     [switch]$Diagnostics,
+    [switch]$IoDiagnostics,
     [switch]$DefaultTests
 )
 $ErrorActionPreference = 'Stop'
@@ -34,6 +35,15 @@ $env:NOVOVM_PROFILE_CRITICAL_PATH = $env:NOVOVM_PROFILE_STAGES
 $env:NOVOVM_NATIVE_LOAD_DIAGNOSTICS = $env:NOVOVM_PROFILE_STAGES
 $env:NOVOVM_PROFILE_NATIVE_DELIVERY = $env:NOVOVM_PROFILE_STAGES
 $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS = if ($Diagnostics) { '100' } else { $null }
+$env:NOVOVM_PROFILE_NATIVE_IO = if ($IoDiagnostics) { '1' } else { '0' }
+if ($IoDiagnostics) {
+    $env:NOVOVM_PROFILE_STAGES = '1'
+    $env:NOVOVM_PROFILE_CRITICAL_PATH = '0'
+    $env:NOVOVM_PROFILE_ASSET_TRACE = '0'
+    $env:NOVOVM_PROFILE_NATIVE_DELIVERY = '0'
+    $env:NOVOVM_NATIVE_LOAD_DIAGNOSTICS = '1'
+    $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS = '250'
+}
 $taskArgs = @($Filter, '--nocapture', '--test-threads=1')
 if (!$DefaultTests) { $taskArgs += '--ignored' }
 & $Tests @taskArgs *> $Log

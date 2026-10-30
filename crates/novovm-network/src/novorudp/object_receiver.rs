@@ -119,6 +119,7 @@ impl NativeObjectReceiver {
                     == u64::from(u32::from_be_bytes(frame.payload[76..80].try_into()?)),
             "object/index binding mismatch"
         );
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::FragmentAccept);
         self.objects
             .push_observed(peer, &frame.payload, now, observe)
     }

@@ -715,7 +715,11 @@ impl NativeObjectLink {
                     }
                     if sender.status() == ObjectSendState::Sending {
                         let before = sender.acknowledged_best_v1();
-                        let decision = sender.on_ack(frame, now);
+                        let decision = {
+                            let _cost =
+                                super::diagnostics::io_span(super::diagnostics::IoPhase::AckAccept);
+                            sender.on_ack(frame, now)
+                        };
                         if let Some(d) = self
                             .diagnostics
                             .as_ref()
@@ -969,6 +973,7 @@ impl NativeObjectLink {
         report: &mut NativeLinkPoll,
     ) -> Result<()> {
         // Control/body/ingress feedback have independent bounded hint queues.
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::Feedback);
         let mut empty_lanes = 0;
         for _ in 0..quantum {
             let stream = self.streams[self.feedback_turn];
@@ -999,14 +1004,17 @@ impl NativeObjectLink {
             };
             // Also checks receiver TTL/history expiry. Never keep a blocked ACK
             // alive after the object it describes has left the receiver state.
-            let Some(ack) = lane.receiver.transport_feedback(
-                self.endpoint.peer_id(peer)?,
-                id,
-                session,
-                epoch,
-                now,
-            )?
-            else {
+            let ack = {
+                let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::AckPrepare);
+                lane.receiver.transport_feedback(
+                    self.endpoint.peer_id(peer)?,
+                    id,
+                    session,
+                    epoch,
+                    now,
+                )?
+            };
+            let Some(ack) = ack else {
                 if let Err(error) = self.endpoint.cancel_feedback_send(peer, stream, id) {
                     lane.requeue_feedback(peer, id);
                     return Err(error);

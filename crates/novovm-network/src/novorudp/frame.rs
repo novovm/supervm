@@ -163,6 +163,21 @@ impl NovoRudpTransportFrameV0 {
     /// Fallible transport boundary; never clamps a length into another frame.
     pub fn try_encode(&self) -> Result<Vec<u8>, NovoRudpTransportFrameEncodeErrorV0> {
         let (payload_len, total_len) = checked_frame_lengths_v0(self.payload.len())?;
+        let mut out = Vec::with_capacity(total_len);
+        self.encode_into(payload_len, &mut out);
+        Ok(out)
+    }
+
+    /// Reserve the AEAD tag in the same buffer; the wire bytes stay unchanged.
+    pub(crate) fn encode_for_aead(&self) -> Vec<u8> {
+        let (payload_len, total_len) = checked_frame_lengths_v0(self.payload.len())
+            .expect("NOVORUDP payload must fit its wire length and address space");
+        let mut out = Vec::with_capacity(total_len.checked_add(16).expect("AEAD frame capacity"));
+        self.encode_into(payload_len, &mut out);
+        out
+    }
+
+    fn encode_into(&self, payload_len: u32, out: &mut Vec<u8>) {
         let checksum = novorudp_transport_frame_checksum_v0(
             self.kind,
             &self.session_id,
@@ -172,7 +187,6 @@ impl NovoRudpTransportFrameV0 {
             self.ack_epoch,
             self.payload.as_slice(),
         );
-        let mut out = Vec::with_capacity(total_len);
         out.extend_from_slice(NOVORUDP_TRANSPORT_FRAME_V0_MAGIC);
         out.extend_from_slice(&NOVORUDP_TRANSPORT_FRAME_V0_VERSION.to_le_bytes());
         out.push(self.kind.code());
@@ -185,7 +199,6 @@ impl NovoRudpTransportFrameV0 {
         out.extend_from_slice(&payload_len.to_le_bytes());
         out.extend_from_slice(&checksum);
         out.extend_from_slice(&self.payload);
-        Ok(out)
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self, NovoRudpTransportFrameDecodeErrorV0> {

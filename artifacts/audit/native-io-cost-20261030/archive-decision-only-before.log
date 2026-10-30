@@ -1,0 +1,12 @@
+
+running 1 test
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_decision_only_does_not_push_unrequested_body ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_decision_only_does_not_push_unrequested_body
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1781 filtered out; finished in 0.27s
+
+Error: decision-only discovery pushed an unrequested full body

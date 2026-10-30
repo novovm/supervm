@@ -4,6 +4,125 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{collections::VecDeque, sync::Mutex, time::Instant};
 
+// Same poll owner's cumulative costs; no per-packet log, tag, lock or allocation.
+// Sampling at a prime interval avoids locking onto the 32/64 packet quanta.
+#[derive(Clone, Copy)]
+pub(crate) enum IoPhase {
+    ReceivePacket,
+    SocketReceive,
+    ReceiveAccounting,
+    EnvelopeDecode,
+    SecureOpen,
+    OpenAead,
+    FrameDecode,
+    FragmentAccept,
+    AckAccept,
+    Feedback,
+    AckPrepare,
+    SenderPoll,
+    FramePrepare,
+    SecureSeal,
+    FrameEncode,
+    SealAead,
+    EnvelopeEncode,
+    SocketSend,
+}
+const IO_NAMES: [&str; 18] = [
+    "receive_packet",
+    "socket_receive",
+    "receive_accounting",
+    "envelope_decode",
+    "secure_open",
+    "open_aead",
+    "frame_decode",
+    "fragment_accept",
+    "ack_accept",
+    "feedback",
+    "ack_prepare",
+    "sender_poll",
+    "frame_prepare",
+    "secure_seal",
+    "frame_encode",
+    "seal_aead",
+    "envelope_encode",
+    "socket_send",
+];
+#[derive(Clone, Copy, Default, Serialize)]
+struct IoCost {
+    calls: u64,
+    samples: u64,
+    sampled_ns: u64,
+    max_sample_ns: u64,
+}
+thread_local! {
+    static IO_COSTS: std::cell::RefCell<[IoCost; 18]> = const {
+        std::cell::RefCell::new([IoCost { calls: 0, samples: 0, sampled_ns: 0, max_sample_ns: 0 }; 18])
+    };
+}
+fn io_cost_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var("NOVOVM_PROFILE_NATIVE_IO").ok().as_deref() == Some("1"))
+}
+pub(crate) struct IoSpan(Option<(IoPhase, Instant)>);
+impl Drop for IoSpan {
+    fn drop(&mut self) {
+        if let Some((phase, start)) = self.0 {
+            let ns = start.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
+            IO_COSTS.with(|costs| {
+                let mut costs = costs.borrow_mut();
+                let c = &mut costs[phase as usize];
+                c.samples += 1;
+                c.sampled_ns = c.sampled_ns.saturating_add(ns);
+                c.max_sample_ns = c.max_sample_ns.max(ns);
+            });
+        }
+    }
+}
+pub(crate) fn io_span(phase: IoPhase) -> IoSpan {
+    if !io_cost_enabled() {
+        return IoSpan(None);
+    }
+    sampled_io_span(phase)
+}
+fn sampled_io_span(phase: IoPhase) -> IoSpan {
+    let sample = IO_COSTS.with(|costs| {
+        let mut costs = costs.borrow_mut();
+        let c = &mut costs[phase as usize];
+        let sample = c.calls % 61 == 0;
+        c.calls = c.calls.saturating_add(1);
+        sample
+    });
+    IoSpan(sample.then(|| (phase, Instant::now())))
+}
+#[test]
+fn io_sampling_is_bounded_nested_and_thread_local() {
+    std::thread::spawn(|| {
+        for _ in 0..123 {
+            let _outer = sampled_io_span(IoPhase::ReceivePacket);
+            let _inner = sampled_io_span(IoPhase::SocketReceive);
+        }
+        IO_COSTS.with(|costs| {
+            let costs = costs.borrow();
+            assert_eq!(costs[IoPhase::ReceivePacket as usize].calls, 123);
+            assert_eq!(costs[IoPhase::ReceivePacket as usize].samples, 3);
+            assert_eq!(costs[IoPhase::SocketReceive as usize].samples, 3);
+            assert_eq!(costs[IoPhase::SocketSend as usize].calls, 0);
+        });
+    })
+    .join()
+    .unwrap();
+}
+pub fn native_io_cost_snapshot() -> Option<serde_json::Value> {
+    io_cost_enabled().then(|| IO_COSTS.with(|costs| {
+        let costs = costs.borrow();
+        let phases: std::collections::BTreeMap<_, _> = IO_NAMES.iter().zip(costs.iter()).collect();
+        serde_json::json!({
+            "scope": "current poll thread; lifetime inclusive sampled wall time; nested phases are not additive; not CPU time",
+            "sample_every_calls": 61, "phases": phases
+        })
+    }))
+}
+
 #[derive(Clone, Copy, Debug, thiserror::Error)]
 #[repr(usize)]
 pub enum NativeRejectReasonV1 {

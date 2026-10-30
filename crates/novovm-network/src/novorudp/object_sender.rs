@@ -304,6 +304,7 @@ impl NativeObjectSender {
         mut wire_budget: Option<&mut wire_budget::NativeWireBudget>,
     ) -> Result<usize> {
         ensure!((1..=64).contains(&budget), "invalid datagram quantum");
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::SenderPoll);
         ensure!(
             session.session_id() == self.session,
             "object sender session changed"
@@ -409,6 +410,7 @@ impl NativeObjectSender {
         let mut sent = 0;
         for _ in 0..budget.min(batch) {
             if self.pending.is_none() {
+                let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::FramePrepare);
                 // Proven gaps need not wait for the whole multi-MiB initial
                 // body. Alternate the existing cursors within the same quantum.
                 let send_initial = self.initial < self.body.frame_count()

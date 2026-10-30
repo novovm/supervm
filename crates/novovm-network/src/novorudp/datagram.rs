@@ -114,6 +114,7 @@ impl NativeUdpSession {
                 }
             }
         };
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::EnvelopeEncode);
         binary::encode(&envelope, MAX_DATAGRAM_BYTES)
     }
 
@@ -130,10 +131,12 @@ impl NativeUdpSession {
             return Err(anyhow::anyhow!("native packet source mismatch")
                 .context(NativeRejectReasonV1::SecureRoute));
         }
-        let envelope =
-            binary::decode(wire, MAX_DATAGRAM_BYTES).context(NativeRejectReasonV1::WireOrFrame)?;
+        let envelope = {
+            let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::EnvelopeDecode);
+            binary::decode(wire, MAX_DATAGRAM_BYTES).context(NativeRejectReasonV1::WireOrFrame)?
+        };
         let frame = match &mut self.channel {
-            NativeChannel::Udp(channel) => channel.open_novorudp_frame(&envelope)?,
+            NativeChannel::Udp(channel) => channel.open_novorudp_frame_owned(envelope)?,
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => {
                 channel.open_novorudp_frame(&crate::duplex::SecureNovoRudpEnvelopeV1 {

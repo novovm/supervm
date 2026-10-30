@@ -24,6 +24,11 @@ $rounds = foreach ($row in $rows) {
                         node_index=$n.node_index;matched_final_head=$n.matched_final_head;
                         phase_scope=$n.snapshot.stage_profile.scope;
                         phases=$n.snapshot.stage_profile.phases;
+                        native_io_costs=$n.snapshot.native_io_costs;
+                        successor=$n.snapshot.successor;
+                        archive_work=$n.snapshot.archive_work;
+                        served_bodies=$n.snapshot.served_bodies;
+                        requested_bodies=$n.snapshot.requested_bodies;
                         send_polls=$n.snapshot.native_send_polls;
                         receive_totals=$n.snapshot.native_receive_totals
                     }

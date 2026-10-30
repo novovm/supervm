@@ -11277,14 +11277,19 @@ impl UdpTransport {
     }
 
     fn receive_packet_v1(&self) -> std::io::Result<Option<(Vec<u8>, SocketAddr)>> {
-        observe_network_runtime_receiver_recv_loop_iteration_v1(self.chain_id);
-        observe_network_runtime_receiver_drain_first_config_v1(
-            self.chain_id,
-            self.drain_first_enabled,
-            self.drain_batch_max.try_into().unwrap_or(u64::MAX),
-            self.rcvbuf_requested_bytes,
-            self.rcvbuf_effective_bytes,
-        );
+        use crate::novorudp::diagnostics::{io_span, IoPhase};
+        let _cost = io_span(IoPhase::ReceivePacket);
+        {
+            let _cost = io_span(IoPhase::ReceiveAccounting);
+            observe_network_runtime_receiver_recv_loop_iteration_v1(self.chain_id);
+            observe_network_runtime_receiver_drain_first_config_v1(
+                self.chain_id,
+                self.drain_first_enabled,
+                self.drain_batch_max.try_into().unwrap_or(u64::MAX),
+                self.rcvbuf_requested_bytes,
+                self.rcvbuf_effective_bytes,
+            );
+        }
 
         // The original receive owner already owns this scratch buffer. Keep its
         // initialized capacity across empty polls and retain only received bytes
@@ -11302,14 +11307,21 @@ impl UdpTransport {
             while queue.len() < self.drain_queue_limit
                 && drained < self.drain_batch_max.try_into().unwrap_or(u64::MAX)
             {
-                match self.socket.recv_from(scratch.as_mut_slice()) {
+                let received = {
+                    let _cost = io_span(IoPhase::SocketReceive);
+                    self.socket.recv_from(scratch.as_mut_slice())
+                };
+                match received {
                     Ok((n, src)) => {
                         let packet = scratch[..n].to_vec();
-                        observe_network_runtime_receiver_udp_packet_recv_v1(
-                            self.chain_id,
-                            src,
-                            packet.as_slice(),
-                        );
+                        {
+                            let _cost = io_span(IoPhase::ReceiveAccounting);
+                            observe_network_runtime_receiver_udp_packet_recv_v1(
+                                self.chain_id,
+                                src,
+                                packet.as_slice(),
+                            );
+                        }
                         queue.push_back((packet, src));
                         drained = drained.saturating_add(1);
                     }
@@ -11329,6 +11341,7 @@ impl UdpTransport {
                 }
             }
             if drained > 0 {
+                let _cost = io_span(IoPhase::ReceiveAccounting);
                 observe_network_runtime_receiver_drain_first_enqueue_v1(
                     self.chain_id,
                     drained,
@@ -11337,18 +11350,26 @@ impl UdpTransport {
             }
             let popped = queue.pop_front();
             if popped.is_some() {
+                let _cost = io_span(IoPhase::ReceiveAccounting);
                 observe_network_runtime_receiver_drain_first_dequeue_v1(self.chain_id);
             }
             popped
         } else {
-            match self.socket.recv_from(scratch.as_mut_slice()) {
+            let received = {
+                let _cost = io_span(IoPhase::SocketReceive);
+                self.socket.recv_from(scratch.as_mut_slice())
+            };
+            match received {
                 Ok((n, src)) => {
                     let packet = scratch[..n].to_vec();
-                    observe_network_runtime_receiver_udp_packet_recv_v1(
-                        self.chain_id,
-                        src,
-                        packet.as_slice(),
-                    );
+                    {
+                        let _cost = io_span(IoPhase::ReceiveAccounting);
+                        observe_network_runtime_receiver_udp_packet_recv_v1(
+                            self.chain_id,
+                            src,
+                            packet.as_slice(),
+                        );
+                    }
                     Some((packet, src))
                 }
                 Err(e)

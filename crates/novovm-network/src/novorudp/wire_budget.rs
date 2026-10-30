@@ -254,7 +254,11 @@ pub(crate) fn try_send_datagram(
             return Ok(false);
         }
     }
-    match io.try_send(wire, remote.into()) {
+    let sent = {
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::SocketSend);
+        io.try_send(wire, remote.into())
+    };
+    match sent {
         Ok(count) => {
             ensure!(
                 count <= wire.len(),
