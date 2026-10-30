@@ -718,7 +718,7 @@ fn run_native_uca_load_mode(
         let mut clients = (0..4)
             .map(|i| client(&nodes, i, set.clone(), CONFIGURED_BATCH))
             .collect::<Result<Vec<_>>>()?;
-        let initial = ready(&mut nodes, &mut clients)?;
+        let initial = ready(&mut nodes, &mut clients, set.clone(), CONFIGURED_BATCH)?;
         evidence["four_process_startup_ready_seconds"] =
             json!(startup_started.elapsed().as_secs_f64());
         ensure!(
@@ -828,7 +828,7 @@ fn run_native_uca_load_mode(
             counts.successful_transactions == count && counts.business_failed_transactions == 0,
             "NUAS load did not finalize all successful transactions"
         );
-        let before = ready(&mut nodes, &mut clients)?;
+        let before = ready(&mut nodes, &mut clients, set.clone(), CONFIGURED_BATCH)?;
         same_head(&before, before[0])?;
         if mode.is_rolling() {
             ensure!(
@@ -971,7 +971,7 @@ fn run_native_uca_load_mode(
         let mut clients = (0..4)
             .map(|i| client(&nodes, i, set.clone(), CONFIGURED_BATCH))
             .collect::<Result<Vec<_>>>()?;
-        let recovered = ready(&mut nodes, &mut clients)?;
+        let recovered = ready(&mut nodes, &mut clients, set.clone(), CONFIGURED_BATCH)?;
         same_head(&recovered, before[0])?;
         let mut cold = observations.clone();
         for row in &mut cold {

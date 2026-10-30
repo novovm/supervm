@@ -13,7 +13,7 @@ use super::{
     CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig, StoredCandidate,
 };
 use crate::native_pipeline::state::tree::{
-    read_state_value, validate_state_node_bytes, NodeHash, StagedStateUpdate, StateNodeReader,
+    read_state_value, validate_state_node_bytes, NodeHash, StagedStateUpdate,
 };
 use anyhow::{ensure, Context, Result};
 use std::collections::VecDeque;
@@ -334,12 +334,6 @@ impl IoService {
                         // approved/pinned initializer. This resumes a partial
                         // startup write, never replaces a journal or chain head.
                         store.install_unpublished_state(&initial)?;
-                        for (hash, expected) in initial.nodes() {
-                            ensure!(
-                                store.read_node(hash)?.as_ref() == Some(expected),
-                                "pinned genesis content missing or altered; explicit recovery required"
-                            );
-                        }
                     }
                     Ok::<_, anyhow::Error>(store)
                 })();

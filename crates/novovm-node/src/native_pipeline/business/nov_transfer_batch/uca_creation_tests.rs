@@ -179,6 +179,48 @@ pub(super) fn run_asset_creation_cases(
             },
             policy,
         };
+        for revoked in [true, false] {
+            let mut denied_grant = funding_grant.clone();
+            denied_grant.revoked = revoked;
+            if !revoked {
+                denied_grant.remaining_debit_budget = opening.amount - 1;
+            }
+            let mut denied_memory = Memory(original_memory.0.clone());
+            let staged = stage_state_update(
+                &denied_memory,
+                original_root,
+                &grant_record_changes(&base, &denied_grant)?,
+            )?;
+            let mut denied_root = staged.root();
+            denied_memory.0.extend(staged.nodes().clone());
+            let rejected = runner.run(
+                &mut denied_memory,
+                &mut denied_root,
+                &[opening.clone()],
+                &keys,
+            )?;
+            assert_eq!(
+                rejected.spend_outputs().unwrap()[0].failure,
+                Some(if revoked {
+                    SpendPolicyError::Revoked
+                } else {
+                    SpendPolicyError::LimitExceeded
+                })
+            );
+            assert_eq!(rejected.receipts()[0].delta.fee_funding_delta, 0);
+            assert_eq!(
+                read_state(&denied_memory, denied_root, &base)?.next_nonce(),
+                0
+            );
+            for declaration in creation_declarations(&opening)? {
+                assert!(crate::native_pipeline::state::tree::read_state_value(
+                    &denied_memory,
+                    denied_root,
+                    &declaration.key
+                )?
+                .is_none());
+            }
+        }
         let mut duplicate = opening.clone();
         duplicate.nonce = 1;
         let created = runner.run(&mut memory, &mut root, &[opening.clone(), duplicate], &keys)?;

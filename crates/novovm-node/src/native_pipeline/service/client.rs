@@ -26,6 +26,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const INITIAL_HANDSHAKE_LIFETIME: Duration = Duration::from_secs(30);
+
 pub struct PreparedQuery {
     owner: Arc<()>,
     request: Request,
@@ -61,6 +63,8 @@ pub struct NativeApplicationClient {
     session: [u8; 32],
     sequence: u64,
     query_pending: Option<Request>,
+    #[cfg(test)]
+    connected_at: Instant,
 }
 impl NativeApplicationClient {
     #[allow(clippy::too_many_arguments)]
@@ -90,7 +94,7 @@ impl NativeApplicationClient {
             identity,
             node,
             NativeHandshakeBudget {
-                lifetime: Duration::from_secs(30),
+                lifetime: INITIAL_HANDSHAKE_LIFETIME,
                 retry: Duration::from_millis(50),
             },
             wall_ms,
@@ -123,7 +127,17 @@ impl NativeApplicationClient {
             session: rand::random(),
             sequence: 0,
             query_pending: None,
+            #[cfg(test)]
+            connected_at: now,
         })
+    }
+
+    /// Fixture preparation can outlast an unanswered initial handshake. This
+    /// does not expire an authenticated session or renew a production attempt.
+    #[cfg(test)]
+    pub(crate) fn startup_handshake_expired(&self, now: Instant) -> bool {
+        self.link.session_id(0).is_none()
+            && now.saturating_duration_since(self.connected_at) >= INITIAL_HANDSHAKE_LIFETIME
     }
 
     /// Preserve APFL columns and original transaction signatures through the

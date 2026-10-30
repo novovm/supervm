@@ -18,6 +18,7 @@ use std::net::UdpSocket;
 
 #[path = "native_product_queries.rs"]
 mod queries;
+pub(super) use queries::QueryTimeout;
 
 // One typed readiness/recovery policy for the process fixtures. In particular,
 // the load fixture must not turn its first unanswered Status into early failure

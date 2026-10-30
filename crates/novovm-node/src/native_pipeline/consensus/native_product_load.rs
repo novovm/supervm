@@ -341,7 +341,12 @@ fn query_before(
         std::thread::yield_now();
     }
 }
-fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> Result<Vec<Status>> {
+fn ready(
+    nodes: &mut ProductNodes,
+    clients: &mut [NativeApplicationClient],
+    set: Arc<ValidatorSet>,
+    batch: usize,
+) -> Result<Vec<Status>> {
     // Untimed fixture preparation, not a node/transport/consensus timeout.
     // Large independently approved initial states may take longer to install.
     let seconds = env_count("NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS", 90, 3600)?;
@@ -349,10 +354,33 @@ fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> R
     loop {
         nodes.alive()?;
         let mut statuses = Vec::new();
-        for client in clients.iter_mut() {
-            statuses.push(super::application::recovery_status(
-                nodes, client, deadline,
-            )?);
+        for (index, connection) in clients.iter_mut().enumerate() {
+            loop {
+                let now = Instant::now();
+                ensure!(now < deadline, "native startup/recovery deadline");
+                let attempt_deadline = deadline.min(now + Duration::from_secs(5));
+                match super::application::recovery_status(nodes, connection, attempt_deadline) {
+                    Ok(status) => {
+                        statuses.push(status);
+                        break;
+                    }
+                    Err(error) if error.is::<super::application::QueryTimeout>() => {
+                        let now = Instant::now();
+                        if now >= deadline {
+                            return Err(error.context("native startup/recovery deadline"));
+                        }
+                        if connection.startup_handshake_expired(now) {
+                            // Preparation can outlive an initial handshake. No
+                            // connected session or measured load is restarted.
+                            *connection = client(nodes, index, set.clone(), batch)?;
+                            eprintln!(
+                                "native startup renewed expired unconnected client peer={index}"
+                            );
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
         }
         if statuses
             .iter()
@@ -365,6 +393,33 @@ fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> R
             "native startup/recovery deadline"
         );
     }
+}
+
+#[test]
+#[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY for the existing protected identity fixture; no sleeping or node startup"]
+fn native_load_startup_client_expiry_is_not_a_lifetime_readiness_failure() -> Result<()> {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/native-product-load")
+        .join(format!(
+            "startup-handshake-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    fs::create_dir_all(&directory)?;
+    let (nodes, set) = setup_with_genesis(&directory, std::env::current_exe()?, genesis()?, 1)?;
+    let created_before = Instant::now();
+    let expired = client(&nodes, 0, set.clone(), 1)?;
+    assert!(!expired.startup_handshake_expired(created_before + Duration::from_secs(29)));
+    assert!(expired.startup_handshake_expired(Instant::now() + Duration::from_secs(31)));
+    let fresh_before = Instant::now();
+    let replacement = client(&nodes, 0, set, 1)?;
+    assert!(!replacement.startup_handshake_expired(fresh_before + Duration::from_secs(29)));
+    assert!(replacement.startup_handshake_expired(Instant::now() + Duration::from_secs(31)));
+    assert!(
+        nodes.processes.iter().all(Option::is_none),
+        "no node process or altered timeout is needed"
+    );
+    Ok(())
 }
 
 #[derive(Clone, Serialize)]
@@ -1030,7 +1085,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         let mut clients = (0..4)
             .map(|i| client(&nodes, i, set.clone(), batch))
             .collect::<Result<Vec<_>>>()?;
-        let initial = ready(&mut nodes, &mut clients)?;
+        let initial = ready(&mut nodes, &mut clients, set.clone(), batch)?;
         ensure!(initial.iter().all(|s| s.height == 0), "not a fresh genesis");
         // Existing readiness replies only: no extra observation traffic and no
         // timer reset. These precede APFL preparation, not the first submission.
@@ -1073,7 +1128,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
             "successful workload has business failures"
         );
         phase = "full native balances and head";
-        let before = ready(&mut nodes, &mut clients)?;
+        let before = ready(&mut nodes, &mut clients, set.clone(), batch)?;
         same_head(&before, before[0])?;
         ensure!(
             before.iter().all(|s| s.apfl_rows >= count as u64),
@@ -1105,7 +1160,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         let mut clients = (0..4)
             .map(|i| client(&nodes, i, set.clone(), batch))
             .collect::<Result<Vec<_>>>()?;
-        let recovered = ready(&mut nodes, &mut clients)?;
+        let recovered = ready(&mut nodes, &mut clients, set.clone(), batch)?;
         same_head(&recovered, before[0])?;
         let mut cold = observations.clone();
         for row in &mut cold {

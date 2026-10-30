@@ -210,9 +210,16 @@ struct StartupPreparation {
 }
 
 fn prepare_startup(config: &ResidentConfig) -> Result<StartupPreparation> {
-    let (metadata, reference_initial) = config.genesis.prepare()?;
+    let (metadata, reference_initial) = if config.uca_initialization.is_some() {
+        // The approved initializer below constructs the complete asset tree.
+        // Validate the same allocations here without staging a discarded copy.
+        (config.genesis.validated_allocations()?.0, None)
+    } else {
+        let (metadata, initial) = config.genesis.prepare()?;
+        (metadata, Some(initial))
+    };
     // Authenticate the independent transport key and complete routing binding
-    // before loading AOEM. A credential error cannot start a socket or a store.
+    // before loading AOEM. A credential error cannot activate a signer or store.
     let transport = read_key(
         &config.transport_key_file,
         config.key_storage,
@@ -254,7 +261,7 @@ fn prepare_startup(config: &ResidentConfig) -> Result<StartupPreparation> {
     let initial = if let Some(material) = &config.uca_initialization {
         material.verify(&config.genesis, &runtime)?.into_state()
     } else {
-        reference_initial
+        reference_initial.expect("reference initial state prepared with validator metadata")
     };
     Ok(StartupPreparation {
         validators,

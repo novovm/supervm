@@ -19,7 +19,7 @@ fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer
 }
 
 #[derive(Debug)]
-struct QueryTimeout(Query);
+pub(crate) struct QueryTimeout(Query);
 
 impl std::fmt::Display for QueryTimeout {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
