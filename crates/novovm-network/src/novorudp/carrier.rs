@@ -91,8 +91,10 @@ pub trait NativeDatagramIo: Send + Sync {
 pub struct NativeCarrierIoFailure(pub(crate) io::Error);
 impl NativeDatagramIo for UdpSocket {
     fn try_receive(&self, buffer: &mut [u8]) -> io::Result<Option<(usize, NativeRoute)>> {
-        self.recv_from(buffer)
-            .map(|(size, source)| Some((size, NativeRoute::Udp(source))))
+        self.recv_from(buffer).map(|(size, source)| {
+            super::diagnostics::traffic(super::diagnostics::Traffic::WireReceived, 0, 3, size);
+            Some((size, NativeRoute::Udp(source)))
+        })
     }
     fn try_send(&self, bytes: &[u8], route: NativeRoute) -> io::Result<usize> {
         match route {

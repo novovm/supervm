@@ -11313,6 +11313,12 @@ impl UdpTransport {
                 };
                 match received {
                     Ok((n, src)) => {
+                        crate::novorudp::diagnostics::traffic(
+                            crate::novorudp::diagnostics::Traffic::WireReceived,
+                            0,
+                            3,
+                            n,
+                        );
                         let packet = scratch[..n].to_vec();
                         {
                             let _cost = io_span(IoPhase::ReceiveAccounting);
@@ -11361,6 +11367,12 @@ impl UdpTransport {
             };
             match received {
                 Ok((n, src)) => {
+                    crate::novorudp::diagnostics::traffic(
+                        crate::novorudp::diagnostics::Traffic::WireReceived,
+                        0,
+                        3,
+                        n,
+                    );
                     let packet = scratch[..n].to_vec();
                     {
                         let _cost = io_span(IoPhase::ReceiveAccounting);

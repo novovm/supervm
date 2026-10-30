@@ -686,6 +686,8 @@ fn run_native_uca_load_mode(
             .map(PreparedApplicationInput::byte_len)
             .collect::<Vec<_>>());
         phase = "native submission through four-node final receipt observation";
+        evidence["client_io_before"] =
+            json!(novovm_network::novorudp::diagnostics::native_io_cost_snapshot());
         timed_attempt = Some(Instant::now());
         measured = Some(if mode == LoadMode::Continuous {
             rolling::drive_continuous(
@@ -734,6 +736,8 @@ fn run_native_uca_load_mode(
             )?
         });
         timed_attempt = None;
+        evidence["client_io_after"] =
+            json!(novovm_network::novorudp::diagnostics::native_io_cost_snapshot());
         evidence["startup_through_four_receipts_seconds"] =
             json!(startup_started.elapsed().as_secs_f64());
         let workload_hash: Hash = workload_hash.finalize().into();

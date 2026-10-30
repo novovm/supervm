@@ -303,7 +303,9 @@ impl CandidateBodies {
     pub fn requests(&self, progress: &RoundProgress) -> Vec<(Hash, Hash)> {
         progress
             .missing_bodies()
-            .filter(|(_, id)| !self.bodies.contains_key(id))
+            .filter(|(_, id)| {
+                !self.bodies.contains_key(id) && !self.retains_promoting_successor(*id, progress)
+            })
             .collect()
     }
 

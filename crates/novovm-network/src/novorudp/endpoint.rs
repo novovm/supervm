@@ -104,6 +104,7 @@ pub struct NativeReceivedFrame {
     peer: usize,
     identity: Arc<str>,
     frame: NovoRudpTransportFrameV0,
+    pub(crate) wire_bytes: usize,
 }
 impl NativeReceivedFrame {
     pub fn peer(&self) -> usize {
@@ -965,6 +966,7 @@ impl NativeEndpoint {
                             peer: index,
                             identity: peer.id.clone(),
                             frame,
+                            wire_bytes: length,
                         })
                     }
                     Ok(_) => {
@@ -1107,12 +1109,14 @@ impl NativeEndpoint {
             .session
             .as_mut()
             .context("native peer not authenticated")?;
-        session.try_send_limited(
-            self.io.as_ref(),
-            frame,
-            Instant::now(),
-            self.wire_budget.as_mut(),
-        )
+        session
+            .try_send_limited(
+                self.io.as_ref(),
+                frame,
+                Instant::now(),
+                self.wire_budget.as_mut(),
+            )
+            .map(|sent| sent.is_some())
     }
 
     pub(crate) fn uses_deferred_writes(&self) -> bool {

@@ -1181,6 +1181,8 @@ impl RpcLifecycle {
         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
         if let Some(costs) = novovm_network::novorudp::diagnostics::native_io_cost_snapshot() {
             status["native_io_costs"] = costs;
+            status["native_delivery_traffic"] =
+                crate::native_pipeline::profile::traffic::snapshot();
         }
         if crate::native_pipeline::profile::asset_enabled() {
             status["native_send_polls"] = json!(core.send_poll_evidence());

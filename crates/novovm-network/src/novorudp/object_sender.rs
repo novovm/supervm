@@ -84,6 +84,7 @@ pub struct NativeObjectSender {
     attempts: u64,
     acknowledged_best: u64,
     diagnostic_progress: Option<diagnostics::NativeSendProgressV1>,
+    traffic: Option<diagnostics::NativeObjectTraffic>,
 }
 
 impl NativeObjectSender {
@@ -141,6 +142,7 @@ impl NativeObjectSender {
             attempts: 0,
             acknowledged_best: 0,
             diagnostic_progress: None,
+            traffic: diagnostics::io_cost_enabled().then(diagnostics::NativeObjectTraffic::default),
         })
     }
     pub(crate) fn acknowledged_best_v1(&self) -> u64 {
@@ -158,6 +160,9 @@ impl NativeObjectSender {
     }
     pub(crate) fn diagnostic_progress_v1(&self) -> Option<diagnostics::NativeSendProgressV1> {
         self.diagnostic_progress
+    }
+    pub(crate) fn traffic(&self) -> Option<diagnostics::NativeObjectTraffic> {
+        self.traffic
     }
     pub fn status(&self) -> ObjectSendState {
         self.terminal
@@ -466,7 +471,9 @@ impl NativeObjectSender {
                 self.pending = Some(PendingSend { frame, cursor });
             }
             let pending = self.pending.as_ref().expect("prepared native frame");
-            if !session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())? {
+            let Some(wire_bytes) =
+                session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())?
+            else {
                 if let Some(p) = &mut self.diagnostic_progress {
                     p.polls.send_blocked = p.polls.send_blocked.saturating_add(1);
                     if wire_budget.is_none() && !io.deferred_writes() {
@@ -474,9 +481,22 @@ impl NativeObjectSender {
                     }
                 }
                 break;
-            }
+            };
             let pending = self.pending.take().expect("completed native frame");
             sent += 1;
+            if let Some(traffic) = &mut self.traffic {
+                let (counter, event) = match pending.cursor {
+                    PendingCursor::Initial { .. } => {
+                        (&mut traffic.initial, diagnostics::Traffic::InitialSent)
+                    }
+                    PendingCursor::Repair { .. } => {
+                        (&mut traffic.repair, diagnostics::Traffic::RepairSent)
+                    }
+                    PendingCursor::Probe => (&mut traffic.probe, diagnostics::Traffic::ProbeSent),
+                };
+                counter.record(wire_bytes);
+                diagnostics::frame_traffic(event, &pending.frame, wire_bytes);
+            }
             self.repair_turn = matches!(pending.cursor, PendingCursor::Initial { .. });
             if let Some(progress) = &mut self.diagnostic_progress {
                 let observed_at = Instant::now();

@@ -714,6 +714,87 @@ fn native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery() -
     run_uca_successor(true)
 }
 
+#[test]
+#[ignore = "real AOEM parent journal ACK; explicit fixture proposal tests request ownership, not finality or TPS"]
+fn native_successor_owned_body_does_not_request_second_full_copy_after_ack() -> Result<()> {
+    let mut u = UcaFixture::new()?;
+    let f = &mut u.native;
+    let first = f.leader(1)?;
+    let next = f.leader(2)?;
+    let parent = Arc::new(Message::AssetBody {
+        context: uca_context(f.base.anchor, 1)?,
+        batch: u.parent_batch.clone(),
+    });
+    ensure!(f.nodes[first].offer(&parent)?);
+    f.until(&[first, next], "parent execution before ACK", |n| {
+        n[next].executed() == 1
+    })?;
+    let selection = f.nodes[next]
+        .successor_selection()?
+        .context("parent basis")?;
+    let child = Arc::new(Message::AssetBody {
+        context: uca_context(selection.parent, 2)?,
+        batch: u.child_batch.clone(),
+    });
+    let id = transport::candidate_body_id(&child, uca_codec())?;
+    // Keep the real owner unpolled to reproduce the exact ACK-before-next-body-
+    // poll window deterministically. No fabricated capture, execution or ACK.
+    let mut held = CandidateBodies::new(
+        &f.base.services.0[first],
+        uca_context(f.base.anchor, 1)?,
+        policy(),
+        uca_codec(),
+        BodyLimits {
+            bodies: 8,
+            bytes: 64 * 1024 * 1024,
+            inflight: 2,
+        },
+    )?;
+    ensure!(held.offer_remote_successor(
+        &child,
+        f.base.ids[next],
+        &f.base.services.0[first],
+        &f.nodes[first].progress,
+        &f.base.set
+    )?);
+    let head = f.await_height(1)?;
+    ensure!(head == selection.parent && f.nodes[first].progress.round() == 0);
+    let proposal = novovm_consensus::round_bft::test_vectors::sign_proposal(
+        f.nodes[first].progress.context(),
+        0,
+        [71; 32],
+        None,
+        &f.base.set,
+        &f.base.keys[next],
+    )?;
+    let offer = Message::Proposal {
+        proposal,
+        valid_quorum: None,
+        body_id: id,
+    };
+    f.nodes[first].progress.receive(f.base.ids[next], &offer)?;
+    ensure!(f.nodes[first]
+        .progress
+        .missing_bodies()
+        .any(|(_, missing)| missing == id));
+    ensure!(
+        held.requests(&f.nodes[first].progress).is_empty(),
+        "complete retained successor requested a second full copy after real parent ACK"
+    );
+    // Missing/different bytes must still request normally; custody of one body
+    // does not vouch for another proposal or confer any execution permission.
+    let mut other = offer.clone();
+    if let Message::Proposal { body_id, .. } = &mut other {
+        body_id[0] ^= 1;
+    }
+    f.nodes[first].progress.receive(f.base.ids[next], &other)?;
+    ensure!(held.requests(&f.nodes[first].progress).len() == 1);
+    drop(held);
+    drop(std::mem::take(&mut f.nodes));
+    f.base.services.shutdown()?;
+    Ok(())
+}
+
 fn run_uca_successor(reused: bool) -> Result<()> {
     let mut u = UcaFixture::new()?;
     let (first, next, selection, child) = u.prepare_successor(reused)?;

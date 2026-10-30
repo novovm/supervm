@@ -58,6 +58,7 @@ fn io_hint_tracks_new_fragments_sends_and_query_completion() -> Result<()> {
         completed: vec![NativeSendCompletion {
             peer: 0,
             diagnostic_tag: None,
+            traffic: None,
             stream: novovm_protocol::native_query::STREAM,
             state: ObjectSendState::Delivered,
             body: Arc::new(OutgoingMessage::with_profile(
@@ -110,6 +111,7 @@ fn io_hint_tracks_real_hash_continuation_but_not_missing_fragments() -> Result<(
         window: None,
         body_request: false,
         durable_control: false,
+        traffic_payload: None,
     };
     let deadline = Instant::now() + Duration::from_secs(10);
     assert!(mesh.channels[0].try_send(0, &prepared, Instant::now())?);

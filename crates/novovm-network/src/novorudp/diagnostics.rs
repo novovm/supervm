@@ -59,9 +59,155 @@ thread_local! {
         std::cell::RefCell::new([IoCost { calls: 0, samples: 0, sampled_ns: 0, max_sample_ns: 0 }; 18])
     };
 }
-fn io_cost_enabled() -> bool {
+pub fn io_cost_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("NOVOVM_PROFILE_NATIVE_IO").ok().as_deref() == Some("1"))
+}
+
+/// Packet count and actual encoded bytes. Refusal events measure attempted
+/// bytes, never completed writes; repeated blocked attempts remain distinct.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct PacketBytes {
+    pub packets: u64,
+    pub bytes: u64,
+}
+impl PacketBytes {
+    pub(crate) fn record(&mut self, bytes: usize) {
+        self.packets = self.packets.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(bytes as u64);
+    }
+}
+const TRAFFIC_NAMES: [&str; 14] = [
+    "wire_sent",
+    "wire_received",
+    "send_would_block",
+    "send_budget_deferred",
+    "sealed_sent",
+    "authenticated_received",
+    "initial_sent",
+    "repair_sent",
+    "probe_sent",
+    "fragment_accepted",
+    "fragment_duplicate",
+    "fragment_history",
+    "fragment_backpressure",
+    "fragment_rejected",
+];
+#[derive(Clone, Copy)]
+pub(crate) enum Traffic {
+    WireSent,
+    WireReceived,
+    SendWouldBlock,
+    SendBudgetDeferred,
+    SealedSent,
+    AuthenticatedReceived,
+    InitialSent,
+    RepairSent,
+    ProbeSent,
+    FragmentAccepted,
+    FragmentDuplicate,
+    FragmentHistory,
+    FragmentBackpressure,
+    FragmentRejected,
+}
+#[derive(Clone, Copy, Default)]
+struct StreamTraffic {
+    stream: u64,
+    // Data / Repair / ACK / other. No Host stream or business policy here.
+    counts: [[PacketBytes; 4]; 14],
+}
+#[derive(Default)]
+struct IoTraffic {
+    streams: [Option<StreamTraffic>; 16],
+    overflow: StreamTraffic,
+}
+impl IoTraffic {
+    fn record(&mut self, event: Traffic, stream: u64, kind: usize, bytes: usize) {
+        let slot = self
+            .streams
+            .iter()
+            .position(|s| s.is_some_and(|s| s.stream == stream))
+            .or_else(|| self.streams.iter().position(Option::is_none));
+        let s = match slot {
+            Some(i) => self.streams[i].get_or_insert_with(|| StreamTraffic {
+                stream,
+                ..Default::default()
+            }),
+            None => &mut self.overflow,
+        };
+        s.counts[event as usize][kind].record(bytes);
+    }
+    fn snapshot(&self) -> serde_json::Value {
+        let view = |s: &StreamTraffic| {
+            let events: std::collections::BTreeMap<_, _> =
+                TRAFFIC_NAMES.iter().zip(s.counts.iter()).collect();
+            serde_json::json!({"stream":s.stream,"events":events})
+        };
+        serde_json::json!({"scope":"current thread; wire_sent/received and blocked are immediate UDP only; sealed/authenticated include bound carriers; bytes include secure envelope, exclude IP/UDP headers; blocked/deferred bytes are attempts, NOT sent bytes; stages overlap, do not sum stages",
+            "kinds":["data","repair","ack","other"],
+            "streams":self.streams.iter().flatten().map(view).collect::<Vec<_>>(),
+            "overflow":view(&self.overflow)})
+    }
+}
+thread_local! {
+    static IO_TRAFFIC: std::cell::RefCell<IoTraffic> = std::cell::RefCell::new(IoTraffic::default());
+}
+pub(crate) fn traffic(event: Traffic, stream: u64, kind: usize, bytes: usize) {
+    if io_cost_enabled() {
+        IO_TRAFFIC.with(|t| t.borrow_mut().record(event, stream, kind, bytes));
+    }
+}
+pub(crate) fn frame_traffic(
+    event: Traffic,
+    frame: &super::frame::NovoRudpTransportFrameV0,
+    bytes: usize,
+) {
+    use super::frame::NovoRudpTransportFrameKindV0 as Kind;
+    let kind = match frame.kind {
+        Kind::Data => 0,
+        Kind::Repair => 1,
+        Kind::Ack => 2,
+        _ => 3,
+    };
+    traffic(event, frame.stream_id, kind, bytes);
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct NativeObjectTraffic {
+    pub initial: PacketBytes,
+    pub repair: PacketBytes,
+    pub probe: PacketBytes,
+}
+
+#[test]
+fn traffic_totals_keep_stages_separate_and_bound_unknown_streams() {
+    let mut t = IoTraffic::default();
+    t.record(Traffic::WireSent, 0, 3, 1200);
+    t.record(Traffic::SendWouldBlock, 0, 3, 1200);
+    t.record(Traffic::SealedSent, 1, 0, 1200);
+    t.record(Traffic::FragmentAccepted, 1, 1, 1190);
+    t.record(Traffic::FragmentDuplicate, 1, 1, 1190);
+    t.record(Traffic::FragmentHistory, 1, 0, 1180);
+    for stream in 2..100 {
+        t.record(Traffic::AuthenticatedReceived, stream, 2, 220);
+    }
+    assert_eq!(t.streams.iter().flatten().count(), 16);
+    assert_eq!(
+        t.streams[0].unwrap().counts[Traffic::WireSent as usize][3].packets,
+        1
+    );
+    assert_eq!(
+        t.streams[1].unwrap().counts[Traffic::FragmentAccepted as usize][1].bytes,
+        1190
+    );
+    assert_eq!(
+        t.overflow.counts[Traffic::AuthenticatedReceived as usize][2].packets,
+        84
+    );
+    assert_eq!(
+        t.overflow.counts[Traffic::AuthenticatedReceived as usize][2].bytes,
+        84 * 220
+    );
 }
 pub(crate) struct IoSpan(Option<(IoPhase, Instant)>);
 impl Drop for IoSpan {
@@ -118,7 +264,8 @@ pub fn native_io_cost_snapshot() -> Option<serde_json::Value> {
         let phases: std::collections::BTreeMap<_, _> = IO_NAMES.iter().zip(costs.iter()).collect();
         serde_json::json!({
             "scope": "current poll thread; lifetime inclusive sampled wall time; nested phases are not additive; not CPU time",
-            "sample_every_calls": 61, "phases": phases
+            "sample_every_calls": 61, "phases": phases,
+            "traffic": IO_TRAFFIC.with(|t| t.borrow().snapshot())
         })
     }))
 }

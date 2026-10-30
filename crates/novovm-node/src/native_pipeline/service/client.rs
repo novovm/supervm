@@ -192,7 +192,7 @@ impl NativeApplicationClient {
     }
 
     /// One outstanding read per client; independent of transaction admission.
-    /// The request echoes session, generation and exact selector in the reply.
+    /// Replies commit to the complete session, generation and exact selector.
     pub fn prepare_query(&mut self, query: Query) -> Result<PreparedQuery> {
         ensure!(
             self.query_pending.is_none(),
@@ -254,12 +254,11 @@ impl NativeApplicationClient {
             );
             bytes.extend_from_slice(&chunk);
         }
-        let Frame::Response(response) = query::decode(&bytes).map_err(anyhow::Error::msg)? else {
-            anyhow::bail!("client expected native query response");
-        };
-        if response.request != request.request {
+        let Some(response) =
+            query::decode_response(&bytes, &request.request).map_err(anyhow::Error::msg)?
+        else {
             return Ok(None);
-        } // Late old generation cannot satisfy a new read.
+        }; // Late old generation or another selector cannot satisfy a new read.
         self.query_pending = None;
         Ok(Some(response))
     }

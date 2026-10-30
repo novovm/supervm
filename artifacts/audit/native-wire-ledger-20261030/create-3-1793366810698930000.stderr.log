@@ -1,0 +1,6 @@
+Error: original tick stopped; drain=Ok(())
+
+Caused by:
+    0: successor execution/storage owner failed
+    1: candidate pipeline Persist failed (candidate Some([8, 107, 217, 222, 114, 46, 153, 194, 108, 177, 90, 56, 136, 95, 204, 85, 59, 164, 14, 197, 92, 115, 189, 44, 106, 241, 144, 22, 50, 222, 100, 163])): AOEM storage provider rejected operation: status=-4: write batch failed: Failed to write batch to RocksDB: IO error: No space left on device: Failed to WriteFile: D:\WorksArea\SUPERVM\target\native-product-load\uca-16036-1793366810149851600\validator-3.rocksdb/000054.log: ���̿ռ䲻�㡣
+       

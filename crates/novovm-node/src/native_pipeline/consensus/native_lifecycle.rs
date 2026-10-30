@@ -373,6 +373,13 @@ impl NativeLifecycle {
                 .position(|d| d.prepared.fragment_id() == completed.body.id())
                 .context("native completion lost its retained input")?;
             ensure!(queue[index].admitted, "completion without native admission");
+            let delivery = &queue[index];
+            crate::native_pipeline::profile::traffic::completed(
+                &completed,
+                delivery.prepared.height().unwrap_or(0),
+                delivery.prepared.traffic_payload,
+                u8::from(delivery.realtime) | (u8::from(delivery.archive) << 1),
+            );
             if queue[index].retiring {
                 let done = queue.remove(index).expect("retired delivery");
                 self.bytes[completed.peer] -= done.prepared.byte_len();

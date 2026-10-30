@@ -175,6 +175,9 @@ pub struct NativeSendCompletion {
     /// Optional local observer binding to the actual send job's session, which
     /// may already have been replaced by the time completion is handed back.
     pub diagnostic_tag: Option<[u8; 32]>,
+    /// Opt-in actual writes by this attempt; not bytes delivered or finalized.
+    /// Deferred terminal drain writes are in sealed_sent, not sender cursors.
+    pub traffic: Option<super::diagnostics::NativeObjectTraffic>,
 }
 #[must_use]
 #[derive(Default)]
@@ -772,6 +775,18 @@ impl NativeObjectLink {
                 let admission =
                     lane.receiver
                         .accept_received_observed(&received, now, |observation| {
+                            use super::diagnostics::{frame_traffic, Traffic};
+                            use super::fragments::FragmentObservation;
+                            let event = match observation {
+                                FragmentObservation::Accepted { .. } => Traffic::FragmentAccepted,
+                                FragmentObservation::Duplicate { completed: false } => {
+                                    Traffic::FragmentDuplicate
+                                }
+                                FragmentObservation::Duplicate { completed: true } => {
+                                    Traffic::FragmentHistory
+                                }
+                            };
+                            frame_traffic(event, frame, received.wire_bytes);
                             if let Some(d) = self
                                 .diagnostics
                                 .as_ref()
@@ -794,7 +809,14 @@ impl NativeObjectLink {
                             }
                         });
                 match admission {
-                    Ok(FragmentAdmission::Backpressure) => report.backpressured += 1,
+                    Ok(FragmentAdmission::Backpressure) => {
+                        report.backpressured += 1;
+                        super::diagnostics::frame_traffic(
+                            super::diagnostics::Traffic::FragmentBackpressure,
+                            frame,
+                            received.wire_bytes,
+                        );
+                    }
                     Ok(admission) => {
                         if admission == FragmentAdmission::Accepted {
                             report.accepted_fragments += 1;
@@ -815,6 +837,11 @@ impl NativeObjectLink {
                         }
                     }
                     Err(_) => {
+                        super::diagnostics::frame_traffic(
+                            super::diagnostics::Traffic::FragmentRejected,
+                            frame,
+                            received.wire_bytes,
+                        );
                         report.rejected += 1;
                         report
                             .rejection_reasons
@@ -931,6 +958,7 @@ impl NativeObjectLink {
                     );
                 }
             }
+            let traffic = sender.traffic();
             let body = sender.into_body();
             let lane = self.lanes.get_mut(&key.1).expect("configured lane");
             lane.usage.remove(body.byte_len());
@@ -944,6 +972,7 @@ impl NativeObjectLink {
                 state,
                 body,
                 diagnostic_tag,
+                traffic,
             });
         }
         // ACK-first alone can starve data, and data-first alone can starve ACKs.

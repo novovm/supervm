@@ -97,6 +97,9 @@ pub struct PreparedMessage {
     window: Option<(u64, Option<u64>)>,
     body_request: bool,
     durable_control: bool,
+    // Diagnostic only: excludes the live/recovery tag, includes full context
+    // and ordered body bytes. Never used for deduplication or authority.
+    pub(super) traffic_payload: Option<[u8; 32]>,
 }
 impl PreparedMessage {
     pub(super) fn is_durable_control(&self) -> bool {
@@ -442,6 +445,13 @@ impl NativeChannel {
         };
         profile::work(Phase::NativePrepareEncode, started, height, None, None);
         let stream = STREAMS[transport::message_lane(&bytes)?];
+        let traffic_payload =
+            if stream == STREAMS[1] && novovm_network::novorudp::diagnostics::io_cost_enabled() {
+                use sha2::{Digest, Sha256};
+                Some(Sha256::digest(&bytes[11..]).into())
+            } else {
+                None
+            };
         let started = profile::mark();
         let object = Arc::new(OutgoingMessage::with_profile(
             transport::fragment_domain(
@@ -466,6 +476,7 @@ impl NativeChannel {
             stream,
             object,
             window,
+            traffic_payload,
             body_request: matches!(message, transport::Message::RequestBody { .. }),
             durable_control: matches!(
                 message,

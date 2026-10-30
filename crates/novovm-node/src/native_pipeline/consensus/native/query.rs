@@ -527,7 +527,7 @@ mod tests {
             std::thread::yield_now();
         }
         assert_eq!(node.query_replies.len(), 1);
-        let second = client.prepare_query(Query::Status)?;
+        let second = client.prepare_query(Query::Receipt { hash: [31; 32] })?;
         let mut second_sent = false;
         let mut delayed = NativeLinkPoll::default();
         while node.query_inbox.entries.is_empty() || delayed.completed.is_empty() {
@@ -553,18 +553,58 @@ mod tests {
         let (peer, exact) = node.poll_query(now)?.context("retained request lost")?;
         assert_eq!(exact.sequence, 2);
         let deadline_before = node.query_inbox.entries[0].deadline;
-        let mut wrong = exact.clone();
-        wrong.sequence += 1;
-        assert!(node
-            .reply_query(
-                peer,
-                Response {
+        for field in 0..3 {
+            let mut wrong = exact.clone();
+            match field {
+                0 => wrong.sequence -= 1,
+                1 => wrong.session[0] ^= 1,
+                _ => wrong.query = Query::Receipt { hash: [32; 32] },
+            }
+            assert!(node
+                .reply_query(
+                    peer,
+                    Response {
+                        request: wrong.clone(),
+                        answer: Answer::Error(QueryError::Busy)
+                    },
+                    now
+                )
+                .is_err());
+            // Inject a validly encoded but misbound serving-node response into
+            // the original delivery owner. Real encrypted UDP and DONE still
+            // run; the client must retain its pending exact request throughout.
+            let object = Arc::new(OutgoingMessage::with_profile(
+                transport::fragment_domain(
+                    node.domain.chain_id,
+                    node.domain.genesis,
+                    node.domain.protocol,
+                ),
+                wire::encode(Frame::Response(Response {
                     request: wrong,
-                    answer: Answer::Error(QueryError::Busy)
-                },
-                now
-            )
-            .is_err());
+                    answer: Answer::Error(QueryError::Busy),
+                }))
+                .map_err(anyhow::Error::msg)?,
+                MAX_BYTES,
+                FragmentProfile::NativeUdpV2,
+            )?);
+            node.query_replies.push_back(QueryDelivery {
+                peer,
+                session: node.link.session_id(peer).context("test session missing")?,
+                object,
+                admitted: false,
+                deadline: deadline_before,
+                trace: None,
+            });
+            while !node.query_replies.is_empty() {
+                let now = Instant::now();
+                ensure!(now < deadline, "misbound compact response timeout");
+                let _ = node.poll_io(wall, now, 64)?;
+                let _ = client.poll(wall, now, 64)?;
+                assert!(client.poll_query_response(&second, now)?.is_none());
+                std::thread::yield_now();
+            }
+            assert_eq!(node.query_inbox.entries[0].request, exact);
+        }
         node.reply_query(
             peer,
             Response {

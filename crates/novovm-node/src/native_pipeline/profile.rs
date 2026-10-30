@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+pub(crate) mod traffic;
 
 const CRITICAL_EVENTS: usize = 2048;
 

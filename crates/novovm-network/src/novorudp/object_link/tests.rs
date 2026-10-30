@@ -146,11 +146,71 @@ fn scoped_observer_separates_admission_writes_fragments_hash_and_done() -> Resul
     assert!(assembled.first_hash_us.is_none());
     assert!(assembled.verified_us.is_none());
     assert_eq!(received.snapshot().unwrap().objects.len(), 1);
+    let repair = NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Repair,
+        a.session_id(0).unwrap(),
+        BODY,
+        u64::from_be_bytes(body.id()[..8].try_into()?),
+        0,
+        0,
+        body.frame(0)?,
+    );
+    fn check_duplicate(
+        a: &mut NativeObjectLink,
+        b: &mut NativeObjectLink,
+        repair: &NovoRudpTransportFrameV0,
+        start: Instant,
+        history: bool,
+    ) -> Result<()> {
+        let before = super::super::diagnostics::native_io_cost_snapshot();
+        assert!(a.endpoint.try_send(0, repair)?);
+        loop {
+            ensure!(
+                start.elapsed() < Duration::from_secs(2),
+                "duplicate observation"
+            );
+            if b.poll(1000, Instant::now(), 8)?.duplicate_fragments == 1 {
+                break;
+            }
+        }
+        if let Some(before) = before {
+            let after = super::super::diagnostics::native_io_cost_snapshot().unwrap();
+            let events = |s: &serde_json::Value| {
+                s["traffic"]["streams"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|s| s["stream"] == BODY)
+                    .unwrap()["events"]
+                    .clone()
+            };
+            let (before, after) = (events(&before), events(&after));
+            assert_eq!(before["fragment_accepted"], after["fragment_accepted"]);
+            let changed = if history {
+                "fragment_history"
+            } else {
+                "fragment_duplicate"
+            };
+            let same = if history {
+                "fragment_duplicate"
+            } else {
+                "fragment_history"
+            };
+            assert_eq!(before[same], after[same]);
+            assert_eq!(
+                after[changed][1]["packets"].as_u64().unwrap(),
+                before[changed][1]["packets"].as_u64().unwrap() + 1
+            );
+        }
+        Ok(())
+    }
+    check_duplicate(&mut a, &mut b, &repair, start, false)?;
     let mut complete = None;
     while complete.is_none() {
         complete = b.poll_complete(BODY, Instant::now(), 1)?;
     }
     assert_eq!(complete.unwrap().id, body.id());
+    check_duplicate(&mut a, &mut b, &repair, start, true)?;
     let verified = received.snapshot_transfer(tag).unwrap();
     assert_eq!(verified.hash_chunks, body.frame_count() as u64);
     assert!(verified.fragments_complete_us <= verified.first_hash_us);

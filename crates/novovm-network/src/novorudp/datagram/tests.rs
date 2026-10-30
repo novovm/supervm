@@ -45,10 +45,81 @@ fn frame(session: [u8; 16], sequence: u64, payload: Vec<u8>) -> NovoRudpTranspor
 }
 
 #[test]
+fn completed_send_reports_exact_secure_wire_bytes_not_payload_or_budget_denial() -> Result<()> {
+    let (a, b) = channels();
+    let tx = UdpSocket::bind("127.0.0.1:0")?;
+    let rx = UdpSocket::bind("127.0.0.1:0")?;
+    rx.set_read_timeout(Some(Duration::from_secs(1)))?;
+    let mut sender = NativeUdpSession::new(a, rx.local_addr()?)?;
+    let mut receiver = NativeUdpSession::new(b, tx.local_addr()?)?;
+    let packet = frame(sender.session_id(), 0, vec![9; 100]);
+    let sent = sender
+        .try_send_limited(&tx, &packet, Instant::now(), None)?
+        .unwrap();
+    let mut bytes = [0; MAX_DATAGRAM_BYTES];
+    let (received, source) = rx.recv_from(&mut bytes)?;
+    assert_eq!(sent, received);
+    assert!(sent > packet.payload.len());
+    assert_eq!(receiver.open(source, &bytes[..received])?, packet);
+    if let Some(snapshot) = super::super::diagnostics::native_io_cost_snapshot() {
+        let streams = snapshot["traffic"]["streams"].as_array().unwrap();
+        let raw = streams.iter().find(|s| s["stream"] == 0).unwrap();
+        let lane = streams.iter().find(|s| s["stream"] == 11).unwrap();
+        assert_eq!(raw["events"]["wire_sent"][3]["packets"], 1);
+        assert_eq!(raw["events"]["wire_sent"][3]["bytes"], sent);
+        assert_eq!(lane["events"]["sealed_sent"][0]["bytes"], sent);
+        assert_eq!(lane["events"]["authenticated_received"][0]["bytes"], sent);
+        // Same ciphertext is rejected before authenticated accounting.
+        assert!(receiver.open(source, &bytes[..received]).is_err());
+        let next = super::super::diagnostics::native_io_cost_snapshot().unwrap();
+        assert_eq!(snapshot["traffic"], next["traffic"]);
+    }
+    // Actual no-capacity path, not a fake successful send or a size estimate.
+    let now = Instant::now();
+    let mut budget = NativeWireBudget::new(2400, now)?;
+    while sender
+        .try_send_limited(&tx, &packet, now, Some(&mut budget))?
+        .is_some()
+    {
+        rx.recv_from(&mut bytes)?;
+    }
+    let before = budget.usage(now).sent_bytes;
+    let before_traffic = super::super::diagnostics::native_io_cost_snapshot();
+    assert!(sender
+        .try_send_limited(&tx, &packet, now, Some(&mut budget))?
+        .is_none());
+    assert_eq!(budget.usage(now).sent_bytes, before);
+    if let Some(before) = before_traffic {
+        let after = super::super::diagnostics::native_io_cost_snapshot().unwrap();
+        let raw = |s: &serde_json::Value| {
+            s["traffic"]["streams"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["stream"] == 0)
+                .unwrap()["events"]
+                .clone()
+        };
+        assert_eq!(raw(&before)["wire_sent"], raw(&after)["wire_sent"]);
+        assert_eq!(
+            raw(&after)["send_budget_deferred"][3]["packets"]
+                .as_u64()
+                .unwrap(),
+            raw(&before)["send_budget_deferred"][3]["packets"]
+                .as_u64()
+                .unwrap()
+                + 1
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn deferred_partial_write_and_cancel_keep_known_and_unknown_bytes_separate() -> Result<()> {
     use crate::novorudp::carrier::NativeDatagramIo;
     struct Partial {
         cancel: bool,
+        cancel_bytes: usize,
     }
     impl NativeDatagramIo for Partial {
         fn deferred_writes(&self) -> bool {
@@ -64,11 +135,11 @@ fn deferred_partial_write_and_cancel_keep_known_and_unknown_bytes_separate() -> 
                 Ok(17)
             }
         }
-        fn cancel_send(&self, _: &[u8], _: NativeRoute) -> std::io::Result<usize> {
-            Ok(17)
+        fn cancel_send(&self, wire: &[u8], _: NativeRoute) -> std::io::Result<usize> {
+            Ok(self.cancel_bytes.min(wire.len()))
         }
     }
-    for cancel in [false, true] {
+    for (cancel, cancel_bytes) in [(false, 17), (true, 17), (true, 0), (true, usize::MAX)] {
         let (channel, _) = channels();
         let mut session = NativeUdpSession::new(channel, "127.0.0.1:12345".parse()?)?;
         let now = Instant::now();
@@ -76,25 +147,51 @@ fn deferred_partial_write_and_cancel_keep_known_and_unknown_bytes_separate() -> 
         let mut payload = vec![0; 72];
         payload[40..72].fill(7);
         let frame = frame(session.session_id(), 0, payload);
-        let result = session.try_send_limited(&Partial { cancel }, &frame, now, Some(&mut budget));
+        let carrier = Partial {
+            cancel,
+            cancel_bytes,
+        };
+        let sealed = || {
+            super::super::diagnostics::native_io_cost_snapshot().map(|s| {
+                s["traffic"]["streams"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|s| s["stream"] == 11)
+                    .map_or(0, |s| {
+                        s["events"]["sealed_sent"][0]["packets"].as_u64().unwrap()
+                    })
+            })
+        };
+        let before = sealed();
+        let result = session.try_send_limited(&carrier, &frame, now, Some(&mut budget));
         if cancel {
-            assert!(!result?);
-            assert!(session
-                .cancel_send(
-                    &Partial { cancel },
-                    11,
-                    [7; 32],
-                    false,
-                    Some(&mut budget),
-                    now
-                )
-                .is_err());
+            assert!(result?.is_none());
+            assert_eq!(
+                session
+                    .cancel_send(&carrier, 11, [7; 32], false, Some(&mut budget), now)
+                    .is_err(),
+                cancel_bytes == 17
+            );
+            // A second cancellation cannot report the completed write again.
+            session.cancel_send(&carrier, 11, [7; 32], false, Some(&mut budget), now)?;
         } else {
             assert!(result.is_err());
         }
+        if let Some(before) = before {
+            assert_eq!(
+                sealed(),
+                Some(before + u64::from(cancel_bytes == usize::MAX))
+            );
+        }
         let usage = budget.usage(now);
-        assert_eq!(usage.sent_bytes, 17);
-        assert!(usage.uncertain_send_bytes > 0);
+        if cancel_bytes == 17 {
+            assert_eq!(usage.sent_bytes, 17);
+            assert!(usage.uncertain_send_bytes > 0);
+        } else {
+            assert_eq!(usage.uncertain_send_bytes, 0);
+            assert_eq!(usage.sent_bytes > 0, cancel_bytes == usize::MAX);
+        }
         assert_eq!(usage.used, usage.sent_bytes + usage.uncertain_send_bytes);
         assert_eq!(usage.reserved_send_bytes, 0);
     }
