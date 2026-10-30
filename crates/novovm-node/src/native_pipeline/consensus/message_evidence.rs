@@ -164,7 +164,8 @@ pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvide
     match message {
         Message::Body { context, .. }
         | Message::ApflBody { context, .. }
-        | Message::AssetBody { context, .. } => {
+        | Message::AssetBody { context, .. }
+        | Message::AssetBodyReference { context, .. } => {
             ensure!(
                 context.chain_id == config.chain_id
                     && context.genesis_config_commitment == config.genesis

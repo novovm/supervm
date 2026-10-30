@@ -308,6 +308,11 @@ impl RoundProgress {
     pub fn pending_message(&self) -> Option<&Message> {
         self.outbox.as_ref()
     }
+
+    #[cfg(test)]
+    pub(crate) fn last_durable_message_for_test(&self) -> Option<&DurableMessage> {
+        self.journal.last_durable_message()
+    }
     pub fn take_message(&mut self) -> Option<Message> {
         self.outbox.take()
     }

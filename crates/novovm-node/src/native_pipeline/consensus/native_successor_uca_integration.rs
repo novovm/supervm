@@ -374,9 +374,13 @@ fn native_successor_uca_remote_body_waits_for_own_parent_without_blocking_curren
                 || (node.executed() == 0 && node.successor_metrics() == [0; 5]))
     );
     ensure!(f.nodes[next].successor_body_enqueued == 3);
+    let Message::AssetBody { context, batch } = child.as_ref() else {
+        anyhow::bail!("expected original asset successor");
+    };
+    let reference = transport::uca_body_reference(context, batch, uca_codec())?;
     ensure!(
         f.nodes[next].successor_body_bytes
-            == 3 * transport::encode(&child, uca_codec())?.len() as u64
+            == 3 * transport::encode(&reference, uca_codec())?.len() as u64
     );
     // Reuse only this receiver's existing capability, even though decoding the
     // network body created a different dictionary Arc. Other receivers below
@@ -491,6 +495,389 @@ fn native_successor_uca_local_ready_discards_different_decided_parent() -> Resul
     run_local_ready_successor(true)
 }
 
+#[derive(Clone, Copy)]
+enum ReferenceInput {
+    Exact,
+    Missing,
+    DifferentSignature,
+}
+
+#[test]
+#[ignore = "real AOEM/UDP; exact local asset rows reconstruct the original body without full-body fallback"]
+fn native_successor_uca_reference_reuses_exact_local_input() -> Result<()> {
+    run_asset_reference(ReferenceInput::Exact)
+}
+
+#[test]
+#[ignore = "real AOEM/UDP; missing local rows request the live successor body without blocking its lane"]
+fn native_successor_uca_reference_missing_input_uses_live_body_reply() -> Result<()> {
+    run_asset_reference(ReferenceInput::Missing)
+}
+
+#[test]
+#[ignore = "real AOEM/UDP; intent hash hits with different signature bytes fall back to the original complete body"]
+fn native_successor_uca_reference_signature_mismatch_uses_full_body() -> Result<()> {
+    run_asset_reference(ReferenceInput::DifferentSignature)
+}
+
+#[test]
+#[ignore = "real AOEM/UDP parent ACK; scheduled decoded full reply precedes the next leader's proposal"]
+fn native_successor_uca_reference_full_reply_survives_parent_ack_before_proposal() -> Result<()> {
+    let mut u = UcaFixture::new()?;
+    let f = &mut u.native;
+    let first = f.leader(1)?;
+    let next = f.leader(2)?;
+    let target = (0..4)
+        .find(|i| *i != first && *i != next)
+        .context("missing reference target")?;
+    let parent = Arc::new(Message::AssetBody {
+        context: uca_context(f.base.anchor, 1)?,
+        batch: u.parent_batch.clone(),
+    });
+    ensure!(f.nodes[next].offer(&parent)?);
+    f.until(&[next], "late reply sender parent basis", |nodes| {
+        nodes[next].executed() == 1
+    })?;
+    let selection = f.nodes[next]
+        .successor_selection()?
+        .context("late reply parent basis missing")?;
+    let child = Arc::new(Message::AssetBody {
+        context: uca_context(selection.parent, 2)?,
+        batch: u.child_batch.clone(),
+    });
+    let child_id = transport::candidate_body_id(&child, uca_codec())?;
+    ensure!(f.nodes[next].offer_successor(&child, &selection, &f.base.services.0[next])?);
+    f.nodes[next].poll(&f.base.services.0[next], Instant::now())?;
+    ensure!(f.nodes[next].successor_body_enqueued == 3);
+
+    // Stop only the next proposer's lifecycle. Its real socket still delivers
+    // the reference and receives RequestBody, but cannot send a reply/proposal.
+    let active = (0..4).filter(|i| *i != next).collect::<Vec<_>>();
+    f.until(
+        &active,
+        "reference miss requested before parent ACK",
+        |nodes| nodes[target].body_reference_full_requests == 1,
+    )?;
+    ensure!(f.nodes[next].served_bodies == 0);
+    for (i, node) in f.nodes.iter_mut().enumerate() {
+        if i != next {
+            ensure!(node.offer(&parent)?);
+        }
+    }
+    f.until(&active, "three real voters persist parent ACK", |nodes| {
+        active.iter().all(|i| {
+            nodes[*i].progress.head() == Some(selection.parent)
+                && nodes[*i].progress.context().height == 2
+        })
+    })?;
+    ensure!(f.nodes[next].progress.context().height == 1);
+    ensure!(f.nodes[next].served_bodies == 0);
+    ensure!(f.nodes[target].executed() == 1);
+    ensure!(!f.nodes[target]
+        .progress
+        .missing_bodies()
+        .any(|(_, id)| id == child_id));
+    // Exercise the original periodic recovery turn without sleeping or moving
+    // consensus time forward: it must not erase an unanswered reference miss.
+    f.nodes[target].defer_archive_discovery_until_for_test(Instant::now());
+    f.nodes[target].poll(&f.base.services.0[target], Instant::now())?;
+
+    let requests = f.nodes[target].requested_bodies;
+    let rejected = f.nodes[target].rejected_messages;
+    // Schedule only the existing decoded body handoff, not a proposal, a
+    // signature capability, a durable candidate or an ACK. The actual socket
+    // path is covered by the adjacent missing-input/full-reply regression.
+    f.nodes[target].retain_body_reply_for_test(f.base.ids[next], child.clone())?;
+    for _ in 0..16 {
+        f.nodes[target].poll(&f.base.services.0[target], Instant::now())?;
+    }
+    ensure!(
+        f.nodes[target].rejected_messages == rejected,
+        "requested full body was discarded after parent ACK"
+    );
+    ensure!(
+        f.nodes[target].executed() == 1
+            && !f.nodes[target].progress.retains_body(child_id)
+            && f.nodes[target].progress.head() == Some(selection.parent),
+        "requested bytes acquired execution or publication authority"
+    );
+    use crate::native_pipeline::consensus::journal::DurableMessage;
+    ensure!(
+        match f.nodes[target].progress.last_durable_message_for_test() {
+            Some(DurableMessage::Proposal(proposal))
+            | Some(DurableMessage::Decision { proposal, .. }) => proposal.context.height < 2,
+            Some(DurableMessage::Vote(vote)) => vote.context.height < 2,
+            None => true,
+        },
+        "body custody signed at the child height before its proposal"
+    );
+
+    let head = f.await_height(2)?;
+    ensure!(f.nodes.iter().all(|node| node.executed() == 2));
+    ensure!(f.nodes[target].progress.head() == Some(head));
+    ensure!(
+        f.nodes[target].requested_bodies == requests
+            && f.nodes[target].body_reference_full_requests == 1,
+        "held requested body was lost and fetched again after the proposal"
+    );
+    ensure!(!f.nodes[target].is_frozen());
+    drop(std::mem::take(&mut f.nodes));
+    f.base.services.shutdown()
+}
+
+fn run_asset_reference(input: ReferenceInput) -> Result<()> {
+    let mut u = UcaFixture::new()?;
+    let f = &mut u.native;
+    let first = f.leader(1)?;
+    let next = f.leader(2)?;
+    ensure!(first != next);
+    let parent = Arc::new(Message::AssetBody {
+        context: uca_context(f.base.anchor, 1)?,
+        batch: u.parent_batch.clone(),
+    });
+    ensure!(f.nodes[next].offer(&parent)?);
+    f.until(&[next], "reference sender's own parent basis", |nodes| {
+        nodes[next].executed() == 1
+    })?;
+    let selection = f.nodes[next]
+        .successor_selection()?
+        .context("reference sender has no actual parent basis")?;
+    let context = uca_context(selection.parent, 2)?;
+    let child = Arc::new(Message::AssetBody {
+        context,
+        batch: u.child_batch.clone(),
+    });
+    let child_id = transport::candidate_body_id(&child, uca_codec())?;
+    let reference = transport::uca_body_reference(&context, &u.child_batch, uca_codec())?;
+    let reference_bytes = transport::encode(&reference, uca_codec())?.len();
+    let full_bytes = transport::encode(&child, uca_codec())?.len();
+    ensure!(reference_bytes < full_bytes);
+
+    // Fixture-local input is not a fabricated signature capability. The real
+    // body owner must still authenticate it after reproducing its own parent.
+    let local_input = match input {
+        ReferenceInput::Exact => {
+            let views = (0..u.child_batch.len())
+                .map(|index| u.child_batch.view(index))
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Some(Arc::new(AssetSpendBatchV2::from_views(
+                &views,
+                AssetSpendBatchLimitsV2 {
+                    transactions: uca_codec().transactions,
+                    transaction_bytes: uca_codec().transaction_bytes,
+                    body_bytes: uca_codec().body_bytes,
+                },
+            )?))
+        }
+        ReferenceInput::Missing => None,
+        ReferenceInput::DifferentSignature => {
+            let mut rows = Vec::new();
+            for index in 0..u.child_batch.len() {
+                let mut row = u.child_batch.row(index)?;
+                if index == 0 {
+                    row.signature[0] ^= 1;
+                }
+                rows.push(row.encode()?);
+            }
+            let changed = Arc::new(AssetSpendBatchV2::from_raw(
+                &rows,
+                AssetSpendBatchLimitsV2 {
+                    transactions: uca_codec().transactions,
+                    transaction_bytes: uca_codec().transaction_bytes,
+                    body_bytes: uca_codec().body_bytes,
+                },
+            )?);
+            let changed_reference = transport::uca_body_reference(&context, &changed, uca_codec())?;
+            let Message::AssetBodyReference {
+                transactions: original_ids,
+                ..
+            } = &reference
+            else {
+                anyhow::bail!("expected asset reference");
+            };
+            let Message::AssetBodyReference {
+                transactions: changed_ids,
+                body_id: changed_id,
+                ..
+            } = changed_reference
+            else {
+                anyhow::bail!("expected changed asset reference");
+            };
+            ensure!(original_ids == &changed_ids && child_id != changed_id);
+            Some(changed)
+        }
+    };
+    if matches!(input, ReferenceInput::Exact) {
+        // A compact wire recipe does not replace the original retained-body
+        // charge. This budget fits reference-sized wire work, not full input.
+        let reserve = uca_codec().message_bytes * 2;
+        let reference_sized = reserve
+            + reference_bytes * 2
+            + u.child_batch.canonical_bytes()
+            + u.child_batch.len() * 64;
+        let mut bounded = CandidateBodies::new(
+            &f.base.services.0[first],
+            uca_context(f.base.anchor, 1)?,
+            policy(),
+            uca_codec(),
+            BodyLimits {
+                bodies: 8,
+                bytes: reference_sized,
+                inflight: 2,
+            },
+        )?;
+        ensure!(!bounded.offer_remote_successor(
+            &child,
+            f.base.ids[next],
+            &f.base.services.0[first],
+            &f.nodes[first].progress,
+            &f.base.set,
+        )?);
+        ensure!(
+            bounded.retained() == (0, 0),
+            "reference reduced body accounting"
+        );
+        let mut full_budget = CandidateBodies::new(
+            &f.base.services.0[first],
+            uca_context(f.base.anchor, 1)?,
+            policy(),
+            uca_codec(),
+            BodyLimits {
+                bodies: 8,
+                bytes: reference_sized + 2 * (full_bytes - reference_bytes),
+                inflight: 2,
+            },
+        )?;
+        ensure!(full_budget.offer_remote_successor(
+            &child,
+            f.base.ids[next],
+            &f.base.services.0[first],
+            &f.nodes[first].progress,
+            &f.base.set,
+        )?);
+        ensure!(full_budget.retained().0 == 1);
+    }
+    ensure!(f.nodes[next].offer_successor(&child, &selection, &f.base.services.0[next])?);
+
+    let mut resolutions = [0u64; 4];
+    let deadline = Instant::now() + DEADLINE;
+    while !f
+        .nodes
+        .iter()
+        .enumerate()
+        .all(|(i, node)| i == next || node.remote_successor_waiting_for_test(child_id))
+    {
+        ensure!(
+            Instant::now() < deadline,
+            "asset reference handoff or full reply stalled"
+        );
+        let now = Instant::now();
+        let wall = 1000 + f.started.elapsed().as_millis() as u64;
+        for (i, node) in f.nodes.iter_mut().enumerate() {
+            node.poll_io(wall, now)?;
+            if let Some((source, received)) = node.take_asset_body_reference()? {
+                ensure!(i != next && source == f.base.ids[next]);
+                ensure!(
+                    received.as_ref() == &reference,
+                    "reference changed ordered input/context"
+                );
+                node.resolve_asset_body_reference(
+                    source,
+                    &received,
+                    local_input.clone(),
+                    &f.base.services.0[i],
+                )?;
+                resolutions[i] += 1;
+            }
+            node.poll(&f.base.services.0[i], now)?;
+            ensure!(!node.is_frozen(), "reference froze node {i}");
+        }
+        std::thread::yield_now();
+    }
+    ensure!(f.nodes[next].successor_body_enqueued == 3);
+    ensure!(f.nodes[next].successor_body_bytes == 3 * reference_bytes as u64);
+    for (i, node) in f.nodes.iter().enumerate() {
+        ensure!(node.progress.head().is_none() && node.progress.context().height == 1);
+        ensure!(
+            !node.progress.retains_body(child_id),
+            "reference granted future authority"
+        );
+        if i == next {
+            continue;
+        }
+        ensure!(resolutions[i] == 1 && node.body_references_received == 1);
+        ensure!(node.executed() == 0 && node.successor_metrics() == [0; 5]);
+        match input {
+            ReferenceInput::Exact => ensure!(
+                node.body_references_reused == 1 && node.body_reference_full_requests == 0,
+                "exact local bytes requested a full body"
+            ),
+            ReferenceInput::Missing | ReferenceInput::DifferentSignature => ensure!(
+                node.body_references_reused == 0 && node.body_reference_full_requests == 1,
+                "missing or different full bytes did not use original recovery"
+            ),
+        }
+    }
+    if !matches!(input, ReferenceInput::Exact) {
+        ensure!(
+            f.nodes[next].served_bodies >= 3,
+            "live successor did not serve full replies"
+        );
+    }
+
+    // Only ordinary current-parent execution and real journal ACK can promote
+    // the reconstructed/recovered child. No fixture proposal or QC is supplied.
+    for (i, node) in f.nodes.iter_mut().enumerate() {
+        if i != next {
+            ensure!(node.offer(&parent)?);
+        }
+    }
+    let head = f.await_height(2)?;
+    ensure!(f.nodes.iter().all(|node| {
+        node.executed() == 2 && node.successor_metrics()[3] == 1 && node.successor_metrics()[4] == 0
+    }));
+    // Retire the running owners before opening the original databases. A second
+    // reader must not wait while an unpolled lifecycle holds the sole I/O ticket.
+    drop(std::mem::take(&mut f.nodes));
+    f.base.services.shutdown()?;
+    for (i, path) in f.base.paths.iter().enumerate() {
+        let pipeline = CandidatePipeline::start(configure(path)?, OpenMode::Existing)?;
+        let journal = open_journal(
+            ValidatorJournal::open(
+                &pipeline,
+                f.base.genesis,
+                f.base.anchor,
+                f.base.set.clone(),
+                f.base.keys[i].clone(),
+            )?,
+            &pipeline,
+        )?;
+        ensure!(
+            journal.head() == Some(head),
+            "reference cold journal head differs"
+        );
+        drop(journal);
+        let mut read = ArchiveRead::new(2, head, f.base.genesis, f.base.set.clone())?;
+        let deadline = Instant::now() + DEADLINE;
+        let archived = loop {
+            ensure!(Instant::now() < deadline, "reference archive read stalled");
+            if let Some(result) = read.poll(&pipeline)? {
+                break result.context("reference child archive missing")?;
+            }
+            std::thread::yield_now();
+        };
+        let restored = transport::stored_body(archived.stored(), uca_codec())?;
+        ensure!(transport::candidate_body_id(&restored, uca_codec())? == child_id);
+        ensure!(
+            &restored == child.as_ref(),
+            "archive stored a reference or different signed input"
+        );
+        ensure!(archived.point() == head);
+        pipeline.shutdown()?;
+    }
+    Ok(())
+}
+
 #[test]
 #[ignore = "real AOEM/native sockets; remote successor source/domain and independently reproduced parent are mandatory"]
 fn native_successor_uca_remote_wrong_parent_never_executes_and_real_body_recovers() -> Result<()> {
@@ -577,6 +964,14 @@ fn native_successor_uca_remote_wrong_parent_never_executes_and_real_body_recover
         |nodes| nodes[target].executed() == 1,
     )?;
     for _ in 0..32 {
+        if let Some((source, reference)) = f.nodes[target].take_asset_body_reference()? {
+            f.nodes[target].resolve_asset_body_reference(
+                source,
+                &reference,
+                None,
+                &f.base.services.0[target],
+            )?;
+        }
         f.nodes[target].poll(&f.base.services.0[target], Instant::now())?;
     }
     ensure!(f.nodes[target].remote_successor_waiting_for_test(wrong_id));
@@ -1037,6 +1432,14 @@ fn native_successor_uca_round_change_drains_auth_and_execution_without_publicati
                 Instant::now() < deadline,
                 "retired UCA successor permit was not drained"
             );
+            if let Some((source, reference)) = f.nodes[next].take_asset_body_reference()? {
+                f.nodes[next].resolve_asset_body_reference(
+                    source,
+                    &reference,
+                    None,
+                    &f.base.services.0[next],
+                )?;
+            }
             f.nodes[next].poll(&f.base.services.0[next], Instant::now())?;
             match f.base.services.0[next].try_authenticate_owned(probe.take().unwrap()) {
                 Ok(crate::native_pipeline::pipeline::AuthenticationSubmission::Accepted(

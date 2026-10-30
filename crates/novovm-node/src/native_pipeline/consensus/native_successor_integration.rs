@@ -93,6 +93,17 @@ impl NativeFixture {
                 // socket. Two active validators cannot form the four-node QC.
                 node.poll_io(wall, now)?;
                 if active.contains(&i) {
+                    if let Some((source, reference)) = node.take_asset_body_reference()? {
+                        // This socket fixture has no RPC pool. Resolve the
+                        // real missing-input case before polling the body lane
+                        // again so its original full reply can be received.
+                        node.resolve_asset_body_reference(
+                            source,
+                            &reference,
+                            None,
+                            &self.base.services.0[i],
+                        )?;
+                    }
                     node.poll(&self.base.services.0[i], now)?;
                 }
                 ensure!(!node.is_frozen(), "native lifecycle froze at node {i}");

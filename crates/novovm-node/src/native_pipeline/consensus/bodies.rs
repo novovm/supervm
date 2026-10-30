@@ -48,6 +48,7 @@ struct Body {
     context: BatchContext,
     charge: usize,
     local_round: Option<u64>,
+    requested_round: Option<u64>,
     work: Work,
 }
 
@@ -148,7 +149,19 @@ impl CandidateBodies {
         local: bool,
         progress: &RoundProgress,
     ) -> Result<bool> {
-        self.offer_inner(message, local, progress, None)
+        self.offer_inner(message, local, progress, None, false)
+    }
+
+    pub(super) fn offer_requested_asset(
+        &mut self,
+        message: &Arc<Message>,
+        progress: &RoundProgress,
+    ) -> Result<bool> {
+        ensure!(
+            matches!(message.as_ref(), Message::AssetBody { .. }),
+            "requested asset input required"
+        );
+        self.offer_inner(message, false, progress, None, true)
     }
 
     /// Local, process-only signature evidence. Remote bodies never carry these
@@ -164,7 +177,7 @@ impl CandidateBodies {
             Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
             "admitted body execution owner changed"
         );
-        self.offer_inner(message, true, progress, Some((pipeline, admitted)))
+        self.offer_inner(message, true, progress, Some((pipeline, admitted)), false)
     }
 
     fn offer_inner(
@@ -173,6 +186,7 @@ impl CandidateBodies {
         local: bool,
         progress: &RoundProgress,
         admitted: Option<(&CandidatePipeline, &[&AdmittedTransfer])>,
+        requested: bool,
     ) -> Result<bool> {
         ensure!(!self.frozen, "body owner frozen");
         ensure!(!progress.is_frozen(), "consensus owner frozen");
@@ -212,7 +226,7 @@ impl CandidateBodies {
             None,
         );
         ensure!(
-            local || progress.missing_bodies().any(|(_, wanted)| wanted == id),
+            local || requested || progress.missing_bodies().any(|(_, wanted)| wanted == id),
             "unsolicited body or different ordered input"
         );
         // A parent ACK can arrive during the same lifecycle turn before the
@@ -224,6 +238,9 @@ impl CandidateBodies {
         if let Some(known) = self.bodies.get_mut(&id) {
             if local {
                 known.local_round = Some(progress.round());
+            }
+            if requested {
+                known.requested_round = Some(progress.round());
             }
             return Ok(true);
         }
@@ -291,6 +308,7 @@ impl CandidateBodies {
                 context: *context,
                 charge,
                 local_round: local.then_some(progress.round()),
+                requested_round: requested.then_some(progress.round()),
                 work: Work::Pending(Some(request)),
             },
         );
@@ -315,6 +333,7 @@ impl CandidateBodies {
         self.bodies
             .get(&id)
             .map(|b| b.message.clone())
+            .or_else(|| self.successor_response(id, progress))
             .or_else(|| progress.candidate_body(id))
     }
 
@@ -394,6 +413,7 @@ impl CandidateBodies {
                 continue;
             }
             if body.local_round != Some(progress.round())
+                && body.requested_round != Some(progress.round())
                 && !progress.retains_body(*id)
                 && !progress.missing_bodies().any(|(_, needed)| needed == *id)
             {
@@ -401,6 +421,12 @@ impl CandidateBodies {
                 continue;
             }
             if let Work::Ready(candidate) = &body.work {
+                if body.requested_round.is_some()
+                    && body.local_round != Some(progress.round())
+                    && !progress.missing_bodies().any(|(_, needed)| needed == *id)
+                {
+                    continue;
+                }
                 // Optional follower preparation stays on this bounded body
                 // owner until a verified proposal demands it. It must not fill
                 // the consensus candidate budget with unrelated local results.

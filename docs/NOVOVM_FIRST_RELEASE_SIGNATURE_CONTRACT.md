@@ -4,6 +4,17 @@
 状态：首发约束和实施映射，**不是密码接线、生产配置或性能已验收**。
 经济约束见[正式 NOV 契约](NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)。
 
+## 2026-10-31 原APFL资产正文引用（开发候选）
+
+客户端的AssetSpendV2签名字节、AssetSpendBatchV2及NVQUERY5不变。验证节点间原body lane
+新增tag20/payload v2，携带完整BatchContext、原body_id和有序intent定位符。
+原RPC池重构同一有序正文后核对完整body_id（包括公钥与独立签名字节），再交原
+CandidateBodies/Lookahead执行；定位符命中不是验签或支出许可，缺失/不匹配走原RequestBody全文。
+原完整正文持有预算、授权、nonce、费用和journal发布不变；冷恢复仍使用完整持久正文。
+不新增UDP/WSS实现，不改变资产签名算法。新增节点消息需整套候选统一升级，旧节点拒绝未知tag；
+不得混跑新旧验证节点。对照实验每轮独立启动同版本四节点，不将新增tag发给旧节点轮次。
+源代码、制品及分层验收见[APFL引用记录](../artifacts/audit/native-apfl-reference-20261031/README.md)。
+
 ## 2026-10-30 原生查询响应收口（开发候选）
 
 请求仍使用同一 `NVQUERY1/2/4` 规范和原认证会话；响应统一使用 `NVQUERY5`：

@@ -119,6 +119,55 @@ impl CandidateBodies {
                 )
         })
     }
+
+    pub(crate) fn successor_response(
+        &self,
+        id: Hash,
+        progress: &RoundProgress,
+    ) -> Option<Arc<Message>> {
+        self.successor
+            .as_ref()
+            .filter(|work| {
+                let pin = Pin::from_selection(&work.selection);
+                work.local_origin
+                    && work.id == id
+                    && !work.retired
+                    && (pin.live(
+                        progress.context(),
+                        progress.round(),
+                        progress.is_recovering(),
+                    ) || pin.promoted(
+                        progress.context(),
+                        progress.round(),
+                        progress.parent(),
+                        progress.head(),
+                        progress.is_recovering(),
+                    ))
+            })
+            .map(|work| work.message.clone())
+    }
+
+    pub(crate) fn accepts_asset_reference(
+        &self,
+        context: &BatchContext,
+        id: Hash,
+        source: Hash,
+        progress: &RoundProgress,
+        validators: &ValidatorSet,
+    ) -> Result<bool> {
+        if self.frozen || progress.is_frozen() || progress.is_recovering() {
+            return Ok(false);
+        }
+        if context.height == progress.context().height {
+            return Ok(matches_context(context, &self.pin, progress)
+                && progress
+                    .missing_bodies()
+                    .any(|(peer, wanted)| peer == source && wanted == id));
+        }
+        Ok(self
+            .remote_successor_selection(context, source, progress, validators)?
+            .is_some())
+    }
     pub(crate) fn successor_metrics(&self) -> [u64; 5] {
         self.successor_metrics
     }
@@ -322,6 +371,21 @@ impl CandidateBodies {
         let Message::AssetBody { context, .. } = message.as_ref() else {
             return Ok(false);
         };
+        let Some(selection) =
+            self.remote_successor_selection(context, source, progress, validators)?
+        else {
+            return Ok(false);
+        };
+        self.retain_successor(message, selection, pipeline, None, false)
+    }
+
+    fn remote_successor_selection(
+        &self,
+        context: &BatchContext,
+        source: Hash,
+        progress: &RoundProgress,
+        validators: &ValidatorSet,
+    ) -> Result<Option<SuccessorSelection>> {
         if self.frozen
             || progress.is_frozen()
             || progress.is_recovering()
@@ -331,7 +395,7 @@ impl CandidateBodies {
             || validators.leader(context.height, 0)? != source
             || source == progress.local_validator()
         {
-            return Ok(false);
+            return Ok(None);
         }
         let selection = SuccessorSelection {
             source: progress.context(),
@@ -354,16 +418,16 @@ impl CandidateBodies {
             || self.pin.business_program != uca_program_id()
             || !matches_successor_context(context, &self.pin, pin)?
         {
-            return Ok(false);
+            return Ok(None);
         }
         if self.successor.is_none()
             && self
                 .successor_attempt
                 .is_some_and(|previous| previous.live(progress.context(), progress.round(), false))
         {
-            return Ok(false);
+            return Ok(None);
         }
-        self.retain_successor(message, selection, pipeline, None, false)
+        Ok(Some(selection))
     }
 
     pub(crate) fn qualify_remote_successor(
@@ -849,6 +913,7 @@ impl CandidateBodies {
                 context: work.context,
                 charge: work.charge,
                 local_round: Some(0),
+                requested_round: None,
                 work: promoted,
             },
         );

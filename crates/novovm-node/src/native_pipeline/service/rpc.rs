@@ -383,6 +383,18 @@ impl RpcLifecycle {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::Lifecycle,
         );
+        if let Some((source, reference)) = self.node.controller.take_asset_body_reference()? {
+            let Message::AssetBodyReference { transactions, .. } = reference.as_ref() else {
+                unreachable!("typed asset reference handoff");
+            };
+            let batch = self.retained_uca_reference(transactions)?;
+            self.node.controller.resolve_asset_body_reference(
+                source,
+                &reference,
+                batch,
+                &self.node.pipeline,
+            )?;
+        }
         // A future body received on the preceding turn is still in the original
         // bounded Lookahead. Rebind complete pool-owned signed rows before its
         // authentication request is submitted; missing rows keep strict verification.
@@ -1202,6 +1214,11 @@ impl RpcLifecycle {
             "early_body_enqueued_peer_obligations":core.successor_body_enqueued,
             "early_body_enqueued_bytes":core.successor_body_bytes,
             "scope":"same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"});
+        status["asset_body_references"] = json!({
+            "received":core.body_references_received,
+            "exact_body_reused":core.body_references_reused,
+            "full_body_requests_enqueued":core.body_reference_full_requests,
+            "scope":"original body lane and pool; logical reuse/request counts, not finality or actual wire bytes"});
         status
     }
 

@@ -50,7 +50,8 @@ fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
         transport::Message::Decision { proposal, .. } => Some((proposal.context.height, None)),
         transport::Message::Body { context, .. }
         | transport::Message::ApflBody { context, .. }
-        | transport::Message::AssetBody { context, .. } => Some((context.height, None)),
+        | transport::Message::AssetBody { context, .. }
+        | transport::Message::AssetBodyReference { context, .. } => Some((context.height, None)),
         transport::Message::RequestDecision { context } => Some((context.height, None)),
         _ => None,
     }
@@ -102,6 +103,14 @@ pub struct PreparedMessage {
     pub(super) traffic_payload: Option<[u8; 32]>,
 }
 impl PreparedMessage {
+    /// A reference miss is owed until its target body height, not merely the
+    /// height at which the request was queued. Wire identity is unchanged.
+    pub(super) fn retain_body_request_until(mut self, height: u64) -> Self {
+        self.window = Some((height, None));
+        self.body_request = false;
+        self
+    }
+
     pub(super) fn is_durable_control(&self) -> bool {
         self.durable_control
     }

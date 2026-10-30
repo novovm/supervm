@@ -71,6 +71,95 @@ pub fn uca_body_id(
     uca_body_id_and_wire_len(context, batch, limits).map(|(id, _)| id)
 }
 
+pub(crate) fn uca_body_reference(
+    context: &BatchContext,
+    batch: &AssetSpendBatchV2,
+    limits: DecodeLimits,
+) -> Result<Message> {
+    let body_id = uca_body_id(context, batch, limits)?;
+    reference_size(batch.len(), limits)?;
+    let transactions = (0..batch.len())
+        .map(|index| {
+            // Exactly the existing pool's intent key. Public keys/signatures
+            // remain committed by body_id, never authenticated by this locator.
+            Ok(Sha256::digest(batch.view(index)?.signing_bytes()?).into())
+        })
+        .collect::<Result<Vec<Hash>>>()?;
+    Ok(Message::AssetBodyReference {
+        context: *context,
+        body_id,
+        transactions,
+    })
+}
+
+fn reference_size(count: usize, limits: DecodeLimits) -> Result<usize> {
+    limits.validate()?;
+    ensure!(
+        count > 0 && count <= limits.transactions,
+        "NUAS reference transaction count exceeds budget or empty"
+    );
+    let hashes = count
+        .checked_mul(32)
+        .context("NUAS reference size overflow")?;
+    // Only reference metadata exists here. Reconstructing the complete batch
+    // must separately enforce its original expanded and per-row byte budgets.
+    ensure!(
+        hashes <= limits.body_bytes,
+        "NUAS reference exceeds byte budget"
+    );
+    let size = hashes
+        .checked_add(PREFIX_BYTES + 2 + CONTEXT_BYTES + 32 + 4)
+        .context("NUAS reference envelope overflow")?;
+    ensure!(
+        size <= limits.message_bytes,
+        "NUAS reference envelope budget"
+    );
+    Ok(size)
+}
+
+pub(super) fn append_reference(
+    out: &mut Vec<u8>,
+    context: &BatchContext,
+    body_id: &Hash,
+    transactions: &[Hash],
+    limits: DecodeLimits,
+) -> Result<()> {
+    uca_profile(context)?;
+    reference_size(transactions.len(), limits)?;
+    out.extend_from_slice(&VERSION.to_be_bytes());
+    append_context(out, context);
+    out.extend_from_slice(body_id);
+    out.extend_from_slice(&u32::try_from(transactions.len())?.to_be_bytes());
+    for hash in transactions {
+        out.extend_from_slice(hash);
+    }
+    Ok(())
+}
+
+pub(super) fn decode_reference(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Message> {
+    ensure!(
+        reader.u16()? == VERSION,
+        "NUAS reference payload version mismatch"
+    );
+    let context = read_context(reader)?;
+    uca_profile(&context)?;
+    let body_id = reader.hash()?;
+    let count = reader.u32()? as usize;
+    reference_size(count, limits)?;
+    ensure!(
+        count.checked_mul(32) == Some(reader.remaining()),
+        "NUAS reference row bytes mismatch"
+    );
+    let transactions = (0..count)
+        .map(|_| reader.hash())
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Message::AssetBodyReference {
+        context,
+        body_id,
+        transactions,
+    })
+}
+
 fn uca_body_id_and_wire_len(
     context: &BatchContext,
     batch: &AssetSpendBatchV2,

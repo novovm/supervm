@@ -39,6 +39,9 @@ pub(super) struct ArchivePeer {
     cached: Option<Cached>,
     decision_pending: bool,
     body_request: Option<Hash>,
+    // A future body requested before its parent ACK must not lose its reply
+    // responsibility when an ordinary archive request refreshes the hint.
+    successor_body_request: Option<Hash>,
 }
 impl ArchivePeer {
     #[cfg(test)]
@@ -70,7 +73,12 @@ impl NativeLifecycle {
             if archive {
                 // A requested live body can precede RequestDecision for the
                 // SAME height. Preserve it on that first/context refresh.
-                if delivery.prepared.height() != keep_archive_height {
+                if keep_archive_height.is_none_or(|keep| {
+                    delivery
+                        .prepared
+                        .height()
+                        .is_none_or(|height| height < keep)
+                }) {
                     delivery.archive = false;
                 }
             } else if delivery
@@ -134,7 +142,7 @@ impl NativeLifecycle {
         }
         // A transport DONE may precede the server's archive readiness. Repeat
         // exact missing-body requests under the same bounded periodic budget.
-        self.requested.clear();
+        self.requested.retain(|_, claim| claim.is_some());
         Ok(())
     }
 
@@ -330,7 +338,15 @@ impl NativeLifecycle {
         // A hint is not an accepted transaction or durable evidence. Repeated
         // requests coalesce at one exact ID per configured peer; older missing
         // hints can be repeated by the requester's existing bounded retry.
-        self.archives[peer].body_request = Some(body_id);
+        if self
+            .bodies
+            .successor_response(body_id, &self.progress)
+            .is_some()
+        {
+            self.archives[peer].successor_body_request = Some(body_id);
+        } else {
+            self.archives[peer].body_request = Some(body_id);
+        }
     }
 
     // Called ONLY for the original sender's actual Delivered completion.
@@ -379,7 +395,11 @@ impl NativeLifecycle {
     }
 
     fn poll_body_response(&mut self, peer: usize) -> Result<()> {
-        let Some(body_id) = self.archives[peer].body_request else {
+        let successor = self.archives[peer].successor_body_request.is_some();
+        let Some(body_id) = self.archives[peer]
+            .successor_body_request
+            .or(self.archives[peer].body_request)
+        else {
             return Ok(());
         };
         let archive = self.archives[peer]
@@ -392,12 +412,22 @@ impl NativeLifecycle {
         } else if let Some(body) = self.bodies.response(body_id, &self.progress) {
             self.channel.prepare_recovery_reply(&body)?
         } else {
+            if successor {
+                // A retired optional fork must not keep this peer's ordinary
+                // archive request behind an input this owner no longer holds.
+                self.archives[peer].successor_body_request = None;
+                return self.poll_body_response(peer);
+            }
             return Ok(());
         };
         // Purpose, not the source cache, owns the requested reply. Advancing
         // the local realtime height cannot cancel the peer's recovery work.
         if self.enqueue_kind(peer, prepared, true) {
-            self.archives[peer].body_request = None;
+            if successor {
+                self.archives[peer].successor_body_request = None;
+            } else {
+                self.archives[peer].body_request = None;
+            }
             self.served_bodies += 1;
         }
         Ok(())

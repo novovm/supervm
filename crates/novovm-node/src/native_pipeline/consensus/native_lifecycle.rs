@@ -100,7 +100,8 @@ pub struct NativeLifecycle {
     outbox: Option<Fanout>,
     successor_outbox: Option<(Hash, Fanout)>,
     successor_announced: Option<Hash>,
-    requested: BTreeSet<(Hash, Hash)>,
+    requested:
+        BTreeMap<(Hash, Hash), Option<crate::native_pipeline::execution::plan::BatchContext>>,
     height: u64,
     round: u64,
     archives: Vec<recovery::ArchivePeer>,
@@ -122,6 +123,9 @@ pub struct NativeLifecycle {
     /// Logical early-body delivery obligations accepted, not wire/retransmit bytes.
     pub successor_body_enqueued: u64,
     pub successor_body_bytes: u64,
+    pub body_references_received: u64,
+    pub body_references_reused: u64,
+    pub body_reference_full_requests: u64,
 }
 impl NativeLifecycle {
     #[cfg(test)]
@@ -244,7 +248,7 @@ impl NativeLifecycle {
             outbox: None,
             successor_outbox: None,
             successor_announced: None,
-            requested: BTreeSet::new(),
+            requested: BTreeMap::new(),
             height,
             round,
             archives: (0..count)
@@ -267,6 +271,9 @@ impl NativeLifecycle {
             archive_cache_reused: 0,
             successor_body_enqueued: 0,
             successor_body_bytes: 0,
+            body_references_received: 0,
+            body_references_reused: 0,
+            body_reference_full_requests: 0,
         })
     }
 
@@ -596,9 +603,12 @@ impl NativeLifecycle {
         self.bodies.poll(pipeline, &mut self.progress)?;
         self.progress.poll_acknowledgements(pipeline)?;
         if self.height != self.progress.context().height || self.round != self.progress.round() {
+            let height_changed = self.height != self.progress.context().height;
             self.height = self.progress.context().height;
             self.round = self.progress.round();
-            self.requested.clear();
+            self.requested.retain(|_, claim| {
+                height_changed && claim.is_some_and(|context| context.height >= self.height)
+            });
             // Genuine local advance postpones archive discovery. Do not read
             // old candidates on every healthy fast-path height just because
             // peers' latest context announcements are still in flight.
@@ -633,6 +643,9 @@ impl NativeLifecycle {
                 if self.pending[lane].is_none() {
                     match self.channel.poll_receive_lane(lane, now, 64)? {
                         Some(ReceiveEvent::Message(message)) => {
+                            if matches!(&message.message, Message::AssetBodyReference { .. }) {
+                                self.body_references_received += 1;
+                            }
                             let peer = *self
                                 .peer_names
                                 .get(&message.peer)
@@ -644,7 +657,8 @@ impl NativeLifecycle {
                                 Message::RequestDecision { context } => context.height,
                                 Message::Body { context, .. }
                                 | Message::ApflBody { context, .. }
-                                | Message::AssetBody { context, .. } => context.height,
+                                | Message::AssetBody { context, .. }
+                                | Message::AssetBodyReference { context, .. } => context.height,
                                 _ => 0,
                             };
                             crate::native_pipeline::profile::delivery_event(
@@ -670,6 +684,10 @@ impl NativeLifecycle {
                 if let Some(received) = self.pending[lane].take() {
                     let peer = received.peer;
                     match received.message.as_ref() {
+                        // RPC resolves this original single-slot handoff from
+                        // its bounded pool before the next node poll. A miss
+                        // releases the lane for the original full-body reply.
+                        Message::AssetBodyReference { .. } => self.pending[lane] = Some(received),
                         Message::AssetBody { context, .. }
                             if context.height > self.progress.context().height =>
                         {
@@ -686,15 +704,46 @@ impl NativeLifecycle {
                                 &self.progress,
                                 &self.validators,
                             ) {
-                                Ok(true) => {}
+                                Ok(true) => {
+                                    let id = super::transport::candidate_body_id(
+                                        &received.message,
+                                        self.codec,
+                                    )?;
+                                    self.requested.remove(&(self.peers[peer], id));
+                                }
                                 Ok(false) | Err(_) => self.rejected_messages += 1,
                             }
                         }
                         Message::Body { .. }
                         | Message::ApflBody { .. }
                         | Message::AssetBody { .. } => {
-                            match self.bodies.offer(&received.message, false, &self.progress) {
-                                Ok(true) => {}
+                            let requested = if let Message::AssetBody { context, .. } =
+                                received.message.as_ref()
+                            {
+                                self.requested.iter().find_map(|((source, id), claim)| {
+                                    (*source == self.peers[peer] && *claim == Some(*context))
+                                        .then_some(*id)
+                                })
+                            } else {
+                                None
+                            };
+                            let requested = requested.filter(|id| {
+                                super::transport::candidate_body_id(&received.message, self.codec)
+                                    .ok()
+                                    == Some(*id)
+                            });
+                            let result = if requested.is_some() {
+                                self.bodies
+                                    .offer_requested_asset(&received.message, &self.progress)
+                            } else {
+                                self.bodies.offer(&received.message, false, &self.progress)
+                            };
+                            match result {
+                                Ok(true) => {
+                                    if let Some(id) = requested {
+                                        self.requested.remove(&(self.peers[peer], id));
+                                    }
+                                }
                                 Ok(false) => self.pending[lane] = Some(received),
                                 Err(_) => self.rejected_messages += 1,
                             }
@@ -769,9 +818,10 @@ impl NativeLifecycle {
         self.poll_archives(pipeline)?;
         self.request_decisions(now)?;
         let missing = self.bodies.requests(&self.progress);
-        self.requested.retain(|key| missing.contains(key));
+        self.requested
+            .retain(|key, claim| claim.is_some() || missing.contains(key));
         for (source, id) in missing {
-            if self.requested.contains(&(source, id)) {
+            if self.requested.contains_key(&(source, id)) {
                 continue;
             }
             let Some(peer) = self.peers.iter().position(|p| *p == source) else {
@@ -781,7 +831,7 @@ impl NativeLifecycle {
                 .channel
                 .prepare(&Message::RequestBody { body_id: id })?;
             if self.enqueue(peer, request) {
-                self.requested.insert((source, id));
+                self.requested.insert((source, id), None);
                 self.requested_bodies += 1;
             }
         }

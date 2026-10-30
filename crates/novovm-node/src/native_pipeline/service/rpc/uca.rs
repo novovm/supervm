@@ -221,4 +221,92 @@ impl RpcLifecycle {
             },
         )?))
     }
+
+    pub(super) fn retained_uca_reference(
+        &self,
+        ordered: &[Hash],
+    ) -> Result<Option<Arc<AssetSpendBatchV2>>> {
+        let mut views = Vec::with_capacity(ordered.len());
+        for id in ordered {
+            let Some(entry) = self.pending.get(id) else {
+                return Ok(None);
+            };
+            let AdmissionInput::Uca { batch, index } = &entry.input else {
+                return Ok(None);
+            };
+            views.push(batch.view(*index)?);
+        }
+        // Receive limits, not this node's local selection target. The normal
+        // body owner still charges and captures the complete rebuilt input.
+        let limits = super::super::native_decode_limits(self.batch_size, true);
+        Ok(Some(Arc::new(AssetSpendBatchV2::from_views(
+            &views,
+            AssetSpendBatchLimitsV2 {
+                transactions: limits.transactions,
+                transaction_bytes: limits.transaction_bytes,
+                body_bytes: limits.body_bytes,
+            },
+        )?)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "real AOEM asset admission; reference reconstruction uses original pool, run alone"]
+    fn asset_body_reference_reuses_pool_rows_without_local_target_or_authority_changes(
+    ) -> Result<()> {
+        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
+            let rpc = &mut nodes[0];
+            for spend in signed {
+                let raw = spend.encode()?;
+                let batch = Arc::new(AssetSpendBatchV2::from_raw(
+                    &[raw],
+                    AssetSpendBatchLimitsV2 {
+                        transactions: 1,
+                        transaction_bytes: 8192,
+                        body_bytes: 8192,
+                    },
+                )?);
+                rpc.ingress_batch_boundary = false;
+                rpc.incoming_from_client = false;
+                rpc.incoming = Some((rpc.node.controller.uca_transactions_message(batch)?, 0));
+                let deadline = Instant::now() + Duration::from_secs(15);
+                while rpc.incoming.is_some() || rpc.admission.has_pending_native_admission() {
+                    ensure!(Instant::now() < deadline, "original pool admission timeout");
+                    rpc.poll_admission()?;
+                    std::thread::yield_now();
+                }
+            }
+            let hashes = signed.iter().map(hash).collect::<Result<Vec<_>>>()?;
+            let retained = rpc.pending_retention.bytes;
+            let parent = rpc.node.controller.parent();
+            let executed = rpc.node.controller.executed();
+            rpc.batch_size = 1;
+            let batch = rpc
+                .retained_uca_reference(&hashes)?
+                .context("retained rows missing")?;
+            assert_eq!(batch.len(), signed.len());
+            for (index, spend) in signed.iter().enumerate() {
+                assert!(batch.view(index)?.matches_signed(spend)?);
+            }
+            let reversed = hashes.iter().rev().copied().collect::<Vec<_>>();
+            let reordered = rpc
+                .retained_uca_reference(&reversed)?
+                .context("reordered rows missing")?;
+            for (index, spend) in signed.iter().rev().enumerate() {
+                assert!(reordered.view(index)?.matches_signed(spend)?);
+            }
+            let mut missing = hashes.clone();
+            missing[0] = [0xff; 32];
+            assert!(rpc.retained_uca_reference(&missing)?.is_none());
+            assert_eq!(rpc.pending_retention.bytes, retained);
+            assert_eq!(rpc.pending.len(), signed.len());
+            assert_eq!(rpc.node.controller.parent(), parent);
+            assert_eq!(rpc.node.controller.executed(), executed);
+            Ok(())
+        })
+    }
 }

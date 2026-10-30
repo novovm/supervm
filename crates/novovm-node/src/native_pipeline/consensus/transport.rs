@@ -31,6 +31,7 @@ mod uca;
 pub use uca::uca_body_id;
 pub(crate) use uca::{
     candidate_body_id, candidate_body_id_and_wire_len, candidate_request, stored_body,
+    uca_body_reference,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +110,13 @@ pub enum Message {
     AssetTransactions {
         scope: TransactionsScope,
         batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+    },
+    /// Ordered pool locators for an exact v2 body (tag 20), not a candidate or
+    /// signature proof. Reconstructed rows must match the full body commitment.
+    AssetBodyReference {
+        context: BatchContext,
+        body_id: Hash,
+        transactions: Vec<Hash>,
     },
 }
 
@@ -203,6 +211,7 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::ApflTransactions { .. } => 13,
         Message::AssetBody { .. } => 14,
         Message::AssetTransactions { .. } => 15,
+        Message::AssetBodyReference { .. } => 20,
     });
     match message {
         Message::Body {
@@ -280,6 +289,11 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::AssetTransactions { scope, batch } => {
             uca::append_transactions(&mut out, scope, batch, limits)?;
         }
+        Message::AssetBodyReference {
+            context,
+            body_id,
+            transactions,
+        } => uca::append_reference(&mut out, context, body_id, transactions, limits)?,
     }
     ensure!(
         out.len() <= limits.message_bytes,
@@ -321,7 +335,7 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
         "host network protocol/version mismatch"
     );
     match bytes[10] {
-        1 | 7 | 11 | 12 | 14 | 17..=19 => Ok(1),
+        1 | 7 | 11 | 12 | 14 | 17..=20 => Ok(1),
         2..=6 | 8 | 10 | 16 => Ok(0),
         9 | 13 | 15 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
@@ -422,6 +436,7 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         tag @ (11..=13) => apfl::decode(tag, &mut reader, limits)?,
         14 => uca::decode(&mut reader, limits)?,
         15 => uca::decode_transactions(&mut reader, limits)?,
+        20 => uca::decode_reference(&mut reader, limits)?,
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(

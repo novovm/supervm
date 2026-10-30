@@ -160,6 +160,105 @@ fn native_archive_delivery_unsent_takeover_survives_realtime_retirement() -> Res
 }
 
 #[test]
+#[ignore = "real native delivery owner; a queued reference request survives its parent height"]
+fn native_reference_request_unsent_retains_target_height_then_retires() -> Result<()> {
+    with_delivery_lifecycle_for_test(|node, _| {
+        let context = node.progress.context();
+        let head = node.progress.head();
+        let target = context.height + 1;
+        let ordinary = request(node, 0x524546)?;
+        let wire = ordinary.clone().retain_body_request_until(target);
+        ensure!(
+            wire.fragment_id() == ordinary.fragment_id()
+                && wire.byte_len() == ordinary.byte_len()
+                && wire.lane() == ordinary.lane(),
+            "request retirement pin changed original bytes or lane"
+        );
+        ensure!(node.enqueue(0, wire.clone()));
+        let bytes = node.bytes[0];
+        ensure!(
+            node.deliveries[0].len() == 1 && !node.deliveries[0][0].admitted,
+            "fixture must retain an unsent request, not a native handle"
+        );
+
+        // Only exercise the retirement scheduler. No consensus parent ACK,
+        // transport admission or completion is fabricated by this height.
+        node.height = target;
+        node.retire_realtime()?;
+        ensure!(
+            node.deliveries[0].len() == 1
+                && node.deliveries[0][0].realtime
+                && !node.deliveries[0][0].archive
+                && !node.deliveries[0][0].admitted
+                && !node.deliveries[0][0].retiring
+                && node.deliveries[0][0].prepared.fragment_id() == wire.fragment_id()
+                && node.bytes[0] == bytes,
+            "parent-height retirement lost the queued successor body request"
+        );
+        node.height = target + 1;
+        node.retire_realtime()?;
+        ensure!(
+            node.deliveries[0].is_empty() && node.bytes[0] == 0,
+            "expired reference target retained unsent request bytes"
+        );
+        ensure!(node.progress.context() == context && node.progress.head() == head);
+        Ok(())
+    })
+}
+
+#[test]
+#[ignore = "real full-body wire and delivery owner; parent archive refresh cannot erase child reply"]
+fn native_reference_reply_unsent_survives_parent_request_then_retires() -> Result<()> {
+    with_delivery_live_body_for_test(|node, _, body| {
+        let parent = node.progress.context();
+        let head = node.progress.head();
+        let Message::ApflBody { context, batch } = body.as_ref() else {
+            anyhow::bail!("expected original APFL fixture body");
+        };
+        let mut child_context = *context;
+        child_context.height = parent.height + 1;
+        child_context.parent_height = parent.height;
+        child_context.parent_block_hash = [0xa1; 32];
+        let child = Message::ApflBody {
+            context: child_context,
+            batch: batch.clone(),
+        };
+        let reply = node.channel.prepare_recovery_reply(&child)?;
+        ensure!(node.enqueue_kind(0, reply.clone(), true));
+        let bytes = node.bytes[0];
+        ensure!(
+            node.deliveries[0].len() == 1 && !node.deliveries[0][0].admitted,
+            "fixture must retain a queued full reply before native admission"
+        );
+
+        // The real request handler updates a peer's recovery hint, not our
+        // chain head. Parent requests may arrive after a child body request.
+        node.request_archive(0, parent)?;
+        ensure!(
+            node.deliveries[0].len() == 1
+                && node.deliveries[0][0].archive
+                && !node.deliveries[0][0].realtime
+                && !node.deliveries[0][0].admitted
+                && !node.deliveries[0][0].retiring
+                && node.deliveries[0][0].prepared.fragment_id() == reply.fragment_id()
+                && node.bytes[0] == bytes,
+            "parent RequestDecision erased the queued successor full-body reply"
+        );
+        let mut next = parent;
+        next.height = child_context.height + 1;
+        next.parent_block_hash = [0xa2; 32];
+        next.parent_decision_hash = [0xa3; 32];
+        node.request_archive(0, next)?;
+        ensure!(
+            node.deliveries[0].is_empty() && node.bytes[0] == 0,
+            "peer advance beyond the child retained obsolete unsent reply bytes"
+        );
+        ensure!(node.progress.context() == parent && node.progress.head() == head);
+        Ok(())
+    })
+}
+
+#[test]
 #[ignore = "real AOEM and native admitted handle; no fabricated ACK"]
 fn native_archive_delivery_inflight_takeover_retains_original_handle() -> Result<()> {
     with_delivery_lifecycle_for_test(|node, message| {
