@@ -1,0 +1,886 @@
+{
+  "baseline": "9d7d6304d4f4940a9251e399f08c5d86321563d9",
+  "node_sha256": "0x6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+  "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+  "source": "paired-33856-1793447405205.json",
+  "input": "0xfae4e354bbab7a388c809fb6937e6445cc040fcbd4f03c9d67f051fb8346f5fc",
+  "scope": "diagnostic 16K; one host four processes; same corpus/genesis; lifetime inclusive wall and sampled IO phases overlap and cannot be summed into main-clock shares; not new formal 65K performance",
+  "selected_next": "original per-datagram AEAD processing only; preserve independent authentication, nonce and replay; repair/candidate implementation frozen pending measured change",
+  "rounds": [
+    {
+      "round": 0,
+      "signature_backend": "cpu",
+      "entry_node": 1,
+      "transactions": 16384,
+      "tps": 2347.319637196993,
+      "latency_us": {
+        "p50": 2824345,
+        "p95": 4221707,
+        "p99": 4225644,
+        "sample_count": 16384,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "all_head_snapshots_match": true,
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "stage_durations_seconds": {
+        "main_observation_period": 10.0299349,
+        "native_io": 4.3319897,
+        "lifecycle": 6.7925412,
+        "assembly": 0.5845677,
+        "queries": 0.0923196,
+        "idle": 3.1792748
+      },
+      "sampled_io_seconds": {
+        "send": 0.8232509191933741,
+        "send_batch": 0.9677698323809524,
+        "seal_aead": 1.0096488428755919,
+        "open_aead": 0.33434820693679096,
+        "receive": 0.21367669234726688,
+        "feedback": 0.13988023772418057,
+        "sender_poll": 3.076137886284813
+      },
+      "stage_profile": {
+        "admission": {
+          "calls": 16,
+          "wall_ns": 205534100,
+          "max_wall_ns": 15170900
+        },
+        "authentication": {
+          "calls": 16,
+          "wall_ns": 77562700,
+          "max_wall_ns": 5951600
+        },
+        "bind": {
+          "calls": 8,
+          "wall_ns": 32068900,
+          "max_wall_ns": 4441800
+        },
+        "capture": {
+          "calls": 14210,
+          "wall_ns": 387496800,
+          "max_wall_ns": 152400
+        },
+        "finalize_capture": {
+          "calls": 16,
+          "wall_ns": 198514900,
+          "max_wall_ns": 13712200
+        },
+        "execute_cpu": {
+          "calls": 16,
+          "wall_ns": 196451000,
+          "max_wall_ns": 13552600
+        },
+        "execute_integer": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "integer_wire": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "reduction": {
+          "calls": 16,
+          "wall_ns": 172241200,
+          "max_wall_ns": 12036400
+        },
+        "state_tree": {
+          "calls": 16,
+          "wall_ns": 118769600,
+          "max_wall_ns": 7925700
+        },
+        "packet": {
+          "calls": 16,
+          "wall_ns": 411029400,
+          "max_wall_ns": 28413400
+        },
+        "io_nodes": {
+          "calls": 1558,
+          "wall_ns": 180738000,
+          "max_wall_ns": 960400
+        },
+        "io_metadata_read": {
+          "calls": 35,
+          "wall_ns": 855100,
+          "max_wall_ns": 79200
+        },
+        "io_metadata_write": {
+          "calls": 66,
+          "wall_ns": 106561000,
+          "max_wall_ns": 4124100
+        },
+        "io_persist": {
+          "calls": 3216,
+          "wall_ns": 843067000,
+          "max_wall_ns": 30890700
+        },
+        "io_recover": {
+          "calls": 11,
+          "wall_ns": 401049700,
+          "max_wall_ns": 44726500
+        },
+        "lifecycle": {
+          "calls": 98612,
+          "wall_ns": 6792541200,
+          "max_wall_ns": 24388100
+        },
+        "consensus": {
+          "calls": 197224,
+          "wall_ns": 33405700,
+          "max_wall_ns": 1436200
+        },
+        "projection": {
+          "calls": 98612,
+          "wall_ns": 36756500,
+          "max_wall_ns": 3236000
+        },
+        "gossip": {
+          "calls": 98612,
+          "wall_ns": 401349000,
+          "max_wall_ns": 12344200
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 2280,
+          "wall_ns": 3179274800,
+          "max_wall_ns": 2659100
+        },
+        "yield": {
+          "calls": 73229,
+          "wall_ns": 9753000,
+          "max_wall_ns": 204200
+        },
+        "queue_admission": {
+          "calls": 16,
+          "wall_ns": 73101600,
+          "max_wall_ns": 38498000
+        },
+        "queue_candidate": {
+          "calls": 40,
+          "wall_ns": 1453100,
+          "max_wall_ns": 182800
+        },
+        "integer_compile": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "integer_projection": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "candidate_registration": {
+          "calls": 17476,
+          "wall_ns": 6732700,
+          "max_wall_ns": 17100
+        },
+        "native_io": {
+          "calls": 98612,
+          "wall_ns": 4331989700,
+          "max_wall_ns": 2890300
+        },
+        "native_assembly": {
+          "calls": 98612,
+          "wall_ns": 584567700,
+          "max_wall_ns": 23650700
+        },
+        "native_query": {
+          "calls": 98612,
+          "wall_ns": 92319600,
+          "max_wall_ns": 416000
+        },
+        "native_selection": {
+          "calls": 98430,
+          "wall_ns": 184922600,
+          "max_wall_ns": 16038400
+        },
+        "native_prepare_encode": {
+          "calls": 163,
+          "wall_ns": 287751700,
+          "max_wall_ns": 7510900
+        },
+        "native_prepare_hash": {
+          "calls": 163,
+          "wall_ns": 94311300,
+          "max_wall_ns": 2540900
+        },
+        "native_decode": {
+          "calls": 220,
+          "wall_ns": 90678500,
+          "max_wall_ns": 5095700
+        },
+        "body_identity": {
+          "calls": 16,
+          "wall_ns": 92249800,
+          "max_wall_ns": 7150700
+        },
+        "body_charge": {
+          "calls": 16,
+          "wall_ns": 800,
+          "max_wall_ns": 100
+        },
+        "native_io_gap": {
+          "calls": 98611,
+          "wall_ns": 5703252200,
+          "max_wall_ns": 31707200
+        },
+        "native_io_period": {
+          "calls": 98611,
+          "wall_ns": 10029934900,
+          "max_wall_ns": 32085000
+        },
+        "tick_status": {
+          "calls": 2,
+          "wall_ns": 21191400,
+          "max_wall_ns": 20859200
+        },
+        "tick_encode": {
+          "calls": 2,
+          "wall_ns": 5845700,
+          "max_wall_ns": 5790000
+        },
+        "tick_write": {
+          "calls": 2,
+          "wall_ns": 1514400,
+          "max_wall_ns": 1278700
+        },
+        "tick_output": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        }
+      },
+      "repair": {
+        "objects": 47,
+        "initial": 333747,
+        "repair": 46438,
+        "probe": 3,
+        "accepted_data": 292301,
+        "accepted_repair": 41446,
+        "duplicate_repair": 1038,
+        "history_repair": 8,
+        "rejected": 0,
+        "backpressure": 0,
+        "repair_retry_cycles": 329,
+        "receive_ms": {
+          "p50": 661.72,
+          "p95": 1122.669,
+          "max": 1144.873
+        },
+        "initial_ms": {
+          "p50": 645.023,
+          "p95": 1101.335,
+          "max": 1116.163
+        }
+      }
+    },
+    {
+      "round": 1,
+      "signature_backend": "gpu_required",
+      "entry_node": 1,
+      "transactions": 16384,
+      "tps": 2407.538487332871,
+      "latency_us": {
+        "p50": 2688350,
+        "p95": 4354961,
+        "p99": 4433207,
+        "sample_count": 16384,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "all_head_snapshots_match": true,
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "stage_durations_seconds": {
+        "main_observation_period": 10.0325843,
+        "native_io": 4.2920784,
+        "lifecycle": 6.6683282,
+        "assembly": 0.5813591,
+        "queries": 0.0852212,
+        "idle": 3.3031384
+      },
+      "sampled_io_seconds": {
+        "send": 0.76019223246113,
+        "send_batch": 0.8652419135678392,
+        "seal_aead": 0.9285559812322705,
+        "open_aead": 0.3993717244848809,
+        "receive": 0.24083814462624678,
+        "feedback": 0.13386959836623555,
+        "sender_poll": 3.062856482156863
+      },
+      "stage_profile": {
+        "admission": {
+          "calls": 16,
+          "wall_ns": 207008000,
+          "max_wall_ns": 15547600
+        },
+        "authentication": {
+          "calls": 16,
+          "wall_ns": 77105100,
+          "max_wall_ns": 5250800
+        },
+        "bind": {
+          "calls": 4,
+          "wall_ns": 15511500,
+          "max_wall_ns": 4113700
+        },
+        "capture": {
+          "calls": 14210,
+          "wall_ns": 390410700,
+          "max_wall_ns": 165500
+        },
+        "finalize_capture": {
+          "calls": 16,
+          "wall_ns": 194524700,
+          "max_wall_ns": 13917000
+        },
+        "execute_cpu": {
+          "calls": 16,
+          "wall_ns": 195170500,
+          "max_wall_ns": 13528300
+        },
+        "execute_integer": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "integer_wire": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "reduction": {
+          "calls": 16,
+          "wall_ns": 171014000,
+          "max_wall_ns": 11777600
+        },
+        "state_tree": {
+          "calls": 16,
+          "wall_ns": 116006600,
+          "max_wall_ns": 8075200
+        },
+        "packet": {
+          "calls": 16,
+          "wall_ns": 404671500,
+          "max_wall_ns": 29863200
+        },
+        "io_nodes": {
+          "calls": 1490,
+          "wall_ns": 196226600,
+          "max_wall_ns": 503200
+        },
+        "io_metadata_read": {
+          "calls": 32,
+          "wall_ns": 741300,
+          "max_wall_ns": 48300
+        },
+        "io_metadata_write": {
+          "calls": 68,
+          "wall_ns": 96711800,
+          "max_wall_ns": 2478300
+        },
+        "io_persist": {
+          "calls": 3216,
+          "wall_ns": 830906800,
+          "max_wall_ns": 34608100
+        },
+        "io_recover": {
+          "calls": 10,
+          "wall_ns": 368926600,
+          "max_wall_ns": 48245100
+        },
+        "lifecycle": {
+          "calls": 89592,
+          "wall_ns": 6668328200,
+          "max_wall_ns": 38606300
+        },
+        "consensus": {
+          "calls": 179184,
+          "wall_ns": 31285700,
+          "max_wall_ns": 702100
+        },
+        "projection": {
+          "calls": 89592,
+          "wall_ns": 36733500,
+          "max_wall_ns": 2907300
+        },
+        "gossip": {
+          "calls": 89592,
+          "wall_ns": 332714900,
+          "max_wall_ns": 10627700
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 2420,
+          "wall_ns": 3303138400,
+          "max_wall_ns": 2538600
+        },
+        "yield": {
+          "calls": 66831,
+          "wall_ns": 10382900,
+          "max_wall_ns": 610300
+        },
+        "queue_admission": {
+          "calls": 16,
+          "wall_ns": 20240500,
+          "max_wall_ns": 16636800
+        },
+        "queue_candidate": {
+          "calls": 36,
+          "wall_ns": 12451600,
+          "max_wall_ns": 11702900
+        },
+        "integer_compile": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "integer_projection": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "candidate_registration": {
+          "calls": 7129,
+          "wall_ns": 3032800,
+          "max_wall_ns": 12900
+        },
+        "native_io": {
+          "calls": 89592,
+          "wall_ns": 4292078400,
+          "max_wall_ns": 2144500
+        },
+        "native_assembly": {
+          "calls": 89592,
+          "wall_ns": 581359100,
+          "max_wall_ns": 38587200
+        },
+        "native_query": {
+          "calls": 89592,
+          "wall_ns": 85221200,
+          "max_wall_ns": 380400
+        },
+        "native_selection": {
+          "calls": 89357,
+          "wall_ns": 239624600,
+          "max_wall_ns": 17460100
+        },
+        "native_prepare_encode": {
+          "calls": 159,
+          "wall_ns": 235403400,
+          "max_wall_ns": 8248800
+        },
+        "native_prepare_hash": {
+          "calls": 159,
+          "wall_ns": 77032000,
+          "max_wall_ns": 1545900
+        },
+        "native_decode": {
+          "calls": 235,
+          "wall_ns": 114788700,
+          "max_wall_ns": 5805900
+        },
+        "body_identity": {
+          "calls": 16,
+          "wall_ns": 83533200,
+          "max_wall_ns": 6096800
+        },
+        "body_charge": {
+          "calls": 16,
+          "wall_ns": 400,
+          "max_wall_ns": 100
+        },
+        "native_io_gap": {
+          "calls": 89591,
+          "wall_ns": 5745734700,
+          "max_wall_ns": 38602500
+        },
+        "native_io_period": {
+          "calls": 89591,
+          "wall_ns": 10032584300,
+          "max_wall_ns": 38608200
+        },
+        "tick_status": {
+          "calls": 2,
+          "wall_ns": 23808500,
+          "max_wall_ns": 23551600
+        },
+        "tick_encode": {
+          "calls": 2,
+          "wall_ns": 6267600,
+          "max_wall_ns": 6226700
+        },
+        "tick_write": {
+          "calls": 2,
+          "wall_ns": 1494600,
+          "max_wall_ns": 1287100
+        },
+        "tick_output": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        }
+      },
+      "repair": {
+        "objects": 48,
+        "initial": 340848,
+        "repair": 50989,
+        "probe": 5,
+        "accepted_data": 296310,
+        "accepted_repair": 44538,
+        "duplicate_repair": 3471,
+        "history_repair": 31,
+        "rejected": 0,
+        "backpressure": 0,
+        "repair_retry_cycles": 274,
+        "receive_ms": {
+          "p50": 681.553,
+          "p95": 839.356,
+          "max": 874.764
+        },
+        "initial_ms": {
+          "p50": 663.102,
+          "p95": 806.956,
+          "max": 818.798
+        }
+      }
+    },
+    {
+      "round": 2,
+      "signature_backend": "cpu",
+      "entry_node": 1,
+      "transactions": 16384,
+      "tps": 2412.5189471969925,
+      "latency_us": {
+        "p50": 2636392,
+        "p95": 4239839,
+        "p99": 4288011,
+        "sample_count": 16384,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "all_head_snapshots_match": true,
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "stage_durations_seconds": {
+        "main_observation_period": 10.0313084,
+        "native_io": 4.1473677,
+        "lifecycle": 6.4847858,
+        "assembly": 0.4812981,
+        "queries": 0.0814631,
+        "idle": 3.4862666
+      },
+      "sampled_io_seconds": {
+        "send": 0.6986072778467909,
+        "send_batch": 0.8647057589108911,
+        "seal_aead": 0.9168946397691864,
+        "open_aead": 0.3968664954632939,
+        "receive": 0.23328393380824478,
+        "feedback": 0.12795296941896026,
+        "sender_poll": 2.9697453655256725
+      },
+      "stage_profile": {
+        "admission": {
+          "calls": 16,
+          "wall_ns": 189762600,
+          "max_wall_ns": 13727800
+        },
+        "authentication": {
+          "calls": 16,
+          "wall_ns": 77370800,
+          "max_wall_ns": 6039300
+        },
+        "bind": {
+          "calls": 9,
+          "wall_ns": 36451500,
+          "max_wall_ns": 4838800
+        },
+        "capture": {
+          "calls": 14210,
+          "wall_ns": 389382000,
+          "max_wall_ns": 1479600
+        },
+        "finalize_capture": {
+          "calls": 16,
+          "wall_ns": 196297600,
+          "max_wall_ns": 13827300
+        },
+        "execute_cpu": {
+          "calls": 16,
+          "wall_ns": 193688200,
+          "max_wall_ns": 13282300
+        },
+        "execute_integer": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "integer_wire": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "reduction": {
+          "calls": 16,
+          "wall_ns": 169905400,
+          "max_wall_ns": 11759300
+        },
+        "state_tree": {
+          "calls": 16,
+          "wall_ns": 118264100,
+          "max_wall_ns": 8048100
+        },
+        "packet": {
+          "calls": 16,
+          "wall_ns": 398890000,
+          "max_wall_ns": 28065300
+        },
+        "io_nodes": {
+          "calls": 1529,
+          "wall_ns": 189226300,
+          "max_wall_ns": 910000
+        },
+        "io_metadata_read": {
+          "calls": 26,
+          "wall_ns": 549300,
+          "max_wall_ns": 66700
+        },
+        "io_metadata_write": {
+          "calls": 64,
+          "wall_ns": 95658300,
+          "max_wall_ns": 4018000
+        },
+        "io_persist": {
+          "calls": 3216,
+          "wall_ns": 811888400,
+          "max_wall_ns": 50957100
+        },
+        "io_recover": {
+          "calls": 8,
+          "wall_ns": 269584200,
+          "max_wall_ns": 38632200
+        },
+        "lifecycle": {
+          "calls": 79780,
+          "wall_ns": 6484785800,
+          "max_wall_ns": 24787400
+        },
+        "consensus": {
+          "calls": 159560,
+          "wall_ns": 31052200,
+          "max_wall_ns": 887400
+        },
+        "projection": {
+          "calls": 79780,
+          "wall_ns": 34132300,
+          "max_wall_ns": 3019500
+        },
+        "gossip": {
+          "calls": 79780,
+          "wall_ns": 311251400,
+          "max_wall_ns": 12299500
+        },
+        "http": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "idle": {
+          "calls": 2622,
+          "wall_ns": 3486266600,
+          "max_wall_ns": 2509800
+        },
+        "yield": {
+          "calls": 57554,
+          "wall_ns": 13240800,
+          "max_wall_ns": 3840200
+        },
+        "queue_admission": {
+          "calls": 16,
+          "wall_ns": 44736500,
+          "max_wall_ns": 41051000
+        },
+        "queue_candidate": {
+          "calls": 41,
+          "wall_ns": 1401800,
+          "max_wall_ns": 457000
+        },
+        "integer_compile": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "integer_projection": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        },
+        "candidate_registration": {
+          "calls": 4465,
+          "wall_ns": 2082900,
+          "max_wall_ns": 27400
+        },
+        "native_io": {
+          "calls": 79780,
+          "wall_ns": 4147367700,
+          "max_wall_ns": 3394000
+        },
+        "native_assembly": {
+          "calls": 79780,
+          "wall_ns": 481298100,
+          "max_wall_ns": 19120800
+        },
+        "native_query": {
+          "calls": 79780,
+          "wall_ns": 81463100,
+          "max_wall_ns": 552600
+        },
+        "native_selection": {
+          "calls": 79543,
+          "wall_ns": 168890200,
+          "max_wall_ns": 16205300
+        },
+        "native_prepare_encode": {
+          "calls": 145,
+          "wall_ns": 194370900,
+          "max_wall_ns": 7509900
+        },
+        "native_prepare_hash": {
+          "calls": 145,
+          "wall_ns": 78411700,
+          "max_wall_ns": 2943100
+        },
+        "native_decode": {
+          "calls": 221,
+          "wall_ns": 102484500,
+          "max_wall_ns": 4978400
+        },
+        "body_identity": {
+          "calls": 16,
+          "wall_ns": 78662100,
+          "max_wall_ns": 5348200
+        },
+        "body_charge": {
+          "calls": 16,
+          "wall_ns": 600,
+          "max_wall_ns": 200
+        },
+        "native_io_gap": {
+          "calls": 79779,
+          "wall_ns": 5889465400,
+          "max_wall_ns": 32820300
+        },
+        "native_io_period": {
+          "calls": 79779,
+          "wall_ns": 10031308400,
+          "max_wall_ns": 33108400
+        },
+        "tick_status": {
+          "calls": 2,
+          "wall_ns": 23300300,
+          "max_wall_ns": 23040300
+        },
+        "tick_encode": {
+          "calls": 2,
+          "wall_ns": 5501900,
+          "max_wall_ns": 5456400
+        },
+        "tick_write": {
+          "calls": 2,
+          "wall_ns": 1362900,
+          "max_wall_ns": 1169500
+        },
+        "tick_output": {
+          "calls": 0,
+          "wall_ns": 0,
+          "max_wall_ns": 0
+        }
+      },
+      "repair": {
+        "objects": 48,
+        "initial": 340848,
+        "repair": 45656,
+        "probe": 1,
+        "accepted_data": 302565,
+        "accepted_repair": 38283,
+        "duplicate_repair": 4162,
+        "history_repair": 236,
+        "rejected": 0,
+        "backpressure": 0,
+        "repair_retry_cycles": 329,
+        "receive_ms": {
+          "p50": 655.782,
+          "p95": 803.433,
+          "max": 814.64
+        },
+        "initial_ms": {
+          "p50": 634.499,
+          "p95": 803.683,
+          "max": 820.745
+        }
+      }
+    }
+  ],
+  "candidate_intervals": [
+    {
+      "round": 0,
+      "height": 6,
+      "body": "462d6f81cfce87803c049afb77ea9684973535fd73f6ab39593d3e91dc8395c1",
+      "identity_to_candidate_ms": 142.5604,
+      "candidate_to_registration_ms": 0.0033,
+      "candidate_to_durable_ack_ms": 570.5669
+    },
+    {
+      "round": 0,
+      "height": 10,
+      "body": "97e53288be04c1aee3e28362ecbab31a9e909a8bea9936afbd29477a1d5825ef",
+      "identity_to_candidate_ms": 146.0631,
+      "candidate_to_registration_ms": 570.0884,
+      "candidate_to_durable_ack_ms": 745.545
+    },
+    {
+      "round": 1,
+      "height": 6,
+      "body": "462d6f81cfce87803c049afb77ea9684973535fd73f6ab39593d3e91dc8395c1",
+      "identity_to_candidate_ms": 164.8966,
+      "candidate_to_registration_ms": 910.8911,
+      "candidate_to_durable_ack_ms": 1064.7345
+    },
+    {
+      "round": 1,
+      "height": 10,
+      "body": "97e53288be04c1aee3e28362ecbab31a9e909a8bea9936afbd29477a1d5825ef",
+      "identity_to_candidate_ms": 151.8427,
+      "candidate_to_registration_ms": 0.0054,
+      "candidate_to_durable_ack_ms": 18.9176
+    },
+    {
+      "round": 2,
+      "height": 6,
+      "body": "462d6f81cfce87803c049afb77ea9684973535fd73f6ab39593d3e91dc8395c1",
+      "identity_to_candidate_ms": 152.6876,
+      "candidate_to_registration_ms": 0.0051,
+      "candidate_to_durable_ack_ms": 732.3017
+    },
+    {
+      "round": 2,
+      "height": 10,
+      "body": "97e53288be04c1aee3e28362ecbab31a9e909a8bea9936afbd29477a1d5825ef",
+      "identity_to_candidate_ms": 140.9494,
+      "candidate_to_registration_ms": 635.4594,
+      "candidate_to_durable_ack_ms": 769
+    }
+  ]
+}
