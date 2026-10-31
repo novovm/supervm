@@ -1,0 +1,48 @@
+{
+  "base": "6c86f0baf1411a16a8c0ee13b498928ce5513260",
+  "scope": "isolated test-only AEAD preparation experiment and CPU accounting harness; original v4 node and AOEM unchanged; no candidate encryption promoted, no deployment",
+  "cpu_accounting": "two GetProcessTimes user/kernel snapshots around original drive call; separate four replicated nodes and driver; denominator unique successful transactions; includes boundary/tail validation skew, not crypto-only CPU or GPU device time",
+  "environment": "candidate-v1.json formal environment; original signature CPU/GPU/CPU backend selection; diagnostics disabled for 65K continuous CPU-accounting rounds",
+  "files": [
+    {
+      "path": "target/native-controller-throughput-20261031/cpu-accounting/native-tests.exe",
+      "sha256": "0377ac42f9c12af0301aa5eaf2b9d1ffa398854a067508fea3b36448b17d3148"
+    },
+    {
+      "path": "target/runtime-rebuild/release/deps/novovm_network-627c50e1fbeae78a.exe",
+      "sha256": "9bebbce8ef09a5d10b5c5f5abf59bb617f8ef07e9ac1708600d040c0e9465da6"
+    },
+    {
+      "path": "target/native-controller-throughput-20261031/candidate-v4/novovm-node.exe",
+      "sha256": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74"
+    },
+    {
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+      "sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+    },
+    {
+      "path": "crates/novovm-network/src/product_overlay.rs",
+      "sha256": "636b5ec4f8d0b46bb9479b97242876bca4a1a2ea0146131deb85a26ed9bbb6ae"
+    },
+    {
+      "path": "crates/novovm-network/src/product_overlay/tests/aead_preparation.rs",
+      "sha256": "bcab3977c8898741e532bc241c8011d081dd110fbefa8d64ede5b09a9e0f3fc0"
+    },
+    {
+      "path": "crates/novovm-udp-batch/src/cpu_clock.rs",
+      "sha256": "2af665e8f903a335f859d321f98d90364b8ec21e1a3df9eb09aac3f961372052"
+    },
+    {
+      "path": "crates/novovm-udp-batch/src/lib.rs",
+      "sha256": "713bf0dbad4623b66e6ad8b2c85033a26fa4a31a361d882a47e3a20bfa78a9b7"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs",
+      "sha256": "6ac2152ed5c02688ecf966d35e2b9dc30131b9575f3c5616e29a0472ab9dd38b"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca/cpu_accounting.rs",
+      "sha256": "d8e369ac4f8c40c8c3937393e6bab920d3277f87816c0774cad0af49239bb486"
+    }
+  ]
+}

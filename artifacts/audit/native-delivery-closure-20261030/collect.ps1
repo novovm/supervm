@@ -14,6 +14,7 @@ $rounds = foreach ($row in $rows) {
         binary_sha256=$r.binary_sha256;aoem_sha256=$r.aoem_sha256;business_backend=$r.backend;
         counts=$r.counts;load_strategy=$r.load_strategy;signature_generation_timed=$r.signature_generation_timed;
         timing=$r.timing;canonical_body_budget=$r.canonical_body_budget;wire_message_budget=$r.wire_message_budget;
+        process_cpu_accounting=$r.process_cpu_accounting;
         grant_expires_at_height=$r.grant_expires_at_height;static_intent_window=$r.static_intent_window;
         cold_counts=$r.cold_counts;recovered=@($r.recovered)
         diagnostic_counters=$(if ($r.final_local_progress) {

@@ -1,0 +1,17 @@
+
+running 1 test
+
+thread 'product_overlay::tests::aead_preparation::isolated_preparation_keeps_exact_ciphertext_nonce_replay_and_sequence_exhaustion' (9920) panicked at crates\novovm-network\src\product_overlay\tests\aead_preparation.rs:92:9:
+assertion `left == right` failed
+  left: NovoRudpTransportFrameV0 { kind: Data, session_id: [85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85], stream_id: 7, object_id: 8, sequence: 0, ack_epoch: 9, payload: [], checksum: [205, 106, 228, 115, 223, 24, 137, 232, 244, 85, 132, 65, 247, 170, 7, 71, 202, 152, 203, 100, 123, 115, 224, 224, 217, 54, 64, 219, 80, 109, 51, 211] }
+ right: NovoRudpTransportFrameV0 { kind: Data, session_id: [85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85, 85], stream_id: 7, object_id: 8, sequence: 0, ack_epoch: 9, payload: [], checksum: [79, 99, 46, 104, 144, 148, 189, 191, 52, 52, 60, 76, 125, 209, 150, 195, 163, 68, 246, 180, 240, 46, 133, 56, 244, 26, 247, 12, 162, 24, 14, 188] }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test product_overlay::tests::aead_preparation::isolated_preparation_keeps_exact_ciphertext_nonce_replay_and_sequence_exhaustion ... FAILED
+
+failures:
+
+failures:
+    product_overlay::tests::aead_preparation::isolated_preparation_keeps_exact_ciphertext_nonce_replay_and_sequence_exhaustion
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 929 filtered out; finished in 0.00s
+

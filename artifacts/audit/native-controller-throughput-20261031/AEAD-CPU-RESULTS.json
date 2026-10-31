@@ -1,0 +1,974 @@
+{
+  "scope": "test-only AEAD preparation and measured process CPU accounting; original v4 node unchanged; no product optimization candidate accepted",
+  "same_key_seal_component": [
+    {
+      "batch": 32,
+      "payload": 64,
+      "old_wall_us": 107343,
+      "prepared_wall_us": 97183,
+      "reduction_pct": 9.46498607268289,
+      "old_p99_ns": 58400,
+      "prepared_p99_ns": 50500,
+      "old_max_p99": 93300,
+      "prepared_max_p99": 54500,
+      "old_cpu_ns": 109375000,
+      "prepared_cpu_ns": 109375000
+    },
+    {
+      "batch": 1,
+      "payload": 768,
+      "old_wall_us": 139982,
+      "prepared_wall_us": 144714,
+      "reduction_pct": -3.3804346273092145,
+      "old_p99_ns": 2300,
+      "prepared_p99_ns": 2300,
+      "old_max_p99": 2600,
+      "prepared_max_p99": 2300,
+      "old_cpu_ns": 140625000,
+      "prepared_cpu_ns": 140625000
+    },
+    {
+      "batch": 8,
+      "payload": 768,
+      "old_wall_us": 137677,
+      "prepared_wall_us": 128288,
+      "reduction_pct": 6.8195849706196405,
+      "old_p99_ns": 19000,
+      "prepared_p99_ns": 17600,
+      "old_max_p99": 19400,
+      "prepared_max_p99": 18400,
+      "old_cpu_ns": 140625000,
+      "prepared_cpu_ns": 125000000
+    },
+    {
+      "batch": 32,
+      "payload": 768,
+      "old_wall_us": 137538,
+      "prepared_wall_us": 127586,
+      "reduction_pct": 7.235818464715205,
+      "old_p99_ns": 70800,
+      "prepared_p99_ns": 65900,
+      "old_max_p99": 80600,
+      "prepared_max_p99": 67000,
+      "old_cpu_ns": 140625000,
+      "prepared_cpu_ns": 125000000
+    }
+  ],
+  "component_raw": [
+    {
+      "scope": "isolated seal including preparation, framing, encryption and output allocation; not transport or TPS; batch scratch is dropped each turn",
+      "batch": 32,
+      "payload_bytes": 64,
+      "samples": [
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 107075,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 52000,
+          "batch_p95_ns": 53700,
+          "batch_p99_ns": 55600
+        },
+        {
+          "repetition": 0,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 97183,
+          "cpu_ns": 93750000,
+          "batch_p50_ns": 47300,
+          "batch_p95_ns": 47800,
+          "batch_p99_ns": 50500
+        },
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 105987,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 51900,
+          "batch_p95_ns": 52800,
+          "batch_p99_ns": 55300
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 105948,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 51900,
+          "batch_p95_ns": 52800,
+          "batch_p99_ns": 55700
+        },
+        {
+          "repetition": 1,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 97046,
+          "cpu_ns": 93750000,
+          "batch_p50_ns": 47300,
+          "batch_p95_ns": 48100,
+          "batch_p99_ns": 50600
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 107003,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 52000,
+          "batch_p95_ns": 53200,
+          "batch_p99_ns": 55400
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 106421,
+          "cpu_ns": 93750000,
+          "batch_p50_ns": 52000,
+          "batch_p95_ns": 53200,
+          "batch_p99_ns": 55300
+        },
+        {
+          "repetition": 2,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 95371,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 45900,
+          "batch_p95_ns": 47800,
+          "batch_p99_ns": 49900
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 108490,
+          "cpu_ns": 93750000,
+          "batch_p50_ns": 51000,
+          "batch_p95_ns": 54600,
+          "batch_p99_ns": 93300
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 107912,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 51900,
+          "batch_p95_ns": 54500,
+          "batch_p99_ns": 71300
+        },
+        {
+          "repetition": 3,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 97500,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 47300,
+          "batch_p95_ns": 49000,
+          "batch_p99_ns": 50200
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 107343,
+          "cpu_ns": 93750000,
+          "batch_p50_ns": 51900,
+          "batch_p95_ns": 54300,
+          "batch_p99_ns": 58400
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 108081,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 52100,
+          "batch_p95_ns": 55000,
+          "batch_p99_ns": 76300
+        },
+        {
+          "repetition": 4,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 97647,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 47400,
+          "batch_p95_ns": 48900,
+          "batch_p99_ns": 54500
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 108370,
+          "cpu_ns": 109375000,
+          "batch_p50_ns": 52200,
+          "batch_p95_ns": 57600,
+          "batch_p99_ns": 79100
+        }
+      ]
+    },
+    {
+      "scope": "isolated seal including preparation, framing, encryption and output allocation; not transport or TPS; batch scratch is dropped each turn",
+      "batch": 1,
+      "payload_bytes": 768,
+      "samples": [
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 143060,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2400
+        },
+        {
+          "repetition": 0,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 144773,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2200,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        },
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 142527,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2600
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 141927,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        },
+        {
+          "repetition": 1,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 144714,
+          "cpu_ns": 156250000,
+          "batch_p50_ns": 2200,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 138922,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2200
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 139936,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2200
+        },
+        {
+          "repetition": 2,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 144746,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2200,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 140297,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 139631,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2200
+        },
+        {
+          "repetition": 3,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 144090,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2200,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 139456,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2200
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 139551,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2200
+        },
+        {
+          "repetition": 4,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 142550,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 139982,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 2100,
+          "batch_p95_ns": 2200,
+          "batch_p99_ns": 2300
+        }
+      ]
+    },
+    {
+      "scope": "isolated seal including preparation, framing, encryption and output allocation; not transport or TPS; batch scratch is dropped each turn",
+      "batch": 8,
+      "payload_bytes": 768,
+      "samples": [
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 137037,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16800,
+          "batch_p95_ns": 17000,
+          "batch_p99_ns": 19000
+        },
+        {
+          "repetition": 0,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 127426,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 15300,
+          "batch_p95_ns": 15900,
+          "batch_p99_ns": 17400
+        },
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 137677,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16800,
+          "batch_p95_ns": 17000,
+          "batch_p99_ns": 19200
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 138767,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16800,
+          "batch_p95_ns": 17000,
+          "batch_p99_ns": 19100
+        },
+        {
+          "repetition": 1,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 128775,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 15700,
+          "batch_p95_ns": 15900,
+          "batch_p99_ns": 17900
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 138415,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16800,
+          "batch_p95_ns": 17000,
+          "batch_p99_ns": 19400
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 138025,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16800,
+          "batch_p95_ns": 17100,
+          "batch_p99_ns": 18900
+        },
+        {
+          "repetition": 2,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 128646,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 15700,
+          "batch_p95_ns": 15800,
+          "batch_p99_ns": 17600
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 136103,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16300,
+          "batch_p95_ns": 17000,
+          "batch_p99_ns": 18700
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 135859,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 16300,
+          "batch_p95_ns": 17000,
+          "batch_p99_ns": 18600
+        },
+        {
+          "repetition": 3,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 128048,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 15700,
+          "batch_p95_ns": 15900,
+          "batch_p99_ns": 17600
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 135605,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 16300,
+          "batch_p95_ns": 16900,
+          "batch_p99_ns": 18400
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 137076,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16800,
+          "batch_p95_ns": 17000,
+          "batch_p99_ns": 18700
+        },
+        {
+          "repetition": 4,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 128288,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 15300,
+          "batch_p95_ns": 15900,
+          "batch_p99_ns": 18400
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 138525,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 16800,
+          "batch_p95_ns": 17100,
+          "batch_p99_ns": 19100
+        }
+      ]
+    },
+    {
+      "scope": "isolated seal including preparation, framing, encryption and output allocation; not transport or TPS; batch scratch is dropped each turn",
+      "batch": 32,
+      "payload_bytes": 768,
+      "samples": [
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 137538,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 67200,
+          "batch_p95_ns": 68700,
+          "batch_p99_ns": 71000
+        },
+        {
+          "repetition": 0,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 128035,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 62300,
+          "batch_p95_ns": 63300,
+          "batch_p99_ns": 65700
+        },
+        {
+          "repetition": 0,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 136477,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 67200,
+          "batch_p95_ns": 68500,
+          "batch_p99_ns": 70700
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 138410,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 67300,
+          "batch_p95_ns": 68800,
+          "batch_p99_ns": 70800
+        },
+        {
+          "repetition": 1,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 126600,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 62200,
+          "batch_p95_ns": 63300,
+          "batch_p99_ns": 65900
+        },
+        {
+          "repetition": 1,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 135878,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 66900,
+          "batch_p95_ns": 68300,
+          "batch_p99_ns": 70500
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 135824,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 67100,
+          "batch_p95_ns": 68000,
+          "batch_p99_ns": 70300
+        },
+        {
+          "repetition": 2,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 125266,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 60200,
+          "batch_p95_ns": 62700,
+          "batch_p99_ns": 65100
+        },
+        {
+          "repetition": 2,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 136055,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 67100,
+          "batch_p95_ns": 68000,
+          "batch_p99_ns": 70300
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 136134,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 67100,
+          "batch_p95_ns": 68200,
+          "batch_p99_ns": 70600
+        },
+        {
+          "repetition": 3,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 127855,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 62300,
+          "batch_p95_ns": 64200,
+          "batch_p99_ns": 67000
+        },
+        {
+          "repetition": 3,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 138766,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 67300,
+          "batch_p95_ns": 69700,
+          "batch_p99_ns": 72400
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 139335,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 67400,
+          "batch_p95_ns": 70000,
+          "batch_p99_ns": 80600
+        },
+        {
+          "repetition": 4,
+          "prepared": true,
+          "packets": 65536,
+          "wall_us": 127586,
+          "cpu_ns": 125000000,
+          "batch_p50_ns": 62300,
+          "batch_p95_ns": 64200,
+          "batch_p99_ns": 66000
+        },
+        {
+          "repetition": 4,
+          "prepared": false,
+          "packets": 65536,
+          "wall_us": 139151,
+          "cpu_ns": 140625000,
+          "batch_p50_ns": 67400,
+          "batch_p95_ns": 69800,
+          "batch_p99_ns": 76800
+        }
+      ]
+    }
+  ],
+  "original_v4_continuous_cpu_accounting": [
+    {
+      "round": 0,
+      "signature_backend": "cpu",
+      "tps": 2610.568444347621,
+      "elapsed_seconds": 25.104111,
+      "latency_us": {
+        "p50": 2918757,
+        "p95": 3774009,
+        "p99": 3983893,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "cpu": {
+        "status": "AVAILABLE",
+        "successful_transactions": 65536,
+        "scope": "GetProcessTimes user+kernel across all process threads; snapshots surround the original drive call, including boundary-read skew and its tail validation/statistic/JSON work, not exactly the receipt timestamp interval; startup, fixture preparation and later audits/cold recovery excluded; four-node cost is replicated work, not one node; driver includes clients and in-clock signing; not GPU device time or crypto-only CPU",
+        "four_node_processes": {
+          "user_ns": 116109375000,
+          "kernel_ns": 30468750000,
+          "total_ns": 146578125000,
+          "cpu_us_per_successful_transaction": 2236.604690551758
+        },
+        "nodes": [
+          {
+            "pid": 14440,
+            "cpu": {
+              "user_ns": 31453125000,
+              "kernel_ns": 9875000000,
+              "total_ns": 41328125000,
+              "cpu_us_per_successful_transaction": 630.6171417236328
+            }
+          },
+          {
+            "pid": 30840,
+            "cpu": {
+              "user_ns": 27968750000,
+              "kernel_ns": 7093750000,
+              "total_ns": 35062500000,
+              "cpu_us_per_successful_transaction": 535.0112915039062
+            }
+          },
+          {
+            "pid": 34144,
+            "cpu": {
+              "user_ns": 28093750000,
+              "kernel_ns": 6453125000,
+              "total_ns": 34546875000,
+              "cpu_us_per_successful_transaction": 527.1434783935547
+            }
+          },
+          {
+            "pid": 33172,
+            "cpu": {
+              "user_ns": 28593750000,
+              "kernel_ns": 7046875000,
+              "total_ns": 35640625000,
+              "cpu_us_per_successful_transaction": 543.8327789306641
+            }
+          }
+        ],
+        "driver_process": {
+          "user_ns": 20468750000,
+          "kernel_ns": 13187500000,
+          "total_ns": 33656250000,
+          "cpu_us_per_successful_transaction": 513.5536193847656
+        },
+        "nodes_plus_driver": {
+          "user_ns": 136578125000,
+          "kernel_ns": 43656250000,
+          "total_ns": 180234375000,
+          "cpu_us_per_successful_transaction": 2750.1583099365234
+        }
+      },
+      "successful": 65536,
+      "failures": 0,
+      "expired": 0,
+      "nonce_rejected": 0,
+      "delivered": 64,
+      "heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "all_account_match": true,
+      "fee_audit": true,
+      "passed": true,
+      "cold": true,
+      "node_sha256": "0x6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+      "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+    },
+    {
+      "round": 1,
+      "signature_backend": "gpu_required",
+      "tps": 2607.5941963362934,
+      "elapsed_seconds": 25.132745,
+      "latency_us": {
+        "p50": 2894043,
+        "p95": 4120427,
+        "p99": 4279174,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "cpu": {
+        "status": "AVAILABLE",
+        "successful_transactions": 65536,
+        "scope": "GetProcessTimes user+kernel across all process threads; snapshots surround the original drive call, including boundary-read skew and its tail validation/statistic/JSON work, not exactly the receipt timestamp interval; startup, fixture preparation and later audits/cold recovery excluded; four-node cost is replicated work, not one node; driver includes clients and in-clock signing; not GPU device time or crypto-only CPU",
+        "four_node_processes": {
+          "user_ns": 103562500000,
+          "kernel_ns": 29125000000,
+          "total_ns": 132687500000,
+          "cpu_us_per_successful_transaction": 2024.6505737304688
+        },
+        "nodes": [
+          {
+            "pid": 32040,
+            "cpu": {
+              "user_ns": 28687500000,
+              "kernel_ns": 9875000000,
+              "total_ns": 38562500000,
+              "cpu_us_per_successful_transaction": 588.4170532226562
+            }
+          },
+          {
+            "pid": 11624,
+            "cpu": {
+              "user_ns": 25421875000,
+              "kernel_ns": 6312500000,
+              "total_ns": 31734375000,
+              "cpu_us_per_successful_transaction": 484.22813415527344
+            }
+          },
+          {
+            "pid": 18792,
+            "cpu": {
+              "user_ns": 24906250000,
+              "kernel_ns": 6593750000,
+              "total_ns": 31500000000,
+              "cpu_us_per_successful_transaction": 480.65185546875
+            }
+          },
+          {
+            "pid": 10600,
+            "cpu": {
+              "user_ns": 24546875000,
+              "kernel_ns": 6343750000,
+              "total_ns": 30890625000,
+              "cpu_us_per_successful_transaction": 471.35353088378906
+            }
+          }
+        ],
+        "driver_process": {
+          "user_ns": 20437500000,
+          "kernel_ns": 13203125000,
+          "total_ns": 33640625000,
+          "cpu_us_per_successful_transaction": 513.3152008056641
+        },
+        "nodes_plus_driver": {
+          "user_ns": 124000000000,
+          "kernel_ns": 42328125000,
+          "total_ns": 166328125000,
+          "cpu_us_per_successful_transaction": 2537.965774536133
+        }
+      },
+      "successful": 65536,
+      "failures": 0,
+      "expired": 0,
+      "nonce_rejected": 0,
+      "delivered": 64,
+      "heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "all_account_match": true,
+      "fee_audit": true,
+      "passed": true,
+      "cold": true,
+      "node_sha256": "0x6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+      "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+    },
+    {
+      "round": 2,
+      "signature_backend": "cpu",
+      "tps": 2243.747244146275,
+      "elapsed_seconds": 29.208281,
+      "latency_us": {
+        "p50": 3420576,
+        "p95": 5061591,
+        "p99": 5317171,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "cpu": {
+        "status": "AVAILABLE",
+        "successful_transactions": 65536,
+        "scope": "GetProcessTimes user+kernel across all process threads; snapshots surround the original drive call, including boundary-read skew and its tail validation/statistic/JSON work, not exactly the receipt timestamp interval; startup, fixture preparation and later audits/cold recovery excluded; four-node cost is replicated work, not one node; driver includes clients and in-clock signing; not GPU device time or crypto-only CPU",
+        "four_node_processes": {
+          "user_ns": 122828125000,
+          "kernel_ns": 32953125000,
+          "total_ns": 155781250000,
+          "cpu_us_per_successful_transaction": 2377.033233642578
+        },
+        "nodes": [
+          {
+            "pid": 32888,
+            "cpu": {
+              "user_ns": 32750000000,
+              "kernel_ns": 10078125000,
+              "total_ns": 42828125000,
+              "cpu_us_per_successful_transaction": 653.5053253173828
+            }
+          },
+          {
+            "pid": 16264,
+            "cpu": {
+              "user_ns": 30265625000,
+              "kernel_ns": 7640625000,
+              "total_ns": 37906250000,
+              "cpu_us_per_successful_transaction": 578.4034729003906
+            }
+          },
+          {
+            "pid": 12988,
+            "cpu": {
+              "user_ns": 30984375000,
+              "kernel_ns": 7796875000,
+              "total_ns": 38781250000,
+              "cpu_us_per_successful_transaction": 591.7549133300781
+            }
+          },
+          {
+            "pid": 35776,
+            "cpu": {
+              "user_ns": 28828125000,
+              "kernel_ns": 7437500000,
+              "total_ns": 36265625000,
+              "cpu_us_per_successful_transaction": 553.3695220947266
+            }
+          }
+        ],
+        "driver_process": {
+          "user_ns": 23375000000,
+          "kernel_ns": 14765625000,
+          "total_ns": 38140625000,
+          "cpu_us_per_successful_transaction": 581.9797515869141
+        },
+        "nodes_plus_driver": {
+          "user_ns": 146203125000,
+          "kernel_ns": 47718750000,
+          "total_ns": 193921875000,
+          "cpu_us_per_successful_transaction": 2959.012985229492
+        }
+      },
+      "successful": 65536,
+      "failures": 0,
+      "expired": 0,
+      "nonce_rejected": 0,
+      "delivered": 64,
+      "heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "all_account_match": true,
+      "fee_audit": true,
+      "passed": true,
+      "cold": true,
+      "node_sha256": "0x6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+      "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+    }
+  ]
+}

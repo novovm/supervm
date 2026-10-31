@@ -810,6 +810,8 @@ fn hex_lower_v1(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    mod aead_preparation;
+
     use super::*;
     use crate::novorudp::NovoRudpTransportFrameKindV0;
     use chacha20poly1305::aead::{Aead, Payload};

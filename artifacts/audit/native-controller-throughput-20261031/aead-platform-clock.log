@@ -1,0 +1,15 @@
+
+running 10 tests
+test cpu_clock::tests::checked_difference_rejects_either_decreasing_component ... ok
+test cpu_clock::tests::checked_total_rejects_overflow ... ok
+test cpu_clock::tests::current_process_cpu_time_is_nondecreasing ... ok
+test cpu_clock::tests::invalid_process_id_returns_os_error ... ok
+test cpu_clock::windows::tests::filetime_conversion_preserves_high_word_and_checks_overflow ... ok
+test poll_timer::tests::precision_scope_retains_unpark_token_with_nested_owners ... ok
+test segmented::tests::segmented_batch_accepts_equal_segments_and_only_a_short_final_segment ... ok
+test segmented::tests::segmented_batch_preserves_original_quantum_and_bounds_total_scratch_bytes ... ok
+test segmented::tests::windows_invalid_segmented_batches_send_nothing ... ok
+test segmented::tests::windows_segmented_loopback_restores_exact_datagrams_and_option_zero_single_send ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

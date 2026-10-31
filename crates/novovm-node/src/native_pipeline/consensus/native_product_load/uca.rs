@@ -31,6 +31,8 @@ mod distribution;
 use distribution::WorkloadShape;
 #[path = "uca/account_audit.rs"]
 mod account_audit;
+#[path = "uca/cpu_accounting.rs"]
+mod cpu_accounting;
 
 #[path = "uca/rolling.rs"]
 mod rolling;
@@ -768,8 +770,9 @@ fn run_native_uca_load_mode(
         phase = "native submission through four-node final receipt observation";
         evidence["client_io_before"] =
             json!(novovm_network::novorudp::diagnostics::native_io_cost_snapshot());
+        let cpu_before = cpu_accounting::capture(&nodes);
         timed_attempt = Some(Instant::now());
-        measured = Some(if mode == LoadMode::Continuous {
+        let measured_result = if mode == LoadMode::Continuous {
             rolling::drive_continuous(
                 &mut nodes,
                 &mut clients,
@@ -786,7 +789,7 @@ fn run_native_uca_load_mode(
                 shape,
                 &make_signed,
                 &mut evidence,
-            )?
+            )
         } else if mode.is_rolling() {
             rolling::drive_rolling(
                 &mut nodes,
@@ -804,7 +807,7 @@ fn run_native_uca_load_mode(
                 shape,
                 &make_signed,
                 &mut evidence,
-            )?
+            )
         } else {
             let result = drive(
                 &mut nodes,
@@ -821,8 +824,11 @@ fn run_native_uca_load_mode(
                 // including on failure. Only delivery order was changed.
                 swap_bridge_rows(&mut observations, frame_rows);
             }
-            result?
-        });
+            result
+        };
+        evidence["process_cpu_accounting"] =
+            cpu_accounting::finish(cpu_before, &nodes, counts.successful_transactions);
+        measured = Some(measured_result?);
         timed_attempt = None;
         evidence["client_io_after"] =
             json!(novovm_network::novorudp::diagnostics::native_io_cost_snapshot());
