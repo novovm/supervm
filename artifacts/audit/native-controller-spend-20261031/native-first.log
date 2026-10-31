@@ -1,0 +1,41 @@
+
+running 1842 tests
+......................................... 41/1842
+mainline_query::tests::mainline_query_cut_c_pq_required_mldsa87_fails_closed_until_pq_wire --- FAILED
+mainline_query::tests::mainline_query_cut_c_pq_required_non_pq_key_rejected --- FAILED
+mainline_query::tests::mainline_query_cut_c_privacy_required_with_confidential_path_succeeds --- FAILED
+mainline_query::tests::mainline_query_cut_c_privacy_required_without_privacy_path_rejected --- FAILED
+mainline_query::tests::mainline_query_cut_c_standard_ed25519_allows_execution --- FAILED
+... 49/1842
+mainline_query::tests::mainline_query_live_mapped_asset_auto_heal_product_smoke --- FAILED
+mainline_query::tests::mainline_query_live_mapped_asset_m2_credit_product_smoke --- FAILED
+mainline_query::tests::mainline_query_m2_bridge_risk_status_blocks_unsafe_m2 --- FAILED
+. 53/1842
+mainline_query::tests::mainline_query_m2_fee_asset_auto_requires_privacy_path --- FAILED
+mainline_query::tests::mainline_query_m2_fee_asset_confidential_path_executes --- FAILED
+mainline_query::tests::mainline_query_mapped_asset_shadow_lifecycle_product_smoke --- FAILED
+mainline_query::tests::mainline_query_mapped_finality_attestation_policy_product_smoke --- FAILED
+mainline_query::tests::mainline_query_mapped_finality_source_policy_product_smoke --- FAILED
+mainline_query::tests::mainline_query_mapped_lock_contract_policy_product_smoke --- FAILED
+mainline_query::tests::mainline_query_mapped_min_confirmations_policy_product_smoke --- FAILED
+. 61/1842
+mainline_query::tests::mainline_query_neth_to_nov_swap_executes_via_real_product_entry --- FAILED
+mainline_query::tests::mainline_query_nov_swap_normalizes_subject_to_explicit_direct_signer_account_id --- FAILED
+mainline_query::tests::mainline_query_nov_swap_reports_risk_rejection_on_real_product_entry --- FAILED
+mainline_query::tests::mainline_query_protocol_clearing_price_and_asset_purchase_product_smoke --- FAILED
+mainline_query::tests::mainline_query_redeem_open_vault_and_asset_balance_flow_through_real_entry --- FAILED
+mainline_query::tests::mainline_query_treasury_deposit_buy_asset_product_smoke --- FAILED
+mainline_query::tests::mainline_query_treasury_governance_write_product_smoke --- FAILED
+mainline_query::tests::mainline_query_treasury_reserve_proof_product_smoke_enforces_cap --- FAILED
+....................................................................................... 156/1842
+....................................................................................... 243/1842
+....................................................................................... 330/1842
+....................................................................................... 417/1842
+ii.ii...........iiiii......ii.ii......................i................................ 504/1842
+................iiiiiiiiii..iiiiiii..iiiiiiiiiiiiiiii........iiiii..iiii.....iiii..i.i. 591/1842
+.iiii..iiii...iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii.................................... 678/1842
+.............................................................ii...iiiii................ 765/1842
+..........i.......i...........ii........i...ii...........iii.i........i............i.ii 852/1842
+.................................i....i...........iii.i.....i.........ii............... 939/1842
+......................i...........................ii..........ii....................... 1026/1842
+........................................

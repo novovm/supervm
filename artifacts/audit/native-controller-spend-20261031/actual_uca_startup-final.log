@@ -1,0 +1,9 @@
+
+running 2 tests
+test native_pipeline::service::config::uca_startup_tests::actual_uca_startup_protected_windows_keys_and_cold_reopen ... UCA startup: custody=ProtectedV1; real approvals + three pins before DB; fresh/reopen root retained; invalid fresh/Existing rejected; legacy Raw/APFL and HTTP asset carriers rejected
+ok
+test native_pipeline::service::config::uca_startup_tests::actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection ... UCA startup: custody=ProtectedV1; real approvals + three pins before DB; fresh/reopen root retained; invalid fresh/Existing rejected; legacy Raw/APFL and HTTP asset carriers rejected
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1840 filtered out; finished in 0.32s
+

@@ -1,0 +1,23 @@
+
+running 10 tests
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::actual_mldsa_capture_uca_cpu_atomic_effects ... ok
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::actual_mldsa_capture_uca_cpu_integer_atomic_effect_equivalence ... ok
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::controller_tests::actual_mldsa_controller_cpu_atomic_effects ... ok
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::controller_tests::actual_mldsa_controller_cpu_integer_atomic_effect_equivalence ... ok
+test native_pipeline::business::uca_spend_state::tests::actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority ... FAILED
+Error: fixture key generator must use the same packaged AOEM library
+test native_pipeline::consensus::tests::uca_publication_integration::actual_mldsa_uca_initialized_spend_respend_journal_recovery ... independently regenerated management approvals differ=false, initial tree and final commitment identical
+UCA original pipeline/journal: structural body roundtrip and bounded native body execution, raw/structural exact locator equality, 4 databases, 2 heights, recipient respend, unresolved precommit RoundProgress replay, archive body identity, candidate-only reopen, unobserved decision ACK recovery, cold balances/nonce/budget/receipts checked; native SDK, real network, process kill and TPS NOT exercised
+ok
+test native_pipeline::pipeline::compute::tests::uca_reuse::actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance ... ok
+test native_pipeline::pipeline::uca_input_tests::actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures ... ok
+test native_pipeline::pipeline::uca_input_tests::actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner ... ok
+test native_pipeline::service::rpc::admitted_tests::actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects ... ok
+
+failures:
+
+failures:
+    native_pipeline::business::uca_spend_state::tests::actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 1832 filtered out; finished in 5.35s
+

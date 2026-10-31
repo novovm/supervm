@@ -315,10 +315,10 @@ mod tests {
 
     fn retained_fresh_offer_case(
         nodes: &mut [RpcLifecycle],
-        signed: &[novovm_protocol::uca_spend::SignedAssetSpendV2],
+        signed: &[novovm_protocol::uca_spend::SignedAssetSpendV3],
         retire_retained_row: bool,
     ) -> Result<()> {
-        use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+        use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
         let hashes = signed.iter().map(uca::hash).collect::<Result<Vec<_>>>()?;
         let bytes = signed
             .iter()
@@ -326,9 +326,9 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()?;
         let mut sources = Vec::new();
         for raw in &bytes {
-            let source = Arc::new(AssetSpendBatchV2::from_raw(
+            let source = Arc::new(AssetSpendBatchV3::from_raw(
                 std::slice::from_ref(raw),
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: 1,
                     transaction_bytes: 8192,
                     body_bytes: 8192,

@@ -388,15 +388,17 @@ fn branch(
                 );
                 limit = b.pick(&selected, &lit(option.limit), &limit);
             }
-            static_code = b.pick(&grant_presence[&entry.grant_id], &static_code, &absent_code);
+            if entry.intent.uses_grant() {
+                static_code = b.pick(&grant_presence[&entry.grant_id], &static_code, &absent_code);
+            }
             let nonce_ok = b.eq(&lit(p.tx_nonces[i].into()), &nonce);
-            let budget_code = if entry.intent.authority_update.is_some() {
-                lit(0)
-            } else {
+            let budget_code = if entry.intent.uses_grant() {
                 let budget_ok = b.le(&lit(entry.reserve), &remaining);
                 let per_intent = b.le(&lit(entry.reserve), &limit);
                 let allowed = b.mul(&budget_ok, &per_intent);
                 b.pick(&allowed, &lit(0), &lit(21))
+            } else {
+                lit(0)
             };
             let dynamic_code = b.pick(&nonce_ok, &budget_code, &lit(20));
             let static_ok = b.eq(&static_code, &lit(0));
@@ -486,12 +488,14 @@ fn branch(
                     );
                 }
                 lit(0)
-            } else {
+            } else if entry.intent.uses_grant() {
                 let amount = b.mul(&success, &lit(request.amount));
                 let debit = b.add(&amount, &after[3]);
                 let remaining = b.sub(&remaining_before, &debit);
                 budgets.insert(spend.entries[i].grant_id, remaining);
                 remaining
+            } else {
+                lit(0)
             }
         } else {
             lit(0)
@@ -537,11 +541,9 @@ fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compi
             "UCA spend row count mismatch"
         );
         ensure!(
-            spend
-                .entries
-                .iter()
-                .all(|entry| entry.static_failure.is_some()
-                    || spend.grants.contains_key(&entry.grant_id)),
+            spend.entries.iter().all(|entry| !entry.intent.uses_grant()
+                || entry.static_failure.is_some()
+                || spend.grants.contains_key(&entry.grant_id)),
             "missing admitted UCA grant"
         );
         ensure!(

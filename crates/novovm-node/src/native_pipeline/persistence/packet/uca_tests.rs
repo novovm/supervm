@@ -7,13 +7,13 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 };
 use novovm_adapter_api::uca_spend_policy::SpendPolicyError;
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MLDSA65_PUBLIC_KEY_BYTES,
+    spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3, MLDSA65_PUBLIC_KEY_BYTES,
     MLDSA65_SIGNATURE_BYTES,
 };
 
 struct UcaFixture {
     base: Fixture,
-    signed: Vec<SignedAssetSpendV2>,
+    signed: Vec<SignedAssetSpendV3>,
     outputs: Vec<SpendOutput>,
 }
 
@@ -25,7 +25,8 @@ impl UcaFixture {
         let payer = Account::try_from(vec![7; 32]).unwrap();
         let recipient = Account::try_from(vec![8; 32]).unwrap();
         for index in 0..2 {
-            let intent = AssetSpendIntentV2 {
+            let intent = AssetSpendIntentV3 {
+                authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 asset: 1,
                 authority_update: None,
                 recipient_creation: None,
@@ -55,7 +56,7 @@ impl UcaFixture {
                 receipt.fee_failure = None;
                 receipt.delta.nonce_after = 0;
             }
-            signed.push(SignedAssetSpendV2 {
+            signed.push(SignedAssetSpendV3 {
                 intent,
                 public_key: key.clone(),
                 signature: vec![11; MLDSA65_SIGNATURE_BYTES],
@@ -134,6 +135,25 @@ impl UcaFixture {
 }
 
 #[test]
+fn controller_packet_cannot_claim_a_delegated_budget() {
+    let mut f = UcaFixture::new();
+    for signed in &mut f.signed {
+        signed.intent.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller;
+    }
+    for (signed, receipt) in f.signed.iter().zip(&mut f.base.receipts) {
+        let hash = Sha256::digest(signed.intent.signing_bytes().unwrap()).into();
+        receipt.tx_hash = hash;
+        receipt.delta.tx_hash = hash;
+    }
+    f.update_plan();
+    assert!(f.packet().is_err());
+    for output in &mut f.outputs {
+        output.remaining = 0;
+    }
+    assert!(f.packet().is_ok());
+}
+
+#[test]
 fn uca_packet_roundtrip_preserves_authorization_budget_and_unchanged_nonce() {
     let f = UcaFixture::new();
     let packet = f.packet().unwrap();
@@ -152,16 +172,16 @@ fn uca_packet_roundtrip_preserves_authorization_budget_and_unchanged_nonce() {
 #[test]
 fn asset_structural_packet_reuses_plan_and_matches_independent_cold_decoder() {
     use crate::native_pipeline::ingress::batch::BatchSource;
-    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
     use std::sync::Arc;
 
     let mut f = UcaFixture::new();
     let expected = f.packet().unwrap();
     let raw = f.base.plan.canonical_transactions_for_test();
     let batch = Arc::new(
-        AssetSpendBatchV2::from_raw(
+        AssetSpendBatchV3::from_raw(
             &raw,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 1024,
                 transaction_bytes: 8192,
                 body_bytes: 8 * 1024 * 1024,
@@ -334,6 +354,7 @@ fn asset_management_packet_rejects_budget_nonce_fee_and_signed_account_tampering
         let intent = &mut f.signed[0].intent;
         intent.recipient = intent.payer.clone();
         intent.amount = 0;
+        intent.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller;
         intent.authority_update = Some(AssetAuthorityUpdateV2 {
             use_recovery: false,
             next_epoch: intent.authorization_epoch + 1,

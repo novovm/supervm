@@ -2,10 +2,10 @@
 //! spending authority. Real ML-DSA/parent authorization tests run separately.
 use super::*;
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES,
+    spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3, MAX_SIGNED_SPEND_BYTES,
     MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
 };
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 
 fn pending_uca(rows: usize) -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)> {
     let public = vec![9; MLDSA65_PUBLIC_KEY_BYTES];
@@ -14,8 +14,10 @@ fn pending_uca(rows: usize) -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)>
     for first in (0..rows).step_by(64) {
         let raws = (first..(first + 64).min(rows))
             .map(|nonce| {
-                SignedAssetSpendV2 {
-                    intent: AssetSpendIntentV2 {
+                SignedAssetSpendV3 {
+                    intent: AssetSpendIntentV3 {
+                        authority:
+                            novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                         asset: 1,
                         authority_update: None,
                         recipient_creation: None,
@@ -37,9 +39,9 @@ fn pending_uca(rows: usize) -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)>
                 .encode()
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let batch = Arc::new(AssetSpendBatchV2::from_raw(
+        let batch = Arc::new(AssetSpendBatchV3::from_raw(
             &raws,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 1024,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                 body_bytes: super::super::uca_body_byte_limit(1024),
@@ -248,8 +250,9 @@ fn eight_grant_openings_respect_original_access_budget_and_preserve_suffix() -> 
         let mut payer = [1; 20];
         payer[12..].copy_from_slice(&(index as u64).to_be_bytes());
         raws.push(
-            SignedAssetSpendV2 {
-                intent: AssetSpendIntentV2 {
+            SignedAssetSpendV3 {
+                intent: AssetSpendIntentV3 {
+                    authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                     chain_id: 71,
                     genesis: [1; 32],
                     payer: payer.to_vec(),
@@ -275,9 +278,9 @@ fn eight_grant_openings_respect_original_access_budget_and_preserve_suffix() -> 
     let mut pending = BTreeMap::new();
     let mut known = BTreeMap::new();
     for (batch_index, chunk) in raws.chunks(64).enumerate() {
-        let batch = Arc::new(AssetSpendBatchV2::from_raw(
+        let batch = Arc::new(AssetSpendBatchV3::from_raw(
             chunk,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 1024,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                 body_bytes: super::super::uca_body_byte_limit(1024),
@@ -699,20 +702,20 @@ fn actual_asset_no_ready_wait_preserves_progress_until_nonce_bridge_arrives() ->
     super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
         let rpc = &mut nodes[0];
         rpc.batch_size = 2;
-        let source = |rows: &[SignedAssetSpendV2]| -> Result<Arc<AssetSpendBatchV2>> {
-            Ok(Arc::new(AssetSpendBatchV2::from_raw(
+        let source = |rows: &[SignedAssetSpendV3]| -> Result<Arc<AssetSpendBatchV3>> {
+            Ok(Arc::new(AssetSpendBatchV3::from_raw(
                 &rows
                     .iter()
-                    .map(SignedAssetSpendV2::encode)
+                    .map(SignedAssetSpendV3::encode)
                     .collect::<std::result::Result<Vec<_>, _>>()?,
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: 1024,
                     transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                     body_bytes: super::super::uca_body_byte_limit(1024),
                 },
             )?))
         };
-        let admit = |rpc: &mut RpcLifecycle, batch: Arc<AssetSpendBatchV2>| -> Result<()> {
+        let admit = |rpc: &mut RpcLifecycle, batch: Arc<AssetSpendBatchV3>| -> Result<()> {
             rpc.incoming_from_client = false;
             rpc.incoming = Some((rpc.node.controller.uca_transactions_message(batch)?, 0));
             let deadline = Instant::now() + Duration::from_secs(15);

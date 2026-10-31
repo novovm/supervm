@@ -7,23 +7,23 @@ use novovm_protocol::uca_spend::{
     AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetGrantConfigV2,
 };
 
-struct CreationRunner<'a> {
-    facade: &'a AoemExecFacade,
-    session: ComputeSession,
-    integer: Option<ResidentTransferResources>,
-    policy: DirectNovFeePolicy,
+pub(super) struct SignedAssetRunner<'a> {
+    pub(super) facade: &'a AoemExecFacade,
+    pub(super) session: ComputeSession,
+    pub(super) integer: Option<ResidentTransferResources>,
+    pub(super) policy: DirectNovFeePolicy,
 }
 
-impl CreationRunner<'_> {
-    fn run(
+impl SignedAssetRunner<'_> {
+    pub(super) fn run(
         &mut self,
         memory: &mut Memory,
         root: &mut NodeHash,
-        intents: &[AssetSpendIntentV2],
+        intents: &[AssetSpendIntentV3],
         keys: &[(Vec<u8>, Vec<u8>)],
     ) -> Result<super::super::execution::ExecutedNovBatch> {
-        let signer = self.facade.asset_spend_signer_v2()?;
-        let verifier = self.facade.asset_spend_verifier_v2()?;
+        let signer = self.facade.asset_spend_signer_v3()?;
+        let verifier = self.facade.asset_spend_verifier_v3()?;
         let signed = intents
             .iter()
             .map(|intent| {
@@ -78,10 +78,10 @@ impl CreationRunner<'_> {
     }
 }
 
-fn read_state(
+pub(super) fn read_state(
     memory: &Memory,
     root: NodeHash,
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
 ) -> Result<CapturedAssetSpendStateV2> {
     let access = AssetSpendStateAccessV2::new(
         intent.clone(),
@@ -120,7 +120,8 @@ pub(super) fn run_asset_creation_cases(
                 remaining_debit_budget: 1000,
             }],
         };
-        let base = AssetSpendIntentV2 {
+        let base = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::DelegatedGrant,
             chain_id: 7,
             genesis: [2; 32],
             payer: vec![11; 20],
@@ -169,7 +170,7 @@ pub(super) fn run_asset_creation_cases(
             orphan_memory.0.extend(orphan.nodes().clone());
             assert!(read_state(&orphan_memory, orphan.root(), &opening).is_err());
         }
-        let mut runner = CreationRunner {
+        let mut runner = SignedAssetRunner {
             facade,
             session: ComputeSession::open(path, 4)?,
             integer: if compare_integer {
@@ -288,6 +289,7 @@ pub(super) fn run_asset_creation_cases(
         );
 
         let mut rotation = spend.clone();
+        rotation.authority = AssetSpendAuthorityV3::Controller;
         rotation.amount = 0;
         rotation.recipient = rotation.payer.clone();
         rotation.spend_key_ref = refs[1];

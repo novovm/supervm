@@ -19,7 +19,7 @@ use novovm_network::novorudp::{
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
 };
 use novovm_protocol::native_query::{self as query, Frame, Query, Request, Response};
-use novovm_protocol::uca_spend_batch::AssetSpendBatchV2;
+use novovm_protocol::uca_spend_batch::AssetSpendBatchV3;
 use std::{
     net::UdpSocket,
     sync::Arc,
@@ -151,7 +151,7 @@ impl NativeApplicationClient {
     /// independently checks current asset authority at its trusted parent.
     pub fn prepare_asset_spend(
         &mut self,
-        batch: Arc<AssetSpendBatchV2>,
+        batch: Arc<AssetSpendBatchV3>,
     ) -> Result<PreparedApplicationInput> {
         self.prepare_input(|scope| Message::AssetTransactions { scope, batch })
     }

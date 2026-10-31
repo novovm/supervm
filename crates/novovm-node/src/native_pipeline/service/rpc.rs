@@ -143,10 +143,10 @@ impl Pending {
         let AdmissionInput::Uca { batch, index } = &self.input else {
             return Some(0);
         };
-        let count = |intent: &novovm_protocol::uca_spend::AssetSpendIntentV2| -> Result<usize> {
+        let count = |intent: &novovm_protocol::uca_spend::AssetSpendIntentV3| -> Result<usize> {
             if intent.authority_update.is_none() && intent.recipient_creation.is_none() {
-                // Two authority ranges, two balances, one grant range and nonce.
-                return Ok(10);
+                // Two authority ranges, balances and nonce; only a delegate reads a grant.
+                return Ok(if intent.uses_grant() { 10 } else { 7 });
             }
             use crate::native_pipeline::business::uca_spend_state as state;
             let payer = Account::try_from(intent.payer.as_slice()).map_err(anyhow::Error::msg)?;
@@ -159,11 +159,13 @@ impl Pending {
                 .iter()
                 .map(|d| d.key.clone())
                 .collect::<BTreeSet<_>>();
-            keys.extend(
-                state::grant_write_declarations(intent)?
-                    .into_iter()
-                    .map(|d| d.key),
-            );
+            if intent.uses_grant() {
+                keys.extend(
+                    state::grant_write_declarations(intent)?
+                        .into_iter()
+                        .map(|d| d.key),
+                );
+            }
             keys.extend(
                 state::creation_declarations(intent)?
                     .into_iter()

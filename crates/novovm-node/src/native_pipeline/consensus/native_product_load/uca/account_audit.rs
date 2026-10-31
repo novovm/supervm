@@ -13,9 +13,7 @@ pub(super) fn audit_all_accounts(
     expected: &[(Account, u128)],
     initial_accounts: &[UcaGenesisAccountV2],
     rounds: u64,
-    remaining: u128,
-    grant_expiry: u64,
-    make_intent: &impl Fn(usize) -> Result<AssetSpendIntentV2>,
+    make_intent: &impl Fn(usize) -> Result<AssetSpendIntentV3>,
 ) -> Result<Value> {
     ensure!(
         initial_accounts.len() == shape.accounts() && expected.len() == shape.accounts() + 1,
@@ -30,7 +28,10 @@ pub(super) fn audit_all_accounts(
             let end = (first + 128).min(shape.accounts());
             let accesses = (first..end)
                 .map(|index| {
-                    let intent = make_intent(index)?;
+                    let mut intent = make_intent(index)?;
+                    // Outside the TPS clock, explicitly read this key's grant
+                    // location. Controller admission intentionally omits it.
+                    intent.authority = AssetSpendAuthorityV3::DelegatedGrant;
                     AssetSpendStateAccessV2::new(
                         intent.clone(),
                         Account::try_from(intent.payer.as_slice()).map_err(anyhow::Error::msg)?,
@@ -57,14 +58,9 @@ pub(super) fn audit_all_accounts(
                     })?
                     .context("account audit missing initialized account")?;
                 let initial = &initial_accounts[index];
-                let grant = state.grant().context("account audit missing grant")?;
                 let (balance, recipient_balance) = state.balances();
                 let expected_nonce = if index < shape.payers { rounds } else { 0 };
-                let expected_budget = if index < shape.payers {
-                    remaining
-                } else {
-                    FUNDING
-                };
+                let intent = make_intent(index)?;
                 ensure!(
                     state.parent_root() == head.state_root
                         && state.payer().account == account_bytes(index)
@@ -74,16 +70,10 @@ pub(super) fn audit_all_accounts(
                         && state.payer().management_key_ref
                             == spend_key_ref_v1(&initial.management_public_key)?
                         && state.payer().recovery_key_ref.is_none()
-                        && grant.account == account_bytes(index)
-                        && grant.asset == 1
-                        && grant.key_ref == spend_key_ref_v1(&initial.grants[0].spend_public_key)?
-                        && grant.authorization_epoch == 1
-                        && grant.permits_nov_transfer
-                        && !grant.revoked
-                        && grant.not_before_height == 1
-                        && grant.expires_at_height == grant_expiry
-                        && grant.max_debit_per_intent == 1000
-                        && grant.remaining_debit_budget == expected_budget
+                        && initial.grants.is_empty()
+                        && state.grant().is_none()
+                        && intent.authority == AssetSpendAuthorityV3::Controller
+                        && intent.spend_key_ref == state.payer().management_key_ref
                         && state.next_nonce() == expected_nonce
                         && balance == expected[index].1
                         && recipient_balance == expected[shape.payers].1,
@@ -91,7 +81,7 @@ pub(super) fn audit_all_accounts(
                 );
                 digest.update(postcard::to_allocvec(&(
                     state.payer(),
-                    grant,
+                    state.grant(),
                     state.next_nonce(),
                     balance,
                 ))?);
@@ -122,6 +112,7 @@ pub(super) fn audit_all_accounts(
         json!({"all_four_stores_match":true,"accounts_checked_per_store":shape.accounts(),
         "payer_accounts":shape.payers,"recipient_accounts":shape.recipients(),
         "economic_state_sha256":hex(&reference.context("complete audit produced no hash")?),
-        "read_batch_accounts":128,"scope":"every payer and recipient management/spend authority, budget, nonce and balance plus supply remainder; original immutable tree at final published root; outside TPS clock"}),
+        "spend_authority":"Controller","restricted_grants":false,
+        "read_batch_accounts":128,"scope":"every payer and recipient controller, absent grant, nonce and balance plus supply remainder; original immutable tree at final published root; outside TPS clock"}),
     )
 }

@@ -2,16 +2,17 @@
 //! as cryptographic or asset authority by these channel-level regressions.
 use super::*;
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES,
+    spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3, MAX_SIGNED_SPEND_BYTES,
     MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
 };
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 
 #[test]
 fn asset_authentication_retains_signed_accounts_and_charges_them_once() -> Result<()> {
     let public_key = vec![7; MLDSA65_PUBLIC_KEY_BYTES];
-    let raw = SignedAssetSpendV2 {
-        intent: AssetSpendIntentV2 {
+    let raw = SignedAssetSpendV3 {
+        intent: AssetSpendIntentV3 {
+            authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
             asset: 1,
             authority_update: None,
             recipient_creation: None,
@@ -31,9 +32,9 @@ fn asset_authentication_retains_signed_accounts_and_charges_them_once() -> Resul
         signature: vec![9; MLDSA65_SIGNATURE_BYTES],
     }
     .encode()?;
-    let batch = Arc::new(AssetSpendBatchV2::from_raw(
+    let batch = Arc::new(AssetSpendBatchV3::from_raw(
         std::slice::from_ref(&raw),
-        AssetSpendBatchLimitsV2 {
+        AssetSpendBatchLimitsV3 {
             transactions: 8,
             transaction_bytes: MAX_SIGNED_SPEND_BYTES,
             body_bytes: 65536,

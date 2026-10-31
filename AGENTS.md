@@ -1,5 +1,25 @@
 # Agent Highest Law
 
+## 2026-10-31 ordinary accounts are controlled by their own keys
+
+The user's latest policy supersedes mandatory tiered spending grants for ordinary
+accounts. Quick-payment and savings are user choices for the SAME asset-account
+type; each account's current control key may spend its available balance under
+the original nonce, fee and atomic execution rules. Ordinary payment must not
+require a per-payment cap, cumulative grant budget or grant expiry. Incoming NOV
+does not require a grant top-up. UCA association grants no spending authority.
+
+Reuse the existing asset management key as controller. Version the signed
+contract to distinguish controller spending from explicitly delegated restricted
+spending; never promote an existing restricted key merely by deleting its grant
+checks. Recovery keys retain their configured recovery-only authority. Keep
+transaction validity/replay checks and existing funded reservations. Preserve
+account addresses, state keys and nonce continuity; no automatic database
+conversion, reset, main advance, library replacement or deployment is authorized.
+Implement and validate CPU and integer execution, admission, initialization,
+runtime opening, queries, archive/catch-up and cold recovery on the same owners.
+Performance remains a separate measured acceptance gate.
+
 ## 2026-10-31 permissionless asset accounts and bounded initialization
 
 The user authorizes scalable initialization and normal runtime asset-account

@@ -1,8 +1,9 @@
 use super::*;
 
-fn fixture() -> (AssetSpendIntentV2, Vec<u8>, SuppliedAssetSpendGrantV2) {
+fn fixture() -> (AssetSpendIntentV3, Vec<u8>, SuppliedAssetSpendGrantV2) {
     (
-        AssetSpendIntentV2 {
+        AssetSpendIntentV3 {
+            authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
             chain_id: 7,
             genesis: [2; 32],
             payer: vec![1; 32],
@@ -396,6 +397,7 @@ fn concrete_accounts_isolate_keys_grants_and_nonce_even_with_shared_identity() {
 fn manager_or_explicit_recovery_can_update_inactive_account_without_spend_grant() {
     use novovm_protocol::uca_spend::AssetAuthorityUpdateV2;
     let (mut intent, account, _) = fixture();
+    intent.authority = AssetSpendAuthorityV3::Controller;
     intent.amount = 0;
     intent.recipient = intent.payer.clone();
     intent.spend_key_ref = [8; 32];
@@ -449,5 +451,127 @@ fn manager_or_explicit_recovery_can_update_inactive_account_without_spend_grant(
     assert_eq!(
         check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
         Err(SpendPolicyError::WrongEpoch)
+    );
+}
+
+#[test]
+fn controller_spends_without_a_grant_but_still_requires_current_account_authority() {
+    use SpendPolicyError::*;
+    let cases = [
+        (0, WrongParent),
+        (1, WrongDomain),
+        (2, WrongAccount),
+        (3, AccountInactive),
+        (4, WrongKey),
+        (5, WrongKey),
+        (6, WrongEpoch),
+        (7, StateUnavailable),
+        (8, StateUnavailable),
+        (9, NonceMismatch),
+        (10, Expired),
+        (11, Expired),
+        (12, WrongKey),
+    ];
+    for (case, expected) in cases {
+        let (mut intent, account, _) = fixture();
+        intent.authority = AssetSpendAuthorityV3::Controller;
+        intent.spend_key_ref = [8; 32];
+        let other_account = vec![2; 32];
+        let mut state = SuppliedAssetSpendStateV2 {
+            chain_id: 7,
+            genesis: [2; 32],
+            parent_root: [5; 32],
+            account: &account,
+            account_active: true,
+            grant: None,
+            management_key_ref: [8; 32],
+            recovery_key_ref: Some([9; 32]),
+            current_spend_epoch: Some(3),
+            next_spend_nonce: Some(9),
+        };
+        assert!(check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12).is_ok());
+        let mut height = 12;
+        match case {
+            0 => state.parent_root = [6; 32],
+            1 => state.chain_id += 1,
+            2 => state.account = &other_account,
+            3 => state.account_active = false,
+            4 => intent.spend_key_ref = [4; 32],
+            5 => intent.spend_key_ref = [9; 32],
+            6 => intent.authorization_epoch += 1,
+            7 => state.current_spend_epoch = None,
+            8 => state.next_spend_nonce = None,
+            9 => state.next_spend_nonce = Some(10),
+            10 => height = 9,
+            11 => height = 20,
+            12 => state.management_key_ref = [0; 32],
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], height),
+            Err(expected),
+            "controller boundary {case}"
+        );
+    }
+}
+
+#[test]
+fn old_restricted_grant_is_not_promoted_and_controller_does_not_consume_its_budget() {
+    let (mut intent, account, grant) = fixture();
+    let original_grant = grant.clone();
+    let mut state = SuppliedAssetSpendStateV2 {
+        chain_id: 7,
+        genesis: [2; 32],
+        parent_root: [5; 32],
+        account: &account,
+        account_active: true,
+        grant: Some(&grant),
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
+        current_spend_epoch: Some(3),
+        next_spend_nonce: Some(9),
+    };
+    assert!(check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12).is_ok());
+    intent.amount += 1;
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::LimitExceeded)
+    );
+    intent.authority = AssetSpendAuthorityV3::Controller;
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::WrongKey),
+        "restricted key cannot choose unrestricted mode"
+    );
+    state.grant = None;
+    intent.authority = AssetSpendAuthorityV3::DelegatedGrant;
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::StateUnavailable),
+        "missing grant never becomes controller permission"
+    );
+    assert_eq!(grant, original_grant);
+
+    intent.authority = AssetSpendAuthorityV3::Controller;
+    intent.spend_key_ref = [8; 32];
+    assert!(check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12).is_ok());
+    // Grant state is separate from the controller's balance authority. Even an
+    // unusable old delegation is neither consulted nor reset by this preflight.
+    let mut unusable_grant = grant.clone();
+    unusable_grant.revoked = true;
+    unusable_grant.expires_at_height = 6;
+    unusable_grant.remaining_debit_budget = 0;
+    let state = SuppliedAssetSpendStateV2 {
+        grant: Some(&unusable_grant),
+        ..state
+    };
+    assert!(check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12).is_ok());
+    assert!(unusable_grant.revoked);
+    assert_eq!(unusable_grant.remaining_debit_budget, 0);
+    intent.authority = AssetSpendAuthorityV3::DelegatedGrant;
+    intent.spend_key_ref = [4; 32];
+    assert_eq!(
+        check_supplied_spend_state_v2(&intent, Some(&state), &[5; 32], 12),
+        Err(SpendPolicyError::Revoked)
     );
 }

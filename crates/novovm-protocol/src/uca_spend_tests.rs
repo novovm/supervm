@@ -1,7 +1,8 @@
 use super::*;
 
-fn intent() -> AssetSpendIntentV2 {
-    AssetSpendIntentV2 {
+fn intent() -> AssetSpendIntentV3 {
+    AssetSpendIntentV3 {
+        authority: AssetSpendAuthorityV3::DelegatedGrant,
         chain_id: 0x0102_0304_0506_0708,
         genesis: [0x22; 32],
         payer: vec![0x11; 20],
@@ -37,11 +38,11 @@ fn update() -> AssetAuthorityUpdateV2 {
     }
 }
 
-fn signed() -> SignedAssetSpendV2 {
+fn signed() -> SignedAssetSpendV3 {
     let public_key = vec![0x42; MLDSA65_PUBLIC_KEY_BYTES];
     let mut intent = intent();
     intent.spend_key_ref = spend_key_ref_v1(&public_key).unwrap();
-    SignedAssetSpendV2 {
+    SignedAssetSpendV3 {
         intent,
         public_key,
         // Codec acceptance does not establish cryptographic validity.
@@ -65,10 +66,10 @@ fn funded_account_opening_has_explicit_purpose_and_binds_complete_permissions() 
     signed.intent.recipient_creation = Some(creation.clone());
     let raw = signed.encode().unwrap();
     assert!(raw.starts_with(CREATE_HEADER));
-    assert!(SignedAssetSpendV2::decode(&raw).unwrap() == signed);
+    assert!(SignedAssetSpendV3::decode(&raw).unwrap() == signed);
     let mut wrong_purpose = raw.clone();
     wrong_purpose[6] = 1;
-    assert!(SignedAssetSpendV2::decode(&wrong_purpose).is_err());
+    assert!(SignedAssetSpendV3::decode(&wrong_purpose).is_err());
     for field in 0..8 {
         let mut changed = signed.intent.clone();
         let descriptor = changed.recipient_creation.as_mut().unwrap();
@@ -88,16 +89,16 @@ fn funded_account_opening_has_explicit_purpose_and_binds_complete_permissions() 
             "unbound creation field {field}"
         );
     }
-    let limits = crate::uca_spend_batch::AssetSpendBatchLimitsV2 {
+    let limits = crate::uca_spend_batch::AssetSpendBatchLimitsV3 {
         transactions: 2,
         transaction_bytes: 8192,
         body_bytes: 16384,
     };
     let batch =
-        crate::uca_spend_batch::AssetSpendBatchV2::from_raw(&[raw.clone(), ordinary], limits)
+        crate::uca_spend_batch::AssetSpendBatchV3::from_raw(&[raw.clone(), ordinary], limits)
             .unwrap();
     let decoded =
-        crate::uca_spend_batch::AssetSpendBatchV2::decode(&batch.encode().unwrap(), limits)
+        crate::uca_spend_batch::AssetSpendBatchV3::decode(&batch.encode().unwrap(), limits)
             .unwrap();
     assert_eq!(decoded.raw_transaction(0).unwrap(), raw);
 }
@@ -113,7 +114,7 @@ fn hex_bytes(hex: &str) -> Vec<u8> {
 #[test]
 fn canonical_signing_vector_is_independent_of_encoder_and_external_pure_framing() {
     let expected = hex_bytes(concat!(
-        "4e554153024101",
+        "4e55415303410101",
         "0102030405060708",
         "2222222222222222222222222222222222222222222222222222222222222222",
         "14",
@@ -130,20 +131,20 @@ fn canonical_signing_vector_is_independent_of_encoder_and_external_pure_framing(
         "00000000000000c8",
         "00"
     ));
-    assert_eq!(expected.len(), 199);
+    assert_eq!(expected.len(), 200);
     assert_eq!(intent().signing_bytes().unwrap(), expected);
     assert_eq!(
-        AssetSpendIntentV2::decode_signing_bytes(&expected).unwrap(),
+        AssetSpendIntentV3::decode_signing_bytes(&expected).unwrap(),
         intent()
     );
-    assert_eq!(SPEND_CONTEXT_V2, b"NOVOVM/asset/NOV-spend/v2");
+    assert_eq!(SPEND_CONTEXT_V3, b"NOVOVM/asset/NOV-spend/v3");
 }
 
 #[test]
 fn every_intent_field_changes_the_signed_message() {
     let base = intent();
     let bytes = base.signing_bytes().unwrap();
-    for field in 0..12 {
+    for field in 0..13 {
         let mut changed = base.clone();
         match field {
             0 => changed.chain_id += 1,
@@ -158,6 +159,7 @@ fn every_intent_field_changes_the_signed_message() {
             9 => changed.not_before_height += 1,
             10 => changed.expires_at_height += 1,
             11 => std::mem::swap(&mut changed.payer, &mut changed.recipient),
+            12 => changed.authority = AssetSpendAuthorityV3::Controller,
             _ => unreachable!(),
         }
         assert_ne!(changed.signing_bytes().unwrap(), bytes, "field {field}");
@@ -166,20 +168,20 @@ fn every_intent_field_changes_the_signed_message() {
     bad_asset.asset = 2;
     assert!(bad_asset.signing_bytes().is_err());
     let mut raw = bytes;
-    raw[141] = 2;
-    assert!(AssetSpendIntentV2::decode_signing_bytes(&raw).is_err());
+    raw[142] = 2;
+    assert!(AssetSpendIntentV3::decode_signing_bytes(&raw).is_err());
 }
 
 #[test]
 fn signed_codec_round_trip_preserves_exact_bytes_but_does_not_verify_signature() {
     let original = signed();
     let bytes = original.encode().unwrap();
-    let decoded = SignedAssetSpendV2::decode(&bytes).unwrap();
+    let decoded = SignedAssetSpendV3::decode(&bytes).unwrap();
     assert!(decoded == original);
     assert_eq!(decoded.encode().unwrap(), bytes);
     let mut changed = bytes;
     *changed.last_mut().unwrap() ^= 1;
-    assert!(SignedAssetSpendV2::decode(&changed).is_ok());
+    assert!(SignedAssetSpendV3::decode(&changed).is_ok());
 }
 
 #[test]
@@ -187,35 +189,44 @@ fn all_truncations_trailing_bytes_and_old_or_unknown_domains_are_rejected() {
     let bytes = signed().encode().unwrap();
     for length in 0..bytes.len() {
         assert!(
-            SignedAssetSpendV2::decode(&bytes[..length]).is_err(),
+            SignedAssetSpendV3::decode(&bytes[..length]).is_err(),
             "length {length}"
         );
     }
     for extra in [1, 128, MAX_SIGNED_SPEND_BYTES] {
         let mut trailing = bytes.clone();
         trailing.resize(bytes.len() + extra, 0);
-        assert!(SignedAssetSpendV2::decode(&trailing).is_err());
+        assert!(SignedAssetSpendV3::decode(&trailing).is_err());
     }
     for index in 0..7 {
         let mut changed = bytes.clone();
         changed[index] ^= 0xff;
-        assert!(SignedAssetSpendV2::decode(&changed).is_err());
+        assert!(SignedAssetSpendV3::decode(&changed).is_err());
     }
-    for version in [0, 1, 3] {
+    for version in [0, 1, 2, 4] {
         let mut changed = bytes.clone();
         changed[4] = version;
-        assert!(SignedAssetSpendV2::decode(&changed).is_err());
+        assert!(SignedAssetSpendV3::decode(&changed).is_err());
     }
     for suite in [0, 44, 87] {
         let mut changed = bytes.clone();
         changed[5] = suite;
-        assert!(SignedAssetSpendV2::decode(&changed).is_err());
+        assert!(SignedAssetSpendV3::decode(&changed).is_err());
     }
     for purpose in [0, 2, 255] {
         let mut changed = bytes.clone();
         changed[6] = purpose;
-        assert!(SignedAssetSpendV2::decode(&changed).is_err());
+        assert!(SignedAssetSpendV3::decode(&changed).is_err());
     }
+    for mode in [2, 255] {
+        let mut changed = bytes.clone();
+        changed[7] = mode;
+        assert!(SignedAssetSpendV3::decode(&changed).is_err());
+    }
+    let mut old_grant_only = bytes;
+    old_grant_only[4] = 2;
+    old_grant_only.remove(7);
+    assert!(SignedAssetSpendV3::decode(&old_grant_only).is_err());
 }
 
 #[test]
@@ -225,7 +236,7 @@ fn concrete_accounts_have_exact_binary_length_bounds_without_aliases() {
             let mut value = signed();
             value.intent.payer = vec![0xff; payer_len];
             value.intent.recipient = vec![0; recipient_len];
-            assert!(SignedAssetSpendV2::decode(&value.encode().unwrap()).unwrap() == value);
+            assert!(SignedAssetSpendV3::decode(&value.encode().unwrap()).unwrap() == value);
         }
     }
     for length in [0, 1, 19, 21, 31, 33, 128, 256] {
@@ -240,11 +251,11 @@ fn concrete_accounts_have_exact_binary_length_bounds_without_aliases() {
         }
     }
     let bytes = signed().encode().unwrap();
-    for offset in [47, 108] {
+    for offset in [48, 109] {
         for length in [0, 19, 21, 31, 33, 255] {
             let mut changed = bytes.clone();
             changed[offset] = length;
-            assert!(SignedAssetSpendV2::decode(&changed).is_err());
+            assert!(SignedAssetSpendV3::decode(&changed).is_err());
         }
     }
     let a = intent();
@@ -275,8 +286,8 @@ fn key_reference_binds_exact_public_key_and_crypto_fields_have_fixed_lengths() {
     changed.public_key[0] ^= 1;
     assert!(changed.encode().is_err());
     let mut bytes = original.encode().unwrap();
-    bytes[199] ^= 1;
-    assert!(SignedAssetSpendV2::decode(&bytes).is_err());
+    bytes[200] ^= 1;
+    assert!(SignedAssetSpendV3::decode(&bytes).is_err());
 }
 
 #[test]
@@ -286,6 +297,7 @@ fn account_replay_identity_survives_key_rotation_epoch_and_intent_changes() {
     let mut rotated = base.clone();
     rotated.spend_key_ref = spend_key_ref_v1(&vec![0x43; MLDSA65_PUBLIC_KEY_BYTES]).unwrap();
     rotated.authorization_epoch += 1;
+    rotated.authority = AssetSpendAuthorityV3::Controller;
     rotated.recipient[0] ^= 1;
     rotated.amount += 1;
     rotated.max_fee += 1;
@@ -345,10 +357,11 @@ fn authority_update_roundtrip_binds_every_management_effect_and_shares_nonce() {
     let mut managed = signed();
     let spend_nonce = managed.intent.nonce_identity().unwrap();
     managed.intent.amount = 0;
+    managed.intent.authority = AssetSpendAuthorityV3::Controller;
     managed.intent.recipient = managed.intent.payer.clone();
     managed.intent.authority_update = Some(update());
     let bytes = managed.encode().unwrap();
-    assert!(SignedAssetSpendV2::decode(&bytes).unwrap() == managed);
+    assert!(SignedAssetSpendV3::decode(&bytes).unwrap() == managed);
     assert_eq!(managed.intent.nonce_identity().unwrap(), spend_nonce);
     let original = managed.intent.signing_bytes().unwrap();
     for field in 0..11 {
@@ -375,14 +388,15 @@ fn authority_update_roundtrip_binds_every_management_effect_and_shares_nonce() {
         );
     }
     for length in 0..bytes.len() {
-        assert!(SignedAssetSpendV2::decode(&bytes[..length]).is_err());
+        assert!(SignedAssetSpendV3::decode(&bytes[..length]).is_err());
     }
 }
 
 #[test]
 fn management_rejects_wrong_shape_duplicate_keys_bounds_and_epoch_overflow() {
-    for field in 0..12 {
+    for field in 0..13 {
         let mut value = intent();
+        value.authority = AssetSpendAuthorityV3::Controller;
         value.amount = 0;
         value.recipient = value.payer.clone();
         value.authority_update = Some(update());
@@ -403,6 +417,7 @@ fn management_rejects_wrong_shape_duplicate_keys_bounds_and_epoch_overflow() {
             9 => update.recovery_key_ref = Some(update.management_key_ref),
             10 => update.grants[0].key_ref = update.management_key_ref,
             11 => update.grants[0].key_ref = update.recovery_key_ref.unwrap(),
+            12 => value.authority = AssetSpendAuthorityV3::DelegatedGrant,
             _ => unreachable!(),
         }
         assert!(value.validate().is_err(), "case {field}");
@@ -411,6 +426,7 @@ fn management_rejects_wrong_shape_duplicate_keys_bounds_and_epoch_overflow() {
     max.intent.payer.resize(32, 1);
     max.intent.recipient = max.intent.payer.clone();
     max.intent.amount = 0;
+    max.intent.authority = AssetSpendAuthorityV3::Controller;
     let mut authority = update();
     authority.grants = (0..MAX_ASSET_GRANTS)
         .map(|index| AssetGrantConfigV2 {
@@ -420,7 +436,7 @@ fn management_rejects_wrong_shape_duplicate_keys_bounds_and_epoch_overflow() {
         .collect();
     max.intent.authority_update = Some(authority);
     assert_eq!(max.encode().unwrap().len(), MAX_SIGNED_SPEND_BYTES);
-    assert!(SignedAssetSpendV2::decode(&max.encode().unwrap()).unwrap() == max);
+    assert!(SignedAssetSpendV3::decode(&max.encode().unwrap()).unwrap() == max);
     assert!(
         max.intent.retained_heap_bytes()
             >= 64 + MAX_ASSET_GRANTS * std::mem::size_of::<AssetGrantConfigV2>()
@@ -436,8 +452,50 @@ fn management_rejects_wrong_shape_duplicate_keys_bounds_and_epoch_overflow() {
     assert!(too_many.encode().is_err());
     for bad in [2, 255] {
         let mut bytes = max.intent.signing_bytes().unwrap();
-        // Explicit option tag follows the 210-byte max-account fixed intent.
-        bytes[210] = bad;
-        assert!(AssetSpendIntentV2::decode_signing_bytes(&bytes).is_err());
+        // Explicit option tag follows the 211-byte max-account fixed intent.
+        bytes[211] = bad;
+        assert!(AssetSpendIntentV3::decode_signing_bytes(&bytes).is_err());
     }
+}
+
+#[test]
+fn controller_mode_is_explicit_and_does_not_change_existing_account_namespaces() {
+    let mut delegated = intent();
+    assert!(delegated.uses_grant());
+    let nonce = delegated.nonce_identity().unwrap();
+    let mut nonce_reference = Sha256::new();
+    nonce_reference.update(b"novovm-asset-spend-nonce/v2\0");
+    nonce_reference.update(delegated.chain_id.to_be_bytes());
+    nonce_reference.update(delegated.genesis);
+    nonce_reference.update([delegated.payer.len() as u8]);
+    nonce_reference.update(&delegated.payer);
+    assert_eq!(nonce, <[u8; 32]>::from(nonce_reference.finalize()));
+
+    let old_bytes = delegated.signing_bytes().unwrap();
+    delegated.authority = AssetSpendAuthorityV3::Controller;
+    assert!(!delegated.uses_grant());
+    assert_eq!(delegated.nonce_identity().unwrap(), nonce);
+    assert_ne!(delegated.signing_bytes().unwrap(), old_bytes);
+    let creation = AssetAccountCreationV2 {
+        management_key_ref: [0x71; 32],
+        recovery_key_ref: None,
+        grants: Vec::new(),
+    };
+    let mut address_reference = Sha256::new();
+    address_reference.update(b"NOVOVM/asset/account-opening/v2\0");
+    address_reference.update(delegated.chain_id.to_be_bytes());
+    address_reference.update(delegated.genesis);
+    // Existing action encoding: creation tag, recovery-choice false, epoch 1,
+    // active true, manager ref, no recovery, zero delegated grants.
+    address_reference.update([2, 0]);
+    address_reference.update(1u64.to_be_bytes());
+    address_reference.update([1]);
+    address_reference.update(creation.management_key_ref);
+    address_reference.update([0, 0]);
+    assert_eq!(
+        creation
+            .account(delegated.chain_id, &delegated.genesis)
+            .unwrap(),
+        <[u8; 32]>::from(address_reference.finalize())
+    );
 }

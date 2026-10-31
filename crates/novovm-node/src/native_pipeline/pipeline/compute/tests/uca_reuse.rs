@@ -8,8 +8,8 @@ use crate::native_pipeline::business::uca_spend_state::{
 };
 use crate::native_pipeline::pipeline::{admitted_uca_for_test, tests as pipeline_tests};
 use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES};
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV3, MAX_SIGNED_SPEND_BYTES};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 
 fn account_record(address: Vec<u8>) -> AssetAccountAuthorityV2 {
     AssetAccountAuthorityV2 {
@@ -31,7 +31,8 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     let facade = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
     let keypair =
         facade.mldsa_keygen_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
-    let intent = AssetSpendIntentV2 {
+    let intent = AssetSpendIntentV3 {
+        authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
         asset: 1,
         authority_update: None,
         recipient_creation: None,
@@ -47,18 +48,18 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         not_before_height: 1,
         expires_at_height: 50,
     };
-    let signed = facade.asset_spend_signer_v2()?.sign(
+    let signed = facade.asset_spend_signer_v3()?.sign(
         intent.clone(),
         &keypair.public_key,
         &keypair.expanded_secret_key,
     )?;
     let raw = vec![signed.encode()?];
-    let limits = AssetSpendBatchLimitsV2 {
+    let limits = AssetSpendBatchLimitsV3 {
         transactions: 16,
         transaction_bytes: MAX_SIGNED_SPEND_BYTES,
         body_bytes: 65536,
     };
-    let source = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
+    let source = Arc::new(AssetSpendBatchV3::from_raw(&raw, limits)?);
     let mut pipeline_config = pipeline_tests::config("unused-uca-parent-reuse".into());
     pipeline_config.authentication.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
     pipeline_config.plan.transaction_bytes = MAX_SIGNED_SPEND_BYTES;
@@ -128,7 +129,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
             "domain" => wrong.intent.chain_id += 1,
             _ => wrong.signature[0] ^= 1,
         }
-        let wrong = Arc::new(AssetSpendBatchV2::from_raw(&[wrong.encode()?], limits)?);
+        let wrong = Arc::new(AssetSpendBatchV3::from_raw(&[wrong.encode()?], limits)?);
         let checked = token.checked_uca().unwrap().reattach(signed.clone())?;
         assert!(
             NovTransferBody::prepare_asset_spend_from_uca(
@@ -177,7 +178,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         let changed = stage_state_update(&memory, original.root(), &mutation)?;
         let mut parent = Memory(memory.0.clone());
         parent.0.extend(changed.nodes().clone());
-        let selected = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
+        let selected = Arc::new(AssetSpendBatchV3::from_raw(&raw, limits)?);
         let admitted = pipeline.rebind_admitted_uca(selected.clone(), &[&token])?;
         let body = authenticate(
             &mut session,

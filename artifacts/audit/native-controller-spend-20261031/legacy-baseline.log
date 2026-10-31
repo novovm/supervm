@@ -1,0 +1,15 @@
+
+running 1 test
+test mainline_query::tests::mainline_query_cut_c_standard_ed25519_allows_execution ... FAILED
+
+failures:
+
+failures:
+    mainline_query::tests::mainline_query_cut_c_standard_ed25519_allows_execution
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1834 filtered out; finished in 0.06s
+
+
+thread 'mainline_query::tests::mainline_query_cut_c_standard_ed25519_allows_execution' (35160) panicked at crates\novovm-node\src\mainline_query.rs:5770:10:
+nov_swap should return a product-facing result: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

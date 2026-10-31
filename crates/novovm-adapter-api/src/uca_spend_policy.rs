@@ -1,9 +1,9 @@
 //! Pure policy preflight over CALLER-SUPPLIED state. No constructor here can
-//! certify that state is authoritative. Native integration must read account,
-//! spend grant, current spend epoch and nonce from the SAME captured parent.
-//! Consume nonce/budget atomically with effects through the existing AOEM owner.
+//! certify that state is authoritative. Native integration reads account,
+//! optional delegated grant, current epoch and nonce from the SAME parent.
+//! Consume nonce and any delegated budget atomically through the AOEM owner.
 //! Never feed an App-provided snapshot into a production authorization decision.
-use novovm_protocol::uca_spend::{AssetSpendIntentV2, NATIVE_NOV_ASSET};
+use novovm_protocol::uca_spend::{AssetSpendAuthorityV3, AssetSpendIntentV3, NATIVE_NOV_ASSET};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpendPolicyError {
@@ -65,7 +65,7 @@ pub struct SuppliedAssetSpendStateV2<'a> {
 /// An Ok result is NOT a spend permit. The caller must establish state provenance,
 /// verify the signature and check/consume all dynamic effects in that plan.
 pub fn check_supplied_spend_authority_v2(
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
     state: Option<&SuppliedAssetSpendStateV2<'_>>,
     expected_parent: &[u8; 32],
     execution_height: u64,
@@ -102,6 +102,24 @@ pub fn check_supplied_spend_authority_v2(
         }
         // A suspended account can be unfrozen only by its current independently
         // authorized manager/recovery key. Identity keys are not consulted.
+        return Ok(());
+    }
+    if intent.authority == AssetSpendAuthorityV3::Controller {
+        if !s.account_active {
+            return Err(AccountInactive);
+        }
+        if intent.spend_key_ref != s.management_key_ref || s.management_key_ref == [0; 32] {
+            return Err(WrongKey);
+        }
+        let current_spend_epoch = s.current_spend_epoch.ok_or(StateUnavailable)?;
+        if current_spend_epoch == 0 || intent.authorization_epoch != current_spend_epoch {
+            return Err(WrongEpoch);
+        }
+        if execution_height < intent.not_before_height
+            || execution_height >= intent.expires_at_height
+        {
+            return Err(Expired);
+        }
         return Ok(());
     }
     let grant = s.grant.ok_or(StateUnavailable)?;
@@ -146,7 +164,7 @@ pub fn check_supplied_spend_authority_v2(
 /// Reserving amount+max_fee bounds potential debit; actual fee settlement remains
 /// in the original business plan and must release any unused reservation.
 pub fn check_supplied_spend_state_v2(
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
     state: Option<&SuppliedAssetSpendStateV2<'_>>,
     expected_parent: &[u8; 32],
     execution_height: u64,
@@ -159,9 +177,9 @@ pub fn check_supplied_spend_state_v2(
     if s.next_spend_nonce.ok_or(StateUnavailable)? != intent.nonce {
         return Err(NonceMismatch);
     }
-    if intent.authority_update.is_some() {
-        // Fees/balance and the atomic authority replacement belong to the
-        // original execution plan. Management does not consume a spend grant.
+    if !intent.uses_grant() {
+        // Controller balance/fees and any atomic authority replacement belong
+        // to the original plan. An unrestricted account has no grant budget.
         return Ok(());
     }
     let grant = s.grant.ok_or(StateUnavailable)?;

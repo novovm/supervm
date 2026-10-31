@@ -21,8 +21,9 @@ fn budget() -> CaptureBudget {
         bytes: 2 * 1024 * 1024,
     }
 }
-fn intent() -> AssetSpendIntentV2 {
-    AssetSpendIntentV2 {
+fn intent() -> AssetSpendIntentV3 {
+    AssetSpendIntentV3 {
+        authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
         chain_id: 7,
         genesis: [2; 32],
         payer: vec![11; 20],
@@ -49,7 +50,7 @@ fn account(address: &[u8]) -> AssetAccountAuthorityV2 {
         recovery_key_ref: Some([9; 32]),
     }
 }
-fn grant(i: &AssetSpendIntentV2) -> SuppliedAssetSpendGrantV2 {
+fn grant(i: &AssetSpendIntentV3) -> SuppliedAssetSpendGrantV2 {
     SuppliedAssetSpendGrantV2 {
         account: i.payer.clone(),
         asset: i.asset,
@@ -63,7 +64,7 @@ fn grant(i: &AssetSpendIntentV2) -> SuppliedAssetSpendGrantV2 {
         remaining_debit_budget: 100,
     }
 }
-fn changes(i: &AssetSpendIntentV2) -> Vec<StateChange> {
+fn changes(i: &AssetSpendIntentV3) -> Vec<StateChange> {
     let mut out = Vec::new();
     for (address, balance) in [(i.payer.clone(), 1000u128), (i.recipient.clone(), 7)] {
         out.extend(account_record_changes(i.chain_id, &i.genesis, &account(&address)).unwrap());
@@ -79,7 +80,7 @@ fn changes(i: &AssetSpendIntentV2) -> Vec<StateChange> {
     });
     out
 }
-fn access(i: &AssetSpendIntentV2) -> AssetSpendStateAccessV2 {
+fn access(i: &AssetSpendIntentV3) -> AssetSpendStateAccessV2 {
     AssetSpendStateAccessV2::new(i.clone(), [11; 20].into(), [12; 32].into()).unwrap()
 }
 fn tree(changes: &[StateChange]) -> (Memory, NodeHash) {
@@ -96,6 +97,45 @@ fn batch_read(
 ) -> Result<Vec<CapturedAssetSpendStateV2>> {
     AssetSpendStateAccessV2::read_captured_batch(std::slice::from_ref(access), input, root)?
         .collect()
+}
+
+#[test]
+fn controller_capture_does_not_read_grant_pages_or_promote_a_delegate() -> Result<()> {
+    use novovm_protocol::uca_spend::AssetSpendAuthorityV3;
+    let mut value = intent();
+    let delegated = access(&value);
+    let writes = changes(&value);
+    let (memory, root) = tree(&writes);
+    value.authority = AssetSpendAuthorityV3::Controller;
+    value.spend_key_ref = account(&value.payer).management_key_ref;
+    let owner = access(&value);
+    assert_eq!(
+        delegated.declarations().len() - owner.declarations().len(),
+        3
+    );
+    let input = capture(&memory, root, &owner);
+    let state = owner.read(&input, root)?;
+    assert!(state.grant().is_none());
+    assert_eq!(state.next_nonce(), value.nonce);
+    assert!(state.static_failure(10).is_none());
+    let grant_keys = record_pages::declarations(&grant_prefix(&intent())?, GRANT_BYTES, false)?;
+    assert!(owner
+        .declarations()
+        .iter()
+        .all(|declaration| { !grant_keys.iter().any(|grant| declaration.key == grant.key) }));
+    value.spend_key_ref = intent().spend_key_ref;
+    let wrong = access(&value);
+    assert!(wrong
+        .read(&capture(&memory, root, &wrong), root)?
+        .static_failure(10)
+        .is_some());
+    value.spend_key_ref = account(&value.payer).recovery_key_ref.unwrap();
+    let recovery = access(&value);
+    assert!(recovery
+        .read(&capture(&memory, root, &recovery), root)?
+        .static_failure(10)
+        .is_some());
+    Ok(())
 }
 
 #[test]
@@ -559,20 +599,24 @@ fn actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority() -> 
     } else {
         ("linux", "libaoem_ffi.so")
     };
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../aoem")
-        .join(platform)
-        .join("core/bin")
-        .join(library);
+    let path = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../aoem")
+                .join(platform)
+                .join("core/bin")
+                .join(library)
+        });
     // Reuse the existing safe bindings loader for ephemeral fixture keys.
     // Never accept an ambient override to a different library or silently skip.
     ensure!(
         aoem_bindings::default_host_dll_path().canonicalize()? == path.canonicalize()?,
-        "fixture key generator must use the same packaged AOEM library"
+        "fixture key generator must use the same qualified AOEM library"
     );
     let facade = AoemExecFacade::open(&path, AoemExecOpenOptions::default())?;
-    let signer = facade.asset_spend_signer_v2()?;
-    let verifier = facade.asset_spend_verifier_v2()?;
+    let signer = facade.asset_spend_signer_v3()?;
+    let verifier = facade.asset_spend_verifier_v3()?;
     let (public, mut secret) = aoem_bindings::mldsa_keygen_v1_auto(65)?
         .context("packaged ML-DSA-65 fixture key generation unavailable")?;
     let mut i = intent();

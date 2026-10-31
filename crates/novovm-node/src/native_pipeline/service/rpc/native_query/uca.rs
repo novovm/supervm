@@ -14,7 +14,7 @@ use crate::native_pipeline::state::frontier::{
 use anyhow::{ensure, Context, Result};
 use novovm_consensus::round_bft::journal::ParentPoint;
 use novovm_protocol::native_query::{Answer, AssetSpendStateViewV2, AssetState, Query, QueryError};
-use novovm_protocol::uca_spend::AssetSpendIntentV2;
+use novovm_protocol::uca_spend::AssetSpendIntentV3;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -89,7 +89,7 @@ pub(crate) struct UcaBatchStateRead {
 impl UcaBatchStateRead {
     pub(crate) fn new(
         root: Hash,
-        inputs: Vec<(AssetSpendIntentV2, Account, Account)>,
+        inputs: Vec<(AssetSpendIntentV3, Account, Account)>,
         budget: CaptureBudget,
     ) -> Result<Self> {
         ensure!(
@@ -392,7 +392,7 @@ pub(crate) struct AssetStateRead {
 impl AssetStateRead {
     pub(crate) fn new(
         root: Hash,
-        intent: AssetSpendIntentV2,
+        intent: AssetSpendIntentV3,
         payer: Account,
         recipient: Account,
     ) -> Result<Self> {
@@ -500,6 +500,7 @@ fn view(state: &CapturedAssetSpendStateV2, height: u64) -> AssetSpendStateViewV2
     let grant = state.grant();
     let (payer_balance, recipient_balance) = state.balances();
     AssetSpendStateViewV2 {
+        authority: state.authority(),
         state_root: state.parent_root(),
         height,
         account_active: state.payer().active,
@@ -508,7 +509,7 @@ fn view(state: &CapturedAssetSpendStateV2, height: u64) -> AssetSpendStateViewV2
         recovery_key_ref: state.payer().recovery_key_ref,
         grant_present: grant.is_some(),
         grant_epoch: grant.map_or(0, |grant| grant.authorization_epoch),
-        permits_nov_transfer: grant.is_some_and(|grant| grant.permits_nov_transfer),
+        permits_nov_transfer: state.static_failure(height).is_none(),
         revoked: grant.is_some_and(|grant| grant.revoked),
         not_before_height: grant.map_or(0, |grant| grant.not_before_height),
         expires_at_height: grant.map_or(0, |grant| grant.expires_at_height),

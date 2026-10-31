@@ -10,9 +10,10 @@ fn asset_signature_fact_compacts_owned_crypto_and_rejects_all_transplants() -> R
     let facade = AoemExecFacade::open(std::path::Path::new(&path), Default::default())?;
     let runtime = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let key = runtime.generate_keypair()?;
-    let signer = facade.asset_spend_signer_v2()?;
+    let signer = facade.asset_spend_signer_v3()?;
     let signed = signer.sign(
-        AssetSpendIntentV2 {
+        AssetSpendIntentV3 {
+            authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
             chain_id: 717,
             genesis: [1; 32],
             payer: vec![1; 20],
@@ -32,14 +33,14 @@ fn asset_signature_fact_compacts_owned_crypto_and_rejects_all_transplants() -> R
         &key.expanded_secret_key,
     )?;
     let bytes = signed.encode()?;
-    let checked = facade.asset_spend_verifier_v2()?.verify(signed.clone())?;
-    let owned_bytes = std::mem::size_of::<SignatureCheckedAssetSpendV2>()
+    let checked = facade.asset_spend_verifier_v3()?.verify(signed.clone())?;
+    let owned_bytes = std::mem::size_of::<SignatureCheckedAssetSpendV3>()
         + signed.intent.retained_heap_bytes()
         + signed.public_key.capacity()
         + signed.signature.capacity();
     let fact = checked.into_signature_fact()?;
     let compact_bytes =
-        std::mem::size_of::<AssetSpendSignatureFactV2>() + fact.intent().retained_heap_bytes();
+        std::mem::size_of::<AssetSpendSignatureFactV3>() + fact.intent().retained_heap_bytes();
     assert!(owned_bytes - compact_bytes > 5_000);
     let restored = fact.reattach(signed.clone())?;
     assert_eq!(restored.signed().encode()?, bytes);
@@ -47,7 +48,7 @@ fn asset_signature_fact_compacts_owned_crypto_and_rejects_all_transplants() -> R
         restored.check_supplied_state(None, &[0; 32], 2),
         Err(novovm_adapter_api::uca_spend_policy::SpendPolicyError::StateUnavailable)
     );
-    for mutation in 0..13 {
+    for mutation in 0..14 {
         let mut changed = signed.clone();
         match mutation {
             0 => changed.intent.payer[0] ^= 1,
@@ -62,6 +63,10 @@ fn asset_signature_fact_compacts_owned_crypto_and_rejects_all_transplants() -> R
             9 => changed.intent.expires_at_height += 1,
             10 => changed.public_key[0] ^= 1,
             11 => changed.signature[0] ^= 1,
+            12 => {
+                changed.intent.authority =
+                    novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller
+            }
             _ => changed.signature.truncate(changed.signature.len() - 1),
         }
         assert!(fact.reattach(changed).is_err(), "mutation {mutation}");
@@ -74,14 +79,24 @@ fn asset_signature_fact_compacts_owned_crypto_and_rejects_all_transplants() -> R
         b"not-the-asset-spend-context",
     )?;
     assert!(fact.reattach(wrong_context).is_err());
+    let mut controller_intent = signed.intent.clone();
+    controller_intent.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller;
+    let controller = signer.sign(controller_intent, &key.public_key, &key.expanded_secret_key)?;
+    let controller_fact = facade
+        .asset_spend_verifier_v3()?
+        .verify(controller.clone())?
+        .into_signature_fact()?;
+    assert!(fact.reattach(controller.clone()).is_err());
+    assert!(controller_fact.reattach(signed.clone()).is_err());
+    assert!(controller_fact.reattach(controller).is_ok());
     let mut wrong_parameter = bytes.clone();
     wrong_parameter[5] = 87;
-    assert!(SignedAssetSpendV2::decode(&wrong_parameter).is_err());
+    assert!(SignedAssetSpendV3::decode(&wrong_parameter).is_err());
     let mut next_intent = signed.intent.clone();
     next_intent.nonce += 1;
     let next = signer.sign(next_intent, &key.public_key, &key.expanded_secret_key)?;
     let next_fact = facade
-        .asset_spend_verifier_v2()?
+        .asset_spend_verifier_v3()?
         .verify(next.clone())?
         .into_signature_fact()?;
     std::thread::scope(|scope| {

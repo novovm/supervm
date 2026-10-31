@@ -49,9 +49,9 @@ fn asset_request_rejects_empty_and_oversized_wire_before_acceptance() {
 #[ignore = "actual packaged AOEM; exact NUAS signature reuse, not asset authority"]
 fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<()> {
     use novovm_protocol::uca_spend::{
-        spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES,
+        spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3, MAX_SIGNED_SPEND_BYTES,
     };
-    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
     let library = std::path::PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
             .context("explicit trusted AOEM test library required")?,
@@ -66,11 +66,12 @@ fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<(
         facade.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
     let keypair = keys.generate_keypair()?;
     let pk = &keypair.public_key;
-    let signer = facade.asset_spend_signer_v2()?;
+    let signer = facade.asset_spend_signer_v3()?;
     let mut signed = Vec::new();
     for nonce in 0..2 {
         signed.push(signer.sign(
-            AssetSpendIntentV2 {
+            AssetSpendIntentV3 {
+                authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 asset: 1,
                 authority_update: None,
                 recipient_creation: None,
@@ -90,16 +91,16 @@ fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<(
             &keypair.expanded_secret_key,
         )?);
     }
-    let limits = AssetSpendBatchLimitsV2 {
+    let limits = AssetSpendBatchLimitsV3 {
         transactions: 16,
         transaction_bytes: MAX_SIGNED_SPEND_BYTES,
         body_bytes: 65536,
     };
-    let make = |rows: &[SignedAssetSpendV2]| -> Result<_> {
-        Ok(Arc::new(AssetSpendBatchV2::from_raw(
+    let make = |rows: &[SignedAssetSpendV3]| -> Result<_> {
+        Ok(Arc::new(AssetSpendBatchV3::from_raw(
             &rows
                 .iter()
-                .map(SignedAssetSpendV2::encode)
+                .map(SignedAssetSpendV3::encode)
                 .collect::<std::result::Result<Vec<_>, _>>()?,
             limits,
         )?))
@@ -171,7 +172,7 @@ fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<(
     }
     let mut wrong_suite = signed[0].encode()?;
     wrong_suite[5] = 87;
-    assert!(SignedAssetSpendV2::decode(&wrong_suite).is_err());
+    assert!(SignedAssetSpendV3::decode(&wrong_suite).is_err());
     let selected = make(&signed)?;
     let bytes = selected.canonical_bytes();
     let candidate = pipeline.rebind_admitted_uca(selected, &[&first, &second])?;
@@ -210,9 +211,9 @@ fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<(
 #[ignore = "actual packaged AOEM ML-DSA admission; not spend authority or finality"]
 fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Result<()> {
     use novovm_protocol::uca_spend::{
-        spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES,
+        spend_key_ref_v1, AssetSpendIntentV3, MAX_SIGNED_SPEND_BYTES,
     };
-    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
     let library = std::path::PathBuf::from(
@@ -242,8 +243,9 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
     let facade =
         novovm_exec::AoemExecFacade::open(&library, novovm_exec::AoemExecOpenOptions::default())?;
     let (pk, sk) = aoem_bindings::mldsa_keygen_v1_auto(65)?.context("ML-DSA-65 unavailable")?;
-    let signed = facade.asset_spend_signer_v2()?.sign(
-        AssetSpendIntentV2 {
+    let signed = facade.asset_spend_signer_v3()?.sign(
+        AssetSpendIntentV3 {
+            authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
             asset: 1,
             authority_update: None,
             recipient_creation: None,
@@ -267,12 +269,12 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
     let mut wrong_domain = signed.clone();
     wrong_domain.intent.genesis[0] ^= 1;
     let raws = vec![signed.encode()?, tampered.encode()?, wrong_domain.encode()?];
-    let limits = AssetSpendBatchLimitsV2 {
+    let limits = AssetSpendBatchLimitsV3 {
         transactions: 16,
         transaction_bytes: MAX_SIGNED_SPEND_BYTES,
         body_bytes: 65536,
     };
-    let batch = Arc::new(AssetSpendBatchV2::from_raw(&raws, limits)?);
+    let batch = Arc::new(AssetSpendBatchV3::from_raw(&raws, limits)?);
     assert!(SignatureAdmissionRequest::new(vec![
         AdmissionInput::Raw(vec![1]),
         AdmissionInput::Uca {
@@ -343,7 +345,7 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
     assert_eq!(fact.reattach(batch.row(0)?)?.signed().encode()?, raws[0]);
     assert!(checked.matches_uca_source(&batch, 0));
     assert!(!checked.matches_uca_source(&batch, 1));
-    let equal_but_distinct = Arc::new(AssetSpendBatchV2::from_raw(&raws, limits)?);
+    let equal_but_distinct = Arc::new(AssetSpendBatchV3::from_raw(&raws, limits)?);
     assert!(!checked.matches_uca_source(&equal_but_distinct, 0));
     let metadata = std::mem::size_of::<AdmittedTransfer>()
         + std::mem::size_of::<crate::native_pipeline::ingress::batch::CheckedAdmission>()

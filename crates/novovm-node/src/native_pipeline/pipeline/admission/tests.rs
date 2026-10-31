@@ -338,8 +338,8 @@ fn authority_handoff_rejects_non_ingress_role_without_changing_accounting() {
 #[test]
 #[ignore = "real trusted AOEM; single-row APFL projection preserves exact signature fact and original owner"]
 fn admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade() -> Result<()> {
-    use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2};
-    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3};
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
     let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
         .context("explicit trusted AOEM test library required")?;
     let facade =
@@ -350,11 +350,12 @@ fn admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade() -
     let mut config = cfg();
     config.authentication.transaction_bytes = 8192;
     config.plan.transaction_bytes = 8192;
-    let signer = facade.asset_spend_signer_v2()?;
+    let signer = facade.asset_spend_signer_v3()?;
     let rows = (0..2)
         .map(|nonce| {
             signer.sign(
-                AssetSpendIntentV2 {
+                AssetSpendIntentV3 {
+                    authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                     chain_id: config.store.domain.chain_id,
                     genesis: config.store.domain.genesis_config_commitment,
                     payer: vec![1; 20],
@@ -377,11 +378,11 @@ fn admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade() -
         .collect::<Result<Vec<_>>>()?;
     let raw = rows
         .iter()
-        .map(SignedAssetSpendV2::encode)
+        .map(SignedAssetSpendV3::encode)
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let source = Arc::new(AssetSpendBatchV2::from_raw(
+    let source = Arc::new(AssetSpendBatchV3::from_raw(
         &raw,
-        AssetSpendBatchLimitsV2 {
+        AssetSpendBatchLimitsV3 {
             transactions: 2,
             transaction_bytes: 8192,
             body_bytes: 16 * 1024,

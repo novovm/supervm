@@ -23,10 +23,10 @@ use novovm_protocol::{
         Answer, AssetReadIntentV2, AssetSpendStateViewV2, AssetState, Query, ReceiptState,
     },
     uca_spend::{
-        spend_key_ref_v1, AssetAuthorityUpdateV2, AssetGrantConfigV2, AssetSpendIntentV2,
-        SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES,
+        spend_key_ref_v1, AssetAuthorityUpdateV2, AssetGrantConfigV2, AssetSpendIntentV3,
+        SignedAssetSpendV3, MAX_SIGNED_SPEND_BYTES,
     },
-    uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
+    uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3},
 };
 use sha2::{Digest, Sha256};
 use std::{net::UdpSocket, path::PathBuf};
@@ -176,13 +176,13 @@ fn tick(nodes: &mut [rpc::RpcLifecycle]) -> Result<()> {
 fn send(
     nodes: &mut [rpc::RpcLifecycle],
     client: &mut client::NativeApplicationClient,
-    signed: &SignedAssetSpendV2,
+    signed: &SignedAssetSpendV3,
     _payer: usize,
     _recipient: usize,
 ) -> Result<()> {
-    let batch = Arc::new(AssetSpendBatchV2::from_raw(
+    let batch = Arc::new(AssetSpendBatchV3::from_raw(
         &[signed.encode()?],
-        AssetSpendBatchLimitsV2 {
+        AssetSpendBatchLimitsV3 {
             transactions: 2,
             transaction_bytes: MAX_SIGNED_SPEND_BYTES,
             body_bytes: 2 * MAX_SIGNED_SPEND_BYTES,
@@ -237,7 +237,7 @@ fn query(
 fn receipt(
     nodes: &mut [rpc::RpcLifecycle],
     client: &mut client::NativeApplicationClient,
-    signed: &SignedAssetSpendV2,
+    signed: &SignedAssetSpendV3,
 ) -> Result<ReceiptState> {
     let hash = Sha256::digest(signed.intent.signing_bytes()?).into();
     let deadline = Instant::now() + TIMEOUT;
@@ -260,7 +260,7 @@ fn receipt(
 fn state(
     nodes: &mut [rpc::RpcLifecycle],
     client: &mut client::NativeApplicationClient,
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
     _payer: usize,
     _recipient: usize,
 ) -> Result<AssetSpendStateViewV2> {
@@ -302,7 +302,7 @@ fn publish(
     nodes: &mut [rpc::RpcLifecycle],
     clients: &mut [client::NativeApplicationClient],
     ingress: usize,
-    signed: &SignedAssetSpendV2,
+    signed: &SignedAssetSpendV3,
 ) -> Result<ReceiptState> {
     send(nodes, &mut clients[ingress], signed, 0, 0)?;
     let receipts = clients
@@ -319,8 +319,8 @@ fn publish(
 fn account_views(
     nodes: &mut [rpc::RpcLifecycle],
     clients: &mut [client::NativeApplicationClient],
-    alice: &AssetSpendIntentV2,
-    bob: &AssetSpendIntentV2,
+    alice: &AssetSpendIntentV3,
+    bob: &AssetSpendIntentV3,
 ) -> Result<Vec<(AssetSpendStateViewV2, AssetSpendStateViewV2)>> {
     let views = clients
         .iter_mut()
@@ -344,8 +344,8 @@ fn reject_unchanged(
     nodes: &mut [rpc::RpcLifecycle],
     clients: &mut [client::NativeApplicationClient],
     ingress: usize,
-    signed: &SignedAssetSpendV2,
-    observations: (&AssetSpendIntentV2, &AssetSpendIntentV2),
+    signed: &SignedAssetSpendV3,
+    observations: (&AssetSpendIntentV3, &AssetSpendIntentV3),
 ) -> Result<()> {
     let before = account_views(nodes, clients, observations.0, observations.1)?;
     let baseline = match query(nodes, &mut clients[ingress], Query::Status)? {
@@ -393,7 +393,7 @@ fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
     run_native_uca_service_fixture_with(pool_pressure, None)
 }
 
-type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV2]) -> Result<()>;
+type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV3]) -> Result<()>;
 
 pub(super) fn with_uca_gossip_service_fixture(check: GossipServiceCheck) -> Result<()> {
     run_native_uca_service_fixture_with(false, Some(check))
@@ -562,8 +562,9 @@ fn run_native_uca_service_fixture_with(
         .map(|config| connect(config, validators.clone()))
         .collect::<Result<Vec<_>>>()?;
     let intent =
-        |payer: usize, recipient: usize, amount: u128, epoch: u64| -> Result<AssetSpendIntentV2> {
-            Ok(AssetSpendIntentV2 {
+        |payer: usize, recipient: usize, amount: u128, epoch: u64| -> Result<AssetSpendIntentV3> {
+            Ok(AssetSpendIntentV3 {
+                authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 asset: 1,
                 authority_update: None,
                 recipient_creation: None,
@@ -580,16 +581,16 @@ fn run_native_uca_service_fixture_with(
                 expires_at_height: 100,
             })
         };
-    let signer = runtime.asset_spend_signer_v2()?;
+    let signer = runtime.asset_spend_signer_v3()?;
     let transfer = signer.sign(intent(0, 1, 100, 1)?, &keys[2].0, &keys[2].1)?;
-    let make_batch = |spends: &[SignedAssetSpendV2]| -> Result<Arc<AssetSpendBatchV2>> {
+    let make_batch = |spends: &[SignedAssetSpendV3]| -> Result<Arc<AssetSpendBatchV3>> {
         let raws = spends
             .iter()
             .map(|spend| spend.encode().map_err(anyhow::Error::msg))
             .collect::<Result<Vec<_>>>()?;
-        Ok(Arc::new(AssetSpendBatchV2::from_raw(
+        Ok(Arc::new(AssetSpendBatchV3::from_raw(
             &raws,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 3,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                 body_bytes: 3 * MAX_SIGNED_SPEND_BYTES,
@@ -823,10 +824,11 @@ fn run_native_uca_service_fixture_with(
                       use_recovery: bool,
                       active: bool,
                       grants: Vec<AssetGrantConfigV2>|
-     -> Result<SignedAssetSpendV2> {
+     -> Result<SignedAssetSpendV3> {
         let mut action = intent(0, 0, 0, epoch)?;
         action.nonce = nonce;
         action.spend_key_ref = refs[key];
+        action.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller;
         action.authority_update = Some(AssetAuthorityUpdateV2 {
             use_recovery,
             next_epoch: epoch + 1,

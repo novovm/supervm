@@ -406,18 +406,17 @@ fn finish(
                 .iter()
                 .find(|option| option.version == version)
                 .context("asset authority prefix missing")?;
-            let static_failure = if !grant_presence[&e.grant_id] {
+            let static_failure = if e.intent.uses_grant() && !grant_presence[&e.grant_id] {
                 option.absent_failure
             } else if version == 0 {
                 e.static_failure
             } else {
                 option.failure
             };
-            let management = e.intent.authority_update.is_some();
             let failure = static_failure.or_else(|| {
                 if prepared.tx_nonces[index] != actual.next_nonce {
                     Some(SpendPolicyError::NonceMismatch)
-                } else if !management
+                } else if e.intent.uses_grant()
                     && (e.reserve > budgets[&e.grant_id] || e.reserve > option.limit)
                 {
                     Some(SpendPolicyError::LimitExceeded)
@@ -431,7 +430,11 @@ fn finish(
                 ));
                 spend_outputs.as_mut().unwrap().push(SpendOutput {
                     failure: Some(failure),
-                    remaining: if management { 0 } else { budgets[&e.grant_id] },
+                    remaining: if e.intent.uses_grant() {
+                        budgets[&e.grant_id]
+                    } else {
+                        0
+                    },
                 });
                 continue;
             }
@@ -512,7 +515,7 @@ fn finish(
                     }
                 }
                 0
-            } else {
+            } else if entry.intent.uses_grant() {
                 let debit = if outcome.is_success() {
                     request
                         .amount
@@ -526,6 +529,8 @@ fn finish(
                     .context("UCA approved budget underflow")?;
                 budgets.insert(id, remaining);
                 remaining
+            } else {
+                0
             };
             spend_outputs.as_mut().unwrap().push(SpendOutput {
                 failure: None,
@@ -631,13 +636,15 @@ pub(super) fn stage_results(
                     for record in super::uca_effects::update_grants(&entry.intent) {
                         let id = super::uca_effects::grant_id(&entry.intent, &record.key_ref)?;
                         let mut location = entry.intent.clone();
+                        location.authority =
+                            novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant;
                         location.authority_update = None;
                         location.authorization_epoch = record.authorization_epoch;
                         location.spend_key_ref = record.key_ref;
                         final_grants.insert(id, (location, record));
                     }
                 }
-            } else {
+            } else if entry.intent.uses_grant() {
                 final_grants
                     .get_mut(&entry.grant_id)
                     .context("successful spend has no effective asset grant")?
@@ -729,7 +736,7 @@ pub(super) fn stage_results(
         digest.update(bytes);
     }
     if let Some(outputs) = &spend_outputs {
-        digest.update(b"asset-authorized-effects/v2\0");
+        digest.update(b"asset-authorized-effects/v3\0");
         for output in outputs {
             digest.update(super::uca_effects::authorization_code(output.failure).to_be_bytes());
             digest.update(output.remaining.to_be_bytes());

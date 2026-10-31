@@ -1,8 +1,8 @@
 //! Real AOEM + original in-process services. Independent-process acceptance
 //! remains with the original native-product load owner.
 use super::*;
-use novovm_protocol::uca_spend::SignedAssetSpendV2;
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend::SignedAssetSpendV3;
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 use sha2::{Digest, Sha256};
 
 #[test]
@@ -19,7 +19,7 @@ fn checked_source_carrier_stays_inside_original_signature_header_reservation() {
 fn maximum_shape_single_row_projection_fits_original_bridge_allowance() -> Result<()> {
     use novovm_protocol::uca_spend::{
         spend_key_ref_v1, AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetGrantConfigV2,
-        AssetSpendIntentV2, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
+        AssetSpendIntentV3, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
     };
     // Codec/allocation bound only: these synthetic bytes confer no signature
     // fact and are never submitted as verified or executed transactions.
@@ -35,7 +35,8 @@ fn maximum_shape_single_row_projection_fits_original_bridge_allowance() -> Resul
         })
         .collect::<Vec<_>>();
     for action in 0..3 {
-        let mut intent = AssetSpendIntentV2 {
+        let mut intent = AssetSpendIntentV3 {
+            authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
             chain_id: 1,
             genesis: [2; 32],
             payer: vec![3; 32],
@@ -54,6 +55,7 @@ fn maximum_shape_single_row_projection_fits_original_bridge_allowance() -> Resul
         if action == 1 {
             intent.amount = 0;
             intent.recipient = intent.payer.clone();
+            intent.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller;
             intent.authority_update = Some(AssetAuthorityUpdateV2 {
                 use_recovery: true,
                 next_epoch: 2,
@@ -73,17 +75,17 @@ fn maximum_shape_single_row_projection_fits_original_bridge_allowance() -> Resul
                 .to_vec();
             intent.recipient_creation = Some(descriptor);
         }
-        let raw = SignedAssetSpendV2 {
+        let raw = SignedAssetSpendV3 {
             intent,
             public_key: public_key.clone(),
             signature: vec![91; MLDSA65_SIGNATURE_BYTES],
         }
         .encode()?;
-        let decoded = SignedAssetSpendV2::decode(&raw)?;
+        let decoded = SignedAssetSpendV3::decode(&raw)?;
         let source = batch(std::slice::from_ref(&decoded))?;
-        let projected = AssetSpendBatchV2::from_views(
+        let projected = AssetSpendBatchV3::from_views(
             &[source.view(0)?],
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 1,
                 transaction_bytes: 8192,
                 body_bytes: 8192,
@@ -99,14 +101,14 @@ fn maximum_shape_single_row_projection_fits_original_bridge_allowance() -> Resul
     Ok(())
 }
 
-fn batch(rows: &[SignedAssetSpendV2]) -> Result<Arc<AssetSpendBatchV2>> {
+fn batch(rows: &[SignedAssetSpendV3]) -> Result<Arc<AssetSpendBatchV3>> {
     let raw = rows
         .iter()
-        .map(SignedAssetSpendV2::encode)
+        .map(SignedAssetSpendV3::encode)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Arc::new(AssetSpendBatchV2::from_raw(
+    Ok(Arc::new(AssetSpendBatchV3::from_raw(
         &raw,
-        AssetSpendBatchLimitsV2 {
+        AssetSpendBatchLimitsV3 {
             transactions: 1024,
             transaction_bytes: 8192,
             body_bytes: 8 * 1024 * 1024,
@@ -131,7 +133,7 @@ fn poll_admission_until(
     Ok(())
 }
 
-fn admit_future_prefix(rpc: &mut RpcLifecycle, signed: &[SignedAssetSpendV2]) -> Result<usize> {
+fn admit_future_prefix(rpc: &mut RpcLifecycle, signed: &[SignedAssetSpendV3]) -> Result<usize> {
     let source = batch(&signed[1..2])?; // nonce 1 before nonce 0
     rpc.incoming_from_client = true;
     rpc.incoming = Some((rpc.node.controller.uca_transactions_message(source)?, 0));
@@ -144,7 +146,7 @@ fn admit_future_prefix(rpc: &mut RpcLifecycle, signed: &[SignedAssetSpendV2]) ->
     Ok(rpc.pending_retention.bytes)
 }
 
-fn queue_source(rpc: &mut RpcLifecycle, source: Arc<AssetSpendBatchV2>) -> Result<()> {
+fn queue_source(rpc: &mut RpcLifecycle, source: Arc<AssetSpendBatchV3>) -> Result<()> {
     let message = rpc.node.controller.uca_transactions_message(source)?;
     rpc.node
         .controller
@@ -216,9 +218,9 @@ fn checked_future_sources_yield_late_bridge_without_rechecking_signatures_or_los
         let prefix = &rpc.pending[&hashes[1]];
         let metadata = prefix.retained_metadata_bytes();
         let bridge = batch(&[signed[0].clone(), signed[1].clone()])?;
-        let single = AssetSpendBatchV2::from_views(
+        let single = AssetSpendBatchV3::from_views(
             &[bridge.view(0)?],
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 1,
                 transaction_bytes: 8192,
                 body_bytes: 8192,

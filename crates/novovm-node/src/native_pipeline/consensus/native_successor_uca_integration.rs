@@ -14,8 +14,8 @@ use crate::native_pipeline::state::frontier::OwnedStateInput;
 use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::AoemExecFacade;
-use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES};
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV3, MAX_SIGNED_SPEND_BYTES};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 
 const ALICE: &str = "uca:successor-alice";
 const BOB: &str = "uca:successor-bob";
@@ -61,8 +61,9 @@ fn intent(
     to: &str,
     nonce: u64,
     amount: u128,
-) -> Result<AssetSpendIntentV2> {
-    Ok(AssetSpendIntentV2 {
+) -> Result<AssetSpendIntentV3> {
+    Ok(AssetSpendIntentV3 {
+        authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
         asset: 1,
         authority_update: None,
         recipient_creation: None,
@@ -97,16 +98,16 @@ fn uca_context(parent: ParentPoint, height: u64) -> Result<BatchContext> {
 
 struct UcaFixture {
     native: NativeFixture,
-    parent_batch: Arc<AssetSpendBatchV2>,
-    child_batch: Arc<AssetSpendBatchV2>,
-    grants: Vec<AssetSpendIntentV2>,
+    parent_batch: Arc<AssetSpendBatchV3>,
+    child_batch: Arc<AssetSpendBatchV3>,
+    grants: Vec<AssetSpendIntentV3>,
     facade: AoemExecFacade,
 }
 
 impl UcaFixture {
     fn new() -> Result<Self> {
         let facade = AoemExecFacade::open(&library()?, Default::default())?;
-        let signer = facade.asset_spend_signer_v2()?;
+        let signer = facade.asset_spend_signer_v3()?;
         let mut keys = (0..4)
             .map(|_| facade.mldsa_keygen_v1(AoemMldsaParameterSet::MlDsa65))
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -147,7 +148,7 @@ impl UcaFixture {
                 value: 0u64.to_le_bytes().to_vec(),
             });
         }
-        let make_batch = |rows: &[(usize, AssetSpendIntentV2)]| -> Result<Arc<AssetSpendBatchV2>> {
+        let make_batch = |rows: &[(usize, AssetSpendIntentV3)]| -> Result<Arc<AssetSpendBatchV3>> {
             let mut raw = Vec::new();
             for (key, intent) in rows {
                 raw.push(
@@ -160,9 +161,9 @@ impl UcaFixture {
                         .encode()?,
                 );
             }
-            Ok(Arc::new(AssetSpendBatchV2::from_raw(
+            Ok(Arc::new(AssetSpendBatchV3::from_raw(
                 &raw,
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: uca_codec().transactions,
                     transaction_bytes: uca_codec().transaction_bytes,
                     body_bytes: uca_codec().body_bytes,
@@ -673,9 +674,9 @@ fn run_asset_reference(input: ReferenceInput) -> Result<()> {
             let views = (0..u.child_batch.len())
                 .map(|index| u.child_batch.view(index))
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            Some(Arc::new(AssetSpendBatchV2::from_views(
+            Some(Arc::new(AssetSpendBatchV3::from_views(
                 &views,
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: uca_codec().transactions,
                     transaction_bytes: uca_codec().transaction_bytes,
                     body_bytes: uca_codec().body_bytes,
@@ -692,9 +693,9 @@ fn run_asset_reference(input: ReferenceInput) -> Result<()> {
                 }
                 rows.push(row.encode()?);
             }
-            let changed = Arc::new(AssetSpendBatchV2::from_raw(
+            let changed = Arc::new(AssetSpendBatchV3::from_raw(
                 &rows,
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: uca_codec().transactions,
                     transaction_bytes: uca_codec().transaction_bytes,
                     body_bytes: uca_codec().body_bytes,

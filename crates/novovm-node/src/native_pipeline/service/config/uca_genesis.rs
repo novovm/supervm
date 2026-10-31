@@ -29,8 +29,8 @@ use novovm_adapter_api::unified_account::{
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::AoemExecFacade;
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, AssetSpendIntentV2, MAX_UCA_ID_BYTES, MLDSA65_PUBLIC_KEY_BYTES,
-    MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
+    spend_key_ref_v1, AssetSpendAuthorityV3, AssetSpendIntentV3, MAX_UCA_ID_BYTES,
+    MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -297,7 +297,6 @@ impl UcaGenesisManifestV2 {
             ensure!(
                 identities.contains_key(id)
                     && account.management_public_key.len() == MLDSA65_PUBLIC_KEY_BYTES
-                    && !account.grants.is_empty()
                     && account.grants.len() <= MAX_INITIAL_GRANTS_PER_ACCOUNT,
                 "invalid initial UCA identity/key/grant bounds"
             );
@@ -545,31 +544,30 @@ impl UcaGenesisManifestV2 {
                 }])?;
             }
             // One stable nonce per concrete account, never per identity/key.
-            let mut first = true;
+            let mut intent = AssetSpendIntentV3 {
+                authority: AssetSpendAuthorityV3::Controller,
+                chain_id: self.genesis.chain_id,
+                genesis: domain,
+                payer: account.asset_account.clone(),
+                authorization_epoch: 1,
+                spend_key_ref: record.management_key_ref,
+                recipient: account.asset_account.clone(),
+                asset: NATIVE_NOV_ASSET,
+                amount: 0,
+                max_fee: 0,
+                nonce: 0,
+                not_before_height: 0,
+                expires_at_height: 1,
+                authority_update: None,
+                recipient_creation: None,
+            };
+            state.extend([StateChange::Put {
+                key: nonce_key(&intent.nonce_identity()?),
+                value: 0u64.to_le_bytes().to_vec(),
+            }])?;
             for entry in &account.grants {
-                let intent = AssetSpendIntentV2 {
-                    chain_id: self.genesis.chain_id,
-                    genesis: domain,
-                    payer: account.asset_account.clone(),
-                    authorization_epoch: 1,
-                    spend_key_ref: entry.grant.key_ref,
-                    recipient: account.asset_account.clone(),
-                    asset: NATIVE_NOV_ASSET,
-                    amount: 0,
-                    max_fee: 0,
-                    nonce: 0,
-                    not_before_height: 0,
-                    expires_at_height: 1,
-                    authority_update: None,
-                    recipient_creation: None,
-                };
-                if first {
-                    state.extend([StateChange::Put {
-                        key: nonce_key(&intent.nonce_identity()?),
-                        value: 0u64.to_le_bytes().to_vec(),
-                    }])?;
-                    first = false;
-                }
+                intent.authority = AssetSpendAuthorityV3::DelegatedGrant;
+                intent.spend_key_ref = entry.grant.key_ref;
                 state.extend(grant_record_changes(&intent, &entry.grant)?)?;
             }
         }
@@ -932,6 +930,30 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_controller_manifest_needs_no_grant_but_retains_subject_approval() -> Result<()> {
+        let mut manifest = manifest();
+        let delegated_domain = manifest.signing_domain()?;
+        manifest.accounts[0].grants.clear();
+        let controller_domain = manifest.signing_domain()?;
+        assert_ne!(controller_domain, delegated_domain);
+        let plan = manifest.prepare_approvals()?;
+        let subject = UcaGenesisApprovalSubjectV2::AssetManagement(
+            manifest.accounts[0].asset_account.clone(),
+        );
+        assert!(plan.subjects().any(|(candidate, public)| {
+            candidate == &subject && public == manifest.accounts[0].management_public_key.as_slice()
+        }));
+        let original_controller = manifest.accounts[0].management_public_key.clone();
+        manifest.accounts[0].management_public_key =
+            manifest.accounts[1].grants[0].spend_public_key.clone();
+        assert!(manifest.signing_domain().is_err());
+        manifest.accounts[0].management_public_key = original_controller;
+        manifest.accounts[0].management_public_key[0] ^= 1;
+        assert_ne!(manifest.signing_domain()?, controller_domain);
+        Ok(())
+    }
+
+    #[test]
     fn obsolete_genesis_approval_shape_is_not_reinterpreted_as_asset_authority() {
         let old = serde_json::json!({"uca_id": "uca:owner", "signature": [0, 1]});
         assert!(serde_json::from_value::<UcaGenesisApprovalV2>(old).is_err());
@@ -1158,13 +1180,17 @@ mod tests {
             identity.identity_public_key = key.public_key.clone();
             keys.push((key.public_key, key.expanded_secret_key));
         }
-        for account in &mut manifest.accounts {
+        for (index, account) in manifest.accounts.iter_mut().enumerate() {
             let management = keygen.generate_keypair()?;
             account.management_public_key = management.public_key.clone();
             keys.push((management.public_key, management.expanded_secret_key));
-            let spending = keygen.generate_keypair()?;
-            account.grants[0].grant.key_ref = spend_key_ref_v1(&spending.public_key)?;
-            account.grants[0].spend_public_key = spending.public_key;
+            if index == 0 {
+                account.grants.clear();
+            } else {
+                let spending = keygen.generate_keypair()?;
+                account.grants[0].grant.key_ref = spend_key_ref_v1(&spending.public_key)?;
+                account.grants[0].spend_public_key = spending.public_key;
+            }
         }
         let references = keys
             .iter()
@@ -1183,11 +1209,54 @@ mod tests {
             crate::native_pipeline::state::tree::empty_root()
         );
         assert!(verified.state().nodes().len() > 65);
+        struct InitialNodes<'a>(&'a BTreeMap<NodeHash, Vec<u8>>);
+        impl crate::native_pipeline::state::tree::StateNodeReader for InitialNodes<'_> {
+            fn read_node(&self, hash: &NodeHash) -> Result<Option<Vec<u8>>> {
+                Ok(self.0.get(hash).cloned())
+            }
+        }
+        let reader = InitialNodes(verified.state().nodes());
+        let intent = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::Controller,
+            chain_id: manifest.genesis.chain_id,
+            genesis: domain,
+            payer: manifest.accounts[0].asset_account.clone(),
+            recipient: manifest.accounts[1].asset_account.clone(),
+            asset: NATIVE_NOV_ASSET,
+            authorization_epoch: 1,
+            spend_key_ref: spend_key_ref_v1(&manifest.accounts[0].management_public_key)?,
+            amount: 1,
+            max_fee: 0,
+            nonce: 0,
+            not_before_height: 1,
+            expires_at_height: 2,
+            authority_update: None,
+            recipient_creation: None,
+        };
+        let access =
+            crate::native_pipeline::business::uca_spend_state::AssetSpendStateAccessV2::new(
+                intent.clone(),
+                Account::try_from(intent.payer.as_slice()).map_err(anyhow::Error::msg)?,
+                Account::try_from(intent.recipient.as_slice()).map_err(anyhow::Error::msg)?,
+            )?;
+        let captured = access
+            .read_optional_with(verified.state().root(), |key| {
+                crate::native_pipeline::state::tree::read_state_value(
+                    &reader,
+                    verified.state().root(),
+                    key,
+                )
+            })?
+            .context("grantless account must include initialized authority, balance and nonce")?;
+        assert!(captured.grant().is_none());
+        assert_eq!(captured.next_nonce(), 0);
+        assert!(captured.static_failure(1).is_none());
+        assert_eq!(captured.payer().management_key_ref, intent.spend_key_ref);
         let mut forged = approvals.clone();
         forged[0].signature[0] ^= 1;
         assert!(manifest.compile(&runtime, domain, &forged).is_err());
         let mut changed = manifest;
-        changed.accounts[0].grants[0].grant.remaining_debit_budget += 1;
+        changed.accounts[1].grants[0].grant.remaining_debit_budget += 1;
         assert!(changed.compile(&runtime, domain, &approvals).is_err());
         Ok(())
     }

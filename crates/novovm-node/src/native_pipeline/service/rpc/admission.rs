@@ -322,8 +322,8 @@ impl RpcLifecycle {
     #[cfg(test)]
     pub(crate) fn prepare_uca_pool_backpressure_for_test(
         &mut self,
-        cached: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
-        partial: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        cached: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
+        partial: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     ) -> Result<()> {
         use crate::native_pipeline::consensus::transport::TransactionsScope;
         ensure!(self.is_uca() && cached.len() == 1 && partial.len() == 2);
@@ -419,10 +419,10 @@ impl RpcLifecycle {
     #[cfg(test)]
     pub(crate) fn assert_uca_overlap_body_boundaries_for_test(
         &mut self,
-        cached: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
-        partial: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
-        newer_bad: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
-        newer_valid: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        cached: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
+        partial: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
+        newer_bad: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
+        newer_valid: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     ) -> Result<()> {
         use crate::native_pipeline::consensus::transport::TransactionsScope;
         ensure!(self.is_uca(), "UCA fixture required");
@@ -1456,7 +1456,7 @@ fn uca_capture_input(
     input: &AdmissionInput,
     checked: &AdmittedTransfer,
 ) -> Result<(
-    novovm_protocol::uca_spend::AssetSpendIntentV2,
+    novovm_protocol::uca_spend::AssetSpendIntentV3,
     Account,
     Account,
 )> {

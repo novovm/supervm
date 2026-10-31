@@ -64,16 +64,6 @@ impl LoadMode {
         }
         Ok(())
     }
-
-    pub(super) fn grant_expiry(self, count: usize) -> Result<u64> {
-        if self.dynamic_windows() {
-            u64::try_from(count)?
-                .checked_add(MAX_SPEND_WINDOW + 1)
-                .context("rolling fixture grant height exhausted")
-        } else {
-            Ok(1000)
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -115,7 +105,7 @@ pub(super) fn append_signed_rows(
     window: SpendWindow,
     fee: u128,
     shape: WorkloadShape,
-    make_signed: &impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2>,
+    make_signed: &impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV3>,
 ) -> Result<()> {
     let first = raw.len();
     append_generated_rows(
@@ -133,7 +123,7 @@ pub(super) fn append_generated_rows(
     raw: &mut Vec<Vec<u8>>,
     observations: &mut Vec<Observation>,
     workload_hash: &mut Sha256,
-    rows: impl IntoIterator<Item = Result<SignedAssetSpendV2>>,
+    rows: impl IntoIterator<Item = Result<SignedAssetSpendV3>>,
     window: SpendWindow,
     fee: u128,
     shape: WorkloadShape,
@@ -185,9 +175,9 @@ pub(super) fn prepare_inputs(
     let codec = native_decode_limits(frame_rows, true);
     raw.chunks(frame_rows)
         .map(|rows| {
-            client.prepare_asset_spend(Arc::new(AssetSpendBatchV2::from_raw(
+            client.prepare_asset_spend(Arc::new(AssetSpendBatchV3::from_raw(
                 rows,
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: frame_rows,
                     transaction_bytes: codec.transaction_bytes,
                     body_bytes: codec.body_bytes,
@@ -246,7 +236,7 @@ pub(super) fn drive_rolling(
     count: usize,
     fee: u128,
     shape: WorkloadShape,
-    make_signed: &impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2>,
+    make_signed: &impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV3>,
     evidence: &mut Value,
 ) -> Result<Duration> {
     let start = Instant::now();
@@ -376,8 +366,8 @@ pub(super) fn generate_rows(
     count: usize,
     window: SpendWindow,
     workers: usize,
-    make_signed: &(impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2> + Sync),
-) -> Result<Vec<SignedAssetSpendV2>> {
+    make_signed: &(impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV3> + Sync),
+) -> Result<Vec<SignedAssetSpendV3>> {
     ensure!(workers > 0 && workers <= 16, "fixture signer worker bound");
     std::thread::scope(|scope| {
         let chunk = count.div_ceil(workers).max(1);
@@ -419,7 +409,7 @@ pub(super) fn drive_continuous(
     count: usize,
     fee: u128,
     shape: WorkloadShape,
-    make_signed: &(impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV2> + Sync),
+    make_signed: &(impl Fn(usize, SpendWindow) -> Result<SignedAssetSpendV3> + Sync),
     evidence: &mut Value,
 ) -> Result<Duration> {
     let workers = env_count("NOVOVM_NATIVE_LOAD_SIGNERS", 4, 16)?;
@@ -604,7 +594,8 @@ fn run_dynamic_pair(mode: LoadMode) -> Result<()> {
                 "load_strategy",
                 "effective_outstanding_limit",
                 "continuous_signer_workers",
-                "grant_expires_at_height",
+                "spend_authority",
+                "restricted_grants",
                 "overall_deadline_seconds",
             ] {
                 ensure!(
@@ -656,7 +647,6 @@ fn native_uca_rolling_window_and_original_funding_contract() -> Result<()> {
     assert!(window.verify_completed_wave(1000, 1257, WAVE_ROWS).is_err());
     assert!(window.verify_completed_wave(1000, 1000, WAVE_ROWS).is_err());
     assert!(SpendWindow::after(u64::MAX - MAX_SPEND_WINDOW).is_err());
-    assert_eq!(LoadMode::Rolling.grant_expiry(65_536)?, 65_793);
     assert!(LoadMode::Rolling.validate_count(65_536, 32).is_ok());
     assert!(LoadMode::Rolling.validate_count(4097, 32).is_err());
     assert!(LoadMode::Rolling.validate_count(65_536, 48).is_err());
@@ -669,7 +659,6 @@ fn native_uca_rolling_window_and_original_funding_contract() -> Result<()> {
     assert!(LoadMode::Continuous.validate_count(9000, 1000).is_err());
     assert!(LoadMode::Rolling.validate_count(65_536, 1024).is_err());
     assert!(LoadMode::Static.validate_count(65_536, 1024).is_ok());
-    assert_eq!(LoadMode::Continuous.grant_expiry(65_536)?, 65_793);
     let nonces_per_payer = 65_536 / SENDERS;
     assert_eq!(nonces_per_payer, 4096);
     assert_eq!(nonces_per_payer as u128 * 51, 208_896);
@@ -702,9 +691,10 @@ fn native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash() -> Result
     // from the original AOEM signer; these bytes are never presented as valid.
     use novovm_protocol::uca_spend::{MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES};
     let public_key = vec![7; MLDSA65_PUBLIC_KEY_BYTES];
-    let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
-        Ok(SignedAssetSpendV2 {
-            intent: AssetSpendIntentV2 {
+    let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV3> {
+        Ok(SignedAssetSpendV3 {
+            intent: AssetSpendIntentV3 {
+                authority: AssetSpendAuthorityV3::Controller,
                 asset: 1,
                 authority_update: None,
                 recipient_creation: None,
@@ -753,7 +743,7 @@ fn native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash() -> Result
     let mut oracle = Sha256::new();
     oracle.update(b"novovm/nuas-load/ordered-signed-inputs/v1\0");
     for (index, bytes) in raw.iter().enumerate() {
-        let signed = SignedAssetSpendV2::decode(bytes)?;
+        let signed = SignedAssetSpendV3::decode(bytes)?;
         assert_eq!(signed.intent.nonce, (index / SENDERS) as u64);
         assert_eq!(
             observations[index].expected_nonce,
@@ -800,8 +790,9 @@ fn native_asset_1024_apfl_frame_sizes_and_lossless_roundtrip() -> Result<()> {
             .map(|index| {
                 let mut public_key = vec![7; MLDSA65_PUBLIC_KEY_BYTES];
                 public_key[..8].copy_from_slice(&((index % distinct_keys) as u64).to_be_bytes());
-                SignedAssetSpendV2 {
-                    intent: AssetSpendIntentV2 {
+                SignedAssetSpendV3 {
+                    intent: AssetSpendIntentV3 {
+                        authority: AssetSpendAuthorityV3::Controller,
                         chain_id: CHAIN,
                         genesis: [1; 32],
                         payer: account_bytes(index % SENDERS).to_vec(),
@@ -824,12 +815,12 @@ fn native_asset_1024_apfl_frame_sizes_and_lossless_roundtrip() -> Result<()> {
                 .map_err(anyhow::Error::from)
             })
             .collect::<Result<Vec<_>>>()?;
-        let limits = AssetSpendBatchLimitsV2 {
+        let limits = AssetSpendBatchLimitsV3 {
             transactions: codec.transactions,
             transaction_bytes: codec.transaction_bytes,
             body_bytes: codec.body_bytes,
         };
-        let batch = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
+        let batch = Arc::new(AssetSpendBatchV3::from_raw(&raw, limits)?);
         let apfl_bytes = batch.encode()?.len();
         let message = Message::AssetTransactions {
             scope: TransactionsScope {

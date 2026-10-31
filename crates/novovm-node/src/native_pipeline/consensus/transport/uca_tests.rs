@@ -2,7 +2,7 @@
 //! ML-DSA verification, spending authorization, execution or network finality.
 use super::*;
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MAX_SIGNED_SPEND_BYTES,
+    spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3, MAX_SIGNED_SPEND_BYTES,
     MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
 };
 
@@ -10,7 +10,7 @@ struct Fixture {
     context: BatchContext,
     policy: DirectNovFeePolicy,
     raw: Vec<Vec<u8>>,
-    batch: Arc<AssetSpendBatchV2>,
+    batch: Arc<AssetSpendBatchV3>,
     limits: DecodeLimits,
 }
 
@@ -64,8 +64,9 @@ fn fixture() -> Result<Fixture> {
     let public_key = vec![7; MLDSA65_PUBLIC_KEY_BYTES];
     let raw = (0..4)
         .map(|nonce| {
-            SignedAssetSpendV2 {
-                intent: AssetSpendIntentV2 {
+            SignedAssetSpendV3 {
+                intent: AssetSpendIntentV3 {
+                    authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                     asset: 1,
                     authority_update: None,
                     recipient_creation: None,
@@ -87,7 +88,7 @@ fn fixture() -> Result<Fixture> {
             .encode()
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let batch = Arc::new(AssetSpendBatchV2::from_raw(&raw, batch_limits(limits))?);
+    let batch = Arc::new(AssetSpendBatchV3::from_raw(&raw, batch_limits(limits))?);
     Ok(Fixture {
         context,
         policy,
@@ -155,7 +156,7 @@ fn asset_body_reference_roundtrip_keeps_exact_pool_order_and_body_identity() -> 
         .raw
         .iter()
         .map(|raw| {
-            let signed = SignedAssetSpendV2::decode(raw)?;
+            let signed = SignedAssetSpendV3::decode(raw)?;
             Ok(Sha256::digest(signed.intent.signing_bytes()?).into())
         })
         .collect::<Result<Vec<Hash>>>()?;
@@ -186,7 +187,7 @@ fn asset_body_reference_keeps_commitment_distinct_from_intent_locators() -> Resu
     };
     let mut reordered = f.raw.clone();
     reordered.swap(0, 1);
-    let reordered = AssetSpendBatchV2::from_raw(&reordered, batch_limits(f.limits))?;
+    let reordered = AssetSpendBatchV3::from_raw(&reordered, batch_limits(f.limits))?;
     let Message::AssetBodyReference {
         body_id: reordered_id,
         transactions: reordered_hashes,
@@ -202,7 +203,7 @@ fn asset_body_reference_keeps_commitment_distinct_from_intent_locators() -> Resu
 
     let mut raw = f.raw.clone();
     *raw[0].last_mut().unwrap() ^= 1;
-    let modified = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
+    let modified = AssetSpendBatchV3::from_raw(&raw, batch_limits(f.limits))?;
     let Message::AssetBodyReference {
         body_id: modified_id,
         transactions: modified_hashes,
@@ -217,12 +218,12 @@ fn asset_body_reference_keeps_commitment_distinct_from_intent_locators() -> Resu
         "intent locator is not a signature fact"
     );
 
-    let mut signed = SignedAssetSpendV2::decode(&f.raw[0])?;
+    let mut signed = SignedAssetSpendV3::decode(&f.raw[0])?;
     signed.public_key[0] ^= 1;
     signed.intent.spend_key_ref = spend_key_ref_v1(&signed.public_key)?;
     let mut raw = f.raw.clone();
     raw[0] = signed.encode()?;
-    let rekeyed = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
+    let rekeyed = AssetSpendBatchV3::from_raw(&raw, batch_limits(f.limits))?;
     assert_ne!(
         original,
         uca_body_reference(&f.context, &rekeyed, f.limits)?
@@ -355,7 +356,7 @@ fn asset_body_reference_preflights_exact_length_version_and_resource_bounds() ->
 fn nuas_body_identity_reuses_exact_wire_length_without_changing_transcript() -> Result<()> {
     let f = fixture()?;
     for count in [1, f.raw.len()] {
-        let batch = Arc::new(AssetSpendBatchV2::from_raw(
+        let batch = Arc::new(AssetSpendBatchV3::from_raw(
             &f.raw[..count],
             batch_limits(f.limits),
         )?);
@@ -467,7 +468,7 @@ fn nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit() -> R
     }
     // A single row's explicit column framing is larger than its canonical
     // NUAS bytes, so isolate message_bytes without first violating body_bytes.
-    let single = Arc::new(AssetSpendBatchV2::from_raw(
+    let single = Arc::new(AssetSpendBatchV3::from_raw(
         &f.raw[..1],
         batch_limits(f.limits),
     )?);
@@ -540,25 +541,25 @@ fn nuas_body_identity_commits_order_signatures_signed_accounts_and_parent() -> R
     let original = uca_body_id(&f.context, &f.batch, f.limits)?;
     let mut raw = f.raw.clone();
     raw.swap(0, 1);
-    let reordered = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
+    let reordered = AssetSpendBatchV3::from_raw(&raw, batch_limits(f.limits))?;
     assert_ne!(original, uca_body_id(&f.context, &reordered, f.limits)?);
     let mut raw = f.raw.clone();
     *raw[0].last_mut().unwrap() ^= 1;
-    let modified_signature = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
+    let modified_signature = AssetSpendBatchV3::from_raw(&raw, batch_limits(f.limits))?;
     assert_ne!(
         original,
         uca_body_id(&f.context, &modified_signature, f.limits)?
     );
     for account_column in 0..2 {
         let mut raw = f.raw.clone();
-        let mut signed = SignedAssetSpendV2::decode(&raw[0])?;
+        let mut signed = SignedAssetSpendV3::decode(&raw[0])?;
         if account_column == 0 {
             signed.intent.payer[0] ^= 1;
         } else {
             signed.intent.recipient[0] ^= 1;
         }
         raw[0] = signed.encode()?;
-        let modified_account = AssetSpendBatchV2::from_raw(&raw, batch_limits(f.limits))?;
+        let modified_account = AssetSpendBatchV3::from_raw(&raw, batch_limits(f.limits))?;
         assert_ne!(
             original,
             uca_body_id(&f.context, &modified_account, f.limits)?
@@ -644,7 +645,7 @@ fn nuas_application_input_limits_charge_original_bytes_not_compressed_size() -> 
         assert!(encode(&message, restricted).is_err());
         assert!(super::super::decode(&encoded, restricted).is_err());
     }
-    let single = Arc::new(AssetSpendBatchV2::from_raw(
+    let single = Arc::new(AssetSpendBatchV3::from_raw(
         &f.raw[..1],
         batch_limits(f.limits),
     )?);

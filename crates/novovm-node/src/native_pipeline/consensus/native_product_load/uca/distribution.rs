@@ -91,7 +91,8 @@ impl WorkloadShape {
                 Recipients::Dispersed => "one separate recipient per payer; row modulo payer count",
                 Recipients::Mixed => "every fourth row to shared recipient, others to payer-specific separate recipient",
             },
-            "independent_management_and_spend_keys_per_account":true,
+            "independent_controller_key_per_account":true,
+            "controller_reuses_management_key":true,
             "identity_scope":"one synthetic UCA association; independent asset accounts and keys, not an acceptance of independently registered UCA identities",
         })
     }

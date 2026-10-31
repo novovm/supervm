@@ -117,8 +117,9 @@ fn uca_local_turn_preserves_terminal_result_and_error_after_local_progress() {
     assert_eq!((calls, steps), (2, 1));
 }
 
-fn intent() -> AssetSpendIntentV2 {
-    AssetSpendIntentV2 {
+fn intent() -> AssetSpendIntentV3 {
+    AssetSpendIntentV3 {
+        authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
         asset: 1,
         authority_update: None,
         recipient_creation: None,
@@ -142,7 +143,7 @@ fn fixture() -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
     fixture_for(&intent())
 }
 
-fn fixture_for(intent: &AssetSpendIntentV2) -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
+fn fixture_for(intent: &AssetSpendIntentV3) -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
     let mut changes = Vec::new();
     for address in [
         Account::try_from(intent.payer.as_slice()).unwrap(),
@@ -200,6 +201,34 @@ fn fixture_for(intent: &AssetSpendIntentV2) -> BTreeMap<Vec<u8>, Option<Vec<u8>>
 }
 
 #[test]
+fn controller_query_is_explicit_and_has_no_synthetic_unlimited_budget() {
+    use novovm_protocol::uca_spend::AssetSpendAuthorityV3;
+    let records = fixture();
+    let mut owner = intent();
+    owner.authority = AssetSpendAuthorityV3::Controller;
+    owner.spend_key_ref = [6; 32];
+    let access = AssetSpendStateAccessV2::new(owner.clone(), account(1), account(2)).unwrap();
+    let state = access
+        .read_optional_with([9; 32], |key| Ok(records.get(key).cloned().flatten()))
+        .unwrap()
+        .unwrap();
+    let snapshot = view(&state, 5);
+    assert_eq!(snapshot.authority, AssetSpendAuthorityV3::Controller);
+    assert!(snapshot.permits_nov_transfer);
+    assert!(!snapshot.grant_present);
+    assert_eq!(snapshot.remaining_debit_budget, 0);
+    assert_eq!(snapshot.max_debit_per_intent, 0);
+    assert!(!view(&state, 11).permits_nov_transfer);
+    owner.spend_key_ref = intent().spend_key_ref;
+    let wrong = AssetSpendStateAccessV2::new(owner, account(1), account(2)).unwrap();
+    let wrong = wrong
+        .read_optional_with([9; 32], |key| Ok(records.get(key).cloned().flatten()))
+        .unwrap()
+        .unwrap();
+    assert!(!view(&wrong, 5).permits_nov_transfer);
+}
+
+#[test]
 fn observation_uses_same_record_codec_and_never_turns_revoked_grant_into_permission() {
     let records = fixture();
     let access = AssetSpendStateAccessV2::new(intent(), account(1), account(2)).unwrap();
@@ -211,6 +240,7 @@ fn observation_uses_same_record_codec_and_never_turns_revoked_grant_into_permiss
     other_intent.nonce += 1;
     assert!(!state.matches_intent(&other_intent));
     assert!(snapshot.revoked);
+    assert!(!snapshot.permits_nov_transfer);
     assert_eq!(snapshot.next_nonce, 9);
     assert_eq!(snapshot.remaining_debit_budget, 123);
     assert_eq!(snapshot.payer_balance, u128::MAX);

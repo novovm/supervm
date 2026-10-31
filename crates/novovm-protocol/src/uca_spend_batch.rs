@@ -1,22 +1,22 @@
-//! Lossless APFL columns for canonical NUAS v2 transactions. Concrete accounts
+//! Lossless APFL columns for canonical NUAS v3 transactions. Concrete accounts
 //! are signed fields, not external hints. This is not signature/authority proof.
 use crate::apfl_column::Column;
 use crate::uca_spend::{
-    decode_asset_action_v2, encode_asset_action_v2, AssetSpendIntentV2, SignedAssetSpendV2,
-    SpendEncodingError, MAX_SIGNED_SPEND_BYTES, MIN_SIGNED_SPEND_BYTES, MLDSA65_PUBLIC_KEY_BYTES,
-    MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
+    decode_asset_action_v2, encode_asset_action_v2, AssetSpendAuthorityV3, AssetSpendIntentV3,
+    SignedAssetSpendV3, SpendEncodingError, MAX_SIGNED_SPEND_BYTES, MIN_SIGNED_SPEND_BYTES,
+    MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
 };
 use sha2::Digest;
 use std::collections::BTreeSet;
 
-const MAGIC: &[u8; 8] = b"NUAPFL02";
-const VERSION: u16 = 2;
-const FIELDS: usize = 14;
+const MAGIC: &[u8; 8] = b"NUAPFL03";
+const VERSION: u16 = 3;
+const FIELDS: usize = 15;
 const MIN_RAW: usize = MIN_SIGNED_SPEND_BYTES;
 type Result<T> = std::result::Result<T, SpendEncodingError>;
 
 #[derive(Clone, Copy, Debug)]
-pub struct AssetSpendBatchLimitsV2 {
+pub struct AssetSpendBatchLimitsV3 {
     pub transactions: usize,
     pub transaction_bytes: usize,
     /// Expanded canonical NUAS bytes. Owned metadata is separately bounded by
@@ -24,7 +24,7 @@ pub struct AssetSpendBatchLimitsV2 {
     pub body_bytes: usize,
 }
 
-impl AssetSpendBatchLimitsV2 {
+impl AssetSpendBatchLimitsV3 {
     fn check(self, rows: usize, total: usize, max: usize) -> Result<()> {
         if rows == 0
             || rows > self.transactions
@@ -43,10 +43,10 @@ impl AssetSpendBatchLimitsV2 {
 
 /// Each column is a typed signed field: chain, genesis, payer, epoch, key-ref,
 /// recipient, amount, max-fee, nonce, start, expiry, public-key, asset, authority
-/// update. Numeric cells retain NUAS big endian byte order.
+/// update, authority mode. Numeric cells retain NUAS big endian byte order.
 /// The outer column framing uses little endian as the existing APFL codec.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AssetSpendBatchV2 {
+pub struct AssetSpendBatchV3 {
     rows: usize,
     columns: [Column<Vec<u8>>; FIELDS],
     signatures: Vec<u8>,
@@ -58,19 +58,20 @@ pub struct AssetSpendBatchV2 {
 /// signature or spending capability. Private fields prevent callers from
 /// constructing an unchecked view or substituting a row's signature.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AssetSpendViewV2<'a> {
+pub struct AssetSpendViewV3<'a> {
     cells: [&'a [u8]; FIELDS],
     signature: &'a [u8],
 }
 
-impl AssetSpendViewV2<'_> {
+impl AssetSpendViewV3<'_> {
     /// Decode the intent while leaving the public key and signature borrowed.
     /// Reading a column view is not signature or spending authorization.
-    pub fn intent(&self) -> Result<AssetSpendIntentV2> {
+    pub fn intent(&self) -> Result<AssetSpendIntentV3> {
         let cell = |field: usize| self.cells[field];
         let array8 = |field| cell(field).try_into().map_err(|_| SpendEncodingError);
         let (authority_update, recipient_creation) = decode_asset_action_v2(cell(13))?;
-        Ok(AssetSpendIntentV2 {
+        Ok(AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::try_from(cell(14)[0])?,
             chain_id: u64::from_be_bytes(array8(0)?),
             genesis: cell(1).try_into().map_err(|_| SpendEncodingError)?,
             payer: cell(2).to_vec(),
@@ -93,7 +94,7 @@ impl AssetSpendViewV2<'_> {
         self.intent()?.signing_bytes()
     }
 
-    /// Same canonical signed bytes as `SignedAssetSpendV2::encode`, without
+    /// Same canonical signed bytes as `SignedAssetSpendV3::encode`, without
     /// allocating a second public key/signature buffer for plan commitments.
     pub fn update_canonical_digest(&self, digest: &mut impl Digest) -> Result<()> {
         digest.update(self.signing_bytes()?);
@@ -104,7 +105,7 @@ impl AssetSpendViewV2<'_> {
 
     /// Compare every canonical field, public key and signature directly. An
     /// intent hash alone cannot establish that a signature fact is reusable.
-    pub fn matches_signed(&self, signed: &SignedAssetSpendV2) -> Result<bool> {
+    pub fn matches_signed(&self, signed: &SignedAssetSpendV3) -> Result<bool> {
         let i = &signed.intent;
         Ok(self.cells[0] == i.chain_id.to_be_bytes()
             && self.cells[1] == i.genesis
@@ -121,6 +122,7 @@ impl AssetSpendViewV2<'_> {
             && self.cells[12] == [i.asset]
             && self.cells[13]
                 == encode_asset_action_v2(&i.authority_update, &i.recipient_creation)?
+            && self.cells[14] == [i.authority as u8]
             && self.signature == signed.signature)
     }
 
@@ -129,20 +131,20 @@ impl AssetSpendViewV2<'_> {
     }
 }
 
-impl AssetSpendBatchV2 {
+impl AssetSpendBatchV3 {
     /// Rebatch existing validated columns without expanding, encoding and
     /// reparsing transactions. The selected order and all signature bytes are
     /// preserved; the new retaining owner must still reserve its own budget.
     pub fn from_views(
-        views: &[AssetSpendViewV2<'_>],
-        limits: AssetSpendBatchLimitsV2,
+        views: &[AssetSpendViewV3<'_>],
+        limits: AssetSpendBatchLimitsV3,
     ) -> Result<Self> {
         let total = views.iter().try_fold(0usize, |n, row| {
             n.checked_add(row.encoded_len()).ok_or(SpendEncodingError)
         })?;
         let max = views
             .iter()
-            .map(AssetSpendViewV2::encoded_len)
+            .map(AssetSpendViewV3::encoded_len)
             .max()
             .unwrap_or(0);
         limits.check(views.len(), total, max)?;
@@ -166,7 +168,7 @@ impl AssetSpendBatchV2 {
         })
     }
 
-    pub fn from_raw(raw: &[Vec<u8>], limits: AssetSpendBatchLimitsV2) -> Result<Self> {
+    pub fn from_raw(raw: &[Vec<u8>], limits: AssetSpendBatchLimitsV3) -> Result<Self> {
         let total = raw.iter().try_fold(0usize, |n, row| {
             n.checked_add(row.len()).ok_or(SpendEncodingError)
         })?;
@@ -175,7 +177,7 @@ impl AssetSpendBatchV2 {
         let mut values: [Vec<Vec<u8>>; FIELDS] = std::array::from_fn(|_| Vec::new());
         let mut signatures = Vec::new();
         for wire in raw {
-            let tx = SignedAssetSpendV2::decode(wire)?;
+            let tx = SignedAssetSpendV3::decode(wire)?;
             if tx.encode()? != *wire {
                 return Err(SpendEncodingError);
             }
@@ -195,6 +197,7 @@ impl AssetSpendBatchV2 {
                 tx.public_key,
                 vec![i.asset],
                 encode_asset_action_v2(&i.authority_update, &i.recipient_creation)?,
+                vec![i.authority as u8],
             ];
             for (field, cell) in cells.into_iter().enumerate() {
                 validate_cell(field, &cell)?;
@@ -252,7 +255,7 @@ impl AssetSpendBatchV2 {
         Ok(out)
     }
 
-    pub fn decode(bytes: &[u8], limits: AssetSpendBatchLimitsV2) -> Result<Self> {
+    pub fn decode(bytes: &[u8], limits: AssetSpendBatchLimitsV3) -> Result<Self> {
         let wire_limit = limits
             .body_bytes
             .checked_mul(2)
@@ -317,20 +320,20 @@ impl AssetSpendBatchV2 {
         Ok(batch)
     }
 
-    pub fn view(&self, row: usize) -> Result<AssetSpendViewV2<'_>> {
+    pub fn view(&self, row: usize) -> Result<AssetSpendViewV3<'_>> {
         if row >= self.rows {
             return Err(SpendEncodingError);
         }
-        Ok(AssetSpendViewV2 {
+        Ok(AssetSpendViewV3 {
             cells: std::array::from_fn(|field| self.columns[field].value(row).as_slice()),
             signature: &self.signatures
                 [row * MLDSA65_SIGNATURE_BYTES..(row + 1) * MLDSA65_SIGNATURE_BYTES],
         })
     }
 
-    pub fn row(&self, row: usize) -> Result<SignedAssetSpendV2> {
+    pub fn row(&self, row: usize) -> Result<SignedAssetSpendV3> {
         let view = self.view(row)?;
-        Ok(SignedAssetSpendV2 {
+        Ok(SignedAssetSpendV3 {
             intent: view.intent()?,
             public_key: view.cells[11].to_vec(),
             signature: view.signature.to_vec(),
@@ -405,6 +408,7 @@ fn validate_cell(field: usize, cell: &[u8]) -> Result<()> {
         11 => cell.len() == MLDSA65_PUBLIC_KEY_BYTES,
         12 => cell == [NATIVE_NOV_ASSET],
         13 => decode_asset_action_v2(cell).is_ok(),
+        14 => cell.len() == 1 && AssetSpendAuthorityV3::try_from(cell[0]).is_ok(),
         _ => false,
     };
     if valid {
@@ -484,13 +488,14 @@ fn read_column<'a>(r: &mut Reader<'a>, rows: usize, field: usize) -> Result<Colu
 mod tests {
     use super::*;
     use crate::uca_spend::spend_key_ref_v1;
-    type Fixture = (Vec<Vec<u8>>, AssetSpendBatchLimitsV2);
+    type Fixture = (Vec<Vec<u8>>, AssetSpendBatchLimitsV3);
     fn fixture() -> Fixture {
         let key = vec![3; MLDSA65_PUBLIC_KEY_BYTES];
         let raw = (0..4)
             .map(|nonce| {
-                SignedAssetSpendV2 {
-                    intent: AssetSpendIntentV2 {
+                SignedAssetSpendV3 {
+                    intent: AssetSpendIntentV3 {
+                        authority: AssetSpendAuthorityV3::DelegatedGrant,
                         chain_id: 1,
                         genesis: [2; 32],
                         payer: vec![5; 20],
@@ -513,7 +518,7 @@ mod tests {
                 .unwrap()
             })
             .collect::<Vec<_>>();
-        let limits = AssetSpendBatchLimitsV2 {
+        let limits = AssetSpendBatchLimitsV3 {
             transactions: 4,
             transaction_bytes: MAX_SIGNED_SPEND_BYTES,
             body_bytes: 4 * MAX_SIGNED_SPEND_BYTES,
@@ -523,15 +528,15 @@ mod tests {
     #[test]
     fn structural_roundtrip_preserves_every_signed_account_and_byte() {
         let (raw, limits) = fixture();
-        let batch = AssetSpendBatchV2::from_raw(&raw, limits).unwrap();
+        let batch = AssetSpendBatchV3::from_raw(&raw, limits).unwrap();
         let wire = batch.encode().unwrap();
         assert!(wire.len() < raw.iter().map(Vec::len).sum::<usize>());
         assert_eq!(batch.columns[11].values.len(), 1);
-        let decoded = AssetSpendBatchV2::decode(&wire, limits).unwrap();
+        let decoded = AssetSpendBatchV3::decode(&wire, limits).unwrap();
         assert_eq!(decoded, batch);
         assert_eq!(decoded.encode().unwrap(), wire);
         for (i, expected) in raw.iter().enumerate() {
-            let signed = SignedAssetSpendV2::decode(expected).unwrap();
+            let signed = SignedAssetSpendV3::decode(expected).unwrap();
             assert_eq!(&decoded.raw_transaction(i).unwrap(), expected);
             assert_eq!(
                 decoded.signed_accounts(i).unwrap(),
@@ -555,53 +560,93 @@ mod tests {
     }
 
     #[test]
+    fn signed_authority_modes_remain_distinct_in_columns_rows_and_commitments() {
+        let (mut raw, limits) = fixture();
+        let mut controller = SignedAssetSpendV3::decode(&raw[0]).unwrap();
+        controller.intent.authority = AssetSpendAuthorityV3::Controller;
+        raw[1] = controller.encode().unwrap();
+        let batch = AssetSpendBatchV3::from_raw(&raw, limits).unwrap();
+        assert_eq!(batch.columns[14].values.len(), 2);
+        let wire = batch.encode().unwrap();
+        assert!(wire.starts_with(b"NUAPFL03"));
+        let decoded = AssetSpendBatchV3::decode(&wire, limits).unwrap();
+        assert_eq!(
+            decoded.row(0).unwrap().intent.authority,
+            AssetSpendAuthorityV3::DelegatedGrant
+        );
+        assert_eq!(
+            decoded.row(1).unwrap().intent.authority,
+            AssetSpendAuthorityV3::Controller
+        );
+        assert!(!decoded
+            .view(0)
+            .unwrap()
+            .matches_signed(&controller)
+            .unwrap());
+        assert_ne!(
+            decoded.view(0).unwrap().signing_bytes().unwrap(),
+            decoded.view(1).unwrap().signing_bytes().unwrap()
+        );
+        for (row, expected) in raw.iter().enumerate() {
+            assert_eq!(&decoded.raw_transaction(row).unwrap(), expected);
+        }
+        let mut unknown_mode = batch.clone();
+        unknown_mode.columns[14].values[0] = vec![2];
+        assert!(AssetSpendBatchV3::decode(&unknown_mode.encode().unwrap(), limits).is_err());
+        let mut old = wire;
+        old[..8].copy_from_slice(b"NUAPFL02");
+        old[8..10].copy_from_slice(&2u16.to_le_bytes());
+        assert!(AssetSpendBatchV3::decode(&old, limits).is_err());
+    }
+
+    #[test]
     fn borrowed_rebatch_preserves_canonical_order_and_enforces_original_limits() {
         let (raw, limits) = fixture();
-        let left = AssetSpendBatchV2::from_raw(&raw[..2], limits).unwrap();
-        let right = AssetSpendBatchV2::from_raw(&raw[2..], limits).unwrap();
+        let left = AssetSpendBatchV3::from_raw(&raw[..2], limits).unwrap();
+        let right = AssetSpendBatchV3::from_raw(&raw[2..], limits).unwrap();
         let views = [
             right.view(1).unwrap(),
             left.view(0).unwrap(),
             right.view(0).unwrap(),
         ];
         let expected_raw = vec![raw[3].clone(), raw[0].clone(), raw[2].clone()];
-        let expected = AssetSpendBatchV2::from_raw(&expected_raw, limits).unwrap();
-        let actual = AssetSpendBatchV2::from_views(&views, limits).unwrap();
+        let expected = AssetSpendBatchV3::from_raw(&expected_raw, limits).unwrap();
+        let actual = AssetSpendBatchV3::from_views(&views, limits).unwrap();
         assert_eq!(actual, expected);
         assert_eq!(actual.encode().unwrap(), expected.encode().unwrap());
         assert_eq!(actual.columns[11].values.len(), 1);
         assert!(left.view(2).is_err());
-        assert!(AssetSpendBatchV2::from_views(&[], limits).is_err());
+        assert!(AssetSpendBatchV3::from_views(&[], limits).is_err());
         for limited in [
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 2,
                 ..limits
             },
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transaction_bytes: actual.max_transaction_bytes() - 1,
                 ..limits
             },
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 body_bytes: actual.canonical_bytes() - 1,
                 ..limits
             },
         ] {
-            assert!(AssetSpendBatchV2::from_views(&views, limited).is_err());
+            assert!(AssetSpendBatchV3::from_views(&views, limited).is_err());
         }
     }
 
     #[test]
     fn borrowed_row_match_binds_all_fields_key_and_signature_not_just_intent_hash() {
         let (raw, limits) = fixture();
-        let batch = AssetSpendBatchV2::from_raw(&raw, limits).unwrap();
+        let batch = AssetSpendBatchV3::from_raw(&raw, limits).unwrap();
         let view = batch.view(0).unwrap();
-        let signed = SignedAssetSpendV2::decode(&raw[0]).unwrap();
+        let signed = SignedAssetSpendV3::decode(&raw[0]).unwrap();
         assert_eq!(
             view.signing_bytes().unwrap(),
             signed.intent.signing_bytes().unwrap()
         );
         assert!(view.matches_signed(&signed).unwrap());
-        for field in 0..15 {
+        for field in 0..16 {
             let mut changed = signed.clone();
             let i = &mut changed.intent;
             match field {
@@ -622,6 +667,7 @@ mod tests {
                 14 => {
                     changed.signature.pop().unwrap();
                 }
+                15 => i.authority = AssetSpendAuthorityV3::Controller,
                 _ => unreachable!(),
             }
             assert!(!view.matches_signed(&changed).unwrap(), "field {field}");
@@ -631,77 +677,77 @@ mod tests {
     #[test]
     fn bounds_headers_truncation_and_trailing_bytes_fail_closed() {
         let (raw, limits) = fixture();
-        let wire = AssetSpendBatchV2::from_raw(&raw, limits)
+        let wire = AssetSpendBatchV3::from_raw(&raw, limits)
             .unwrap()
             .encode()
             .unwrap();
         for end in [0, 7, 9, 25, wire.len() - 1] {
-            assert!(AssetSpendBatchV2::decode(&wire[..end], limits).is_err());
+            assert!(AssetSpendBatchV3::decode(&wire[..end], limits).is_err());
         }
         for offset in [0, 8, 10, 14, 22] {
             let mut bad = wire.clone();
             bad[offset] ^= 0x40;
-            assert!(AssetSpendBatchV2::decode(&bad, limits).is_err());
+            assert!(AssetSpendBatchV3::decode(&bad, limits).is_err());
         }
         let mut bad = wire.clone();
         bad.push(0);
-        assert!(AssetSpendBatchV2::decode(&bad, limits).is_err());
-        assert!(AssetSpendBatchV2::decode(
+        assert!(AssetSpendBatchV3::decode(&bad, limits).is_err());
+        assert!(AssetSpendBatchV3::decode(
             &wire,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: 3,
                 ..limits
             }
         )
         .is_err());
-        assert!(AssetSpendBatchV2::decode(
+        assert!(AssetSpendBatchV3::decode(
             &wire,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transaction_bytes: MIN_RAW,
                 ..limits
             }
         )
         .is_err());
-        assert!(AssetSpendBatchV2::decode(
+        assert!(AssetSpendBatchV3::decode(
             &wire,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 body_bytes: MIN_RAW,
                 ..limits
             }
         )
         .is_err());
-        assert!(AssetSpendBatchV2::from_raw(&[], limits).is_err());
+        assert!(AssetSpendBatchV3::from_raw(&[], limits).is_err());
         let mut legacy = wire.clone();
         legacy[7] = b'1';
         legacy[8] = 1;
-        assert!(AssetSpendBatchV2::decode(&legacy, limits).is_err());
+        assert!(AssetSpendBatchV3::decode(&legacy, limits).is_err());
     }
     #[test]
     fn dictionary_canonicality_and_original_nuas_contract_are_checked() {
         let (raw, limits) = fixture();
-        let batch = AssetSpendBatchV2::from_raw(&raw, limits).unwrap();
+        let batch = AssetSpendBatchV3::from_raw(&raw, limits).unwrap();
         let mut bad = batch.clone();
         bad.columns[5].indexes[0] = 1;
-        assert!(AssetSpendBatchV2::decode(&bad.encode().unwrap(), limits).is_err());
+        assert!(AssetSpendBatchV3::decode(&bad.encode().unwrap(), limits).is_err());
         let mut bad = batch.clone();
         bad.columns[5].indexes.fill(0);
-        assert!(AssetSpendBatchV2::decode(&bad.encode().unwrap(), limits).is_err());
+        assert!(AssetSpendBatchV3::decode(&bad.encode().unwrap(), limits).is_err());
         let mut bad = batch.clone();
         bad.columns[5].indexes[2] = 2;
-        assert!(AssetSpendBatchV2::decode(&bad.encode().unwrap(), limits).is_err());
+        assert!(AssetSpendBatchV3::decode(&bad.encode().unwrap(), limits).is_err());
         let mut bad = batch.clone();
         bad.columns[5].values[1] = bad.columns[5].values[0].clone();
-        assert!(AssetSpendBatchV2::decode(&bad.encode().unwrap(), limits).is_err());
+        assert!(AssetSpendBatchV3::decode(&bad.encode().unwrap(), limits).is_err());
         let mut bad = batch.clone();
         bad.columns[11].values[0][0] ^= 1;
-        assert!(AssetSpendBatchV2::decode(&bad.encode().unwrap(), limits).is_err());
+        assert!(AssetSpendBatchV3::decode(&bad.encode().unwrap(), limits).is_err());
         let mut bad = batch.clone();
         bad.columns[8].values[0] = u64::MAX.to_be_bytes().to_vec();
-        assert!(AssetSpendBatchV2::decode(&bad.encode().unwrap(), limits).is_err());
+        assert!(AssetSpendBatchV3::decode(&bad.encode().unwrap(), limits).is_err());
         // The codec does NOT claim to verify a signature or authorize accounts.
         let mut unverified = batch.clone();
         unverified.signatures[0] ^= 1;
-        assert!(AssetSpendBatchV2::decode(&unverified.encode().unwrap(), limits).is_ok());
+        assert!(AssetSpendBatchV3::decode(&unverified.encode().unwrap(), limits).is_ok());
     }
 
     #[test]
@@ -710,7 +756,8 @@ mod tests {
             AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetGrantConfigV2,
         };
         let (mut raw, limits) = fixture();
-        let mut management = SignedAssetSpendV2::decode(&raw[1]).unwrap();
+        let mut management = SignedAssetSpendV3::decode(&raw[1]).unwrap();
+        management.intent.authority = AssetSpendAuthorityV3::Controller;
         management.intent.amount = 0;
         management.intent.recipient = management.intent.payer.clone();
         management.intent.authority_update = Some(AssetAuthorityUpdateV2 {
@@ -729,7 +776,7 @@ mod tests {
             }],
         });
         raw[1] = management.encode().unwrap();
-        let mut opening = SignedAssetSpendV2::decode(&raw[2]).unwrap();
+        let mut opening = SignedAssetSpendV3::decode(&raw[2]).unwrap();
         let creation = AssetAccountCreationV2 {
             management_key_ref: [12; 32],
             recovery_key_ref: Some([11; 32]),
@@ -748,21 +795,21 @@ mod tests {
             .to_vec();
         opening.intent.recipient_creation = Some(creation);
         raw[2] = opening.encode().unwrap();
-        let batch = AssetSpendBatchV2::from_raw(&raw, limits).unwrap();
+        let batch = AssetSpendBatchV3::from_raw(&raw, limits).unwrap();
         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum());
         let wire = batch.encode().unwrap();
-        let decoded = AssetSpendBatchV2::decode(&wire, limits).unwrap();
+        let decoded = AssetSpendBatchV3::decode(&wire, limits).unwrap();
         let views = (0..decoded.len())
             .map(|index| decoded.view(index).unwrap())
             .collect::<Vec<_>>();
         assert_eq!(
-            AssetSpendBatchV2::from_views(&views, limits).unwrap(),
+            AssetSpendBatchV3::from_views(&views, limits).unwrap(),
             decoded
         );
         for (index, bytes) in raw.iter().enumerate() {
             assert_eq!(decoded.raw_transaction(index).unwrap(), *bytes);
             assert_eq!(decoded.transaction_bytes(index).unwrap(), bytes.len());
-            let signed = SignedAssetSpendV2::decode(bytes).unwrap();
+            let signed = SignedAssetSpendV3::decode(bytes).unwrap();
             assert!(decoded.row(index).unwrap() == signed);
             assert!(decoded
                 .view(index)
@@ -782,10 +829,10 @@ mod tests {
         assert!(!decoded.view(1).unwrap().matches_signed(&changed).unwrap());
         let mut wrong = batch;
         wrong.columns[13].values.push(vec![0]);
-        assert!(AssetSpendBatchV2::decode(&wrong.encode().unwrap(), limits).is_err());
-        assert!(AssetSpendBatchV2::decode(
+        assert!(AssetSpendBatchV3::decode(&wrong.encode().unwrap(), limits).is_err());
+        assert!(AssetSpendBatchV3::decode(
             &wire,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 body_bytes: decoded.canonical_bytes() - 1,
                 ..limits
             }

@@ -2,8 +2,8 @@
 //! reader. Admission is volatile; only the original plan/journal spends funds.
 use super::*;
 #[cfg(test)]
-use novovm_protocol::uca_spend::SignedAssetSpendV2;
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend::SignedAssetSpendV3;
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 use sha2::{Digest, Sha256};
 
 pub(super) enum UcaAdmission {
@@ -12,7 +12,7 @@ pub(super) enum UcaAdmission {
 }
 
 #[cfg(test)]
-pub(super) fn hash(signed: &SignedAssetSpendV2) -> Result<Hash> {
+pub(super) fn hash(signed: &SignedAssetSpendV3) -> Result<Hash> {
     Ok(Sha256::digest(signed.intent.signing_bytes()?).into())
 }
 
@@ -124,7 +124,7 @@ impl RpcLifecycle {
             .amount
             .checked_add(intent.max_fee)
             .context("UCA debit overflow")?;
-        if intent.authority_update.is_none() {
+        if intent.uses_grant() {
             let grant = state.grant().context("asset spend grant missing")?;
             ensure!(
                 debit <= grant.max_debit_per_intent && debit <= grant.remaining_debit_budget,
@@ -280,7 +280,7 @@ impl RpcLifecycle {
         Ok(UcaAdmission::Accepted)
     }
 
-    pub(super) fn selected_uca_batch(&self, selected: &[Hash]) -> Result<Arc<AssetSpendBatchV2>> {
+    pub(super) fn selected_uca_batch(&self, selected: &[Hash]) -> Result<Arc<AssetSpendBatchV3>> {
         let mut views = Vec::with_capacity(selected.len());
         for id in selected {
             let entry = self.pending.get(id).context("selected UCA entry missing")?;
@@ -289,9 +289,9 @@ impl RpcLifecycle {
             };
             views.push(batch.view(*index)?);
         }
-        Ok(Arc::new(AssetSpendBatchV2::from_views(
+        Ok(Arc::new(AssetSpendBatchV3::from_views(
             &views,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: self.batch_size,
                 transaction_bytes: 8192,
                 body_bytes: self.input_body_limit(),
@@ -302,7 +302,7 @@ impl RpcLifecycle {
     pub(super) fn retained_uca_reference(
         &self,
         ordered: &[Hash],
-    ) -> Result<Option<Arc<AssetSpendBatchV2>>> {
+    ) -> Result<Option<Arc<AssetSpendBatchV3>>> {
         let mut views = Vec::with_capacity(ordered.len());
         for id in ordered {
             let Some(entry) = self.pending.get(id) else {
@@ -316,9 +316,9 @@ impl RpcLifecycle {
         // Receive limits, not this node's local selection target. The normal
         // body owner still charges and captures the complete rebuilt input.
         let limits = super::super::native_decode_limits(self.batch_size, true);
-        Ok(Some(Arc::new(AssetSpendBatchV2::from_views(
+        Ok(Some(Arc::new(AssetSpendBatchV3::from_views(
             &views,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: limits.transactions,
                 transaction_bytes: limits.transaction_bytes,
                 body_bytes: limits.body_bytes,
@@ -338,11 +338,11 @@ mod tests {
             let rpc = &mut nodes[0];
             let raws = signed
                 .iter()
-                .map(SignedAssetSpendV2::encode)
+                .map(SignedAssetSpendV3::encode)
                 .collect::<std::result::Result<Vec<_>, _>>()?;
-            let batch = Arc::new(AssetSpendBatchV2::from_raw(
+            let batch = Arc::new(AssetSpendBatchV3::from_raw(
                 &raws,
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: 1024,
                     transaction_bytes: 8192,
                     body_bytes: 8 * 1024 * 1024,
@@ -392,11 +392,11 @@ mod tests {
             assert_eq!(rpc.pending_retention.owners.len(), 1);
             assert_eq!(rpc.pending_retention.metadata_bytes, metadata);
             assert_eq!(rpc.pending_retention.bytes, payload + metadata);
-            let make_input = |spend: &SignedAssetSpendV2| -> Result<AdmissionInput> {
+            let make_input = |spend: &SignedAssetSpendV3| -> Result<AdmissionInput> {
                 Ok(AdmissionInput::Uca {
-                    batch: Arc::new(AssetSpendBatchV2::from_raw(
+                    batch: Arc::new(AssetSpendBatchV3::from_raw(
                         &[spend.encode()?],
-                        AssetSpendBatchLimitsV2 {
+                        AssetSpendBatchLimitsV3 {
                             transactions: 1,
                             transaction_bytes: 8192,
                             body_bytes: 8192,
@@ -477,9 +477,9 @@ mod tests {
             let rpc = &mut nodes[0];
             for spend in signed {
                 let raw = spend.encode()?;
-                let batch = Arc::new(AssetSpendBatchV2::from_raw(
+                let batch = Arc::new(AssetSpendBatchV3::from_raw(
                     &[raw],
-                    AssetSpendBatchLimitsV2 {
+                    AssetSpendBatchLimitsV3 {
                         transactions: 1,
                         transaction_bytes: 8192,
                         body_bytes: 8192,

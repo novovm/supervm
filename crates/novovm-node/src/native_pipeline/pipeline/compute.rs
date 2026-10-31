@@ -490,7 +490,7 @@ fn domain_matches(domain: StorageDomain, context: &BatchContext) -> Result<()> {
 
 fn prepare(
     session: &mut ComputeSession,
-    uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
+    uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV3>,
     config: &ComputeConfig,
     request: PrepareRequest,
 ) -> Result<NovTransferPlan> {
@@ -509,7 +509,7 @@ fn prepare(
 
 fn authenticate(
     session: &mut ComputeSession,
-    uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
+    uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV3>,
     config: &ComputeConfig,
     request: AuthenticateRequest,
 ) -> Result<NovTransferBody> {
@@ -538,7 +538,7 @@ fn authenticate(
             for index in 0..source.len() {
                 let tx = match &source {
                     BatchSource::Raw(raw) => {
-                        novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&raw[index])?
+                        novovm_protocol::uca_spend::SignedAssetSpendV3::decode(&raw[index])?
                     }
                     BatchSource::Uca(batch) => batch.row(index)?,
                     BatchSource::Apfl(_) => unreachable!(),
@@ -624,7 +624,7 @@ fn authenticate(
 }
 
 fn ensure_uca_facade(
-    facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
+    facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV3>,
     config: &ComputeConfig,
 ) -> Result<()> {
     if facade.is_none() {
@@ -639,7 +639,7 @@ fn ensure_uca_facade(
         *facade = Some(
             selection
                 .open_wire_facade()?
-                .asset_spend_verifier_with_backend_v2(config.signature_backend)?,
+                .asset_spend_verifier_with_backend_v3(config.signature_backend)?,
         );
     }
     Ok(())
@@ -648,7 +648,7 @@ fn ensure_uca_facade(
 /// Reuses the candidate verifier on this resident owner. A bad external row is
 /// a row rejection, never an execution/session failure or an asset permission.
 fn admit_uca_rows(
-    facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
+    facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV3>,
     config: &ComputeConfig,
     inputs: Vec<AdmissionInput>,
 ) -> Result<AdmissionRows> {
@@ -775,7 +775,7 @@ fn packet(
 
 fn run_owner(
     session: &mut ComputeSession,
-    mut uca_facade: Option<novovm_exec::uca_spend::AssetSpendVerifierV2>,
+    mut uca_facade: Option<novovm_exec::uca_spend::AssetSpendVerifierV3>,
     config: &ComputeConfig,
     receiver: mpsc::Receiver<lanes::Queued>,
     notification: &Notification,

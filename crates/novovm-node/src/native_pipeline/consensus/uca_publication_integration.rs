@@ -29,8 +29,8 @@ use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_consensus::round_bft::journal::JournalBackend;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES};
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV3, MAX_SIGNED_SPEND_BYTES};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 
 fn progress(
     journal: ValidatorJournal,
@@ -69,9 +69,9 @@ fn codec() -> DecodeLimits {
 }
 
 fn structured_body(context: BatchContext, raw: &[Vec<u8>]) -> Result<Message> {
-    let batch = AssetSpendBatchV2::from_raw(
+    let batch = AssetSpendBatchV3::from_raw(
         raw,
-        AssetSpendBatchLimitsV2 {
+        AssetSpendBatchLimitsV3 {
             transactions: codec().transactions,
             transaction_bytes: codec().transaction_bytes,
             body_bytes: codec().body_bytes,
@@ -113,8 +113,9 @@ fn intent(
     payer: &Account,
     recipient: &Account,
     amount: u128,
-) -> Result<AssetSpendIntentV2> {
-    Ok(AssetSpendIntentV2 {
+) -> Result<AssetSpendIntentV3> {
+    Ok(AssetSpendIntentV3 {
+        authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
         asset: 1,
         authority_update: None,
         recipient_creation: None,
@@ -176,7 +177,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
     let facade = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
     // Explicit same packaged runtime; no alternate verifier or fallback suite.
     let runtime = &facade;
-    let spender = facade.asset_spend_signer_v2()?;
+    let spender = facade.asset_spend_signer_v3()?;
     let keygen = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     let mut keys = Vec::new();
     for _ in 0..5 {

@@ -29,7 +29,7 @@ impl AuthenticationRequest {
     /// signatures are prepared here; binding later captures the complete UCA
     /// authority/budget/nonce/balance/fee state at the supplied exact parent.
     pub fn from_uca_batch(
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {
         Self::from_input(

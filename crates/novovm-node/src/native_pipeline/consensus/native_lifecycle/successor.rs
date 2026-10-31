@@ -1,7 +1,7 @@
 //! Optional execution lookahead on this lifecycle's existing body owner.
 use super::*;
 pub use crate::native_pipeline::consensus::bodies::SuccessorSelection;
-use novovm_protocol::uca_spend_batch::AssetSpendBatchV2;
+use novovm_protocol::uca_spend_batch::AssetSpendBatchV3;
 
 impl NativeLifecycle {
     /// The ordered input recipe travels on the existing body lane. The full
@@ -99,7 +99,7 @@ impl NativeLifecycle {
         &mut self,
         source: Hash,
         reference: &Arc<Message>,
-        batch: Option<Arc<AssetSpendBatchV2>>,
+        batch: Option<Arc<AssetSpendBatchV3>>,
         pipeline: &CandidatePipeline,
     ) -> Result<()> {
         let Message::AssetBodyReference {

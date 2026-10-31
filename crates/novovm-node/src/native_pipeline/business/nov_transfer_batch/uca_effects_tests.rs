@@ -9,11 +9,14 @@ use crate::native_pipeline::state::tree::{empty_root, stage_state_update};
 use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
 use novovm_exec::resident::ComputeSession;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendAuthorityV3, AssetSpendIntentV3};
 use std::time::Duration;
 
 #[path = "uca_creation_tests.rs"]
 mod creation_tests;
+
+#[path = "uca_controller_tests.rs"]
+mod controller_tests;
 
 #[derive(Default)]
 struct Memory(BTreeMap<NodeHash, Vec<u8>>);
@@ -43,7 +46,7 @@ fn account(_id: &str, address: Vec<u8>) -> AssetAccountAuthorityV2 {
 }
 
 fn fixture(
-    i: &AssetSpendIntentV2,
+    i: &AssetSpendIntentV3,
     budget: u128,
     policy: &DirectNovFeePolicy,
     case: &str,
@@ -82,7 +85,7 @@ fn fixture(
     Ok((Memory(staged.nodes().clone()), staged.root()))
 }
 
-fn grant(i: &AssetSpendIntentV2, budget: u128, case: &str) -> SuppliedAssetSpendGrantV2 {
+fn grant(i: &AssetSpendIntentV3, budget: u128, case: &str) -> SuppliedAssetSpendGrantV2 {
     SuppliedAssetSpendGrantV2 {
         account: i.payer.clone(),
         asset: i.asset,
@@ -120,7 +123,8 @@ fn context(root: NodeHash, policy: &DirectNovFeePolicy) -> Result<BatchContext> 
 #[test]
 fn asset_authority_metadata_is_bounded_before_prefix_allocation() -> Result<()> {
     use novovm_protocol::uca_spend::AssetAuthorityUpdateV2;
-    let mut intent = AssetSpendIntentV2 {
+    let mut intent = AssetSpendIntentV3 {
+        authority: AssetSpendAuthorityV3::DelegatedGrant,
         chain_id: 7,
         genesis: [2; 32],
         payer: vec![11; 20],
@@ -139,6 +143,7 @@ fn asset_authority_metadata_is_bounded_before_prefix_allocation() -> Result<()> 
     super::uca_effects::validate_authority_metadata(71, |_| &intent, 384 * 1024)?;
     assert!(super::uca_effects::validate_authority_metadata(1, |_| &intent, 1).is_err());
     intent.amount = 0;
+    intent.authority = AssetSpendAuthorityV3::Controller;
     intent.recipient = intent.payer.clone();
     intent.authority_update = Some(AssetAuthorityUpdateV2 {
         use_recovery: false,
@@ -167,7 +172,7 @@ fn actual_mldsa_capture_uca_cpu_atomic_effects() -> Result<()> {
     run_actual_mldsa_effects(false)
 }
 
-fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
+fn actual_mldsa_facade() -> Result<(std::path::PathBuf, AoemExecFacade)> {
     let (platform, name) = if cfg!(target_os = "windows") {
         ("windows", "aoem_ffi.dll")
     } else if cfg!(target_os = "macos") {
@@ -192,14 +197,20 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
         "fixture generator and execution must use the same qualified AOEM"
     );
     let facade = AoemExecFacade::open(&path, AoemExecOpenOptions::default())?;
-    let signer = facade.asset_spend_signer_v2()?;
-    let verifier = facade.asset_spend_verifier_v2()?;
+    Ok((path, facade))
+}
+
+fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
+    let (path, facade) = actual_mldsa_facade()?;
+    let signer = facade.asset_spend_signer_v3()?;
+    let verifier = facade.asset_spend_verifier_v3()?;
     let (public, mut secret) = aoem_bindings::mldsa_keygen_v1_auto(65)?
         .context("packaged ML-DSA-65 key generation unavailable")?;
     let (other_public, mut other_secret) = aoem_bindings::mldsa_keygen_v1_auto(65)?
         .context("second packaged ML-DSA-65 fixture key unavailable")?;
     let result = (|| -> Result<()> {
-        let base = AssetSpendIntentV2 {
+        let base = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::DelegatedGrant,
             chain_id: 7,
             genesis: [2; 32],
             payer: vec![11; 20],
@@ -600,8 +611,8 @@ fn run_asset_component_cases(
     compare_integer: bool,
 ) -> Result<()> {
     use crate::native_pipeline::business::direct_nov_fee::{FeeAccounting, FeeFailureCode};
-    let signer = facade.asset_spend_signer_v2()?;
-    let verifier = facade.asset_spend_verifier_v2()?;
+    let signer = facade.asset_spend_signer_v3()?;
+    let verifier = facade.asset_spend_verifier_v3()?;
     let mut keys = (0..2)
         .map(|_| aoem_bindings::mldsa_keygen_v1_auto(65)?.context("component fixture key missing"))
         .collect::<Result<Vec<_>>>()?;
@@ -622,7 +633,8 @@ fn run_asset_component_cases(
             let intents = [0usize, 1]
                 .into_iter()
                 .map(|index| {
-                    Ok(AssetSpendIntentV2 {
+                    Ok(AssetSpendIntentV3 {
+                        authority: AssetSpendAuthorityV3::DelegatedGrant,
                         chain_id: 7,
                         genesis: [2; 32],
                         payer: vec![11 + index as u8; 20],
@@ -761,8 +773,8 @@ fn run_asset_management_cases(
     compare_integer: bool,
 ) -> Result<()> {
     use novovm_protocol::uca_spend::{AssetAuthorityUpdateV2, AssetGrantConfigV2};
-    let signer = facade.asset_spend_signer_v2()?;
-    let verifier = facade.asset_spend_verifier_v2()?;
+    let signer = facade.asset_spend_signer_v3()?;
+    let verifier = facade.asset_spend_verifier_v3()?;
     let mut keys = (0..4)
         .map(|_| {
             aoem_bindings::mldsa_keygen_v1_auto(65)?
@@ -774,7 +786,8 @@ fn run_asset_management_cases(
             .iter()
             .map(|(pk, _)| spend_key_ref_v1(pk))
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        let base = AssetSpendIntentV2 {
+        let base = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::DelegatedGrant,
             chain_id: 7,
             genesis: [2; 32],
             payer: vec![11; 20],
@@ -826,6 +839,7 @@ fn run_asset_management_cases(
             root = update.root();
             memory.0.extend(update.nodes().clone());
             let mut management = base.clone();
+            management.authority = AssetSpendAuthorityV3::Controller;
             management.recipient = management.payer.clone();
             management.amount = 0;
             management.spend_key_ref =

@@ -4,8 +4,8 @@ use aoem_bindings::AoemDyn;
 use novovm_exec::pq_signature::{AoemMldsaParameterSet, MldsaSigner};
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, MLDSA65_PUBLIC_KEY_BYTES,
-    MLDSA65_SIGNATURE_BYTES, SPEND_CONTEXT_V2,
+    spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3, MLDSA65_PUBLIC_KEY_BYTES,
+    MLDSA65_SIGNATURE_BYTES, SPEND_CONTEXT_V3,
 };
 use std::path::PathBuf;
 
@@ -33,8 +33,9 @@ impl Drop for TestSecret {
     }
 }
 
-fn intent(public_key: &[u8]) -> AssetSpendIntentV2 {
-    AssetSpendIntentV2 {
+fn intent(public_key: &[u8]) -> AssetSpendIntentV3 {
+    AssetSpendIntentV3 {
+        authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
         chain_id: 97,
         genesis: [0x31; 32],
         payer: vec![1; 32],
@@ -60,10 +61,10 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
     let facade = AoemExecFacade::open(&path, AoemExecOpenOptions::default())
         .expect("open the same packaged runtime through the product facade");
     let signer = facade
-        .asset_spend_signer_v2()
+        .asset_spend_signer_v3()
         .expect("qualified ML-DSA-65 signer");
     let verifier = facade
-        .asset_spend_verifier_v2()
+        .asset_spend_verifier_v3()
         .expect("qualified ML-DSA-65 verifier");
     let (public_key, secret_key) = runtime
         .mldsa_keygen_v1(65)
@@ -75,7 +76,7 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
     assert_eq!(original.public_key.len(), MLDSA65_PUBLIC_KEY_BYTES);
     assert_eq!(original.signature.len(), MLDSA65_SIGNATURE_BYTES);
     let encoded = original.encode().unwrap();
-    let decoded = SignedAssetSpendV2::decode(&encoded).unwrap();
+    let decoded = SignedAssetSpendV3::decode(&encoded).unwrap();
     assert!(decoded == original);
     let checked = verifier.verify(decoded).unwrap();
     assert_eq!(checked.intent(), &original.intent);
@@ -88,7 +89,7 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
 
     // Each changed intent is still structurally valid. The altered key reference
     // fails binding; the other altered fields must fail signature verification.
-    let mutations: [fn(&mut AssetSpendIntentV2); 11] = [
+    let mutations: [fn(&mut AssetSpendIntentV3); 12] = [
         |v| v.chain_id += 1,
         |v| v.genesis[0] ^= 1,
         |v| v.payer[0] ^= 1,
@@ -100,6 +101,7 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
         |v| v.nonce += 1,
         |v| v.not_before_height += 1,
         |v| v.expires_at_height += 1,
+        |v| v.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller,
     ];
     for (index, mutate) in mutations.into_iter().enumerate() {
         let mut changed = original.clone();
@@ -126,7 +128,11 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
     // under another purpose or raw/internal framing is not an asset signature.
     let generic = MldsaSigner::new(&runtime, AoemMldsaParameterSet::MlDsa65).unwrap();
     let message = original.intent.signing_bytes().unwrap();
-    for context in [b"NOVOVM/UCA/device/v1".as_slice(), b"".as_slice()] {
+    for context in [
+        b"NOVOVM/UCA/device/v1".as_slice(),
+        b"NOVOVM/asset/NOV-spend/v2".as_slice(),
+        b"".as_slice(),
+    ] {
         let mut other_context = original.clone();
         other_context.signature = generic
             .sign(&public_key, &secret_key.0, &message, context)
@@ -146,13 +152,13 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
         let other = MldsaSigner::new(&runtime, parameters).unwrap();
         let mut wrong_suite = original.clone();
         wrong_suite.signature = other
-            .sign(&key, &secret.0, &message, SPEND_CONTEXT_V2)
+            .sign(&key, &secret.0, &message, SPEND_CONTEXT_V3)
             .unwrap();
         wrong_suite.public_key = key;
         assert!(verifier.verify(wrong_suite).is_err());
         let mut wrong_header = encoded.clone();
         wrong_header[5] = level as u8;
-        assert!(SignedAssetSpendV2::decode(&wrong_header).is_err());
+        assert!(SignedAssetSpendV3::decode(&wrong_header).is_err());
     }
     let mut ed_shape = original.clone();
     ed_shape.public_key = vec![7; 32];
@@ -161,7 +167,7 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
     for offset in [4, 6] {
         let mut changed = encoded.clone();
         changed[offset] ^= 1;
-        assert!(SignedAssetSpendV2::decode(&changed).is_err());
+        assert!(SignedAssetSpendV3::decode(&changed).is_err());
     }
 
     // This only demonstrates stable replay-domain derivation across key/epoch
@@ -187,6 +193,7 @@ fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
     // The same cryptographic consumer signs explicit account-management
     // effects. Valid cryptography still does NOT grant management authority.
     let mut management = original.intent.clone();
+    management.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller;
     management.amount = 0;
     management.recipient = management.payer.clone();
     management.authority_update = Some(novovm_protocol::uca_spend::AssetAuthorityUpdateV2 {
@@ -237,7 +244,7 @@ fn packaged_uca_batch_matches_scalar_mixed_rows_and_preserves_qualified_owner() 
         .mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)
         .unwrap();
     let key = runtime.generate_keypair().unwrap();
-    let signer = facade.asset_spend_signer_v2().unwrap();
+    let signer = facade.asset_spend_signer_v3().unwrap();
     let signed = signer
         .sign(
             intent(&key.public_key),
@@ -260,7 +267,7 @@ fn packaged_uca_batch_matches_scalar_mixed_rows_and_preserves_qualified_owner() 
         )
         .unwrap();
     drop(runtime);
-    let verifier = facade.asset_spend_verifier_v2().unwrap();
+    let verifier = facade.asset_spend_verifier_v3().unwrap();
     // Repeated signed values intentionally test crypto only, not nonce or spend
     // permission. Enough well-shaped rows exercise AOEM's existing bulk path.
     let rows: Vec<_> = (0..320)
@@ -278,6 +285,10 @@ fn packaged_uca_batch_matches_scalar_mixed_rows_and_preserves_qualified_owner() 
                 4 => row.intent.spend_key_ref[0] ^= 1,
                 5 => row.signature.truncate(64),
                 6 => row.intent.expires_at_height = row.intent.not_before_height,
+                8 => {
+                    row.intent.authority =
+                        novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller
+                }
                 _ => {}
             }
             row

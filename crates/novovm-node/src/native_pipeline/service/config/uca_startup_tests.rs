@@ -6,10 +6,9 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     uca_effect_contract, uca_program_id, uca_receipt_codec,
 };
 use crate::native_pipeline::service::{ResidentNode, StartMode};
-use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, NATIVE_NOV_ASSET};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendAuthorityV3, NATIVE_NOV_ASSET};
 
 #[test]
 #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; actual fresh original service and reopen, not asset activation"]
@@ -39,7 +38,6 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     let identity = signer.generate_keypair()?;
     let management = signer.generate_keypair()?;
     let recovery = signer.generate_keypair()?;
-    let spend = signer.generate_keypair()?;
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
@@ -103,21 +101,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
             asset_account: vec![1; 20],
             management_public_key: management.public_key.clone(),
             recovery_public_key: Some(recovery.public_key.clone()),
-            grants: vec![UcaGenesisGrantV2 {
-                spend_public_key: spend.public_key.clone(),
-                grant: SuppliedAssetSpendGrantV2 {
-                    account: vec![1; 20],
-                    asset: NATIVE_NOV_ASSET,
-                    key_ref: spend_key_ref_v1(&spend.public_key)?,
-                    authorization_epoch: 1,
-                    permits_nov_transfer: true,
-                    revoked: false,
-                    not_before_height: 1,
-                    expires_at_height: 100,
-                    max_debit_per_intent: 100,
-                    remaining_debit_budget: 1000,
-                },
-            }],
+            grants: vec![],
         }],
     };
     let domain = manifest.signing_domain()?;
@@ -202,6 +186,13 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     });
     std::fs::write(&public_config_path, serde_json::to_vec(&public_config)?)?;
     let config = ResidentConfig::load(&public_config_path)?;
+    assert!(config
+        .uca_initialization
+        .as_ref()
+        .unwrap()
+        .accounts
+        .iter()
+        .all(|account| account.grants.is_empty()));
     assert_eq!(
         config
             .uca_initialization
@@ -226,7 +217,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
             }
             1 => init.expected_initial_root[0] ^= 1,
             2 => init.expected_final_commitment[0] ^= 1,
-            3 => init.accounts[0].grants[0].grant.remaining_debit_budget += 1,
+            3 => init.accounts[0].management_public_key[0] ^= 1,
             4 => init.approvals[0].signature[0] ^= 1,
             5 => {
                 let first = bad.genesis.validators[1].transport_public_key;
@@ -319,14 +310,15 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     let parent = first.controller.parent();
     let mut lifecycle = crate::native_pipeline::service::rpc::RpcLifecycle::new(first, 2)?;
     let signed = runtime
-        .asset_spend_signer_v2()?
+        .asset_spend_signer_v3()?
         .sign(
-            novovm_protocol::uca_spend::AssetSpendIntentV2 {
+            novovm_protocol::uca_spend::AssetSpendIntentV3 {
+                authority: AssetSpendAuthorityV3::Controller,
                 chain_id: config.genesis.chain_id,
                 genesis: domain,
                 payer: vec![1; 20],
                 authorization_epoch: 1,
-                spend_key_ref: spend_key_ref_v1(&spend.public_key)?,
+                spend_key_ref: spend_key_ref_v1(&management.public_key)?,
                 recipient: vec![1; 20],
                 asset: NATIVE_NOV_ASSET,
                 amount: 1,
@@ -337,8 +329,8 @@ fn actual_uca_startup_with_custody() -> Result<()> {
                 authority_update: None,
                 recipient_creation: None,
             },
-            &spend.public_key,
-            &spend.expanded_secret_key,
+            &management.public_key,
+            &management.expanded_secret_key,
         )?
         .encode()?;
     lifecycle.assert_uca_legacy_asset_rejection_for_test(signed)?;

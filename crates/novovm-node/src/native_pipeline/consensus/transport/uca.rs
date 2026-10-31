@@ -6,12 +6,12 @@ use crate::native_pipeline::{
     persistence::StoredCandidate,
     pipeline::BatchRequest,
 };
-use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 
 const VERSION: u16 = 2;
 
-fn batch_limits(limits: DecodeLimits) -> AssetSpendBatchLimitsV2 {
-    AssetSpendBatchLimitsV2 {
+fn batch_limits(limits: DecodeLimits) -> AssetSpendBatchLimitsV3 {
+    AssetSpendBatchLimitsV3 {
         transactions: limits.transactions,
         transaction_bytes: limits.transaction_bytes,
         body_bytes: limits.body_bytes,
@@ -28,7 +28,7 @@ fn uca_profile(context: &BatchContext) -> Result<()> {
     Ok(())
 }
 
-fn validate(batch: &AssetSpendBatchV2, limits: DecodeLimits) -> Result<()> {
+fn validate(batch: &AssetSpendBatchV3, limits: DecodeLimits) -> Result<()> {
     limits.validate()?;
     ensure!(
         !batch.is_empty()
@@ -43,7 +43,7 @@ fn validate(batch: &AssetSpendBatchV2, limits: DecodeLimits) -> Result<()> {
 pub(super) fn append_body(
     out: &mut Vec<u8>,
     context: &BatchContext,
-    batch: &AssetSpendBatchV2,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<()> {
     uca_profile(context)?;
@@ -62,10 +62,10 @@ pub(super) fn append_body(
     Ok(())
 }
 
-/// The v2 body commits exact signed asset accounts and canonical input.
+/// The v3 body commits exact signed asset accounts, authority mode and canonical input.
 pub fn uca_body_id(
     context: &BatchContext,
-    batch: &AssetSpendBatchV2,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<Hash> {
     uca_body_id_and_wire_len(context, batch, limits).map(|(id, _)| id)
@@ -73,7 +73,7 @@ pub fn uca_body_id(
 
 pub(crate) fn uca_body_reference(
     context: &BatchContext,
-    batch: &AssetSpendBatchV2,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<Message> {
     let body_id = uca_body_id(context, batch, limits)?;
@@ -162,7 +162,7 @@ pub(super) fn decode_reference(reader: &mut Reader<'_>, limits: DecodeLimits) ->
 
 fn uca_body_id_and_wire_len(
     context: &BatchContext,
-    batch: &AssetSpendBatchV2,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<(Hash, usize)> {
     let mut bytes = Vec::new();
@@ -183,7 +183,7 @@ pub(super) fn decode(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Me
     );
     let context = read_context(reader)?;
     uca_profile(&context)?;
-    let batch = AssetSpendBatchV2::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
+    let batch = AssetSpendBatchV3::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
     validate(&batch, limits)?;
     Ok(Message::AssetBody {
         context,
@@ -194,7 +194,7 @@ pub(super) fn decode(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Me
 pub(super) fn append_transactions(
     out: &mut Vec<u8>,
     scope: &TransactionsScope,
-    batch: &AssetSpendBatchV2,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<()> {
     scope.validate_shape()?;
@@ -218,7 +218,7 @@ pub(super) fn decode_transactions(
     limits: DecodeLimits,
 ) -> Result<Message> {
     let scope = transactions::read_scope(reader)?;
-    let batch = AssetSpendBatchV2::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
+    let batch = AssetSpendBatchV3::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
     validate(&batch, limits)?;
     Ok(Message::AssetTransactions {
         scope,
@@ -300,7 +300,7 @@ pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Res
         uca_profile(&context)?;
         Ok(Message::AssetBody {
             context,
-            batch: Arc::new(AssetSpendBatchV2::from_raw(
+            batch: Arc::new(AssetSpendBatchV3::from_raw(
                 stored.raw_transactions(),
                 batch_limits(limits),
             )?),

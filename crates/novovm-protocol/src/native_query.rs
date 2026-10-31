@@ -1,4 +1,4 @@
-//! Native application reads: typed requests and compact, request-bound v5 replies.
+//! Native application reads: typed requests and compact, request-bound v6 replies.
 //! Binary, bounded, read-only; carried by
 //! the existing authenticated NovoRUDP session, not a second transport or ledger.
 //! Replies are the authenticated serving node's observations, NOT light-client
@@ -16,7 +16,7 @@ pub const MAX_BYTES: usize = 32 * 1024;
 const MAGIC_V1: &[u8; 8] = b"NVQUERY1";
 const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
 const MAGIC_V4: &[u8; 8] = b"NVQUERY4";
-const MAGIC_RESPONSE_V5: &[u8; 8] = b"NVQUERY5";
+const MAGIC_RESPONSE_V6: &[u8; 8] = b"NVQUERY6";
 pub type Hash = [u8; 32];
 
 /// Nonempty bounded sequence. Its wire representation is an ordinary postcard
@@ -115,7 +115,7 @@ pub enum Query {
         hashes: ReceiptBatch<Hash>,
     },
     /// Read-only observation at a published root; NEVER a spend permission.
-    /// Concrete accounts are committed by the canonical v2 intent, not hints.
+    /// Concrete accounts and authority mode are committed by the v3 intent.
     AssetSpendState {
         intent: AssetReadIntentV2,
     },
@@ -126,14 +126,14 @@ pub enum Query {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssetReadIntentV2(Vec<u8>);
 impl AssetReadIntentV2 {
-    pub fn new(intent: &crate::uca_spend::AssetSpendIntentV2) -> Result<Self, &'static str> {
+    pub fn new(intent: &crate::uca_spend::AssetSpendIntentV3) -> Result<Self, &'static str> {
         intent
             .signing_bytes()
             .map(Self)
             .map_err(|_| "invalid UCA read intent")
     }
-    pub fn intent(&self) -> crate::uca_spend::AssetSpendIntentV2 {
-        crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&self.0)
+    pub fn intent(&self) -> crate::uca_spend::AssetSpendIntentV3 {
+        crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&self.0)
             .expect("validated immutable UCA read intent")
     }
 }
@@ -151,7 +151,7 @@ impl<'de> Deserialize<'de> for AssetReadIntentV2 {
                 f.write_str("bounded canonical NUAS intent")
             }
             fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Self::Value, E> {
-                crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(value)
+                crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(value)
                     .map_err(|_| E::custom("invalid UCA read intent"))?;
                 Ok(AssetReadIntentV2(value.to_vec()))
             }
@@ -164,6 +164,7 @@ impl<'de> Deserialize<'de> for AssetReadIntentV2 {
 /// read from the SAME published root, not assembled from caller declarations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetSpendStateViewV2 {
+    pub authority: crate::uca_spend::AssetSpendAuthorityV3,
     pub state_root: Hash,
     pub height: u64,
     pub account_active: bool,
@@ -283,7 +284,7 @@ struct CompactResponse {
 fn request_digest(request: &Request) -> Result<Hash, &'static str> {
     let canonical = postcard::to_allocvec(request).map_err(|_| "native query encode")?;
     let mut digest = Sha256::new();
-    digest.update(b"NOVOVM-NATIVE-QUERY-RESPONSE-V5\0");
+    digest.update(b"NOVOVM-NATIVE-QUERY-RESPONSE-V6\0");
     digest.update(canonical);
     Ok(digest.finalize().into())
 }
@@ -329,7 +330,7 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     }
     let batch = is_batch(&frame);
     let mut bytes = if matches!(frame, Frame::Response(_)) {
-        MAGIC_RESPONSE_V5
+        MAGIC_RESPONSE_V6
     } else if is_uca(&frame) {
         MAGIC_V4
     } else if batch {
@@ -386,7 +387,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
 /// A valid reply for another request is stale, not an answer to the current one.
 /// There is no fallback to the former full-request response wire formats.
 pub fn decode_response(bytes: &[u8], expected: &Request) -> Result<Option<Response>, &'static str> {
-    if !bytes.starts_with(MAGIC_RESPONSE_V5) || bytes.len() > MAX_BYTES {
+    if !bytes.starts_with(MAGIC_RESPONSE_V6) || bytes.len() > MAX_BYTES {
         return Err("native query response header/size");
     }
     let (response, tail): (CompactResponse, _) =
@@ -418,11 +419,50 @@ pub fn decode_response(bytes: &[u8], expected: &Request) -> Result<Option<Respon
 mod tests {
     use super::*;
 
+    #[test]
+    fn account_query_commits_authority_mode_and_rejects_the_old_grant_only_intent() {
+        let delegated = uca_intent();
+        let mut controller = delegated.clone();
+        controller.authority = crate::uca_spend::AssetSpendAuthorityV3::Controller;
+        let request = |intent: &crate::uca_spend::AssetSpendIntentV3| Request {
+            session: [7; 32],
+            sequence: 1,
+            query: Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(intent).unwrap(),
+            },
+        };
+        let delegated_request = request(&delegated);
+        let controller_request = request(&controller);
+        assert_ne!(
+            request_digest(&delegated_request).unwrap(),
+            request_digest(&controller_request).unwrap()
+        );
+        let reply = encode(Frame::Response(Response {
+            request: controller_request.clone(),
+            answer: Answer::AssetSpendState(AssetState::Pending),
+        }))
+        .unwrap();
+        assert!(reply.starts_with(b"NVQUERY6"));
+        assert!(decode_response(&reply, &controller_request)
+            .unwrap()
+            .is_some());
+        assert!(decode_response(&reply, &delegated_request)
+            .unwrap()
+            .is_none());
+        let mut old = delegated.signing_bytes().unwrap();
+        old[4] = 2;
+        old.remove(7);
+        assert!(
+            postcard::from_bytes::<AssetReadIntentV2>(&postcard::to_allocvec(&old).unwrap())
+                .is_err()
+        );
+    }
+
     fn assert_response_round_trip(bytes: &[u8], frame: &Frame) {
         let Frame::Response(response) = frame else {
             panic!("expected response fixture");
         };
-        assert!(bytes.starts_with(MAGIC_RESPONSE_V5));
+        assert!(bytes.starts_with(MAGIC_RESPONSE_V6));
         assert_eq!(
             decode_response(bytes, &response.request).unwrap(),
             Some(response.clone())
@@ -430,8 +470,9 @@ mod tests {
         assert!(decode(bytes).is_err(), "request ingress rejects a reply");
     }
 
-    fn uca_intent() -> crate::uca_spend::AssetSpendIntentV2 {
-        crate::uca_spend::AssetSpendIntentV2 {
+    fn uca_intent() -> crate::uca_spend::AssetSpendIntentV3 {
+        crate::uca_spend::AssetSpendIntentV3 {
+            authority: crate::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
             asset: 1,
             authority_update: None,
             recipient_creation: None,
@@ -454,17 +495,17 @@ mod tests {
         let intent = uca_intent();
         let raw = intent.signing_bytes().unwrap();
         assert_eq!(
-            crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&raw).unwrap(),
+            crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&raw).unwrap(),
             intent
         );
         for len in 0..raw.len() {
             assert!(
-                crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&raw[..len]).is_err()
+                crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&raw[..len]).is_err()
             );
         }
         let mut tail = raw.clone();
         tail.push(0);
-        assert!(crate::uca_spend::AssetSpendIntentV2::decode_signing_bytes(&tail).is_err());
+        assert!(crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&tail).is_err());
         let request = Request {
             session: [7; 32],
             sequence: 1,
@@ -479,6 +520,7 @@ mod tests {
                 height: 1,
             },
             AssetState::Present(Box::new(AssetSpendStateViewV2 {
+                authority: crate::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 state_root: [9; 32],
                 height: u64::MAX,
                 account_active: false,
@@ -522,8 +564,7 @@ mod tests {
     fn uca_read_intent_rejects_unbounded_or_invalid_body_before_ownership() {
         let mut raw = uca_intent().signing_bytes().unwrap();
         for bytes in [vec![0; 4096], {
-            raw[7] = 0;
-            raw[14] = 0;
+            raw[7] = 255;
             raw
         }] {
             let encoded = postcard::to_allocvec(&bytes).unwrap();
@@ -688,7 +729,7 @@ mod tests {
             let Frame::Response(response) = frame else {
                 unreachable!();
             };
-            let mut bytes = MAGIC_RESPONSE_V5.to_vec();
+            let mut bytes = MAGIC_RESPONSE_V6.to_vec();
             bytes.extend(
                 postcard::to_allocvec(&CompactResponse {
                     session: response.request.session,
@@ -749,10 +790,10 @@ mod tests {
             assert_eq!(encode(Frame::Request(request.clone())).unwrap(), expected);
             assert_eq!(decode(&expected).unwrap(), Frame::Request(request.clone()));
             let mut digest = Sha256::new();
-            digest.update(b"NOVOVM-NATIVE-QUERY-RESPONSE-V5\0");
+            digest.update(b"NOVOVM-NATIVE-QUERY-RESPONSE-V6\0");
             digest.update(&expected[9..]); // Frozen complete Request, no Frame tag.
             let compact = [
-                MAGIC_RESPONSE_V5.to_vec(),
+                MAGIC_RESPONSE_V6.to_vec(),
                 vec![7; 32],
                 vec![1],
                 digest.finalize().to_vec(),
@@ -938,7 +979,7 @@ mod tests {
                     indexed_height: 1,
                 },
             };
-            let mut bytes = MAGIC_RESPONSE_V5.to_vec();
+            let mut bytes = MAGIC_RESPONSE_V6.to_vec();
             bytes.extend(postcard::to_allocvec(&compact).unwrap());
             assert!(decode_response(&bytes, &request).is_err());
         }
@@ -953,7 +994,7 @@ mod tests {
         let mut oversized = bytes;
         oversized.resize(MAX_BYTES + 1, 0);
         assert!(decode_response(&oversized, &request).is_err());
-        for magic in [MAGIC_V1, MAGIC_V2, MAGIC_V4] {
+        for magic in [MAGIC_V1, MAGIC_V2, MAGIC_V4, b"NVQUERY5"] {
             let mut legacy = magic.to_vec();
             legacy.extend(postcard::to_allocvec(&frame).unwrap());
             assert!(decode(&legacy).is_err());

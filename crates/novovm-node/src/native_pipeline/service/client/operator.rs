@@ -21,7 +21,7 @@ use novovm_network::novorudp::{
 use novovm_protocol::{
     native_query::{self, Answer, Frame, Query},
     uca_spend::MAX_SIGNED_SPEND_BYTES,
-    uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
+    uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -197,7 +197,7 @@ fn read_client_config(path: &Path) -> Result<ClientConfig> {
 
 enum Operation {
     Query(Query),
-    Submit(Arc<AssetSpendBatchV2>),
+    Submit(Arc<AssetSpendBatchV3>),
 }
 
 fn receipt_view(state: native_query::ReceiptState) -> Value {
@@ -237,6 +237,7 @@ fn answer_view(answer: Answer) -> Value {
         Answer::NovBalance(value) => json!({"NovBalance":value.map(|b|
             json!({"amount":b.amount.to_string(),"state_root":b.state_root,"height":b.height}))}),
         Answer::AssetSpendState(AssetState::Present(s)) => json!({"AssetSpendState":{"Present":{
+            "authority":s.authority,
             "state_root":s.state_root,"height":s.height,"account_active":s.account_active,
             "current_spend_epoch":s.current_spend_epoch,"grant_epoch":s.grant_epoch,
             "management_key_ref":s.management_key_ref,"recovery_key_ref":s.recovery_key_ref,
@@ -267,9 +268,9 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
             // The SDK supplies fresh session/sequence correlation, never replays it.
             Ok(Operation::Query(request.query))
         }
-        ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(AssetSpendBatchV2::decode(
+        ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(AssetSpendBatchV3::decode(
             &read_bounded(path, codec.message_bytes)?,
-            AssetSpendBatchLimitsV2 {
+            AssetSpendBatchLimitsV3 {
                 transactions: MAX_ROWS,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                 body_bytes: codec.body_bytes,
@@ -456,6 +457,7 @@ mod tests {
         assert_eq!(receipt["Finalized"]["charged_fee"], text);
         let state = answer_view(Answer::AssetSpendState(native_query::AssetState::Present(
             Box::new(native_query::AssetSpendStateViewV2 {
+                authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 state_root: [3; 32],
                 height: 1,
                 account_active: true,

@@ -139,7 +139,7 @@ impl BatchRequest {
     /// Preserve the immutable structural batch until the resident verifier
     /// consumes each canonical row, including its signed asset accounts.
     pub fn from_uca_batch(
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
         context: BatchContext,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {

@@ -8,7 +8,7 @@ use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
 use crate::native_pipeline::pipeline::{
     AdmissionInput, AdmittedTransfer, SignatureAdmissionOutput,
 };
-use novovm_protocol::uca_spend_batch::AssetSpendBatchV2;
+use novovm_protocol::uca_spend_batch::AssetSpendBatchV3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TransactionOrigin {
@@ -175,7 +175,7 @@ impl NativeLifecycle {
 
     pub fn uca_transactions_message(
         &mut self,
-        batch: Arc<AssetSpendBatchV2>,
+        batch: Arc<AssetSpendBatchV3>,
     ) -> Result<Arc<Message>> {
         Ok(Arc::new(Message::AssetTransactions {
             scope: self.next_transactions_scope()?,

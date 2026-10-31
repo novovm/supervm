@@ -7,7 +7,7 @@ use crate::pq_signature::{
 use crate::AoemExecFacade;
 use anyhow::{ensure, Result};
 use novovm_protocol::uca_spend::{
-    spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, SPEND_CONTEXT_V2,
+    spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3, SPEND_CONTEXT_V3,
 };
 use sha2::{Digest, Sha256};
 
@@ -17,42 +17,42 @@ use sha2::{Digest, Sha256};
 /// constructor accepts a caller-supplied digest.
 ///
 /// ```compile_fail
-/// use novovm_exec::uca_spend::AssetSpendSignatureFactV2;
-/// use novovm_protocol::uca_spend::AssetSpendIntentV2;
-/// fn forge(intent: AssetSpendIntentV2) -> AssetSpendSignatureFactV2 {
-///     AssetSpendSignatureFactV2 { intent, binding: [0; 32] }
+/// use novovm_exec::uca_spend::AssetSpendSignatureFactV3;
+/// use novovm_protocol::uca_spend::AssetSpendIntentV3;
+/// fn forge(intent: AssetSpendIntentV3) -> AssetSpendSignatureFactV3 {
+///     AssetSpendSignatureFactV3 { intent, binding: [0; 32] }
 /// }
 /// ```
 #[derive(Clone)]
-pub struct AssetSpendSignatureFactV2 {
-    intent: AssetSpendIntentV2,
+pub struct AssetSpendSignatureFactV3 {
+    intent: AssetSpendIntentV3,
     binding: [u8; 32],
 }
 
-impl AssetSpendSignatureFactV2 {
-    pub fn intent(&self) -> &AssetSpendIntentV2 {
+impl AssetSpendSignatureFactV3 {
+    pub fn intent(&self) -> &AssetSpendIntentV3 {
         &self.intent
     }
 
     /// Reattach unchanged bytes to this verified fact without repeating the
     /// cryptographic signature operation. Pipeline/source ownership and current
     /// account authorization remain the original consumer's obligations.
-    pub fn reattach(&self, signed: SignedAssetSpendV2) -> Result<SignatureCheckedAssetSpendV2> {
+    pub fn reattach(&self, signed: SignedAssetSpendV3) -> Result<SignatureCheckedAssetSpendV3> {
         ensure!(
             signed.intent == self.intent && signature_binding(&signed)? == self.binding,
             "asset signature fact does not bind these signed bytes"
         );
-        Ok(SignatureCheckedAssetSpendV2 { signed })
+        Ok(SignatureCheckedAssetSpendV3 { signed })
     }
 }
 
-fn signature_binding(signed: &SignedAssetSpendV2) -> Result<[u8; 32]> {
+fn signature_binding(signed: &SignedAssetSpendV3) -> Result<[u8; 32]> {
     let message = signed.intent.signing_bytes()?;
     let mut digest = Sha256::new();
-    digest.update(b"NOVOVM/asset-spend/signature-fact/v2");
+    digest.update(b"NOVOVM/asset-spend/signature-fact/v3");
     digest.update(AoemMldsaParameterSet::MlDsa65.level().to_be_bytes());
-    digest.update([0, SPEND_CONTEXT_V2.len() as u8]);
-    digest.update(SPEND_CONTEXT_V2);
+    digest.update([0, SPEND_CONTEXT_V3.len() as u8]);
+    digest.update(SPEND_CONTEXT_V3);
     for bytes in [message.as_slice(), &signed.public_key, &signed.signature] {
         digest.update((bytes.len() as u64).to_be_bytes());
         digest.update(bytes);
@@ -63,25 +63,25 @@ fn signature_binding(signed: &SignedAssetSpendV2) -> Result<[u8; 32]> {
 /// Cannot be deserialized or constructed by a caller. Does not certify the
 /// key's current authority, sufficient funds, nonce eligibility or finality.
 #[derive(Clone)]
-pub struct SignatureCheckedAssetSpendV2 {
-    signed: SignedAssetSpendV2,
+pub struct SignatureCheckedAssetSpendV3 {
+    signed: SignedAssetSpendV3,
 }
 
-impl SignatureCheckedAssetSpendV2 {
+impl SignatureCheckedAssetSpendV3 {
     /// Release owned key/signature buffers when the immutable input owner will
     /// retain their original bytes for later candidate reconstruction.
-    pub fn into_signature_fact(self) -> Result<AssetSpendSignatureFactV2> {
+    pub fn into_signature_fact(self) -> Result<AssetSpendSignatureFactV3> {
         let binding = signature_binding(&self.signed)?;
-        Ok(AssetSpendSignatureFactV2 {
+        Ok(AssetSpendSignatureFactV3 {
             intent: self.signed.intent,
             binding,
         })
     }
 
-    pub fn intent(&self) -> &AssetSpendIntentV2 {
+    pub fn intent(&self) -> &AssetSpendIntentV3 {
         &self.signed.intent
     }
-    pub fn signed(&self) -> &SignedAssetSpendV2 {
+    pub fn signed(&self) -> &SignedAssetSpendV3 {
         &self.signed
     }
 
@@ -106,11 +106,11 @@ impl SignatureCheckedAssetSpendV2 {
 /// Reuse this qualified verification-only owner across admission batches. Clones
 /// retain the same already-loaded AOEM and do not re-run compatibility vectors.
 #[derive(Clone)]
-pub struct AssetSpendVerifierV2 {
+pub struct AssetSpendVerifierV3 {
     verifier: OwnedMldsaVerifier,
 }
 
-impl AssetSpendVerifierV2 {
+impl AssetSpendVerifierV3 {
     /// Latest completed semantic call on this shared owner, including startup
     /// qualification. Diagnostic only: concurrent callers must not associate
     /// this snapshot with a particular transaction or use it as authority.
@@ -118,15 +118,15 @@ impl AssetSpendVerifierV2 {
         self.verifier.last_execution_v1()
     }
 
-    pub fn verify(&self, signed: SignedAssetSpendV2) -> Result<SignatureCheckedAssetSpendV2> {
+    pub fn verify(&self, signed: SignedAssetSpendV3) -> Result<SignatureCheckedAssetSpendV3> {
         signed.validate()?;
         self.verifier.verify(MldsaVerifyInput {
             public_key: &signed.public_key,
             message: &signed.intent.signing_bytes()?,
-            context: SPEND_CONTEXT_V2,
+            context: SPEND_CONTEXT_V3,
             signature: &signed.signature,
         })?;
-        Ok(SignatureCheckedAssetSpendV2 { signed })
+        Ok(SignatureCheckedAssetSpendV3 { signed })
     }
 
     /// Verifies one bounded admission unit through the qualified AOEM batch
@@ -135,13 +135,13 @@ impl AssetSpendVerifierV2 {
     /// cryptographic evidence, never a trusted parent/nonce/budget permission.
     pub fn verify_batch(
         &self,
-        signed: Vec<SignedAssetSpendV2>,
-    ) -> Result<Vec<Result<SignatureCheckedAssetSpendV2>>> {
+        signed: Vec<SignedAssetSpendV3>,
+    ) -> Result<Vec<Result<SignatureCheckedAssetSpendV3>>> {
         ensure!(
             signed.len() <= MLDSA_VERIFY_BATCH_MAX_ITEMS,
             "UCA signature batch exceeds limit"
         );
-        let mut outcomes: Vec<Option<Result<SignatureCheckedAssetSpendV2>>> =
+        let mut outcomes: Vec<Option<Result<SignatureCheckedAssetSpendV3>>> =
             std::iter::repeat_with(|| None).take(signed.len()).collect();
         let mut prepared = Vec::with_capacity(signed.len());
         for (index, signed) in signed.into_iter().enumerate() {
@@ -158,7 +158,7 @@ impl AssetSpendVerifierV2 {
             .map(|(_, signed, message)| MldsaVerifyInput {
                 public_key: &signed.public_key,
                 message,
-                context: SPEND_CONTEXT_V2,
+                context: SPEND_CONTEXT_V3,
                 signature: &signed.signature,
             })
             .collect();
@@ -170,7 +170,7 @@ impl AssetSpendVerifierV2 {
         for ((index, signed, _), result) in prepared.into_iter().zip(verified) {
             outcomes[index] = Some(
                 result
-                    .map(|()| SignatureCheckedAssetSpendV2 { signed })
+                    .map(|()| SignatureCheckedAssetSpendV3 { signed })
                     .map_err(Into::into),
             );
         }
@@ -181,19 +181,19 @@ impl AssetSpendVerifierV2 {
     }
 }
 
-pub struct AssetSpendSignerV2<'a> {
+pub struct AssetSpendSignerV3<'a> {
     signer: MldsaSigner<'a>,
 }
 
-impl AssetSpendSignerV2<'_> {
+impl AssetSpendSignerV3<'_> {
     /// Key custody and user consent remain with the existing purpose-key owner.
     /// No secret key copy or persistence, and no inference of asset permission.
     pub fn sign(
         &self,
-        intent: AssetSpendIntentV2,
+        intent: AssetSpendIntentV3,
         public_key: &[u8],
         expanded_secret_key: &[u8],
-    ) -> Result<SignedAssetSpendV2> {
+    ) -> Result<SignedAssetSpendV3> {
         ensure!(
             spend_key_ref_v1(public_key)? == intent.spend_key_ref,
             "spend key binding mismatch"
@@ -202,9 +202,9 @@ impl AssetSpendSignerV2<'_> {
             public_key,
             expanded_secret_key,
             &intent.signing_bytes()?,
-            SPEND_CONTEXT_V2,
+            SPEND_CONTEXT_V3,
         )?;
-        let signed = SignedAssetSpendV2 {
+        let signed = SignedAssetSpendV3 {
             intent,
             public_key: public_key.to_vec(),
             signature,
@@ -217,30 +217,30 @@ impl AssetSpendSignerV2<'_> {
 impl AoemExecFacade {
     /// Requires the existing positive/tampered known-answer checks and explicit
     /// 65 sizes. No negotiation or fallback to another suite or algorithm.
-    pub fn asset_spend_verifier_v2(&self) -> Result<AssetSpendVerifierV2> {
+    pub fn asset_spend_verifier_v3(&self) -> Result<AssetSpendVerifierV3> {
         let verifier = OwnedMldsaVerifier::new(
             std::sync::Arc::clone(&self.dynlib),
             AoemMldsaParameterSet::MlDsa65,
         )?;
-        Ok(AssetSpendVerifierV2 { verifier })
+        Ok(AssetSpendVerifierV3 { verifier })
     }
 
     /// Explicit backend qualification for isolated comparisons using the same
     /// original consumer. No fallback or change to the default Auto policy.
-    pub fn asset_spend_verifier_with_backend_v2(
+    pub fn asset_spend_verifier_with_backend_v3(
         &self,
         backend: MldsaVerificationBackendV1,
-    ) -> Result<AssetSpendVerifierV2> {
+    ) -> Result<AssetSpendVerifierV3> {
         let verifier = OwnedMldsaVerifier::new_with_backend(
             std::sync::Arc::clone(&self.dynlib),
             AoemMldsaParameterSet::MlDsa65,
             backend,
         )?;
-        Ok(AssetSpendVerifierV2 { verifier })
+        Ok(AssetSpendVerifierV3 { verifier })
     }
 
-    pub fn asset_spend_signer_v2(&self) -> Result<AssetSpendSignerV2<'_>> {
-        Ok(AssetSpendSignerV2 {
+    pub fn asset_spend_signer_v3(&self) -> Result<AssetSpendSignerV3<'_>> {
+        Ok(AssetSpendSignerV3 {
             signer: MldsaSigner::new(&self.dynlib, AoemMldsaParameterSet::MlDsa65)?,
         })
     }

@@ -279,19 +279,20 @@ fn regrouped_candidate_does_not_pin_retired_pool_dictionaries() -> Result<()> {
 fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Result<()> {
     use crate::native_pipeline::pipeline::admitted_uca_for_test;
     use novovm_protocol::uca_spend::{
-        spend_key_ref_v1, AssetSpendIntentV2, MAX_SIGNED_SPEND_BYTES,
+        spend_key_ref_v1, AssetSpendIntentV3, MAX_SIGNED_SPEND_BYTES,
     };
-    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
     let library: std::path::PathBuf = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
         .context("explicit trusted AOEM library required")?
         .into();
     let facade = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
     let keys = facade.mldsa_keygen_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
-    let signer = facade.asset_spend_signer_v2()?;
+    let signer = facade.asset_spend_signer_v3()?;
     let mut signed = Vec::new();
     for nonce in 0..2 {
         signed.push(signer.sign(
-            AssetSpendIntentV2 {
+            AssetSpendIntentV3 {
+                authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 asset: 1,
                 authority_update: None,
                 recipient_creation: None,
@@ -315,13 +316,13 @@ fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Res
         .iter()
         .map(|s| s.encode())
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let limits = AssetSpendBatchLimitsV2 {
+    let limits = AssetSpendBatchLimitsV3 {
         transactions: 16,
         transaction_bytes: MAX_SIGNED_SPEND_BYTES,
         body_bytes: 65536,
     };
     let make = |raws: &[Vec<u8>]| -> Result<_> {
-        Ok(Arc::new(AssetSpendBatchV2::from_raw(raws, limits)?))
+        Ok(Arc::new(AssetSpendBatchV3::from_raw(raws, limits)?))
     };
     let source = make(&raws)?;
     let owner = Arc::new(());

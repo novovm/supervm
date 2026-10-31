@@ -443,7 +443,7 @@ fn resident_shared_and_unshared_complete_plans_match_every_export() -> Result<()
 fn spend_prepared(count: usize, remaining: u128) -> Prepared {
     use super::super::uca_effects::{AuthorityOption, SpendEntry, SpendGrant, SpendPlan};
     use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
-    use novovm_protocol::uca_spend::AssetSpendIntentV2;
+    use novovm_protocol::uca_spend::AssetSpendIntentV3;
     let mut p = prepared(count, false);
     let payer = p.requests[0].payer.clone();
     let identity = p.identities[0];
@@ -456,7 +456,8 @@ fn spend_prepared(count: usize, remaining: u128) -> Prepared {
         p.tx_nonces[i] = i as u64;
     }
     let grant_id = [17; 32];
-    let intent = AssetSpendIntentV2 {
+    let intent = AssetSpendIntentV3 {
+        authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
         chain_id: 7,
         genesis: [8; 32],
         payer: payer.as_bytes().to_vec(),
@@ -510,6 +511,23 @@ fn spend_prepared(count: usize, remaining: u128) -> Prepared {
         )]),
     });
     p
+}
+
+#[test]
+fn controller_complete_plan_needs_no_grant_or_synthetic_budget() -> Result<()> {
+    let mut p = spend_prepared(2, 10_000);
+    let spend = p.spend.as_mut().unwrap();
+    spend.grants.clear();
+    for entry in &mut spend.entries {
+        entry.intent.authority = novovm_protocol::uca_spend::AssetSpendAuthorityV3::Controller;
+        entry.authority_options[0].limit = 0;
+    }
+    let plan = compile(&p, 172_800_123)?;
+    let tail = p.requests.len() * ROW + 21;
+    for index in 0..p.requests.len() {
+        assert_eq!(plan.exports[tail + index * 2 + 1], lit(0));
+    }
+    Ok(())
 }
 
 #[test]

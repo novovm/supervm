@@ -73,7 +73,7 @@ impl AdmittedTransfer {
             .expect("V3 admission accessor requires V3 contract")
     }
 
-    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV2> {
+    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV3> {
         self.checked.uca()
     }
 
@@ -83,7 +83,7 @@ impl AdmittedTransfer {
 
     pub fn matches_uca_source(
         &self,
-        batch: &Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: &Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
         index: usize,
     ) -> bool {
         matches!(self.checked.as_ref(), CheckedAdmission::Uca { batch: source, index: source_index, .. }
@@ -129,7 +129,7 @@ pub(super) enum AdmittedSignatures {
     V3(SignatureCheckedBatch),
     Uca {
         source: BatchSource,
-        transactions: Vec<novovm_exec::uca_spend::SignatureCheckedAssetSpendV2>,
+        transactions: Vec<novovm_exec::uca_spend::SignatureCheckedAssetSpendV3>,
     },
 }
 
@@ -139,7 +139,7 @@ impl AdmittedBatch {
             AdmittedSignatures::V3(checked) => checked.retained_metadata_bytes(),
             AdmittedSignatures::Uca { transactions, .. } => {
                 transactions.capacity()
-                    * std::mem::size_of::<novovm_exec::uca_spend::SignatureCheckedAssetSpendV2>()
+                    * std::mem::size_of::<novovm_exec::uca_spend::SignatureCheckedAssetSpendV3>()
                     + transactions
                         .iter()
                         .map(|checked| {
@@ -239,11 +239,11 @@ pub(crate) fn admitted_for_test(
 pub(crate) fn admitted_uca_for_test(
     owner: Arc<()>,
     facade: &novovm_exec::AoemExecFacade,
-    batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+    batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     index: usize,
 ) -> Result<AdmittedTransfer> {
     let checked = facade
-        .asset_spend_verifier_v2()?
+        .asset_spend_verifier_v3()?
         .verify(batch.row(index)?)?
         .into_signature_fact()?;
     Ok(AdmittedTransfer {
@@ -303,7 +303,7 @@ impl SignatureAdmissionRequest {
     }
 
     pub fn from_uca(
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     ) -> Result<Self> {
         Self::new(
             (0..batch.len())
@@ -494,9 +494,9 @@ impl CandidatePipeline {
         let view = source.view(*index)?;
         let budget = self.config.authentication;
         let batch = Arc::new(
-            novovm_protocol::uca_spend_batch::AssetSpendBatchV2::from_views(
+            novovm_protocol::uca_spend_batch::AssetSpendBatchV3::from_views(
                 &[view],
-                novovm_protocol::uca_spend_batch::AssetSpendBatchLimitsV2 {
+                novovm_protocol::uca_spend_batch::AssetSpendBatchLimitsV3 {
                     transactions: budget.transactions,
                     transaction_bytes: budget.transaction_bytes,
                     body_bytes: budget.body_bytes,
@@ -554,7 +554,7 @@ impl CandidatePipeline {
     /// authority: the candidate still captures and checks its actual parent.
     pub fn rebind_admitted_uca(
         &self,
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
         admitted: &[&AdmittedTransfer],
     ) -> Result<AdmittedBatch> {
         let budget = self.config.authentication;

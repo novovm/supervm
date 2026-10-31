@@ -32,7 +32,7 @@ pub struct AuthenticationBudget {
 pub(crate) enum BatchSource {
     Raw(Vec<Vec<u8>>),
     Apfl(Arc<ApflTransferBatch>),
-    Uca(Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>),
+    Uca(Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>),
 }
 
 impl BatchSource {
@@ -119,7 +119,7 @@ pub enum AdmissionInput {
         index: usize,
     },
     Uca {
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
         index: usize,
     },
 }
@@ -152,8 +152,8 @@ pub struct AdmissionRow {
 pub enum CheckedAdmission {
     V3(SignatureCheckedTransfer),
     Uca {
-        checked: novovm_exec::uca_spend::AssetSpendSignatureFactV2,
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        checked: novovm_exec::uca_spend::AssetSpendSignatureFactV3,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
         index: usize,
     },
 }
@@ -166,7 +166,7 @@ impl CheckedAdmission {
         }
     }
 
-    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV2> {
+    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV3> {
         match self {
             Self::Uca { checked, .. } => Some(checked),
             Self::V3(_) => None,

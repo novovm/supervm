@@ -103,13 +103,13 @@ pub enum Message {
     /// Locator hints are untrusted; execution rechecks the exact parent state.
     AssetBody {
         context: BatchContext,
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     },
     /// NUAS structural application input (tag 15). Transport custody is not
     /// signature admission or UCA spending authority.
     AssetTransactions {
         scope: TransactionsScope,
-        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     },
     /// Ordered pool locators for an exact v2 body (tag 20), not a candidate or
     /// signature proof. Reconstructed rows must match the full body commitment.

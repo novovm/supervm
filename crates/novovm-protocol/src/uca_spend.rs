@@ -5,19 +5,19 @@ use thiserror::Error;
 
 pub const MLDSA65_PUBLIC_KEY_BYTES: usize = 1952;
 pub const MLDSA65_SIGNATURE_BYTES: usize = 3309;
-pub const SPEND_CONTEXT_V2: &[u8] = b"NOVOVM/asset/NOV-spend/v2";
+pub const SPEND_CONTEXT_V3: &[u8] = b"NOVOVM/asset/NOV-spend/v3";
 pub const NATIVE_NOV_ASSET: u8 = 1;
 // Identity management retains this bound; asset intents contain no UCA id.
 pub const MAX_UCA_ID_BYTES: usize = 128;
 pub const MAX_SPEND_WINDOW: u64 = 256;
 pub const MAX_ASSET_GRANTS: usize = 8;
 const MAX_AUTHORITY_UPDATE_BYTES: usize = 1 + 8 + 1 + 32 + 33 + 1 + MAX_ASSET_GRANTS * 81;
-// NUAS, version=2, suite=65 (ML-DSA external pure), purpose=1 (NOV transfer).
-// Version 1 UCA-addressed bytes MUST NOT be reinterpreted as asset accounts.
-const HEADER: &[u8] = b"NUAS\x02\x41\x01";
-// Explicit funded account-opening purpose; ordinary v2 bytes are unchanged.
-const CREATE_HEADER: &[u8] = b"NUAS\x02\x41\x02";
+// NUAS v3 signs the authority mode. Neither v1 UCA-addressed nor v2 grant-only
+// transactions may acquire controller authority by reinterpretation.
+const HEADER: &[u8] = b"NUAS\x03\x41\x01";
+const CREATE_HEADER: &[u8] = b"NUAS\x03\x41\x02";
 pub const MAX_SIGNED_SPEND_BYTES: usize = 7
+    + 1
     + 8
     + 32
     + 33
@@ -35,6 +35,27 @@ pub const MAX_SIGNED_SPEND_BYTES: usize = 7
     + MLDSA65_PUBLIC_KEY_BYTES
     + MLDSA65_SIGNATURE_BYTES;
 pub const MIN_SIGNED_SPEND_BYTES: usize = MAX_SIGNED_SPEND_BYTES - MAX_AUTHORITY_UPDATE_BYTES - 24;
+
+/// The signature commits to either the account controller or an explicitly
+/// restricted delegation. A missing or expired grant never selects Controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+pub enum AssetSpendAuthorityV3 {
+    Controller = 0,
+    DelegatedGrant = 1,
+}
+
+impl TryFrom<u8> for AssetSpendAuthorityV3 {
+    type Error = SpendEncodingError;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Controller),
+            1 => Ok(Self::DelegatedGrant),
+            _ => Err(SpendEncodingError),
+        }
+    }
+}
 
 /// Complete replacement grant set for an account-authorized management action.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +151,8 @@ impl AssetAuthorityUpdateV2 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssetSpendIntentV2 {
+pub struct AssetSpendIntentV3 {
+    pub authority: AssetSpendAuthorityV3,
     pub chain_id: u64,
     pub genesis: [u8; 32],
     /// Stable concrete account. Key rotation never changes this balance/nonce owner.
@@ -155,8 +177,8 @@ pub struct AssetSpendIntentV2 {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct SignedAssetSpendV2 {
-    pub intent: AssetSpendIntentV2,
+pub struct SignedAssetSpendV3 {
+    pub intent: AssetSpendIntentV3,
     pub public_key: Vec<u8>,
     pub signature: Vec<u8>,
 }
@@ -182,7 +204,11 @@ pub fn spend_key_ref_v1(public_key: &[u8]) -> Result<[u8; 32]> {
     Ok(h.finalize().into())
 }
 
-impl AssetSpendIntentV2 {
+impl AssetSpendIntentV3 {
+    pub fn uses_grant(&self) -> bool {
+        self.authority == AssetSpendAuthorityV3::DelegatedGrant && self.authority_update.is_none()
+    }
+
     /// Actual retained heap, including spare capacity. No UCA material is held.
     pub fn retained_heap_bytes(&self) -> usize {
         self.payer
@@ -234,7 +260,8 @@ impl AssetSpendIntentV2 {
         }
         if let Some(update) = &self.authority_update {
             update.validate()?;
-            if self.amount != 0
+            if self.authority != AssetSpendAuthorityV3::Controller
+                || self.amount != 0
                 || self.recipient != self.payer
                 || self.authorization_epoch.checked_add(1) != Some(update.next_epoch)
             {
@@ -252,7 +279,7 @@ impl AssetSpendIntentV2 {
         Ok(())
     }
 
-    /// Unframed message for external-pure ML-DSA with SPEND_CONTEXT_V2. The
+    /// Unframed message for external-pure ML-DSA with SPEND_CONTEXT_V3. The
     /// existing exec signer adds FIPS 204's external-pure framing exactly once.
     /// All integers use big endian; accounts use u8 length + exact bytes.
     pub fn signing_bytes(&self) -> Result<Vec<u8>> {
@@ -265,6 +292,7 @@ impl AssetSpendIntentV2 {
         } else {
             HEADER
         });
+        out.push(self.authority as u8);
         out.extend_from_slice(&self.chain_id.to_be_bytes());
         out.extend_from_slice(&self.genesis);
         out.push(self.payer.len() as u8);
@@ -300,7 +328,7 @@ impl AssetSpendIntentV2 {
     }
 }
 
-impl SignedAssetSpendV2 {
+impl SignedAssetSpendV3 {
     pub fn validate(&self) -> Result<()> {
         self.intent.validate()?;
         if self.signature.len() != MLDSA65_SIGNATURE_BYTES
@@ -348,8 +376,9 @@ impl SignedAssetSpendV2 {
 
 struct Reader<'a>(&'a [u8]);
 impl<'a> Reader<'a> {
-    fn intent(&mut self) -> Result<AssetSpendIntentV2> {
-        let mut value = AssetSpendIntentV2 {
+    fn intent(&mut self) -> Result<AssetSpendIntentV3> {
+        let mut value = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::try_from(self.array::<1>()?[0])?,
             chain_id: u64::from_be_bytes(self.array()?),
             genesis: self.array()?,
             payer: self.account()?,

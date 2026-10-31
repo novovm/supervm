@@ -1,6 +1,6 @@
 //! A brand-new asset account through the same running native node processes.
 use super::*;
-use novovm_protocol::uca_spend::{AssetAccountCreationV2, AssetGrantConfigV2};
+use novovm_protocol::uca_spend::AssetAccountCreationV2;
 
 pub(super) fn run(
     nodes: &mut ProductNodes,
@@ -8,7 +8,7 @@ pub(super) fn run(
     set: Arc<ValidatorSet>,
     runtime: &AoemExecFacade,
     alice_key: (&[u8], &[u8]),
-    mut alice_intent: AssetSpendIntentV2,
+    mut alice_intent: AssetSpendIntentV3,
     evidence: &mut Value,
 ) -> Result<()> {
     ensure!(
@@ -29,27 +29,20 @@ pub(super) fn run(
     // Generated only now, after the chain and original recovery have completed.
     // Expanded secrets remain local Zeroizing values; only references are reported.
     let manager = keygen.generate_keypair()?;
-    let spender = keygen.generate_keypair()?;
     let descriptor = AssetAccountCreationV2 {
         management_key_ref: spend_key_ref_v1(&manager.public_key)?,
         recovery_key_ref: None,
-        grants: vec![AssetGrantConfigV2 {
-            key_ref: spend_key_ref_v1(&spender.public_key)?,
-            permits_nov_transfer: true,
-            not_before_height: OFFLINE_HEIGHTS + 2,
-            expires_at_height: 1000,
-            max_debit_per_intent: 1000,
-            remaining_debit_budget: 1000,
-        }],
+        grants: vec![],
     };
     let account = descriptor
         .account(alice_intent.chain_id, &alice_intent.genesis)?
         .to_vec();
-    let signer = runtime.asset_spend_signer_v2()?;
+    let signer = runtime.asset_spend_signer_v3()?;
     let mut respend_intent = alice_intent.clone();
     respend_intent.payer = account.clone();
     respend_intent.recipient = ADDRESS[0].to_vec();
-    respend_intent.spend_key_ref = spend_key_ref_v1(&spender.public_key)?;
+    respend_intent.authority = AssetSpendAuthorityV3::Controller;
+    respend_intent.spend_key_ref = descriptor.management_key_ref;
     respend_intent.authorization_epoch = 1;
     respend_intent.nonce = 0;
     respend_intent.amount = 10;
@@ -84,6 +77,7 @@ pub(super) fn run(
         "keys_generated_after_height":OFFLINE_HEIGHTS + 1,
         "account":hex(&account),"management_key_ref":hex(&descriptor.management_key_ref),
         "spend_key_ref":hex(&respend_intent.spend_key_ref),
+        "spend_authority":"Controller","restricted_grants":false,
         "absent_before_opening":true,"node_configuration_changed":false,
         "genesis_allocation_to_new_account":false,"opening_amount":"100","respend_amount":"10",
         "completed_original_recovery_height":OFFLINE_HEIGHTS + 1,
@@ -122,13 +116,15 @@ pub(super) fn run(
                 && view.current_spend_epoch == 1
                 && view.management_key_ref == descriptor.management_key_ref
                 && view.recovery_key_ref.is_none()
-                && view.grant_present
-                && view.grant_epoch == 1
+                && view.authority == AssetSpendAuthorityV3::Controller
+                && !view.grant_present
+                && view.grant_epoch == 0
+                && view.permits_nov_transfer
                 && view.next_nonce == 0
                 && view.payer_balance == 100
                 && view.recipient_balance == alice_before.payer_balance - 100 - opening_fee
-                && view.remaining_debit_budget == 1000
-                && view.max_debit_per_intent == 1000,
+                && view.remaining_debit_budget == 0
+                && view.max_debit_per_intent == 0,
             "new account was not initialized atomically: {view:?}"
         );
         opened_states.push(view);
@@ -143,8 +139,8 @@ pub(super) fn run(
 
     let respend = signer.sign(
         respend_intent.clone(),
-        &spender.public_key,
-        &spender.expanded_secret_key,
+        &manager.public_key,
+        &manager.expanded_secret_key,
     )?;
     let respend_id: [u8; 32] = Sha256::digest(respend.intent.signing_bytes()?).into();
     send_uca(&mut clients[0], &respend, 0)?;
@@ -172,14 +168,17 @@ pub(super) fn run(
                 && new_account.height == OFFLINE_HEIGHTS + 3
                 && new_account.current_spend_epoch == 1
                 && new_account.management_key_ref == descriptor.management_key_ref
-                && new_account.grant_present
-                && new_account.grant_epoch == 1
+                && new_account.authority == AssetSpendAuthorityV3::Controller
+                && !new_account.grant_present
+                && new_account.grant_epoch == 0
+                && new_account.permits_nov_transfer
                 && new_account.next_nonce == 1
                 && new_account.payer_balance == 100 - 10 - respend_fee
-                && new_account.remaining_debit_budget == 1000 - 10 - respend_fee
+                && new_account.remaining_debit_budget == 0
                 && alice.payer_balance == alice_before.payer_balance - 100 - opening_fee + 10
-                && alice.remaining_debit_budget
-                    == alice_before.remaining_debit_budget - 100 - opening_fee
+                && alice.authority == AssetSpendAuthorityV3::Controller
+                && !alice.grant_present
+                && alice.remaining_debit_budget == 0
                 && alice.next_nonce == OFFLINE_TRANSACTIONS + 1
                 && alice.recipient_balance == new_account.payer_balance
                 && new_account.recipient_balance == alice.payer_balance,

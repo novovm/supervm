@@ -10,8 +10,8 @@ use crate::native_pipeline::state::frontier::{DeclaredAccess, OwnedStateInput};
 use crate::native_pipeline::state::tree::{NodeHash, StateChange, MAX_BATCH_READ_KEYS};
 use anyhow::{ensure, Context, Result};
 use novovm_adapter_api::uca_spend_policy::{SuppliedAssetSpendGrantV2, SuppliedAssetSpendStateV2};
-use novovm_exec::uca_spend::SignatureCheckedAssetSpendV2;
-use novovm_protocol::uca_spend::{AssetSpendIntentV2, MAX_UCA_ID_BYTES};
+use novovm_exec::uca_spend::SignatureCheckedAssetSpendV3;
+use novovm_protocol::uca_spend::{AssetSpendIntentV3, MAX_UCA_ID_BYTES};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -74,7 +74,7 @@ fn account_prefix(chain: u64, genesis: &NodeHash, account: &Account) -> Result<V
     Ok(key)
 }
 
-fn grant_prefix(intent: &AssetSpendIntentV2) -> Result<Vec<u8>> {
+fn grant_prefix(intent: &AssetSpendIntentV3) -> Result<Vec<u8>> {
     let mut key = domain(intent.chain_id, &intent.genesis, b"/grant/")?;
     // A fixed hash is a state-key identity, NOT a derived balance address.
     key.extend_from_slice(&intent.nonce_identity()?);
@@ -82,7 +82,7 @@ fn grant_prefix(intent: &AssetSpendIntentV2) -> Result<Vec<u8>> {
     Ok(key)
 }
 
-pub(crate) fn grant_write_declarations(intent: &AssetSpendIntentV2) -> Result<Vec<DeclaredAccess>> {
+pub(crate) fn grant_write_declarations(intent: &AssetSpendIntentV3) -> Result<Vec<DeclaredAccess>> {
     record_pages::declarations(&grant_prefix(intent)?, GRANT_BYTES, true)
 }
 
@@ -167,7 +167,7 @@ pub(crate) fn account_write_declarations(
 }
 
 pub(crate) fn authority_failure(
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
     parent: NodeHash,
     height: u64,
     authority: &AssetAccountAuthorityV2,
@@ -196,7 +196,7 @@ pub(crate) fn authority_failure(
 /// Codec only, NOT an issue-grant transaction. Identity and current epoch are
 /// checked again on captured-state consumption, not assumed from this helper.
 pub fn grant_record_changes(
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
     grant: &SuppliedAssetSpendGrantV2,
 ) -> Result<Vec<StateChange>> {
     intent.validate()?;
@@ -221,9 +221,9 @@ pub fn grant_record_changes(
 /// from the complete declared range at this same parent. None is not proof of
 /// absence: management may replace a record that this batch did not decode.
 pub(crate) fn grant_record_changes_from_parent(
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
     grant: &SuppliedAssetSpendGrantV2,
-    previous: Option<(&AssetSpendIntentV2, &SuppliedAssetSpendGrantV2)>,
+    previous: Option<(&AssetSpendIntentV3, &SuppliedAssetSpendGrantV2)>,
 ) -> Result<Vec<StateChange>> {
     let changes = grant_record_changes(intent, grant)?;
     match previous {
@@ -241,7 +241,7 @@ pub(crate) fn grant_record_changes_from_parent(
 
 /// Reuses the account's ordinary grant/nonce namespace. No funding or identity
 /// authority is introduced by this descriptor location.
-pub(crate) fn creation_location(intent: &AssetSpendIntentV2) -> AssetSpendIntentV2 {
+pub(crate) fn creation_location(intent: &AssetSpendIntentV3) -> AssetSpendIntentV3 {
     let mut location = intent.clone();
     location.payer = intent.recipient.clone();
     location.authority_update = None;
@@ -250,7 +250,7 @@ pub(crate) fn creation_location(intent: &AssetSpendIntentV2) -> AssetSpendIntent
     location
 }
 
-pub(crate) fn creation_authority(intent: &AssetSpendIntentV2) -> Option<AssetAccountAuthorityV2> {
+pub(crate) fn creation_authority(intent: &AssetSpendIntentV3) -> Option<AssetAccountAuthorityV2> {
     intent
         .recipient_creation
         .as_ref()
@@ -264,7 +264,7 @@ pub(crate) fn creation_authority(intent: &AssetSpendIntentV2) -> Option<AssetAcc
         })
 }
 
-pub(crate) fn creation_grants(intent: &AssetSpendIntentV2) -> Vec<SuppliedAssetSpendGrantV2> {
+pub(crate) fn creation_grants(intent: &AssetSpendIntentV3) -> Vec<SuppliedAssetSpendGrantV2> {
     intent
         .recipient_creation
         .as_ref()
@@ -288,7 +288,7 @@ pub(crate) fn creation_grants(intent: &AssetSpendIntentV2) -> Vec<SuppliedAssetS
         })
 }
 
-pub(crate) fn creation_declarations(intent: &AssetSpendIntentV2) -> Result<Vec<DeclaredAccess>> {
+pub(crate) fn creation_declarations(intent: &AssetSpendIntentV3) -> Result<Vec<DeclaredAccess>> {
     if intent.recipient_creation.is_none() {
         return Ok(Vec::new());
     }
@@ -315,14 +315,14 @@ pub(crate) fn creation_declarations(intent: &AssetSpendIntentV2) -> Result<Vec<D
 /// Access declarations for signed concrete asset accounts. The supplied Account
 /// values are checked copies of signed bytes, never unsigned address hints.
 pub struct AssetSpendStateAccessV2 {
-    intent: AssetSpendIntentV2,
+    intent: AssetSpendIntentV3,
     payer: Account,
     recipient: Account,
     declarations: Vec<DeclaredAccess>,
 }
 
 impl AssetSpendStateAccessV2 {
-    pub fn new(intent: AssetSpendIntentV2, payer: Account, recipient: Account) -> Result<Self> {
+    pub fn new(intent: AssetSpendIntentV3, payer: Account, recipient: Account) -> Result<Self> {
         intent.validate()?;
         ensure!(
             intent.payer == payer.as_bytes() && intent.recipient == recipient.as_bytes(),
@@ -347,8 +347,10 @@ impl AssetSpendStateAccessV2 {
                 },
             );
         }
-        for access in record_pages::declarations(&grant_prefix(&intent)?, GRANT_BYTES, false)? {
-            declarations.insert(access.key.clone(), access);
+        if intent.uses_grant() {
+            for access in record_pages::declarations(&grant_prefix(&intent)?, GRANT_BYTES, false)? {
+                declarations.insert(access.key.clone(), access);
+            }
         }
         let key = nov_transfer_batch::nonce_key(&intent.nonce_identity()?);
         declarations.insert(
@@ -527,18 +529,22 @@ impl AssetSpendStateAccessV2 {
             ));
             accounts.push(record);
         }
-        let grant_prefix = grant_prefix(&self.intent)?;
-        let grant_declarations = record_pages::declarations(&grant_prefix, GRANT_BYTES, false)?;
-        let grant = if read(&grant_declarations[0].key)?.is_some() {
-            Some(decode(&record_pages::read_with(
-                &mut read,
-                &grant_prefix,
-                GRANT_BYTES,
-            )?)?)
-        } else {
-            for declaration in grant_declarations.iter().skip(1) {
-                ensure!(read(&declaration.key)?.is_none(), "orphan asset grant page");
+        let grant = if self.intent.uses_grant() {
+            let prefix = grant_prefix(&self.intent)?;
+            let declarations = record_pages::declarations(&prefix, GRANT_BYTES, false)?;
+            if read(&declarations[0].key)?.is_some() {
+                Some(decode(&record_pages::read_with(
+                    &mut read,
+                    &prefix,
+                    GRANT_BYTES,
+                )?)?)
+            } else {
+                for declaration in declarations.iter().skip(1) {
+                    ensure!(read(&declaration.key)?.is_none(), "orphan asset grant page");
+                }
+                None
             }
+        } else {
             None
         };
         let nonce = read(&nov_transfer_batch::nonce_key(
@@ -564,7 +570,7 @@ impl AssetSpendStateAccessV2 {
 /// Immutable captured input, not an authorization token or a completed spend.
 /// No Deserialize or public constructor can substitute individual state fields.
 pub struct CapturedAssetSpendStateV2 {
-    intent: AssetSpendIntentV2,
+    intent: AssetSpendIntentV3,
     parent: NodeHash,
     payer: AssetAccountAuthorityV2,
     recipient: AssetAccountAuthorityV2,
@@ -576,7 +582,11 @@ pub struct CapturedAssetSpendStateV2 {
 }
 
 impl CapturedAssetSpendStateV2 {
-    pub(crate) fn matches_intent(&self, intent: &AssetSpendIntentV2) -> bool {
+    pub(crate) fn authority(&self) -> novovm_protocol::uca_spend::AssetSpendAuthorityV3 {
+        self.intent.authority
+    }
+
+    pub(crate) fn matches_intent(&self, intent: &AssetSpendIntentV3) -> bool {
         &self.intent == intent
     }
 
@@ -617,7 +627,7 @@ impl CapturedAssetSpendStateV2 {
 
     pub fn preflight(
         &self,
-        signed: &SignatureCheckedAssetSpendV2,
+        signed: &SignatureCheckedAssetSpendV3,
         expected_parent: NodeHash,
         height: u64,
     ) -> Result<()> {

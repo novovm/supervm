@@ -10,16 +10,15 @@ use crate::native_pipeline::{
     },
     consensus::chain::ChainRecord,
     service::config::uca_genesis::{
-        UcaGenesisAccountV2, UcaGenesisApprovalV2, UcaGenesisGrantV2, UcaGenesisIdentityV2,
-        UcaGenesisManifestV2, UcaInitializationConfigV2,
+        UcaGenesisAccountV2, UcaGenesisApprovalV2, UcaGenesisIdentityV2, UcaGenesisManifestV2,
+        UcaInitializationConfigV2,
     },
 };
-use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_exec::pq_signature::AoemMldsaParameterSet;
 use novovm_protocol::{
     native_query::{AssetReadIntentV2, AssetSpendStateViewV2, AssetState},
-    uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2},
-    uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2},
+    uca_spend::{spend_key_ref_v1, AssetSpendAuthorityV3, AssetSpendIntentV3, SignedAssetSpendV3},
+    uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3},
 };
 use std::collections::BTreeMap;
 
@@ -87,9 +86,9 @@ fn apfl_frame_sizes(raw: &[Vec<u8>], frame_rows: usize) -> Result<Vec<Value>> {
     let codec = native_decode_limits(frame_rows, true);
     raw.chunks(frame_rows)
         .map(|rows| {
-            let batch = AssetSpendBatchV2::from_raw(
+            let batch = AssetSpendBatchV3::from_raw(
                 rows,
-                AssetSpendBatchLimitsV2 {
+                AssetSpendBatchLimitsV3 {
                     transactions: codec.transactions,
                     transaction_bytes: codec.transaction_bytes,
                     body_bytes: codec.body_bytes,
@@ -175,7 +174,7 @@ fn collect_final_progress(nodes: &mut ProductNodes, head: Status) -> Result<Valu
 
 fn read_uca_state(
     client: &mut NativeApplicationClient,
-    intent: &AssetSpendIntentV2,
+    intent: &AssetSpendIntentV3,
     _payer: usize,
 ) -> Result<AssetSpendStateViewV2> {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -252,7 +251,7 @@ fn audit_fee_pages(
             .context("NUAS archived candidate missing")?;
         actual_batch_sizes.push(stored.raw_transactions().len());
         for bytes in stored.raw_transactions() {
-            let signed = SignedAssetSpendV2::decode(bytes)?;
+            let signed = SignedAssetSpendV3::decode(bytes)?;
             let hash: Hash = Sha256::digest(signed.intent.signing_bytes()?).into();
             let index = *by_hash
                 .get(&hash)
@@ -266,6 +265,7 @@ fn audit_fee_pages(
             ensure!(
                 signed.intent.payer == account_bytes(payer)
                     && signed.intent.recipient == account_bytes(recipient)
+                    && signed.intent.authority == AssetSpendAuthorityV3::Controller
                     && signed.intent.nonce == nonces[payer],
                 "NUAS archive payer/nonce order"
             );
@@ -383,12 +383,11 @@ fn run_native_uca_load_mode(
     );
     let rounds = count / shape.payers;
     mode.validate_count(count, frame_rows)?;
-    let grant_expiry = mode.grant_expiry(count)?;
     ensure!(
         (rounds as u128)
             .checked_mul(51)
             .is_some_and(|value| value <= FUNDING),
-        "NUAS original funded balance/budget cannot cover amount plus maximum fee"
+        "NUAS original funded balance cannot cover amount plus maximum fee"
     );
     let timeout = Duration::from_secs(env_count(
         "NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS",
@@ -452,12 +451,12 @@ fn run_native_uca_load_mode(
         "backend":test_execution_backend()?,"binary":binary,"binary_sha256":hex(&Sha256::digest(fs::read(&binary)?)),
         "signature_backend":signature_override.unwrap_or(crate::native_pipeline::service::config::test_signature_backend()?),
         "aoem_sha256":hex(&Sha256::digest(fs::read(&library)?)),"real_processes":4,"real_machines":1,
-        "asset_signature":"ML-DSA-65","transport":"native_novorudp_apfl","http_listeners":0,
+        "asset_signature":"ML-DSA-65","signed_contract":"NUAS/v3","transport":"native_novorudp_apfl","http_listeners":0,
         "requested_full_65536_workload":count == 65_536,
         "full_65536_workload":false,
         "static_intent_window":if mode.dynamic_windows() {Value::Null} else {json!([1,257])},
         "static_65536_feasibility":"1024 full candidates need 64 heights; actual packing/rounds must still finish every signed row within [1,257), otherwise fail without extending or renewing signed intents",
-        "load_strategy":mode.label(),"grant_expires_at_height":grant_expiry,
+        "load_strategy":mode.label(),"spend_authority":"Controller","restricted_grants":false,
         "rolling_wave_transactions":if mode.is_rolling() {Some(rolling::WAVE_ROWS)} else {None},
         "effective_outstanding_limit":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
         "submission_frame_order":if late_bridge {"0,8,2,3,4,5,6,7,1,9,...; signed corpus remains canonical"} else {"canonical"},
@@ -494,7 +493,7 @@ fn run_native_uca_load_mode(
             Some(keys) => keys.clone(),
             None => {
                 let keys = Arc::new(
-                    (0..2 * account_count + 1)
+                    (0..account_count + 1)
                         .map(|_| {
                             let pair = keygen.generate_keypair()?;
                             Ok((pair.public_key, pair.expanded_secret_key))
@@ -506,7 +505,7 @@ fn run_native_uca_load_mode(
             }
         };
         ensure!(
-            keys.len() == 2 * account_count + 1,
+            keys.len() == account_count + 1,
             "paired account distribution changed"
         );
         let mut genesis = genesis()?;
@@ -529,7 +528,7 @@ fn run_native_uca_load_mode(
             genesis,
             identities: vec![UcaGenesisIdentityV2 {
                 uca_id: account_name(0),
-                identity_public_key: keys[2 * account_count].0.clone(),
+                identity_public_key: keys[account_count].0.clone(),
             }],
             accounts: (0..account_count)
                 .map(|i| {
@@ -538,21 +537,7 @@ fn run_native_uca_load_mode(
                         asset_account: account_bytes(i).to_vec(),
                         management_public_key: keys[i].0.clone(),
                         recovery_public_key: None,
-                        grants: vec![UcaGenesisGrantV2 {
-                            spend_public_key: keys[account_count + i].0.clone(),
-                            grant: SuppliedAssetSpendGrantV2 {
-                                asset: 1,
-                                account: account_bytes(i).to_vec(),
-                                key_ref: spend_key_ref_v1(&keys[account_count + i].0)?,
-                                authorization_epoch: 1,
-                                permits_nov_transfer: true,
-                                revoked: false,
-                                not_before_height: 1,
-                                expires_at_height: grant_expiry,
-                                max_debit_per_intent: 1000,
-                                remaining_debit_budget: FUNDING,
-                            },
-                        }],
+                        grants: vec![],
                     })
                 })
                 .collect::<Result<Vec<_>>>()?,
@@ -611,13 +596,14 @@ fn run_native_uca_load_mode(
         evidence["signing_domain"] = json!(hex(&domain));
         evidence["initial_root"] = json!(hex(&material.expected_initial_root));
         evidence["genesis_commitment"] = json!(hex(&material.expected_final_commitment));
-        let signer = runtime.asset_spend_signer_v2()?;
+        let signer = runtime.asset_spend_signer_v3()?;
         let make_intent = |payer: usize,
                            recipient: usize,
                            nonce: u64,
                            window: SpendWindow|
-         -> Result<AssetSpendIntentV2> {
-            Ok(AssetSpendIntentV2 {
+         -> Result<AssetSpendIntentV3> {
+            Ok(AssetSpendIntentV3 {
+                authority: AssetSpendAuthorityV3::Controller,
                 asset: 1,
                 authority_update: None,
                 recipient_creation: None,
@@ -625,7 +611,7 @@ fn run_native_uca_load_mode(
                 genesis: domain,
                 payer: account_bytes(payer).to_vec(),
                 authorization_epoch: 1,
-                spend_key_ref: spend_key_ref_v1(&keys[account_count + payer].0)?,
+                spend_key_ref: spend_key_ref_v1(&keys[payer].0)?,
                 recipient: account_bytes(recipient).to_vec(),
                 amount: 1,
                 max_fee: 50,
@@ -658,13 +644,13 @@ fn run_native_uca_load_mode(
         let mut workload_hash = Sha256::new();
         workload_hash.update(b"novovm/nuas-load/ordered-signed-inputs/v1\0");
         let replay_signed = corpus.signed.clone();
-        let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
+        let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV3> {
             let payer = index % shape.payers;
             let nonce = (index / shape.payers) as u64;
             let recipient = shape.recipient(index);
-            let key = &keys[account_count + payer];
+            let key = &keys[payer];
             let signed = match replay_signed.as_ref().filter(|_| !mode.dynamic_windows()) {
-                Some(raw) => SignedAssetSpendV2::decode(&raw[index])?,
+                Some(raw) => SignedAssetSpendV3::decode(&raw[index])?,
                 None => signer.sign(
                     make_intent(payer, recipient, nonce, window)?,
                     &key.0,
@@ -932,28 +918,28 @@ fn run_native_uca_load_mode(
                 } else {
                     0
                 };
-                let expected_budget = if payer < shape.payers {
-                    remaining
-                } else {
-                    FUNDING
-                };
                 let expected_balance = expected[payer].1;
                 ensure!(
                     view.state_root == before[0].state_root
                         && view.height == before[0].height
                         && view.account_active
                         && view.current_spend_epoch == 1
-                        && view.grant_epoch == 1
+                        && view.authority == AssetSpendAuthorityV3::Controller
+                        && view.management_key_ref == spend_key_ref_v1(&keys[payer].0)?
+                        && !view.grant_present
+                        && view.grant_epoch == 0
                         && view.permits_nov_transfer
+                            == (view.height >= query_window.not_before
+                                && view.height < query_window.expires)
                         && !view.revoked
-                        && view.not_before_height == 1
-                        && view.expires_at_height == grant_expiry
-                        && view.max_debit_per_intent == 1000
+                        && view.not_before_height == 0
+                        && view.expires_at_height == 0
+                        && view.max_debit_per_intent == 0
                         && view.next_nonce == expected_nonce
-                        && view.remaining_debit_budget == expected_budget
+                        && view.remaining_debit_budget == 0
                         && view.payer_balance == expected_balance
                         && view.recipient_balance == recipient_credits[0],
-                    "NUAS authoritative account/budget/nonce mismatch: {view:?}"
+                    "NUAS authoritative controller/balance/nonce mismatch: {view:?}"
                 );
                 states.push(view);
             }
@@ -989,8 +975,6 @@ fn run_native_uca_load_mode(
             &expected,
             &material.accounts,
             rounds as u64,
-            remaining,
-            grant_expiry,
             &|account| make_intent(account, shape.payers, rounds as u64, query_window),
         )?;
         evidence["untimed_full_economics_audit_seconds"] =
@@ -1066,8 +1050,6 @@ fn run_native_uca_load_mode(
                 &expected,
                 &material.accounts,
                 rounds as u64,
-                remaining,
-                grant_expiry,
                 &|account| make_intent(account, shape.payers, rounds as u64, query_window)
             )? == evidence["all_account_authority"],
             "NUAS cold complete account state changed"
@@ -1399,8 +1381,9 @@ fn paired_authority_comparison_excludes_only_schedule_metadata() -> Result<()> {
     let mut first = json!({
         "authority":(0..=SENDERS).map(|_| json!({
             "height":1,"state_root":vec![1u8;32],"next_nonce":64,
-            "remaining_debit_budget":999_000,"payer_balance":999_000,
-            "recipient_balance":1024,"revoked":false,"grant_epoch":1
+            "authority":"Controller","grant_present":false,
+            "remaining_debit_budget":0,"payer_balance":999_000,
+            "recipient_balance":1024,"revoked":false,"grant_epoch":0
         })).collect::<Vec<_>>(),
         "durable_economics":{"oracle_sender_balances":[999_000],
             "oracle_sender_nonces":[64],"archived_transactions":1024}
