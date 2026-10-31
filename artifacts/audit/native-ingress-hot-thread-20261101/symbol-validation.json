@@ -1,0 +1,65 @@
+[
+  {
+    "role": "node",
+    "binary": "target/native-controller-throughput-20261031/candidate-v4/novovm-node.exe",
+    "pdb": "target/runtime-rebuild/release/novovm_node.pdb",
+    "binary_sha256": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+    "pdb_sha256": "76832311a5279cab395bad164d446f2bd97c4bb47a5a864795b4d8671ae18dfe",
+    "pe_debug": [
+      "File: target/native-controller-throughput-20261031/candidate-v4/novovm-node.exe",
+      "PDBSignature: 0x53445352",
+      "PDBGUID: {5EA003E9-B833-45C8-B129-6570542B4CFE}",
+      "PDBAge: 1",
+      "PDBFileName: novovm_node.pdb"
+    ],
+    "pdb_summary": [
+      "Age: 1",
+      "GUID: {5EA003E9-B833-45C8-B129-6570542B4CFE}",
+      "Has Debug Info: true",
+      "Has Publics: true",
+      "Is stripped: false"
+    ]
+  },
+  {
+    "role": "driver",
+    "binary": "target/native-controller-throughput-20261031/stability-observer/native-tests.exe",
+    "pdb": "target/runtime-rebuild/release/deps/novovm_node-9c742166f7d138ac.pdb",
+    "binary_sha256": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb",
+    "pdb_sha256": "c38757c548dad6179f4c431ef4bc279087716d0081b8d496000c5196417186a8",
+    "pe_debug": [
+      "File: target/native-controller-throughput-20261031/stability-observer/native-tests.exe",
+      "PDBSignature: 0x53445352",
+      "PDBGUID: {0912C349-16A5-4477-A364-5ED8C9BE5888}",
+      "PDBAge: 4",
+      "PDBFileName: novovm_node-9c742166f7d138ac.pdb"
+    ],
+    "pdb_summary": [
+      "Age: 4",
+      "GUID: {0912C349-16A5-4477-A364-5ED8C9BE5888}",
+      "Has Debug Info: true",
+      "Has Publics: true",
+      "Is stripped: false"
+    ]
+  },
+  {
+    "role": "aoem",
+    "binary": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+    "pdb": "D:/WorksArea/AOEM/cargo-target-ci-local/release/aoem_ffi.pdb",
+    "binary_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+    "pdb_sha256": "cd59bc926dfa27632d22e948f46155582277f1a3579549f078bdeaeb36e05d78",
+    "pe_debug": [
+      "File: D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+      "PDBSignature: 0x53445352",
+      "PDBGUID: {DB48DF11-8E23-454A-88F8-0DD8577E6457}",
+      "PDBAge: 1",
+      "PDBFileName: aoem_ffi.pdb"
+    ],
+    "pdb_summary": [
+      "Age: 1",
+      "GUID: {DB48DF11-8E23-454A-88F8-0DD8577E6457}",
+      "Has Debug Info: true",
+      "Has Publics: true",
+      "Is stripped: false"
+    ]
+  }
+]
