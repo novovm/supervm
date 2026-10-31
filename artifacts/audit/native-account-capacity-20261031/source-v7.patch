@@ -1,0 +1,3871 @@
+diff --git a/crates/novovm-exec/src/uca_spend.rs b/crates/novovm-exec/src/uca_spend.rs
+index f5642898..82ebf0b9 100644
+--- a/crates/novovm-exec/src/uca_spend.rs
++++ b/crates/novovm-exec/src/uca_spend.rs
+@@ -9,6 +9,56 @@ use anyhow::{ensure, Result};
+ use novovm_protocol::uca_spend::{
+     spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, SPEND_CONTEXT_V2,
+ };
++use sha2::{Digest, Sha256};
++
++/// Compact signature evidence, not account authority. Its binding commits to
++/// the exact canonical intent, ML-DSA-65 pure-purpose framing, key and signature.
++/// Only a successful original verifier result can create it; no wire decoder or
++/// constructor accepts a caller-supplied digest.
++///
++/// ```compile_fail
++/// use novovm_exec::uca_spend::AssetSpendSignatureFactV2;
++/// use novovm_protocol::uca_spend::AssetSpendIntentV2;
++/// fn forge(intent: AssetSpendIntentV2) -> AssetSpendSignatureFactV2 {
++///     AssetSpendSignatureFactV2 { intent, binding: [0; 32] }
++/// }
++/// ```
++#[derive(Clone)]
++pub struct AssetSpendSignatureFactV2 {
++    intent: AssetSpendIntentV2,
++    binding: [u8; 32],
++}
++
++impl AssetSpendSignatureFactV2 {
++    pub fn intent(&self) -> &AssetSpendIntentV2 {
++        &self.intent
++    }
++
++    /// Reattach unchanged bytes to this verified fact without repeating the
++    /// cryptographic signature operation. Pipeline/source ownership and current
++    /// account authorization remain the original consumer's obligations.
++    pub fn reattach(&self, signed: SignedAssetSpendV2) -> Result<SignatureCheckedAssetSpendV2> {
++        ensure!(
++            signed.intent == self.intent && signature_binding(&signed)? == self.binding,
++            "asset signature fact does not bind these signed bytes"
++        );
++        Ok(SignatureCheckedAssetSpendV2 { signed })
++    }
++}
++
++fn signature_binding(signed: &SignedAssetSpendV2) -> Result<[u8; 32]> {
++    let message = signed.intent.signing_bytes()?;
++    let mut digest = Sha256::new();
++    digest.update(b"NOVOVM/asset-spend/signature-fact/v2");
++    digest.update(AoemMldsaParameterSet::MlDsa65.level().to_be_bytes());
++    digest.update([0, SPEND_CONTEXT_V2.len() as u8]);
++    digest.update(SPEND_CONTEXT_V2);
++    for bytes in [message.as_slice(), &signed.public_key, &signed.signature] {
++        digest.update((bytes.len() as u64).to_be_bytes());
++        digest.update(bytes);
++    }
++    Ok(digest.finalize().into())
++}
+ 
+ /// Cannot be deserialized or constructed by a caller. Does not certify the
+ /// key's current authority, sufficient funds, nonce eligibility or finality.
+@@ -18,6 +68,16 @@ pub struct SignatureCheckedAssetSpendV2 {
+ }
+ 
+ impl SignatureCheckedAssetSpendV2 {
++    /// Release owned key/signature buffers when the immutable input owner will
++    /// retain their original bytes for later candidate reconstruction.
++    pub fn into_signature_fact(self) -> Result<AssetSpendSignatureFactV2> {
++        let binding = signature_binding(&self.signed)?;
++        Ok(AssetSpendSignatureFactV2 {
++            intent: self.signed.intent,
++            binding,
++        })
++    }
++
+     pub fn intent(&self) -> &AssetSpendIntentV2 {
+         &self.signed.intent
+     }
+@@ -185,3 +245,6 @@ impl AoemExecFacade {
+         })
+     }
+ }
++
++#[cfg(test)]
++mod tests;
+diff --git a/crates/novovm-exec/src/uca_spend/tests.rs b/crates/novovm-exec/src/uca_spend/tests.rs
+new file mode 100644
+index 00000000..8be8403c
+--- /dev/null
++++ b/crates/novovm-exec/src/uca_spend/tests.rs
+@@ -0,0 +1,98 @@
++//! Real original verifier evidence and compact reattachment only; no asset state
++//! or successful spend is manufactured by a signature-fact test.
++use super::*;
++
++#[test]
++#[ignore = "requires explicit trusted AOEM library; real ML-DSA-65 fact binding and compact retention"]
++fn asset_signature_fact_compacts_owned_crypto_and_rejects_all_transplants() -> Result<()> {
++    let path = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
++        .ok_or_else(|| anyhow::anyhow!("explicit trusted AOEM library required"))?;
++    let facade = AoemExecFacade::open(std::path::Path::new(&path), Default::default())?;
++    let runtime = facade.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
++    let key = runtime.generate_keypair()?;
++    let signer = facade.asset_spend_signer_v2()?;
++    let signed = signer.sign(
++        AssetSpendIntentV2 {
++            chain_id: 717,
++            genesis: [1; 32],
++            payer: vec![1; 20],
++            recipient: vec![2; 20],
++            asset: 1,
++            amount: 30,
++            max_fee: 50,
++            nonce: 0,
++            authorization_epoch: 1,
++            spend_key_ref: spend_key_ref_v1(&key.public_key)?,
++            not_before_height: 1,
++            expires_at_height: 50,
++            authority_update: None,
++            recipient_creation: None,
++        },
++        &key.public_key,
++        &key.expanded_secret_key,
++    )?;
++    let bytes = signed.encode()?;
++    let checked = facade.asset_spend_verifier_v2()?.verify(signed.clone())?;
++    let owned_bytes = std::mem::size_of::<SignatureCheckedAssetSpendV2>()
++        + signed.intent.retained_heap_bytes()
++        + signed.public_key.capacity()
++        + signed.signature.capacity();
++    let fact = checked.into_signature_fact()?;
++    let compact_bytes =
++        std::mem::size_of::<AssetSpendSignatureFactV2>() + fact.intent().retained_heap_bytes();
++    assert!(owned_bytes - compact_bytes > 5_000);
++    let restored = fact.reattach(signed.clone())?;
++    assert_eq!(restored.signed().encode()?, bytes);
++    assert_eq!(
++        restored.check_supplied_state(None, &[0; 32], 2),
++        Err(novovm_adapter_api::uca_spend_policy::SpendPolicyError::StateUnavailable)
++    );
++    for mutation in 0..13 {
++        let mut changed = signed.clone();
++        match mutation {
++            0 => changed.intent.payer[0] ^= 1,
++            1 => changed.intent.recipient[0] ^= 1,
++            2 => changed.intent.chain_id += 1,
++            3 => changed.intent.genesis[0] ^= 1,
++            4 => changed.intent.amount += 1,
++            5 => changed.intent.max_fee += 1,
++            6 => changed.intent.nonce += 1,
++            7 => changed.intent.authorization_epoch += 1,
++            8 => changed.intent.spend_key_ref[0] ^= 1,
++            9 => changed.intent.expires_at_height += 1,
++            10 => changed.public_key[0] ^= 1,
++            11 => changed.signature[0] ^= 1,
++            _ => changed.signature.truncate(changed.signature.len() - 1),
++        }
++        assert!(fact.reattach(changed).is_err(), "mutation {mutation}");
++    }
++    let mut wrong_context = signed.clone();
++    wrong_context.signature = runtime.sign(
++        &key.public_key,
++        &key.expanded_secret_key,
++        &signed.intent.signing_bytes()?,
++        b"not-the-asset-spend-context",
++    )?;
++    assert!(fact.reattach(wrong_context).is_err());
++    let mut wrong_parameter = bytes.clone();
++    wrong_parameter[5] = 87;
++    assert!(SignedAssetSpendV2::decode(&wrong_parameter).is_err());
++    let mut next_intent = signed.intent.clone();
++    next_intent.nonce += 1;
++    let next = signer.sign(next_intent, &key.public_key, &key.expanded_secret_key)?;
++    let next_fact = facade
++        .asset_spend_verifier_v2()?
++        .verify(next.clone())?
++        .into_signature_fact()?;
++    std::thread::scope(|scope| {
++        for _ in 0..2 {
++            scope.spawn(|| {
++                assert!(fact.reattach(signed.clone()).is_ok());
++                assert!(next_fact.reattach(next.clone()).is_ok());
++                assert!(fact.reattach(next.clone()).is_err());
++                assert!(next_fact.reattach(signed.clone()).is_err());
++            });
++        }
++    });
++    Ok(())
++}
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/candidate_input.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/candidate_input.rs
+index 874175b7..8d7c4a79 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/candidate_input.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/candidate_input.rs
+@@ -3,12 +3,13 @@
+ //! signing or publication authority from its input representation.
+ use super::*;
+ use crate::native_pipeline::execution::plan::{BoundBatchCapture, OwnedBatchInput};
++use crate::native_pipeline::ingress::batch::BatchSource;
+ use crate::native_pipeline::state::frontier::StateReadSeed;
+ 
+ pub(super) enum BodyInput {
+     Reference(SignatureCheckedBatch),
+     Uca {
+-        raw: Vec<Vec<u8>>,
++        source: BatchSource,
+         metadata: Box<uca_effects::UcaMetadata>,
+     },
+ }
+@@ -23,10 +24,10 @@ impl BodyInput {
+             Self::Reference(batch) => {
+                 PlanInput::Reference(batch.bind(context, declarations, budget)?)
+             }
+-            Self::Uca { raw, metadata } => {
++            Self::Uca { source, metadata } => {
+                 metadata.check_domain(&context)?;
+                 PlanInput::Uca {
+-                    plan: BatchPlan::new(context, raw, declarations, budget)?,
++                    plan: BatchPlan::from_source(context, source, declarations, budget)?,
+                     metadata,
+                 }
+             }
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs
+index 8b6b5b96..f6069e6f 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs
+@@ -11,6 +11,10 @@ use novovm_exec::resident::{ComputeSession, ComputeTask};
+ use std::sync::{Arc, Mutex};
+ use std::time::Duration;
+ 
++#[cfg(test)]
++#[path = "execution/fee_delta_tests.rs"]
++mod fee_delta_tests;
++
+ /// A new ordered receipt encoding. The final state binds diagnostics; this
+ /// receipt binds each quote, rejection and full successful fee journal entry.
+ /// It deliberately has no `safe`, `finalized`, old prev-seal or fake proof flag.
+@@ -578,8 +582,12 @@ pub(super) fn stage_results(
+             .iter()
+             .filter_map(|receipt| receipt.journal.as_ref().map(|entry| entry.settled_nov)),
+     )?;
+-    let mut changes =
+-        record_pages::record_changes(FEE_PREFIX, &postcard::to_allocvec(&fees)?, FEE_BYTES)?;
++    let mut changes = record_pages::record_changes_from_parent(
++        FEE_PREFIX,
++        &postcard::to_allocvec(&fees)?,
++        FEE_BYTES,
++        Some(&postcard::to_allocvec(&prepared.fees)?),
++    )?;
+     ensure!(
+         prepared.spend.is_some() == spend_outputs.is_some(),
+         "UCA effect output missing/unexpected"
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution/fee_delta_tests.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution/fee_delta_tests.rs
+new file mode 100644
+index 00000000..ac053b0e
+--- /dev/null
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution/fee_delta_tests.rs
+@@ -0,0 +1,198 @@
++//! Compare original full codec updates with parent-bound deltas through the
++//! original captured tree, including its existing node-work counters.
++use super::*;
++use crate::native_pipeline::business::direct_nov_fee::{quote_and_settle, FeeFailureCode};
++use crate::native_pipeline::state::frontier::{CaptureBudget, DeclaredAccess, OwnedStateInput};
++use crate::native_pipeline::state::tree::{
++    empty_root, read_state_value, stage_state_update, take_reachability_decodes_for_test,
++    StateChange, StateNodeReader,
++};
++
++#[derive(Default)]
++struct Memory(BTreeMap<NodeHash, Vec<u8>>);
++impl StateNodeReader for Memory {
++    fn read_node(&self, hash: &NodeHash) -> Result<Option<Vec<u8>>> {
++        Ok(self.0.get(hash).cloned())
++    }
++}
++
++fn settled_fees(before: &FeeState) -> Result<FeeState> {
++    let policy = super::super::body_tests::policy();
++    let request = TransferFeeRequest {
++        tx_hash: [71; 32],
++        payer: [1; 20].into(),
++        recipient: [2; 20].into(),
++        asset: "NOV".into(),
++        amount: 100,
++        pay_asset: "NOV".into(),
++        max_pay_amount: 50,
++        slippage_bps: 0,
++    };
++    let effects = quote_and_settle(&request, &policy, before, 10_000, 172_800_500)?;
++    ensure!(effects.failure.is_none() && effects.journal.is_some());
++    Ok(effects.after_fee_state)
++}
++
++fn compare_fee_updates(before: &FeeState, after: &FeeState) -> Result<(usize, usize)> {
++    before.validate()?;
++    after.validate()?;
++    let old = postcard::to_allocvec(before)?;
++    let new = postcard::to_allocvec(after)?;
++    let full = record_pages::record_changes(FEE_PREFIX, &new, FEE_BYTES)?;
++    let delta = record_pages::record_changes_from_parent(FEE_PREFIX, &new, FEE_BYTES, Some(&old))?;
++    let mut memory = Memory::default();
++    let initial = stage_state_update(
++        &memory,
++        empty_root(),
++        &record_pages::record_changes(FEE_PREFIX, &old, FEE_BYTES)?,
++    )?;
++    let root = initial.root();
++    memory.0.extend(initial.nodes().clone());
++    let captured = OwnedStateInput::capture(
++        &memory,
++        root,
++        &record_pages::declarations(FEE_PREFIX, FEE_BYTES, true)?,
++        CaptureBudget {
++            keys: 33,
++            nodes: 512,
++            bytes: 128 * 1024,
++        },
++    )?;
++    let captured_old = record_pages::read_with(|key| captured.read(key), FEE_PREFIX, FEE_BYTES)?;
++    assert_eq!(captured_old, old);
++    let expected = captured.stage(&full)?;
++    let actual = captured.stage(&delta)?;
++    assert_eq!(actual.parent_root(), expected.parent_root());
++    assert_eq!(actual.root(), expected.root());
++    assert_eq!(actual.nodes(), expected.nodes());
++    memory.0.extend(actual.nodes().clone());
++    assert_eq!(
++        record_pages::read_with(
++            |key| read_state_value(&memory, actual.root(), key),
++            FEE_PREFIX,
++            FEE_BYTES
++        )?,
++        new
++    );
++    Ok((
++        delta
++            .iter()
++            .filter(|change| matches!(change, StateChange::Delete { .. }))
++            .count(),
++        delta.len(),
++    ))
++}
++
++#[test]
++fn fee_record_delta_preserves_real_settlement_varints_and_tail_shrink() -> Result<()> {
++    let ordinary = FeeState::default();
++    let settled = settled_fees(&ordinary)?;
++    let (deletes, _) = compare_fee_updates(&ordinary, &settled)?;
++    assert_eq!(deletes, 0);
++    let next = settled_fees(&settled)?;
++    assert_eq!(compare_fee_updates(&settled, &next)?.0, 0);
++    for (before, after) in [(127, 128), (16_383, 16_384), (128, 127)] {
++        let mut old = settled.clone();
++        old.diagnostics.quote_max_pay_exceeded = before;
++        let mut new = old.clone();
++        new.diagnostics.quote_max_pay_exceeded = after;
++        assert_ne!(
++            postcard::to_allocvec(&old)?.len(),
++            postcard::to_allocvec(&new)?.len()
++        );
++        assert_eq!(compare_fee_updates(&old, &new)?.0, 0);
++    }
++    let mut large = settled.clone();
++    large.diagnostics.last_quote_failure = Some(FeeFailure {
++        code: FeeFailureCode::MaxPayExceeded,
++        reason: format!(
++            "{}: {}",
++            FeeFailureCode::MaxPayExceeded.as_str(),
++            "x".repeat(400)
++        ),
++    });
++    let mut small = large.clone();
++    small.diagnostics.last_quote_failure = None;
++    assert!(
++        compare_fee_updates(&large, &small)?.0 > 0,
++        "genuinely used old fee pages must still be deleted"
++    );
++    Ok(())
++}
++
++#[test]
++fn fee_page_delta_removes_reachability_rewalk_for_1024_account_put_run() -> Result<()> {
++    const ROWS: usize = 3 * 1024 + 1;
++    let before = settled_fees(&FeeState::default())?;
++    let after = settled_fees(&before)?;
++    let old = postcard::to_allocvec(&before)?;
++    let new = postcard::to_allocvec(&after)?;
++    let mut initial = record_pages::record_changes(FEE_PREFIX, &old, FEE_BYTES)?;
++    let mut declarations = record_pages::declarations(FEE_PREFIX, FEE_BYTES, true)?;
++    let mut writes = Vec::with_capacity(ROWS);
++    for row in 0..ROWS {
++        let key = format!("fee-page-delta/ledger/{row:08}").into_bytes();
++        initial.push(StateChange::Put {
++            key: key.clone(),
++            value: 100_000u64.to_le_bytes().to_vec(),
++        });
++        writes.push(StateChange::Put {
++            key: key.clone(),
++            value: 99_999u64.to_le_bytes().to_vec(),
++        });
++        declarations.push(DeclaredAccess {
++            key,
++            may_put: true,
++            may_delete: false,
++        });
++    }
++    let mut memory = Memory::default();
++    let staged = stage_state_update(&memory, empty_root(), &initial)?;
++    let root = staged.root();
++    memory.0.extend(staged.nodes().clone());
++    let captured = OwnedStateInput::capture(
++        &memory,
++        root,
++        &declarations,
++        CaptureBudget {
++            keys: declarations.len(),
++            nodes: 65_536,
++            bytes: 16 * 1024 * 1024,
++        },
++    )?;
++    let mut full = record_pages::record_changes(FEE_PREFIX, &new, FEE_BYTES)?;
++    assert!(full
++        .iter()
++        .any(|change| matches!(change, StateChange::Delete { .. })));
++    let mut delta =
++        record_pages::record_changes_from_parent(FEE_PREFIX, &new, FEE_BYTES, Some(&old))?;
++    assert!(delta
++        .iter()
++        .all(|change| matches!(change, StateChange::Put { .. })));
++    full.extend(writes.clone());
++    delta.extend(writes);
++    take_reachability_decodes_for_test();
++    let expected = captured.stage(&full)?;
++    let old_rewalk = take_reachability_decodes_for_test();
++    let actual = captured.stage(&delta)?;
++    let new_rewalk = take_reachability_decodes_for_test();
++    assert_eq!(actual.root(), expected.root());
++    assert_eq!(actual.nodes(), expected.nodes());
++    assert!(old_rewalk >= ROWS);
++    assert_eq!(new_rewalk, 0);
++    assert!(actual.staged_calls() < expected.staged_calls());
++    assert!(actual.max_batched_puts() > expected.max_batched_puts());
++    memory.0.extend(actual.nodes().clone());
++    assert_eq!(
++        record_pages::read_with(
++            |key| read_state_value(&memory, actual.root(), key),
++            FEE_PREFIX,
++            FEE_BYTES
++        )?,
++        new
++    );
++    eprintln!("fee-page-delta tree-only: ledger_puts={ROWS} full_changes={} delta_changes={} full_stages={} delta_stages={} full_loaded={} delta_loaded={} full_max_put_run={} delta_max_put_run={} full_reachability={} delta_reachability={}",
++        full.len(), delta.len(), expected.staged_calls(), actual.staged_calls(), expected.loaded_nodes(), actual.loaded_nodes(),
++        expected.max_batched_puts(), actual.max_batched_puts(), old_rewalk, new_rewalk);
++    Ok(())
++}
+diff --git a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_effects.rs b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_effects.rs
+index 68b0c38c..627d568c 100644
+--- a/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_effects.rs
++++ b/crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_effects.rs
+@@ -8,10 +8,12 @@ use crate::native_pipeline::business::quoted_transfer::{
+ use crate::native_pipeline::business::uca_spend_state::{
+     self, AssetAccountAuthorityV2, AssetSpendStateAccessV2,
+ };
++use crate::native_pipeline::ingress::batch::BatchSource;
+ use crate::native_pipeline::state::tree::MAX_BATCH_READ_KEYS;
+ use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
+ use novovm_exec::uca_spend::SignatureCheckedAssetSpendV2;
+ use novovm_protocol::uca_spend::AssetSpendIntentV2;
++use std::sync::Arc;
+ 
+ pub(super) struct SpendPlan {
+     pub entries: Vec<SpendEntry>,
+@@ -265,12 +267,40 @@ impl NovTransferBody {
+         signed: Vec<SignatureCheckedAssetSpendV2>,
+         policy: DirectNovFeePolicy,
+         plan_budget: PlanBudget,
++    ) -> Result<Self> {
++        Self::prepare_asset_spend_inner(signed, None, policy, plan_budget)
++    }
++
++    /// Retain the product's original immutable columns. Signature capabilities
++    /// must match every signed row; this grants no parent-state authority.
++    pub(crate) fn prepare_asset_spend_from_uca(
++        source: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
++        signed: Vec<SignatureCheckedAssetSpendV2>,
++        policy: DirectNovFeePolicy,
++        plan_budget: PlanBudget,
++    ) -> Result<Self> {
++        Self::prepare_asset_spend_inner(signed, Some(source), policy, plan_budget)
++    }
++
++    fn prepare_asset_spend_inner(
++        signed: Vec<SignatureCheckedAssetSpendV2>,
++        source: Option<Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>>,
++        policy: DirectNovFeePolicy,
++        plan_budget: PlanBudget,
+     ) -> Result<Self> {
+         let effect_contract = uca_effect_contract(&policy)?;
+         ensure!(
+             !signed.is_empty() && signed.len() <= plan_budget.transactions,
+             "UCA candidate shape/budget"
+         );
++        if let Some(batch) = &source {
++            ensure!(
++                batch.len() == signed.len()
++                    && batch.max_transaction_bytes() <= plan_budget.transaction_bytes
++                    && batch.canonical_bytes() <= plan_budget.body_bytes,
++                "UCA structural source count/byte budget"
++            );
++        }
+         validate_authority_metadata(
+             signed.len(),
+             |index| signed[index].intent(),
+@@ -291,19 +321,26 @@ impl NovTransferBody {
+         let mut raw = Vec::new();
+         let mut body_bytes = 0usize;
+         let mut seen = BTreeSet::new();
+-        for (tx, (payer, recipient)) in signed.iter().zip(&accounts) {
++        for (index, (tx, (payer, recipient))) in signed.iter().zip(&accounts).enumerate() {
+             let i = tx.intent();
+             ensure!(seen.insert(i.signing_bytes()?), "duplicate UCA intent");
+-            let bytes = tx.signed().encode()?;
+-            body_bytes = body_bytes
+-                .checked_add(bytes.len())
+-                .context("UCA body size overflow")?;
+-            ensure!(
+-                bytes.len() <= plan_budget.transaction_bytes
+-                    && body_bytes <= plan_budget.body_bytes,
+-                "UCA signed body byte budget"
+-            );
+-            raw.push(bytes);
++            if let Some(batch) = &source {
++                ensure!(
++                    batch.view(index)?.matches_signed(tx.signed())?,
++                    "UCA structural source differs from checked signed row"
++                );
++            } else {
++                let bytes = tx.signed().encode()?;
++                body_bytes = body_bytes
++                    .checked_add(bytes.len())
++                    .context("UCA body size overflow")?;
++                ensure!(
++                    bytes.len() <= plan_budget.transaction_bytes
++                        && body_bytes <= plan_budget.body_bytes,
++                    "UCA signed body byte budget"
++                );
++                raw.push(bytes);
++            }
+             let access = AssetSpendStateAccessV2::new(i.clone(), payer.clone(), recipient.clone())?;
+             for d in access.declarations() {
+                 declarations
+@@ -361,7 +398,7 @@ impl NovTransferBody {
+         );
+         Ok(Self {
+             batch: BodyInput::Uca {
+-                raw,
++                source: source.map_or_else(|| BatchSource::Raw(raw), BatchSource::Uca),
+                 metadata: Box::new(UcaMetadata {
+                     signed,
+                     accounts,
+diff --git a/crates/novovm-node/src/native_pipeline/business/record_pages.rs b/crates/novovm-node/src/native_pipeline/business/record_pages.rs
+index da8986fc..cdecffef 100644
+--- a/crates/novovm-node/src/native_pipeline/business/record_pages.rs
++++ b/crates/novovm-node/src/native_pipeline/business/record_pages.rs
+@@ -130,6 +130,56 @@ pub fn record_changes(prefix: &[u8], bytes: &[u8], max_bytes: usize) -> Result<V
+     Ok(changes)
+ }
+ 
++/// The previous bytes must be the canonical record read from the complete
++/// declared range at this same parent. None keeps the original full update;
++/// it is not a claim of absence. Actual old tail pages are still deleted.
++pub(crate) fn record_changes_from_parent(
++    prefix: &[u8],
++    bytes: &[u8],
++    max_bytes: usize,
++    previous: Option<&[u8]>,
++) -> Result<Vec<StateChange>> {
++    let changes = record_changes(prefix, bytes, max_bytes)?;
++    match previous {
++        Some(previous) => {
++            changed_record_pages(changes, record_changes(prefix, previous, max_bytes)?)
++        }
++        None => Ok(changes),
++    }
++}
++
++/// Compare the original codec's complete page ranges. Callers retain the same
++/// read permissions and must supply old material from their captured parent.
++pub(crate) fn changed_record_pages(
++    changes: Vec<StateChange>,
++    previous: Vec<StateChange>,
++) -> Result<Vec<StateChange>> {
++    ensure!(
++        changes.len() == previous.len(),
++        "record page delta profile mismatch"
++    );
++    let mut changed = Vec::with_capacity(changes.len());
++    for (change, old) in changes.into_iter().zip(previous) {
++        let (key, value) = match &change {
++            StateChange::Put { key, value } => (key, Some(value)),
++            StateChange::Delete { key } => (key, None),
++        };
++        let (old_key, old_value) = match &old {
++            StateChange::Put { key, value } => (key, Some(value)),
++            StateChange::Delete { key } => (key, None),
++        };
++        ensure!(key == old_key, "record page delta prefix mismatch");
++        if value != old_value {
++            changed.push(change);
++        }
++    }
++    Ok(changed)
++}
++
++#[cfg(test)]
++#[path = "record_pages/delta_tests.rs"]
++mod delta_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/crates/novovm-node/src/native_pipeline/business/record_pages/delta_tests.rs b/crates/novovm-node/src/native_pipeline/business/record_pages/delta_tests.rs
+new file mode 100644
+index 00000000..dce53f52
+--- /dev/null
++++ b/crates/novovm-node/src/native_pipeline/business/record_pages/delta_tests.rs
+@@ -0,0 +1,75 @@
++use super::*;
++use crate::native_pipeline::state::tree::{
++    empty_root, read_state_value, stage_state_update, NodeHash, StateNodeReader,
++};
++use std::collections::BTreeMap;
++
++#[derive(Default)]
++struct Memory(BTreeMap<NodeHash, Vec<u8>>);
++impl StateNodeReader for Memory {
++    fn read_node(&self, hash: &NodeHash) -> Result<Option<Vec<u8>>> {
++        Ok(self.0.get(hash).cloned())
++    }
++}
++
++#[test]
++fn parent_record_delta_keeps_full_unknown_updates_and_real_tail_deletions() -> Result<()> {
++    let prefix = b"native-record-delta";
++    for (before, after) in [
++        (vec![7; 100], vec![8; 100]),
++        (vec![7; 100], vec![8; 512]),
++        (vec![7; 512], vec![8; 100]),
++        (vec![7; 100], vec![7; 100]),
++    ] {
++        let full = record_changes(prefix, &after, 512)?;
++        let unknown = record_changes_from_parent(prefix, &after, 512, None)?;
++        let delta = record_changes_from_parent(prefix, &after, 512, Some(&before))?;
++        let mut memory = Memory::default();
++        let initial = stage_state_update(
++            &memory,
++            empty_root(),
++            &record_changes(prefix, &before, 512)?,
++        )?;
++        let root = initial.root();
++        memory.0.extend(initial.nodes().clone());
++        let expected = stage_state_update(&memory, root, &full)?;
++        let no_parent = stage_state_update(&memory, root, &unknown)?;
++        let actual = stage_state_update(&memory, root, &delta)?;
++        assert_eq!(unknown.len(), full.len());
++        assert_eq!(actual.root(), expected.root());
++        assert_eq!(no_parent.root(), expected.root());
++        assert_eq!(actual.nodes(), expected.nodes());
++        if after.len() < before.len() {
++            assert!(delta
++                .iter()
++                .any(|change| matches!(change, StateChange::Delete { .. })));
++        } else {
++            assert!(delta
++                .iter()
++                .all(|change| matches!(change, StateChange::Put { .. })));
++        }
++        if before == after {
++            assert!(delta.is_empty());
++        }
++        memory.0.extend(actual.nodes().clone());
++        assert_eq!(
++            read_with(
++                |key| read_state_value(&memory, actual.root(), key),
++                prefix,
++                512
++            )?,
++            after
++        );
++    }
++    assert!(changed_record_pages(
++        record_changes(prefix, &[9; 100], 256)?,
++        record_changes(prefix, &[7; 512], 512)?,
++    )
++    .is_err());
++    assert!(changed_record_pages(
++        record_changes(prefix, &[9; 100], 512)?,
++        record_changes(b"other-native-record", &[7; 100], 512)?,
++    )
++    .is_err());
++    Ok(())
++}
+diff --git a/crates/novovm-node/src/native_pipeline/business/uca_spend_state.rs b/crates/novovm-node/src/native_pipeline/business/uca_spend_state.rs
+index ec7765ce..a324a0c9 100644
+--- a/crates/novovm-node/src/native_pipeline/business/uca_spend_state.rs
++++ b/crates/novovm-node/src/native_pipeline/business/uca_spend_state.rs
+@@ -230,38 +230,15 @@ pub(crate) fn grant_record_changes_from_parent(
+         Some((old_intent, old_grant)) => {
+             // Epoch is not in the physical prefix, but the original codec checks
+             // it. Use the captured record's normalized intent, not the new epoch.
+-            changed_record_pages(changes, grant_record_changes(old_intent, old_grant)?)
++            record_pages::changed_record_pages(
++                changes,
++                grant_record_changes(old_intent, old_grant)?,
++            )
+         }
+         None => Ok(changes),
+     }
+ }
+ 
+-fn changed_record_pages(
+-    changes: Vec<StateChange>,
+-    previous: Vec<StateChange>,
+-) -> Result<Vec<StateChange>> {
+-    ensure!(
+-        changes.len() == previous.len(),
+-        "record page delta profile mismatch"
+-    );
+-    let mut changed = Vec::with_capacity(changes.len());
+-    for (change, old) in changes.into_iter().zip(previous) {
+-        let (key, value) = match &change {
+-            StateChange::Put { key, value } => (key, Some(value)),
+-            StateChange::Delete { key } => (key, None),
+-        };
+-        let (old_key, old_value) = match &old {
+-            StateChange::Put { key, value } => (key, Some(value)),
+-            StateChange::Delete { key } => (key, None),
+-        };
+-        ensure!(key == old_key, "record page delta prefix mismatch");
+-        if value != old_value {
+-            changed.push(change);
+-        }
+-    }
+-    Ok(changed)
+-}
+-
+ /// Reuses the account's ordinary grant/nonce namespace. No funding or identity
+ /// authority is introduced by this descriptor location.
+ pub(crate) fn creation_location(intent: &AssetSpendIntentV2) -> AssetSpendIntentV2 {
+diff --git a/crates/novovm-node/src/native_pipeline/business/uca_spend_state/page_delta_tests.rs b/crates/novovm-node/src/native_pipeline/business/uca_spend_state/page_delta_tests.rs
+index 734340f2..a71b3961 100644
+--- a/crates/novovm-node/src/native_pipeline/business/uca_spend_state/page_delta_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/business/uca_spend_state/page_delta_tests.rs
+@@ -93,7 +93,7 @@ fn record_page_delta_preserves_real_tail_shrink_growth_and_original_profile() ->
+     for (before, after) in [(vec![7; 512], vec![8; 100]), (vec![7; 100], vec![8; 512])] {
+         let old = record_pages::record_changes(prefix, &before, 512)?;
+         let full = record_pages::record_changes(prefix, &after, 512)?;
+-        let delta = changed_record_pages(full.clone(), old.clone())?;
++        let delta = record_pages::changed_record_pages(full.clone(), old.clone())?;
+         if after.len() < before.len() {
+             assert!(
+                 matches!(delta.last(), Some(StateChange::Delete { .. })),
+@@ -125,7 +125,7 @@ fn record_page_delta_preserves_real_tail_shrink_growth_and_original_profile() ->
+         );
+     }
+     assert!(
+-        changed_record_pages(
++        record_pages::changed_record_pages(
+             record_pages::record_changes(prefix, &[8; 100], 256)?,
+             record_pages::record_changes(prefix, &[7; 512], 512)?,
+         )
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+index 28808d14..e9c5c3cb 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+@@ -21,7 +21,7 @@ pub struct SuccessorSelection {
+     pub source: VoteContext,
+     pub source_round: u64,
+     pub parent: ParentPoint,
+-    pub nonce_after: BTreeMap<Hash, u64>,
++    pub nonce_after: Arc<BTreeMap<Hash, u64>>,
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -339,13 +339,9 @@ impl CandidateBodies {
+                 nonce_after: if expected.is_some() {
+                     // Remote qualification does not select transactions. Do
+                     // not rebuild a nonce-selection map that it never uses.
+-                    BTreeMap::new()
++                    Arc::new(BTreeMap::new())
+                 } else {
+-                    packet
+-                        .receipt_projection()
+-                        .iter()
+-                        .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
+-                        .collect()
++                    Arc::clone(packet.nonce_projection())
+                 },
+             }));
+         }
+@@ -411,7 +407,7 @@ impl CandidateBodies {
+                 state_version: context.parent_state_version,
+                 decision_hash: decision_id(&progress.context(), context.parent_block_hash),
+             },
+-            nonce_after: BTreeMap::new(),
++            nonce_after: Arc::new(BTreeMap::new()),
+         };
+         let pin = Pin::from_selection(&selection);
+         if context.parent_height != progress.context().height
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
+index ed722d8d..193348fb 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
+@@ -15,6 +15,7 @@ use crate::native_pipeline::{
+     pipeline::CandidatePipeline,
+ };
+ use anyhow::{ensure, Context, Result};
++pub(crate) use ingress::{CheckedTransactionSource, TransactionOrigin, TransactionSource};
+ use novovm_network::novorudp::{object_link::NativeSendLimits, object_sender::ObjectSendState};
+ use std::{
+     collections::{BTreeMap, BTreeSet, VecDeque},
+@@ -92,8 +93,8 @@ pub struct NativeLifecycle {
+     bytes: Vec<usize>,
+     send_turn: usize,
+     pending: [Option<Incoming>; 3],
+-    transactions: Vec<VecDeque<Arc<Message>>>,
+-    client_transactions: VecDeque<Arc<Message>>,
++    transactions: Vec<VecDeque<ingress::TransactionSource>>,
++    client_transactions: VecDeque<ingress::TransactionSource>,
+     transaction_turn: usize,
+     transaction_session: Hash,
+     transaction_sequence: u64,
+@@ -622,9 +623,13 @@ impl NativeLifecycle {
+         // neither enters RoundProgress nor participates in validator fanout.
+         if self.client_transactions.len() < 2 {
+             match self.channel.poll_application(now, 64)? {
+-                Some(ReceiveEvent::Message(message)) => self
+-                    .client_transactions
+-                    .push_back(Arc::new(message.message)),
++                Some(ReceiveEvent::Message(message)) => {
++                    self.client_transactions
++                        .push_back(ingress::TransactionSource::Raw {
++                            message: Arc::new(message.message),
++                            origin: ingress::TransactionOrigin::Client,
++                        })
++                }
+                 Some(ReceiveEvent::Rejected { .. }) => self.rejected_messages += 1,
+                 None => {}
+             }
+@@ -777,7 +782,12 @@ impl NativeLifecycle {
+                             // Native DONE means bounded custody, never signature admission.
+                             // RPC consumes these originals via the resident auth owner.
+                             if self.transactions[peer].len() < 2 {
+-                                self.transactions[peer].push_back(received.message);
++                                self.transactions[peer].push_back(
++                                    ingress::TransactionSource::Raw {
++                                        message: received.message,
++                                        origin: ingress::TransactionOrigin::Peer(peer),
++                                    },
++                                );
+                             } else {
+                                 self.pending[lane] = Some(received);
+                             }
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
+index 58303b7a..816702a0 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
+@@ -5,8 +5,42 @@ use crate::native_pipeline::consensus::{
+     statement::ParentPoint, transport::TransactionsScope, wire::Context as VoteContext,
+ };
+ use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
++use crate::native_pipeline::pipeline::{
++    AdmissionInput, AdmittedTransfer, SignatureAdmissionOutput,
++};
+ use novovm_protocol::uca_spend_batch::AssetSpendBatchV2;
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(crate) enum TransactionOrigin {
++    Client,
++    Peer(usize),
++}
++
++/// The original source handoff may retain signature facts, never parent-state
++/// authority. Its output permit keeps every byte charged while queued.
++/// The boxed carrier fits the original signature reservation's 4096-byte
++/// reply/header allowance; row/source storage keeps that same byte permit.
++pub(crate) struct CheckedTransactionSource {
++    pub output: SignatureAdmissionOutput,
++    pub rows: VecDeque<(AdmissionInput, AdmittedTransfer)>,
++    pub complete_body: bool,
++    pub detached_body: bool,
++    pub broadcast: bool,
++    pub waiting_parent: Option<ParentPoint>,
++    pub waiting_pool: Option<(usize, usize, usize)>,
++}
++
++pub(crate) enum TransactionSource {
++    Raw {
++        message: Arc<Message>,
++        origin: TransactionOrigin,
++    },
++    Checked {
++        checked: Box<CheckedTransactionSource>,
++        origin: TransactionOrigin,
++    },
++}
++
+ /// The cheap availability hint retains its existing conservative bounds. Only
+ /// this exact, prepared-message check grants the final local reservation; the
+ /// auxiliary/control split can be tighter than the half-budget hint.
+@@ -44,9 +78,72 @@ impl NativeLifecycle {
+     /// Untrusted application input, not a validator message or signed vote.
+     /// The product's existing admission owner must independently authenticate
+     /// each transaction and disseminate accepted input to validator peers.
+-    pub fn take_client_transactions(&mut self) -> Option<Arc<Message>> {
++    pub(crate) fn take_client_transactions(&mut self) -> Option<TransactionSource> {
+         self.client_transactions.pop_front()
+     }
++
++    /// Return to the SAME two-slot source queue. A full queue exchanges its
++    /// oldest source into the caller's existing incoming/authority handoff.
++    /// No accepted row or checked fact is discarded to make room.
++    pub(crate) fn return_checked_transactions(
++        &mut self,
++        origin: TransactionOrigin,
++        mut checked: Box<CheckedTransactionSource>,
++    ) -> std::result::Result<
++        Option<TransactionSource>,
++        (Box<CheckedTransactionSource>, anyhow::Error),
++    > {
++        let queue = match origin {
++            TransactionOrigin::Client => &mut self.client_transactions,
++            TransactionOrigin::Peer(peer) => match self.transactions.get_mut(peer) {
++                Some(queue) => queue,
++                None => {
++                    return Err((
++                        checked,
++                        anyhow::anyhow!("unknown original transaction source"),
++                    ))
++                }
++            },
++        };
++        if let Err(error) = checked.output.park_for_source() {
++            return Err((checked, error));
++        }
++        let next = if queue.len() == 2 {
++            queue.pop_front()
++        } else {
++            None
++        };
++        queue.push_back(TransactionSource::Checked { checked, origin });
++        Ok(next)
++    }
++
++    pub(crate) fn rotate_taken_checked_transactions(
++        &mut self,
++        origin: TransactionOrigin,
++        checked: Box<CheckedTransactionSource>,
++    ) {
++        let queue = match origin {
++            TransactionOrigin::Client => &mut self.client_transactions,
++            TransactionOrigin::Peer(peer) => &mut self.transactions[peer],
++        };
++        // The caller just removed this exact source; no receive call occurs
++        // between removal and rotation, so its original slot remains free.
++        assert!(queue.len() < 2, "taken source slot must remain free");
++        queue.push_back(TransactionSource::Checked { checked, origin });
++    }
++
++    #[cfg(test)]
++    pub(crate) fn queue_client_transactions_for_test(
++        &mut self,
++        message: Arc<Message>,
++    ) -> Result<()> {
++        ensure!(self.client_transactions.len() < 2, "test source queue full");
++        self.client_transactions.push_back(TransactionSource::Raw {
++            message,
++            origin: TransactionOrigin::Client,
++        });
++        Ok(())
++    }
+     pub fn context(&self) -> VoteContext {
+         self.progress.context()
+     }
+@@ -248,7 +345,7 @@ impl NativeLifecycle {
+     }
+ 
+     /// Fair, bounded handoff to the existing independent authentication owner.
+-    pub fn take_transactions(&mut self) -> Option<Arc<Message>> {
++    pub(crate) fn take_transactions(&mut self) -> Option<TransactionSource> {
+         for _ in 0..self.transactions.len() {
+             let peer = self.transaction_turn;
+             self.transaction_turn = (peer + 1) % self.transactions.len();
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+index 0a6211e5..b727545c 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+@@ -48,9 +48,27 @@ type CorpusKeyPair = (Vec<u8>, zeroize::Zeroizing<Vec<u8>>);
+ struct PairedCorpus {
+     keys: Option<Arc<Vec<CorpusKeyPair>>>,
+     approvals: Option<Vec<UcaGenesisApprovalV2>>,
+-    signed: Option<Vec<Vec<u8>>>,
++    signed: Option<Arc<Vec<Vec<u8>>>>,
+     identity: Option<(Hash, Hash, Hash)>,
+     rolling_identity: Option<(Hash, Hash)>,
++    last_report: Option<PathBuf>,
++}
++
++fn swap_bridge_rows<T>(rows: &mut [T], frame_rows: usize) {
++    for index in 0..frame_rows {
++        rows.swap(frame_rows + index, 8 * frame_rows + index);
++    }
++}
++
++#[test]
++fn late_bridge_delivery_order_preserves_every_original_observation() {
++    let original = (0..16 * 4).collect::<Vec<_>>();
++    let mut rows = original.clone();
++    swap_bridge_rows(&mut rows, 4);
++    assert_eq!(&rows[4..8], &[32, 33, 34, 35]);
++    assert_eq!(&rows[32..36], &[4, 5, 6, 7]);
++    swap_bridge_rows(&mut rows, 4);
++    assert_eq!(rows, original);
+ }
+ 
+ fn account_bytes(index: usize) -> [u8; 20] {
+@@ -351,6 +369,12 @@ fn run_native_uca_load_mode(
+     )?;
+     let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, CONFIGURED_BATCH)?;
+     let shape = WorkloadShape::from_environment(count)?;
++    let late_bridge = std::env::var("NOVOVM_NATIVE_UCA_LATE_BRIDGE").as_deref() == Ok("1");
++    ensure!(
++        !late_bridge
++            || mode == LoadMode::Static && count >= 9 * frame_rows && shape.payers == frame_rows,
++        "late bridge fixture requires static whole-account nonce frames and at least nine frames"
++    );
+     let account_count = shape.accounts();
+     let codec = native_decode_limits(CONFIGURED_BATCH, true);
+     ensure!(
+@@ -414,6 +438,7 @@ fn run_native_uca_load_mode(
+         "NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS",
+         "NOVOVM_NATIVE_UCA_PAYERS",
+         "NOVOVM_NATIVE_UCA_RECIPIENT_DISTRIBUTION",
++        "NOVOVM_NATIVE_UCA_LATE_BRIDGE",
+     ]
+     .into_iter()
+     .map(|name| (name, std::env::var(name).ok()))
+@@ -435,6 +460,7 @@ fn run_native_uca_load_mode(
+         "load_strategy":mode.label(),"grant_expires_at_height":grant_expiry,
+         "rolling_wave_transactions":if mode.is_rolling() {Some(rolling::WAVE_ROWS)} else {None},
+         "effective_outstanding_limit":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
++        "submission_frame_order":if late_bridge {"0,8,2,3,4,5,6,7,1,9,...; signed corpus remains canonical"} else {"canonical"},
+         "rolling_signature_65536":if mode.is_rolling() {"PENDING"} else {"NOT_EXECUTED"},
+         "continuous_signature_65536":if mode == LoadMode::Continuous {"PENDING"} else {"NOT_EXECUTED"},
+         "input_identity":if mode.dynamic_windows() {"same logical payer/recipient/amount/nonce and approved genesis; receipt-anchored expiry and signatures can differ across runs, NOT byte-identical"} else if signature_override.is_some() {"one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU"} else {"fresh generated per invocation; same logical workload is not byte-identical input"},
+@@ -631,12 +657,13 @@ fn run_native_uca_load_mode(
+         let mut raw = Vec::with_capacity(count);
+         let mut workload_hash = Sha256::new();
+         workload_hash.update(b"novovm/nuas-load/ordered-signed-inputs/v1\0");
++        let replay_signed = corpus.signed.clone();
+         let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
+             let payer = index % shape.payers;
+             let nonce = (index / shape.payers) as u64;
+             let recipient = shape.recipient(index);
+             let key = &keys[account_count + payer];
+-            let signed = match corpus.signed.as_ref().filter(|_| !mode.dynamic_windows()) {
++            let signed = match replay_signed.as_ref().filter(|_| !mode.dynamic_windows()) {
+                 Some(raw) => SignedAssetSpendV2::decode(&raw[index])?,
+                 None => signer.sign(
+                     make_intent(payer, recipient, nonce, window)?,
+@@ -681,9 +708,6 @@ fn run_native_uca_load_mode(
+                 &make_signed,
+             )?;
+         }
+-        evidence["initial_signed_corpus_rows"] = json!(first_count);
+-        evidence["initial_signed_corpus_preparation_us"] =
+-            json!(initial_preparation_started.elapsed().as_micros() as u64);
+         if mode.dynamic_windows() {
+             ensure!(
+                 corpus
+@@ -698,6 +722,19 @@ fn run_native_uca_load_mode(
+                 "paired genesis/root/signed bytes changed before node startup"
+             );
+         }
++        if !mode.dynamic_windows() && corpus.identity.is_none() {
++            // A failed delivery attempt must not discard the exact randomized
++            // signatures needed to replay that same input against the candidate.
++            corpus.identity = Some((
++                domain,
++                material.expected_initial_root,
++                workload_hash.clone().finalize().into(),
++            ));
++            corpus.signed = Some(Arc::new(raw.clone()));
++        }
++        evidence["initial_signed_corpus_rows"] = json!(first_count);
++        evidence["initial_signed_corpus_preparation_us"] =
++            json!(initial_preparation_started.elapsed().as_micros() as u64);
+         evidence["signed_workload_sha256"] = json!(hex(&workload_hash.clone().finalize()));
+         evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
+         let ingress = (0..4)
+@@ -733,7 +770,11 @@ fn run_native_uca_load_mode(
+                 "NUAS load HTTP listener unexpectedly open"
+             );
+         }
+-        let inputs = rolling::prepare_inputs(&mut clients[ingress], &raw, 0, frame_rows)?;
++        let mut inputs = rolling::prepare_inputs(&mut clients[ingress], &raw, 0, frame_rows)?;
++        if late_bridge {
++            inputs.swap(1, 8);
++            swap_bridge_rows(&mut observations, frame_rows);
++        }
+         evidence["application_object_bytes"] = json!(inputs
+             .iter()
+             .map(PreparedApplicationInput::byte_len)
+@@ -779,7 +820,7 @@ fn run_native_uca_load_mode(
+                 &mut evidence,
+             )?
+         } else {
+-            drive(
++            let result = drive(
+                 &mut nodes,
+                 &mut clients,
+                 ingress,
+@@ -788,7 +829,13 @@ fn run_native_uca_load_mode(
+                 &mut observations,
+                 &mut counts,
+                 timeout,
+-            )?
++            );
++            if late_bridge {
++                // Keep the receipt/audit oracle in its original canonical order,
++                // including on failure. Only delivery order was changed.
++                swap_bridge_rows(&mut observations, frame_rows);
++            }
++            result?
+         });
+         timed_attempt = None;
+         evidence["client_io_after"] =
+@@ -810,15 +857,10 @@ fn run_native_uca_load_mode(
+             });
+         } else {
+             let identity = (domain, material.expected_initial_root, workload_hash);
+-            if let Some(expected) = corpus.identity {
+-                ensure!(
+-                    identity == expected,
+-                    "paired genesis/root/signed bytes changed"
+-                );
+-            } else {
+-                corpus.identity = Some(identity);
+-                corpus.signed = Some(raw.clone());
+-            }
++            ensure!(
++                corpus.identity == Some(identity),
++                "paired genesis/root/signed bytes changed"
++            );
+         }
+         evidence["signed_workload_sha256"] = json!(hex(&workload_hash));
+         evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
+@@ -1088,10 +1130,94 @@ fn run_native_uca_load_mode(
+         directory.join("report.json"),
+         serde_json::to_vec_pretty(&evidence)?,
+     )?;
++    corpus.last_report = Some(directory.join("report.json"));
+     result?;
+     Ok(evidence)
+ }
+ 
++#[test]
++#[ignore = "real original-node late bridge: old pool must stall and candidate must finish the exact same signed input; run alone"]
++fn native_uca_late_nonce_bridge_before_after() -> Result<()> {
++    use novovm_exec::pq_signature::MldsaVerificationBackendV1::Cpu;
++    ensure!(
++        std::env::var("NOVOVM_NATIVE_UCA_LATE_BRIDGE").as_deref() == Ok("1"),
++        "late bridge order must be explicitly selected"
++    );
++    let baseline = fs::canonicalize(
++        std::env::var_os("NOVOVM_NATIVE_UCA_BASELINE_NODE_BINARY")
++            .context("pre-fix original node required")?,
++    )?;
++    let candidate = fs::canonicalize(
++        std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY").context("candidate node required")?,
++    )?;
++    ensure!(baseline != candidate, "late bridge binaries must differ");
++    let mut corpus = PairedCorpus::default();
++    let before_result = run_native_uca_load(Some(Cpu), &mut corpus, Some(&baseline));
++    let before: Value = serde_json::from_slice(&fs::read(
++        corpus
++            .last_report
++            .as_ref()
++            .context("old attempt report missing")?,
++    )?)?;
++    ensure!(
++        before_result.is_err()
++            && before["passed"] == false
++            && before["counts"]["transport_failures"] == 0
++            && before["counts"]["application_batches_transport_delivered"].as_u64() >= Some(9)
++            && before["counts"]["successful_transactions"] == before["wire_frame_rows"],
++        "old original node did not reproduce the delivered-but-unadmitted late bridge"
++    );
++    corpus.last_report = None;
++    let after_result = run_native_uca_load(Some(Cpu), &mut corpus, Some(&candidate));
++    let after: Value = serde_json::from_slice(&fs::read(
++        corpus
++            .last_report
++            .as_ref()
++            .context("candidate attempt report missing")?,
++    )?)?;
++    for field in [
++        "signed_workload_sha256",
++        "signing_domain",
++        "genesis_commitment",
++        "initial_root",
++        "aoem_sha256",
++        "backend",
++        "transactions",
++        "wire_frame_rows",
++        "query_batch",
++        "canonical_body_budget",
++        "submission_frame_order",
++    ] {
++        ensure!(before[field] == after[field], "late bridge {field} differs");
++    }
++    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
++        .join("../../target/native-product-load")
++        .join(format!(
++            "late-bridge-paired-{}-{}.json",
++            std::process::id(),
++            clock_ms()?
++        ));
++    fs::write(
++        &path,
++        serde_json::to_vec_pretty(&json!({
++            "scope":"one-host four-process late bridge counterexample, not a throughput acceptance",
++            "same_signed_corpus_and_initial_state":true,
++            "expected_before_liveness_failure_observed":true,
++            "rounds":[{"label":"before_cpu_expected_stall","report":before},
++                      {"label":"after_cpu","report":after}]
++        }))?,
++    )?;
++    eprintln!("NUAS late bridge paired report={}", path.display());
++    after_result?;
++    ensure!(
++        after["passed"] == true
++            && after["cold_recovery_pass"] == true
++            && after["full_fee_state_audited"] == true,
++        "candidate late bridge acceptance incomplete"
++    );
++    Ok(())
++}
++
+ #[test]
+ #[ignore = "isolated laboratory CPU/GPU/CPU replay of one NUAS corpus on four original processes; never deployment keys; run alone"]
+ fn native_uca_same_corpus_signature_cpu_gpu_cpu() -> Result<()> {
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs b/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs
+index 31e184ed..e60f8eae 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs
+@@ -267,6 +267,18 @@ impl UcaFixture {
+         let selection = f.nodes[next]
+             .successor_selection()?
+             .context("UCA successor basis absent")?;
++        for _ in 0..8 {
++            let repeated = f.nodes[next]
++                .successor_selection()?
++                .context("unchanged UCA successor basis disappeared")?;
++            ensure!(
++                repeated.parent == selection.parent
++                    && repeated.source == selection.source
++                    && repeated.source_round == selection.source_round
++                    && Arc::ptr_eq(&repeated.nonce_after, &selection.nonce_after),
++                "unchanged executed basis rebuilt its nonce projection"
++            );
++        }
+         ensure!(
+             selection.nonce_after.get(&self.grants[0].nonce_identity()?) == Some(&1),
+             "real UCA parent receipt missing stable account nonce"
+@@ -1091,6 +1103,13 @@ fn run_local_ready_successor(different_parent: bool) -> Result<()> {
+                     .all(|node| node.progress.head() == Some(head)),
+             "unselected private branch was promoted or published"
+         );
++        ensure!(
++            f.nodes[next].successor_selection()?.is_none_or(|current| {
++                current.parent != selected.parent
++                    && !Arc::ptr_eq(&current.nonce_after, &selected.nonce_after)
++            }),
++            "different decided parent reused an old nonce projection"
++        );
+     } else {
+         f.await_height(2)?;
+         ensure!(
+@@ -1422,6 +1441,10 @@ fn native_successor_uca_round_change_drains_auth_and_execution_without_publicati
+                 .poll(&f.base.services.0[next], Instant::now())?;
+             std::thread::yield_now();
+         }
++        ensure!(
++            f.nodes[next].successor_selection()?.is_none(),
++            "old-round nonce projection survived its selection pin"
++        );
+         let mut probe = Some(
+             crate::native_pipeline::pipeline::AuthenticationRequest::from_uca_batch(
+                 u.child_batch.clone(),
+diff --git a/crates/novovm-node/src/native_pipeline/execution/plan.rs b/crates/novovm-node/src/native_pipeline/execution/plan.rs
+index e7cf1b60..e72409e5 100644
+--- a/crates/novovm-node/src/native_pipeline/execution/plan.rs
++++ b/crates/novovm-node/src/native_pipeline/execution/plan.rs
+@@ -154,7 +154,7 @@ impl BatchPlan {
+             let len = match &source {
+                 BatchSource::Raw(raw) => raw[index].len(),
+                 BatchSource::Apfl(batch) => batch.row(index)?.encoded_len()?,
+-                BatchSource::Uca(batch) => batch.raw_transaction(index)?.len(),
++                BatchSource::Uca(batch) => batch.transaction_bytes(index)?,
+             };
+             if len == 0 || len > budget.transaction_bytes {
+                 bail!("batch raw transaction size exceeds budget or empty");
+@@ -441,7 +441,11 @@ fn framed_source_row(digest: &mut Sha256, source: &BatchSource, index: usize) ->
+             digest.update(u64::try_from(row.encoded_len()?)?.to_be_bytes());
+             row.update_canonical_digest(digest)
+         }
+-        BatchSource::Uca(batch) => framed(digest, &batch.raw_transaction(index)?),
++        BatchSource::Uca(batch) => {
++            digest.update(u64::try_from(batch.transaction_bytes(index)?)?.to_be_bytes());
++            batch.view(index)?.update_canonical_digest(digest)?;
++            Ok(())
++        }
+     }
+ }
+ 
+diff --git a/crates/novovm-node/src/native_pipeline/execution/plan/tests.rs b/crates/novovm-node/src/native_pipeline/execution/plan/tests.rs
+index 5c050db4..bf7f55dc 100644
+--- a/crates/novovm-node/src/native_pipeline/execution/plan/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/execution/plan/tests.rs
+@@ -300,6 +300,119 @@ fn apfl_plan_retains_shared_source_and_exact_raw_commitment() {
+     assert_eq!(Arc::strong_count(&source), 2);
+ }
+ 
++#[test]
++fn asset_plan_keeps_original_columns_and_exact_raw_commitment_order_and_domain() {
++    use novovm_protocol::uca_spend::{
++        spend_key_ref_v1, AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetSpendIntentV2,
++        SignedAssetSpendV2, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
++    };
++    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
++    // Structural plan fixture only; real ML-DSA facts are covered by the
++    // product compute reuse test, not manufactured by these shaped bytes.
++    let public = vec![3; MLDSA65_PUBLIC_KEY_BYTES];
++    let rows = [0, 1, 128]
++        .into_iter()
++        .map(|nonce| {
++            let mut signed = SignedAssetSpendV2 {
++                intent: AssetSpendIntentV2 {
++                    chain_id: 7,
++                    genesis: [1; 32],
++                    payer: vec![5; 20],
++                    recipient: vec![6; 32],
++                    asset: 1,
++                    amount: 10,
++                    max_fee: 1,
++                    nonce,
++                    authorization_epoch: 1,
++                    spend_key_ref: spend_key_ref_v1(&public).unwrap(),
++                    not_before_height: 1,
++                    expires_at_height: 50,
++                    authority_update: None,
++                    recipient_creation: None,
++                },
++                public_key: public.clone(),
++                signature: vec![nonce as u8; MLDSA65_SIGNATURE_BYTES],
++            };
++            if nonce == 1 {
++                signed.intent.amount = 0;
++                signed.intent.recipient = signed.intent.payer.clone();
++                signed.intent.authority_update = Some(AssetAuthorityUpdateV2 {
++                    use_recovery: false,
++                    next_epoch: 2,
++                    active: true,
++                    management_key_ref: [9; 32],
++                    recovery_key_ref: Some([8; 32]),
++                    grants: vec![],
++                });
++            } else if nonce == 128 {
++                let creation = AssetAccountCreationV2 {
++                    management_key_ref: [11; 32],
++                    recovery_key_ref: Some([10; 32]),
++                    grants: vec![],
++                };
++                signed.intent.recipient = creation.account(7, &[1; 32]).unwrap().to_vec();
++                signed.intent.recipient_creation = Some(creation);
++            }
++            signed.encode().unwrap()
++        })
++        .collect::<Vec<_>>();
++    let limits = AssetSpendBatchLimitsV2 {
++        transactions: 16,
++        transaction_bytes: 8192,
++        body_bytes: 32768,
++    };
++    let budget = PlanBudget {
++        transactions: limits.transactions,
++        transaction_bytes: limits.transaction_bytes,
++        body_bytes: limits.body_bytes,
++        access_keys: 16,
++    };
++    let source = Arc::new(AssetSpendBatchV2::from_raw(&rows, limits).unwrap());
++    let build =
++        |source, context| BatchPlan::from_source(context, source, accesses(), budget).unwrap();
++    let reference = build(BatchSource::Raw(rows.clone()), context([7; 32]));
++    let plan = build(BatchSource::Uca(source.clone()), context([7; 32]));
++    assert!(matches!(&plan.source, BatchSource::Uca(retained) if Arc::ptr_eq(retained, &source)));
++    assert_eq!(Arc::strong_count(&source), 2);
++    assert!(plan.raw_transactions_if_materialized().is_none());
++    assert_eq!(plan.commitment(), reference.commitment());
++    assert_eq!(
++        plan.canonical_body_bytes(),
++        reference.canonical_body_bytes()
++    );
++    assert_eq!(
++        plan.max_transaction_bytes(),
++        reference.max_transaction_bytes()
++    );
++    for (index, bytes) in rows.iter().enumerate() {
++        assert_eq!(plan.canonical_transaction(index).unwrap().as_ref(), bytes);
++    }
++    let mut reordered = rows.clone();
++    reordered.swap(0, 1);
++    let reordered_source = Arc::new(AssetSpendBatchV2::from_raw(&reordered, limits).unwrap());
++    let reordered_plan = build(BatchSource::Uca(reordered_source), context([7; 32]));
++    assert_ne!(reordered_plan.commitment(), plan.commitment());
++    assert_eq!(
++        reordered_plan.commitment(),
++        build(BatchSource::Raw(reordered), context([7; 32])).commitment()
++    );
++    let mut changed_domain = context([7; 32]);
++    changed_domain.chain_id += 1;
++    assert_ne!(
++        build(BatchSource::Uca(source.clone()), changed_domain).commitment(),
++        plan.commitment()
++    );
++    let duplicate =
++        Arc::new(AssetSpendBatchV2::from_raw(&[rows[0].clone(), rows[0].clone()], limits).unwrap());
++    assert!(BatchPlan::from_source(
++        context([7; 32]),
++        BatchSource::Uca(duplicate),
++        accesses(),
++        budget
++    )
++    .is_err());
++}
++
+ #[test]
+ fn apfl_plan_preserves_duplicate_bounds_order_and_signature_binding() {
+     let rows = signed_structural_rows();
+diff --git a/crates/novovm-node/src/native_pipeline/ingress/batch.rs b/crates/novovm-node/src/native_pipeline/ingress/batch.rs
+index 8b02720d..0ff69727 100644
+--- a/crates/novovm-node/src/native_pipeline/ingress/batch.rs
++++ b/crates/novovm-node/src/native_pipeline/ingress/batch.rs
+@@ -152,7 +152,7 @@ pub struct AdmissionRow {
+ pub enum CheckedAdmission {
+     V3(SignatureCheckedTransfer),
+     Uca {
+-        checked: novovm_exec::uca_spend::SignatureCheckedAssetSpendV2,
++        checked: novovm_exec::uca_spend::AssetSpendSignatureFactV2,
+         batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+         index: usize,
+     },
+@@ -166,7 +166,7 @@ impl CheckedAdmission {
+         }
+     }
+ 
+-    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedAssetSpendV2> {
++    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV2> {
+         match self {
+             Self::Uca { checked, .. } => Some(checked),
+             Self::V3(_) => None,
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/packet.rs b/crates/novovm-node/src/native_pipeline/persistence/packet.rs
+index 4dddefcf..a3049f86 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/packet.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/packet.rs
+@@ -20,7 +20,10 @@ use crate::native_pipeline::state::tree::{
+ use anyhow::{ensure, Context, Result};
+ use serde::{Deserialize, Serialize};
+ use sha2::{Digest, Sha256};
+-use std::collections::{BTreeMap, BTreeSet};
++use std::{
++    collections::{BTreeMap, BTreeSet},
++    sync::Arc,
++};
+ 
+ const DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND01";
+ // UCA extends the same candidate document, never re-labels a V3 body/receipt.
+@@ -91,6 +94,8 @@ pub struct PreparedCandidate {
+     // charged below against the existing 2x maximum-packet reservation.
+     // Not serialized or added to any business/consensus commitment.
+     receipt_projection: Vec<ReceiptProjection>,
++    // Same verified receipt facts, indexed once for repeated local selection.
++    nonce_projection: Arc<BTreeMap<NodeHash, u64>>,
+ }
+ 
+ struct Resources {
+@@ -155,8 +160,8 @@ impl PreparedCandidate {
+     pub fn record_bytes(&self) -> usize {
+         self.resources.total_bytes
+     }
+-    /// Logical record content plus the actual capacity of the read-only receipt
+-    /// projection. Runtime owners use this for retention, not storage encoding.
++    /// Logical records, receipt capacity and conservatively charged nonce index.
++    /// Runtime owners use this for retention, not storage encoding or exact RSS.
+     pub(crate) fn retained_bytes(&self) -> usize {
+         self.resources.retained_bytes
+     }
+@@ -166,6 +171,9 @@ impl PreparedCandidate {
+     pub(crate) fn receipt_projection(&self) -> &[ReceiptProjection] {
+         &self.receipt_projection
+     }
++    pub(crate) fn nonce_projection(&self) -> &Arc<BTreeMap<NodeHash, u64>> {
++        &self.nonce_projection
++    }
+     pub fn context(&self) -> &BatchContext {
+         &self.summary.context
+     }
+@@ -610,9 +618,24 @@ fn prepare_with_spend(
+     for (key, value) in &records {
+         account_record(&mut total, key, value, budget)?;
+     }
++    // Keep the last ACTUAL receipt nonce, including unchanged/failure rows.
++    // The immutable packet owns this once; selection only shares its Arc.
++    let nonce_projection: BTreeMap<_, _> = receipt_projection
++        .iter()
++        .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
++        .collect();
++    // Match the existing successor's conservative logical per-entry charge.
++    // Map/Arc headers are included; this is not allocator-exact RSS accounting.
++    let nonce_projection_bytes = nonce_projection
++        .len()
++        .checked_mul(96)
++        .and_then(|bytes| bytes.checked_add(std::mem::size_of::<BTreeMap<NodeHash, u64>>()))
++        .and_then(|bytes| bytes.checked_add(2 * std::mem::size_of::<usize>()))
++        .context("nonce projection size overflow")?;
+     let projection_bytes = receipt_projection
+         .capacity()
+         .checked_mul(std::mem::size_of::<ReceiptProjection>())
++        .and_then(|bytes| bytes.checked_add(nonce_projection_bytes))
+         .context("receipt projection size overflow")?;
+     // Existing pipeline reservation contains 2 * maximum packet bytes. The
+     // extra projection cannot silently widen that admitted memory contract.
+@@ -651,6 +674,7 @@ fn prepare_with_spend(
+         records,
+         resources,
+         receipt_projection,
++        nonce_projection: Arc::new(nonce_projection),
+     })
+ }
+ 
+diff --git a/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs b/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs
+index 8903dc61..bf554ed4 100644
+--- a/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs
+@@ -222,8 +222,11 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
+         assert_eq!(hot.success, cold.success);
+         assert_eq!(hot.charged_fee, cold.charged_fee.parse::<u128>().unwrap());
+     }
+-    let projection_bytes =
+-        packet.receipt_projection.capacity() * std::mem::size_of::<ReceiptProjection>();
++    let projection_bytes = packet.receipt_projection.capacity()
++        * std::mem::size_of::<ReceiptProjection>()
++        + packet.nonce_projection.len() * 96
++        + std::mem::size_of::<BTreeMap<NodeHash, u64>>()
++        + 2 * std::mem::size_of::<usize>();
+     assert_eq!(
+         packet.retained_bytes(),
+         packet.record_bytes() + projection_bytes
+@@ -271,6 +274,27 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
+     assert_eq!(packet.records(), repeated.records());
+ }
+ 
++#[test]
++fn immutable_nonce_projection_keeps_last_actual_receipt_and_one_allocation() {
++    let fixture = Fixture::new(&[4, 5, 6], 0, 3);
++    let packet = fixture.packet(PacketBudget::default()).unwrap();
++    let subject = fixture.receipts[0].signer_identity;
++    assert_eq!(packet.nonce_projection().len(), 1);
++    assert_eq!(packet.nonce_projection().get(&subject), Some(&7));
++    assert!(packet.receipt_projection().iter().all(|row| !row.success));
++    let retained = Arc::clone(packet.nonce_projection());
++    for _ in 0..64 {
++        assert!(Arc::ptr_eq(&retained, packet.nonce_projection()));
++        assert_eq!(retained.get(&subject), Some(&7));
++    }
++    let other = Fixture::new(&[7], 0, 3)
++        .packet(PacketBudget::default())
++        .unwrap();
++    assert!(!Arc::ptr_eq(&retained, other.nonce_projection()));
++    assert_eq!(other.nonce_projection().get(&subject), Some(&8));
++    assert_eq!(retained.get(&subject), Some(&7));
++}
++
+ #[test]
+ fn receipt_projection_codec_preserves_u128_and_distinct_failure_conditions() {
+     // Codec-only mirror test, not construction of an executed capability.
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/admission.rs b/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
+index 4853d5a3..941c24bb 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
+@@ -73,7 +73,7 @@ impl AdmittedTransfer {
+             .expect("V3 admission accessor requires V3 contract")
+     }
+ 
+-    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedAssetSpendV2> {
++    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV2> {
+         self.checked.uca()
+     }
+ 
+@@ -104,12 +104,9 @@ impl AdmittedTransfer {
+         std::mem::size_of::<Self>()
+             + std::mem::size_of::<CheckedAdmission>()
+             + 2 * std::mem::size_of::<usize>()
+-            + self.checked_uca().map_or(0, |checked| {
+-                let signed = checked.signed();
+-                signed.public_key.capacity()
+-                    + signed.signature.capacity()
+-                    + signed.intent.retained_heap_bytes()
+-            })
++            + self
++                .checked_uca()
++                .map_or(0, |checked| checked.intent().retained_heap_bytes())
+     }
+ }
+ 
+@@ -245,9 +242,10 @@ pub(crate) fn admitted_uca_for_test(
+     batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+     index: usize,
+ ) -> Result<AdmittedTransfer> {
+-    let signed =
+-        novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&batch.raw_transaction(index)?)?;
+-    let checked = facade.asset_spend_verifier_v2()?.verify(signed)?;
++    let checked = facade
++        .asset_spend_verifier_v2()?
++        .verify(batch.row(index)?)?
++        .into_signature_fact()?;
+     Ok(AdmittedTransfer {
+         checked: Arc::new(CheckedAdmission::Uca {
+             checked,
+@@ -415,6 +413,19 @@ impl SignatureAdmissionOutput {
+         self._permit.park_for_authority()
+     }
+ 
++    /// The original bounded source queue takes ownership of this completed
++    /// output and any popped rows. Retain every byte, release only its active
++    /// scheduling slot; rotating an already parked source is idempotent.
++    pub(crate) fn park_for_source(&mut self) -> Result<()> {
++        self._permit.park_for_source()
++    }
++
++    /// A checked source can resume only the original single authority slot.
++    /// Busy leaves both its role and original retained-byte charge unchanged.
++    pub(crate) fn resume_authority(&mut self) -> Result<bool> {
++        self._permit.resume_authority()
++    }
++
+     pub fn len(&self) -> usize {
+         self.rows.rows.len()
+     }
+@@ -459,6 +470,51 @@ impl CandidatePipeline {
+         Arc::ptr_eq(&row.owner, &self.identity)
+     }
+ 
++    /// Rare pool-pressure bridge: retain one exact original signed row instead
++    /// of pinning its complete source dictionary. The caller still accounts
++    /// this new source/fact in the existing pool before retaining it.
++    pub(crate) fn project_admitted_uca_row(
++        &self,
++        original: &AdmittedTransfer,
++    ) -> Result<(AdmissionInput, AdmittedTransfer)> {
++        ensure!(self.owns_admitted(original), "foreign UCA verifier owner");
++        let CheckedAdmission::Uca {
++            checked,
++            batch: source,
++            index,
++        } = original.checked.as_ref()
++        else {
++            anyhow::bail!("only original signed asset input can be projected");
++        };
++        ensure!(
++            checked.intent().chain_id == self.config.store.domain.chain_id
++                && checked.intent().genesis == self.config.store.domain.genesis_config_commitment,
++            "projected UCA signature domain mismatch"
++        );
++        let view = source.view(*index)?;
++        let budget = self.config.authentication;
++        let batch = Arc::new(
++            novovm_protocol::uca_spend_batch::AssetSpendBatchV2::from_views(
++                &[view],
++                novovm_protocol::uca_spend_batch::AssetSpendBatchLimitsV2 {
++                    transactions: budget.transactions,
++                    transaction_bytes: budget.transaction_bytes,
++                    body_bytes: budget.body_bytes,
++                },
++            )?,
++        );
++        ensure!(batch.view(0)? == view, "projected UCA signed row changed");
++        let admitted = AdmittedTransfer {
++            checked: Arc::new(CheckedAdmission::Uca {
++                checked: checked.clone(),
++                batch: batch.clone(),
++                index: 0,
++            }),
++            owner: self.identity.clone(),
++        };
++        Ok((AdmissionInput::Uca { batch, index: 0 }, admitted))
++    }
++
+     /// Structural rebinding only: this never authorizes a parent or executes
+     /// business. Every new row must match its same-owner evidence in full,
+     /// including signatures; canonical transaction hashes are insufficient.
+@@ -527,12 +583,11 @@ impl CandidatePipeline {
+                 checked.intent().chain_id == self.config.store.domain.chain_id
+                     && checked.intent().genesis
+                         == self.config.store.domain.genesis_config_commitment
+-                    && view.matches_signed(checked.signed())?
+                     && original.view(*original_index)? == view
+                     && seen.insert(checked.intent().signing_bytes()?),
+                 "admitted UCA signed row, order, locator or domain mismatch"
+             );
+-            transactions.push(checked.clone());
++            transactions.push(checked.reattach(batch.row(index)?)?);
+         }
+         Ok(AdmittedBatch {
+             checked: AdmittedSignatures::Uca {
+@@ -635,7 +690,7 @@ impl CandidatePipeline {
+             bytes,
+             background: false,
+             ingress: true,
+-            authority_parked: AtomicBool::new(false),
++            admission_role: AtomicU8::new(ADMISSION_INGRESS),
+         })))
+     }
+ }
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/admission/tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/admission/tests.rs
+index 413ab788..32595e1d 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/admission/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/admission/tests.rs
+@@ -243,6 +243,44 @@ fn authority_parking_hands_off_only_one_slot_and_retains_bytes_through_last_arc(
+     assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+ }
+ 
++#[test]
++fn source_parking_preserves_bytes_and_reclaims_only_the_unique_authority_slot() {
++    let mut config = cfg();
++    let bytes = input().reservation(&config).unwrap();
++    let reserve = BatchRequest::retained_reservation(
++        config.authentication.body_bytes.min(config.plan.body_bytes),
++        &config,
++    )
++    .unwrap();
++    config.max_retained_bytes = 3 * bytes + reserve;
++    let (pipeline, receiver) = inert_pipeline(config);
++    let mut first = completed(&pipeline, &receiver);
++    first.park_for_source().unwrap();
++    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 0));
++    assert!(first.park_for_authority().is_err());
++    let mut second = completed(&pipeline, &receiver);
++    second.park_for_authority().unwrap();
++    let mut third = completed(&pipeline, &receiver);
++    let before = all_usage(&pipeline);
++    assert_eq!(before, (0, 3 * bytes, 0, 1, 1));
++    assert!(!first.resume_authority().unwrap());
++    first.park_for_source().unwrap();
++    assert_eq!(all_usage(&pipeline), before);
++    third.park_for_source().unwrap();
++    assert_eq!(all_usage(&pipeline), (0, 3 * bytes, 0, 0, 1));
++    second.park_for_source().unwrap();
++    assert_eq!(all_usage(&pipeline), (0, 3 * bytes, 0, 0, 0));
++    assert!(first.resume_authority().unwrap());
++    assert!(!second.resume_authority().unwrap());
++    assert!(!third.resume_authority().unwrap());
++    assert!(first.resume_authority().is_err());
++    let retained = first._permit.clone();
++    drop((second, third, first));
++    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
++    drop(retained);
++    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
++}
++
+ #[test]
+ fn parked_source_charge_still_reserves_the_maximum_candidate_bytes() {
+     let mut config = cfg();
+@@ -255,12 +293,12 @@ fn parked_source_charge_still_reserves_the_maximum_candidate_bytes() {
+     config.max_retained_bytes = 2 * bytes + reserve - 1;
+     let (pipeline, receiver) = inert_pipeline(config);
+     let mut output = completed(&pipeline, &receiver);
+-    output.park_for_authority().unwrap();
++    output.park_for_source().unwrap();
+     assert!(matches!(
+         pipeline.try_admit_signatures_owned(input()).unwrap(),
+         SignatureAdmissionSubmission::Backpressured(_)
+     ));
+-    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
++    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 0));
+     let Submission::Accepted(candidate) = pipeline.try_submit_owned(request(empty_root())).unwrap()
+     else {
+         panic!("parked bytes prevented the reserved candidate")
+@@ -290,11 +328,117 @@ fn authority_handoff_rejects_non_ingress_role_without_changing_accounting() {
+     let permit = pipeline.reserve(23, false).unwrap().unwrap();
+     assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
+     assert!(permit.park_for_authority().is_err());
++    assert!(permit.park_for_source().is_err());
++    assert!(permit.resume_authority().is_err());
+     assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
+     drop(permit);
+     assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+ }
+ 
++#[test]
++#[ignore = "real trusted AOEM; single-row APFL projection preserves exact signature fact and original owner"]
++fn admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade() -> Result<()> {
++    use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2};
++    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
++    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
++        .context("explicit trusted AOEM test library required")?;
++    let facade =
++        novovm_exec::AoemExecFacade::open(std::path::Path::new(&library), Default::default())?;
++    let runtime =
++        facade.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
++    let key = runtime.generate_keypair()?;
++    let mut config = cfg();
++    config.authentication.transaction_bytes = 8192;
++    config.plan.transaction_bytes = 8192;
++    let signer = facade.asset_spend_signer_v2()?;
++    let rows = (0..2)
++        .map(|nonce| {
++            signer.sign(
++                AssetSpendIntentV2 {
++                    chain_id: config.store.domain.chain_id,
++                    genesis: config.store.domain.genesis_config_commitment,
++                    payer: vec![1; 20],
++                    recipient: vec![2; 20],
++                    asset: 1,
++                    authorization_epoch: 1,
++                    spend_key_ref: spend_key_ref_v1(&key.public_key)?,
++                    amount: 1,
++                    max_fee: 50,
++                    nonce,
++                    not_before_height: 1,
++                    expires_at_height: 50,
++                    authority_update: None,
++                    recipient_creation: None,
++                },
++                &key.public_key,
++                &key.expanded_secret_key,
++            )
++        })
++        .collect::<Result<Vec<_>>>()?;
++    let raw = rows
++        .iter()
++        .map(SignedAssetSpendV2::encode)
++        .collect::<std::result::Result<Vec<_>, _>>()?;
++    let source = Arc::new(AssetSpendBatchV2::from_raw(
++        &raw,
++        AssetSpendBatchLimitsV2 {
++            transactions: 2,
++            transaction_bytes: 8192,
++            body_bytes: 16 * 1024,
++        },
++    )?);
++    let weak = Arc::downgrade(&source);
++    let (pipeline, _) = inert_pipeline(config.clone());
++    let (foreign, _) = inert_pipeline(config);
++    let original = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 1)?;
++    assert!(foreign.project_admitted_uca_row(&original).is_err());
++    let v3 = admitted_for_test(&pipeline, structured(&[signed(1, 10)]), 0)?;
++    assert!(pipeline.project_admitted_uca_row(&v3).is_err());
++    let (input, projected) = pipeline.project_admitted_uca_row(&original)?;
++    let AdmissionInput::Uca { batch, index } = &input else {
++        anyhow::bail!("asset projection changed contract");
++    };
++    assert_eq!(*index, 0);
++    assert_eq!(batch.len(), 1);
++    assert!(!Arc::ptr_eq(batch, &source));
++    assert_eq!(batch.view(0)?, source.view(1)?);
++    assert!(projected.matches_uca_source(batch, 0));
++    assert!(!projected.matches_uca_source(&source, 1));
++    assert!(!original.matches_uca_source(batch, 0));
++    assert!(
++        projected
++            .checked_uca()
++            .unwrap()
++            .reattach(batch.row(0)?)?
++            .signed()
++            == &rows[1]
++    );
++    assert!(projected
++        .checked_uca()
++        .unwrap()
++        .reattach(rows[0].clone())
++        .is_err());
++    assert!(batch.retained_bytes()? + projected.retained_metadata_bytes() <= 29_184);
++    assert!(pipeline
++        .rebind_admitted_uca(batch.clone(), &[&projected])
++        .is_ok());
++    assert!(foreign
++        .rebind_admitted_uca(batch.clone(), &[&projected])
++        .is_err());
++    assert_eq!(
++        pipeline.signature_counts(),
++        (0, 0),
++        "projection/rebind must not rerun crypto"
++    );
++    drop(original);
++    drop(source);
++    assert!(
++        weak.upgrade().is_none(),
++        "single-row fact still pins the full original dictionary"
++    );
++    Ok(())
++}
++
+ #[test]
+ fn backpressure_and_closed_pipeline_return_the_exact_original_raw_allocation() {
+     let (mut pipeline, receiver) = inert_pipeline(cfg());
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+index f357c3b8..ac093b10 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+@@ -536,16 +536,13 @@ fn authenticate(
+             );
+             let mut signed = Vec::with_capacity(source.len());
+             for index in 0..source.len() {
+-                let projected;
+-                let wire = match &source {
+-                    BatchSource::Raw(raw) => &raw[index],
+-                    BatchSource::Uca(batch) => {
+-                        projected = batch.raw_transaction(index)?;
+-                        &projected
++                let tx = match &source {
++                    BatchSource::Raw(raw) => {
++                        novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&raw[index])?
+                     }
++                    BatchSource::Uca(batch) => batch.row(index)?,
+                     BatchSource::Apfl(_) => unreachable!(),
+                 };
+-                let tx = novovm_protocol::uca_spend::SignedAssetSpendV2::decode(wire)?;
+                 ensure!(
+                     tx.intent.chain_id == config.domain.chain_id
+                         && tx.intent.genesis == config.domain.genesis_config_commitment,
+@@ -565,7 +562,18 @@ fn authenticate(
+                 Ordering::Relaxed,
+             );
+             let signed = signed.into_iter().collect::<Result<Vec<_>>>()?;
+-            return NovTransferBody::prepare_asset_spend(signed, request.policy, config.plan);
++            return match source {
++                BatchSource::Uca(batch) => NovTransferBody::prepare_asset_spend_from_uca(
++                    batch,
++                    signed,
++                    request.policy,
++                    config.plan,
++                ),
++                BatchSource::Raw(_) => {
++                    NovTransferBody::prepare_asset_spend(signed, request.policy, config.plan)
++                }
++                BatchSource::Apfl(_) => unreachable!(),
++            };
+         }
+         CandidateInput::Unverified(source) => authenticate_source_batch_observed(
+             session,
+@@ -589,7 +597,7 @@ fn authenticate(
+                     checked
+                 }
+                 super::admission::AdmittedSignatures::Uca {
+-                    source: BatchSource::Uca(_),
++                    source: BatchSource::Uca(source),
+                     transactions,
+                 } => {
+                     config
+@@ -599,7 +607,8 @@ fn authenticate(
+                     // Only signatures are reused. This original body compiler
+                     // still captures the new exact parent and checks its UCA
+                     // revocation, nonce, budget, balance and fee effects.
+-                    return NovTransferBody::prepare_asset_spend(
++                    return NovTransferBody::prepare_asset_spend_from_uca(
++                        source,
+                         transactions,
+                         request.policy,
+                         config.plan,
+@@ -710,7 +719,7 @@ fn admit_uca_rows(
+             verified
+                 .next()
+                 .context("UCA verification row missing")?
+-                .map(|checked| {
++                .and_then(|checked| {
+                     let AdmissionInput::Uca { batch, index } = &input else {
+                         unreachable!("checked contract");
+                     };
+@@ -718,11 +727,11 @@ fn admit_uca_rows(
+                         .signatures
+                         .strict_verified
+                         .fetch_add(1, Ordering::Relaxed);
+-                    CheckedAdmission::Uca {
+-                        checked,
++                    Ok(CheckedAdmission::Uca {
++                        checked: checked.into_signature_fact()?,
+                         batch: batch.clone(),
+                         index: *index,
+-                    }
++                    })
+                 })
+         };
+         rows.push_back(AdmissionRow { input, result });
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs
+index 5285a6c4..22c7e694 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs
+@@ -120,6 +120,27 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
+     let memory = Memory(original.nodes().clone());
+     let mut session = ComputeSession::open(&library, 2)?;
+     let mut verifier = None;
++    for field in ["payer", "recipient", "domain", "signature"] {
++        let mut wrong = signed.clone();
++        match field {
++            "payer" => wrong.intent.payer[0] ^= 1,
++            "recipient" => wrong.intent.recipient[0] ^= 1,
++            "domain" => wrong.intent.chain_id += 1,
++            _ => wrong.signature[0] ^= 1,
++        }
++        let wrong = Arc::new(AssetSpendBatchV2::from_raw(&[wrong.encode()?], limits)?);
++        let checked = token.checked_uca().unwrap().reattach(signed.clone())?;
++        assert!(
++            NovTransferBody::prepare_asset_spend_from_uca(
++                wrong,
++                vec![checked],
++                policy(),
++                config.plan,
++            )
++            .is_err(),
++            "changed {field} attached to a real signature fact"
++        );
++    }
+     for case in [
+         "unchanged",
+         "revoked",
+@@ -157,7 +178,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
+         let mut parent = Memory(memory.0.clone());
+         parent.0.extend(changed.nodes().clone());
+         let selected = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
+-        let admitted = pipeline.rebind_admitted_uca(selected, &[&token])?;
++        let admitted = pipeline.rebind_admitted_uca(selected.clone(), &[&token])?;
+         let body = authenticate(
+             &mut session,
+             &mut verifier,
+@@ -175,9 +196,54 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
+         context.business_program = uca_program_id();
+         context.effect_contract = uca_effect_contract(&policy())?;
+         context.receipt_codec = uca_receipt_codec();
+-        let result = capture(body.bind(context)?, &parent)?
++        let plan = body.bind(context)?;
++        assert!(plan.plan().raw_transactions_if_materialized().is_none());
++        assert_eq!(
++            Arc::strong_count(&selected),
++            2,
++            "product rebuilt its APFL owner"
++        );
++        let reference = if case == "unchanged" {
++            let checked = token.checked_uca().unwrap().reattach(signed.clone())?;
++            let raw = NovTransferBody::prepare_asset_spend(vec![checked], policy(), config.plan)?
++                .bind(context)?;
++            assert!(raw.plan().raw_transactions_if_materialized().is_some());
++            assert_eq!(raw.commitment(), plan.commitment());
++            Some(raw)
++        } else {
++            None
++        };
++        let result = capture(plan, &parent)?
+             .finalize_capture()?
+             .execute(&mut session, Duration::from_secs(30))?;
++        if let Some(reference) = reference {
++            let expected = capture(reference, &parent)?
++                .finalize_capture()?
++                .execute(&mut session, Duration::from_secs(30))?;
++            assert_eq!(
++                result.effects().plan_commitment(),
++                expected.effects().plan_commitment()
++            );
++            assert_eq!(
++                result.effects().update().root(),
++                expected.effects().update().root()
++            );
++            assert_eq!(
++                result.effects().update().nodes(),
++                expected.effects().update().nodes()
++            );
++            assert_eq!(result.receipts(), expected.receipts());
++            assert_eq!(result.spend_outputs(), expected.spend_outputs());
++            assert_eq!(result.fees(), expected.fees());
++            assert_eq!(
++                result.receipt_batch_commitment(),
++                expected.receipt_batch_commitment()
++            );
++            assert_eq!(
++                result.statement_commitment(),
++                expected.statement_commitment()
++            );
++        }
+         let receipt = &result.receipts()[0];
+         let output = &result.spend_outputs().context("missing UCA outputs")?[0];
+         if case == "unchanged" {
+@@ -210,17 +276,31 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
+     assert_eq!(config.signatures.reused.load(Ordering::Relaxed), 6);
+     assert_eq!(config.signatures.uca_batch_calls.load(Ordering::Relaxed), 0);
+     // Missing evidence still uses the original qualified batch verifier.
+-    authenticate(
++    let body = authenticate(
+         &mut session,
+         &mut verifier,
+         &config,
+         AuthenticateRequest {
+             raw_transactions: CandidateInput::Uca {
+-                source: BatchSource::Uca(source),
++                source: BatchSource::Uca(source.clone()),
+             },
+             policy: policy(),
+         },
+     )?;
++    let mut fresh_context = context(original.root());
++    fresh_context.business_program = uca_program_id();
++    fresh_context.effect_contract = uca_effect_contract(&policy())?;
++    fresh_context.receipt_codec = uca_receipt_codec();
++    let fresh_plan = body.bind(fresh_context)?;
++    assert!(fresh_plan
++        .plan()
++        .raw_transactions_if_materialized()
++        .is_none());
++    assert_eq!(
++        Arc::strong_count(&source),
++        3,
++        "fresh verifier lost original APFL source"
++    );
+     assert!(verifier.is_some());
+     assert_eq!(config.signatures.strict_verified.load(Ordering::Relaxed), 1);
+     assert_eq!(config.signatures.uca_batch_calls.load(Ordering::Relaxed), 1);
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/driver/tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/driver/tests.rs
+index 13e2e64c..7da2f138 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/driver/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/driver/tests.rs
+@@ -21,7 +21,7 @@ fn job(marker: u8, background: bool) -> Job {
+             bytes: 0,
+             background,
+             ingress: false,
+-            authority_parked: AtomicBool::new(false),
++            admission_role: AtomicU8::new(ADMISSION_INGRESS),
+         }),
+         background,
+     }
+@@ -139,7 +139,7 @@ fn bound_job(marker: u8, background: bool) -> (Job, Arc<Mutex<Usage>>) {
+         bytes,
+         background: true,
+         ingress: false,
+-        authority_parked: AtomicBool::new(false),
++        admission_role: AtomicU8::new(ADMISSION_INGRESS),
+     });
+     let original = Arc::as_ptr(&permit);
+     let (reply, _) = mpsc::channel();
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/mod.rs b/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
+index 67fbfdf5..91762660 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
+@@ -46,7 +46,7 @@ use crate::native_pipeline::persistence::{
+ use crate::native_pipeline::state::frontier::CaptureBudget;
+ use crate::native_pipeline::state::tree::{NodeHash, StagedStateUpdate};
+ use anyhow::{ensure, Context, Result};
+-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
++use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+ use std::sync::{mpsc, Arc, Mutex, TryLockError};
+ use std::thread::{self, JoinHandle};
+ use std::time::Duration;
+@@ -394,12 +394,16 @@ struct Usage {
+     ingress: usize,
+     authority: usize,
+ }
++const ADMISSION_INGRESS: u8 = 0;
++const ADMISSION_AUTHORITY: u8 = 1;
++const ADMISSION_SOURCE: u8 = 2;
++
+ struct Permit {
+     usage: Arc<Mutex<Usage>>,
+     bytes: usize,
+     background: bool,
+     ingress: bool,
+-    authority_parked: AtomicBool,
++    admission_role: AtomicU8,
+ }
+ impl Permit {
+     fn park_for_authority(&self) -> Result<()> {
+@@ -412,7 +416,7 @@ impl Permit {
+             .lock()
+             .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
+         ensure!(
+-            !self.authority_parked.load(Ordering::Relaxed),
++            self.admission_role.load(Ordering::Relaxed) == ADMISSION_INGRESS,
+             "signature output already parked for authority"
+         );
+         ensure!(usage.authority == 0, "authority admission slot occupied");
+@@ -421,9 +425,58 @@ impl Permit {
+         // scheduling phase changes, under the same mutex as issuance and drop.
+         usage.ingress -= 1;
+         usage.authority += 1;
+-        self.authority_parked.store(true, Ordering::Relaxed);
++        self.admission_role
++            .store(ADMISSION_AUTHORITY, Ordering::Relaxed);
++        Ok(())
++    }
++
++    fn park_for_source(&self) -> Result<()> {
++        ensure!(
++            self.ingress && !self.background,
++            "non-ingress source permit"
++        );
++        let mut usage = self
++            .usage
++            .lock()
++            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
++        match self.admission_role.load(Ordering::Relaxed) {
++            ADMISSION_INGRESS => {
++                ensure!(usage.ingress == 1, "signature admission slot not owned");
++                usage.ingress -= 1;
++            }
++            ADMISSION_AUTHORITY => {
++                ensure!(usage.authority == 1, "authority admission slot not owned");
++                usage.authority -= 1;
++            }
++            ADMISSION_SOURCE => return Ok(()),
++            _ => unreachable!("private admission role"),
++        }
++        self.admission_role
++            .store(ADMISSION_SOURCE, Ordering::Relaxed);
+         Ok(())
+     }
++
++    fn resume_authority(&self) -> Result<bool> {
++        ensure!(
++            self.ingress && !self.background,
++            "non-ingress authority resume"
++        );
++        let mut usage = self
++            .usage
++            .lock()
++            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
++        ensure!(
++            self.admission_role.load(Ordering::Relaxed) == ADMISSION_SOURCE,
++            "authority resume requires a parked source"
++        );
++        if usage.authority != 0 {
++            return Ok(false);
++        }
++        usage.authority += 1;
++        self.admission_role
++            .store(ADMISSION_AUTHORITY, Ordering::Relaxed);
++        Ok(true)
++    }
+ }
+ impl Drop for Permit {
+     fn drop(&mut self) {
+@@ -432,10 +485,11 @@ impl Drop for Permit {
+         usage.bytes -= self.bytes;
+         usage.background -= usize::from(self.background);
+         if self.ingress {
+-            if self.authority_parked.load(Ordering::Relaxed) {
+-                usage.authority -= 1;
+-            } else {
+-                usage.ingress -= 1;
++            match self.admission_role.load(Ordering::Relaxed) {
++                ADMISSION_INGRESS => usage.ingress -= 1,
++                ADMISSION_AUTHORITY => usage.authority -= 1,
++                ADMISSION_SOURCE => {}
++                _ => unreachable!("private admission role"),
+             }
+         }
+     }
+@@ -741,7 +795,7 @@ impl CandidatePipeline {
+             bytes,
+             background,
+             ingress: false,
+-            authority_parked: AtomicBool::new(false),
++            admission_role: AtomicU8::new(ADMISSION_INGRESS),
+         })))
+     }
+ 
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs
+index e4554928..330f5736 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs
+@@ -113,6 +113,24 @@ fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<(
+     let (foreign, _foreign_receiver) = tests::inert_pipeline(config);
+     let first = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 0)?;
+     let second = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 1)?;
++    std::thread::scope(|scope| {
++        for owner in [&pipeline, &foreign] {
++            let make = &make;
++            let signed = &signed;
++            let first = &first;
++            let second = &second;
++            let expected = std::ptr::eq(owner, &pipeline);
++            scope.spawn(move || {
++                let selected = make(signed).unwrap();
++                assert_eq!(
++                    owner
++                        .rebind_admitted_uca(selected, &[first, second])
++                        .is_ok(),
++                    expected
++                );
++            });
++        }
++    });
+     assert!(foreign
+         .rebind_admitted_uca(make(&signed)?, &[&first, &second])
+         .is_err());
+@@ -321,12 +339,23 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
+     assert!(checked.is_uca());
+     assert!(pipeline.owns_admitted(&checked));
+     assert!(!foreign.owns_admitted(&checked));
+-    assert_eq!(checked.checked_uca().unwrap().signed().encode()?, raws[0]);
++    let fact = checked.checked_uca().unwrap();
++    assert_eq!(fact.reattach(batch.row(0)?)?.signed().encode()?, raws[0]);
+     assert!(checked.matches_uca_source(&batch, 0));
+     assert!(!checked.matches_uca_source(&batch, 1));
+     let equal_but_distinct = Arc::new(AssetSpendBatchV2::from_raw(&raws, limits)?);
+     assert!(!checked.matches_uca_source(&equal_but_distinct, 0));
+-    assert!(checked.retained_metadata_bytes() >= raws[0].len());
++    let metadata = std::mem::size_of::<AdmittedTransfer>()
++        + std::mem::size_of::<crate::native_pipeline::ingress::batch::CheckedAdmission>()
++        + 2 * std::mem::size_of::<usize>()
++        + fact.intent().retained_heap_bytes();
++    assert_eq!(checked.retained_metadata_bytes(), metadata);
++    assert!(
++        metadata < raws[0].len(),
++        "pool token must not retain a second crypto payload"
++    );
++    let original_signed = batch.row(0)?;
++    assert!(original_signed.public_key.capacity() + original_signed.signature.capacity() > 5_000);
+     assert!(output.pop_admitted().unwrap().result.is_err());
+     assert!(output.pop_admitted().unwrap().result.is_err());
+     assert!(output
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc.rs b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+index 79484ea4..47d1b210 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+@@ -595,9 +595,10 @@ impl RpcLifecycle {
+             return Ok(());
+         }
+         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
++            let empty_next = BTreeMap::new();
+             let next = successor
+                 .as_ref()
+-                .map_or_else(BTreeMap::new, |s| s.nonce_after.clone());
++                .map_or(&empty_next, |s| s.nonce_after.as_ref());
+             if self
+                 .nonce_window
+                 .as_ref()
+@@ -608,7 +609,7 @@ impl RpcLifecycle {
+                         &self.order,
+                         &self.pending,
+                         &self.nonces.values,
+-                        next.clone(),
++                        next,
+                         self.nonce_scan,
+                         self.batch_size,
+                     )
+@@ -620,7 +621,7 @@ impl RpcLifecycle {
+             // Keep this bounded candidate window while the original I/O owner
+             // resolves its exact-parent nonces. Eight read slots are an I/O
+             // budget, not a smaller consensus/transaction batch size.
+-            self.poll_window_nonces(&next)?;
++            self.poll_window_nonces(next)?;
+             let window = &self.nonce_window.as_ref().expect("nonce window").1;
+             let Some((selected, budget_full)) = select_prepared_nonce_window(
+                 window,
+@@ -634,7 +635,9 @@ impl RpcLifecycle {
+                     Some(position),
+                     0,
+                     None,
+-                    successor.as_ref().map(|selection| &selection.nonce_after),
++                    successor
++                        .as_ref()
++                        .map(|selection| selection.nonce_after.as_ref()),
+                 );
+                 return Ok(());
+             };
+@@ -1540,12 +1543,6 @@ fn admitted_for_body<'a>(
+             {
+                 return Ok(None);
+             }
+-            let Some(value) = checked.checked_uca() else {
+-                return Ok(None);
+-            };
+-            if !view.matches_signed(value.signed())? {
+-                return Ok(None);
+-            }
+             admitted.push(checked);
+         }
+         return Ok(Some(admitted));
+@@ -1632,7 +1629,7 @@ fn asset_nonce_selection_window(
+     order: &VecDeque<Hash>,
+     pending: &BTreeMap<Hash, Pending>,
+     nonces: &BTreeMap<Hash, u64>,
+-    next: BTreeMap<Hash, u64>,
++    next: &BTreeMap<Hash, u64>,
+     start: usize,
+     batch_size: usize,
+ ) -> VecDeque<Hash> {
+@@ -1647,7 +1644,8 @@ fn asset_nonce_selection_window(
+     }) {
+         return ordinary;
+     }
+-    let (selected, _) = select_pending_batch_with_budget(order, pending, nonces, next, batch_size);
++    let (selected, _) =
++        select_pending_batch_with_budget(order, pending, nonces, next.clone(), batch_size);
+     if selected.len() == batch_size {
+         selected.into()
+     } else {
+@@ -1662,7 +1660,7 @@ fn select_prepared_nonce_window(
+     window: &VecDeque<Hash>,
+     pending: &BTreeMap<Hash, Pending>,
+     nonces: &BTreeMap<Hash, u64>,
+-    next: BTreeMap<Hash, u64>,
++    next: &BTreeMap<Hash, u64>,
+     batch_size: usize,
+ ) -> Option<(Vec<Hash>, bool)> {
+     if window.iter().any(|hash| {
+@@ -1673,7 +1671,11 @@ fn select_prepared_nonce_window(
+         return None;
+     }
+     Some(select_pending_batch_with_budget(
+-        window, pending, nonces, next, batch_size,
++        window,
++        pending,
++        nonces,
++        next.clone(),
++        batch_size,
+     ))
+ }
+ 
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs b/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
+index 464d2fc0..e6e3b743 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
+@@ -3,6 +3,9 @@
+ //! ordered results reach the control-owned nonce reservations and pending pool.
+ use super::*;
+ use crate::native_fresh_rpc::{DeferredRpcHandler, DeferredRpcReply};
++use crate::native_pipeline::consensus::native_lifecycle::{
++    CheckedTransactionSource, TransactionOrigin, TransactionSource,
++};
+ use crate::native_pipeline::ingress::wire::decode_transfer_view_v3;
+ use crate::native_pipeline::pipeline::{
+     AdmissionInput, SignatureAdmissionRequest, SignatureAdmissionSubmission,
+@@ -34,6 +37,7 @@ enum Target {
+         // cursor. Completing it must never clear a newer incoming body.
+         detached_body: bool,
+         broadcast: bool,
++        origin: Option<TransactionOrigin>,
+     },
+ }
+ 
+@@ -60,12 +64,20 @@ pub(super) struct AdmissionState {
+     work: Option<Work>,
+     uca: Option<UcaWork>,
+     cached_body_boundary_waiting: bool,
++    incoming_origin: Option<TransactionOrigin>,
++    source_yielded_this_poll: bool,
++    source_returns: u64,
++    source_resumes: u64,
++    #[cfg(test)]
++    signature_rows: Option<usize>,
+     #[cfg(test)]
+     hold_authority_poll_once: bool,
+     #[cfg(test)]
+     hold_authority_until_parent_advance: bool,
+     #[cfg(test)]
+     pub(super) pool_byte_limit: Option<usize>,
++    #[cfg(test)]
++    pub(super) bridge_reserve_bytes: Option<usize>,
+     next_signature_submitted_while_capture: u64,
+     signature_completed_while_capture: u64,
+     max_retained_stage_slots: usize,
+@@ -94,6 +106,7 @@ struct UcaWork {
+     complete_body: bool,
+     detached_body: bool,
+     broadcast: bool,
++    origin: Option<TransactionOrigin>,
+     trace: Option<UcaTrace>,
+ }
+ 
+@@ -195,6 +208,7 @@ impl AdmissionState {
+             "cancelled_http":self.cancelled_http,
+             "control_polls_while_checking":self.control_polls_while_checking,
+             "backpressured_polls":self.backpressured_polls,
++            "checked_source_returns":self.source_returns,"checked_source_resumes":self.source_resumes,
+             "uca_state_capture":{
+                 "batches":self.uca_capture.batches,
+                 "declared_keys":self.uca_capture.declaration_keys,
+@@ -315,6 +329,7 @@ impl RpcLifecycle {
+         ensure!(self.is_uca() && cached.len() == 1 && partial.len() == 2);
+         let original_batch_size = self.batch_size;
+         self.batch_size = 1;
++        self.admission.signature_rows = Some(1);
+         let scope = TransactionsScope {
+             chain_id: self.node.template.chain_id,
+             genesis: self.node.template.genesis_config_commitment,
+@@ -383,6 +398,7 @@ impl RpcLifecycle {
+         // deterministically rather than assuming head and parent move together.
+         self.admission.hold_authority_until_parent_advance = true;
+         self.batch_size = original_batch_size;
++        self.admission.signature_rows = None;
+         Ok(())
+     }
+ 
+@@ -415,6 +431,7 @@ impl RpcLifecycle {
+         // source can now exercise a partial body without exceeding those caps.
+         let original_batch_size = self.batch_size;
+         self.batch_size = 1;
++        self.admission.signature_rows = Some(1);
+         ensure!(partial.len() > self.batch_size && newer_bad.len() > self.batch_size);
+         let expected_pending = partial.len(); // cached row plus uncached prefix
+         let bad_rows = newer_bad.len() as u64;
+@@ -519,6 +536,7 @@ impl RpcLifecycle {
+             "admission published state"
+         );
+         self.batch_size = original_batch_size;
++        self.admission.signature_rows = None;
+         ensure!(
+             self.node.controller.head() == head,
+             "admission changed durable head"
+@@ -704,6 +722,7 @@ impl RpcLifecycle {
+ 
+     pub(super) fn poll_admission(&mut self) -> Result<()> {
+         self.admission.made_progress = false;
++        self.admission.source_yielded_this_poll = false;
+         // A completed body grants an opportunity, not a one-poll pulse. Keep it
+         // while projection/selection is unavailable, but do not carry an empty
+         // source's stale grant into the first partial quantum of a later source.
+@@ -795,6 +814,11 @@ impl RpcLifecycle {
+         if self.admission.work.is_some() {
+             return Ok(());
+         }
++        if self.admission.source_yielded_this_poll {
++            // Let the original receive owner run before taking the same parked
++            // source back. Its vacated slot can accept the missing nonce source.
++            return Ok(());
++        }
+         // Historical V3 remains single-stage. UCA alone may overlap its one
+         // authority capture with one next job in the SAME compute/I/O owners.
+         if self.admission.uca.is_some() && !self.is_uca() {
+@@ -933,10 +957,11 @@ impl RpcLifecycle {
+                             .map(|m| (m, true))
+                     })
+             };
+-            if let Some((message, client)) = source {
+-                self.incoming_from_client = client;
++            if let Some((source, client)) = source {
+                 self.admission.prefer_client = !client;
+-                self.incoming = Some((message, 0));
++                if !self.take_admission_source(source)? {
++                    return Ok(None);
++                }
+             }
+         }
+         let Some((message, mut index)) = self.incoming.take() else {
+@@ -951,7 +976,14 @@ impl RpcLifecycle {
+             _ => anyhow::bail!("transaction channel returned non-transaction message"),
+         };
+         let mut inputs = Vec::new();
+-        let end = (index + self.batch_size).min(count);
++        let signature_rows = if self.is_uca() {
++            super::super::native_decode_limits(self.batch_size, true).transactions
++        } else {
++            self.batch_size
++        };
++        #[cfg(test)]
++        let signature_rows = self.admission.signature_rows.unwrap_or(signature_rows);
++        let end = (index + signature_rows).min(count);
+         while index < end {
+             self.admission.made_progress = true;
+             let input = match message.as_ref() {
+@@ -976,6 +1008,7 @@ impl RpcLifecycle {
+             }
+         }
+         let complete_body = index == count;
++        let origin = self.admission.incoming_origin;
+         let detached_body = self.is_uca() && complete_body;
+         // Retain the body marker until the whole verified prefix is admitted;
+         // a partially checked body must not cause tiny proposal fragments. A
+@@ -983,10 +1016,13 @@ impl RpcLifecycle {
+         // retains its boundary while the next source can begin verification.
+         if !detached_body {
+             self.incoming = Some((message, index));
++        } else {
++            self.admission.incoming_origin = None;
+         }
+         if inputs.is_empty() {
+             if complete_body {
+                 self.incoming = None;
++                self.admission.incoming_origin = None;
+                 if self.is_uca() {
+                     // This can be the cached-only final chunk of a body larger
+                     // than batch_size. Its earlier authority prefix must finish
+@@ -1006,6 +1042,7 @@ impl RpcLifecycle {
+                 complete_body,
+                 detached_body,
+                 broadcast: self.incoming_from_client,
++                origin,
+             },
+             phase: Phase::Queued(request),
+             rows,
+@@ -1031,11 +1068,15 @@ impl RpcLifecycle {
+                     complete_body,
+                     detached_body,
+                     broadcast,
++                    origin,
+                 },
+                 Ok(mut output),
+             ) => {
+                 output.profile_event("authority_queued");
+-                ensure!(rows <= self.batch_size, "UCA admission batch limit");
++                ensure!(
++                    rows <= super::super::native_decode_limits(self.batch_size, true).transactions,
++                    "UCA admission batch limit"
++                );
+                 ensure!(self.admission.uca.is_none(), "UCA authority slot occupied");
+                 output.park_for_authority()?;
+                 let mut checked_rows = VecDeque::with_capacity(rows);
+@@ -1078,6 +1119,7 @@ impl RpcLifecycle {
+                     complete_body: *complete_body,
+                     detached_body: *detached_body,
+                     broadcast: *broadcast,
++                    origin: *origin,
+                     trace,
+                 });
+                 self.admission.record_retained_stages();
+@@ -1127,6 +1169,7 @@ impl RpcLifecycle {
+                 complete_body,
+                 detached_body,
+                 broadcast,
++                origin: _,
+             } => {
+                 for result in results {
+                     match result
+@@ -1195,7 +1238,7 @@ impl RpcLifecycle {
+             // Give already admitted rows a selection turn, without claiming
+             // progress, re-reading authority or admitting an unchecked suffix.
+             self.ingress_batch_boundary = true;
+-            self.admission.uca = Some(work);
++            self.return_uca_source(work)?;
+             return Ok(());
+         }
+         work.pool_wait = None;
+@@ -1292,7 +1335,7 @@ impl RpcLifecycle {
+                     // to deadlock a full pool. Only its accepted prefix exists
+                     // in `pending`; the suffix retains its original permit.
+                     self.ingress_batch_boundary = true;
+-                    self.admission.uca = Some(work);
++                    self.return_uca_source(work)?;
+                     return Ok(());
+                 }
+                 Err(_) => {
+@@ -1325,6 +1368,88 @@ impl RpcLifecycle {
+         );
+         self.admission.made_progress = true;
+     }
++
++    fn take_admission_source(&mut self, source: TransactionSource) -> Result<bool> {
++        match source {
++            TransactionSource::Raw { message, origin } => {
++                ensure!(self.incoming.is_none(), "original input handoff occupied");
++                self.incoming_from_client = origin == TransactionOrigin::Client;
++                self.admission.incoming_origin = Some(origin);
++                self.incoming = Some((message, 0));
++                Ok(true)
++            }
++            TransactionSource::Checked {
++                mut checked,
++                origin,
++            } => {
++                if self.admission.uca.is_some() || !checked.output.resume_authority()? {
++                    self.node
++                        .controller
++                        .rotate_taken_checked_transactions(origin, checked);
++                    return Ok(false);
++                }
++                self.admission.source_resumes = self.admission.source_resumes.saturating_add(1);
++                self.admission.uca = Some(Self::resumed_uca_work(*checked, origin));
++                self.admission.record_retained_stages();
++                Ok(false)
++            }
++        }
++    }
++
++    fn resumed_uca_work(checked: CheckedTransactionSource, origin: TransactionOrigin) -> UcaWork {
++        UcaWork {
++            _output: checked.output,
++            rows: checked.rows,
++            read: None,
++            states: None,
++            pool_wait: checked.waiting_pool,
++            parent: checked.waiting_parent,
++            capture_started: None,
++            complete_body: checked.complete_body,
++            detached_body: checked.detached_body,
++            broadcast: checked.broadcast,
++            origin: Some(origin),
++            trace: None,
++        }
++    }
++
++    fn return_uca_source(&mut self, work: UcaWork) -> Result<()> {
++        let Some(origin) = work.origin.filter(|_| self.incoming.is_none()) else {
++            // Test-only partial-source fixtures retain their original active
++            // owner. Production legal UCA sources use the common whole limit.
++            self.admission.uca = Some(work);
++            return Ok(());
++        };
++        let checked = Box::new(CheckedTransactionSource {
++            output: work._output,
++            rows: work.rows,
++            complete_body: work.complete_body,
++            detached_body: work.detached_body,
++            broadcast: work.broadcast,
++            waiting_parent: work.parent,
++            waiting_pool: work.pool_wait,
++        });
++        // Dropping the captured parent view here is intentional: the source
++        // retains only verified immutable signature facts and original row ids.
++        match self
++            .node
++            .controller
++            .return_checked_transactions(origin, checked)
++        {
++            Ok(next) => {
++                self.admission.source_returns = self.admission.source_returns.saturating_add(1);
++                self.admission.source_yielded_this_poll = true;
++                if let Some(next) = next {
++                    self.take_admission_source(next)?;
++                }
++                Ok(())
++            }
++            Err((checked, error)) => {
++                self.admission.uca = Some(Self::resumed_uca_work(*checked, origin));
++                Err(error)
++            }
++        }
++    }
+ }
+ 
+ fn uca_capture_input(
+@@ -1353,6 +1478,10 @@ fn uca_capture_input(
+     Ok((intent, payer, recipient))
+ }
+ 
++#[cfg(test)]
++#[path = "admission/hol_tests.rs"]
++mod hol_tests;
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -1363,6 +1492,7 @@ mod tests {
+                 complete_body: true,
+                 detached_body: true,
+                 broadcast: false,
++                origin: None,
+             },
+             phase: Phase::Completed(Err(anyhow::anyhow!("injected signature owner error"))),
+             rows: 1,
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/admission/hol_tests.rs b/crates/novovm-node/src/native_pipeline/service/rpc/admission/hol_tests.rs
+new file mode 100644
+index 00000000..f940e08b
+--- /dev/null
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/admission/hol_tests.rs
+@@ -0,0 +1,376 @@
++//! Real AOEM + original in-process services. Independent-process acceptance
++//! remains with the original native-product load owner.
++use super::*;
++use novovm_protocol::uca_spend::SignedAssetSpendV2;
++use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
++use sha2::{Digest, Sha256};
++
++#[test]
++fn checked_source_carrier_stays_inside_original_signature_header_reservation() {
++    assert!(
++        std::mem::size_of::<CheckedTransactionSource>()
++            + std::mem::size_of::<Box<CheckedTransactionSource>>()
++            <= 4096
++    );
++    assert!(std::mem::size_of::<TransactionSource>() <= 64);
++}
++
++#[test]
++fn maximum_shape_single_row_projection_fits_original_bridge_allowance() -> Result<()> {
++    use novovm_protocol::uca_spend::{
++        spend_key_ref_v1, AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetGrantConfigV2,
++        AssetSpendIntentV2, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
++    };
++    // Codec/allocation bound only: these synthetic bytes confer no signature
++    // fact and are never submitted as verified or executed transactions.
++    let public_key = vec![73; MLDSA65_PUBLIC_KEY_BYTES];
++    let grants = (1..=8)
++        .map(|n| AssetGrantConfigV2 {
++            key_ref: [n; 32],
++            permits_nov_transfer: true,
++            not_before_height: 0,
++            expires_at_height: u64::MAX,
++            max_debit_per_intent: u128::MAX,
++            remaining_debit_budget: u128::MAX,
++        })
++        .collect::<Vec<_>>();
++    for action in 0..3 {
++        let mut intent = AssetSpendIntentV2 {
++            chain_id: 1,
++            genesis: [2; 32],
++            payer: vec![3; 32],
++            recipient: vec![4; 32],
++            asset: 1,
++            amount: u128::MAX - 1,
++            max_fee: 1,
++            nonce: u64::MAX - 1,
++            authorization_epoch: 1,
++            spend_key_ref: spend_key_ref_v1(&public_key)?,
++            not_before_height: 0,
++            expires_at_height: 256,
++            authority_update: None,
++            recipient_creation: None,
++        };
++        if action == 1 {
++            intent.amount = 0;
++            intent.recipient = intent.payer.clone();
++            intent.authority_update = Some(AssetAuthorityUpdateV2 {
++                use_recovery: true,
++                next_epoch: 2,
++                active: true,
++                management_key_ref: [40; 32],
++                recovery_key_ref: Some([41; 32]),
++                grants: grants.clone(),
++            });
++        } else if action == 2 {
++            let descriptor = AssetAccountCreationV2 {
++                management_key_ref: [40; 32],
++                recovery_key_ref: Some([41; 32]),
++                grants: grants.clone(),
++            };
++            intent.recipient = descriptor
++                .account(intent.chain_id, &intent.genesis)?
++                .to_vec();
++            intent.recipient_creation = Some(descriptor);
++        }
++        let raw = SignedAssetSpendV2 {
++            intent,
++            public_key: public_key.clone(),
++            signature: vec![91; MLDSA65_SIGNATURE_BYTES],
++        }
++        .encode()?;
++        let decoded = SignedAssetSpendV2::decode(&raw)?;
++        let source = batch(std::slice::from_ref(&decoded))?;
++        let projected = AssetSpendBatchV2::from_views(
++            &[source.view(0)?],
++            AssetSpendBatchLimitsV2 {
++                transactions: 1,
++                transaction_bytes: 8192,
++                body_bytes: 8192,
++            },
++        )?;
++        let metadata = std::mem::size_of::<AdmittedTransfer>()
++            + std::mem::size_of::<crate::native_pipeline::ingress::batch::CheckedAdmission>()
++            + 2 * std::mem::size_of::<usize>()
++            + decoded.intent.retained_heap_bytes();
++        ensure!(projected.raw_transaction(0)? == raw);
++        ensure!(projected.retained_bytes()? + metadata <= 3 * 8192 + 512 + 4096);
++    }
++    Ok(())
++}
++
++fn batch(rows: &[SignedAssetSpendV2]) -> Result<Arc<AssetSpendBatchV2>> {
++    let raw = rows
++        .iter()
++        .map(SignedAssetSpendV2::encode)
++        .collect::<Result<Vec<_>, _>>()?;
++    Ok(Arc::new(AssetSpendBatchV2::from_raw(
++        &raw,
++        AssetSpendBatchLimitsV2 {
++            transactions: 1024,
++            transaction_bytes: 8192,
++            body_bytes: 8 * 1024 * 1024,
++        },
++    )?))
++}
++
++fn poll_admission_until(
++    rpc: &mut RpcLifecycle,
++    done: impl Fn(&RpcLifecycle) -> bool,
++) -> Result<()> {
++    let deadline = Instant::now() + Duration::from_secs(20);
++    while !done(rpc) {
++        ensure!(
++            Instant::now() < deadline,
++            "bounded source admission stalled: {}",
++            rpc.status()
++        );
++        rpc.poll_admission()?;
++        std::thread::yield_now();
++    }
++    Ok(())
++}
++
++fn admit_future_prefix(rpc: &mut RpcLifecycle, signed: &[SignedAssetSpendV2]) -> Result<usize> {
++    let source = batch(&signed[1..2])?; // nonce 1 before nonce 0
++    rpc.incoming_from_client = true;
++    rpc.incoming = Some((rpc.node.controller.uca_transactions_message(source)?, 0));
++    poll_admission_until(rpc, |rpc| {
++        rpc.incoming.is_none() && !rpc.admission.has_pending_native_admission()
++    })?;
++    ensure!(rpc.pending.len() == 1 && rpc.reservations.len() == 1);
++    ensure!(rpc.pending.values().next().unwrap().nonce == 1);
++    ensure!(rpc.node.controller.head().is_none());
++    Ok(rpc.pending_retention.bytes)
++}
++
++fn queue_source(rpc: &mut RpcLifecycle, source: Arc<AssetSpendBatchV2>) -> Result<()> {
++    let message = rpc.node.controller.uca_transactions_message(source)?;
++    rpc.node
++        .controller
++        .queue_client_transactions_for_test(message)
++}
++
++#[test]
++#[ignore = "real trusted AOEM; original pool_wait counterexample, run alone"]
++fn future_nonce_pool_wait_without_source_return_holds_late_bridge() -> Result<()> {
++    super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
++        let rpc = &mut nodes[0];
++        let prefix_bytes = admit_future_prefix(rpc, signed)?;
++        rpc.admission.pool_byte_limit = Some(prefix_bytes);
++        rpc.admission.bridge_reserve_bytes = Some(0);
++        // The old cursor/authority owner has no source-return handoff. Its
++        // full pool contains only a future nonce, not a publishable prefix.
++        rpc.incoming = Some((
++            rpc.node
++                .controller
++                .uca_transactions_message(batch(&signed[2..3])?)?,
++            0,
++        ));
++        poll_admission_until(rpc, |rpc| {
++            rpc.admission
++                .uca
++                .as_ref()
++                .is_some_and(|work| work.pool_wait.is_some())
++        })?;
++        let bridge = batch(&signed[..1])?;
++        queue_source(rpc, bridge.clone())?;
++        let checked = rpc.admission.checked_rows;
++        let captured = rpc.admission.uca_capture.batches;
++        for _ in 0..32 {
++            rpc.poll_admission()?;
++        }
++        ensure!(rpc.pending.len() == 1 && rpc.pending.values().next().unwrap().nonce == 1);
++        ensure!(
++            rpc.admission.checked_rows == checked && rpc.admission.uca_capture.batches == captured
++        );
++        ensure!(rpc.admission.uca.as_ref().unwrap().rows.len() == 1);
++        // The existing next-signature stage may complete, but it still cannot
++        // enter the occupied authority slot or publish the missing nonce.
++        ensure!(rpc
++            .admission
++            .work
++            .as_ref()
++            .is_some_and(|work| work.rows == 1));
++        ensure!(Arc::strong_count(&bridge) >= 2);
++        ensure!(bridge.raw_transaction(0)? == signed[0].encode()?);
++        ensure!(
++            rpc.node.controller.head().is_none(),
++            "no nonce gap may become finality"
++        );
++        Ok(())
++    })
++}
++
++#[test]
++#[ignore = "real trusted AOEM; original two-slot source exchange, exact bridge projection and four services, run alone"]
++fn checked_future_sources_yield_late_bridge_without_rechecking_signatures_or_losing_rows(
++) -> Result<()> {
++    super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
++        let hashes = signed[..4]
++            .iter()
++            .map(uca::hash)
++            .collect::<Result<Vec<_>>>()?;
++        let rpc = &mut nodes[0];
++        let prefix_bytes = admit_future_prefix(rpc, signed)?;
++        let prefix = &rpc.pending[&hashes[1]];
++        let metadata = prefix.retained_metadata_bytes();
++        let bridge = batch(&[signed[0].clone(), signed[1].clone()])?;
++        let single = AssetSpendBatchV2::from_views(
++            &[bridge.view(0)?],
++            AssetSpendBatchLimitsV2 {
++                transactions: 1,
++                transaction_bytes: 8192,
++                body_bytes: 8192,
++            },
++        )?;
++        let single_retained = single.retained_bytes()? + metadata;
++        ensure!(single_retained <= 3 * 8192 + 512 + 4096);
++        rpc.admission.pool_byte_limit = Some(prefix_bytes + single_retained);
++        rpc.admission.bridge_reserve_bytes = Some(single_retained);
++        queue_source(rpc, batch(&signed[2..3])?)?;
++        poll_admission_until(rpc, |rpc| rpc.admission.source_returns == 1)?;
++        ensure!(rpc.admission.uca.is_none() && rpc.admission.work.is_none());
++        ensure!(rpc.pending.len() == 1);
++        // Fill the second source slot, resume the checked future, then fill
++        // its vacated slot with the bridge BEFORE it encounters pressure again.
++        queue_source(rpc, batch(&signed[3..4])?)?;
++        rpc.poll_admission()?;
++        ensure!(rpc.admission.uca.is_some());
++        queue_source(rpc, bridge.clone())?;
++        let checked_before_rotation = rpc.admission.checked_rows;
++        let captures_before_rotation = rpc.admission.uca_capture.batches;
++        rpc.poll_admission()?;
++        ensure!(rpc.admission.source_returns == 2);
++        ensure!(rpc.admission.checked_rows == checked_before_rotation);
++        ensure!(
++            rpc.admission.uca_capture.batches == captures_before_rotation,
++            "same-parent/same-pool source rotation must not recapture authority"
++        );
++        poll_admission_until(rpc, |rpc| rpc.pending.contains_key(&hashes[0]))?;
++        ensure!(rpc.pending_retention.bytes <= rpc.admission.pool_byte_limit.unwrap());
++        ensure!(rpc.pending.len() == 2 && rpc.reservations.len() == 2);
++        let AdmissionInput::Uca {
++            batch: projected,
++            index,
++        } = &rpc.pending[&hashes[0]].input
++        else {
++            unreachable!()
++        };
++        ensure!(projected.len() == 1 && *index == 0 && !Arc::ptr_eq(projected, &bridge));
++        ensure!(projected.raw_transaction(0)? == signed[0].encode()?);
++        ensure!(
++            rpc.admission.checked_rows == 4,
++            "each distinct signed row is checked once, not again on source resume"
++        );
++        // Both blocked future rows remain in the original source/authority
++        // handoffs, with their original indices and immutable checked facts.
++        let mut owned = BTreeSet::<Hash>::new();
++        if let Some(work) = &rpc.admission.uca {
++            for (_, admitted) in &work.rows {
++                owned.insert(
++                    Sha256::digest(admitted.checked_uca().unwrap().intent().signing_bytes()?)
++                        .into(),
++                );
++            }
++        }
++        let mut sources = Vec::new();
++        while let Some(source) = rpc.node.controller.take_client_transactions() {
++            sources.push(source);
++        }
++        ensure!(sources.len() <= 2);
++        for source in sources {
++            let TransactionSource::Checked { checked, origin } = source else {
++                anyhow::bail!("checked future source lost its fact owner");
++            };
++            for (_, admitted) in &checked.rows {
++                let intent = admitted
++                    .checked_uca()
++                    .context("checked source fact")?
++                    .intent();
++                owned.insert(Sha256::digest(intent.signing_bytes()?).into());
++            }
++            rpc.node
++                .controller
++                .rotate_taken_checked_transactions(origin, checked);
++        }
++        ensure!(owned == BTreeSet::from([hashes[2], hashes[3]]));
++        let deadline = Instant::now() + Duration::from_secs(30);
++        while !nodes.iter().all(|rpc| {
++            hashes.iter().all(|id| {
++                matches!(
++                    rpc.receipts.get(id),
++                    Some(ReceiptState::Finalized { success: true, .. })
++                )
++            })
++        }) {
++            ensure!(
++                Instant::now() < deadline,
++                "late bridge did not publish all original rows: {:?}",
++                nodes.iter().map(RpcLifecycle::status).collect::<Vec<_>>()
++            );
++            for rpc in nodes.iter_mut() {
++                rpc.poll(Instant::now())?;
++            }
++            std::thread::yield_now();
++        }
++        for rpc in nodes.iter_mut() {
++            let mut fees = 0;
++            for (index, id) in hashes.iter().enumerate() {
++                let Some(ReceiptState::Finalized {
++                    success: true,
++                    nonce_after,
++                    charged_fee,
++                    ..
++                }) = rpc.receipts.get(id)
++                else {
++                    unreachable!()
++                };
++                ensure!(*nonce_after == index as u64 + 1 && *charged_fee <= 50);
++                fees += charged_fee;
++            }
++            let root = rpc
++                .node
++                .controller
++                .head()
++                .context("published bridge head")?
++                .state_root;
++            let mut read = native_query::UcaBatchStateRead::new(
++                root,
++                vec![(
++                    signed[0].intent.clone(),
++                    Account::try_from(signed[0].intent.payer.as_slice())
++                        .map_err(anyhow::Error::msg)?,
++                    Account::try_from(signed[0].intent.recipient.as_slice())
++                        .map_err(anyhow::Error::msg)?,
++                )],
++                rpc.node.pipeline.capture_budget(),
++            )?;
++            let state = loop {
++                ensure!(
++                    Instant::now() < deadline,
++                    "published bridge state read timeout"
++                );
++                if let Some(mut states) = read.poll(&rpc.node.pipeline)? {
++                    break states.pop().context("bridge state result")??;
++                }
++                std::thread::yield_now();
++            };
++            let native_query::UcaReadResult::Present(state) = state else {
++                anyhow::bail!("bridge did not retain original account state");
++            };
++            let amount: u128 = signed[..4].iter().map(|row| row.intent.amount).sum();
++            ensure!(state.next_nonce() == 4 && state.balances() == (1000 - amount - fees, amount));
++            ensure!(
++                state
++                    .grant()
++                    .context("published original grant")?
++                    .remaining_debit_budget
++                    == 1000 - amount - fees
++            );
++            ensure!(rpc.pending.is_empty() && rpc.reservations.is_empty());
++            ensure!(rpc.pending_retention.bytes == 0 && rpc.pending_retention.owners.is_empty());
++        }
++        Ok(())
++    })
++}
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca.rs b/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca.rs
+index 52f11ce0..98f72feb 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca.rs
+@@ -145,7 +145,9 @@ impl UcaBatchStateRead {
+                 );
+                 if !declarations.contains_key(&declaration.key) {
+                     key_bytes = key_bytes
+-                        .checked_add(declaration.key.len() + 257)
++                        .checked_add(
++                            declaration.key.len() + 257 + std::mem::size_of::<(Hash, usize)>(),
++                        )
+                         .context("UCA read retention overflow")?;
+                     ensure!(
+                         declarations.len() < budget.keys && key_bytes <= budget.bytes,
+@@ -157,7 +159,21 @@ impl UcaBatchStateRead {
+         }
+         let declarations: Vec<_> = declarations.into_values().collect();
+         stats.unique_keys = declarations.len();
+-        let keys = declarations.iter().map(|d| d.key.clone()).collect();
++        // Tree paths follow hashed keys, not their logical prefixes. Adjacent
++        // hash ranges share those paths inside each existing 64-key read turn.
++        // Temporary sort metadata is charged above and dropped before polling.
++        let mut order = Vec::with_capacity(declarations.len());
++        for (index, declaration) in declarations.iter().enumerate() {
++            order.push((
++                crate::native_pipeline::state::tree::state_key_hash(&declaration.key)?,
++                index,
++            ));
++        }
++        order.sort_unstable_by_key(|(hash, _)| *hash);
++        let keys = order
++            .into_iter()
++            .map(|(_, index)| declarations[index].key.clone())
++            .collect();
+         let capture = if declarations.is_empty() {
+             None
+         } else {
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca/tests.rs b/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca/tests.rs
+index cfe3be43..0bf4b894 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca/tests.rs
+@@ -139,12 +139,18 @@ fn account(byte: u8) -> Account {
+     Account::try_from(vec![byte; 20]).unwrap()
+ }
+ fn fixture() -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
+-    let intent = intent();
++    fixture_for(&intent())
++}
++
++fn fixture_for(intent: &AssetSpendIntentV2) -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
+     let mut changes = Vec::new();
+-    for address in [account(1), account(2)] {
++    for address in [
++        Account::try_from(intent.payer.as_slice()).unwrap(),
++        Account::try_from(intent.recipient.as_slice()).unwrap(),
++    ] {
+         changes.extend(
+             account_record_changes(
+-                7,
++                intent.chain_id,
+                 &intent.genesis,
+                 &AssetAccountAuthorityV2 {
+                     account: address.as_bytes().to_vec(),
+@@ -164,7 +170,7 @@ fn fixture() -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
+     }
+     changes.extend(
+         grant_record_changes(
+-            &intent,
++            intent,
+             &SuppliedAssetSpendGrantV2 {
+                 asset: 1,
+                 account: intent.payer.clone(),
+@@ -182,7 +188,7 @@ fn fixture() -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
+     );
+     changes.push(StateChange::Put {
+         key: nonce_key(&intent.nonce_identity().unwrap()),
+-        value: 9u64.to_le_bytes().to_vec(),
++        value: intent.nonce.to_le_bytes().to_vec(),
+     });
+     changes
+         .into_iter()
+@@ -281,6 +287,31 @@ impl crate::native_pipeline::state::tree::StateNodeReader for Memory {
+     }
+ }
+ 
++struct CountingReader<'a> {
++    memory: &'a Memory,
++    reads: std::cell::Cell<usize>,
++}
++
++impl crate::native_pipeline::state::tree::StateNodeReader for CountingReader<'_> {
++    fn read_node(&self, hash: &Hash) -> Result<Option<Vec<u8>>> {
++        self.reads.set(self.reads.get() + 1);
++        Ok(self.memory.0.get(hash).cloned())
++    }
++}
++
++fn read_ordered_turns(
++    reader: &CountingReader<'_>,
++    root: Hash,
++    keys: &[Vec<u8>],
++) -> Result<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
++    let mut values = BTreeMap::new();
++    for keys in keys.chunks(CAPTURE_QUANTUM) {
++        let read = crate::native_pipeline::state::tree::read_state_values(reader, root, keys)?;
++        values.extend(keys.iter().cloned().zip(read));
++    }
++    Ok(values)
++}
++
+ fn capture_budget() -> CaptureBudget {
+     CaptureBudget {
+         keys: 4096,
+@@ -374,6 +405,128 @@ fn asset_batch_capture_deduplicates_all_10_keys_and_preserves_order_and_revocati
+     assert!(read.made_progress());
+ }
+ 
++#[test]
++fn asset_hash_ordered_read_turns_reduce_frontier_loads_and_preserve_1024_rows() -> Result<()> {
++    let mut records = BTreeMap::new();
++    let mut inputs = Vec::new();
++    for index in (0..1024u32).rev() {
++        let mut row = intent();
++        row.payer = vec![0; 20];
++        row.payer[..4].copy_from_slice(&index.to_be_bytes());
++        row.payer[19] = 0x71;
++        row.nonce = 9 + u64::from(index);
++        records.extend(fixture_for(&row));
++        let payer = Account::try_from(row.payer.as_slice()).map_err(anyhow::Error::msg)?;
++        inputs.push((row, payer, account(2)));
++    }
++    let (memory, root) = tree_fixture(&records);
++    let budget = CaptureBudget {
++        keys: 32_768,
++        nodes: 65_536,
++        bytes: 16 * 1024 * 1024,
++    };
++    let mut read = UcaBatchStateRead::new(root, inputs.clone(), budget)?;
++    assert_eq!(read.stats().declaration_keys, 10 * 1024);
++    assert_eq!(read.stats().unique_keys, 7 * 1024 + 3);
++    let mut legacy = read.keys.clone();
++    legacy.sort_unstable();
++    let hashes = read
++        .keys
++        .iter()
++        .map(|key| crate::native_pipeline::state::tree::state_key_hash(key))
++        .collect::<Result<Vec<_>>>()?;
++    assert!(hashes.windows(2).all(|pair| pair[0] <= pair[1]));
++    let old = CountingReader {
++        memory: &memory,
++        reads: std::cell::Cell::new(0),
++    };
++    let new = CountingReader {
++        memory: &memory,
++        reads: std::cell::Cell::new(0),
++    };
++    let old_values = read_ordered_turns(&old, root, &legacy)?;
++    let new_values = read_ordered_turns(&new, root, &read.keys)?;
++    assert_eq!(new_values, old_values);
++    for (key, value) in &new_values {
++        assert_eq!(*value, records.get(key).cloned().flatten());
++    }
++    assert!(
++        new.reads.get() < old.reads.get(),
++        "hash-grouped 64-key turns did not reduce original tree node loads: new={} old={}",
++        new.reads.get(),
++        old.reads.get()
++    );
++    eprintln!("1024-row immutable frontier read/decode loads: dictionary_order={} hash_order={} keys={} quantum={}",
++        old.reads.get(), new.reads.get(), read.keys.len(), CAPTURE_QUANTUM);
++    let rows = finish_memory_capture(&mut read, &memory);
++    for (row, (expected, _, _)) in rows.into_iter().zip(inputs) {
++        let UcaReadResult::Present(state) = row? else {
++            anyhow::bail!("known account reported absent");
++        };
++        assert!(state.matches_intent(&expected));
++        assert_eq!(state.next_nonce(), expected.nonce);
++        assert_eq!(
++            state.static_failure(5),
++            Some(novovm_adapter_api::uca_spend_policy::SpendPolicyError::Revoked)
++        );
++    }
++    Ok(())
++}
++
++#[test]
++fn asset_hash_ordering_charges_temporary_metadata_and_keeps_tail_rejection() -> Result<()> {
++    let access = AssetSpendStateAccessV2::new(intent(), account(1), account(2))?;
++    let metadata = access.declarations().len() * std::mem::size_of::<(Hash, usize)>();
++    let previous = access
++        .declarations()
++        .iter()
++        .map(|d| d.key.len() + 257)
++        .sum::<usize>();
++    let exact = CaptureBudget {
++        bytes: previous + metadata,
++        ..capture_budget()
++    };
++    assert!(UcaBatchStateRead::new(
++        [9; 32],
++        vec![(intent(), account(1), account(2))],
++        CaptureBudget {
++            bytes: exact.bytes - 1,
++            ..exact
++        }
++    )
++    .is_err());
++    UcaBatchStateRead::new([9; 32], vec![(intent(), account(1), account(2))], exact)?;
++    let mut records = fixture();
++    let tail = access
++        .declarations()
++        .iter()
++        .find(|d| {
++            d.key
++                .windows(b"/grant/".len())
++                .any(|part| part == b"/grant/")
++                && d.key.ends_with(&[0, 1])
++        })
++        .context("grant tail declaration missing")?
++        .key
++        .clone();
++    records.insert(tail, Some(vec![1]));
++    let (memory, root) = tree_fixture(&records);
++    for old_order in [false, true] {
++        let mut read = UcaBatchStateRead::new(
++            root,
++            vec![(intent(), account(1), account(2))],
++            capture_budget(),
++        )?;
++        if old_order {
++            read.keys.sort_unstable();
++        }
++        let mut rows = finish_memory_capture(&mut read, &memory);
++        assert_eq!(rows.len(), 1);
++        assert!(rows.pop().unwrap().is_err());
++    }
++    Ok(())
++}
++
+ #[test]
+ fn uca_local_turn_captured_rows_match_single_steps_including_corrupt_pages() {
+     let good = fixture();
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/nonce_cache/tests.rs b/crates/novovm-node/src/native_pipeline/service/rpc/nonce_cache/tests.rs
+index a92e2888..15355351 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/nonce_cache/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/nonce_cache/tests.rs
+@@ -392,7 +392,7 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
+         )?;
+         assert!(cache.reads.len() <= MAX_READS);
+         let selection =
+-            select_prepared_nonce_window(&window, &pending, &cache.values, BTreeMap::new(), 1024);
++            select_prepared_nonce_window(&window, &pending, &cache.values, &BTreeMap::new(), 1024);
+         if selection.is_some() {
+             // The actual caller places stale-pool cleanup after this readiness
+             // gate, never in the per-eight-ticket read/completion operation.
+@@ -482,19 +482,19 @@ fn fully_known_gap_window_rotates_to_ready_work_but_unknown_window_does_not() {
+     let window = nonce_selection_window(&order, 0, 4);
+     assert_eq!(window.len(), 4);
+     assert_eq!(
+-        select_prepared_nonce_window(&window, &pending, &BTreeMap::new(), BTreeMap::new(), 4),
++        select_prepared_nonce_window(&window, &pending, &BTreeMap::new(), &BTreeMap::new(), 4),
+         None,
+         "unknown is not proof that this prefix only contains nonce gaps"
+     );
+     assert_eq!(
+-        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 4),
++        select_prepared_nonce_window(&window, &pending, &known, &BTreeMap::new(), 4),
+         Some((Vec::new(), false))
+     );
+     let next = advance_nonce_window(0, window.len(), order.len());
+     assert_eq!(next, 4);
+     let ready = nonce_selection_window(&order, next, 4);
+     assert_eq!(
+-        select_prepared_nonce_window(&ready, &pending, &known, BTreeMap::new(), 4),
++        select_prepared_nonce_window(&ready, &pending, &known, &BTreeMap::new(), 4),
+         Some((order.iter().skip(4).copied().collect(), true))
+     );
+     assert_eq!(advance_nonce_window(next, ready.len(), order.len()), 0);
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs b/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs
+index 19a754d2..3a950d73 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs
+@@ -76,25 +76,23 @@ fn asset_successor_window_fills_past_queued_predecessor_rows_without_nonce_credi
+     let successor = BTreeMap::from([([3; 32], 512)]);
+     let old = nonce_selection_window(&order, 0, 1024);
+     let (partial, _) =
+-        select_prepared_nonce_window(&old, &pending, &known, successor.clone(), 1024).unwrap();
++        select_prepared_nonce_window(&old, &pending, &known, &successor, 1024).unwrap();
+     assert_eq!(partial.len(), 512);
+-    let window = asset_nonce_selection_window(&order, &pending, &known, successor.clone(), 0, 1024);
++    let window = asset_nonce_selection_window(&order, &pending, &known, &successor, 0, 1024);
+     assert_eq!(
+         window,
+         order.iter().skip(512).copied().collect::<VecDeque<_>>()
+     );
+     let (selected, full) =
+-        select_prepared_nonce_window(&window, &pending, &known, successor, 1024).unwrap();
++        select_prepared_nonce_window(&window, &pending, &known, &successor, 1024).unwrap();
+     assert_eq!(selected.len(), 1024);
+     assert!(full);
+     assert_eq!(order.len(), 1536);
+     assert_eq!(pending.len(), 1536);
+ 
+     let empty = BTreeMap::new();
+-    let unknown = asset_nonce_selection_window(&order, &pending, &empty, empty.clone(), 0, 1024);
+-    assert!(
+-        select_prepared_nonce_window(&unknown, &pending, &empty, empty.clone(), 1024).is_none()
+-    );
++    let unknown = asset_nonce_selection_window(&order, &pending, &empty, &empty, 0, 1024);
++    assert!(select_prepared_nonce_window(&unknown, &pending, &empty, &empty, 1024).is_none());
+     Ok(())
+ }
+ 
+@@ -108,11 +106,11 @@ fn asset_full_known_stream_does_not_skip_an_older_unknown_nonce_subject() -> Res
+     let (available, _) =
+         select_pending_batch_with_budget(&order, &pending, &known, BTreeMap::new(), 1024);
+     assert_eq!(available.len(), 1024);
+-    let window = asset_nonce_selection_window(&order, &pending, &known, BTreeMap::new(), 0, 1024);
++    let window = asset_nonce_selection_window(&order, &pending, &known, &BTreeMap::new(), 0, 1024);
+     assert_eq!(window, nonce_selection_window(&order, 0, 1024));
+     assert_eq!(window.front(), order.front());
+     assert!(
+-        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 1024).is_none()
++        select_prepared_nonce_window(&window, &pending, &known, &BTreeMap::new(), 1024).is_none()
+     );
+     Ok(())
+ }
+@@ -121,15 +119,15 @@ fn asset_full_known_stream_does_not_skip_an_older_unknown_nonce_subject() -> Res
+ fn asset_nonce_window_keeps_low_load_and_missing_predecessor_behavior() -> Result<()> {
+     let (order, mut pending) = pending_uca(64)?;
+     let known = BTreeMap::from([([3; 32], 0)]);
+-    let window = asset_nonce_selection_window(&order, &pending, &known, BTreeMap::new(), 0, 1024);
++    let window = asset_nonce_selection_window(&order, &pending, &known, &BTreeMap::new(), 0, 1024);
+     let (selected, full) =
+-        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 1024).unwrap();
++        select_prepared_nonce_window(&window, &pending, &known, &BTreeMap::new(), 1024).unwrap();
+     assert_eq!(selected.len(), 64);
+     assert!(!full);
+     pending.remove(&order[0]);
+-    let window = asset_nonce_selection_window(&order, &pending, &known, BTreeMap::new(), 0, 1024);
++    let window = asset_nonce_selection_window(&order, &pending, &known, &BTreeMap::new(), 0, 1024);
+     let (selected, _) =
+-        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 1024).unwrap();
++        select_prepared_nonce_window(&window, &pending, &known, &BTreeMap::new(), 1024).unwrap();
+     assert!(selected.is_empty(), "a known nonce gap cannot be skipped");
+     Ok(())
+ }
+@@ -351,14 +349,14 @@ fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum
+     let known = BTreeMap::from([([3; 32], 0)]);
+     let first_quantum = order.iter().take(32).copied().collect();
+     let (partial, full) =
+-        select_prepared_nonce_window(&first_quantum, &pending, &known, BTreeMap::new(), 64)
++        select_prepared_nonce_window(&first_quantum, &pending, &known, &BTreeMap::new(), 64)
+             .unwrap();
+     assert_eq!(partial.len(), 32);
+     assert!(!full, "32 verified rows do not fill a 64-row source budget");
+ 
+     let full_source = nonce_selection_window(&order, 0, 64);
+     let (selected, full) =
+-        select_prepared_nonce_window(&full_source, &pending, &known, BTreeMap::new(), 64).unwrap();
++        select_prepared_nonce_window(&full_source, &pending, &known, &BTreeMap::new(), 64).unwrap();
+     assert_eq!(selected.len(), 64);
+     assert!(
+         full,
+@@ -367,7 +365,7 @@ fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum
+ 
+     let partial_source = nonce_selection_window(&order, 0, 128);
+     let (selected, full) =
+-        select_prepared_nonce_window(&partial_source, &pending, &known, BTreeMap::new(), 1024)
++        select_prepared_nonce_window(&partial_source, &pending, &known, &BTreeMap::new(), 1024)
+             .unwrap();
+     assert_eq!(selected.len(), 128);
+     assert!(
+@@ -376,7 +374,7 @@ fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum
+     );
+ 
+     let (selected, full) =
+-        select_prepared_nonce_window(&order, &pending, &known, BTreeMap::new(), 1024).unwrap();
++        select_prepared_nonce_window(&order, &pending, &known, &BTreeMap::new(), 1024).unwrap();
+     assert_eq!(selected.len(), 1024);
+     assert!(full, "the configured row limit makes a full candidate");
+     let bytes = selected
+@@ -391,13 +389,13 @@ fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum
+     // nonce gap nor an unresolved read grants the full-candidate exception.
+     pending.get_mut(&order[0]).unwrap().nonce = 7;
+     let (selected, full) =
+-        select_prepared_nonce_window(&order, &pending, &known, BTreeMap::new(), 1024).unwrap();
++        select_prepared_nonce_window(&order, &pending, &known, &BTreeMap::new(), 1024).unwrap();
+     assert!(selected.is_empty() && !full);
+     assert!(select_prepared_nonce_window(
+         &order,
+         &pending,
+         &BTreeMap::new(),
+-        BTreeMap::new(),
++        &BTreeMap::new(),
+         1024,
+     )
+     .is_none());
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs b/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
+index 38b7c843..87b68e58 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
+@@ -83,8 +83,8 @@ impl RpcLifecycle {
+     /// an account/grant. Two different grants still reserve one account nonce.
+     pub(super) fn admit_uca_checked(
+         &mut self,
+-        input: AdmissionInput,
+-        admitted: AdmittedTransfer,
++        mut input: AdmissionInput,
++        mut admitted: AdmittedTransfer,
+         state: &crate::native_pipeline::business::uca_spend_state::CapturedAssetSpendStateV2,
+         broadcast: bool,
+     ) -> Result<UcaAdmission> {
+@@ -136,7 +136,9 @@ impl RpcLifecycle {
+             admitted.matches_uca_source(batch, *index),
+             "UCA source capability mismatch"
+         );
+-        let id = hash(checked.signed())?;
++        let source_ref = Arc::as_ptr(batch) as usize;
++        let source_index = *index;
++        let id: Hash = Sha256::digest(intent.signing_bytes()?).into();
+         if self.receipts.contains_key(&id) || self.pending.contains_key(&id) {
+             return Ok(UcaAdmission::Accepted);
+         }
+@@ -150,17 +152,89 @@ impl RpcLifecycle {
+         let limit = MAX_POOL_BYTES;
+         #[cfg(test)]
+         let limit = self.admission.pool_byte_limit.unwrap_or(limit);
+-        if self.pending.len() >= MAX_POOL
+-            || canonical_len > limit.saturating_sub(self.pending_bytes)
++        // Reuse the original one-row signature-retention allowance. Future
++        // gaps cannot consume the last legal bridge row's slot and bytes.
++        let reserve = super::super::native_decode_limits(self.batch_size, true)
++            .transaction_bytes
++            .checked_mul(3)
++            .and_then(|bytes| bytes.checked_add(512 + 4096))
++            .context("bridge row retained bound overflow")?;
++        #[cfg(test)]
++        let reserve = self.admission.bridge_reserve_bytes.unwrap_or(reserve);
++        let future_limit = limit.saturating_sub(reserve);
++        let mut metadata = admitted.retained_metadata_bytes();
++        let reserved = if self.pending.len() < MAX_POOL.saturating_sub(1)
++            && canonical_len <= future_limit.saturating_sub(self.pending_bytes)
+         {
+-            return Ok(UcaAdmission::Backpressured(input, admitted));
+-        }
+-        let metadata = admitted.retained_metadata_bytes();
+-        if let Err(error) = self.pending_retention.reserve(&input, metadata, limit) {
+-            if error.is::<PoolBackpressure>() {
+-                return Ok(UcaAdmission::Backpressured(input, admitted));
++            self.pending_retention
++                .reserve(&input, metadata, future_limit)
++        } else {
++            Err(PoolBackpressure.into())
++        };
++        match reserved {
++            Ok(()) => {}
++            Err(error) if error.is::<PoolBackpressure>() => {
++                // This scan is only at actual pressure, never once per hot
++                // incoming row. Reservations grant priority, not spend authority.
++                let mut expected = state.next_nonce();
++                while self.reservations.contains(&(signer, expected)) {
++                    expected = expected
++                        .checked_add(1)
++                        .context("pending nonce prefix overflow")?;
++                }
++                if nonce != expected
++                    || self.pending.len() >= MAX_POOL
++                    || canonical_len > limit.saturating_sub(self.pending_bytes)
++                {
++                    return Ok(UcaAdmission::Backpressured(input, admitted));
++                }
++                match self.pending_retention.reserve(&input, metadata, limit) {
++                    Ok(()) => {}
++                    Err(error) if error.is::<PoolBackpressure>() => {
++                        self.nonces.bind_current_parent(parent);
++                        let has_ready = self.pending.values().any(|entry| {
++                            let known = if entry.signer == signer {
++                                Some(state.next_nonce())
++                            } else {
++                                self.nonces.get(&entry.signer).copied()
++                            };
++                            known == Some(entry.nonce)
++                        });
++                        if has_ready {
++                            return Ok(UcaAdmission::Backpressured(input, admitted));
++                        }
++                        // Only a real bridge blocked by its larger frame gets
++                        // a compact original-APFL single-row projection.
++                        let (projected, rebound) =
++                            self.node.pipeline.project_admitted_uca_row(&admitted)?;
++                        let AdmissionInput::Uca { batch, .. } = &projected else {
++                            unreachable!("typed UCA projection");
++                        };
++                        let rebound_metadata = rebound.retained_metadata_bytes();
++                        let retained = batch
++                            .retained_bytes()?
++                            .checked_add(rebound_metadata)
++                            .context("bridge projection retained bytes overflow")?;
++                        if retained > reserve {
++                            return Ok(UcaAdmission::Backpressured(input, admitted));
++                        }
++                        if let Err(error) =
++                            self.pending_retention
++                                .reserve(&projected, rebound_metadata, limit)
++                        {
++                            if error.is::<PoolBackpressure>() {
++                                return Ok(UcaAdmission::Backpressured(input, admitted));
++                            }
++                            return Err(error);
++                        }
++                        input = projected;
++                        admitted = rebound;
++                        metadata = rebound_metadata;
++                    }
++                    Err(error) => return Err(error),
++                }
+             }
+-            return Err(error);
++            Err(error) => return Err(error),
+         }
+         self.nonces.bind_current_parent(parent);
+         if let Err(error) =
+@@ -177,7 +251,7 @@ impl RpcLifecycle {
+                 parent.height + 1,
+                 || {
+                     json!({
+-                        "source_ref":Arc::as_ptr(batch) as usize,"index":index,"tx":hex(&id),
++                        "source_ref":source_ref,"index":source_index,"tx":hex(&id),
+                         "nonce":nonce,"signer":hex(&signer),"parent_height":parent.height,
+                         "parent_root":hex(&parent.state_root),"parent_nonce":state.next_nonce()
+                     })
+@@ -254,6 +328,78 @@ impl RpcLifecycle {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    #[ignore = "real AOEM/native admission; compact facts and exactly-once original APFL pool retention"]
++    fn asset_pool_compact_facts_charge_one_source_without_owned_crypto_copies() -> Result<()> {
++        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
++            let rpc = &mut nodes[0];
++            let raws = signed
++                .iter()
++                .map(SignedAssetSpendV2::encode)
++                .collect::<std::result::Result<Vec<_>, _>>()?;
++            let batch = Arc::new(AssetSpendBatchV2::from_raw(
++                &raws,
++                AssetSpendBatchLimitsV2 {
++                    transactions: 1024,
++                    transaction_bytes: 8192,
++                    body_bytes: 8 * 1024 * 1024,
++                },
++            )?);
++            let payload = batch.retained_bytes()?;
++            rpc.ingress_batch_boundary = false;
++            rpc.incoming_from_client = false;
++            rpc.incoming = Some((
++                rpc.node
++                    .controller
++                    .uca_transactions_message(batch.clone())?,
++                0,
++            ));
++            let deadline = Instant::now() + Duration::from_secs(15);
++            while rpc.incoming.is_some() || rpc.admission.has_pending_native_admission() {
++                ensure!(
++                    Instant::now() < deadline,
++                    "original compact pool admission timeout"
++                );
++                rpc.poll_admission()?;
++                std::thread::yield_now();
++            }
++            assert_eq!(rpc.pending.len(), signed.len());
++            let mut metadata = 0;
++            for entry in rpc.pending.values() {
++                let AdmissionInput::Uca {
++                    batch: original,
++                    index,
++                } = &entry.input
++                else {
++                    anyhow::bail!("unexpected non-asset pool source");
++                };
++                assert!(Arc::ptr_eq(original, &batch));
++                let admitted = entry.admitted.as_ref().context("pool fact missing")?;
++                assert!(admitted.matches_uca_source(&batch, *index));
++                let fact = admitted.checked_uca().unwrap();
++                let expected = std::mem::size_of::<AdmittedTransfer>()
++                    + std::mem::size_of::<crate::native_pipeline::ingress::batch::CheckedAdmission>(
++                    )
++                    + 2 * std::mem::size_of::<usize>()
++                    + fact.intent().retained_heap_bytes();
++                assert_eq!(admitted.retained_metadata_bytes(), expected);
++                assert!(expected < original.transaction_bytes(*index)?);
++                metadata += expected;
++            }
++            assert_eq!(rpc.pending_retention.owners.len(), 1);
++            assert_eq!(rpc.pending_retention.metadata_bytes, metadata);
++            assert_eq!(rpc.pending_retention.bytes, payload + metadata);
++            for (_, entry) in std::mem::take(&mut rpc.pending) {
++                rpc.pending_retention
++                    .release(&entry.input, entry.retained_metadata_bytes());
++            }
++            assert_eq!(rpc.pending_retention.bytes, 0);
++            assert_eq!(rpc.pending_retention.metadata_bytes, 0);
++            assert!(rpc.pending_retention.owners.is_empty());
++            Ok(())
++        })
++    }
++
+     #[test]
+     #[ignore = "real AOEM asset admission; reference reconstruction uses original pool, run alone"]
+     fn asset_body_reference_reuses_pool_rows_without_local_target_or_authority_changes(
+diff --git a/crates/novovm-node/src/native_pipeline/state/tree.rs b/crates/novovm-node/src/native_pipeline/state/tree.rs
+index 0b22cac6..5eba6c89 100644
+--- a/crates/novovm-node/src/native_pipeline/state/tree.rs
++++ b/crates/novovm-node/src/native_pipeline/state/tree.rs
+@@ -123,6 +123,11 @@ thread_local! {
+     static REACHABILITY_DECODES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+ }
+ 
++#[cfg(test)]
++pub(crate) fn take_reachability_decodes_for_test() -> usize {
++    REACHABILITY_DECODES.with(|count| count.replace(0))
++}
++
+ pub fn empty_root() -> NodeHash {
+     #[cfg(test)]
+     EMPTY_ROOT_LOOKUPS.with(|count| count.set(count.get() + 1));
+diff --git a/crates/novovm-protocol/src/uca_spend_batch.rs b/crates/novovm-protocol/src/uca_spend_batch.rs
+index 8edba3a2..bb52c5a9 100644
+--- a/crates/novovm-protocol/src/uca_spend_batch.rs
++++ b/crates/novovm-protocol/src/uca_spend_batch.rs
+@@ -6,6 +6,7 @@ use crate::uca_spend::{
+     SpendEncodingError, MAX_SIGNED_SPEND_BYTES, MIN_SIGNED_SPEND_BYTES, MLDSA65_PUBLIC_KEY_BYTES,
+     MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
+ };
++use sha2::Digest;
+ use std::collections::BTreeSet;
+ 
+ const MAGIC: &[u8; 8] = b"NUAPFL02";
+@@ -90,6 +91,15 @@ impl AssetSpendViewV2<'_> {
+         self.intent()?.signing_bytes()
+     }
+ 
++    /// Same canonical signed bytes as `SignedAssetSpendV2::encode`, without
++    /// allocating a second public key/signature buffer for plan commitments.
++    pub fn update_canonical_digest(&self, digest: &mut impl Digest) -> Result<()> {
++        digest.update(self.signing_bytes()?);
++        digest.update(self.cells[11]);
++        digest.update(self.signature);
++        Ok(())
++    }
++
+     /// Compare every canonical field, public key and signature directly. An
+     /// intent hash alone cannot establish that a signature fact is reusable.
+     pub fn matches_signed(&self, signed: &SignedAssetSpendV2) -> Result<bool> {
+@@ -528,6 +538,13 @@ mod tests {
+                     signed.intent.recipient.as_slice()
+                 )
+             );
++            let mut digest = sha2::Sha256::new();
++            decoded
++                .view(i)
++                .unwrap()
++                .update_canonical_digest(&mut digest)
++                .unwrap();
++            assert_eq!(digest.finalize(), sha2::Sha256::digest(expected));
+         }
+         assert!(decoded.raw_transaction(4).is_err());
+         assert!(decoded.transaction_bytes(4).is_err());
+@@ -687,7 +704,9 @@ mod tests {
+ 
+     #[test]
+     fn mixed_spend_and_authority_updates_preserve_original_rows_and_byte_budgets() {
+-        use crate::uca_spend::{AssetAuthorityUpdateV2, AssetGrantConfigV2};
++        use crate::uca_spend::{
++            AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetGrantConfigV2,
++        };
+         let (mut raw, limits) = fixture();
+         let mut management = SignedAssetSpendV2::decode(&raw[1]).unwrap();
+         management.intent.amount = 0;
+@@ -708,6 +727,25 @@ mod tests {
+             }],
+         });
+         raw[1] = management.encode().unwrap();
++        let mut opening = SignedAssetSpendV2::decode(&raw[2]).unwrap();
++        let creation = AssetAccountCreationV2 {
++            management_key_ref: [12; 32],
++            recovery_key_ref: Some([11; 32]),
++            grants: vec![AssetGrantConfigV2 {
++                key_ref: [10; 32],
++                permits_nov_transfer: true,
++                not_before_height: 1,
++                expires_at_height: 100,
++                max_debit_per_intent: 10,
++                remaining_debit_budget: 100,
++            }],
++        };
++        opening.intent.recipient = creation
++            .account(opening.intent.chain_id, &opening.intent.genesis)
++            .unwrap()
++            .to_vec();
++        opening.intent.recipient_creation = Some(creation);
++        raw[2] = opening.encode().unwrap();
+         let batch = AssetSpendBatchV2::from_raw(&raw, limits).unwrap();
+         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum());
+         let wire = batch.encode().unwrap();
+@@ -729,6 +767,13 @@ mod tests {
+                 .unwrap()
+                 .matches_signed(&signed)
+                 .unwrap());
++            let mut digest = sha2::Sha256::new();
++            decoded
++                .view(index)
++                .unwrap()
++                .update_canonical_digest(&mut digest)
++                .unwrap();
++            assert_eq!(digest.finalize(), sha2::Sha256::digest(bytes));
+         }
+         let mut changed = management;
+         changed.intent.authority_update.as_mut().unwrap().grants[0].remaining_debit_budget += 1;

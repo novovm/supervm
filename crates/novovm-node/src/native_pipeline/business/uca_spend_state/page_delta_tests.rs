@@ -93,7 +93,7 @@ fn record_page_delta_preserves_real_tail_shrink_growth_and_original_profile() ->
     for (before, after) in [(vec![7; 512], vec![8; 100]), (vec![7; 100], vec![8; 512])] {
         let old = record_pages::record_changes(prefix, &before, 512)?;
         let full = record_pages::record_changes(prefix, &after, 512)?;
-        let delta = changed_record_pages(full.clone(), old.clone())?;
+        let delta = record_pages::changed_record_pages(full.clone(), old.clone())?;
         if after.len() < before.len() {
             assert!(
                 matches!(delta.last(), Some(StateChange::Delete { .. })),
@@ -125,7 +125,7 @@ fn record_page_delta_preserves_real_tail_shrink_growth_and_original_profile() ->
         );
     }
     assert!(
-        changed_record_pages(
+        record_pages::changed_record_pages(
             record_pages::record_changes(prefix, &[8; 100], 256)?,
             record_pages::record_changes(prefix, &[7; 512], 512)?,
         )

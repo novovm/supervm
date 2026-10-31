@@ -130,6 +130,56 @@ pub fn record_changes(prefix: &[u8], bytes: &[u8], max_bytes: usize) -> Result<V
     Ok(changes)
 }
 
+/// The previous bytes must be the canonical record read from the complete
+/// declared range at this same parent. None keeps the original full update;
+/// it is not a claim of absence. Actual old tail pages are still deleted.
+pub(crate) fn record_changes_from_parent(
+    prefix: &[u8],
+    bytes: &[u8],
+    max_bytes: usize,
+    previous: Option<&[u8]>,
+) -> Result<Vec<StateChange>> {
+    let changes = record_changes(prefix, bytes, max_bytes)?;
+    match previous {
+        Some(previous) => {
+            changed_record_pages(changes, record_changes(prefix, previous, max_bytes)?)
+        }
+        None => Ok(changes),
+    }
+}
+
+/// Compare the original codec's complete page ranges. Callers retain the same
+/// read permissions and must supply old material from their captured parent.
+pub(crate) fn changed_record_pages(
+    changes: Vec<StateChange>,
+    previous: Vec<StateChange>,
+) -> Result<Vec<StateChange>> {
+    ensure!(
+        changes.len() == previous.len(),
+        "record page delta profile mismatch"
+    );
+    let mut changed = Vec::with_capacity(changes.len());
+    for (change, old) in changes.into_iter().zip(previous) {
+        let (key, value) = match &change {
+            StateChange::Put { key, value } => (key, Some(value)),
+            StateChange::Delete { key } => (key, None),
+        };
+        let (old_key, old_value) = match &old {
+            StateChange::Put { key, value } => (key, Some(value)),
+            StateChange::Delete { key } => (key, None),
+        };
+        ensure!(key == old_key, "record page delta prefix mismatch");
+        if value != old_value {
+            changed.push(change);
+        }
+    }
+    Ok(changed)
+}
+
+#[cfg(test)]
+#[path = "record_pages/delta_tests.rs"]
+mod delta_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

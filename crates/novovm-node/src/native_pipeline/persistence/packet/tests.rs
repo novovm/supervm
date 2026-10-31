@@ -222,8 +222,11 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
         assert_eq!(hot.success, cold.success);
         assert_eq!(hot.charged_fee, cold.charged_fee.parse::<u128>().unwrap());
     }
-    let projection_bytes =
-        packet.receipt_projection.capacity() * std::mem::size_of::<ReceiptProjection>();
+    let projection_bytes = packet.receipt_projection.capacity()
+        * std::mem::size_of::<ReceiptProjection>()
+        + packet.nonce_projection.len() * 96
+        + std::mem::size_of::<BTreeMap<NodeHash, u64>>()
+        + 2 * std::mem::size_of::<usize>();
     assert_eq!(
         packet.retained_bytes(),
         packet.record_bytes() + projection_bytes
@@ -269,6 +272,27 @@ fn exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments()
         })
         .unwrap();
     assert_eq!(packet.records(), repeated.records());
+}
+
+#[test]
+fn immutable_nonce_projection_keeps_last_actual_receipt_and_one_allocation() {
+    let fixture = Fixture::new(&[4, 5, 6], 0, 3);
+    let packet = fixture.packet(PacketBudget::default()).unwrap();
+    let subject = fixture.receipts[0].signer_identity;
+    assert_eq!(packet.nonce_projection().len(), 1);
+    assert_eq!(packet.nonce_projection().get(&subject), Some(&7));
+    assert!(packet.receipt_projection().iter().all(|row| !row.success));
+    let retained = Arc::clone(packet.nonce_projection());
+    for _ in 0..64 {
+        assert!(Arc::ptr_eq(&retained, packet.nonce_projection()));
+        assert_eq!(retained.get(&subject), Some(&7));
+    }
+    let other = Fixture::new(&[7], 0, 3)
+        .packet(PacketBudget::default())
+        .unwrap();
+    assert!(!Arc::ptr_eq(&retained, other.nonce_projection()));
+    assert_eq!(other.nonce_projection().get(&subject), Some(&8));
+    assert_eq!(retained.get(&subject), Some(&7));
 }
 
 #[test]

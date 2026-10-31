@@ -244,6 +244,44 @@ fn authority_parking_hands_off_only_one_slot_and_retains_bytes_through_last_arc(
 }
 
 #[test]
+fn source_parking_preserves_bytes_and_reclaims_only_the_unique_authority_slot() {
+    let mut config = cfg();
+    let bytes = input().reservation(&config).unwrap();
+    let reserve = BatchRequest::retained_reservation(
+        config.authentication.body_bytes.min(config.plan.body_bytes),
+        &config,
+    )
+    .unwrap();
+    config.max_retained_bytes = 3 * bytes + reserve;
+    let (pipeline, receiver) = inert_pipeline(config);
+    let mut first = completed(&pipeline, &receiver);
+    first.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 0));
+    assert!(first.park_for_authority().is_err());
+    let mut second = completed(&pipeline, &receiver);
+    second.park_for_authority().unwrap();
+    let mut third = completed(&pipeline, &receiver);
+    let before = all_usage(&pipeline);
+    assert_eq!(before, (0, 3 * bytes, 0, 1, 1));
+    assert!(!first.resume_authority().unwrap());
+    first.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), before);
+    third.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, 3 * bytes, 0, 0, 1));
+    second.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, 3 * bytes, 0, 0, 0));
+    assert!(first.resume_authority().unwrap());
+    assert!(!second.resume_authority().unwrap());
+    assert!(!third.resume_authority().unwrap());
+    assert!(first.resume_authority().is_err());
+    let retained = first._permit.clone();
+    drop((second, third, first));
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
+    drop(retained);
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
 fn parked_source_charge_still_reserves_the_maximum_candidate_bytes() {
     let mut config = cfg();
     let bytes = input().reservation(&config).unwrap();
@@ -255,12 +293,12 @@ fn parked_source_charge_still_reserves_the_maximum_candidate_bytes() {
     config.max_retained_bytes = 2 * bytes + reserve - 1;
     let (pipeline, receiver) = inert_pipeline(config);
     let mut output = completed(&pipeline, &receiver);
-    output.park_for_authority().unwrap();
+    output.park_for_source().unwrap();
     assert!(matches!(
         pipeline.try_admit_signatures_owned(input()).unwrap(),
         SignatureAdmissionSubmission::Backpressured(_)
     ));
-    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 0));
     let Submission::Accepted(candidate) = pipeline.try_submit_owned(request(empty_root())).unwrap()
     else {
         panic!("parked bytes prevented the reserved candidate")
@@ -290,9 +328,115 @@ fn authority_handoff_rejects_non_ingress_role_without_changing_accounting() {
     let permit = pipeline.reserve(23, false).unwrap().unwrap();
     assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
     assert!(permit.park_for_authority().is_err());
+    assert!(permit.park_for_source().is_err());
+    assert!(permit.resume_authority().is_err());
     assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
     drop(permit);
     assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
+#[ignore = "real trusted AOEM; single-row APFL projection preserves exact signature fact and original owner"]
+fn admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade() -> Result<()> {
+    use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2};
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .context("explicit trusted AOEM test library required")?;
+    let facade =
+        novovm_exec::AoemExecFacade::open(std::path::Path::new(&library), Default::default())?;
+    let runtime =
+        facade.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
+    let key = runtime.generate_keypair()?;
+    let mut config = cfg();
+    config.authentication.transaction_bytes = 8192;
+    config.plan.transaction_bytes = 8192;
+    let signer = facade.asset_spend_signer_v2()?;
+    let rows = (0..2)
+        .map(|nonce| {
+            signer.sign(
+                AssetSpendIntentV2 {
+                    chain_id: config.store.domain.chain_id,
+                    genesis: config.store.domain.genesis_config_commitment,
+                    payer: vec![1; 20],
+                    recipient: vec![2; 20],
+                    asset: 1,
+                    authorization_epoch: 1,
+                    spend_key_ref: spend_key_ref_v1(&key.public_key)?,
+                    amount: 1,
+                    max_fee: 50,
+                    nonce,
+                    not_before_height: 1,
+                    expires_at_height: 50,
+                    authority_update: None,
+                    recipient_creation: None,
+                },
+                &key.public_key,
+                &key.expanded_secret_key,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let raw = rows
+        .iter()
+        .map(SignedAssetSpendV2::encode)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let source = Arc::new(AssetSpendBatchV2::from_raw(
+        &raw,
+        AssetSpendBatchLimitsV2 {
+            transactions: 2,
+            transaction_bytes: 8192,
+            body_bytes: 16 * 1024,
+        },
+    )?);
+    let weak = Arc::downgrade(&source);
+    let (pipeline, _) = inert_pipeline(config.clone());
+    let (foreign, _) = inert_pipeline(config);
+    let original = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 1)?;
+    assert!(foreign.project_admitted_uca_row(&original).is_err());
+    let v3 = admitted_for_test(&pipeline, structured(&[signed(1, 10)]), 0)?;
+    assert!(pipeline.project_admitted_uca_row(&v3).is_err());
+    let (input, projected) = pipeline.project_admitted_uca_row(&original)?;
+    let AdmissionInput::Uca { batch, index } = &input else {
+        anyhow::bail!("asset projection changed contract");
+    };
+    assert_eq!(*index, 0);
+    assert_eq!(batch.len(), 1);
+    assert!(!Arc::ptr_eq(batch, &source));
+    assert_eq!(batch.view(0)?, source.view(1)?);
+    assert!(projected.matches_uca_source(batch, 0));
+    assert!(!projected.matches_uca_source(&source, 1));
+    assert!(!original.matches_uca_source(batch, 0));
+    assert!(
+        projected
+            .checked_uca()
+            .unwrap()
+            .reattach(batch.row(0)?)?
+            .signed()
+            == &rows[1]
+    );
+    assert!(projected
+        .checked_uca()
+        .unwrap()
+        .reattach(rows[0].clone())
+        .is_err());
+    assert!(batch.retained_bytes()? + projected.retained_metadata_bytes() <= 29_184);
+    assert!(pipeline
+        .rebind_admitted_uca(batch.clone(), &[&projected])
+        .is_ok());
+    assert!(foreign
+        .rebind_admitted_uca(batch.clone(), &[&projected])
+        .is_err());
+    assert_eq!(
+        pipeline.signature_counts(),
+        (0, 0),
+        "projection/rebind must not rerun crypto"
+    );
+    drop(original);
+    drop(source);
+    assert!(
+        weak.upgrade().is_none(),
+        "single-row fact still pins the full original dictionary"
+    );
+    Ok(())
 }
 
 #[test]

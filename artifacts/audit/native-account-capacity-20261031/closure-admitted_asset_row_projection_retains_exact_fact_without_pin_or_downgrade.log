@@ -1,0 +1,6 @@
+
+running 1 test
+test native_pipeline::pipeline::admission::tests::admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1820 filtered out; finished in 0.01s
+

@@ -5,7 +5,41 @@ use crate::native_pipeline::consensus::{
     statement::ParentPoint, transport::TransactionsScope, wire::Context as VoteContext,
 };
 use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
+use crate::native_pipeline::pipeline::{
+    AdmissionInput, AdmittedTransfer, SignatureAdmissionOutput,
+};
 use novovm_protocol::uca_spend_batch::AssetSpendBatchV2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TransactionOrigin {
+    Client,
+    Peer(usize),
+}
+
+/// The original source handoff may retain signature facts, never parent-state
+/// authority. Its output permit keeps every byte charged while queued.
+/// The boxed carrier fits the original signature reservation's 4096-byte
+/// reply/header allowance; row/source storage keeps that same byte permit.
+pub(crate) struct CheckedTransactionSource {
+    pub output: SignatureAdmissionOutput,
+    pub rows: VecDeque<(AdmissionInput, AdmittedTransfer)>,
+    pub complete_body: bool,
+    pub detached_body: bool,
+    pub broadcast: bool,
+    pub waiting_parent: Option<ParentPoint>,
+    pub waiting_pool: Option<(usize, usize, usize)>,
+}
+
+pub(crate) enum TransactionSource {
+    Raw {
+        message: Arc<Message>,
+        origin: TransactionOrigin,
+    },
+    Checked {
+        checked: Box<CheckedTransactionSource>,
+        origin: TransactionOrigin,
+    },
+}
 
 /// The cheap availability hint retains its existing conservative bounds. Only
 /// this exact, prepared-message check grants the final local reservation; the
@@ -44,8 +78,71 @@ impl NativeLifecycle {
     /// Untrusted application input, not a validator message or signed vote.
     /// The product's existing admission owner must independently authenticate
     /// each transaction and disseminate accepted input to validator peers.
-    pub fn take_client_transactions(&mut self) -> Option<Arc<Message>> {
+    pub(crate) fn take_client_transactions(&mut self) -> Option<TransactionSource> {
         self.client_transactions.pop_front()
+    }
+
+    /// Return to the SAME two-slot source queue. A full queue exchanges its
+    /// oldest source into the caller's existing incoming/authority handoff.
+    /// No accepted row or checked fact is discarded to make room.
+    pub(crate) fn return_checked_transactions(
+        &mut self,
+        origin: TransactionOrigin,
+        mut checked: Box<CheckedTransactionSource>,
+    ) -> std::result::Result<
+        Option<TransactionSource>,
+        (Box<CheckedTransactionSource>, anyhow::Error),
+    > {
+        let queue = match origin {
+            TransactionOrigin::Client => &mut self.client_transactions,
+            TransactionOrigin::Peer(peer) => match self.transactions.get_mut(peer) {
+                Some(queue) => queue,
+                None => {
+                    return Err((
+                        checked,
+                        anyhow::anyhow!("unknown original transaction source"),
+                    ))
+                }
+            },
+        };
+        if let Err(error) = checked.output.park_for_source() {
+            return Err((checked, error));
+        }
+        let next = if queue.len() == 2 {
+            queue.pop_front()
+        } else {
+            None
+        };
+        queue.push_back(TransactionSource::Checked { checked, origin });
+        Ok(next)
+    }
+
+    pub(crate) fn rotate_taken_checked_transactions(
+        &mut self,
+        origin: TransactionOrigin,
+        checked: Box<CheckedTransactionSource>,
+    ) {
+        let queue = match origin {
+            TransactionOrigin::Client => &mut self.client_transactions,
+            TransactionOrigin::Peer(peer) => &mut self.transactions[peer],
+        };
+        // The caller just removed this exact source; no receive call occurs
+        // between removal and rotation, so its original slot remains free.
+        assert!(queue.len() < 2, "taken source slot must remain free");
+        queue.push_back(TransactionSource::Checked { checked, origin });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_client_transactions_for_test(
+        &mut self,
+        message: Arc<Message>,
+    ) -> Result<()> {
+        ensure!(self.client_transactions.len() < 2, "test source queue full");
+        self.client_transactions.push_back(TransactionSource::Raw {
+            message,
+            origin: TransactionOrigin::Client,
+        });
+        Ok(())
     }
     pub fn context(&self) -> VoteContext {
         self.progress.context()
@@ -248,7 +345,7 @@ impl NativeLifecycle {
     }
 
     /// Fair, bounded handoff to the existing independent authentication owner.
-    pub fn take_transactions(&mut self) -> Option<Arc<Message>> {
+    pub(crate) fn take_transactions(&mut self) -> Option<TransactionSource> {
         for _ in 0..self.transactions.len() {
             let peer = self.transaction_turn;
             self.transaction_turn = (peer + 1) % self.transactions.len();

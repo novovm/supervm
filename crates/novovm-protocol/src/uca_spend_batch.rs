@@ -6,6 +6,7 @@ use crate::uca_spend::{
     SpendEncodingError, MAX_SIGNED_SPEND_BYTES, MIN_SIGNED_SPEND_BYTES, MLDSA65_PUBLIC_KEY_BYTES,
     MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
 };
+use sha2::Digest;
 use std::collections::BTreeSet;
 
 const MAGIC: &[u8; 8] = b"NUAPFL02";
@@ -63,7 +64,9 @@ pub struct AssetSpendViewV2<'a> {
 }
 
 impl AssetSpendViewV2<'_> {
-    fn intent(&self) -> Result<AssetSpendIntentV2> {
+    /// Decode the intent while leaving the public key and signature borrowed.
+    /// Reading a column view is not signature or spending authorization.
+    pub fn intent(&self) -> Result<AssetSpendIntentV2> {
         let cell = |field: usize| self.cells[field];
         let array8 = |field| cell(field).try_into().map_err(|_| SpendEncodingError);
         let (authority_update, recipient_creation) = decode_asset_action_v2(cell(13))?;
@@ -88,6 +91,15 @@ impl AssetSpendViewV2<'_> {
     /// Original canonical intent encoding, without copying the key/signature.
     pub fn signing_bytes(&self) -> Result<Vec<u8>> {
         self.intent()?.signing_bytes()
+    }
+
+    /// Same canonical signed bytes as `SignedAssetSpendV2::encode`, without
+    /// allocating a second public key/signature buffer for plan commitments.
+    pub fn update_canonical_digest(&self, digest: &mut impl Digest) -> Result<()> {
+        digest.update(self.signing_bytes()?);
+        digest.update(self.cells[11]);
+        digest.update(self.signature);
+        Ok(())
     }
 
     /// Compare every canonical field, public key and signature directly. An
@@ -528,6 +540,13 @@ mod tests {
                     signed.intent.recipient.as_slice()
                 )
             );
+            let mut digest = sha2::Sha256::new();
+            decoded
+                .view(i)
+                .unwrap()
+                .update_canonical_digest(&mut digest)
+                .unwrap();
+            assert_eq!(digest.finalize(), sha2::Sha256::digest(expected));
         }
         assert!(decoded.raw_transaction(4).is_err());
         assert!(decoded.transaction_bytes(4).is_err());
@@ -687,7 +706,9 @@ mod tests {
 
     #[test]
     fn mixed_spend_and_authority_updates_preserve_original_rows_and_byte_budgets() {
-        use crate::uca_spend::{AssetAuthorityUpdateV2, AssetGrantConfigV2};
+        use crate::uca_spend::{
+            AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetGrantConfigV2,
+        };
         let (mut raw, limits) = fixture();
         let mut management = SignedAssetSpendV2::decode(&raw[1]).unwrap();
         management.intent.amount = 0;
@@ -708,6 +729,25 @@ mod tests {
             }],
         });
         raw[1] = management.encode().unwrap();
+        let mut opening = SignedAssetSpendV2::decode(&raw[2]).unwrap();
+        let creation = AssetAccountCreationV2 {
+            management_key_ref: [12; 32],
+            recovery_key_ref: Some([11; 32]),
+            grants: vec![AssetGrantConfigV2 {
+                key_ref: [10; 32],
+                permits_nov_transfer: true,
+                not_before_height: 1,
+                expires_at_height: 100,
+                max_debit_per_intent: 10,
+                remaining_debit_budget: 100,
+            }],
+        };
+        opening.intent.recipient = creation
+            .account(opening.intent.chain_id, &opening.intent.genesis)
+            .unwrap()
+            .to_vec();
+        opening.intent.recipient_creation = Some(creation);
+        raw[2] = opening.encode().unwrap();
         let batch = AssetSpendBatchV2::from_raw(&raw, limits).unwrap();
         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum());
         let wire = batch.encode().unwrap();
@@ -729,6 +769,13 @@ mod tests {
                 .unwrap()
                 .matches_signed(&signed)
                 .unwrap());
+            let mut digest = sha2::Sha256::new();
+            decoded
+                .view(index)
+                .unwrap()
+                .update_canonical_digest(&mut digest)
+                .unwrap();
+            assert_eq!(digest.finalize(), sha2::Sha256::digest(bytes));
         }
         let mut changed = management;
         changed.intent.authority_update.as_mut().unwrap().grants[0].remaining_debit_budget += 1;

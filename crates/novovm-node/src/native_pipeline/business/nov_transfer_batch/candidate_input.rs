@@ -3,12 +3,13 @@
 //! signing or publication authority from its input representation.
 use super::*;
 use crate::native_pipeline::execution::plan::{BoundBatchCapture, OwnedBatchInput};
+use crate::native_pipeline::ingress::batch::BatchSource;
 use crate::native_pipeline::state::frontier::StateReadSeed;
 
 pub(super) enum BodyInput {
     Reference(SignatureCheckedBatch),
     Uca {
-        raw: Vec<Vec<u8>>,
+        source: BatchSource,
         metadata: Box<uca_effects::UcaMetadata>,
     },
 }
@@ -23,10 +24,10 @@ impl BodyInput {
             Self::Reference(batch) => {
                 PlanInput::Reference(batch.bind(context, declarations, budget)?)
             }
-            Self::Uca { raw, metadata } => {
+            Self::Uca { source, metadata } => {
                 metadata.check_domain(&context)?;
                 PlanInput::Uca {
-                    plan: BatchPlan::new(context, raw, declarations, budget)?,
+                    plan: BatchPlan::from_source(context, source, declarations, budget)?,
                     metadata,
                 }
             }

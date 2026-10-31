@@ -123,6 +123,11 @@ thread_local! {
     static REACHABILITY_DECODES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(test)]
+pub(crate) fn take_reachability_decodes_for_test() -> usize {
+    REACHABILITY_DECODES.with(|count| count.replace(0))
+}
+
 pub fn empty_root() -> NodeHash {
     #[cfg(test)]
     EMPTY_ROOT_LOOKUPS.with(|count| count.set(count.get() + 1));

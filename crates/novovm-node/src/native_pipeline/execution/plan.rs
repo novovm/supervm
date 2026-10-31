@@ -154,7 +154,7 @@ impl BatchPlan {
             let len = match &source {
                 BatchSource::Raw(raw) => raw[index].len(),
                 BatchSource::Apfl(batch) => batch.row(index)?.encoded_len()?,
-                BatchSource::Uca(batch) => batch.raw_transaction(index)?.len(),
+                BatchSource::Uca(batch) => batch.transaction_bytes(index)?,
             };
             if len == 0 || len > budget.transaction_bytes {
                 bail!("batch raw transaction size exceeds budget or empty");
@@ -441,7 +441,11 @@ fn framed_source_row(digest: &mut Sha256, source: &BatchSource, index: usize) ->
             digest.update(u64::try_from(row.encoded_len()?)?.to_be_bytes());
             row.update_canonical_digest(digest)
         }
-        BatchSource::Uca(batch) => framed(digest, &batch.raw_transaction(index)?),
+        BatchSource::Uca(batch) => {
+            digest.update(u64::try_from(batch.transaction_bytes(index)?)?.to_be_bytes());
+            batch.view(index)?.update_canonical_digest(digest)?;
+            Ok(())
+        }
     }
 }
 

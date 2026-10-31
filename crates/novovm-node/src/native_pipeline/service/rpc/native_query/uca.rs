@@ -145,7 +145,9 @@ impl UcaBatchStateRead {
                 );
                 if !declarations.contains_key(&declaration.key) {
                     key_bytes = key_bytes
-                        .checked_add(declaration.key.len() + 257)
+                        .checked_add(
+                            declaration.key.len() + 257 + std::mem::size_of::<(Hash, usize)>(),
+                        )
                         .context("UCA read retention overflow")?;
                     ensure!(
                         declarations.len() < budget.keys && key_bytes <= budget.bytes,
@@ -157,7 +159,21 @@ impl UcaBatchStateRead {
         }
         let declarations: Vec<_> = declarations.into_values().collect();
         stats.unique_keys = declarations.len();
-        let keys = declarations.iter().map(|d| d.key.clone()).collect();
+        // Tree paths follow hashed keys, not their logical prefixes. Adjacent
+        // hash ranges share those paths inside each existing 64-key read turn.
+        // Temporary sort metadata is charged above and dropped before polling.
+        let mut order = Vec::with_capacity(declarations.len());
+        for (index, declaration) in declarations.iter().enumerate() {
+            order.push((
+                crate::native_pipeline::state::tree::state_key_hash(&declaration.key)?,
+                index,
+            ));
+        }
+        order.sort_unstable_by_key(|(hash, _)| *hash);
+        let keys = order
+            .into_iter()
+            .map(|(_, index)| declarations[index].key.clone())
+            .collect();
         let capture = if declarations.is_empty() {
             None
         } else {

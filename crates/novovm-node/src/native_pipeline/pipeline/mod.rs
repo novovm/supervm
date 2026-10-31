@@ -46,7 +46,7 @@ use crate::native_pipeline::persistence::{
 use crate::native_pipeline::state::frontier::CaptureBudget;
 use crate::native_pipeline::state::tree::{NodeHash, StagedStateUpdate};
 use anyhow::{ensure, Context, Result};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -394,12 +394,16 @@ struct Usage {
     ingress: usize,
     authority: usize,
 }
+const ADMISSION_INGRESS: u8 = 0;
+const ADMISSION_AUTHORITY: u8 = 1;
+const ADMISSION_SOURCE: u8 = 2;
+
 struct Permit {
     usage: Arc<Mutex<Usage>>,
     bytes: usize,
     background: bool,
     ingress: bool,
-    authority_parked: AtomicBool,
+    admission_role: AtomicU8,
 }
 impl Permit {
     fn park_for_authority(&self) -> Result<()> {
@@ -412,7 +416,7 @@ impl Permit {
             .lock()
             .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
         ensure!(
-            !self.authority_parked.load(Ordering::Relaxed),
+            self.admission_role.load(Ordering::Relaxed) == ADMISSION_INGRESS,
             "signature output already parked for authority"
         );
         ensure!(usage.authority == 0, "authority admission slot occupied");
@@ -421,8 +425,57 @@ impl Permit {
         // scheduling phase changes, under the same mutex as issuance and drop.
         usage.ingress -= 1;
         usage.authority += 1;
-        self.authority_parked.store(true, Ordering::Relaxed);
+        self.admission_role
+            .store(ADMISSION_AUTHORITY, Ordering::Relaxed);
         Ok(())
+    }
+
+    fn park_for_source(&self) -> Result<()> {
+        ensure!(
+            self.ingress && !self.background,
+            "non-ingress source permit"
+        );
+        let mut usage = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
+        match self.admission_role.load(Ordering::Relaxed) {
+            ADMISSION_INGRESS => {
+                ensure!(usage.ingress == 1, "signature admission slot not owned");
+                usage.ingress -= 1;
+            }
+            ADMISSION_AUTHORITY => {
+                ensure!(usage.authority == 1, "authority admission slot not owned");
+                usage.authority -= 1;
+            }
+            ADMISSION_SOURCE => return Ok(()),
+            _ => unreachable!("private admission role"),
+        }
+        self.admission_role
+            .store(ADMISSION_SOURCE, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn resume_authority(&self) -> Result<bool> {
+        ensure!(
+            self.ingress && !self.background,
+            "non-ingress authority resume"
+        );
+        let mut usage = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
+        ensure!(
+            self.admission_role.load(Ordering::Relaxed) == ADMISSION_SOURCE,
+            "authority resume requires a parked source"
+        );
+        if usage.authority != 0 {
+            return Ok(false);
+        }
+        usage.authority += 1;
+        self.admission_role
+            .store(ADMISSION_AUTHORITY, Ordering::Relaxed);
+        Ok(true)
     }
 }
 impl Drop for Permit {
@@ -432,10 +485,11 @@ impl Drop for Permit {
         usage.bytes -= self.bytes;
         usage.background -= usize::from(self.background);
         if self.ingress {
-            if self.authority_parked.load(Ordering::Relaxed) {
-                usage.authority -= 1;
-            } else {
-                usage.ingress -= 1;
+            match self.admission_role.load(Ordering::Relaxed) {
+                ADMISSION_INGRESS => usage.ingress -= 1,
+                ADMISSION_AUTHORITY => usage.authority -= 1,
+                ADMISSION_SOURCE => {}
+                _ => unreachable!("private admission role"),
             }
         }
     }
@@ -741,7 +795,7 @@ impl CandidatePipeline {
             bytes,
             background,
             ingress: false,
-            authority_parked: AtomicBool::new(false),
+            admission_role: AtomicU8::new(ADMISSION_INGRESS),
         })))
     }
 

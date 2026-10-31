@@ -120,6 +120,27 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     let memory = Memory(original.nodes().clone());
     let mut session = ComputeSession::open(&library, 2)?;
     let mut verifier = None;
+    for field in ["payer", "recipient", "domain", "signature"] {
+        let mut wrong = signed.clone();
+        match field {
+            "payer" => wrong.intent.payer[0] ^= 1,
+            "recipient" => wrong.intent.recipient[0] ^= 1,
+            "domain" => wrong.intent.chain_id += 1,
+            _ => wrong.signature[0] ^= 1,
+        }
+        let wrong = Arc::new(AssetSpendBatchV2::from_raw(&[wrong.encode()?], limits)?);
+        let checked = token.checked_uca().unwrap().reattach(signed.clone())?;
+        assert!(
+            NovTransferBody::prepare_asset_spend_from_uca(
+                wrong,
+                vec![checked],
+                policy(),
+                config.plan,
+            )
+            .is_err(),
+            "changed {field} attached to a real signature fact"
+        );
+    }
     for case in [
         "unchanged",
         "revoked",
@@ -157,7 +178,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         let mut parent = Memory(memory.0.clone());
         parent.0.extend(changed.nodes().clone());
         let selected = Arc::new(AssetSpendBatchV2::from_raw(&raw, limits)?);
-        let admitted = pipeline.rebind_admitted_uca(selected, &[&token])?;
+        let admitted = pipeline.rebind_admitted_uca(selected.clone(), &[&token])?;
         let body = authenticate(
             &mut session,
             &mut verifier,
@@ -175,9 +196,54 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         context.business_program = uca_program_id();
         context.effect_contract = uca_effect_contract(&policy())?;
         context.receipt_codec = uca_receipt_codec();
-        let result = capture(body.bind(context)?, &parent)?
+        let plan = body.bind(context)?;
+        assert!(plan.plan().raw_transactions_if_materialized().is_none());
+        assert_eq!(
+            Arc::strong_count(&selected),
+            2,
+            "product rebuilt its APFL owner"
+        );
+        let reference = if case == "unchanged" {
+            let checked = token.checked_uca().unwrap().reattach(signed.clone())?;
+            let raw = NovTransferBody::prepare_asset_spend(vec![checked], policy(), config.plan)?
+                .bind(context)?;
+            assert!(raw.plan().raw_transactions_if_materialized().is_some());
+            assert_eq!(raw.commitment(), plan.commitment());
+            Some(raw)
+        } else {
+            None
+        };
+        let result = capture(plan, &parent)?
             .finalize_capture()?
             .execute(&mut session, Duration::from_secs(30))?;
+        if let Some(reference) = reference {
+            let expected = capture(reference, &parent)?
+                .finalize_capture()?
+                .execute(&mut session, Duration::from_secs(30))?;
+            assert_eq!(
+                result.effects().plan_commitment(),
+                expected.effects().plan_commitment()
+            );
+            assert_eq!(
+                result.effects().update().root(),
+                expected.effects().update().root()
+            );
+            assert_eq!(
+                result.effects().update().nodes(),
+                expected.effects().update().nodes()
+            );
+            assert_eq!(result.receipts(), expected.receipts());
+            assert_eq!(result.spend_outputs(), expected.spend_outputs());
+            assert_eq!(result.fees(), expected.fees());
+            assert_eq!(
+                result.receipt_batch_commitment(),
+                expected.receipt_batch_commitment()
+            );
+            assert_eq!(
+                result.statement_commitment(),
+                expected.statement_commitment()
+            );
+        }
         let receipt = &result.receipts()[0];
         let output = &result.spend_outputs().context("missing UCA outputs")?[0];
         if case == "unchanged" {
@@ -210,17 +276,31 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     assert_eq!(config.signatures.reused.load(Ordering::Relaxed), 6);
     assert_eq!(config.signatures.uca_batch_calls.load(Ordering::Relaxed), 0);
     // Missing evidence still uses the original qualified batch verifier.
-    authenticate(
+    let body = authenticate(
         &mut session,
         &mut verifier,
         &config,
         AuthenticateRequest {
             raw_transactions: CandidateInput::Uca {
-                source: BatchSource::Uca(source),
+                source: BatchSource::Uca(source.clone()),
             },
             policy: policy(),
         },
     )?;
+    let mut fresh_context = context(original.root());
+    fresh_context.business_program = uca_program_id();
+    fresh_context.effect_contract = uca_effect_contract(&policy())?;
+    fresh_context.receipt_codec = uca_receipt_codec();
+    let fresh_plan = body.bind(fresh_context)?;
+    assert!(fresh_plan
+        .plan()
+        .raw_transactions_if_materialized()
+        .is_none());
+    assert_eq!(
+        Arc::strong_count(&source),
+        3,
+        "fresh verifier lost original APFL source"
+    );
     assert!(verifier.is_some());
     assert_eq!(config.signatures.strict_verified.load(Ordering::Relaxed), 1);
     assert_eq!(config.signatures.uca_batch_calls.load(Ordering::Relaxed), 1);

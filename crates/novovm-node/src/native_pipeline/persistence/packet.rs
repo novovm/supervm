@@ -20,7 +20,10 @@ use crate::native_pipeline::state::tree::{
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 const DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND01";
 // UCA extends the same candidate document, never re-labels a V3 body/receipt.
@@ -91,6 +94,8 @@ pub struct PreparedCandidate {
     // charged below against the existing 2x maximum-packet reservation.
     // Not serialized or added to any business/consensus commitment.
     receipt_projection: Vec<ReceiptProjection>,
+    // Same verified receipt facts, indexed once for repeated local selection.
+    nonce_projection: Arc<BTreeMap<NodeHash, u64>>,
 }
 
 struct Resources {
@@ -155,8 +160,8 @@ impl PreparedCandidate {
     pub fn record_bytes(&self) -> usize {
         self.resources.total_bytes
     }
-    /// Logical record content plus the actual capacity of the read-only receipt
-    /// projection. Runtime owners use this for retention, not storage encoding.
+    /// Logical records, receipt capacity and conservatively charged nonce index.
+    /// Runtime owners use this for retention, not storage encoding or exact RSS.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.resources.retained_bytes
     }
@@ -165,6 +170,9 @@ impl PreparedCandidate {
     }
     pub(crate) fn receipt_projection(&self) -> &[ReceiptProjection] {
         &self.receipt_projection
+    }
+    pub(crate) fn nonce_projection(&self) -> &Arc<BTreeMap<NodeHash, u64>> {
+        &self.nonce_projection
     }
     pub fn context(&self) -> &BatchContext {
         &self.summary.context
@@ -610,9 +618,24 @@ fn prepare_with_spend(
     for (key, value) in &records {
         account_record(&mut total, key, value, budget)?;
     }
+    // Keep the last ACTUAL receipt nonce, including unchanged/failure rows.
+    // The immutable packet owns this once; selection only shares its Arc.
+    let nonce_projection: BTreeMap<_, _> = receipt_projection
+        .iter()
+        .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
+        .collect();
+    // Match the existing successor's conservative logical per-entry charge.
+    // Map/Arc headers are included; this is not allocator-exact RSS accounting.
+    let nonce_projection_bytes = nonce_projection
+        .len()
+        .checked_mul(96)
+        .and_then(|bytes| bytes.checked_add(std::mem::size_of::<BTreeMap<NodeHash, u64>>()))
+        .and_then(|bytes| bytes.checked_add(2 * std::mem::size_of::<usize>()))
+        .context("nonce projection size overflow")?;
     let projection_bytes = receipt_projection
         .capacity()
         .checked_mul(std::mem::size_of::<ReceiptProjection>())
+        .and_then(|bytes| bytes.checked_add(nonce_projection_bytes))
         .context("receipt projection size overflow")?;
     // Existing pipeline reservation contains 2 * maximum packet bytes. The
     // extra projection cannot silently widen that admitted memory contract.
@@ -651,6 +674,7 @@ fn prepare_with_spend(
         records,
         resources,
         receipt_projection,
+        nonce_projection: Arc::new(nonce_projection),
     })
 }
 

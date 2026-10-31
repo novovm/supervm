@@ -21,7 +21,7 @@ pub struct SuccessorSelection {
     pub source: VoteContext,
     pub source_round: u64,
     pub parent: ParentPoint,
-    pub nonce_after: BTreeMap<Hash, u64>,
+    pub nonce_after: Arc<BTreeMap<Hash, u64>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -339,13 +339,9 @@ impl CandidateBodies {
                 nonce_after: if expected.is_some() {
                     // Remote qualification does not select transactions. Do
                     // not rebuild a nonce-selection map that it never uses.
-                    BTreeMap::new()
+                    Arc::new(BTreeMap::new())
                 } else {
-                    packet
-                        .receipt_projection()
-                        .iter()
-                        .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
-                        .collect()
+                    Arc::clone(packet.nonce_projection())
                 },
             }));
         }
@@ -411,7 +407,7 @@ impl CandidateBodies {
                 state_version: context.parent_state_version,
                 decision_hash: decision_id(&progress.context(), context.parent_block_hash),
             },
-            nonce_after: BTreeMap::new(),
+            nonce_after: Arc::new(BTreeMap::new()),
         };
         let pin = Pin::from_selection(&selection);
         if context.parent_height != progress.context().height

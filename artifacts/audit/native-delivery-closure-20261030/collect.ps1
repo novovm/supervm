@@ -56,7 +56,7 @@ if (Test-Path -LiteralPath $zip) {
         $raw | Select-Object completed,scope,real_processes,real_machines,fixed_quorum,
             binary_sha256,library_sha256,missing_validator,offline_heights,late_start_after_ms,
             catchup_crash,final_heads,final_states,durable_fee_oracle,
-            same_config_and_signing_outbox_preserved,cold_reopen_verified,elapsed_ms
+            same_config_and_signing_outbox_preserved,cold_reopen_verified,runtime_account_opening,elapsed_ms
     });
     scope='public reports only; raw report compressed unchanged; per-round database and signing journal retained locally; no private-key files';
     rounds=@($rounds)

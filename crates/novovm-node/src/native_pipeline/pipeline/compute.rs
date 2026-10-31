@@ -536,16 +536,13 @@ fn authenticate(
             );
             let mut signed = Vec::with_capacity(source.len());
             for index in 0..source.len() {
-                let projected;
-                let wire = match &source {
-                    BatchSource::Raw(raw) => &raw[index],
-                    BatchSource::Uca(batch) => {
-                        projected = batch.raw_transaction(index)?;
-                        &projected
+                let tx = match &source {
+                    BatchSource::Raw(raw) => {
+                        novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&raw[index])?
                     }
+                    BatchSource::Uca(batch) => batch.row(index)?,
                     BatchSource::Apfl(_) => unreachable!(),
                 };
-                let tx = novovm_protocol::uca_spend::SignedAssetSpendV2::decode(wire)?;
                 ensure!(
                     tx.intent.chain_id == config.domain.chain_id
                         && tx.intent.genesis == config.domain.genesis_config_commitment,
@@ -565,7 +562,18 @@ fn authenticate(
                 Ordering::Relaxed,
             );
             let signed = signed.into_iter().collect::<Result<Vec<_>>>()?;
-            return NovTransferBody::prepare_asset_spend(signed, request.policy, config.plan);
+            return match source {
+                BatchSource::Uca(batch) => NovTransferBody::prepare_asset_spend_from_uca(
+                    batch,
+                    signed,
+                    request.policy,
+                    config.plan,
+                ),
+                BatchSource::Raw(_) => {
+                    NovTransferBody::prepare_asset_spend(signed, request.policy, config.plan)
+                }
+                BatchSource::Apfl(_) => unreachable!(),
+            };
         }
         CandidateInput::Unverified(source) => authenticate_source_batch_observed(
             session,
@@ -589,7 +597,7 @@ fn authenticate(
                     checked
                 }
                 super::admission::AdmittedSignatures::Uca {
-                    source: BatchSource::Uca(_),
+                    source: BatchSource::Uca(source),
                     transactions,
                 } => {
                     config
@@ -599,7 +607,8 @@ fn authenticate(
                     // Only signatures are reused. This original body compiler
                     // still captures the new exact parent and checks its UCA
                     // revocation, nonce, budget, balance and fee effects.
-                    return NovTransferBody::prepare_asset_spend(
+                    return NovTransferBody::prepare_asset_spend_from_uca(
+                        source,
                         transactions,
                         request.policy,
                         config.plan,
@@ -669,9 +678,7 @@ fn admit_uca_rows(
             let AdmissionInput::Uca { batch, index } = input else {
                 unreachable!("checked contract");
             };
-            let signed = novovm_protocol::uca_spend::SignedAssetSpendV2::decode(
-                &batch.raw_transaction(*index)?,
-            )?;
+            let signed = batch.row(*index)?;
             ensure!(
                 signed.intent.chain_id == config.domain.chain_id
                     && signed.intent.genesis == config.domain.genesis_config_commitment,
@@ -710,7 +717,7 @@ fn admit_uca_rows(
             verified
                 .next()
                 .context("UCA verification row missing")?
-                .map(|checked| {
+                .and_then(|checked| {
                     let AdmissionInput::Uca { batch, index } = &input else {
                         unreachable!("checked contract");
                     };
@@ -718,11 +725,11 @@ fn admit_uca_rows(
                         .signatures
                         .strict_verified
                         .fetch_add(1, Ordering::Relaxed);
-                    CheckedAdmission::Uca {
-                        checked,
+                    Ok(CheckedAdmission::Uca {
+                        checked: checked.into_signature_fact()?,
                         batch: batch.clone(),
                         index: *index,
-                    }
+                    })
                 })
         };
         rows.push_back(AdmissionRow { input, result });

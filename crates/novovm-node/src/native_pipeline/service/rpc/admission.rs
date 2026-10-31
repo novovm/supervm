@@ -3,6 +3,9 @@
 //! ordered results reach the control-owned nonce reservations and pending pool.
 use super::*;
 use crate::native_fresh_rpc::{DeferredRpcHandler, DeferredRpcReply};
+use crate::native_pipeline::consensus::native_lifecycle::{
+    CheckedTransactionSource, TransactionOrigin, TransactionSource,
+};
 use crate::native_pipeline::ingress::wire::decode_transfer_view_v3;
 use crate::native_pipeline::pipeline::{
     AdmissionInput, SignatureAdmissionRequest, SignatureAdmissionSubmission,
@@ -34,6 +37,7 @@ enum Target {
         // cursor. Completing it must never clear a newer incoming body.
         detached_body: bool,
         broadcast: bool,
+        origin: Option<TransactionOrigin>,
     },
 }
 
@@ -60,12 +64,20 @@ pub(super) struct AdmissionState {
     work: Option<Work>,
     uca: Option<UcaWork>,
     cached_body_boundary_waiting: bool,
+    incoming_origin: Option<TransactionOrigin>,
+    source_yielded_this_poll: bool,
+    source_returns: u64,
+    source_resumes: u64,
+    #[cfg(test)]
+    signature_rows: Option<usize>,
     #[cfg(test)]
     hold_authority_poll_once: bool,
     #[cfg(test)]
     hold_authority_until_parent_advance: bool,
     #[cfg(test)]
     pub(super) pool_byte_limit: Option<usize>,
+    #[cfg(test)]
+    pub(super) bridge_reserve_bytes: Option<usize>,
     next_signature_submitted_while_capture: u64,
     signature_completed_while_capture: u64,
     max_retained_stage_slots: usize,
@@ -94,6 +106,7 @@ struct UcaWork {
     complete_body: bool,
     detached_body: bool,
     broadcast: bool,
+    origin: Option<TransactionOrigin>,
     trace: Option<UcaTrace>,
 }
 
@@ -195,6 +208,7 @@ impl AdmissionState {
             "cancelled_http":self.cancelled_http,
             "control_polls_while_checking":self.control_polls_while_checking,
             "backpressured_polls":self.backpressured_polls,
+            "checked_source_returns":self.source_returns,"checked_source_resumes":self.source_resumes,
             "uca_state_capture":{
                 "batches":self.uca_capture.batches,
                 "declared_keys":self.uca_capture.declaration_keys,
@@ -315,6 +329,7 @@ impl RpcLifecycle {
         ensure!(self.is_uca() && cached.len() == 1 && partial.len() == 2);
         let original_batch_size = self.batch_size;
         self.batch_size = 1;
+        self.admission.signature_rows = Some(1);
         let scope = TransactionsScope {
             chain_id: self.node.template.chain_id,
             genesis: self.node.template.genesis_config_commitment,
@@ -383,6 +398,7 @@ impl RpcLifecycle {
         // deterministically rather than assuming head and parent move together.
         self.admission.hold_authority_until_parent_advance = true;
         self.batch_size = original_batch_size;
+        self.admission.signature_rows = None;
         Ok(())
     }
 
@@ -415,6 +431,7 @@ impl RpcLifecycle {
         // source can now exercise a partial body without exceeding those caps.
         let original_batch_size = self.batch_size;
         self.batch_size = 1;
+        self.admission.signature_rows = Some(1);
         ensure!(partial.len() > self.batch_size && newer_bad.len() > self.batch_size);
         let expected_pending = partial.len(); // cached row plus uncached prefix
         let bad_rows = newer_bad.len() as u64;
@@ -519,6 +536,7 @@ impl RpcLifecycle {
             "admission published state"
         );
         self.batch_size = original_batch_size;
+        self.admission.signature_rows = None;
         ensure!(
             self.node.controller.head() == head,
             "admission changed durable head"
@@ -704,6 +722,7 @@ impl RpcLifecycle {
 
     pub(super) fn poll_admission(&mut self) -> Result<()> {
         self.admission.made_progress = false;
+        self.admission.source_yielded_this_poll = false;
         // A completed body grants an opportunity, not a one-poll pulse. Keep it
         // while projection/selection is unavailable, but do not carry an empty
         // source's stale grant into the first partial quantum of a later source.
@@ -793,6 +812,11 @@ impl RpcLifecycle {
             self.finish_admission(work.target, work.rows, output)?;
         }
         if self.admission.work.is_some() {
+            return Ok(());
+        }
+        if self.admission.source_yielded_this_poll {
+            // Let the original receive owner run before taking the same parked
+            // source back. Its vacated slot can accept the missing nonce source.
             return Ok(());
         }
         // Historical V3 remains single-stage. UCA alone may overlap its one
@@ -933,10 +957,11 @@ impl RpcLifecycle {
                             .map(|m| (m, true))
                     })
             };
-            if let Some((message, client)) = source {
-                self.incoming_from_client = client;
+            if let Some((source, client)) = source {
                 self.admission.prefer_client = !client;
-                self.incoming = Some((message, 0));
+                if !self.take_admission_source(source)? {
+                    return Ok(None);
+                }
             }
         }
         let Some((message, mut index)) = self.incoming.take() else {
@@ -951,7 +976,14 @@ impl RpcLifecycle {
             _ => anyhow::bail!("transaction channel returned non-transaction message"),
         };
         let mut inputs = Vec::new();
-        let end = (index + self.batch_size).min(count);
+        let signature_rows = if self.is_uca() {
+            super::super::native_decode_limits(self.batch_size, true).transactions
+        } else {
+            self.batch_size
+        };
+        #[cfg(test)]
+        let signature_rows = self.admission.signature_rows.unwrap_or(signature_rows);
+        let end = (index + signature_rows).min(count);
         while index < end {
             self.admission.made_progress = true;
             let input = match message.as_ref() {
@@ -976,6 +1008,7 @@ impl RpcLifecycle {
             }
         }
         let complete_body = index == count;
+        let origin = self.admission.incoming_origin;
         let detached_body = self.is_uca() && complete_body;
         // Retain the body marker until the whole verified prefix is admitted;
         // a partially checked body must not cause tiny proposal fragments. A
@@ -983,10 +1016,13 @@ impl RpcLifecycle {
         // retains its boundary while the next source can begin verification.
         if !detached_body {
             self.incoming = Some((message, index));
+        } else {
+            self.admission.incoming_origin = None;
         }
         if inputs.is_empty() {
             if complete_body {
                 self.incoming = None;
+                self.admission.incoming_origin = None;
                 if self.is_uca() {
                     // This can be the cached-only final chunk of a body larger
                     // than batch_size. Its earlier authority prefix must finish
@@ -1006,6 +1042,7 @@ impl RpcLifecycle {
                 complete_body,
                 detached_body,
                 broadcast: self.incoming_from_client,
+                origin,
             },
             phase: Phase::Queued(request),
             rows,
@@ -1031,11 +1068,15 @@ impl RpcLifecycle {
                     complete_body,
                     detached_body,
                     broadcast,
+                    origin,
                 },
                 Ok(mut output),
             ) => {
                 output.profile_event("authority_queued");
-                ensure!(rows <= self.batch_size, "UCA admission batch limit");
+                ensure!(
+                    rows <= super::super::native_decode_limits(self.batch_size, true).transactions,
+                    "UCA admission batch limit"
+                );
                 ensure!(self.admission.uca.is_none(), "UCA authority slot occupied");
                 output.park_for_authority()?;
                 let mut checked_rows = VecDeque::with_capacity(rows);
@@ -1078,6 +1119,7 @@ impl RpcLifecycle {
                     complete_body: *complete_body,
                     detached_body: *detached_body,
                     broadcast: *broadcast,
+                    origin: *origin,
                     trace,
                 });
                 self.admission.record_retained_stages();
@@ -1127,6 +1169,7 @@ impl RpcLifecycle {
                 complete_body,
                 detached_body,
                 broadcast,
+                origin: _,
             } => {
                 for result in results {
                     match result
@@ -1195,7 +1238,7 @@ impl RpcLifecycle {
             // Give already admitted rows a selection turn, without claiming
             // progress, re-reading authority or admitting an unchecked suffix.
             self.ingress_batch_boundary = true;
-            self.admission.uca = Some(work);
+            self.return_uca_source(work)?;
             return Ok(());
         }
         work.pool_wait = None;
@@ -1292,7 +1335,7 @@ impl RpcLifecycle {
                     // to deadlock a full pool. Only its accepted prefix exists
                     // in `pending`; the suffix retains its original permit.
                     self.ingress_batch_boundary = true;
-                    self.admission.uca = Some(work);
+                    self.return_uca_source(work)?;
                     return Ok(());
                 }
                 Err(_) => {
@@ -1325,6 +1368,88 @@ impl RpcLifecycle {
         );
         self.admission.made_progress = true;
     }
+
+    fn take_admission_source(&mut self, source: TransactionSource) -> Result<bool> {
+        match source {
+            TransactionSource::Raw { message, origin } => {
+                ensure!(self.incoming.is_none(), "original input handoff occupied");
+                self.incoming_from_client = origin == TransactionOrigin::Client;
+                self.admission.incoming_origin = Some(origin);
+                self.incoming = Some((message, 0));
+                Ok(true)
+            }
+            TransactionSource::Checked {
+                mut checked,
+                origin,
+            } => {
+                if self.admission.uca.is_some() || !checked.output.resume_authority()? {
+                    self.node
+                        .controller
+                        .rotate_taken_checked_transactions(origin, checked);
+                    return Ok(false);
+                }
+                self.admission.source_resumes = self.admission.source_resumes.saturating_add(1);
+                self.admission.uca = Some(Self::resumed_uca_work(*checked, origin));
+                self.admission.record_retained_stages();
+                Ok(false)
+            }
+        }
+    }
+
+    fn resumed_uca_work(checked: CheckedTransactionSource, origin: TransactionOrigin) -> UcaWork {
+        UcaWork {
+            _output: checked.output,
+            rows: checked.rows,
+            read: None,
+            states: None,
+            pool_wait: checked.waiting_pool,
+            parent: checked.waiting_parent,
+            capture_started: None,
+            complete_body: checked.complete_body,
+            detached_body: checked.detached_body,
+            broadcast: checked.broadcast,
+            origin: Some(origin),
+            trace: None,
+        }
+    }
+
+    fn return_uca_source(&mut self, work: UcaWork) -> Result<()> {
+        let Some(origin) = work.origin.filter(|_| self.incoming.is_none()) else {
+            // Test-only partial-source fixtures retain their original active
+            // owner. Production legal UCA sources use the common whole limit.
+            self.admission.uca = Some(work);
+            return Ok(());
+        };
+        let checked = Box::new(CheckedTransactionSource {
+            output: work._output,
+            rows: work.rows,
+            complete_body: work.complete_body,
+            detached_body: work.detached_body,
+            broadcast: work.broadcast,
+            waiting_parent: work.parent,
+            waiting_pool: work.pool_wait,
+        });
+        // Dropping the captured parent view here is intentional: the source
+        // retains only verified immutable signature facts and original row ids.
+        match self
+            .node
+            .controller
+            .return_checked_transactions(origin, checked)
+        {
+            Ok(next) => {
+                self.admission.source_returns = self.admission.source_returns.saturating_add(1);
+                self.admission.source_yielded_this_poll = true;
+                if let Some(next) = next {
+                    self.take_admission_source(next)?;
+                }
+                Ok(())
+            }
+            Err((checked, error)) => {
+                self.admission.uca = Some(Self::resumed_uca_work(*checked, origin));
+                Err(error)
+            }
+        }
+    }
 }
 
 fn uca_capture_input(
@@ -1354,6 +1479,10 @@ fn uca_capture_input(
 }
 
 #[cfg(test)]
+#[path = "admission/hol_tests.rs"]
+mod hol_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1363,6 +1492,7 @@ mod tests {
                 complete_body: true,
                 detached_body: true,
                 broadcast: false,
+                origin: None,
             },
             phase: Phase::Completed(Err(anyhow::anyhow!("injected signature owner error"))),
             rows: 1,

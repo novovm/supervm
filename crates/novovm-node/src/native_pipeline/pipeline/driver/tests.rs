@@ -21,7 +21,7 @@ fn job(marker: u8, background: bool) -> Job {
             bytes: 0,
             background,
             ingress: false,
-            authority_parked: AtomicBool::new(false),
+            admission_role: AtomicU8::new(ADMISSION_INGRESS),
         }),
         background,
     }
@@ -139,7 +139,7 @@ fn bound_job(marker: u8, background: bool) -> (Job, Arc<Mutex<Usage>>) {
         bytes,
         background: true,
         ingress: false,
-        authority_parked: AtomicBool::new(false),
+        admission_role: AtomicU8::new(ADMISSION_INGRESS),
     });
     let original = Arc::as_ptr(&permit);
     let (reply, _) = mpsc::channel();

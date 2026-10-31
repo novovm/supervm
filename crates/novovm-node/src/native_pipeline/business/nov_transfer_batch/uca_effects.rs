@@ -8,10 +8,12 @@ use crate::native_pipeline::business::quoted_transfer::{
 use crate::native_pipeline::business::uca_spend_state::{
     self, AssetAccountAuthorityV2, AssetSpendStateAccessV2,
 };
+use crate::native_pipeline::ingress::batch::BatchSource;
 use crate::native_pipeline::state::tree::MAX_BATCH_READ_KEYS;
 use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
 use novovm_exec::uca_spend::SignatureCheckedAssetSpendV2;
 use novovm_protocol::uca_spend::AssetSpendIntentV2;
+use std::sync::Arc;
 
 pub(super) struct SpendPlan {
     pub entries: Vec<SpendEntry>,
@@ -266,11 +268,39 @@ impl NovTransferBody {
         policy: DirectNovFeePolicy,
         plan_budget: PlanBudget,
     ) -> Result<Self> {
+        Self::prepare_asset_spend_inner(signed, None, policy, plan_budget)
+    }
+
+    /// Retain the product's original immutable columns. Signature capabilities
+    /// must match every signed row; this grants no parent-state authority.
+    pub(crate) fn prepare_asset_spend_from_uca(
+        source: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
+        signed: Vec<SignatureCheckedAssetSpendV2>,
+        policy: DirectNovFeePolicy,
+        plan_budget: PlanBudget,
+    ) -> Result<Self> {
+        Self::prepare_asset_spend_inner(signed, Some(source), policy, plan_budget)
+    }
+
+    fn prepare_asset_spend_inner(
+        signed: Vec<SignatureCheckedAssetSpendV2>,
+        source: Option<Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>>,
+        policy: DirectNovFeePolicy,
+        plan_budget: PlanBudget,
+    ) -> Result<Self> {
         let effect_contract = uca_effect_contract(&policy)?;
         ensure!(
             !signed.is_empty() && signed.len() <= plan_budget.transactions,
             "UCA candidate shape/budget"
         );
+        if let Some(batch) = &source {
+            ensure!(
+                batch.len() == signed.len()
+                    && batch.max_transaction_bytes() <= plan_budget.transaction_bytes
+                    && batch.canonical_bytes() <= plan_budget.body_bytes,
+                "UCA structural source count/byte budget"
+            );
+        }
         validate_authority_metadata(
             signed.len(),
             |index| signed[index].intent(),
@@ -291,19 +321,26 @@ impl NovTransferBody {
         let mut raw = Vec::new();
         let mut body_bytes = 0usize;
         let mut seen = BTreeSet::new();
-        for (tx, (payer, recipient)) in signed.iter().zip(&accounts) {
+        for (index, (tx, (payer, recipient))) in signed.iter().zip(&accounts).enumerate() {
             let i = tx.intent();
             ensure!(seen.insert(i.signing_bytes()?), "duplicate UCA intent");
-            let bytes = tx.signed().encode()?;
-            body_bytes = body_bytes
-                .checked_add(bytes.len())
-                .context("UCA body size overflow")?;
-            ensure!(
-                bytes.len() <= plan_budget.transaction_bytes
-                    && body_bytes <= plan_budget.body_bytes,
-                "UCA signed body byte budget"
-            );
-            raw.push(bytes);
+            if let Some(batch) = &source {
+                ensure!(
+                    batch.view(index)?.matches_signed(tx.signed())?,
+                    "UCA structural source differs from checked signed row"
+                );
+            } else {
+                let bytes = tx.signed().encode()?;
+                body_bytes = body_bytes
+                    .checked_add(bytes.len())
+                    .context("UCA body size overflow")?;
+                ensure!(
+                    bytes.len() <= plan_budget.transaction_bytes
+                        && body_bytes <= plan_budget.body_bytes,
+                    "UCA signed body byte budget"
+                );
+                raw.push(bytes);
+            }
             let access = AssetSpendStateAccessV2::new(i.clone(), payer.clone(), recipient.clone())?;
             for d in access.declarations() {
                 declarations
@@ -361,7 +398,7 @@ impl NovTransferBody {
         );
         Ok(Self {
             batch: BodyInput::Uca {
-                raw,
+                source: source.map_or_else(|| BatchSource::Raw(raw), BatchSource::Uca),
                 metadata: Box::new(UcaMetadata {
                     signed,
                     accounts,

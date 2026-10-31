@@ -1,0 +1,7 @@
+
+running 1 test
+1024-row immutable frontier read/decode loads: dictionary_order=56845 hash_order=13640 keys=7171 quantum=64
+test native_pipeline::service::rpc::native_query::uca::tests::asset_hash_ordered_read_turns_reduce_frontier_loads_and_preserve_1024_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1826 filtered out; finished in 0.13s
+

@@ -15,6 +15,7 @@ use crate::native_pipeline::{
     pipeline::CandidatePipeline,
 };
 use anyhow::{ensure, Context, Result};
+pub(crate) use ingress::{CheckedTransactionSource, TransactionOrigin, TransactionSource};
 use novovm_network::novorudp::{object_link::NativeSendLimits, object_sender::ObjectSendState};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -92,8 +93,8 @@ pub struct NativeLifecycle {
     bytes: Vec<usize>,
     send_turn: usize,
     pending: [Option<Incoming>; 3],
-    transactions: Vec<VecDeque<Arc<Message>>>,
-    client_transactions: VecDeque<Arc<Message>>,
+    transactions: Vec<VecDeque<ingress::TransactionSource>>,
+    client_transactions: VecDeque<ingress::TransactionSource>,
     transaction_turn: usize,
     transaction_session: Hash,
     transaction_sequence: u64,
@@ -622,9 +623,13 @@ impl NativeLifecycle {
         // neither enters RoundProgress nor participates in validator fanout.
         if self.client_transactions.len() < 2 {
             match self.channel.poll_application(now, 64)? {
-                Some(ReceiveEvent::Message(message)) => self
-                    .client_transactions
-                    .push_back(Arc::new(message.message)),
+                Some(ReceiveEvent::Message(message)) => {
+                    self.client_transactions
+                        .push_back(ingress::TransactionSource::Raw {
+                            message: Arc::new(message.message),
+                            origin: ingress::TransactionOrigin::Client,
+                        })
+                }
                 Some(ReceiveEvent::Rejected { .. }) => self.rejected_messages += 1,
                 None => {}
             }
@@ -777,7 +782,12 @@ impl NativeLifecycle {
                             // Native DONE means bounded custody, never signature admission.
                             // RPC consumes these originals via the resident auth owner.
                             if self.transactions[peer].len() < 2 {
-                                self.transactions[peer].push_back(received.message);
+                                self.transactions[peer].push_back(
+                                    ingress::TransactionSource::Raw {
+                                        message: received.message,
+                                        origin: ingress::TransactionOrigin::Peer(peer),
+                                    },
+                                );
                             } else {
                                 self.pending[lane] = Some(received);
                             }

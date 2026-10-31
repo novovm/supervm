@@ -267,6 +267,18 @@ impl UcaFixture {
         let selection = f.nodes[next]
             .successor_selection()?
             .context("UCA successor basis absent")?;
+        for _ in 0..8 {
+            let repeated = f.nodes[next]
+                .successor_selection()?
+                .context("unchanged UCA successor basis disappeared")?;
+            ensure!(
+                repeated.parent == selection.parent
+                    && repeated.source == selection.source
+                    && repeated.source_round == selection.source_round
+                    && Arc::ptr_eq(&repeated.nonce_after, &selection.nonce_after),
+                "unchanged executed basis rebuilt its nonce projection"
+            );
+        }
         ensure!(
             selection.nonce_after.get(&self.grants[0].nonce_identity()?) == Some(&1),
             "real UCA parent receipt missing stable account nonce"
@@ -1091,6 +1103,13 @@ fn run_local_ready_successor(different_parent: bool) -> Result<()> {
                     .all(|node| node.progress.head() == Some(head)),
             "unselected private branch was promoted or published"
         );
+        ensure!(
+            f.nodes[next].successor_selection()?.is_none_or(|current| {
+                current.parent != selected.parent
+                    && !Arc::ptr_eq(&current.nonce_after, &selected.nonce_after)
+            }),
+            "different decided parent reused an old nonce projection"
+        );
     } else {
         f.await_height(2)?;
         ensure!(
@@ -1422,6 +1441,10 @@ fn native_successor_uca_round_change_drains_auth_and_execution_without_publicati
                 .poll(&f.base.services.0[next], Instant::now())?;
             std::thread::yield_now();
         }
+        ensure!(
+            f.nodes[next].successor_selection()?.is_none(),
+            "old-round nonce projection survived its selection pin"
+        );
         let mut probe = Some(
             crate::native_pipeline::pipeline::AuthenticationRequest::from_uca_batch(
                 u.child_batch.clone(),

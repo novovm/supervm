@@ -9,6 +9,56 @@ use anyhow::{ensure, Result};
 use novovm_protocol::uca_spend::{
     spend_key_ref_v1, AssetSpendIntentV2, SignedAssetSpendV2, SPEND_CONTEXT_V2,
 };
+use sha2::{Digest, Sha256};
+
+/// Compact signature evidence, not account authority. Its binding commits to
+/// the exact canonical intent, ML-DSA-65 pure-purpose framing, key and signature.
+/// Only a successful original verifier result can create it; no wire decoder or
+/// constructor accepts a caller-supplied digest.
+///
+/// ```compile_fail
+/// use novovm_exec::uca_spend::AssetSpendSignatureFactV2;
+/// use novovm_protocol::uca_spend::AssetSpendIntentV2;
+/// fn forge(intent: AssetSpendIntentV2) -> AssetSpendSignatureFactV2 {
+///     AssetSpendSignatureFactV2 { intent, binding: [0; 32] }
+/// }
+/// ```
+#[derive(Clone)]
+pub struct AssetSpendSignatureFactV2 {
+    intent: AssetSpendIntentV2,
+    binding: [u8; 32],
+}
+
+impl AssetSpendSignatureFactV2 {
+    pub fn intent(&self) -> &AssetSpendIntentV2 {
+        &self.intent
+    }
+
+    /// Reattach unchanged bytes to this verified fact without repeating the
+    /// cryptographic signature operation. Pipeline/source ownership and current
+    /// account authorization remain the original consumer's obligations.
+    pub fn reattach(&self, signed: SignedAssetSpendV2) -> Result<SignatureCheckedAssetSpendV2> {
+        ensure!(
+            signed.intent == self.intent && signature_binding(&signed)? == self.binding,
+            "asset signature fact does not bind these signed bytes"
+        );
+        Ok(SignatureCheckedAssetSpendV2 { signed })
+    }
+}
+
+fn signature_binding(signed: &SignedAssetSpendV2) -> Result<[u8; 32]> {
+    let message = signed.intent.signing_bytes()?;
+    let mut digest = Sha256::new();
+    digest.update(b"NOVOVM/asset-spend/signature-fact/v2");
+    digest.update(AoemMldsaParameterSet::MlDsa65.level().to_be_bytes());
+    digest.update([0, SPEND_CONTEXT_V2.len() as u8]);
+    digest.update(SPEND_CONTEXT_V2);
+    for bytes in [message.as_slice(), &signed.public_key, &signed.signature] {
+        digest.update((bytes.len() as u64).to_be_bytes());
+        digest.update(bytes);
+    }
+    Ok(digest.finalize().into())
+}
 
 /// Cannot be deserialized or constructed by a caller. Does not certify the
 /// key's current authority, sufficient funds, nonce eligibility or finality.
@@ -18,6 +68,16 @@ pub struct SignatureCheckedAssetSpendV2 {
 }
 
 impl SignatureCheckedAssetSpendV2 {
+    /// Release owned key/signature buffers when the immutable input owner will
+    /// retain their original bytes for later candidate reconstruction.
+    pub fn into_signature_fact(self) -> Result<AssetSpendSignatureFactV2> {
+        let binding = signature_binding(&self.signed)?;
+        Ok(AssetSpendSignatureFactV2 {
+            intent: self.signed.intent,
+            binding,
+        })
+    }
+
     pub fn intent(&self) -> &AssetSpendIntentV2 {
         &self.signed.intent
     }
@@ -185,3 +245,6 @@ impl AoemExecFacade {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

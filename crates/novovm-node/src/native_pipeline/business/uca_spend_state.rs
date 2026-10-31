@@ -230,36 +230,13 @@ pub(crate) fn grant_record_changes_from_parent(
         Some((old_intent, old_grant)) => {
             // Epoch is not in the physical prefix, but the original codec checks
             // it. Use the captured record's normalized intent, not the new epoch.
-            changed_record_pages(changes, grant_record_changes(old_intent, old_grant)?)
+            record_pages::changed_record_pages(
+                changes,
+                grant_record_changes(old_intent, old_grant)?,
+            )
         }
         None => Ok(changes),
     }
-}
-
-fn changed_record_pages(
-    changes: Vec<StateChange>,
-    previous: Vec<StateChange>,
-) -> Result<Vec<StateChange>> {
-    ensure!(
-        changes.len() == previous.len(),
-        "record page delta profile mismatch"
-    );
-    let mut changed = Vec::with_capacity(changes.len());
-    for (change, old) in changes.into_iter().zip(previous) {
-        let (key, value) = match &change {
-            StateChange::Put { key, value } => (key, Some(value)),
-            StateChange::Delete { key } => (key, None),
-        };
-        let (old_key, old_value) = match &old {
-            StateChange::Put { key, value } => (key, Some(value)),
-            StateChange::Delete { key } => (key, None),
-        };
-        ensure!(key == old_key, "record page delta prefix mismatch");
-        if value != old_value {
-            changed.push(change);
-        }
-    }
-    Ok(changed)
 }
 
 /// Reuses the account's ordinary grant/nonce namespace. No funding or identity

@@ -73,7 +73,7 @@ impl AdmittedTransfer {
             .expect("V3 admission accessor requires V3 contract")
     }
 
-    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedAssetSpendV2> {
+    pub fn checked_uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV2> {
         self.checked.uca()
     }
 
@@ -104,12 +104,9 @@ impl AdmittedTransfer {
         std::mem::size_of::<Self>()
             + std::mem::size_of::<CheckedAdmission>()
             + 2 * std::mem::size_of::<usize>()
-            + self.checked_uca().map_or(0, |checked| {
-                let signed = checked.signed();
-                signed.public_key.capacity()
-                    + signed.signature.capacity()
-                    + signed.intent.retained_heap_bytes()
-            })
+            + self
+                .checked_uca()
+                .map_or(0, |checked| checked.intent().retained_heap_bytes())
     }
 }
 
@@ -245,9 +242,10 @@ pub(crate) fn admitted_uca_for_test(
     batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
     index: usize,
 ) -> Result<AdmittedTransfer> {
-    let signed =
-        novovm_protocol::uca_spend::SignedAssetSpendV2::decode(&batch.raw_transaction(index)?)?;
-    let checked = facade.asset_spend_verifier_v2()?.verify(signed)?;
+    let checked = facade
+        .asset_spend_verifier_v2()?
+        .verify(batch.row(index)?)?
+        .into_signature_fact()?;
     Ok(AdmittedTransfer {
         checked: Arc::new(CheckedAdmission::Uca {
             checked,
@@ -415,6 +413,19 @@ impl SignatureAdmissionOutput {
         self._permit.park_for_authority()
     }
 
+    /// The original bounded source queue takes ownership of this completed
+    /// output and any popped rows. Retain every byte, release only its active
+    /// scheduling slot; rotating an already parked source is idempotent.
+    pub(crate) fn park_for_source(&mut self) -> Result<()> {
+        self._permit.park_for_source()
+    }
+
+    /// A checked source can resume only the original single authority slot.
+    /// Busy leaves both its role and original retained-byte charge unchanged.
+    pub(crate) fn resume_authority(&mut self) -> Result<bool> {
+        self._permit.resume_authority()
+    }
+
     pub fn len(&self) -> usize {
         self.rows.rows.len()
     }
@@ -457,6 +468,51 @@ pub(super) struct AdmissionCommand {
 impl CandidatePipeline {
     pub fn owns_admitted(&self, row: &AdmittedTransfer) -> bool {
         Arc::ptr_eq(&row.owner, &self.identity)
+    }
+
+    /// Rare pool-pressure bridge: retain one exact original signed row instead
+    /// of pinning its complete source dictionary. The caller still accounts
+    /// this new source/fact in the existing pool before retaining it.
+    pub(crate) fn project_admitted_uca_row(
+        &self,
+        original: &AdmittedTransfer,
+    ) -> Result<(AdmissionInput, AdmittedTransfer)> {
+        ensure!(self.owns_admitted(original), "foreign UCA verifier owner");
+        let CheckedAdmission::Uca {
+            checked,
+            batch: source,
+            index,
+        } = original.checked.as_ref()
+        else {
+            anyhow::bail!("only original signed asset input can be projected");
+        };
+        ensure!(
+            checked.intent().chain_id == self.config.store.domain.chain_id
+                && checked.intent().genesis == self.config.store.domain.genesis_config_commitment,
+            "projected UCA signature domain mismatch"
+        );
+        let view = source.view(*index)?;
+        let budget = self.config.authentication;
+        let batch = Arc::new(
+            novovm_protocol::uca_spend_batch::AssetSpendBatchV2::from_views(
+                &[view],
+                novovm_protocol::uca_spend_batch::AssetSpendBatchLimitsV2 {
+                    transactions: budget.transactions,
+                    transaction_bytes: budget.transaction_bytes,
+                    body_bytes: budget.body_bytes,
+                },
+            )?,
+        );
+        ensure!(batch.view(0)? == view, "projected UCA signed row changed");
+        let admitted = AdmittedTransfer {
+            checked: Arc::new(CheckedAdmission::Uca {
+                checked: checked.clone(),
+                batch: batch.clone(),
+                index: 0,
+            }),
+            owner: self.identity.clone(),
+        };
+        Ok((AdmissionInput::Uca { batch, index: 0 }, admitted))
     }
 
     /// Structural rebinding only: this never authorizes a parent or executes
@@ -527,12 +583,11 @@ impl CandidatePipeline {
                 checked.intent().chain_id == self.config.store.domain.chain_id
                     && checked.intent().genesis
                         == self.config.store.domain.genesis_config_commitment
-                    && view.matches_signed(checked.signed())?
                     && original.view(*original_index)? == view
                     && seen.insert(checked.intent().signing_bytes()?),
                 "admitted UCA signed row, order, locator or domain mismatch"
             );
-            transactions.push(checked.clone());
+            transactions.push(checked.reattach(batch.row(index)?)?);
         }
         Ok(AdmittedBatch {
             checked: AdmittedSignatures::Uca {
@@ -635,7 +690,7 @@ impl CandidatePipeline {
             bytes,
             background: false,
             ingress: true,
-            authority_parked: AtomicBool::new(false),
+            admission_role: AtomicU8::new(ADMISSION_INGRESS),
         })))
     }
 }

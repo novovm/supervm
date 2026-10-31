@@ -126,10 +126,9 @@ struct Pending {
 }
 
 impl Pending {
-    /// Match the original pipeline's expanded-input budget. NUAS locator hints
-    /// are outside its signed canonical bytes but remain part of the candidate
-    /// input; column compression cannot make them free. Invalid metadata cannot
-    /// be selected or advance the local nonce prefix.
+    /// Match the original pipeline's expanded-input budget. APFL sharing does
+    /// not exempt the expanded transaction from resource accounting. Invalid
+    /// metadata cannot be selected or advance the local nonce prefix.
     fn selection_input_bytes(&self) -> Option<usize> {
         match &self.input {
             AdmissionInput::Uca { batch, index } => {
@@ -336,6 +335,34 @@ struct Position {
     source: Option<(VoteContext, u64)>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SelectionStamp {
+    pool_revision: u64,
+    nonce_revision: u64,
+    boundary: bool,
+    awaiting_admission: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionWaitReason {
+    SourceBoundary,
+    NoReady,
+}
+
+#[derive(Clone, Copy)]
+struct SelectionWait {
+    position: Position,
+    stamp: SelectionStamp,
+    reason: SelectionWaitReason,
+    selected: usize,
+}
+
+impl SelectionWait {
+    fn matches(&self, position: Position, stamp: SelectionStamp) -> bool {
+        self.position == position && self.stamp == stamp
+    }
+}
+
 /// Last observation only: never consulted by selection, admission or execution.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SelectionDiagnostic {
@@ -368,11 +395,13 @@ pub struct RpcLifecycle {
     reservations: BTreeSet<(Hash, u64)>,
     pending_bytes: usize,
     pending_retention: PoolRetention,
+    pool_revision: u64,
     nonces: NonceCache,
     nonce_scan: usize,
     // References into the existing pool, not a second transaction queue. A
     // cold nonce cache must not turn a 1,024-row input into eight-row blocks.
     nonce_window: Option<(Position, VecDeque<Hash>)>,
+    selection_wait: Option<SelectionWait>,
     selection_diagnostic: Option<SelectionDiagnostic>,
     receipts: BTreeMap<Hash, ReceiptState>,
     recent: VecDeque<Hash>,
@@ -420,9 +449,11 @@ impl RpcLifecycle {
             reservations: BTreeSet::new(),
             pending_bytes: 0,
             pending_retention: PoolRetention::default(),
+            pool_revision: 0,
             nonces,
             nonce_scan: 0,
             nonce_window: None,
+            selection_wait: None,
             selection_diagnostic: None,
             receipts: BTreeMap::new(),
             recent: VecDeque::new(),
@@ -595,23 +626,57 @@ impl RpcLifecycle {
             return Ok(());
         }
         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
+            let empty_next = BTreeMap::new();
             let next = successor
                 .as_ref()
-                .map_or_else(BTreeMap::new, |s| s.nonce_after.clone());
+                .map_or(&empty_next, |s| s.nonce_after.as_ref());
+            if self.is_uca() {
+                if let Some(wait) = self.selection_wait {
+                    if wait.matches(position, self.selection_stamp(awaiting_admission)) {
+                        // A retained wait never suppresses the original I/O
+                        // owner's completion/progress handling.
+                        if self.nonces.has_pending_reads() {
+                            self.poll_window_nonces(next)?;
+                        }
+                        if wait.matches(position, self.selection_stamp(awaiting_admission)) {
+                            self.record_selection_gate(
+                                match wait.reason {
+                                    SelectionWaitReason::SourceBoundary => {
+                                        "source_boundary_pending"
+                                    }
+                                    SelectionWaitReason::NoReady => "no_ordered_rows",
+                                },
+                                Some(position),
+                                wait.selected,
+                                Some(false),
+                                None,
+                            );
+                            return Ok(());
+                        }
+                    }
+                    self.selection_wait = None;
+                    self.nonce_window = None;
+                }
+            }
+            let mut known_empty = None;
             if self
                 .nonce_window
                 .as_ref()
                 .is_none_or(|(old, _)| *old != position)
             {
                 let window = if self.is_uca() {
-                    asset_nonce_selection_window(
+                    let (window, no_ready) = asset_nonce_selection_window(
                         &self.order,
                         &self.pending,
                         &self.nonces.values,
-                        next.clone(),
+                        next,
                         self.nonce_scan,
                         self.batch_size,
-                    )
+                    );
+                    if no_ready {
+                        known_empty = Some((self.pool_revision, self.nonces.revision()));
+                    }
+                    window
                 } else {
                     nonce_selection_window(&self.order, self.nonce_scan, self.batch_size)
                 };
@@ -620,7 +685,7 @@ impl RpcLifecycle {
             // Keep this bounded candidate window while the original I/O owner
             // resolves its exact-parent nonces. Eight read slots are an I/O
             // budget, not a smaller consensus/transaction batch size.
-            self.poll_window_nonces(&next)?;
+            self.poll_window_nonces(next)?;
             let window = &self.nonce_window.as_ref().expect("nonce window").1;
             let Some((selected, budget_full)) = select_prepared_nonce_window(
                 window,
@@ -634,7 +699,9 @@ impl RpcLifecycle {
                     Some(position),
                     0,
                     None,
-                    successor.as_ref().map(|selection| &selection.nonce_after),
+                    successor
+                        .as_ref()
+                        .map(|selection| selection.nonce_after.as_ref()),
                 );
                 return Ok(());
             };
@@ -661,8 +728,8 @@ impl RpcLifecycle {
                 && !budget_full
                 && !selected.is_empty()
             {
-                // Do not turn the first 32-row authentication quantum of a
-                // finite source into a small block. Only completed, ordered
+                // Do not turn a partially authenticated finite source into a
+                // small block. Only completed, ordered
                 // pool rows count toward fullness, never raw pending count.
                 self.record_selection_gate(
                     "source_boundary_pending",
@@ -671,6 +738,14 @@ impl RpcLifecycle {
                     Some(budget_full),
                     None,
                 );
+                if self.is_uca() {
+                    self.selection_wait = Some(SelectionWait {
+                        position,
+                        stamp: self.selection_stamp(awaiting_admission),
+                        reason: SelectionWaitReason::SourceBoundary,
+                        selected: selected.len(),
+                    });
+                }
                 return Ok(());
             }
             // Once per prepared window, not once per eight I/O completions.
@@ -686,6 +761,17 @@ impl RpcLifecycle {
                     None,
                 );
                 self.ingress_batch_boundary = false;
+                if self.is_uca()
+                    && known_empty == Some((self.pool_revision, self.nonces.revision()))
+                {
+                    self.selection_wait = Some(SelectionWait {
+                        position,
+                        stamp: self.selection_stamp(awaiting_admission),
+                        reason: SelectionWaitReason::NoReady,
+                        selected: 0,
+                    });
+                    return Ok(());
+                }
                 // All required reads are known: these are actual gaps/stale
                 // entries, not temporary I/O. Try another finite window next
                 // turn rather than allowing the prefix to starve ready work.
@@ -935,6 +1021,7 @@ impl RpcLifecycle {
             self.nonces
                 .published(receipt.signer_identity, receipt.nonce_after);
             if let Some(entry) = self.pending.remove(&receipt.tx_hash) {
+                self.pool_revision = self.pool_revision.wrapping_add(1);
                 self.gossip_repair.remove(entry.gossip_missing);
                 self.pending_bytes -= entry.canonical_len;
                 self.pending_retention
@@ -996,6 +1083,15 @@ impl RpcLifecycle {
         Ok(())
     }
 
+    fn selection_stamp(&self, awaiting_admission: bool) -> SelectionStamp {
+        SelectionStamp {
+            pool_revision: self.pool_revision,
+            nonce_revision: self.nonces.revision(),
+            boundary: self.ingress_batch_boundary,
+            awaiting_admission,
+        }
+    }
+
     fn retire_stale_pending(&mut self) {
         let stale: Vec<_> = self
             .pending
@@ -1009,6 +1105,7 @@ impl RpcLifecycle {
             .collect();
         for hash in stale {
             let entry = self.pending.remove(&hash).expect("stale entry");
+            self.pool_revision = self.pool_revision.wrapping_add(1);
             self.gossip_repair.remove(entry.gossip_missing);
             self.pending_bytes -= entry.canonical_len;
             self.pending_retention
@@ -1113,6 +1210,7 @@ impl RpcLifecycle {
         );
         self.reservations.insert((signer, nonce));
         self.order.push_back(hash);
+        self.pool_revision = self.pool_revision.wrapping_add(1);
         if broadcast {
             self.queue_gossip(hash);
         }
@@ -1540,12 +1638,6 @@ fn admitted_for_body<'a>(
             {
                 return Ok(None);
             }
-            let Some(value) = checked.checked_uca() else {
-                return Ok(None);
-            };
-            if !view.matches_signed(value.signed())? {
-                return Ok(None);
-            }
             admitted.push(checked);
         }
         return Ok(Some(admitted));
@@ -1628,14 +1720,16 @@ fn advance_nonce_window(start: usize, count: usize, remaining: usize) -> usize {
 /// successor. Do not let those stale-for-successor rows consume its entire
 /// bounded read window when a full executable group is already known. The
 /// ordinary nonce poll and ordered selection still recheck this window.
+/// The second result is only the existing full-order scan's known-empty proof,
+/// never a claim about an empty local read window.
 fn asset_nonce_selection_window(
     order: &VecDeque<Hash>,
     pending: &BTreeMap<Hash, Pending>,
     nonces: &BTreeMap<Hash, u64>,
-    next: BTreeMap<Hash, u64>,
+    next: &BTreeMap<Hash, u64>,
     start: usize,
     batch_size: usize,
-) -> VecDeque<Hash> {
+) -> (VecDeque<Hash>, bool) {
     let ordinary = nonce_selection_window(order, start, batch_size);
     // Preserve the original window's nonce reads before skipping any rows.
     // Otherwise a continuous full known stream could starve an older subject
@@ -1645,13 +1739,14 @@ fn asset_nonce_selection_window(
             !next.contains_key(&entry.signer) && !nonces.contains_key(&entry.signer)
         })
     }) {
-        return ordinary;
+        return (ordinary, false);
     }
-    let (selected, _) = select_pending_batch_with_budget(order, pending, nonces, next, batch_size);
+    let (selected, _, no_ready) =
+        select_pending_batch_with_budget(order, pending, nonces, next.clone(), batch_size);
     if selected.len() == batch_size {
-        selected.into()
+        (selected.into(), false)
     } else {
-        ordinary
+        (ordinary, no_ready)
     }
 }
 
@@ -1662,7 +1757,7 @@ fn select_prepared_nonce_window(
     window: &VecDeque<Hash>,
     pending: &BTreeMap<Hash, Pending>,
     nonces: &BTreeMap<Hash, u64>,
-    next: BTreeMap<Hash, u64>,
+    next: &BTreeMap<Hash, u64>,
     batch_size: usize,
 ) -> Option<(Vec<Hash>, bool)> {
     if window.iter().any(|hash| {
@@ -1672,9 +1767,9 @@ fn select_prepared_nonce_window(
     }) {
         return None;
     }
-    Some(select_pending_batch_with_budget(
-        window, pending, nonces, next, batch_size,
-    ))
+    let (selected, full, _) =
+        select_pending_batch_with_budget(window, pending, nonces, next.clone(), batch_size);
+    Some((selected, full))
 }
 
 #[cfg(test)]
@@ -1689,17 +1784,21 @@ fn select_pending_batch(
 }
 
 // Fullness comes from the SAME ordered nonce/byte selection, not a pool-wide
-// count (which can include stale rows and gaps). No second readiness scan.
+// count (which can include stale rows and gaps). Its third result proves that
+// this traversal exhausted the supplied order, knew every subject and found no
+// executable row. Neither early budget/metadata exits nor unknowns prove that.
 fn select_pending_batch_with_budget(
     order: &VecDeque<Hash>,
     pending: &BTreeMap<Hash, Pending>,
     nonces: &BTreeMap<Hash, u64>,
     mut next: BTreeMap<Hash, u64>,
     batch_size: usize,
-) -> (Vec<Hash>, bool) {
+) -> (Vec<Hash>, bool, bool) {
     let mut selected = Vec::new();
     let mut raw_bytes = 0usize;
     let mut budget_full = false;
+    let mut all_known = true;
+    let mut exhausted = true;
     let mut access_keys = 42;
     let body_limit = if pending
         .values()
@@ -1720,6 +1819,7 @@ fn select_pending_batch_with_budget(
                 let Some(known) = nonces.get(entry.key()) else {
                     // No completed state read/verified successor output, no
                     // nonce credit. An evicted subject is never assumed new.
+                    all_known = false;
                     continue;
                 };
                 entry.insert(*known)
@@ -1727,15 +1827,18 @@ fn select_pending_batch_with_budget(
         };
         if entry.nonce == *expected {
             let Some(row_bytes) = entry.selection_input_bytes() else {
+                exhausted = false;
                 break;
             };
             let Some(row_keys) = entry.selection_access_keys() else {
+                exhausted = false;
                 break;
             };
             if row_bytes > body_limit.saturating_sub(raw_bytes)
                 || row_keys > ASSET_PLAN_ACCESS_KEYS.saturating_sub(access_keys)
             {
                 budget_full = true;
+                exhausted = false;
                 break;
             }
             raw_bytes += row_bytes;
@@ -1744,11 +1847,13 @@ fn select_pending_batch_with_budget(
             *expected += 1;
             if selected.len() == batch_size || raw_bytes == body_limit {
                 budget_full = true;
+                exhausted = false;
                 break;
             }
         }
     }
-    (selected, budget_full)
+    let no_ready = exhausted && all_known && selected.is_empty();
+    (selected, budget_full, no_ready)
 }
 
 fn reserve_balance_slot(balances: &mut VecDeque<BalanceQuery>) -> Result<()> {

@@ -152,7 +152,7 @@ pub struct AdmissionRow {
 pub enum CheckedAdmission {
     V3(SignatureCheckedTransfer),
     Uca {
-        checked: novovm_exec::uca_spend::SignatureCheckedAssetSpendV2,
+        checked: novovm_exec::uca_spend::AssetSpendSignatureFactV2,
         batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV2>,
         index: usize,
     },
@@ -166,7 +166,7 @@ impl CheckedAdmission {
         }
     }
 
-    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::SignatureCheckedAssetSpendV2> {
+    pub fn uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV2> {
         match self {
             Self::Uca { checked, .. } => Some(checked),
             Self::V3(_) => None,

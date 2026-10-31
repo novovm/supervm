@@ -113,6 +113,24 @@ fn actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner() -> Result<(
     let (foreign, _foreign_receiver) = tests::inert_pipeline(config);
     let first = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 0)?;
     let second = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 1)?;
+    std::thread::scope(|scope| {
+        for owner in [&pipeline, &foreign] {
+            let make = &make;
+            let signed = &signed;
+            let first = &first;
+            let second = &second;
+            let expected = std::ptr::eq(owner, &pipeline);
+            scope.spawn(move || {
+                let selected = make(signed).unwrap();
+                assert_eq!(
+                    owner
+                        .rebind_admitted_uca(selected, &[first, second])
+                        .is_ok(),
+                    expected
+                );
+            });
+        }
+    });
     assert!(foreign
         .rebind_admitted_uca(make(&signed)?, &[&first, &second])
         .is_err());
@@ -321,12 +339,23 @@ fn actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures() -> Res
     assert!(checked.is_uca());
     assert!(pipeline.owns_admitted(&checked));
     assert!(!foreign.owns_admitted(&checked));
-    assert_eq!(checked.checked_uca().unwrap().signed().encode()?, raws[0]);
+    let fact = checked.checked_uca().unwrap();
+    assert_eq!(fact.reattach(batch.row(0)?)?.signed().encode()?, raws[0]);
     assert!(checked.matches_uca_source(&batch, 0));
     assert!(!checked.matches_uca_source(&batch, 1));
     let equal_but_distinct = Arc::new(AssetSpendBatchV2::from_raw(&raws, limits)?);
     assert!(!checked.matches_uca_source(&equal_but_distinct, 0));
-    assert!(checked.retained_metadata_bytes() >= raws[0].len());
+    let metadata = std::mem::size_of::<AdmittedTransfer>()
+        + std::mem::size_of::<crate::native_pipeline::ingress::batch::CheckedAdmission>()
+        + 2 * std::mem::size_of::<usize>()
+        + fact.intent().retained_heap_bytes();
+    assert_eq!(checked.retained_metadata_bytes(), metadata);
+    assert!(
+        metadata < raws[0].len(),
+        "pool token must not retain a second crypto payload"
+    );
+    let original_signed = batch.row(0)?;
+    assert!(original_signed.public_key.capacity() + original_signed.signature.capacity() > 5_000);
     assert!(output.pop_admitted().unwrap().result.is_err());
     assert!(output.pop_admitted().unwrap().result.is_err());
     assert!(output

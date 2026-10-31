@@ -301,6 +301,119 @@ fn apfl_plan_retains_shared_source_and_exact_raw_commitment() {
 }
 
 #[test]
+fn asset_plan_keeps_original_columns_and_exact_raw_commitment_order_and_domain() {
+    use novovm_protocol::uca_spend::{
+        spend_key_ref_v1, AssetAccountCreationV2, AssetAuthorityUpdateV2, AssetSpendIntentV2,
+        SignedAssetSpendV2, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
+    };
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV2, AssetSpendBatchV2};
+    // Structural plan fixture only; real ML-DSA facts are covered by the
+    // product compute reuse test, not manufactured by these shaped bytes.
+    let public = vec![3; MLDSA65_PUBLIC_KEY_BYTES];
+    let rows = [0, 1, 128]
+        .into_iter()
+        .map(|nonce| {
+            let mut signed = SignedAssetSpendV2 {
+                intent: AssetSpendIntentV2 {
+                    chain_id: 7,
+                    genesis: [1; 32],
+                    payer: vec![5; 20],
+                    recipient: vec![6; 32],
+                    asset: 1,
+                    amount: 10,
+                    max_fee: 1,
+                    nonce,
+                    authorization_epoch: 1,
+                    spend_key_ref: spend_key_ref_v1(&public).unwrap(),
+                    not_before_height: 1,
+                    expires_at_height: 50,
+                    authority_update: None,
+                    recipient_creation: None,
+                },
+                public_key: public.clone(),
+                signature: vec![nonce as u8; MLDSA65_SIGNATURE_BYTES],
+            };
+            if nonce == 1 {
+                signed.intent.amount = 0;
+                signed.intent.recipient = signed.intent.payer.clone();
+                signed.intent.authority_update = Some(AssetAuthorityUpdateV2 {
+                    use_recovery: false,
+                    next_epoch: 2,
+                    active: true,
+                    management_key_ref: [9; 32],
+                    recovery_key_ref: Some([8; 32]),
+                    grants: vec![],
+                });
+            } else if nonce == 128 {
+                let creation = AssetAccountCreationV2 {
+                    management_key_ref: [11; 32],
+                    recovery_key_ref: Some([10; 32]),
+                    grants: vec![],
+                };
+                signed.intent.recipient = creation.account(7, &[1; 32]).unwrap().to_vec();
+                signed.intent.recipient_creation = Some(creation);
+            }
+            signed.encode().unwrap()
+        })
+        .collect::<Vec<_>>();
+    let limits = AssetSpendBatchLimitsV2 {
+        transactions: 16,
+        transaction_bytes: 8192,
+        body_bytes: 32768,
+    };
+    let budget = PlanBudget {
+        transactions: limits.transactions,
+        transaction_bytes: limits.transaction_bytes,
+        body_bytes: limits.body_bytes,
+        access_keys: 16,
+    };
+    let source = Arc::new(AssetSpendBatchV2::from_raw(&rows, limits).unwrap());
+    let build =
+        |source, context| BatchPlan::from_source(context, source, accesses(), budget).unwrap();
+    let reference = build(BatchSource::Raw(rows.clone()), context([7; 32]));
+    let plan = build(BatchSource::Uca(source.clone()), context([7; 32]));
+    assert!(matches!(&plan.source, BatchSource::Uca(retained) if Arc::ptr_eq(retained, &source)));
+    assert_eq!(Arc::strong_count(&source), 2);
+    assert!(plan.raw_transactions_if_materialized().is_none());
+    assert_eq!(plan.commitment(), reference.commitment());
+    assert_eq!(
+        plan.canonical_body_bytes(),
+        reference.canonical_body_bytes()
+    );
+    assert_eq!(
+        plan.max_transaction_bytes(),
+        reference.max_transaction_bytes()
+    );
+    for (index, bytes) in rows.iter().enumerate() {
+        assert_eq!(plan.canonical_transaction(index).unwrap().as_ref(), bytes);
+    }
+    let mut reordered = rows.clone();
+    reordered.swap(0, 1);
+    let reordered_source = Arc::new(AssetSpendBatchV2::from_raw(&reordered, limits).unwrap());
+    let reordered_plan = build(BatchSource::Uca(reordered_source), context([7; 32]));
+    assert_ne!(reordered_plan.commitment(), plan.commitment());
+    assert_eq!(
+        reordered_plan.commitment(),
+        build(BatchSource::Raw(reordered), context([7; 32])).commitment()
+    );
+    let mut changed_domain = context([7; 32]);
+    changed_domain.chain_id += 1;
+    assert_ne!(
+        build(BatchSource::Uca(source.clone()), changed_domain).commitment(),
+        plan.commitment()
+    );
+    let duplicate =
+        Arc::new(AssetSpendBatchV2::from_raw(&[rows[0].clone(), rows[0].clone()], limits).unwrap());
+    assert!(BatchPlan::from_source(
+        context([7; 32]),
+        BatchSource::Uca(duplicate),
+        accesses(),
+        budget
+    )
+    .is_err());
+}
+
+#[test]
 fn apfl_plan_preserves_duplicate_bounds_order_and_signature_binding() {
     let rows = signed_structural_rows();
     let make = |rows: &[Vec<u8>], budget| {

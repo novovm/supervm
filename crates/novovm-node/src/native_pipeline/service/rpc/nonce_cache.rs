@@ -45,6 +45,7 @@ pub(super) struct NonceCache<T = IoTicket<Option<Vec<u8>>>> {
     reads: VecDeque<Read<T>>,
     capacity: usize,
     require_present: bool,
+    revision: u64,
 }
 
 impl<T: NonceReadTicket> NonceCache<T> {
@@ -58,6 +59,7 @@ impl<T: NonceReadTicket> NonceCache<T> {
             reads: VecDeque::new(),
             capacity,
             require_present: false,
+            revision: 0,
         }
     }
 
@@ -66,6 +68,9 @@ impl<T: NonceReadTicket> NonceCache<T> {
     }
 
     fn clear(&mut self) {
+        if !self.values.is_empty() {
+            self.revision = self.revision.wrapping_add(1);
+        }
         self.values.clear();
         self.absent.clear();
         self.insertion_order.clear();
@@ -78,6 +83,7 @@ impl<T: NonceReadTicket> NonceCache<T> {
         if self.parent != Some(parent) {
             self.clear();
             self.parent = Some(parent);
+            self.revision = self.revision.wrapping_add(1);
         }
     }
 
@@ -98,6 +104,7 @@ impl<T: NonceReadTicket> NonceCache<T> {
             self.reads.clear();
         }
         self.parent = Some(parent);
+        self.revision = self.revision.wrapping_add(1);
     }
 
     pub(super) fn get(&self, subject: &Hash) -> Option<&u64> {
@@ -106,6 +113,10 @@ impl<T: NonceReadTicket> NonceCache<T> {
 
     pub(super) fn has_pending_reads(&self) -> bool {
         !self.reads.is_empty()
+    }
+
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
     }
 
     fn lookup(&self, subject: &Hash) -> Lookup {
@@ -123,6 +134,8 @@ impl<T: NonceReadTicket> NonceCache<T> {
     }
 
     fn insert(&mut self, subject: Hash, value: u64, absent: bool) {
+        let changed =
+            self.values.get(&subject) != Some(&value) || self.absent.contains(&subject) != absent;
         if !self.values.contains_key(&subject) {
             if self.values.len() == self.capacity {
                 let oldest = self.insertion_order.pop_front().expect("cached nonce");
@@ -136,6 +149,9 @@ impl<T: NonceReadTicket> NonceCache<T> {
             self.absent.insert(subject);
         } else {
             self.absent.remove(&subject);
+        }
+        if changed {
+            self.revision = self.revision.wrapping_add(1);
         }
     }
 

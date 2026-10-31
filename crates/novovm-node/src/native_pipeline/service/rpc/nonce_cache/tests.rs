@@ -112,6 +112,111 @@ fn bulk_nonce_observation_cannot_change_parent_or_replace_a_conflicting_fact() -
     Ok(())
 }
 
+#[test]
+fn selection_revision_changes_only_for_new_nonce_facts_or_parent_binding() -> Result<()> {
+    let mut cache = cache(2);
+    let old = parent(3);
+    let owner = subject(1);
+    let revision = cache.revision();
+    cache.bind_current_parent(old);
+    assert_ne!(cache.revision(), revision);
+    let revision = cache.revision();
+    cache.bind_current_parent(old);
+    assert_eq!(cache.revision(), revision);
+    cache.observe_present_at_parent(old, owner, 7)?;
+    assert_ne!(cache.revision(), revision);
+    let revision = cache.revision();
+    cache.observe_present_at_parent(old, owner, 7)?;
+    cache.published(owner, 7);
+    assert_eq!(cache.revision(), revision);
+    cache.published(owner, 8);
+    assert_ne!(cache.revision(), revision);
+    cache.accept_read(old, subject(2), None)?;
+    let revision = cache.revision();
+    cache.published(subject(2), 0);
+    assert_ne!(
+        cache.revision(),
+        revision,
+        "absent and initialized zero differ"
+    );
+    let revision = cache.revision();
+    cache.published(subject(3), 0);
+    assert_ne!(cache.revision(), revision);
+    assert_eq!(
+        cache.lookup(&owner),
+        Lookup::Unknown,
+        "eviction changes the usable subject set"
+    );
+    let revision = cache.revision();
+    cache.begin_published_parent(parent(4));
+    assert_ne!(
+        cache.revision(),
+        revision,
+        "unchanged values still bind a new published parent"
+    );
+    let revision = cache.revision();
+    cache.clear();
+    assert_ne!(cache.revision(), revision);
+    Ok(())
+}
+
+#[test]
+fn source_wait_keeps_original_nonce_ticket_progress_and_wakes_on_completion() -> Result<()> {
+    use super::super::{Position, SelectionStamp, SelectionWait, SelectionWaitReason};
+    let mut cache = cache(2);
+    let parent = parent(3);
+    let owner = subject(1);
+    cache.bind_current_parent(parent);
+    cache.published(owner, 0);
+    cache.poll(parent, [subject(2)].into_iter(), |_, _| {
+        Ok(Some(Completion::Pending))
+    })?;
+    let position = Position {
+        height: parent.height + 1,
+        round: 0,
+        parent,
+        source: None,
+    };
+    let stamp = SelectionStamp {
+        pool_revision: 1,
+        nonce_revision: cache.revision(),
+        boundary: false,
+        awaiting_admission: true,
+    };
+    let wait = SelectionWait {
+        position,
+        stamp,
+        reason: SelectionWaitReason::SourceBoundary,
+        selected: 1,
+    };
+    assert!(wait.matches(position, stamp));
+    assert!(cache.has_pending_reads());
+    assert!(!cache.poll(parent, [subject(2)].into_iter(), |_, _| panic!(
+        "duplicate nonce read"
+    ))?);
+    assert!(wait.matches(
+        position,
+        SelectionStamp {
+            nonce_revision: cache.revision(),
+            ..stamp
+        }
+    ));
+    cache.reads[0].ticket = Completion::Ready(Some(9u64.to_le_bytes().to_vec()));
+    assert!(cache.poll(parent, [subject(2)].into_iter(), |_, _| panic!(
+        "completed nonce read"
+    ))?);
+    assert!(!cache.has_pending_reads());
+    assert_eq!(cache.lookup(&subject(2)), Lookup::Present(9));
+    assert!(!wait.matches(
+        position,
+        SelectionStamp {
+            nonce_revision: cache.revision(),
+            ..stamp
+        }
+    ));
+    Ok(())
+}
+
 fn pending(subject: Hash, nonces: &[u64]) -> (VecDeque<Hash>, BTreeMap<Hash, Pending>) {
     let mut order = VecDeque::new();
     let mut pending = BTreeMap::new();
@@ -392,7 +497,7 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
         )?;
         assert!(cache.reads.len() <= MAX_READS);
         let selection =
-            select_prepared_nonce_window(&window, &pending, &cache.values, BTreeMap::new(), 1024);
+            select_prepared_nonce_window(&window, &pending, &cache.values, &BTreeMap::new(), 1024);
         if selection.is_some() {
             // The actual caller places stale-pool cleanup after this readiness
             // gate, never in the per-eight-ticket read/completion operation.
@@ -482,19 +587,19 @@ fn fully_known_gap_window_rotates_to_ready_work_but_unknown_window_does_not() {
     let window = nonce_selection_window(&order, 0, 4);
     assert_eq!(window.len(), 4);
     assert_eq!(
-        select_prepared_nonce_window(&window, &pending, &BTreeMap::new(), BTreeMap::new(), 4),
+        select_prepared_nonce_window(&window, &pending, &BTreeMap::new(), &BTreeMap::new(), 4),
         None,
         "unknown is not proof that this prefix only contains nonce gaps"
     );
     assert_eq!(
-        select_prepared_nonce_window(&window, &pending, &known, BTreeMap::new(), 4),
+        select_prepared_nonce_window(&window, &pending, &known, &BTreeMap::new(), 4),
         Some((Vec::new(), false))
     );
     let next = advance_nonce_window(0, window.len(), order.len());
     assert_eq!(next, 4);
     let ready = nonce_selection_window(&order, next, 4);
     assert_eq!(
-        select_prepared_nonce_window(&ready, &pending, &known, BTreeMap::new(), 4),
+        select_prepared_nonce_window(&ready, &pending, &known, &BTreeMap::new(), 4),
         Some((order.iter().skip(4).copied().collect(), true))
     );
     assert_eq!(advance_nonce_window(next, ready.len(), order.len()), 0);

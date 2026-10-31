@@ -139,12 +139,18 @@ fn account(byte: u8) -> Account {
     Account::try_from(vec![byte; 20]).unwrap()
 }
 fn fixture() -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
-    let intent = intent();
+    fixture_for(&intent())
+}
+
+fn fixture_for(intent: &AssetSpendIntentV2) -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
     let mut changes = Vec::new();
-    for address in [account(1), account(2)] {
+    for address in [
+        Account::try_from(intent.payer.as_slice()).unwrap(),
+        Account::try_from(intent.recipient.as_slice()).unwrap(),
+    ] {
         changes.extend(
             account_record_changes(
-                7,
+                intent.chain_id,
                 &intent.genesis,
                 &AssetAccountAuthorityV2 {
                     account: address.as_bytes().to_vec(),
@@ -164,7 +170,7 @@ fn fixture() -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
     }
     changes.extend(
         grant_record_changes(
-            &intent,
+            intent,
             &SuppliedAssetSpendGrantV2 {
                 asset: 1,
                 account: intent.payer.clone(),
@@ -182,7 +188,7 @@ fn fixture() -> BTreeMap<Vec<u8>, Option<Vec<u8>>> {
     );
     changes.push(StateChange::Put {
         key: nonce_key(&intent.nonce_identity().unwrap()),
-        value: 9u64.to_le_bytes().to_vec(),
+        value: intent.nonce.to_le_bytes().to_vec(),
     });
     changes
         .into_iter()
@@ -281,6 +287,31 @@ impl crate::native_pipeline::state::tree::StateNodeReader for Memory {
     }
 }
 
+struct CountingReader<'a> {
+    memory: &'a Memory,
+    reads: std::cell::Cell<usize>,
+}
+
+impl crate::native_pipeline::state::tree::StateNodeReader for CountingReader<'_> {
+    fn read_node(&self, hash: &Hash) -> Result<Option<Vec<u8>>> {
+        self.reads.set(self.reads.get() + 1);
+        Ok(self.memory.0.get(hash).cloned())
+    }
+}
+
+fn read_ordered_turns(
+    reader: &CountingReader<'_>,
+    root: Hash,
+    keys: &[Vec<u8>],
+) -> Result<BTreeMap<Vec<u8>, Option<Vec<u8>>>> {
+    let mut values = BTreeMap::new();
+    for keys in keys.chunks(CAPTURE_QUANTUM) {
+        let read = crate::native_pipeline::state::tree::read_state_values(reader, root, keys)?;
+        values.extend(keys.iter().cloned().zip(read));
+    }
+    Ok(values)
+}
+
 fn capture_budget() -> CaptureBudget {
     CaptureBudget {
         keys: 4096,
@@ -372,6 +403,128 @@ fn asset_batch_capture_deduplicates_all_10_keys_and_preserves_order_and_revocati
     assert!(read.input.is_none());
     assert!(read.completed);
     assert!(read.made_progress());
+}
+
+#[test]
+fn asset_hash_ordered_read_turns_reduce_frontier_loads_and_preserve_1024_rows() -> Result<()> {
+    let mut records = BTreeMap::new();
+    let mut inputs = Vec::new();
+    for index in (0..1024u32).rev() {
+        let mut row = intent();
+        row.payer = vec![0; 20];
+        row.payer[..4].copy_from_slice(&index.to_be_bytes());
+        row.payer[19] = 0x71;
+        row.nonce = 9 + u64::from(index);
+        records.extend(fixture_for(&row));
+        let payer = Account::try_from(row.payer.as_slice()).map_err(anyhow::Error::msg)?;
+        inputs.push((row, payer, account(2)));
+    }
+    let (memory, root) = tree_fixture(&records);
+    let budget = CaptureBudget {
+        keys: 32_768,
+        nodes: 65_536,
+        bytes: 16 * 1024 * 1024,
+    };
+    let mut read = UcaBatchStateRead::new(root, inputs.clone(), budget)?;
+    assert_eq!(read.stats().declaration_keys, 10 * 1024);
+    assert_eq!(read.stats().unique_keys, 7 * 1024 + 3);
+    let mut legacy = read.keys.clone();
+    legacy.sort_unstable();
+    let hashes = read
+        .keys
+        .iter()
+        .map(|key| crate::native_pipeline::state::tree::state_key_hash(key))
+        .collect::<Result<Vec<_>>>()?;
+    assert!(hashes.windows(2).all(|pair| pair[0] <= pair[1]));
+    let old = CountingReader {
+        memory: &memory,
+        reads: std::cell::Cell::new(0),
+    };
+    let new = CountingReader {
+        memory: &memory,
+        reads: std::cell::Cell::new(0),
+    };
+    let old_values = read_ordered_turns(&old, root, &legacy)?;
+    let new_values = read_ordered_turns(&new, root, &read.keys)?;
+    assert_eq!(new_values, old_values);
+    for (key, value) in &new_values {
+        assert_eq!(*value, records.get(key).cloned().flatten());
+    }
+    assert!(
+        new.reads.get() < old.reads.get(),
+        "hash-grouped 64-key turns did not reduce original tree node loads: new={} old={}",
+        new.reads.get(),
+        old.reads.get()
+    );
+    eprintln!("1024-row immutable frontier read/decode loads: dictionary_order={} hash_order={} keys={} quantum={}",
+        old.reads.get(), new.reads.get(), read.keys.len(), CAPTURE_QUANTUM);
+    let rows = finish_memory_capture(&mut read, &memory);
+    for (row, (expected, _, _)) in rows.into_iter().zip(inputs) {
+        let UcaReadResult::Present(state) = row? else {
+            anyhow::bail!("known account reported absent");
+        };
+        assert!(state.matches_intent(&expected));
+        assert_eq!(state.next_nonce(), expected.nonce);
+        assert_eq!(
+            state.static_failure(5),
+            Some(novovm_adapter_api::uca_spend_policy::SpendPolicyError::Revoked)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn asset_hash_ordering_charges_temporary_metadata_and_keeps_tail_rejection() -> Result<()> {
+    let access = AssetSpendStateAccessV2::new(intent(), account(1), account(2))?;
+    let metadata = access.declarations().len() * std::mem::size_of::<(Hash, usize)>();
+    let previous = access
+        .declarations()
+        .iter()
+        .map(|d| d.key.len() + 257)
+        .sum::<usize>();
+    let exact = CaptureBudget {
+        bytes: previous + metadata,
+        ..capture_budget()
+    };
+    assert!(UcaBatchStateRead::new(
+        [9; 32],
+        vec![(intent(), account(1), account(2))],
+        CaptureBudget {
+            bytes: exact.bytes - 1,
+            ..exact
+        }
+    )
+    .is_err());
+    UcaBatchStateRead::new([9; 32], vec![(intent(), account(1), account(2))], exact)?;
+    let mut records = fixture();
+    let tail = access
+        .declarations()
+        .iter()
+        .find(|d| {
+            d.key
+                .windows(b"/grant/".len())
+                .any(|part| part == b"/grant/")
+                && d.key.ends_with(&[0, 1])
+        })
+        .context("grant tail declaration missing")?
+        .key
+        .clone();
+    records.insert(tail, Some(vec![1]));
+    let (memory, root) = tree_fixture(&records);
+    for old_order in [false, true] {
+        let mut read = UcaBatchStateRead::new(
+            root,
+            vec![(intent(), account(1), account(2))],
+            capture_budget(),
+        )?;
+        if old_order {
+            read.keys.sort_unstable();
+        }
+        let mut rows = finish_memory_capture(&mut read, &memory);
+        assert_eq!(rows.len(), 1);
+        assert!(rows.pop().unwrap().is_err());
+    }
+    Ok(())
 }
 
 #[test]

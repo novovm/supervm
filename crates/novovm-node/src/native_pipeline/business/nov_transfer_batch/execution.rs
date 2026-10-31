@@ -11,6 +11,10 @@ use novovm_exec::resident::{ComputeSession, ComputeTask};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(test)]
+#[path = "execution/fee_delta_tests.rs"]
+mod fee_delta_tests;
+
 /// A new ordered receipt encoding. The final state binds diagnostics; this
 /// receipt binds each quote, rejection and full successful fee journal entry.
 /// It deliberately has no `safe`, `finalized`, old prev-seal or fake proof flag.
@@ -578,8 +582,12 @@ pub(super) fn stage_results(
             .iter()
             .filter_map(|receipt| receipt.journal.as_ref().map(|entry| entry.settled_nov)),
     )?;
-    let mut changes =
-        record_pages::record_changes(FEE_PREFIX, &postcard::to_allocvec(&fees)?, FEE_BYTES)?;
+    let mut changes = record_pages::record_changes_from_parent(
+        FEE_PREFIX,
+        &postcard::to_allocvec(&fees)?,
+        FEE_BYTES,
+        Some(&postcard::to_allocvec(&prepared.fees)?),
+    )?;
     ensure!(
         prepared.spend.is_some() == spend_outputs.is_some(),
         "UCA effect output missing/unexpected"

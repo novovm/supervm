@@ -48,9 +48,27 @@ type CorpusKeyPair = (Vec<u8>, zeroize::Zeroizing<Vec<u8>>);
 struct PairedCorpus {
     keys: Option<Arc<Vec<CorpusKeyPair>>>,
     approvals: Option<Vec<UcaGenesisApprovalV2>>,
-    signed: Option<Vec<Vec<u8>>>,
+    signed: Option<Arc<Vec<Vec<u8>>>>,
     identity: Option<(Hash, Hash, Hash)>,
     rolling_identity: Option<(Hash, Hash)>,
+    last_report: Option<PathBuf>,
+}
+
+fn swap_bridge_rows<T>(rows: &mut [T], frame_rows: usize) {
+    for index in 0..frame_rows {
+        rows.swap(frame_rows + index, 8 * frame_rows + index);
+    }
+}
+
+#[test]
+fn late_bridge_delivery_order_preserves_every_original_observation() {
+    let original = (0..16 * 4).collect::<Vec<_>>();
+    let mut rows = original.clone();
+    swap_bridge_rows(&mut rows, 4);
+    assert_eq!(&rows[4..8], &[32, 33, 34, 35]);
+    assert_eq!(&rows[32..36], &[4, 5, 6, 7]);
+    swap_bridge_rows(&mut rows, 4);
+    assert_eq!(rows, original);
 }
 
 fn account_bytes(index: usize) -> [u8; 20] {
@@ -351,6 +369,12 @@ fn run_native_uca_load_mode(
     )?;
     let frame_rows = env_count("NOVOVM_NATIVE_UCA_FRAME_ROWS", 32, CONFIGURED_BATCH)?;
     let shape = WorkloadShape::from_environment(count)?;
+    let late_bridge = std::env::var("NOVOVM_NATIVE_UCA_LATE_BRIDGE").as_deref() == Ok("1");
+    ensure!(
+        !late_bridge
+            || mode == LoadMode::Static && count >= 9 * frame_rows && shape.payers == frame_rows,
+        "late bridge fixture requires static whole-account nonce frames and at least nine frames"
+    );
     let account_count = shape.accounts();
     let codec = native_decode_limits(CONFIGURED_BATCH, true);
     ensure!(
@@ -414,6 +438,7 @@ fn run_native_uca_load_mode(
         "NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS",
         "NOVOVM_NATIVE_UCA_PAYERS",
         "NOVOVM_NATIVE_UCA_RECIPIENT_DISTRIBUTION",
+        "NOVOVM_NATIVE_UCA_LATE_BRIDGE",
     ]
     .into_iter()
     .map(|name| (name, std::env::var(name).ok()))
@@ -435,6 +460,7 @@ fn run_native_uca_load_mode(
         "load_strategy":mode.label(),"grant_expires_at_height":grant_expiry,
         "rolling_wave_transactions":if mode.is_rolling() {Some(rolling::WAVE_ROWS)} else {None},
         "effective_outstanding_limit":if mode.is_rolling() {rolling::WAVE_ROWS} else {WINDOW},
+        "submission_frame_order":if late_bridge {"0,8,2,3,4,5,6,7,1,9,...; signed corpus remains canonical"} else {"canonical"},
         "rolling_signature_65536":if mode.is_rolling() {"PENDING"} else {"NOT_EXECUTED"},
         "continuous_signature_65536":if mode == LoadMode::Continuous {"PENDING"} else {"NOT_EXECUTED"},
         "input_identity":if mode.dynamic_windows() {"same logical payer/recipient/amount/nonce and approved genesis; receipt-anchored expiry and signatures can differ across runs, NOT byte-identical"} else if signature_override.is_some() {"one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU"} else {"fresh generated per invocation; same logical workload is not byte-identical input"},
@@ -631,12 +657,13 @@ fn run_native_uca_load_mode(
         let mut raw = Vec::with_capacity(count);
         let mut workload_hash = Sha256::new();
         workload_hash.update(b"novovm/nuas-load/ordered-signed-inputs/v1\0");
+        let replay_signed = corpus.signed.clone();
         let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
             let payer = index % shape.payers;
             let nonce = (index / shape.payers) as u64;
             let recipient = shape.recipient(index);
             let key = &keys[account_count + payer];
-            let signed = match corpus.signed.as_ref().filter(|_| !mode.dynamic_windows()) {
+            let signed = match replay_signed.as_ref().filter(|_| !mode.dynamic_windows()) {
                 Some(raw) => SignedAssetSpendV2::decode(&raw[index])?,
                 None => signer.sign(
                     make_intent(payer, recipient, nonce, window)?,
@@ -681,9 +708,6 @@ fn run_native_uca_load_mode(
                 &make_signed,
             )?;
         }
-        evidence["initial_signed_corpus_rows"] = json!(first_count);
-        evidence["initial_signed_corpus_preparation_us"] =
-            json!(initial_preparation_started.elapsed().as_micros() as u64);
         if mode.dynamic_windows() {
             ensure!(
                 corpus
@@ -698,6 +722,19 @@ fn run_native_uca_load_mode(
                 "paired genesis/root/signed bytes changed before node startup"
             );
         }
+        if !mode.dynamic_windows() && corpus.identity.is_none() {
+            // A failed delivery attempt must not discard the exact randomized
+            // signatures needed to replay that same input against the candidate.
+            corpus.identity = Some((
+                domain,
+                material.expected_initial_root,
+                workload_hash.clone().finalize().into(),
+            ));
+            corpus.signed = Some(Arc::new(raw.clone()));
+        }
+        evidence["initial_signed_corpus_rows"] = json!(first_count);
+        evidence["initial_signed_corpus_preparation_us"] =
+            json!(initial_preparation_started.elapsed().as_micros() as u64);
         evidence["signed_workload_sha256"] = json!(hex(&workload_hash.clone().finalize()));
         evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
         let ingress = (0..4)
@@ -733,7 +770,11 @@ fn run_native_uca_load_mode(
                 "NUAS load HTTP listener unexpectedly open"
             );
         }
-        let inputs = rolling::prepare_inputs(&mut clients[ingress], &raw, 0, frame_rows)?;
+        let mut inputs = rolling::prepare_inputs(&mut clients[ingress], &raw, 0, frame_rows)?;
+        if late_bridge {
+            inputs.swap(1, 8);
+            swap_bridge_rows(&mut observations, frame_rows);
+        }
         evidence["application_object_bytes"] = json!(inputs
             .iter()
             .map(PreparedApplicationInput::byte_len)
@@ -779,7 +820,7 @@ fn run_native_uca_load_mode(
                 &mut evidence,
             )?
         } else {
-            drive(
+            let result = drive(
                 &mut nodes,
                 &mut clients,
                 ingress,
@@ -788,7 +829,13 @@ fn run_native_uca_load_mode(
                 &mut observations,
                 &mut counts,
                 timeout,
-            )?
+            );
+            if late_bridge {
+                // Keep the receipt/audit oracle in its original canonical order,
+                // including on failure. Only delivery order was changed.
+                swap_bridge_rows(&mut observations, frame_rows);
+            }
+            result?
         });
         timed_attempt = None;
         evidence["client_io_after"] =
@@ -810,15 +857,10 @@ fn run_native_uca_load_mode(
             });
         } else {
             let identity = (domain, material.expected_initial_root, workload_hash);
-            if let Some(expected) = corpus.identity {
-                ensure!(
-                    identity == expected,
-                    "paired genesis/root/signed bytes changed"
-                );
-            } else {
-                corpus.identity = Some(identity);
-                corpus.signed = Some(raw.clone());
-            }
+            ensure!(
+                corpus.identity == Some(identity),
+                "paired genesis/root/signed bytes changed"
+            );
         }
         evidence["signed_workload_sha256"] = json!(hex(&workload_hash));
         evidence["canonical_signed_input_bytes"] = json!(raw.iter().map(Vec::len).sum::<usize>());
@@ -1088,8 +1130,92 @@ fn run_native_uca_load_mode(
         directory.join("report.json"),
         serde_json::to_vec_pretty(&evidence)?,
     )?;
+    corpus.last_report = Some(directory.join("report.json"));
     result?;
     Ok(evidence)
+}
+
+#[test]
+#[ignore = "real original-node late bridge: old pool must stall and candidate must finish the exact same signed input; run alone"]
+fn native_uca_late_nonce_bridge_before_after() -> Result<()> {
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1::Cpu;
+    ensure!(
+        std::env::var("NOVOVM_NATIVE_UCA_LATE_BRIDGE").as_deref() == Ok("1"),
+        "late bridge order must be explicitly selected"
+    );
+    let baseline = fs::canonicalize(
+        std::env::var_os("NOVOVM_NATIVE_UCA_BASELINE_NODE_BINARY")
+            .context("pre-fix original node required")?,
+    )?;
+    let candidate = fs::canonicalize(
+        std::env::var_os("NOVOVM_RESIDENT_NODE_BINARY").context("candidate node required")?,
+    )?;
+    ensure!(baseline != candidate, "late bridge binaries must differ");
+    let mut corpus = PairedCorpus::default();
+    let before_result = run_native_uca_load(Some(Cpu), &mut corpus, Some(&baseline));
+    let before: Value = serde_json::from_slice(&fs::read(
+        corpus
+            .last_report
+            .as_ref()
+            .context("old attempt report missing")?,
+    )?)?;
+    ensure!(
+        before_result.is_err()
+            && before["passed"] == false
+            && before["counts"]["transport_failures"] == 0
+            && before["counts"]["application_batches_transport_delivered"].as_u64() >= Some(9)
+            && before["counts"]["successful_transactions"] == before["wire_frame_rows"],
+        "old original node did not reproduce the delivered-but-unadmitted late bridge"
+    );
+    corpus.last_report = None;
+    let after_result = run_native_uca_load(Some(Cpu), &mut corpus, Some(&candidate));
+    let after: Value = serde_json::from_slice(&fs::read(
+        corpus
+            .last_report
+            .as_ref()
+            .context("candidate attempt report missing")?,
+    )?)?;
+    for field in [
+        "signed_workload_sha256",
+        "signing_domain",
+        "genesis_commitment",
+        "initial_root",
+        "aoem_sha256",
+        "backend",
+        "transactions",
+        "wire_frame_rows",
+        "query_batch",
+        "canonical_body_budget",
+        "submission_frame_order",
+    ] {
+        ensure!(before[field] == after[field], "late bridge {field} differs");
+    }
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/native-product-load")
+        .join(format!(
+            "late-bridge-paired-{}-{}.json",
+            std::process::id(),
+            clock_ms()?
+        ));
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&json!({
+            "scope":"one-host four-process late bridge counterexample, not a throughput acceptance",
+            "same_signed_corpus_and_initial_state":true,
+            "expected_before_liveness_failure_observed":true,
+            "rounds":[{"label":"before_cpu_expected_stall","report":before},
+                      {"label":"after_cpu","report":after}]
+        }))?,
+    )?;
+    eprintln!("NUAS late bridge paired report={}", path.display());
+    after_result?;
+    ensure!(
+        after["passed"] == true
+            && after["cold_recovery_pass"] == true
+            && after["full_fee_state_audited"] == true,
+        "candidate late bridge acceptance incomplete"
+    );
+    Ok(())
 }
 
 #[test]
