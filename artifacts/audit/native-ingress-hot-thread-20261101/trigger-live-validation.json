@@ -1,0 +1,148 @@
+{
+  "scope": "Real unchanged original CPU/GPU/CPU3x65536 load; same capture trigger and8sec observer windows; NO ETW recording. Validates trigger timing, not ETW samples or new throughput. trace_start/end fields below are observer timestamps used by the shared coverage helper, NOT an ETL header; enumerated_length is a cached earlier FileInfo, not proof of filesystem metadata behavior.",
+  "load_exit": 0,
+  "report": "D:\\WorksArea\\SUPERVM\\crates\\novovm-node\\../../target/native-product-load\\paired-32316-1793484349169.json",
+  "windows": [
+    {
+      "round": 0,
+      "directory": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\uca-32316-1793484199008397000",
+      "spawn_seen_unix_ms": 1793484209609,
+      "latest_create_utc": "2026-10-31T22:03:29.3833443Z",
+      "profile": "NativeCpuStacks",
+      "trace_start_unix_ms": 1793484217393,
+      "trace_end_unix_ms": 1793484225410,
+      "live_file_evidence": [
+        {
+          "name": "create-0-1793484209364043600.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-1-1793484209377505500.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-2-1793484209380965700.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-3-1793484209384012700.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        }
+      ],
+      "load_coverage": {
+        "overlap_seconds": 8.017,
+        "minimum_seconds": 4,
+        "coverage": "LOAD_OVERLAP_NEEDS_THREAD_SYMBOL_AND_FREQUENCY_VALIDATION"
+      },
+      "load_boundary": {
+        "before_read_started_unix_ms": 1793484211014,
+        "before_read_completed_unix_ms": 1793484211014,
+        "after_read_started_unix_ms": 1793484237448,
+        "after_read_completed_unix_ms": 1793484237448,
+        "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+      }
+    },
+    {
+      "round": 1,
+      "directory": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\uca-32316-1793484254584943100",
+      "spawn_seen_unix_ms": 1793484255181,
+      "latest_create_utc": "2026-10-31T22:04:15.1357761Z",
+      "profile": "NativeCpuStacks",
+      "trace_start_unix_ms": 1793484263149,
+      "trace_end_unix_ms": 1793484271153,
+      "live_file_evidence": [
+        {
+          "name": "create-0-1793484255125639500.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-1-1793484255129577500.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-2-1793484255132852600.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-3-1793484255136342900.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        }
+      ],
+      "load_coverage": {
+        "overlap_seconds": 8.004,
+        "minimum_seconds": 4,
+        "coverage": "LOAD_OVERLAP_NEEDS_THREAD_SYMBOL_AND_FREQUENCY_VALIDATION"
+      },
+      "load_boundary": {
+        "before_read_started_unix_ms": 1793484260193,
+        "before_read_completed_unix_ms": 1793484260193,
+        "after_read_started_unix_ms": 1793484285575,
+        "after_read_completed_unix_ms": 1793484285575,
+        "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+      }
+    },
+    {
+      "round": 2,
+      "directory": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\uca-32316-1793484304108391300",
+      "spawn_seen_unix_ms": 1793484304700,
+      "latest_create_utc": "2026-10-31T22:05:04.6798068Z",
+      "profile": "NativeCpuStacks",
+      "trace_start_unix_ms": 1793484312687,
+      "trace_end_unix_ms": 1793484320691,
+      "live_file_evidence": [
+        {
+          "name": "create-0-1793484304661195800.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-1-1793484304665350900.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-2-1793484304668463900.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        },
+        {
+          "name": "create-3-1793484304679854200.stdout.log",
+          "enumerated_length": 0,
+          "item_length": 133,
+          "handle_length": 133
+        }
+      ],
+      "load_coverage": {
+        "overlap_seconds": 8.004,
+        "minimum_seconds": 4,
+        "coverage": "LOAD_OVERLAP_NEEDS_THREAD_SYMBOL_AND_FREQUENCY_VALIDATION"
+      },
+      "load_boundary": {
+        "before_read_started_unix_ms": 1793484306974,
+        "before_read_completed_unix_ms": 1793484306974,
+        "after_read_started_unix_ms": 1793484332062,
+        "after_read_completed_unix_ms": 1793484332062,
+        "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+      }
+    }
+  ]
+}

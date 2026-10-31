@@ -1,0 +1,57 @@
+[
+  {
+    "round": 0,
+    "loss": 0,
+    "trace_start_unix_ms": 1793483140411,
+    "load_end_unix_ms": 1793483138929,
+    "coverage": {
+      "overlap_seconds": 0.0,
+      "minimum_seconds": 4,
+      "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+    }
+  },
+  {
+    "round": 1,
+    "loss": 0,
+    "trace_start_unix_ms": 1793483186878,
+    "load_end_unix_ms": 1793483185850,
+    "coverage": {
+      "overlap_seconds": 0.0,
+      "minimum_seconds": 4,
+      "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+    }
+  },
+  {
+    "round": 2,
+    "loss": 0,
+    "trace_start_unix_ms": 1793483231817,
+    "load_end_unix_ms": 1793483230474,
+    "coverage": {
+      "overlap_seconds": 0.0,
+      "minimum_seconds": 3,
+      "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+    }
+  },
+  {
+    "round": 3,
+    "loss": 0,
+    "trace_start_unix_ms": 1793483277519,
+    "load_end_unix_ms": 1793483276211,
+    "coverage": {
+      "overlap_seconds": 0.0,
+      "minimum_seconds": 3,
+      "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+    }
+  },
+  {
+    "round": 4,
+    "loss": 0,
+    "trace_start_unix_ms": 1793483321942,
+    "load_end_unix_ms": 1793483320761,
+    "coverage": {
+      "overlap_seconds": 0.0,
+      "minimum_seconds": 4,
+      "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+    }
+  }
+]

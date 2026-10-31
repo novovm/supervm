@@ -32,15 +32,72 @@ function Read-IngressTraceHeader {
     $header | Set-Content -LiteralPath $OutputPath -Encoding UTF8
     $events = [regex]::Match(($header -join "`n"), 'Total # Lost Events\s*:\s*(\d+)')
     $buffers = [regex]::Match(($header -join "`n"), 'Total # Lost Buffers\s*:\s*(\d+)')
-    $result = [ordered]@{ read_exit=$readExit; lost_events=$null; lost_buffers=$null; integrity='UNKNOWN' }
+    $result = [ordered]@{ read_exit=$readExit; lost_events=$null; lost_buffers=$null
+        trace_start_unix_ms=$null; trace_end_unix_ms=$null; integrity='UNKNOWN' }
+    foreach ($edge in @('Start','End')) {
+        $time = [regex]::Match(($header -join "`n"), "(?m)^$edge time \(UTC\)\s*:\s*(\d{4}/\d{2}/\d{2}:\d{2}:\d{2}:\d{2}\.\d{7})")
+        if ($time.Success) {
+            $utc = [DateTimeOffset]::ParseExact($time.Groups[1].Value, 'yyyy/MM/dd:HH:mm:ss.fffffff',
+                [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal)
+            $result["trace_$($edge.ToLowerInvariant())_unix_ms"] = $utc.ToUnixTimeMilliseconds()
+        }
+    }
     if ($readExit -eq 0 -and $events.Success -and $buffers.Success) {
         $result.lost_events = [long]$events.Groups[1].Value
         $result.lost_buffers = [long]$buffers.Groups[1].Value
-        $result.integrity = if ($result.lost_events -eq 0 -and $result.lost_buffers -eq 0) {
+        $result.integrity = if ($result.lost_events -eq 0 -and $result.lost_buffers -eq 0 -and
+            $null -ne $result.trace_start_unix_ms -and $null -ne $result.trace_end_unix_ms) {
             'HEADER_ZERO_LOSS_NEEDS_TARGET_WINDOW_AND_SYMBOL_VALIDATION'
-        } else { 'REJECTED_EVENT_LOSS' }
+        } elseif ($result.lost_events -ne 0 -or $result.lost_buffers -ne 0) {
+            'REJECTED_EVENT_LOSS'
+        } else { 'UNKNOWN' }
     }
     return $result
+}
+
+function Measure-IngressLoadCoverage {
+    param($Window, $RoundReport)
+    $answer = [ordered]@{ overlap_seconds=$null; minimum_seconds=$(if ($Window.profile -eq 'NativeSchedule') { 3 } else { 4 }); coverage='UNKNOWN' }
+    $boundary = $RoundReport.process_cpu_accounting.external_sample_alignment
+    if ($null -ne $Window.trace_start_unix_ms -and $null -ne $Window.trace_end_unix_ms -and
+        $null -ne $boundary.before_read_completed_unix_ms -and $null -ne $boundary.after_read_started_unix_ms) {
+        $begin = [Math]::Max([long]$Window.trace_start_unix_ms, [long]$boundary.before_read_completed_unix_ms)
+        $end = [Math]::Min([long]$Window.trace_end_unix_ms, [long]$boundary.after_read_started_unix_ms)
+        $answer.overlap_seconds = [Math]::Max(0, $end - $begin) / 1000.0
+        $answer.coverage = if ($answer.overlap_seconds -ge $answer.minimum_seconds) {
+            'LOAD_OVERLAP_NEEDS_THREAD_SYMBOL_AND_FREQUENCY_VALIDATION'
+        } else { 'REJECTED_INSUFFICIENT_LOAD_OVERLAP' }
+    }
+    return $answer
+}
+
+function Wait-IngressRoundSpawn {
+    param($Driver, [string]$StderrPath, [int]$Round)
+    $waiting = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($waiting.Elapsed.TotalSeconds -le 180) {
+        $Driver.Refresh()
+        if ($Driver.HasExited) { throw "Load exited before round $Round spawn was observed." }
+        if (Test-Path -LiteralPath $StderrPath) {
+            $text = Get-Content -LiteralPath $StderrPath -Raw
+            $directories = @()
+            if ($text) {
+                $directories = @([regex]::Matches($text, '(?m)^NUAS native load artifacts=(.+)') | ForEach-Object { $_.Groups[1].Value.Trim() })
+            }
+            if ($directories.Count -gt $Round) {
+                # The original spawn owner creates these before Command.spawn.
+                # Do NOT wait for Length/LastWriteTime: the old trigger fired
+                # after drive completion in every recorded window.
+                $logs = @(Get-ChildItem -LiteralPath $directories[$Round] -Filter 'create-*.stdout.log' -File)
+                if ($logs.Count -eq 4) {
+                    return [ordered]@{ directory=$directories[$Round]; files=$logs
+                        latest_creation_utc=($logs | Sort-Object CreationTimeUtc -Descending | Select-Object -First 1).CreationTimeUtc
+                        observed_unix_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "No four-node spawn window for round $Round; original load is not cancelled."
 }
 
 if ($ValidateOnly) {
@@ -114,6 +171,8 @@ function Record-IngressWindow {
     $record.header_exit = $quality.read_exit
     $record.lost_events = $quality.lost_events
     $record.lost_buffers = $quality.lost_buffers
+    $record['trace_start_unix_ms'] = $quality.trace_start_unix_ms
+    $record['trace_end_unix_ms'] = $quality.trace_end_unix_ms
     $record.integrity = $quality.integrity
     if ($record.integrity -ne 'HEADER_ZERO_LOSS_NEEDS_TARGET_WINDOW_AND_SYMBOL_VALIDATION') {
         throw "Trace quality failed for $Tag; no further windows will be recorded."
@@ -135,37 +194,16 @@ try {
         @{ profile='NativeCpuStacks'; seconds=8; backend='cpu' }
     )
     for ($round = 0; $round -lt $plan.Count; $round++) {
-        $waiting = [System.Diagnostics.Stopwatch]::StartNew()
-        $logs = @()
-        $roundDirectory = $null
-        while ($logs.Count -ne 4) {
-            $taskDriver.Refresh()
-            if ($taskDriver.HasExited -or $waiting.Elapsed.TotalSeconds -gt 180) {
-                throw "No live four-node startup window for round $round; original load is not cancelled."
-            }
-            if (Test-Path -LiteralPath $stderr) {
-                $text = Get-Content -LiteralPath $stderr -Raw
-                $directories = @()
-                if ($text) {
-                    $directories = @([regex]::Matches($text, '(?m)^NUAS native load artifacts=(.+)') | ForEach-Object { $_.Groups[1].Value.Trim() })
-                }
-                if ($directories.Count -gt $round) {
-                    $roundDirectory = $directories[$round]
-                    $logs = @(Get-ChildItem -LiteralPath $roundDirectory -Filter 'create-*.stdout.log' -File | Where-Object { $_.Length -gt 0 })
-                }
-            }
-            if ($logs.Count -ne 4) { Start-Sleep -Seconds 1 }
-        }
+        $spawn = Wait-IngressRoundSpawn -Driver $taskDriver -StderrPath $stderr -Round $round
         # A scheduling aid, NOT a trusted load-start marker. Offline analysis must
         # intersect each ETL with the original drive UTC boundaries and reject
         # insufficient overlap. No node/client timer or validity is changed.
-        $lastStartup = ($logs | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1).LastWriteTimeUtc
-        $delay = ($lastStartup.AddSeconds(8) - [DateTime]::UtcNow).TotalMilliseconds
+        $delay = ($spawn.latest_creation_utc.AddSeconds(8) - [DateTime]::UtcNow).TotalMilliseconds
         if ($delay -gt 0) { Start-Sleep -Milliseconds ([int]$delay) }
         Record-IngressWindow -Tag "round-$round" -ProfileName $plan[$round].profile -Seconds $plan[$round].seconds
         $taskWindows[$taskWindows.Count - 1]['round'] = $round
         $taskWindows[$taskWindows.Count - 1]['backend'] = $plan[$round].backend
-        $taskWindows[$taskWindows.Count - 1]['round_directory'] = $roundDirectory
+        $taskWindows[$taskWindows.Count - 1]['round_directory'] = $spawn.directory
     }
 } catch {
     $taskFailure = $_.Exception.Message
@@ -175,8 +213,23 @@ try {
         $taskDriver.WaitForExit()
         $taskLoadExit = $taskDriver.ExitCode
     }
+    if ($taskDriver -and $taskLoadExit -eq 0) {
+        try {
+            $paired = @(Select-String -LiteralPath $stderr -Pattern '^NUAS paired report=(.+)$')
+            if ($paired.Count -ne 1) { throw 'Original paired report is missing; load coverage cannot qualify.' }
+            $reports = Get-Content -LiteralPath ($paired[0].Matches[0].Groups[1].Value.Trim()) -Raw | ConvertFrom-Json
+            foreach ($window in $taskWindows | Where-Object { $_.tag -match '^round-\d+$' }) {
+                $index = [int]($window.tag -replace '^round-', '')
+                $coverage = Measure-IngressLoadCoverage -Window $window -RoundReport $reports.rounds[$index]
+                $window['load_coverage'] = $coverage
+                if ($coverage.coverage -ne 'LOAD_OVERLAP_NEEDS_THREAD_SYMBOL_AND_FREQUENCY_VALIDATION') {
+                    $taskFailure = "$taskFailure Round $index has insufficient or unknown load overlap."
+                }
+            }
+        } catch { $taskFailure = "$taskFailure Coverage validation: $($_.Exception.Message)" }
+    }
     [ordered]@{
-        schema='novovm-ingress-bounded-capture/v2'
+        schema='novovm-ingress-bounded-capture/v3'
         scope='Frozen five-round same-byte CPU/GPU/CPU/GPU/CPU diagnostic. Only short selected ETW windows; not new TPS acceptance. No CSwitch/ReadyThread stacks. Scheduling does NOT provide wait callsites. All raw system traces remain local.'
         begin_unix_ms=$taskBegin; end_unix_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         driver_pid=$(if ($taskDriver) { $taskDriver.Id } else { $null }); load_exit=$taskLoadExit; failure=$taskFailure
