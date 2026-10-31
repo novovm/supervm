@@ -1,0 +1,3546 @@
+{
+  "scope": "Read-only stability measurement on frozen f9247fe8 harness and unchanged v4 node; no AEAD promotion, no production source or default change, not a performance improvement",
+  "same_machine": true,
+  "real_hosts": 1,
+  "processes_per_round": 4,
+  "payer_accounts": 1024,
+  "recipient_distribution": "one shared independent recipient",
+  "candidate_rows": 1024,
+  "expanded_budget_bytes": 8388608,
+  "outstanding_limit": 8192,
+  "signature_algorithm": "ML-DSA-65",
+  "business_backend": "cpu_callbacks",
+  "source_commit": "f9247fe846afb904c073e042bc104bea9a82aa31",
+  "resource_formulas": "Select per-process AVAILABLE samples by original node PID and CPU boundary UTC markers, wholly inside drive; process_start_utc must be consistent. CPU core rate = cumulative CPU counter delta / corresponding sampled wall span, approximately one-core occupancy, not scheduler wait duration or useful-work saturation. Per-thread CPU sums use adjacent observed same-TID nondecreasing counters; births/exits between samples are not reconstructed. CPU counter units100ns. Sampled private/working peaks are lower bounds; OS lifetime peak is not per-load private peak. Diagnostic percentiles use sorted floor((n-1)*p).",
+  "groups": [
+    {
+      "name": "strict_same_bytes_observed",
+      "transactions_per_round": 65536,
+      "designed_static_byte_replay": true,
+      "observed_unique_signed_input_hashes": [
+        "0xce3a278a630045c9a24a55e5011d7a4db6e3c492e44365254161b92f37ecc748"
+      ],
+      "cpu_repeat": {
+        "cpu_tps": [
+          2579.9155370547533,
+          2549.1918249733358,
+          2479.896063535833
+        ],
+        "last_vs_first_pct": -3.876850698496237
+      },
+      "rounds": [
+        {
+          "signature": "cpu",
+          "tps": 2579.9155370547533,
+          "p95_us": 3684002,
+          "p99_us": 3902062,
+          "cpu_us": 2251.3866424560547,
+          "driver_cpu_us": 380.7544708251953,
+          "node_us": [
+            622.9877471923828,
+            533.8191986083984,
+            554.5616149902344,
+            540.0180816650391
+          ],
+          "queries": 153091,
+          "passed": true,
+          "cold": true,
+          "hash": "0xce3a278a630045c9a24a55e5011d7a4db6e3c492e44365254161b92f37ecc748",
+          "node_cpu": [
+            {
+              "pid": 32968,
+              "cpu": {
+                "user_ns": 29828125000,
+                "kernel_ns": 11000000000,
+                "total_ns": 40828125000,
+                "cpu_us_per_successful_transaction": 622.9877471923828
+              }
+            },
+            {
+              "pid": 22848,
+              "cpu": {
+                "user_ns": 27531250000,
+                "kernel_ns": 7453125000,
+                "total_ns": 34984375000,
+                "cpu_us_per_successful_transaction": 533.8191986083984
+              }
+            },
+            {
+              "pid": 20888,
+              "cpu": {
+                "user_ns": 28562500000,
+                "kernel_ns": 7781250000,
+                "total_ns": 36343750000,
+                "cpu_us_per_successful_transaction": 554.5616149902344
+              }
+            },
+            {
+              "pid": 32552,
+              "cpu": {
+                "user_ns": 29156250000,
+                "kernel_ns": 6234375000,
+                "total_ns": 35390625000,
+                "cpu_us_per_successful_transaction": 540.0180816650391
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 14156250000,
+            "kernel_ns": 10796875000,
+            "total_ns": 24953125000,
+            "cpu_us_per_successful_transaction": 380.7544708251953
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793465894156,
+            "before_read_completed_unix_ms": 1793465894157,
+            "after_read_started_unix_ms": 1793465919560,
+            "after_read_completed_unix_ms": 1793465919560,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "gpu_required",
+          "tps": 2641.054903483782,
+          "p95_us": 3652917,
+          "p99_us": 4140601,
+          "cpu_us": 2010.5838775634766,
+          "driver_cpu_us": 370.7408905029297,
+          "node_us": [
+            573.8735198974609,
+            471.35353088378906,
+            468.7309265136719,
+            496.6259002685547
+          ],
+          "queries": 145789,
+          "passed": true,
+          "cold": true,
+          "hash": "0xce3a278a630045c9a24a55e5011d7a4db6e3c492e44365254161b92f37ecc748",
+          "node_cpu": [
+            {
+              "pid": 29200,
+              "cpu": {
+                "user_ns": 27984375000,
+                "kernel_ns": 9625000000,
+                "total_ns": 37609375000,
+                "cpu_us_per_successful_transaction": 573.8735198974609
+              }
+            },
+            {
+              "pid": 24896,
+              "cpu": {
+                "user_ns": 24062500000,
+                "kernel_ns": 6828125000,
+                "total_ns": 30890625000,
+                "cpu_us_per_successful_transaction": 471.35353088378906
+              }
+            },
+            {
+              "pid": 16708,
+              "cpu": {
+                "user_ns": 24921875000,
+                "kernel_ns": 5796875000,
+                "total_ns": 30718750000,
+                "cpu_us_per_successful_transaction": 468.7309265136719
+              }
+            },
+            {
+              "pid": 13204,
+              "cpu": {
+                "user_ns": 25343750000,
+                "kernel_ns": 7203125000,
+                "total_ns": 32546875000,
+                "cpu_us_per_successful_transaction": 496.6259002685547
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 13843750000,
+            "kernel_ns": 10453125000,
+            "total_ns": 24296875000,
+            "cpu_us_per_successful_transaction": 370.7408905029297
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793465941324,
+            "before_read_completed_unix_ms": 1793465941325,
+            "after_read_started_unix_ms": 1793465966140,
+            "after_read_completed_unix_ms": 1793465966140,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "cpu",
+          "tps": 2549.1918249733358,
+          "p95_us": 3963321,
+          "p99_us": 4182867,
+          "cpu_us": 2306.699752807617,
+          "driver_cpu_us": 384.8075866699219,
+          "node_us": [
+            631.0939788818359,
+            558.8531494140625,
+            565.7672882080078,
+            550.9853363037109
+          ],
+          "queries": 156362,
+          "passed": true,
+          "cold": true,
+          "hash": "0xce3a278a630045c9a24a55e5011d7a4db6e3c492e44365254161b92f37ecc748",
+          "node_cpu": [
+            {
+              "pid": 16200,
+              "cpu": {
+                "user_ns": 30609375000,
+                "kernel_ns": 10750000000,
+                "total_ns": 41359375000,
+                "cpu_us_per_successful_transaction": 631.0939788818359
+              }
+            },
+            {
+              "pid": 31396,
+              "cpu": {
+                "user_ns": 28937500000,
+                "kernel_ns": 7687500000,
+                "total_ns": 36625000000,
+                "cpu_us_per_successful_transaction": 558.8531494140625
+              }
+            },
+            {
+              "pid": 34712,
+              "cpu": {
+                "user_ns": 29578125000,
+                "kernel_ns": 7500000000,
+                "total_ns": 37078125000,
+                "cpu_us_per_successful_transaction": 565.7672882080078
+              }
+            },
+            {
+              "pid": 7048,
+              "cpu": {
+                "user_ns": 29046875000,
+                "kernel_ns": 7062500000,
+                "total_ns": 36109375000,
+                "cpu_us_per_successful_transaction": 550.9853363037109
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 14578125000,
+            "kernel_ns": 10640625000,
+            "total_ns": 25218750000,
+            "cpu_us_per_successful_transaction": 384.8075866699219
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793465986157,
+            "before_read_completed_unix_ms": 1793465986157,
+            "after_read_started_unix_ms": 1793466011867,
+            "after_read_completed_unix_ms": 1793466011867,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "gpu_required",
+          "tps": 2733.7258197642254,
+          "p95_us": 3774847,
+          "p99_us": 4087406,
+          "cpu_us": 1994.6098327636719,
+          "driver_cpu_us": 357.8662872314453,
+          "node_us": [
+            569.5819854736328,
+            488.51966857910156,
+            468.96934509277344,
+            467.53883361816406
+          ],
+          "queries": 144661,
+          "passed": true,
+          "cold": true,
+          "hash": "0xce3a278a630045c9a24a55e5011d7a4db6e3c492e44365254161b92f37ecc748",
+          "node_cpu": [
+            {
+              "pid": 9940,
+              "cpu": {
+                "user_ns": 27781250000,
+                "kernel_ns": 9546875000,
+                "total_ns": 37328125000,
+                "cpu_us_per_successful_transaction": 569.5819854736328
+              }
+            },
+            {
+              "pid": 24420,
+              "cpu": {
+                "user_ns": 25500000000,
+                "kernel_ns": 6515625000,
+                "total_ns": 32015625000,
+                "cpu_us_per_successful_transaction": 488.51966857910156
+              }
+            },
+            {
+              "pid": 6812,
+              "cpu": {
+                "user_ns": 24765625000,
+                "kernel_ns": 5968750000,
+                "total_ns": 30734375000,
+                "cpu_us_per_successful_transaction": 468.96934509277344
+              }
+            },
+            {
+              "pid": 7184,
+              "cpu": {
+                "user_ns": 24437500000,
+                "kernel_ns": 6203125000,
+                "total_ns": 30640625000,
+                "cpu_us_per_successful_transaction": 467.53883361816406
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 13734375000,
+            "kernel_ns": 9718750000,
+            "total_ns": 23453125000,
+            "cpu_us_per_successful_transaction": 357.8662872314453
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466033954,
+            "before_read_completed_unix_ms": 1793466033954,
+            "after_read_started_unix_ms": 1793466057928,
+            "after_read_completed_unix_ms": 1793466057928,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "cpu",
+          "tps": 2479.896063535833,
+          "p95_us": 3819215,
+          "p99_us": 4383539,
+          "cpu_us": 2326.96533203125,
+          "driver_cpu_us": 395.05958557128906,
+          "node_us": [
+            650.4058837890625,
+            563.3831024169922,
+            556.4689636230469,
+            556.7073822021484
+          ],
+          "queries": 160019,
+          "passed": true,
+          "cold": true,
+          "hash": "0xce3a278a630045c9a24a55e5011d7a4db6e3c492e44365254161b92f37ecc748",
+          "node_cpu": [
+            {
+              "pid": 29500,
+              "cpu": {
+                "user_ns": 31984375000,
+                "kernel_ns": 10640625000,
+                "total_ns": 42625000000,
+                "cpu_us_per_successful_transaction": 650.4058837890625
+              }
+            },
+            {
+              "pid": 24188,
+              "cpu": {
+                "user_ns": 29562500000,
+                "kernel_ns": 7359375000,
+                "total_ns": 36921875000,
+                "cpu_us_per_successful_transaction": 563.3831024169922
+              }
+            },
+            {
+              "pid": 20160,
+              "cpu": {
+                "user_ns": 28953125000,
+                "kernel_ns": 7515625000,
+                "total_ns": 36468750000,
+                "cpu_us_per_successful_transaction": 556.4689636230469
+              }
+            },
+            {
+              "pid": 23256,
+              "cpu": {
+                "user_ns": 29140625000,
+                "kernel_ns": 7343750000,
+                "total_ns": 36484375000,
+                "cpu_us_per_successful_transaction": 556.7073822021484
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 14968750000,
+            "kernel_ns": 10921875000,
+            "total_ns": 25890625000,
+            "cpu_us_per_successful_transaction": 395.05958557128906
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466078114,
+            "before_read_completed_unix_ms": 1793466078114,
+            "after_read_started_unix_ms": 1793466104542,
+            "after_read_completed_unix_ms": 1793466104542,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        }
+      ],
+      "sampled_resources": [
+        {
+          "round": 0,
+          "signature": "cpu",
+          "nodes": [
+            {
+              "pid": 32968,
+              "samples": 25,
+              "observed_span_s": 24.223,
+              "cpu_cores_observed": 1.625521198860587,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 315.37890625,
+              "private_first_last_mib": [
+                62.59765625,
+                290.98828125
+              ],
+              "sampled_working_peak_mib": 326.8359375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  13948,
+                  23.578125
+                ],
+                [
+                  33832,
+                  5.46875
+                ],
+                [
+                  32060,
+                  3.15625
+                ]
+              ],
+              "top_thread_observed_core": 0.9733775750319944
+            },
+            {
+              "pid": 22848,
+              "samples": 25,
+              "observed_span_s": 24.216,
+              "cpu_cores_observed": 1.378221010901883,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 229.94921875,
+              "private_first_last_mib": [
+                53.47265625,
+                223.2734375
+              ],
+              "sampled_working_peak_mib": 238.765625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  27748,
+                  18.15625
+                ],
+                [
+                  28912,
+                  4.328125
+                ],
+                [
+                  24544,
+                  3.0625
+                ]
+              ],
+              "top_thread_observed_core": 0.749762553683515
+            },
+            {
+              "pid": 20888,
+              "samples": 25,
+              "observed_span_s": 24.211,
+              "cpu_cores_observed": 1.435943372847053,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 242.12890625,
+              "private_first_last_mib": [
+                53.609375,
+                215.546875
+              ],
+              "sampled_working_peak_mib": 253.27734375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  22752,
+                  18.609375
+                ],
+                [
+                  5084,
+                  4.34375
+                ],
+                [
+                  29740,
+                  3.03125
+                ]
+              ],
+              "top_thread_observed_core": 0.7686330593531866
+            },
+            {
+              "pid": 32552,
+              "samples": 25,
+              "observed_span_s": 24.219,
+              "cpu_cores_observed": 1.3715987447871505,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 231.421875,
+              "private_first_last_mib": [
+                53.171875,
+                231.421875
+              ],
+              "sampled_working_peak_mib": 243.08203125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  3996,
+                  18.3125
+                ],
+                [
+                  13936,
+                  3.90625
+                ],
+                [
+                  24380,
+                  3.09375
+                ]
+              ],
+              "top_thread_observed_core": 0.7561212271357198
+            }
+          ],
+          "driver": {
+            "pid": 18560,
+            "samples": 26,
+            "observed_span_s": 25.219,
+            "cpu_cores_observed": 0.9826420555930052,
+            "max_threads": 6,
+            "min_threads": 4,
+            "sampled_private_peak_mib": 1108.75,
+            "private_first_last_mib": [
+              1108.75,
+              1108.69140625
+            ],
+            "sampled_working_peak_mib": 1098.37890625,
+            "top_thread_sampled_cpu_s": [
+              [
+                10164,
+                24.78125
+              ],
+              [
+                22036,
+                0
+              ],
+              [
+                35224,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9826420555930052
+          }
+        },
+        {
+          "round": 1,
+          "signature": "gpu_required",
+          "nodes": [
+            {
+              "pid": 29200,
+              "samples": 25,
+              "observed_span_s": 24.257,
+              "cpu_cores_observed": 1.533062621099064,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 547.83203125,
+              "private_first_last_mib": [
+                219.44921875,
+                436.65234375
+              ],
+              "sampled_working_peak_mib": 408.8515625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  31344,
+                  23.53125
+                ],
+                [
+                  29284,
+                  5.34375
+                ],
+                [
+                  22452,
+                  3.421875
+                ]
+              ],
+              "top_thread_observed_core": 0.9700808014181472
+            },
+            {
+              "pid": 24896,
+              "samples": 25,
+              "observed_span_s": 24.256,
+              "cpu_cores_observed": 1.2651508905013193,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 451.61328125,
+              "private_first_last_mib": [
+                204.78125,
+                436.44140625
+              ],
+              "sampled_working_peak_mib": 321.14453125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  14900,
+                  18.5625
+                ],
+                [
+                  36796,
+                  4.265625
+                ],
+                [
+                  20996,
+                  3.53125
+                ]
+              ],
+              "top_thread_observed_core": 0.7652745712401056
+            },
+            {
+              "pid": 16708,
+              "samples": 25,
+              "observed_span_s": 24.254,
+              "cpu_cores_observed": 1.2555918611363073,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 446.37890625,
+              "private_first_last_mib": [
+                204.20703125,
+                445.578125
+              ],
+              "sampled_working_peak_mib": 318.484375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  6052,
+                  18.4375
+                ],
+                [
+                  19592,
+                  3.859375
+                ],
+                [
+                  23972,
+                  3.515625
+                ]
+              ],
+              "top_thread_observed_core": 0.7601838871938649
+            },
+            {
+              "pid": 13204,
+              "samples": 25,
+              "observed_span_s": 24.252,
+              "cpu_cores_observed": 1.3323643410852715,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 450.78125,
+              "private_first_last_mib": [
+                204.828125,
+                435.65625
+              ],
+              "sampled_working_peak_mib": 320.53515625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  32960,
+                  18.296875
+                ],
+                [
+                  7236,
+                  4.421875
+                ],
+                [
+                  30400,
+                  3.40625
+                ]
+              ],
+              "top_thread_observed_core": 0.7544480867557315
+            }
+          ],
+          "driver": {
+            "pid": 18560,
+            "samples": 25,
+            "observed_span_s": 24.246,
+            "cpu_cores_observed": 0.9788985812092716,
+            "max_threads": 8,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 1119.90625,
+            "private_first_last_mib": [
+              1119.90625,
+              1119.87890625
+            ],
+            "sampled_working_peak_mib": 1112.7578125,
+            "top_thread_sampled_cpu_s": [
+              [
+                10164,
+                23.734375
+              ],
+              [
+                22036,
+                0
+              ],
+              [
+                27004,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9788985812092716
+          }
+        },
+        {
+          "round": 2,
+          "signature": "cpu",
+          "nodes": [
+            {
+              "pid": 16200,
+              "samples": 26,
+              "observed_span_s": 25.251,
+              "cpu_cores_observed": 1.6088471743693318,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 313.77734375,
+              "private_first_last_mib": [
+                56.375,
+                200.18359375
+              ],
+              "sampled_working_peak_mib": 325.78515625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  20368,
+                  24.578125
+                ],
+                [
+                  13288,
+                  5.6875
+                ],
+                [
+                  25552,
+                  3.40625
+                ]
+              ],
+              "top_thread_observed_core": 0.9733525404934458
+            },
+            {
+              "pid": 31396,
+              "samples": 26,
+              "observed_span_s": 25.255,
+              "cpu_cores_observed": 1.4205107899425857,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 238.11328125,
+              "private_first_last_mib": [
+                53.0703125,
+                238.11328125
+              ],
+              "sampled_working_peak_mib": 249.88671875,
+              "top_thread_sampled_cpu_s": [
+                [
+                  18572,
+                  19.921875
+                ],
+                [
+                  13760,
+                  4.828125
+                ],
+                [
+                  18728,
+                  3.109375
+                ]
+              ],
+              "top_thread_observed_core": 0.7888289447634133
+            },
+            {
+              "pid": 34712,
+              "samples": 26,
+              "observed_span_s": 25.259,
+              "cpu_cores_observed": 1.4406993546854587,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 247.671875,
+              "private_first_last_mib": [
+                54.49609375,
+                222.92578125
+              ],
+              "sampled_working_peak_mib": 259.93359375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  36384,
+                  19.9375
+                ],
+                [
+                  33492,
+                  4.5625
+                ],
+                [
+                  28192,
+                  3.234375
+                ]
+              ],
+              "top_thread_observed_core": 0.7893226176808267
+            },
+            {
+              "pid": 7048,
+              "samples": 26,
+              "observed_span_s": 25.248,
+              "cpu_cores_observed": 1.3893427202154625,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 255.0234375,
+              "private_first_last_mib": [
+                53.37109375,
+                255.0234375
+              ],
+              "sampled_working_peak_mib": 264.51953125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  2848,
+                  19.546875
+                ],
+                [
+                  18352,
+                  4.3125
+                ],
+                [
+                  24160,
+                  3.328125
+                ]
+              ],
+              "top_thread_observed_core": 0.7741949857414449
+            }
+          ],
+          "driver": {
+            "pid": 18560,
+            "samples": 26,
+            "observed_span_s": 25.244,
+            "cpu_cores_observed": 0.9804309935034068,
+            "max_threads": 7,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 1125.08203125,
+            "private_first_last_mib": [
+              1125.08203125,
+              1125.08203125
+            ],
+            "sampled_working_peak_mib": 1115.0859375,
+            "top_thread_sampled_cpu_s": [
+              [
+                10164,
+                24.75
+              ],
+              [
+                22036,
+                0
+              ],
+              [
+                27004,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9804309935034068
+          }
+        },
+        {
+          "round": 3,
+          "signature": "gpu_required",
+          "nodes": [
+            {
+              "pid": 9940,
+              "samples": 24,
+              "observed_span_s": 23.241,
+              "cpu_cores_observed": 1.579912654360828,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 530.140625,
+              "private_first_last_mib": [
+                344.87109375,
+                385.484375
+              ],
+              "sampled_working_peak_mib": 398.7109375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  11188,
+                  22.578125
+                ],
+                [
+                  12848,
+                  4.90625
+                ],
+                [
+                  14668,
+                  3.25
+                ]
+              ],
+              "top_thread_observed_core": 0.9714782066176154
+            },
+            {
+              "pid": 24420,
+              "samples": 24,
+              "observed_span_s": 23.243,
+              "cpu_cores_observed": 1.3740696123564085,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 448.88671875,
+              "private_first_last_mib": [
+                207.6796875,
+                443.8671875
+              ],
+              "sampled_working_peak_mib": 318.64453125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  20528,
+                  18.109375
+                ],
+                [
+                  12596,
+                  4.375
+                ],
+                [
+                  26476,
+                  3.546875
+                ]
+              ],
+              "top_thread_observed_core": 0.779132426967259
+            },
+            {
+              "pid": 6812,
+              "samples": 24,
+              "observed_span_s": 23.236,
+              "cpu_cores_observed": 1.3166530383887072,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 451.90625,
+              "private_first_last_mib": [
+                206.03515625,
+                441.38671875
+              ],
+              "sampled_working_peak_mib": 314.34765625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  36116,
+                  17.96875
+                ],
+                [
+                  9268,
+                  4.171875
+                ],
+                [
+                  34752,
+                  3.609375
+                ]
+              ],
+              "top_thread_observed_core": 0.7733151144775349
+            },
+            {
+              "pid": 7184,
+              "samples": 24,
+              "observed_span_s": 23.239,
+              "cpu_cores_observed": 1.315138345023452,
+              "max_threads": 98,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 461.04296875,
+              "private_first_last_mib": [
+                207.453125,
+                442.12109375
+              ],
+              "sampled_working_peak_mib": 331.15234375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  34924,
+                  17.796875
+                ],
+                [
+                  18992,
+                  4.484375
+                ],
+                [
+                  19136,
+                  3.484375
+                ]
+              ],
+              "top_thread_observed_core": 0.7658193123628383
+            }
+          ],
+          "driver": {
+            "pid": 18560,
+            "samples": 24,
+            "observed_span_s": 23.231,
+            "cpu_cores_observed": 0.977277129697387,
+            "max_threads": 7,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 1130.56640625,
+            "private_first_last_mib": [
+              1130.56640625,
+              1130.56640625
+            ],
+            "sampled_working_peak_mib": 1117.44140625,
+            "top_thread_sampled_cpu_s": [
+              [
+                10164,
+                22.703125
+              ],
+              [
+                22036,
+                0
+              ],
+              [
+                27004,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.977277129697387
+          }
+        },
+        {
+          "round": 4,
+          "signature": "cpu",
+          "nodes": [
+            {
+              "pid": 29500,
+              "samples": 26,
+              "observed_span_s": 25.258,
+              "cpu_cores_observed": 1.6269597751207538,
+              "max_threads": 115,
+              "min_threads": 115,
+              "sampled_private_peak_mib": 340.66015625,
+              "private_first_last_mib": [
+                153.0078125,
+                230.5625
+              ],
+              "sampled_working_peak_mib": 348.37109375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  10656,
+                  24.71875
+                ],
+                [
+                  17844,
+                  5.328125
+                ],
+                [
+                  28284,
+                  3.234375
+                ]
+              ],
+              "top_thread_observed_core": 0.9786503286087577
+            },
+            {
+              "pid": 24188,
+              "samples": 26,
+              "observed_span_s": 25.254,
+              "cpu_cores_observed": 1.439128454898234,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 228.61328125,
+              "private_first_last_mib": [
+                60.93359375,
+                215.83203125
+              ],
+              "sampled_working_peak_mib": 239.72265625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  848,
+                  20.140625
+                ],
+                [
+                  4600,
+                  4.140625
+                ],
+                [
+                  16812,
+                  3.375
+                ]
+              ],
+              "top_thread_observed_core": 0.7975221747049972
+            },
+            {
+              "pid": 20160,
+              "samples": 26,
+              "observed_span_s": 25.247,
+              "cpu_cores_observed": 1.417866479185646,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 230.7265625,
+              "private_first_last_mib": [
+                60.359375,
+                213.25390625
+              ],
+              "sampled_working_peak_mib": 242.1953125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  18304,
+                  19.984375
+                ],
+                [
+                  20564,
+                  4.25
+                ],
+                [
+                  13304,
+                  3.46875
+                ]
+              ],
+              "top_thread_observed_core": 0.791554442111934
+            },
+            {
+              "pid": 23256,
+              "samples": 26,
+              "observed_span_s": 25.251,
+              "cpu_cores_observed": 1.4182606629440417,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 234.171875,
+              "private_first_last_mib": [
+                61.66015625,
+                214.71484375
+              ],
+              "sampled_working_peak_mib": 246.53125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  16092,
+                  20.296875
+                ],
+                [
+                  25344,
+                  4.53125
+                ],
+                [
+                  4496,
+                  3.3125
+                ]
+              ],
+              "top_thread_observed_core": 0.8038047998099085
+            }
+          ],
+          "driver": {
+            "pid": 18560,
+            "samples": 26,
+            "observed_span_s": 25.242,
+            "cpu_cores_observed": 0.9792706600110926,
+            "max_threads": 7,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 1132.66796875,
+            "private_first_last_mib": [
+              1132.66796875,
+              1132.66796875
+            ],
+            "sampled_working_peak_mib": 1118.9140625,
+            "top_thread_sampled_cpu_s": [
+              [
+                10164,
+                24.71875
+              ],
+              [
+                22036,
+                0
+              ],
+              [
+                27004,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9792706600110926
+          }
+        }
+      ],
+      "observer": {
+        "samples": 238,
+        "stop_reason": "driver_exited",
+        "coverage": "sampled until driver exit",
+        "sampling_cpu_s": 7.515625,
+        "peak_working_before_output_mib": 157.875,
+        "sample_mean_ms": 30.010062605042023,
+        "sample_max_ms": 808.5677,
+        "unavailable_process_samples": 0,
+        "thread_read_errors": 0
+      }
+    },
+    {
+      "name": "continuous_observed",
+      "transactions_per_round": 65536,
+      "designed_static_byte_replay": false,
+      "observed_unique_signed_input_hashes": [
+        "0xbf6b70a0cf04461093a328e0c9c5770ef34294a5a38e2bf0eca339a68f078e77"
+      ],
+      "cpu_repeat": {
+        "cpu_tps": [
+          2502.6243072350153,
+          2604.7967035585466,
+          2614.074479184471
+        ],
+        "last_vs_first_pct": 4.453332113304276
+      },
+      "rounds": [
+        {
+          "signature": "cpu",
+          "tps": 2502.6243072350153,
+          "p95_us": 3797773,
+          "p99_us": 4527272,
+          "cpu_us": 2281.9042205810547,
+          "driver_cpu_us": 525.9513854980469,
+          "node_us": [
+            618.4577941894531,
+            545.501708984375,
+            561.9525909423828,
+            555.9921264648438
+          ],
+          "queries": 148805,
+          "passed": true,
+          "cold": true,
+          "hash": "0xbf6b70a0cf04461093a328e0c9c5770ef34294a5a38e2bf0eca339a68f078e77",
+          "node_cpu": [
+            {
+              "pid": 33344,
+              "cpu": {
+                "user_ns": 30390625000,
+                "kernel_ns": 10140625000,
+                "total_ns": 40531250000,
+                "cpu_us_per_successful_transaction": 618.4577941894531
+              }
+            },
+            {
+              "pid": 35436,
+              "cpu": {
+                "user_ns": 28062500000,
+                "kernel_ns": 7687500000,
+                "total_ns": 35750000000,
+                "cpu_us_per_successful_transaction": 545.501708984375
+              }
+            },
+            {
+              "pid": 23692,
+              "cpu": {
+                "user_ns": 29312500000,
+                "kernel_ns": 7515625000,
+                "total_ns": 36828125000,
+                "cpu_us_per_successful_transaction": 561.9525909423828
+              }
+            },
+            {
+              "pid": 1404,
+              "cpu": {
+                "user_ns": 28921875000,
+                "kernel_ns": 7515625000,
+                "total_ns": 36437500000,
+                "cpu_us_per_successful_transaction": 555.9921264648438
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20812500000,
+            "kernel_ns": 13656250000,
+            "total_ns": 34468750000,
+            "cpu_us_per_successful_transaction": 525.9513854980469
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466183094,
+            "before_read_completed_unix_ms": 1793466183094,
+            "after_read_started_unix_ms": 1793466209292,
+            "after_read_completed_unix_ms": 1793466209292,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "gpu_required",
+          "tps": 2632.3229707975465,
+          "p95_us": 3777522,
+          "p99_us": 4386586,
+          "cpu_us": 2045.3929901123047,
+          "driver_cpu_us": 502.58636474609375,
+          "node_us": [
+            582.2181701660156,
+            473.97613525390625,
+            494.95697021484375,
+            494.24171447753906
+          ],
+          "queries": 137948,
+          "passed": true,
+          "cold": true,
+          "hash": "0xbf6b70a0cf04461093a328e0c9c5770ef34294a5a38e2bf0eca339a68f078e77",
+          "node_cpu": [
+            {
+              "pid": 20464,
+              "cpu": {
+                "user_ns": 28218750000,
+                "kernel_ns": 9937500000,
+                "total_ns": 38156250000,
+                "cpu_us_per_successful_transaction": 582.2181701660156
+              }
+            },
+            {
+              "pid": 19840,
+              "cpu": {
+                "user_ns": 25140625000,
+                "kernel_ns": 5921875000,
+                "total_ns": 31062500000,
+                "cpu_us_per_successful_transaction": 473.97613525390625
+              }
+            },
+            {
+              "pid": 31572,
+              "cpu": {
+                "user_ns": 25687500000,
+                "kernel_ns": 6750000000,
+                "total_ns": 32437500000,
+                "cpu_us_per_successful_transaction": 494.95697021484375
+              }
+            },
+            {
+              "pid": 3248,
+              "cpu": {
+                "user_ns": 25796875000,
+                "kernel_ns": 6593750000,
+                "total_ns": 32390625000,
+                "cpu_us_per_successful_transaction": 494.24171447753906
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20046875000,
+            "kernel_ns": 12890625000,
+            "total_ns": 32937500000,
+            "cpu_us_per_successful_transaction": 502.58636474609375
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466230945,
+            "before_read_completed_unix_ms": 1793466230945,
+            "after_read_started_unix_ms": 1793466255854,
+            "after_read_completed_unix_ms": 1793466255854,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "cpu",
+          "tps": 2604.7967035585466,
+          "p95_us": 3770493,
+          "p99_us": 4236068,
+          "cpu_us": 2197.742462158203,
+          "driver_cpu_us": 513.5536193847656,
+          "node_us": [
+            622.0340728759766,
+            513.0767822265625,
+            522.8519439697266,
+            539.7796630859375
+          ],
+          "queries": 139593,
+          "passed": true,
+          "cold": true,
+          "hash": "0xbf6b70a0cf04461093a328e0c9c5770ef34294a5a38e2bf0eca339a68f078e77",
+          "node_cpu": [
+            {
+              "pid": 32112,
+              "cpu": {
+                "user_ns": 31000000000,
+                "kernel_ns": 9765625000,
+                "total_ns": 40765625000,
+                "cpu_us_per_successful_transaction": 622.0340728759766
+              }
+            },
+            {
+              "pid": 13516,
+              "cpu": {
+                "user_ns": 27078125000,
+                "kernel_ns": 6546875000,
+                "total_ns": 33625000000,
+                "cpu_us_per_successful_transaction": 513.0767822265625
+              }
+            },
+            {
+              "pid": 7804,
+              "cpu": {
+                "user_ns": 27031250000,
+                "kernel_ns": 7234375000,
+                "total_ns": 34265625000,
+                "cpu_us_per_successful_transaction": 522.8519439697266
+              }
+            },
+            {
+              "pid": 22808,
+              "cpu": {
+                "user_ns": 28250000000,
+                "kernel_ns": 7125000000,
+                "total_ns": 35375000000,
+                "cpu_us_per_successful_transaction": 539.7796630859375
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20406250000,
+            "kernel_ns": 13250000000,
+            "total_ns": 33656250000,
+            "cpu_us_per_successful_transaction": 513.5536193847656
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466275308,
+            "before_read_completed_unix_ms": 1793466275308,
+            "after_read_started_unix_ms": 1793466300482,
+            "after_read_completed_unix_ms": 1793466300482,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "gpu_required",
+          "tps": 2569.1588505868067,
+          "p95_us": 3892735,
+          "p99_us": 4290224,
+          "cpu_us": 2050.638198852539,
+          "driver_cpu_us": 514.984130859375,
+          "node_us": [
+            593.9006805419922,
+            481.8439483642578,
+            476.1219024658203,
+            498.77166748046875
+          ],
+          "queries": 143005,
+          "passed": true,
+          "cold": true,
+          "hash": "0xbf6b70a0cf04461093a328e0c9c5770ef34294a5a38e2bf0eca339a68f078e77",
+          "node_cpu": [
+            {
+              "pid": 27920,
+              "cpu": {
+                "user_ns": 28734375000,
+                "kernel_ns": 10187500000,
+                "total_ns": 38921875000,
+                "cpu_us_per_successful_transaction": 593.9006805419922
+              }
+            },
+            {
+              "pid": 7048,
+              "cpu": {
+                "user_ns": 25359375000,
+                "kernel_ns": 6218750000,
+                "total_ns": 31578125000,
+                "cpu_us_per_successful_transaction": 481.8439483642578
+              }
+            },
+            {
+              "pid": 17800,
+              "cpu": {
+                "user_ns": 24484375000,
+                "kernel_ns": 6718750000,
+                "total_ns": 31203125000,
+                "cpu_us_per_successful_transaction": 476.1219024658203
+              }
+            },
+            {
+              "pid": 35388,
+              "cpu": {
+                "user_ns": 25750000000,
+                "kernel_ns": 6937500000,
+                "total_ns": 32687500000,
+                "cpu_us_per_successful_transaction": 498.77166748046875
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20171875000,
+            "kernel_ns": 13578125000,
+            "total_ns": 33750000000,
+            "cpu_us_per_successful_transaction": 514.984130859375
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466322648,
+            "before_read_completed_unix_ms": 1793466322648,
+            "after_read_started_unix_ms": 1793466348169,
+            "after_read_completed_unix_ms": 1793466348169,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "cpu",
+          "tps": 2614.074479184471,
+          "p95_us": 3728173,
+          "p99_us": 3861723,
+          "cpu_us": 2261.1618041992188,
+          "driver_cpu_us": 518.3219909667969,
+          "node_us": [
+            624.8950958251953,
+            540.9717559814453,
+            543.1175231933594,
+            552.1774291992188
+          ],
+          "queries": 139152,
+          "passed": true,
+          "cold": true,
+          "hash": "0xbf6b70a0cf04461093a328e0c9c5770ef34294a5a38e2bf0eca339a68f078e77",
+          "node_cpu": [
+            {
+              "pid": 23668,
+              "cpu": {
+                "user_ns": 30812500000,
+                "kernel_ns": 10140625000,
+                "total_ns": 40953125000,
+                "cpu_us_per_successful_transaction": 624.8950958251953
+              }
+            },
+            {
+              "pid": 28212,
+              "cpu": {
+                "user_ns": 28343750000,
+                "kernel_ns": 7109375000,
+                "total_ns": 35453125000,
+                "cpu_us_per_successful_transaction": 540.9717559814453
+              }
+            },
+            {
+              "pid": 17992,
+              "cpu": {
+                "user_ns": 28781250000,
+                "kernel_ns": 6812500000,
+                "total_ns": 35593750000,
+                "cpu_us_per_successful_transaction": 543.1175231933594
+              }
+            },
+            {
+              "pid": 32712,
+              "cpu": {
+                "user_ns": 28437500000,
+                "kernel_ns": 7750000000,
+                "total_ns": 36187500000,
+                "cpu_us_per_successful_transaction": 552.1774291992188
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20656250000,
+            "kernel_ns": 13312500000,
+            "total_ns": 33968750000,
+            "cpu_us_per_successful_transaction": 518.3219909667969
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466368788,
+            "before_read_completed_unix_ms": 1793466368788,
+            "after_read_started_unix_ms": 1793466393871,
+            "after_read_completed_unix_ms": 1793466393871,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        }
+      ],
+      "sampled_resources": [
+        {
+          "round": 0,
+          "signature": "cpu",
+          "nodes": [
+            {
+              "pid": 33344,
+              "samples": 26,
+              "observed_span_s": 25.243,
+              "cpu_cores_observed": 1.554886503189003,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 339.96484375,
+              "private_first_last_mib": [
+                56.79296875,
+                276.109375
+              ],
+              "sampled_working_peak_mib": 350.49609375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  4532,
+                  24.40625
+                ],
+                [
+                  24732,
+                  4.9375
+                ],
+                [
+                  24016,
+                  3.296875
+                ]
+              ],
+              "top_thread_observed_core": 0.9668521966485759
+            },
+            {
+              "pid": 35436,
+              "samples": 26,
+              "observed_span_s": 25.247,
+              "cpu_cores_observed": 1.3442191151423932,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 244.640625,
+              "private_first_last_mib": [
+                55.03125,
+                244.45703125
+              ],
+              "sampled_working_peak_mib": 255.765625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  12272,
+                  18.421875
+                ],
+                [
+                  34208,
+                  4.0625
+                ],
+                [
+                  15384,
+                  3.34375
+                ]
+              ],
+              "top_thread_observed_core": 0.7296659008991168
+            },
+            {
+              "pid": 23692,
+              "samples": 26,
+              "observed_span_s": 25.241,
+              "cpu_cores_observed": 1.4014896398716374,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 251.22265625,
+              "private_first_last_mib": [
+                53.8828125,
+                220.5
+              ],
+              "sampled_working_peak_mib": 261.93359375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  36392,
+                  18.90625
+                ],
+                [
+                  18156,
+                  4.109375
+                ],
+                [
+                  6136,
+                  3.1875
+                ]
+              ],
+              "top_thread_observed_core": 0.7490293569985341
+            },
+            {
+              "pid": 1404,
+              "samples": 26,
+              "observed_span_s": 25.24,
+              "cpu_cores_observed": 1.3866877971473852,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 237.9140625,
+              "private_first_last_mib": [
+                53.81640625,
+                223.76171875
+              ],
+              "sampled_working_peak_mib": 248.11328125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  8668,
+                  18.984375
+                ],
+                [
+                  33340,
+                  4.390625
+                ],
+                [
+                  21836,
+                  3.171875
+                ]
+              ],
+              "top_thread_observed_core": 0.7521543185419969
+            }
+          ],
+          "driver": {
+            "pid": 26224,
+            "samples": 26,
+            "observed_span_s": 25.236,
+            "cpu_cores_observed": 1.329945316214931,
+            "max_threads": 11,
+            "min_threads": 6,
+            "sampled_private_peak_mib": 748.28125,
+            "private_first_last_mib": [
+              122.08203125,
+              748.28125
+            ],
+            "sampled_working_peak_mib": 754.53515625,
+            "top_thread_sampled_cpu_s": [
+              [
+                816,
+                24.34375
+              ],
+              [
+                3540,
+                0
+              ],
+              [
+                34872,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9646437628784276
+          }
+        },
+        {
+          "round": 1,
+          "signature": "gpu_required",
+          "nodes": [
+            {
+              "pid": 20464,
+              "samples": 25,
+              "observed_span_s": 24.24,
+              "cpu_cores_observed": 1.5560540429042906,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 533.125,
+              "private_first_last_mib": [
+                308.6640625,
+                431.171875
+              ],
+              "sampled_working_peak_mib": 402.87890625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  11536,
+                  23.4375
+                ],
+                [
+                  8732,
+                  5.1875
+                ],
+                [
+                  23860,
+                  3.53125
+                ]
+              ],
+              "top_thread_observed_core": 0.9668935643564357
+            },
+            {
+              "pid": 19840,
+              "samples": 25,
+              "observed_span_s": 24.238,
+              "cpu_cores_observed": 1.2738262232857496,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 450.203125,
+              "private_first_last_mib": [
+                204.62890625,
+                428.23046875
+              ],
+              "sampled_working_peak_mib": 320.0859375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  32568,
+                  18.375
+                ],
+                [
+                  8768,
+                  4.0625
+                ],
+                [
+                  22220,
+                  3.46875
+                ]
+              ],
+              "top_thread_observed_core": 0.7581071045465798
+            },
+            {
+              "pid": 31572,
+              "samples": 25,
+              "observed_span_s": 24.243,
+              "cpu_cores_observed": 1.3315699377139794,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 453.3515625,
+              "private_first_last_mib": [
+                204.734375,
+                430.046875
+              ],
+              "sampled_working_peak_mib": 323.90234375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  27180,
+                  18.484375
+                ],
+                [
+                  35512,
+                  4.28125
+                ],
+                [
+                  22140,
+                  3.53125
+                ]
+              ],
+              "top_thread_observed_core": 0.7624623602689437
+            },
+            {
+              "pid": 3248,
+              "samples": 25,
+              "observed_span_s": 24.236,
+              "cpu_cores_observed": 1.3280863178742366,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 470.55859375,
+              "private_first_last_mib": [
+                204.5625,
+                444.46875
+              ],
+              "sampled_working_peak_mib": 336.6484375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  24260,
+                  18.53125
+                ],
+                [
+                  12592,
+                  4.84375
+                ],
+                [
+                  33932,
+                  3.3125
+                ]
+              ],
+              "top_thread_observed_core": 0.7646166859217692
+            }
+          ],
+          "driver": {
+            "pid": 26224,
+            "samples": 25,
+            "observed_span_s": 24.232,
+            "cpu_cores_observed": 1.3315295889732586,
+            "max_threads": 13,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 761.921875,
+            "private_first_last_mib": [
+              154.453125,
+              761.921875
+            ],
+            "sampled_working_peak_mib": 767.98828125,
+            "top_thread_sampled_cpu_s": [
+              [
+                816,
+                23.265625
+              ],
+              [
+                3540,
+                0
+              ],
+              [
+                35324,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9601198827996038
+          }
+        },
+        {
+          "round": 2,
+          "signature": "cpu",
+          "nodes": [
+            {
+              "pid": 32112,
+              "samples": 25,
+              "observed_span_s": 24.243,
+              "cpu_cores_observed": 1.6428711380604712,
+              "max_threads": 115,
+              "min_threads": 115,
+              "sampled_private_peak_mib": 331.78125,
+              "private_first_last_mib": [
+                98.90234375,
+                222.34375
+              ],
+              "sampled_working_peak_mib": 342.1640625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  27804,
+                  23.65625
+                ],
+                [
+                  34268,
+                  5.359375
+                ],
+                [
+                  26596,
+                  3.203125
+                ]
+              ],
+              "top_thread_observed_core": 0.9757971373179888
+            },
+            {
+              "pid": 13516,
+              "samples": 25,
+              "observed_span_s": 24.238,
+              "cpu_cores_observed": 1.3673003135572241,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 228.96875,
+              "private_first_last_mib": [
+                54.1640625,
+                216.15234375
+              ],
+              "sampled_working_peak_mib": 239.31640625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  21064,
+                  18.359375
+                ],
+                [
+                  15820,
+                  4.25
+                ],
+                [
+                  36564,
+                  3.109375
+                ]
+              ],
+              "top_thread_observed_core": 0.7574624556481558
+            },
+            {
+              "pid": 7804,
+              "samples": 25,
+              "observed_span_s": 24.235,
+              "cpu_cores_observed": 1.384232514957706,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 226.5625,
+              "private_first_last_mib": [
+                53.84375,
+                220.36328125
+              ],
+              "sampled_working_peak_mib": 238.23828125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  2708,
+                  18.15625
+                ],
+                [
+                  26880,
+                  4.265625
+                ],
+                [
+                  24896,
+                  3.34375
+                ]
+              ],
+              "top_thread_observed_core": 0.7491747472663504
+            },
+            {
+              "pid": 22808,
+              "samples": 25,
+              "observed_span_s": 24.241,
+              "cpu_cores_observed": 1.443834825295986,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 244.45703125,
+              "private_first_last_mib": [
+                53.5625,
+                225.22265625
+              ],
+              "sampled_working_peak_mib": 253.359375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  27768,
+                  18.015625
+                ],
+                [
+                  35196,
+                  4.171875
+                ],
+                [
+                  27068,
+                  3.375
+                ]
+              ],
+              "top_thread_observed_core": 0.7431881935563714
+            }
+          ],
+          "driver": {
+            "pid": 26224,
+            "samples": 25,
+            "observed_span_s": 24.231,
+            "cpu_cores_observed": 1.3509295943213238,
+            "max_threads": 12,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 767.89453125,
+            "private_first_last_mib": [
+              155.015625,
+              767.89453125
+            ],
+            "sampled_working_peak_mib": 770.796875,
+            "top_thread_sampled_cpu_s": [
+              [
+                816,
+                23.609375
+              ],
+              [
+                3540,
+                0
+              ],
+              [
+                13932,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9743458792455945
+          }
+        },
+        {
+          "round": 3,
+          "signature": "gpu_required",
+          "nodes": [
+            {
+              "pid": 27920,
+              "samples": 25,
+              "observed_span_s": 24.246,
+              "cpu_cores_observed": 1.5485801781737194,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 542.015625,
+              "private_first_last_mib": [
+                320.9921875,
+                485.1171875
+              ],
+              "sampled_working_peak_mib": 404.94140625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  35092,
+                  23.484375
+                ],
+                [
+                  33084,
+                  4.96875
+                ],
+                [
+                  28996,
+                  3.203125
+                ]
+              ],
+              "top_thread_observed_core": 0.9685876020786934
+            },
+            {
+              "pid": 7048,
+              "samples": 25,
+              "observed_span_s": 24.243,
+              "cpu_cores_observed": 1.2632512477828652,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 469.796875,
+              "private_first_last_mib": [
+                207.28125,
+                439.10546875
+              ],
+              "sampled_working_peak_mib": 339.2109375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  33024,
+                  17.625
+                ],
+                [
+                  21804,
+                  4.234375
+                ],
+                [
+                  34864,
+                  3.59375
+                ]
+              ],
+              "top_thread_observed_core": 0.7270139834178939
+            },
+            {
+              "pid": 17800,
+              "samples": 25,
+              "observed_span_s": 24.245,
+              "cpu_cores_observed": 1.2476799340070117,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 470.8125,
+              "private_first_last_mib": [
+                208.3515625,
+                435.63671875
+              ],
+              "sampled_working_peak_mib": 333.8828125,
+              "top_thread_sampled_cpu_s": [
+                [
+                  17104,
+                  17.65625
+                ],
+                [
+                  10792,
+                  4.234375
+                ],
+                [
+                  36184,
+                  3.390625
+                ]
+              ],
+              "top_thread_observed_core": 0.7282429366879769
+            },
+            {
+              "pid": 35388,
+              "samples": 25,
+              "observed_span_s": 24.247,
+              "cpu_cores_observed": 1.3068627046644945,
+              "max_threads": 99,
+              "min_threads": 98,
+              "sampled_private_peak_mib": 462.05859375,
+              "private_first_last_mib": [
+                208.38671875,
+                444.8828125
+              ],
+              "sampled_working_peak_mib": 332.03515625,
+              "top_thread_sampled_cpu_s": [
+                [
+                  26016,
+                  17.71875
+                ],
+                [
+                  31108,
+                  4.046875
+                ],
+                [
+                  24392,
+                  3.234375
+                ]
+              ],
+              "top_thread_observed_core": 0.7307605064544067
+            }
+          ],
+          "driver": {
+            "pid": 26224,
+            "samples": 25,
+            "observed_span_s": 24.241,
+            "cpu_cores_observed": 1.3394146281094015,
+            "max_threads": 12,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 770.9453125,
+            "private_first_last_mib": [
+              160.06640625,
+              770.9453125
+            ],
+            "sampled_working_peak_mib": 772.4609375,
+            "top_thread_sampled_cpu_s": [
+              [
+                816,
+                23.28125
+              ],
+              [
+                3540,
+                0
+              ],
+              [
+                13932,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9604079864692051
+          }
+        },
+        {
+          "round": 4,
+          "signature": "cpu",
+          "nodes": [
+            {
+              "pid": 23668,
+              "samples": 25,
+              "observed_span_s": 24.27,
+              "cpu_cores_observed": 1.6423310671611042,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 312.09765625,
+              "private_first_last_mib": [
+                58.59375,
+                270.42578125
+              ],
+              "sampled_working_peak_mib": 323.609375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  32544,
+                  23.53125
+                ],
+                [
+                  21428,
+                  5.53125
+                ],
+                [
+                  6836,
+                  3.234375
+                ]
+              ],
+              "top_thread_observed_core": 0.9695611866501854
+            },
+            {
+              "pid": 28212,
+              "samples": 25,
+              "observed_span_s": 24.273,
+              "cpu_cores_observed": 1.4148951509908128,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 236.84375,
+              "private_first_last_mib": [
+                54.53515625,
+                212.8203125
+              ],
+              "sampled_working_peak_mib": 247.6796875,
+              "top_thread_sampled_cpu_s": [
+                [
+                  13404,
+                  17.921875
+                ],
+                [
+                  34520,
+                  4.75
+                ],
+                [
+                  20580,
+                  3.203125
+                ]
+              ],
+              "top_thread_observed_core": 0.7383461047254151
+            },
+            {
+              "pid": 17992,
+              "samples": 25,
+              "observed_span_s": 24.266,
+              "cpu_cores_observed": 1.413371589878843,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 239.09765625,
+              "private_first_last_mib": [
+                53.00390625,
+                213.83984375
+              ],
+              "sampled_working_peak_mib": 248.01171875,
+              "top_thread_sampled_cpu_s": [
+                [
+                  21044,
+                  18.15625
+                ],
+                [
+                  36780,
+                  4.03125
+                ],
+                [
+                  8776,
+                  3.125
+                ]
+              ],
+              "top_thread_observed_core": 0.7482176708151324
+            },
+            {
+              "pid": 32712,
+              "samples": 25,
+              "observed_span_s": 24.275,
+              "cpu_cores_observed": 1.4392378990731205,
+              "max_threads": 115,
+              "min_threads": 91,
+              "sampled_private_peak_mib": 235.5078125,
+              "private_first_last_mib": [
+                53.484375,
+                194.97265625
+              ],
+              "sampled_working_peak_mib": 243.3359375,
+              "top_thread_sampled_cpu_s": [
+                [
+                  9108,
+                  17.890625
+                ],
+                [
+                  13980,
+                  4.296875
+                ],
+                [
+                  548,
+                  3.3125
+                ]
+              ],
+              "top_thread_observed_core": 0.7369979402677652
+            }
+          ],
+          "driver": {
+            "pid": 26224,
+            "samples": 25,
+            "observed_span_s": 24.26,
+            "cpu_cores_observed": 1.367348516075845,
+            "max_threads": 12,
+            "min_threads": 7,
+            "sampled_private_peak_mib": 775.45703125,
+            "private_first_last_mib": [
+              161.00390625,
+              775.45703125
+            ],
+            "sampled_working_peak_mib": 775.84765625,
+            "top_thread_sampled_cpu_s": [
+              [
+                816,
+                23.34375
+              ],
+              [
+                3540,
+                0
+              ],
+              [
+                13932,
+                0
+              ]
+            ],
+            "top_thread_observed_core": 0.9622320692497939
+          }
+        }
+      ],
+      "observer": {
+        "samples": 228,
+        "stop_reason": "driver_exited",
+        "coverage": "sampled until driver exit",
+        "sampling_cpu_s": 7.640625,
+        "peak_working_before_output_mib": 157.2109375,
+        "sample_mean_ms": 28.298467543859644,
+        "sample_max_ms": 67.5592,
+        "unavailable_process_samples": 0,
+        "thread_read_errors": 0
+      }
+    },
+    {
+      "name": "continuous_without_external_sampler",
+      "transactions_per_round": 65536,
+      "designed_static_byte_replay": false,
+      "observed_unique_signed_input_hashes": [
+        "0x3eac4a3a4aa88f7add0a3281d00061663f55a0ea3fccf57aafb903c0adc4d1f2",
+        "0xa6de8a86c5974d15f33895be849194aefeb0b107034176ac9ec7767aec35a95e"
+      ],
+      "cpu_repeat": {
+        "cpu_tps": [
+          2533.175551006075,
+          2509.889468505935,
+          2621.1014585356156
+        ],
+        "last_vs_first_pct": 3.4709756887800536
+      },
+      "rounds": [
+        {
+          "signature": "cpu",
+          "tps": 2533.175551006075,
+          "p95_us": 3987212,
+          "p99_us": 4294182,
+          "cpu_us": 2308.368682861328,
+          "driver_cpu_us": 525.4745483398438,
+          "node_us": [
+            661.6115570068359,
+            555.2768707275391,
+            542.8791046142578,
+            548.6011505126953
+          ],
+          "queries": 151233,
+          "passed": true,
+          "cold": true,
+          "hash": "0x3eac4a3a4aa88f7add0a3281d00061663f55a0ea3fccf57aafb903c0adc4d1f2",
+          "node_cpu": [
+            {
+              "pid": 34132,
+              "cpu": {
+                "user_ns": 31875000000,
+                "kernel_ns": 11484375000,
+                "total_ns": 43359375000,
+                "cpu_us_per_successful_transaction": 661.6115570068359
+              }
+            },
+            {
+              "pid": 11460,
+              "cpu": {
+                "user_ns": 29046875000,
+                "kernel_ns": 7343750000,
+                "total_ns": 36390625000,
+                "cpu_us_per_successful_transaction": 555.2768707275391
+              }
+            },
+            {
+              "pid": 33464,
+              "cpu": {
+                "user_ns": 28515625000,
+                "kernel_ns": 7062500000,
+                "total_ns": 35578125000,
+                "cpu_us_per_successful_transaction": 542.8791046142578
+              }
+            },
+            {
+              "pid": 36468,
+              "cpu": {
+                "user_ns": 28468750000,
+                "kernel_ns": 7484375000,
+                "total_ns": 35953125000,
+                "cpu_us_per_successful_transaction": 548.6011505126953
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20640625000,
+            "kernel_ns": 13796875000,
+            "total_ns": 34437500000,
+            "cpu_us_per_successful_transaction": 525.4745483398438
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466428961,
+            "before_read_completed_unix_ms": 1793466428961,
+            "after_read_started_unix_ms": 1793466454844,
+            "after_read_completed_unix_ms": 1793466454844,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "gpu_required",
+          "tps": 2724.003187369696,
+          "p95_us": 4124069,
+          "p99_us": 4605143,
+          "cpu_us": 1940.7272338867188,
+          "driver_cpu_us": 499.48692321777344,
+          "node_us": [
+            569.1051483154297,
+            456.3331604003906,
+            453.4721374511719,
+            461.81678771972656
+          ],
+          "queries": 130721,
+          "passed": true,
+          "cold": true,
+          "hash": "0xa6de8a86c5974d15f33895be849194aefeb0b107034176ac9ec7767aec35a95e",
+          "node_cpu": [
+            {
+              "pid": 23496,
+              "cpu": {
+                "user_ns": 27359375000,
+                "kernel_ns": 9937500000,
+                "total_ns": 37296875000,
+                "cpu_us_per_successful_transaction": 569.1051483154297
+              }
+            },
+            {
+              "pid": 12360,
+              "cpu": {
+                "user_ns": 23703125000,
+                "kernel_ns": 6203125000,
+                "total_ns": 29906250000,
+                "cpu_us_per_successful_transaction": 456.3331604003906
+              }
+            },
+            {
+              "pid": 13264,
+              "cpu": {
+                "user_ns": 23484375000,
+                "kernel_ns": 6234375000,
+                "total_ns": 29718750000,
+                "cpu_us_per_successful_transaction": 453.4721374511719
+              }
+            },
+            {
+              "pid": 29288,
+              "cpu": {
+                "user_ns": 24218750000,
+                "kernel_ns": 6046875000,
+                "total_ns": 30265625000,
+                "cpu_us_per_successful_transaction": 461.81678771972656
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 19578125000,
+            "kernel_ns": 13156250000,
+            "total_ns": 32734375000,
+            "cpu_us_per_successful_transaction": 499.48692321777344
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466476428,
+            "before_read_completed_unix_ms": 1793466476428,
+            "after_read_started_unix_ms": 1793466500498,
+            "after_read_completed_unix_ms": 1793466500498,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "cpu",
+          "tps": 2509.889468505935,
+          "p95_us": 3826701,
+          "p99_us": 4730656,
+          "cpu_us": 2296.924591064453,
+          "driver_cpu_us": 527.6203155517578,
+          "node_us": [
+            645.1606750488281,
+            556.2305450439453,
+            554.5616149902344,
+            540.9717559814453
+          ],
+          "queries": 148820,
+          "passed": true,
+          "cold": true,
+          "hash": "0x3eac4a3a4aa88f7add0a3281d00061663f55a0ea3fccf57aafb903c0adc4d1f2",
+          "node_cpu": [
+            {
+              "pid": 30052,
+              "cpu": {
+                "user_ns": 31906250000,
+                "kernel_ns": 10375000000,
+                "total_ns": 42281250000,
+                "cpu_us_per_successful_transaction": 645.1606750488281
+              }
+            },
+            {
+              "pid": 36372,
+              "cpu": {
+                "user_ns": 29328125000,
+                "kernel_ns": 7125000000,
+                "total_ns": 36453125000,
+                "cpu_us_per_successful_transaction": 556.2305450439453
+              }
+            },
+            {
+              "pid": 13612,
+              "cpu": {
+                "user_ns": 29390625000,
+                "kernel_ns": 6953125000,
+                "total_ns": 36343750000,
+                "cpu_us_per_successful_transaction": 554.5616149902344
+              }
+            },
+            {
+              "pid": 35956,
+              "cpu": {
+                "user_ns": 27312500000,
+                "kernel_ns": 8140625000,
+                "total_ns": 35453125000,
+                "cpu_us_per_successful_transaction": 540.9717559814453
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20937500000,
+            "kernel_ns": 13640625000,
+            "total_ns": 34578125000,
+            "cpu_us_per_successful_transaction": 527.6203155517578
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466520263,
+            "before_read_completed_unix_ms": 1793466520263,
+            "after_read_started_unix_ms": 1793466546390,
+            "after_read_completed_unix_ms": 1793466546390,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "gpu_required",
+          "tps": 2643.7362137321315,
+          "p95_us": 3986280,
+          "p99_us": 4637994,
+          "cpu_us": 2041.1014556884766,
+          "driver_cpu_us": 509.2620849609375,
+          "node_us": [
+            578.6418914794922,
+            488.51966857910156,
+            494.7185516357422,
+            479.2213439941406
+          ],
+          "queries": 140653,
+          "passed": true,
+          "cold": true,
+          "hash": "0x3eac4a3a4aa88f7add0a3281d00061663f55a0ea3fccf57aafb903c0adc4d1f2",
+          "node_cpu": [
+            {
+              "pid": 28904,
+              "cpu": {
+                "user_ns": 28343750000,
+                "kernel_ns": 9578125000,
+                "total_ns": 37921875000,
+                "cpu_us_per_successful_transaction": 578.6418914794922
+              }
+            },
+            {
+              "pid": 33172,
+              "cpu": {
+                "user_ns": 25468750000,
+                "kernel_ns": 6546875000,
+                "total_ns": 32015625000,
+                "cpu_us_per_successful_transaction": 488.51966857910156
+              }
+            },
+            {
+              "pid": 34056,
+              "cpu": {
+                "user_ns": 25890625000,
+                "kernel_ns": 6531250000,
+                "total_ns": 32421875000,
+                "cpu_us_per_successful_transaction": 494.7185516357422
+              }
+            },
+            {
+              "pid": 33108,
+              "cpu": {
+                "user_ns": 25375000000,
+                "kernel_ns": 6031250000,
+                "total_ns": 31406250000,
+                "cpu_us_per_successful_transaction": 479.2213439941406
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 20546875000,
+            "kernel_ns": 12828125000,
+            "total_ns": 33375000000,
+            "cpu_us_per_successful_transaction": 509.2620849609375
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466568509,
+            "before_read_completed_unix_ms": 1793466568509,
+            "after_read_started_unix_ms": 1793466593312,
+            "after_read_completed_unix_ms": 1793466593313,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        },
+        {
+          "signature": "cpu",
+          "tps": 2621.1014585356156,
+          "p95_us": 3663281,
+          "p99_us": 4706393,
+          "cpu_us": 2228.7368774414062,
+          "driver_cpu_us": 516.1762237548828,
+          "node_us": [
+            634.1934204101562,
+            539.5412445068359,
+            529.5276641845703,
+            525.4745483398438
+          ],
+          "queries": 138864,
+          "passed": true,
+          "cold": true,
+          "hash": "0x3eac4a3a4aa88f7add0a3281d00061663f55a0ea3fccf57aafb903c0adc4d1f2",
+          "node_cpu": [
+            {
+              "pid": 21056,
+              "cpu": {
+                "user_ns": 31906250000,
+                "kernel_ns": 9656250000,
+                "total_ns": 41562500000,
+                "cpu_us_per_successful_transaction": 634.1934204101562
+              }
+            },
+            {
+              "pid": 796,
+              "cpu": {
+                "user_ns": 27968750000,
+                "kernel_ns": 7390625000,
+                "total_ns": 35359375000,
+                "cpu_us_per_successful_transaction": 539.5412445068359
+              }
+            },
+            {
+              "pid": 3612,
+              "cpu": {
+                "user_ns": 27609375000,
+                "kernel_ns": 7093750000,
+                "total_ns": 34703125000,
+                "cpu_us_per_successful_transaction": 529.5276641845703
+              }
+            },
+            {
+              "pid": 6328,
+              "cpu": {
+                "user_ns": 27984375000,
+                "kernel_ns": 6453125000,
+                "total_ns": 34437500000,
+                "cpu_us_per_successful_transaction": 525.4745483398438
+              }
+            }
+          ],
+          "driver_cpu": {
+            "user_ns": 19656250000,
+            "kernel_ns": 14171875000,
+            "total_ns": 33828125000,
+            "cpu_us_per_successful_transaction": 516.1762237548828
+          },
+          "successful_transactions": 65536,
+          "transport_delivered": 64,
+          "business_failures": 0,
+          "rejected_nonce": 0,
+          "expired": 0,
+          "full_fee_audit": true,
+          "cold_heads": [
+            64,
+            64,
+            64,
+            64
+          ],
+          "cpu_boundary": {
+            "before_read_started_unix_ms": 1793466613030,
+            "before_read_completed_unix_ms": 1793466613030,
+            "after_read_started_unix_ms": 1793466638048,
+            "after_read_completed_unix_ms": 1793466638048,
+            "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+          }
+        }
+      ],
+      "sampled_resources": null,
+      "observer": {
+        "status": "NOT_RUNNING"
+      }
+    }
+  ],
+  "diagnostic": {
+    "scope": "Separate16K static CPU/GPU/CPU with PROFILE_STAGES+CRITICAL_PATH and original progress writer on; process-lifetime inclusive/nested wall spans, not CPU or physical-disk latency; exclude from formal65K TPS comparisons",
+    "rounds": [
+      {
+        "signature": "cpu",
+        "tps": 2496.075126011117,
+        "p95_us": 3875347,
+        "p99_us": 3973267,
+        "cpu_us": 2223.0148315429688,
+        "driver_cpu_us": 391.96014404296875,
+        "node_us": [
+          585.5560302734375,
+          559.8068237304688,
+          537.872314453125,
+          539.7796630859375
+        ],
+        "queries": 44071,
+        "passed": true,
+        "cold": true,
+        "hash": "0xbaf24c08f20be5d9fc1de68cd88db0e88a805d2ac0a53c4bd07a15d57d53e20e"
+      },
+      {
+        "signature": "gpu_required",
+        "tps": 2517.3088026834907,
+        "p95_us": 4466705,
+        "p99_us": 4517720,
+        "cpu_us": 2071.380615234375,
+        "driver_cpu_us": 389.09912109375,
+        "node_us": [
+          558.8531494140625,
+          494.0032958984375,
+          532.1502685546875,
+          486.3739013671875
+        ],
+        "queries": 41766,
+        "passed": true,
+        "cold": true,
+        "hash": "0xbaf24c08f20be5d9fc1de68cd88db0e88a805d2ac0a53c4bd07a15d57d53e20e"
+      },
+      {
+        "signature": "cpu",
+        "tps": 2493.5606353465873,
+        "p95_us": 4070084,
+        "p99_us": 4194872,
+        "cpu_us": 2179.1458129882812,
+        "driver_cpu_us": 389.09912109375,
+        "node_us": [
+          605.5831909179688,
+          535.0112915039062,
+          514.984130859375,
+          523.5671997070312
+        ],
+        "queries": 39906,
+        "passed": true,
+        "cold": true,
+        "hash": "0xbaf24c08f20be5d9fc1de68cd88db0e88a805d2ac0a53c4bd07a15d57d53e20e"
+      }
+    ],
+    "stages": [
+      {
+        "round": 0,
+        "signature": "cpu",
+        "progress": "COMPLETE",
+        "nodes": [
+          {
+            "node": 0,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 196674100,
+                "max_wall_ns": 15085100
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 802244600,
+                "max_wall_ns": 28895300
+              },
+              "io_metadata_write": {
+                "calls": 67,
+                "wall_ns": 110473300,
+                "max_wall_ns": 10195200
+              },
+              "native_io": {
+                "calls": 106588,
+                "wall_ns": 4112662500,
+                "max_wall_ns": 3192000
+              },
+              "queue_candidate": {
+                "calls": 42,
+                "wall_ns": 12819500,
+                "max_wall_ns": 10691100
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 52056400,
+                "max_wall_ns": 51699600
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 2.0795,
+              "p95": 5.7778,
+              "max": 26.3278
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 2.3003,
+              "p95": 4.0517,
+              "max": 7.785
+            }
+          },
+          {
+            "node": 1,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 198619200,
+                "max_wall_ns": 14593900
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 833587800,
+                "max_wall_ns": 37769100
+              },
+              "io_metadata_write": {
+                "calls": 68,
+                "wall_ns": 113920800,
+                "max_wall_ns": 9056700
+              },
+              "native_io": {
+                "calls": 596765,
+                "wall_ns": 2704896500,
+                "max_wall_ns": 2240200
+              },
+              "queue_candidate": {
+                "calls": 41,
+                "wall_ns": 1403000,
+                "max_wall_ns": 353900
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 533900,
+                "max_wall_ns": 164500
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.6457,
+              "p95": 4.9411,
+              "max": 32.2218
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.759,
+              "p95": 2.2727,
+              "max": 3.2811
+            }
+          },
+          {
+            "node": 2,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 202407800,
+                "max_wall_ns": 14391000
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 798490800,
+                "max_wall_ns": 28327400
+              },
+              "io_metadata_write": {
+                "calls": 60,
+                "wall_ns": 91013500,
+                "max_wall_ns": 7434000
+              },
+              "native_io": {
+                "calls": 575174,
+                "wall_ns": 2722284900,
+                "max_wall_ns": 2989200
+              },
+              "queue_candidate": {
+                "calls": 39,
+                "wall_ns": 1508700,
+                "max_wall_ns": 198900
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 404900,
+                "max_wall_ns": 145800
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.6952,
+              "p95": 2.3783,
+              "max": 14.2663
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.8008,
+              "p95": 2.8131,
+              "max": 7.6886
+            }
+          },
+          {
+            "node": 3,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 194751300,
+                "max_wall_ns": 13531000
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 800103400,
+                "max_wall_ns": 29775700
+              },
+              "io_metadata_write": {
+                "calls": 62,
+                "wall_ns": 108405600,
+                "max_wall_ns": 8669600
+              },
+              "native_io": {
+                "calls": 536107,
+                "wall_ns": 2748188400,
+                "max_wall_ns": 2196000
+              },
+              "queue_candidate": {
+                "calls": 38,
+                "wall_ns": 10923400,
+                "max_wall_ns": 8947700
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 608500,
+                "max_wall_ns": 159900
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.7626,
+              "p95": 2.7305,
+              "max": 4.9084
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.7223,
+              "p95": 2.249,
+              "max": 2.2864
+            }
+          }
+        ]
+      },
+      {
+        "round": 1,
+        "signature": "gpu_required",
+        "progress": "COMPLETE",
+        "nodes": [
+          {
+            "node": 0,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 204405400,
+                "max_wall_ns": 15659000
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 782528800,
+                "max_wall_ns": 27985300
+              },
+              "io_metadata_write": {
+                "calls": 64,
+                "wall_ns": 87912400,
+                "max_wall_ns": 3599000
+              },
+              "native_io": {
+                "calls": 86166,
+                "wall_ns": 4207029000,
+                "max_wall_ns": 2702000
+              },
+              "queue_candidate": {
+                "calls": 41,
+                "wall_ns": 12886500,
+                "max_wall_ns": 12192800
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 57524900,
+                "max_wall_ns": 35589900
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.9043,
+              "p95": 11.1923,
+              "max": 13.4705
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 2.282,
+              "p95": 3.7708,
+              "max": 6.972
+            }
+          },
+          {
+            "node": 1,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 201011900,
+                "max_wall_ns": 14454900
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 807467600,
+                "max_wall_ns": 29636600
+              },
+              "io_metadata_write": {
+                "calls": 68,
+                "wall_ns": 100718400,
+                "max_wall_ns": 2904600
+              },
+              "native_io": {
+                "calls": 543125,
+                "wall_ns": 2673903500,
+                "max_wall_ns": 1407300
+              },
+              "queue_candidate": {
+                "calls": 39,
+                "wall_ns": 904800,
+                "max_wall_ns": 189700
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 131701900,
+                "max_wall_ns": 40977700
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.6812,
+              "p95": 5.2112,
+              "max": 7.2009
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.6638,
+              "p95": 2.1796,
+              "max": 2.9537
+            }
+          },
+          {
+            "node": 2,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 198288500,
+                "max_wall_ns": 13204900
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 786651400,
+                "max_wall_ns": 30270400
+              },
+              "io_metadata_write": {
+                "calls": 60,
+                "wall_ns": 90345100,
+                "max_wall_ns": 2944800
+              },
+              "native_io": {
+                "calls": 537051,
+                "wall_ns": 2780274300,
+                "max_wall_ns": 2138000
+              },
+              "queue_candidate": {
+                "calls": 41,
+                "wall_ns": 879400,
+                "max_wall_ns": 105300
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 101747600,
+                "max_wall_ns": 43868800
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.649,
+              "p95": 10.0709,
+              "max": 13.8117
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.734,
+              "p95": 3.5403,
+              "max": 7.7578
+            }
+          },
+          {
+            "node": 3,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 199370700,
+                "max_wall_ns": 15021600
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 787153200,
+                "max_wall_ns": 28482400
+              },
+              "io_metadata_write": {
+                "calls": 66,
+                "wall_ns": 91104800,
+                "max_wall_ns": 3281000
+              },
+              "native_io": {
+                "calls": 525936,
+                "wall_ns": 2618536500,
+                "max_wall_ns": 1983800
+              },
+              "queue_candidate": {
+                "calls": 39,
+                "wall_ns": 1600100,
+                "max_wall_ns": 706900
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 40172000,
+                "max_wall_ns": 17765500
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.3753,
+              "p95": 2.2702,
+              "max": 2.2875
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.9055,
+              "p95": 2.8444,
+              "max": 3.0659
+            }
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "signature": "cpu",
+        "progress": "COMPLETE",
+        "nodes": [
+          {
+            "node": 0,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 197253200,
+                "max_wall_ns": 13869700
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 809185800,
+                "max_wall_ns": 37012000
+              },
+              "io_metadata_write": {
+                "calls": 67,
+                "wall_ns": 98556200,
+                "max_wall_ns": 3017500
+              },
+              "native_io": {
+                "calls": 54899,
+                "wall_ns": 4144312900,
+                "max_wall_ns": 3053100
+              },
+              "queue_candidate": {
+                "calls": 38,
+                "wall_ns": 11471500,
+                "max_wall_ns": 10342100
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 57989600,
+                "max_wall_ns": 54484800
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.8102,
+              "p95": 2.457,
+              "max": 2.9174
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 2.3248,
+              "p95": 3.069,
+              "max": 4.1086
+            }
+          },
+          {
+            "node": 1,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 195111500,
+                "max_wall_ns": 13154000
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 803427300,
+                "max_wall_ns": 33031600
+              },
+              "io_metadata_write": {
+                "calls": 66,
+                "wall_ns": 100472600,
+                "max_wall_ns": 4214100
+              },
+              "native_io": {
+                "calls": 516411,
+                "wall_ns": 2788336300,
+                "max_wall_ns": 2058000
+              },
+              "queue_candidate": {
+                "calls": 38,
+                "wall_ns": 2691000,
+                "max_wall_ns": 1012300
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 48010300,
+                "max_wall_ns": 30333100
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.4961,
+              "p95": 2.4776,
+              "max": 13.1787
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.6163,
+              "p95": 1.8815,
+              "max": 6.6238
+            }
+          },
+          {
+            "node": 2,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 196089300,
+                "max_wall_ns": 13579600
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 823111600,
+                "max_wall_ns": 34745100
+              },
+              "io_metadata_write": {
+                "calls": 62,
+                "wall_ns": 93808700,
+                "max_wall_ns": 3757700
+              },
+              "native_io": {
+                "calls": 530354,
+                "wall_ns": 2718391600,
+                "max_wall_ns": 1738200
+              },
+              "queue_candidate": {
+                "calls": 37,
+                "wall_ns": 1053700,
+                "max_wall_ns": 200900
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 16334100,
+                "max_wall_ns": 15815800
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.5565,
+              "p95": 2.7253,
+              "max": 2.9476
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.7753,
+              "p95": 2.2205,
+              "max": 3.0852
+            }
+          },
+          {
+            "node": 3,
+            "matched": true,
+            "critical_dropped": 0,
+            "phases": {
+              "execute_cpu": {
+                "calls": 16,
+                "wall_ns": 198094000,
+                "max_wall_ns": 13801400
+              },
+              "io_persist": {
+                "calls": 3216,
+                "wall_ns": 801010000,
+                "max_wall_ns": 35165100
+              },
+              "io_metadata_write": {
+                "calls": 68,
+                "wall_ns": 104410500,
+                "max_wall_ns": 3246400
+              },
+              "native_io": {
+                "calls": 478903,
+                "wall_ns": 2728849400,
+                "max_wall_ns": 3360800
+              },
+              "queue_candidate": {
+                "calls": 37,
+                "wall_ns": 1491800,
+                "max_wall_ns": 229400
+              },
+              "queue_admission": {
+                "calls": 16,
+                "wall_ns": 26360600,
+                "max_wall_ns": 25587100
+              }
+            },
+            "journal_ack_ms": {
+              "count": 16,
+              "p50": 1.4352,
+              "p95": 2.7874,
+              "max": 6.0075
+            },
+            "ack_to_projection_ms": {
+              "count": 16,
+              "p50": 1.7614,
+              "p95": 2.2825,
+              "max": 4.0337
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "limits": [
+    "Historical14percentCPUdrop not reproduced or causally explained; do not mark fixed",
+    "Observed/no-observer groups have different input corpora and are not strict cross-group A/B",
+    "Allocation/free counts, scheduler wait durations and physicaldisk latency remain NOT_MEASURED",
+    "No Linux, physicalfour-host or new kill-during-catchup acceptance; all listed cold recovery only",
+    "Whole-process CPU includes control, polling, network and persistence, not crypto-onlyCPU or GPU device time"
+  ],
+  "files": [
+    {
+      "path": "target/native-product-load/paired-18560-1793466121604.json",
+      "sha256": "9a43d1eaeac14b13efdab9e14fd61897e7cb5301eb4870d0c22949756ae595b4"
+    },
+    {
+      "path": "target/native-product-load/continuous_8192_outstanding_receipt_anchored_windows-paired-26224-1793466410786.json",
+      "sha256": "0f19bf8ad585cf80a90036674adacac9a3183a8f1f176a97f74e809affedeb67"
+    },
+    {
+      "path": "target/native-product-load/continuous_8192_outstanding_receipt_anchored_windows-paired-36036-1793466656216.json",
+      "sha256": "b0377b8ae5931d33560c41e79e58232398f9bd7f69642dd86e249d8eeb40ca37"
+    },
+    {
+      "path": "target/native-product-load/paired-33588-1793466731891.json",
+      "sha256": "108a522482a12dc250b9933f9b242959a44fdd2569329af7ac8e9dc528130c12"
+    },
+    {
+      "path": "artifacts/audit/native-controller-throughput-20261031/20261101-010202-441-25760-stability-65k-same-bytes-process-series.json",
+      "sha256": "ed081179f004ef26a9cc9ccdcd82effe2eb1e1a79a595b9d0ebf800c08eb8fe1"
+    },
+    {
+      "path": "artifacts/audit/native-controller-throughput-20261031/20261101-010651-306-12100-stability-65k-continuous-process-series.json",
+      "sha256": "c2ed0825964269338100821108b10d88eef34630f352b9a6878249c26db991e3"
+    },
+    {
+      "path": "target/native-controller-throughput-20261031/stability-observer/native-tests.exe",
+      "sha256": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb"
+    },
+    {
+      "path": "target/native-controller-throughput-20261031/candidate-v4/novovm-node.exe",
+      "sha256": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74"
+    },
+    {
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+      "sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+    },
+    {
+      "path": "scripts/novovm-native-pipeline-memory-profiler.ps1",
+      "sha256": "8b9589a540733100a1b306357c9ebc93119f381ef27483bb68878523e3218162"
+    }
+  ]
+}

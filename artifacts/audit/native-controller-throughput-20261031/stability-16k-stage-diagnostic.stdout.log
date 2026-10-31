@@ -1,0 +1,6 @@
+
+running 1 test
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1845 filtered out; finished in 56.52s
+
