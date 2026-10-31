@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WindowsPerformanceRecorder Version="1.0" Author="NOVOVM">
+  <Profiles>
+    <SystemCollector Id="SC" Name="Native ingress bounded collector">
+      <BufferSize Value="1024"/>
+      <Buffers Value="128"/>
+    </SystemCollector>
+    <SystemProvider Id="CpuSamples">
+      <Keywords>
+        <Keyword Value="CpuConfig"/>
+        <Keyword Value="ProcessThread"/>
+        <Keyword Value="Loader"/>
+        <Keyword Value="SampledProfile"/>
+      </Keywords>
+      <CaptureStateOnStart>
+        <Keyword Value="ProcessThread" RundownFlag="Start"/>
+        <Keyword Value="Loader" RundownFlag="Start"/>
+      </CaptureStateOnStart>
+      <Stacks>
+        <Stack Value="SampledProfile"/>
+      </Stacks>
+    </SystemProvider>
+    <SystemProvider Id="ScheduleEvents">
+      <Keywords>
+        <Keyword Value="CpuConfig"/>
+        <Keyword Value="ProcessThread"/>
+        <Keyword Value="Loader"/>
+        <Keyword Value="CSwitch"/>
+        <Keyword Value="ReadyThread"/>
+      </Keywords>
+      <CaptureStateOnStart>
+        <Keyword Value="ProcessThread" RundownFlag="Start"/>
+        <Keyword Value="Loader" RundownFlag="Start"/>
+      </CaptureStateOnStart>
+    </SystemProvider>
+    <Profile Id="NativeCpuStacks.Verbose.File" Name="NativeCpuStacks"
+             Description="Sampled CPU stacks only; no switch or ready stacks"
+             LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="SC">
+          <SystemProviderId Value="CpuSamples"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+    <Profile Id="NativeSchedule.Verbose.File" Name="NativeSchedule"
+             Description="Switch and ready events without stacks; no wait-callsite claims"
+             LoggingMode="File" DetailLevel="Verbose">
+      <Collectors>
+        <SystemCollectorId Value="SC">
+          <SystemProviderId Value="ScheduleEvents"/>
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

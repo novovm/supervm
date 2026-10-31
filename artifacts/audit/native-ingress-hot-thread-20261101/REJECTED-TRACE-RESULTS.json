@@ -1,0 +1,410 @@
+{
+  "status": "REJECTED_EVENT_LOSS",
+  "capture_directory": "target/native-ingress-hot-thread-20261101/20261101-014501-30992",
+  "etl_sha256": "b57acf634068bf4dc4af10a5a5cd746de7b3d16b850c84377014a9158fd92653",
+  "etl_bytes": 28413263872,
+  "trace_start_utc": "2026-10-31T17:45:01.9182695Z",
+  "trace_end_utc": "2026-10-31T17:48:33.3165302Z",
+  "lost_events": 269327509,
+  "lost_buffers": 0,
+  "observed_global_events": {
+    "networking_correlation": 226180284,
+    "context_switch": 6304492,
+    "ready_thread": 3404540,
+    "sampled_profile": 962883,
+    "stack_walk": 12333140
+  },
+  "network_correlation_reported_total_size": 4523605680,
+  "event_scope": "Surviving system-global ETW event counts, NOT network packets, retransmissions, physicalbytes or per-node calls. Loss provider/time distribution is unknown.",
+  "metric_qualification": {
+    "function_percentages": "NOT_QUALIFIED",
+    "hot_thread_identity_from_flat_profile": "NOT_MEASURED",
+    "running_ready_wait_times": "NOT_QUALIFIED",
+    "capacity_tps": "DIAGNOSTIC_ONLY",
+    "symbol_resolution": "Confirmed real Rust symbols resolve; this does not qualify the surviving sample distribution"
+  },
+  "partial_analysis": "xperf -tle used ONLY for forensic inspection of damaged input, never to waive the loss gate. Full CSVs contain other-process metadata and remain local. Public rows below are target-ingress process leaf samples, NOT hot-thread/inclusive caller costs. raw_weight is the original xperf field, not a validated CPU duration or share.",
+  "cases": [
+    {
+      "round": 0,
+      "backend": "cpu",
+      "ingress_node_index": 1,
+      "ingress_pid": 14596,
+      "load_window_utc_ms": {
+        "before_read_started_unix_ms": 1793468714342,
+        "before_read_completed_unix_ms": 1793468714342,
+        "after_read_started_unix_ms": 1793468745599,
+        "after_read_completed_unix_ms": 1793468745599,
+        "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+      },
+      "diagnostic_tps": 2096.728226064774,
+      "p99_us": 5505466,
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "successful": 65536,
+      "nonce_rejected": 0,
+      "expired": 0,
+      "source_csv_sha256": "f9041cc1bc4fecec3620b5be443b99fffefef5e2152c17074bdc5286f1a06860",
+      "observed_resolved_native_leafs": [
+        {
+          "pid": 14596,
+          "raw_weight": 4181478,
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 1863597,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 1489563,
+          "symbol": "novovm-node.exe!_ZN8chacha208backends4avx25inner17h593b9e86687be917E.llvm.2543196795479789641"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 1126042,
+          "symbol": "aoem_ffi.dll!aoem_mldsa_native_keccak_f1600_x4_avx2_asm"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 904435,
+          "symbol": "novovm-node.exe!_ZN8poly13057backend4avx25State13compute_block17hd6b4d91242e20db1E"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 704576,
+          "symbol": "aoem_ffi.dll!aoem_mldsa_bridge_verify"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 677844,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx227_mm256_permutevar8x32_epi3217hd1094ad843e43e28E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 601850,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 427466,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi3217hbbc35e272b29b261E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 338924,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_and_si25617h5c4306ee304279e6E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 331048,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree17decode_state_node17hf47d90390b277947E.llvm.2706430040075246553"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 260251,
+          "symbol": "aoem_ffi.dll!rocksdb::RocksDBOptionsParser::VerifyTableFactory"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 259013,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi6417hd60155779c71b8fdE.llvm.11371739752038881803"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 245333,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx218_mm256_blend_epi3217h56bb5e03e2d4f246E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 243081,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query74_$LT$impl$u20$novovm_node..native_pipeline..service..rpc..RpcLifecycle$GT$14recent_receipt17h748564deee0e2374E"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 208171,
+          "symbol": "aoem_ffi.dll!snappy::internal::CompressFragment"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 202739,
+          "symbol": "aoem_ffi.dll!aoem_mldsa_native_ntt_avx2_asm"
+        },
+        {
+          "pid": 14596,
+          "raw_weight": 189911,
+          "symbol": "novovm-node.exe!memcmp"
+        }
+      ]
+    },
+    {
+      "round": 1,
+      "backend": "gpu_required",
+      "ingress_node_index": 1,
+      "ingress_pid": 30536,
+      "load_window_utc_ms": {
+        "before_read_started_unix_ms": 1793468771566,
+        "before_read_completed_unix_ms": 1793468771566,
+        "after_read_started_unix_ms": 1793468812232,
+        "after_read_completed_unix_ms": 1793468812232,
+        "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+      },
+      "diagnostic_tps": 1611.6217364235636,
+      "p99_us": 8395817,
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "successful": 65536,
+      "nonce_rejected": 0,
+      "expired": 0,
+      "source_csv_sha256": "e6d25c8c05f461750d94bf9db1bf9c936eacfc06ba3950c2cd10e4a4a9117870",
+      "observed_resolved_native_leafs": [
+        {
+          "pid": 30536,
+          "raw_weight": 4449350,
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 1858102,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 1505111,
+          "symbol": "novovm-node.exe!_ZN8chacha208backends4avx25inner17h593b9e86687be917E.llvm.2543196795479789641"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 933451,
+          "symbol": "novovm-node.exe!_ZN8poly13057backend4avx25State13compute_block17hd6b4d91242e20db1E"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 791013,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx227_mm256_permutevar8x32_epi3217hd1094ad843e43e28E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 655690,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 517755,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query74_$LT$impl$u20$novovm_node..native_pipeline..service..rpc..RpcLifecycle$GT$14recent_receipt17h748564deee0e2374E"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 446823,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi3217hbbc35e272b29b261E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 334796,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_and_si25617h5c4306ee304279e6E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 282606,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree17decode_state_node17hf47d90390b277947E.llvm.2706430040075246553"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 270101,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi6417hd60155779c71b8fdE.llvm.11371739752038881803"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 245825,
+          "symbol": "aoem_ffi.dll!rocksdb::RocksDBOptionsParser::VerifyTableFactory"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 240714,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx218_mm256_blend_epi3217h56bb5e03e2d4f246E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 236357,
+          "symbol": "aoem_ffi.dll!snappy::internal::CompressFragment"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 208228,
+          "symbol": "novovm-node.exe!memcmp"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 184338,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx217_mm256_srli_epi3217haffa9fb36edf9c1cE.llvm.11371739752038881803"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 178094,
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp11object_link16NativeObjectLink12process_poll17h89b65314d06d0709E"
+        },
+        {
+          "pid": 30536,
+          "raw_weight": 170508,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree13CaptureCursor7advance17h99b8f150cb9a86bdE"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "backend": "cpu",
+      "ingress_node_index": 1,
+      "ingress_pid": 2992,
+      "load_window_utc_ms": {
+        "before_read_started_unix_ms": 1793468837359,
+        "before_read_completed_unix_ms": 1793468837359,
+        "after_read_started_unix_ms": 1793468869953,
+        "after_read_completed_unix_ms": 1793468869953,
+        "scope": "UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"
+      },
+      "diagnostic_tps": 2010.7144424068806,
+      "p99_us": 8132672,
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "successful": 65536,
+      "nonce_rejected": 0,
+      "expired": 0,
+      "source_csv_sha256": "9ab2a151a8c50e163ed89ce4da4a60778f6dc3c69d11f4e322de3db61748fa73",
+      "observed_resolved_native_leafs": [
+        {
+          "pid": 2992,
+          "raw_weight": 4111313,
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 1886542,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 1260521,
+          "symbol": "novovm-node.exe!_ZN8chacha208backends4avx25inner17h593b9e86687be917E.llvm.2543196795479789641"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 1174206,
+          "symbol": "aoem_ffi.dll!aoem_mldsa_native_keccak_f1600_x4_avx2_asm"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 795736,
+          "symbol": "novovm-node.exe!_ZN8poly13057backend4avx25State13compute_block17hd6b4d91242e20db1E"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 719798,
+          "symbol": "aoem_ffi.dll!aoem_mldsa_bridge_verify"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 718216,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx227_mm256_permutevar8x32_epi3217hd1094ad843e43e28E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 599123,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 407673,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query74_$LT$impl$u20$novovm_node..native_pipeline..service..rpc..RpcLifecycle$GT$14recent_receipt17h748564deee0e2374E"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 384088,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi3217hbbc35e272b29b261E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 328120,
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree17decode_state_node17hf47d90390b277947E.llvm.2706430040075246553"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 312919,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_and_si25617h5c4306ee304279e6E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 263833,
+          "symbol": "aoem_ffi.dll!rocksdb::RocksDBOptionsParser::VerifyTableFactory"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 244441,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi6417hd60155779c71b8fdE.llvm.11371739752038881803"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 226884,
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx218_mm256_blend_epi3217h56bb5e03e2d4f246E.llvm.11371739752038881803"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 217078,
+          "symbol": "aoem_ffi.dll!snappy::internal::CompressFragment"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 201583,
+          "symbol": "aoem_ffi.dll!aoem_mldsa_native_ntt_avx2_asm"
+        },
+        {
+          "pid": 2992,
+          "raw_weight": 201486,
+          "symbol": "novovm-node.exe!memcmp"
+        }
+      ]
+    }
+  ],
+  "new_capture_plan": {
+    "mode": "original same-byte CPU/GPU/CPU/GPU/CPU five rounds",
+    "profiles": [
+      {
+        "round": 0,
+        "backend": "cpu",
+        "kind": "sampled_cpu_stacks",
+        "seconds": 8
+      },
+      {
+        "round": 1,
+        "backend": "gpu_required",
+        "kind": "sampled_cpu_stacks",
+        "seconds": 8
+      },
+      {
+        "round": 2,
+        "backend": "cpu",
+        "kind": "scheduling_no_stacks",
+        "seconds": 5
+      },
+      {
+        "round": 3,
+        "backend": "gpu_required",
+        "kind": "scheduling_no_stacks",
+        "seconds": 5
+      },
+      {
+        "round": 4,
+        "backend": "cpu",
+        "kind": "sampled_cpu_stacks",
+        "seconds": 8
+      }
+    ],
+    "buffer_cost": "128 x1024KiB; no guarantee against loss",
+    "trigger": "8sec after four initial stdout files; scheduling aid only. Actual CPU boundary overlap must be validated offline.",
+    "quality": "Preflight eachprofile beforeload; everywindow must have header-zero-loss plus later target overlap, frequency and symbol validation. Unknown/nonzero loss aborts further recording, not original workload.",
+    "not_yet_run": true
+  }
+}

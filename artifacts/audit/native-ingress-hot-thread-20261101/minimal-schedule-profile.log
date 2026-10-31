@@ -1,0 +1,20 @@
+
+Microsoft Windows Performance Recorder Version 10.0.26100 (CoreSystem)
+Copyright (c) 2024 Microsoft Corporation. All rights reserved.
+
+Profile			: NativeSchedule.Verbose.File
+
+
+Collector Name		: WPR_initiated_WprApp_WPR System Collector
+Buffer Size (KB)	: 1024
+Number of Buffers	: 128
+Providers
+System Keywords
+	CpuConfig
+	CSwitch
+	Loader
+	ProcessThread
+	ReadyThread
+CaptureStateOnStart Keywords
+	ProcessThread
+	Loader
