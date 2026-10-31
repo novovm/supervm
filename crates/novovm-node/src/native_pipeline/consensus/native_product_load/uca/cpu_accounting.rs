@@ -3,12 +3,15 @@ use super::*;
 use novovm_udp_batch::{read_process_cpu_time, ProcessCpuTime};
 
 pub(super) struct Snapshot {
+    started_unix_ms: u64,
+    completed_unix_ms: u64,
     driver: ProcessCpuTime,
     nodes: Vec<(u32, ProcessCpuTime)>,
 }
 
 pub(super) fn capture(nodes: &ProductNodes) -> Result<Snapshot> {
     Ok(Snapshot {
+        started_unix_ms: clock_ms()?,
         driver: read_process_cpu_time(std::process::id())?,
         nodes: nodes
             .processes
@@ -21,6 +24,7 @@ pub(super) fn capture(nodes: &ProductNodes) -> Result<Snapshot> {
                 Ok((pid, read_process_cpu_time(pid)?))
             })
             .collect::<Result<Vec<_>>>()?,
+        completed_unix_ms: clock_ms()?,
     })
 }
 
@@ -78,6 +82,11 @@ fn delta(before: Snapshot, after: Snapshot, rows: usize) -> Result<Value> {
             .context("CPU sum overflow")?,
     };
     Ok(json!({"status":"AVAILABLE","successful_transactions":rows,
+        "external_sample_alignment":{"before_read_started_unix_ms":before.started_unix_ms,
+            "before_read_completed_unix_ms":before.completed_unix_ms,
+            "after_read_started_unix_ms":after.started_unix_ms,
+            "after_read_completed_unix_ms":after.completed_unix_ms,
+            "scope":"UTC wall-clock markers for an external observer only; TPS and CPU deltas retain their original clocks"},
         "scope":"GetProcessTimes user+kernel across all process threads; snapshots surround the original drive call, including boundary-read skew and its tail validation/statistic/JSON work, not exactly the receipt timestamp interval; startup, fixture preparation and later audits/cold recovery excluded; four-node cost is replicated work, not one node; driver includes clients and in-clock signing; not GPU device time or crypto-only CPU",
         "four_node_processes":view(aggregate)?,"nodes":node_views,
         "driver_process":view(driver)?,"nodes_plus_driver":view(combined)?}))
@@ -86,6 +95,8 @@ fn delta(before: Snapshot, after: Snapshot, rows: usize) -> Result<Value> {
 #[test]
 fn accounting_keeps_replicated_node_and_driver_cpu_separate() -> Result<()> {
     let old = Snapshot {
+        started_unix_ms: 100,
+        completed_unix_ms: 101,
         driver: ProcessCpuTime::default(),
         nodes: vec![
             (1, ProcessCpuTime::default()),
@@ -93,6 +104,8 @@ fn accounting_keeps_replicated_node_and_driver_cpu_separate() -> Result<()> {
         ],
     };
     let new = Snapshot {
+        started_unix_ms: 200,
+        completed_unix_ms: 201,
         driver: ProcessCpuTime {
             user_ns: 40_000,
             kernel_ns: 10_000,
@@ -115,6 +128,14 @@ fn accounting_keeps_replicated_node_and_driver_cpu_separate() -> Result<()> {
         ],
     };
     let measured = delta(old, new, 10)?;
+    assert_eq!(
+        measured["external_sample_alignment"]["before_read_started_unix_ms"],
+        100
+    );
+    assert_eq!(
+        measured["external_sample_alignment"]["after_read_completed_unix_ms"],
+        201
+    );
     assert_eq!(measured["four_node_processes"]["total_ns"], 350_000);
     assert_eq!(
         measured["driver_process"]["cpu_us_per_successful_transaction"],

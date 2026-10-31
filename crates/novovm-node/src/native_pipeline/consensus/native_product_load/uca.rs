@@ -1210,12 +1210,24 @@ fn native_uca_late_nonce_bridge_before_after() -> Result<()> {
 #[ignore = "isolated laboratory CPU/GPU/CPU replay of one NUAS corpus on four original processes; never deployment keys; run alone"]
 fn native_uca_same_corpus_signature_cpu_gpu_cpu() -> Result<()> {
     use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
+    run_same_corpus_sequence(&[Cpu, GpuRequired, Cpu])
+}
+
+#[test]
+#[ignore = "five CPU/GPU/CPU/GPU/CPU rounds with identical signed bytes and fresh four-node stores; run alone"]
+fn native_asset_same_corpus_five_round_stability() -> Result<()> {
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
+    run_same_corpus_sequence(&[Cpu, GpuRequired, Cpu, GpuRequired, Cpu])
+}
+
+fn run_same_corpus_sequence(
+    backends: &[novovm_exec::pq_signature::MldsaVerificationBackendV1],
+) -> Result<()> {
     let mut corpus = PairedCorpus::default();
     let mut reports = Vec::new();
-    for backend in [Cpu, GpuRequired, Cpu] {
+    for &backend in backends {
         reports.push(run_native_uca_load(Some(backend), &mut corpus, None)?);
     }
-    ensure!(reports.len() == 3, "paired run count");
     for report in &reports {
         ensure!(
             report["signed_workload_sha256"] == reports[0]["signed_workload_sha256"]
@@ -1252,7 +1264,7 @@ fn native_uca_same_corpus_signature_cpu_gpu_cpu() -> Result<()> {
         serde_json::to_vec_pretty(&json!({
             "scope":"one-host four-process isolated laboratory acceptance replay, not a deployment reset recipe",
             "same_signed_corpus_and_initial_state":true,
-            "signature_backend_order":["cpu","gpu_required","cpu"],
+            "signature_backend_order":backends,
             "business_backend_unchanged":true,
             "committed_economics_equal_excluding_height_and_root":true,
             "all_round_databases_and_journals_retained":true,

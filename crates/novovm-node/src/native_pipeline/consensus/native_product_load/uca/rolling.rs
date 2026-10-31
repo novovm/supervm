@@ -552,7 +552,8 @@ fn native_uca_rolling_65536_final_receipts_and_cold_economics() -> Result<()> {
 #[test]
 #[ignore = "CPU/GPU/CPU rolling 65536 NUAS business comparison, not byte-identical input; run alone"]
 fn native_uca_rolling_65536_signature_cpu_gpu_cpu() -> Result<()> {
-    run_dynamic_pair(LoadMode::Rolling)
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
+    run_dynamic_pair(LoadMode::Rolling, &[Cpu, GpuRequired, Cpu])
 }
 
 #[test]
@@ -570,14 +571,27 @@ fn native_asset_continuous_65536_final_receipts_and_cold_economics() -> Result<(
 #[test]
 #[ignore = "CPU/GPU/CPU continuous 65536 load, same logical business not byte-identical dynamic windows; run alone"]
 fn native_asset_continuous_65536_signature_cpu_gpu_cpu() -> Result<()> {
-    run_dynamic_pair(LoadMode::Continuous)
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
+    run_dynamic_pair(LoadMode::Continuous, &[Cpu, GpuRequired, Cpu])
 }
 
-fn run_dynamic_pair(mode: LoadMode) -> Result<()> {
+#[test]
+#[ignore = "five continuous 65536 CPU/GPU/CPU/GPU/CPU rounds; rolling signatures may differ; run alone"]
+fn native_asset_continuous_65536_five_round_stability() -> Result<()> {
     use novovm_exec::pq_signature::MldsaVerificationBackendV1::{Cpu, GpuRequired};
+    run_dynamic_pair(
+        LoadMode::Continuous,
+        &[Cpu, GpuRequired, Cpu, GpuRequired, Cpu],
+    )
+}
+
+fn run_dynamic_pair(
+    mode: LoadMode,
+    backends: &[novovm_exec::pq_signature::MldsaVerificationBackendV1],
+) -> Result<()> {
     let mut corpus = PairedCorpus::default();
     let mut reports: Vec<Value> = Vec::new();
-    for backend in [Cpu, GpuRequired, Cpu] {
+    for &backend in backends {
         let report = run_native_uca_load_mode(Some(backend), &mut corpus, None, mode)?;
         if let Some(first) = reports.first() {
             for field in [
@@ -629,7 +643,7 @@ fn run_dynamic_pair(mode: LoadMode) -> Result<()> {
         serde_json::to_vec_pretty(&json!({
             "scope":mode.label(),
             "same_signed_corpus":false,"same_approved_genesis_and_logical_business_workload":true,
-            "signature_backend_order":["cpu","gpu_required","cpu"],
+            "signature_backend_order":backends,
             "expiry_and_randomized_signature_bytes_may_differ":true,
             "single_unpaused_wall_per_run":true,"post_first_submit_signing_included":true,
             "all_round_databases_and_journals_retained":true,"rounds":reports,
