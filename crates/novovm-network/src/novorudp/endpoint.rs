@@ -325,8 +325,19 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<Self> {
-        ensure!(!peers.is_empty(), "native endpoint peer bound");
         socket.set_nonblocking(true)?;
+        Self::bind_with_io(socket, identity, peers, budget, wall_ms, now)
+    }
+
+    pub(crate) fn bind_with_io(
+        io: Arc<dyn NativeDatagramIo>,
+        identity: SigningKey,
+        peers: Vec<NativePeer>,
+        budget: NativeHandshakeBudget,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<Self> {
+        ensure!(!peers.is_empty(), "native endpoint peer bound");
         let mut sources = BTreeMap::new();
         let mut ids = BTreeSet::new();
         let mut owned = BTreeMap::new();
@@ -372,7 +383,7 @@ impl NativeEndpoint {
             }),
         );
         Ok(Self {
-            io: socket,
+            io,
             receive_scratch: vec![0; 65536],
             local_key: identity.verifying_key().to_bytes(),
             next_peer: owned.len(),

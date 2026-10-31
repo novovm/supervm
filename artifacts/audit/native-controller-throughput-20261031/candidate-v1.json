@@ -1,0 +1,44 @@
+{
+  "base": "5fd31d55d2ab6b3c3de532c9bea1bef82c797f98",
+  "branch": "dev/mldsa65-identity-closure",
+  "snapshot": "target/native-controller-throughput-20261031/candidate-v1",
+  "scope": "isolated unreleased candidate; same Controller V3 contract; no deployment or shipped AOEM replacement",
+  "source_files": {
+    "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs": "f51df90dde19eefc701da015330540583c3124da24fec93a5d4367813480e1bc",
+    "crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs": "60928805bcf9b029f88b69f88c034185c9d099ffb78a37e89f5e60f385d6ef07"
+  },
+  "artifacts_sha256": {
+    "novovm-node.exe": "ca1ccbb2797f6766abc60bc6f37605bd59fca57a377e9fa6d04f74038179186c",
+    "native-tests.exe": "6f2ce7b418a92d06abe35cefe7e9846cc2de15892344a4aedc64bec521d96f1d",
+    "novovm-native-client.exe": "cfa17a7e21f890b7e87c4035b3877782bdc930b9a867adbeda4b1db669cbe237",
+    "baseline_node": "ad402c2ec020c8d4fad9ee5d86a836c089cdf77f91b1122db2adfe19a28fb83d",
+    "aoem_ffi.dll": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+  },
+  "environment": {
+    "NOVOVM_AOEM_TEST_LIBRARY": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+    "NOVOVM_AOEM_DLL": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+    "AOEM_SEMANTIC_GRAPH_V2_WORKERS": "24",
+    "RAYON_NUM_THREADS": "24",
+    "AOEM_MLDSA_VERIFY_BATCH_PAR_MIN": "128",
+    "NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND": "cpu_callbacks",
+    "NOVOVM_RESIDENT_TEST_SIGNATURE_BACKEND": "gpu_required",
+    "NOVOVM_NATIVE_LOAD_SIGNERS": "4",
+    "NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS": "90",
+    "NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS": "600",
+    "NOVOVM_NATIVE_UCA_LOAD_TRANSACTIONS": "65536",
+    "NOVOVM_NATIVE_UCA_FRAME_ROWS": "1024",
+    "NOVOVM_NATIVE_QUERY_BATCH": "128",
+    "NOVOVM_NATIVE_UCA_PAYERS": "1024",
+    "NOVOVM_NATIVE_UCA_RECIPIENT_DISTRIBUTION": "shared",
+    "NOVOVM_NATIVE_UCA_LATE_BRIDGE": "0",
+    "NOVOVM_PROFILE_STAGES": "0",
+    "NOVOVM_PROFILE_CRITICAL_PATH": "0",
+    "NOVOVM_PROFILE_ASSET_TRACE": "0",
+    "NOVOVM_PROFILE_NATIVE_IO": "0",
+    "NOVOVM_PROFILE_NATIVE_DELIVERY": "0",
+    "NOVOVM_NATIVE_LOAD_DIAGNOSTICS": "0"
+  },
+  "signature_backend_note": "Each paired round explicitly selects CPU or GPU-required, overriding the inherited fixture default. Business execution remains CPU callbacks.",
+  "hardware": "Intel Core Ultra 9 275HX, 24 logical CPUs; RTX 5090 Laptop GPU; driver 592.01",
+  "rustc": "1.94.0 x86_64-pc-windows-msvc"
+}

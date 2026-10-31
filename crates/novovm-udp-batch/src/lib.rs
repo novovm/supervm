@@ -3,6 +3,12 @@
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 
+mod segmented;
+pub use segmented::{
+    send_udp_segmented_batch, set_udp_send_segment_size, MAX_UDP_SEGMENTED_BATCH_BYTES,
+    MAX_UDP_SEGMENTED_DATAGRAMS,
+};
+
 #[cfg(windows)]
 mod poll_timer;
 #[cfg(windows)]

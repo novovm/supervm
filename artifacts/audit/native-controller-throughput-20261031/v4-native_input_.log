@@ -1,0 +1,7 @@
+
+running 2 tests
+test native_pipeline::consensus::native_lifecycle::ingress::tests::native_input_fanout_omits_only_full_peer_and_survives_height_advance ... ok
+test native_pipeline::consensus::native_lifecycle::ingress::tests::native_input_full_peer_reopens_only_after_original_transport_done ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1841 filtered out; finished in 0.51s
+

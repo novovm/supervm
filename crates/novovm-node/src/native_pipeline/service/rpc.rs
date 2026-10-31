@@ -383,6 +383,7 @@ struct GossipOffer {
     hashes: Vec<Hash>,
     message: Arc<Message>,
     repair_peer: Option<usize>,
+    repair_missing: u64,
     profile_wait: bool,
 }
 

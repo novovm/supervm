@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "scope": "ephemeral IPv4 loopback segmentation capability; not NIC offload, NovoRUDP acceptance, or TPS",
+  "sent_bytes": 1659,
+  "received_datagram_lengths": [
+    768,
+    768,
+    123
+  ],
+  "exact_bytes_and_origin": true
+}

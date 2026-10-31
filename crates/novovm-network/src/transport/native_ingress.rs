@@ -99,23 +99,24 @@ impl UdpTransport {
             lifetime: handshake.lifetime,
             retry: handshake.retry,
         };
+        // Check before creating the endpoint's Arc. Existing public clones and
+        // legacy writers keep ordinary single-datagram semantics.
+        let exclusive = !observe_legacy_protocol
+            && Arc::strong_count(&self.socket) == 1
+            && Arc::weak_count(&self.socket) == 0;
+        self.socket.set_nonblocking(true)?;
+        let io = crate::novorudp::carrier::owned_udp_io(Arc::clone(&self.socket), exclusive);
         let mut endpoint = if peers.is_empty() {
-            NativeEndpoint::listen_clients_shared(
-                Arc::clone(&self.socket),
+            NativeEndpoint::listen_clients_with_io(
+                io,
                 identity,
                 client_slots,
                 client_streams,
                 handshake,
             )?
         } else {
-            let mut endpoint = NativeEndpoint::bind_shared(
-                Arc::clone(&self.socket),
-                identity.clone(),
-                peers,
-                handshake,
-                wall_ms,
-                now,
-            )?;
+            let mut endpoint =
+                NativeEndpoint::bind_with_io(io, identity.clone(), peers, handshake, wall_ms, now)?;
             if client_slots > 0 {
                 endpoint.allow_clients(identity, client_slots, client_streams, client_budget)?;
             }
@@ -165,6 +166,10 @@ impl AuthenticatedUdpIngressV1 {
         self.link.enable_configured_reconnect_v1()
     }
     pub fn send_protocol(&self, peer: NodeId, message: &ProtocolMessage) -> Result<()> {
+        ensure!(
+            self.observe_legacy_protocol,
+            "legacy sends disabled by native-only ownership"
+        );
         // Compatibility sends retain main's original transaction stamping and
         // signing contract; the adapter does not introduce an unsigned bypass.
         Ok(super::Transport::send(

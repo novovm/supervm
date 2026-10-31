@@ -264,6 +264,64 @@ impl NativeUdpSession {
         }
     }
 
+    /// One existing unmetered UDP poll quantum, still independently sealed per
+    /// frame. Metered/deferred owners retain their original per-packet path.
+    /// No failed or unsent suffix advances an object cursor or byte counter.
+    pub(crate) fn try_send_batch(
+        &mut self,
+        io: &dyn NativeDatagramIo,
+        frames: &[NovoRudpTransportFrameV0],
+    ) -> Result<Vec<usize>> {
+        ensure!(
+            !io.deferred_writes() && self.pending.is_none(),
+            "batch on deferred carrier"
+        );
+        ensure!(
+            !frames.is_empty() && frames.len() <= io.send_batch_limit().min(64),
+            "invalid native send batch"
+        );
+        let wires = frames
+            .iter()
+            .map(|frame| self.encode(frame))
+            .collect::<Result<Vec<_>>>()?;
+        // The final fragment can be shorter; stop before it rather than combine
+        // unequal middle segments (packet_copies may repeat that short tail).
+        let count = wires
+            .iter()
+            .take_while(|wire| wire.len() == wires[0].len())
+            .count();
+        let refs = wires[..count].iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let sent = {
+            let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::SocketBatchSend);
+            io.try_send_batch(&refs, self.remote)
+        };
+        let sent = match sent {
+            Ok(sent) => sent,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                super::diagnostics::traffic(
+                    super::diagnostics::Traffic::SendWouldBlock,
+                    0,
+                    3,
+                    refs[0].len(),
+                );
+                0
+            }
+            Err(error) => return Err(error.into()),
+        };
+        ensure!(sent <= count, "native batch write count exceeds input");
+        let mut lengths = Vec::with_capacity(sent);
+        for (frame, wire) in frames.iter().zip(&wires).take(sent) {
+            super::diagnostics::traffic(super::diagnostics::Traffic::WireSent, 0, 3, wire.len());
+            super::diagnostics::frame_traffic(
+                super::diagnostics::Traffic::SealedSent,
+                frame,
+                wire.len(),
+            );
+            lengths.push(wire.len());
+        }
+        Ok(lengths)
+    }
+
     /// A verified complete object can still have one repair frame in flight.
     /// Finish that exact retained write instead of aborting a partial stream.
     /// WouldBlock keeps its reservation and bytes; no new frame is admitted.

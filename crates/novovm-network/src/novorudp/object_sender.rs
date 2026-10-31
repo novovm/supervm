@@ -413,7 +413,73 @@ impl NativeObjectSender {
             .map(|r| r.plan.batch_pause_ms)
             .unwrap_or(self.config.batch_pause_ms.max(self.pacing.batch_pause_ms));
         let mut sent = 0;
+        // Reuse the same initial cursor and poll quantum. Repairs, retained
+        // writes and metered carriers keep their existing per-frame decisions;
+        // no shadow repair scheduler or persistent batch queue is introduced.
+        let bulk = io.send_batch_limit() > 1
+            && budget.min(batch) > 1
+            && !io.deferred_writes()
+            && wire_budget.is_none()
+            && self.pending.is_none()
+            && self.repair.is_none()
+            && self.initial + 1 < self.body.frame_count();
+        let mut completed = if bulk {
+            let copies = self.config.packet_copies.max(self.pacing.packet_copies);
+            let mut index = self.initial;
+            let mut copy = self.copy;
+            let mut packets = Vec::new();
+            for _ in 0..budget.min(batch).min(io.send_batch_limit()) {
+                if index == self.body.frame_count() {
+                    break;
+                }
+                let frame = NovoRudpTransportFrameV0::new(
+                    NovoRudpTransportFrameKindV0::Data,
+                    self.session,
+                    self.stream,
+                    u64::from_be_bytes(self.body.id()[..8].try_into()?),
+                    index as u64,
+                    self.state.latest_ack_epoch,
+                    self.body.frame(index)?,
+                );
+                packets.push(frame);
+                copy += 1;
+                if copy == copies {
+                    index += 1;
+                    copy = 0;
+                }
+            }
+            let lengths = session.try_send_batch(io, &packets)?;
+            if lengths.is_empty() {
+                if let Some(p) = &mut self.diagnostic_progress {
+                    p.polls.send_blocked = p.polls.send_blocked.saturating_add(1);
+                    p.polls.udp_would_block = p.polls.udp_would_block.saturating_add(1);
+                }
+            }
+            packets
+                .into_iter()
+                .zip(lengths)
+                .collect::<Vec<_>>()
+                .into_iter()
+        } else {
+            Vec::new().into_iter()
+        };
         for _ in 0..budget.min(batch) {
+            let batch_wire = if bulk {
+                let Some((frame, length)) = completed.next() else {
+                    break;
+                };
+                self.pending = Some(PendingSend {
+                    frame,
+                    cursor: PendingCursor::Initial {
+                        index: self.initial,
+                        copy: self.copy,
+                        copies: self.config.packet_copies.max(self.pacing.packet_copies),
+                    },
+                });
+                Some(length)
+            } else {
+                None
+            };
             if self.pending.is_none() {
                 let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::FramePrepare);
                 // Proven gaps need not wait for the whole multi-MiB initial
@@ -471,9 +537,12 @@ impl NativeObjectSender {
                 self.pending = Some(PendingSend { frame, cursor });
             }
             let pending = self.pending.as_ref().expect("prepared native frame");
-            let Some(wire_bytes) =
-                session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())?
-            else {
+            let Some(wire_bytes) = (match batch_wire {
+                Some(length) => Some(length),
+                None => {
+                    session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())?
+                }
+            }) else {
                 if let Some(p) = &mut self.diagnostic_progress {
                     p.polls.send_blocked = p.polls.send_blocked.saturating_add(1);
                     if wire_budget.is_none() && !io.deferred_writes() {

@@ -26,8 +26,9 @@ pub(crate) enum IoPhase {
     SealAead,
     EnvelopeEncode,
     SocketSend,
+    SocketBatchSend,
 }
-const IO_NAMES: [&str; 18] = [
+const IO_NAMES: [&str; 19] = [
     "receive_packet",
     "socket_receive",
     "receive_accounting",
@@ -46,6 +47,7 @@ const IO_NAMES: [&str; 18] = [
     "seal_aead",
     "envelope_encode",
     "socket_send",
+    "socket_batch_send",
 ];
 #[derive(Clone, Copy, Default, Serialize)]
 struct IoCost {
@@ -55,8 +57,8 @@ struct IoCost {
     max_sample_ns: u64,
 }
 thread_local! {
-    static IO_COSTS: std::cell::RefCell<[IoCost; 18]> = const {
-        std::cell::RefCell::new([IoCost { calls: 0, samples: 0, sampled_ns: 0, max_sample_ns: 0 }; 18])
+    static IO_COSTS: std::cell::RefCell<[IoCost; 19]> = const {
+        std::cell::RefCell::new([IoCost { calls: 0, samples: 0, sampled_ns: 0, max_sample_ns: 0 }; 19])
     };
 }
 pub fn io_cost_enabled() -> bool {

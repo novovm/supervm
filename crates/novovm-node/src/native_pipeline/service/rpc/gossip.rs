@@ -57,7 +57,7 @@ impl RepairHints {
         json!({"omitted_recipient_inputs": self.counts.iter().sum::<usize>(),
             "repair_batches_reserved": self.accepted_batches,
             "repair_inputs_reserved": self.reserved_inputs,
-            "scope":"local omitted-recipient repair; not remote or durable receipt"})
+            "scope":"local omitted-recipient repair; inputs count shared rows, not peer copies; not remote or durable receipt"})
     }
 }
 
@@ -76,9 +76,10 @@ fn select_repair(
     pending: &BTreeMap<Hash, Pending>,
     peer: usize,
     batch_size: usize,
-) -> Vec<Hash> {
+) -> (Vec<Hash>, u64) {
     let mut hashes = Vec::new();
     let mut bytes = 0;
+    let mut missing = u64::MAX;
     for hash in order {
         let Some(entry) = pending.get(hash) else {
             continue;
@@ -98,8 +99,23 @@ fn select_repair(
         }
         bytes += entry.canonical_len;
         hashes.push(*hash);
+        missing &= entry.gossip_missing;
     }
-    hashes
+    if hashes.is_empty() {
+        missing = 0;
+    }
+    (hashes, missing)
+}
+
+/// One original fanout can repair the same complete ordered batch for every
+/// available recipient that missed ALL its rows. A partial overlap is not a
+/// reason to send that peer already-reserved inputs again.
+fn repair_recipients(missing: u64, available: &[bool]) -> Vec<bool> {
+    available
+        .iter()
+        .enumerate()
+        .map(|(peer, ready)| *ready && missing & (1_u64 << peer) != 0)
+        .collect()
 }
 
 impl RpcLifecycle {
@@ -157,10 +173,11 @@ impl RpcLifecycle {
             let repair = self.gossip_repair.next_peer(&available);
             let use_repair = repair.is_some()
                 && (self.gossip_repair.prefer_repair || self.gossip_order.is_empty());
-            let (hashes, repair_peer) = if use_repair {
+            let (hashes, repair_peer, repair_missing) = if use_repair {
                 let peer = repair.expect("eligible repair recipient");
-                let hashes = select_repair(&self.order, &self.pending, peer, self.batch_size);
-                (hashes, Some(peer))
+                let (hashes, missing) =
+                    select_repair(&self.order, &self.pending, peer, self.batch_size);
+                (hashes, Some(peer), missing)
             } else {
                 let mut hashes = Vec::new();
                 let mut bytes = 0;
@@ -178,7 +195,7 @@ impl RpcLifecycle {
                     }
                     self.gossip_order.pop_front();
                 }
-                (hashes, None)
+                (hashes, None, 0)
             };
             if !hashes.is_empty() {
                 let message = if self.is_uca() {
@@ -211,6 +228,9 @@ impl RpcLifecycle {
                     hashes,
                     message,
                     repair_peer,
+                    // Only this offer can change its rows' missing bits, on
+                    // acceptance below. A retired row discards the offer above.
+                    repair_missing,
                     profile_wait: false,
                 });
             }
@@ -218,9 +238,11 @@ impl RpcLifecycle {
         let Some(offer) = &mut self.gossip_offer else {
             return Ok(());
         };
-        let requested: Vec<_> = (0..available.len())
-            .map(|peer| offer.repair_peer.is_none_or(|repair| repair == peer))
-            .collect();
+        let requested = if offer.repair_peer.is_some() {
+            repair_recipients(offer.repair_missing, &available)
+        } else {
+            vec![true; available.len()]
+        };
         let Some(reserved) = self
             .node
             .controller
@@ -301,6 +323,110 @@ mod tests {
     fn retained_fresh_offer_yields_reopened_slot_to_older_missing_input() -> Result<()> {
         super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
             retained_fresh_offer_case(nodes, signed, false)
+        })
+    }
+
+    #[test]
+    #[ignore = "real signed asset pool and original multi-peer UDP fanout, run alone"]
+    fn repair_shares_one_original_fanout_with_all_identically_missing_peers() -> Result<()> {
+        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
+            use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
+            let raw = signed[..2]
+                .iter()
+                .map(|row| row.encode())
+                .collect::<Result<Vec<_>, _>>()?;
+            let batch = Arc::new(AssetSpendBatchV3::from_raw(
+                &raw,
+                AssetSpendBatchLimitsV3 {
+                    transactions: 2,
+                    transaction_bytes: 8192,
+                    body_bytes: 16384,
+                },
+            )?);
+            let rpc = &mut nodes[0];
+            rpc.incoming_from_client = false;
+            rpc.incoming = Some((
+                rpc.node
+                    .controller
+                    .uca_transactions_message(batch.clone())?,
+                0,
+            ));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while rpc.incoming.is_some() || rpc.admission.has_pending_native_admission() {
+                ensure!(
+                    Instant::now() < deadline,
+                    "original asset admission timeout"
+                );
+                rpc.poll_admission()?;
+                std::thread::yield_now();
+            }
+            let hashes = signed[..2]
+                .iter()
+                .map(uca::hash)
+                .collect::<Result<Vec<_>>>()?;
+            let retained = rpc.pending_retention.bytes;
+            for _ in 0..2 {
+                let blocker = rpc
+                    .node
+                    .controller
+                    .uca_transactions_message(batch.clone())?;
+                assert_eq!(
+                    rpc.node
+                        .controller
+                        .try_submit_transactions_to(&blocker, &[true, true, false])?,
+                    Some(vec![true, true, false])
+                );
+            }
+            for hash in &hashes {
+                rpc.queue_gossip(*hash);
+            }
+            rpc.poll_gossip()?;
+            for hash in &hashes {
+                assert_eq!(rpc.pending[hash].gossip_missing, 0b011);
+            }
+            let (repair_hashes, missing) = select_repair(&rpc.order, &rpc.pending, 0, 2);
+            assert_eq!(repair_hashes, hashes);
+            assert_eq!(missing, 0b011);
+            assert_eq!(
+                repair_recipients(missing, &[false, false, true]),
+                vec![false; 3],
+                "a prepared repair mask must not retain old peer availability"
+            );
+            // Only those two receivers drain. The third has already reserved
+            // this exact body and must not receive another repair obligation.
+            while !nodes[0].node.controller.transactions_available_recipients()[..2]
+                .iter()
+                .all(|v| *v)
+            {
+                ensure!(
+                    Instant::now() < deadline,
+                    "original peer slots did not reopen"
+                );
+                for node in nodes.iter_mut().take(3) {
+                    node.node.poll(Instant::now())?;
+                }
+                for node in nodes.iter_mut().take(3).skip(1) {
+                    while node.node.controller.take_transactions().is_some() {}
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let rpc = &mut nodes[0];
+            rpc.poll_gossip()?;
+            assert_eq!(rpc.gossip_repair.accepted_batches, 1);
+            assert_eq!(rpc.gossip_repair.counts[..3], [0; 3]);
+            for hash in &hashes {
+                assert_eq!(rpc.pending[hash].gossip_missing, 0);
+            }
+            assert_eq!(rpc.pending_retention.bytes, retained);
+            assert!(
+                !rpc.gossip_repair.prefer_repair,
+                "fresh input keeps the next turn"
+            );
+            assert!(
+                rpc.node.controller.head().is_none(),
+                "fanout is not finality"
+            );
+            Ok(())
         })
     }
 
@@ -536,15 +662,38 @@ mod tests {
                 },
             );
         }
-        let hashes = select_repair(&order, &pending, 2, 2);
+        let (hashes, missing) = select_repair(&order, &pending, 2, 2);
         assert_eq!(hashes, vec![[1; 32], [2; 32]]);
-        assert!(select_repair(&order, &pending, 1, 2).is_empty());
-        pending.remove(&[1; 32]); // finalized/stale data must not be resurrected
+        assert_eq!(missing, 0b101);
         assert_eq!(
-            select_repair(&order, &pending, 2, 2),
-            vec![[2; 32], [3; 32]]
+            repair_recipients(missing, &[true, true, true]),
+            vec![true, false, true]
         );
+        assert_eq!(
+            repair_recipients(missing, &[false, true, true]),
+            vec![false, false, true]
+        );
+        pending.get_mut(&[2; 32]).unwrap().gossip_missing = 0b100;
+        let (partial_hashes, partial_missing) = select_repair(&order, &pending, 2, 2);
+        assert_eq!(partial_hashes, hashes);
+        assert_eq!(partial_missing, 0b100);
+        assert_eq!(
+            repair_recipients(partial_missing, &[true; 3]),
+            vec![false, false, true],
+            "partial overlap must not retransmit the peer's reserved row"
+        );
+        pending.get_mut(&[2; 32]).unwrap().gossip_missing = 0b101;
+        assert_eq!(select_repair(&order, &pending, 1, 2), (vec![], 0));
+        pending.remove(&[1; 32]); // finalized/stale data must not be resurrected
+        let (live_hashes, live_missing) = select_repair(&order, &pending, 2, 2);
+        assert_eq!(live_hashes, vec![[2; 32], [3; 32]]);
+        assert_eq!(live_missing, 0b101);
         assert_eq!(pending.len(), 4);
+        pending.clear();
+        let (empty_hashes, empty_missing) = select_repair(&order, &pending, 2, 2);
+        assert!(empty_hashes.is_empty());
+        assert_eq!(empty_missing, 0);
+        assert_eq!(repair_recipients(empty_missing, &[true; 3]), vec![false; 3]);
     }
 
     #[test]
@@ -574,8 +723,9 @@ mod tests {
                 },
             );
         }
-        let selected = select_repair(&order, &pending, 2, 2);
+        let (selected, missing) = select_repair(&order, &pending, 2, 2);
         assert_eq!(selected, vec![order[1], order[2]]);
+        assert_eq!(missing, 0b100);
         let repair = selected_apfl_batch(&selected, &pending, 2)?;
         for (index, raw) in raws[1..3].iter().enumerate() {
             assert!(repair.row(index)?.matches_canonical_bytes(raw)?);
@@ -589,9 +739,9 @@ mod tests {
         pending.remove(&order[1]);
         assert_eq!(
             select_repair(&order, &pending, 2, 2),
-            vec![order[2], order[3]]
+            (vec![order[2], order[3]], 0b100)
         );
-        assert!(select_repair(&order, &pending, 1, 2).is_empty());
+        assert_eq!(select_repair(&order, &pending, 1, 2), (vec![], 0));
         Ok(())
     }
 

@@ -1,0 +1,18 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-udp-batch v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-udp-batch)
+    Finished `release` profile [optimized] target(s) in 0.41s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_udp_batch-46864d6634228a55.exe)
+
+running 5 tests
+test poll_timer::tests::precision_scope_retains_unpark_token_with_nested_owners ... ok
+test segmented::tests::segmented_batch_accepts_equal_segments_and_only_a_short_final_segment ... ok
+test segmented::tests::segmented_batch_preserves_original_quantum_and_bounds_total_scratch_bytes ... ok
+test segmented::tests::windows_invalid_segmented_batches_send_nothing ... ok
+test segmented::tests::windows_segmented_loopback_restores_exact_datagrams_and_option_zero_single_send ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

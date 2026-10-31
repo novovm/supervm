@@ -3031,6 +3031,7 @@ dependencies = [
  "mio",
  "novovm-protocol",
  "novovm-storage-budget",
+ "novovm-udp-batch",
  "rand 0.8.5",
  "rand 0.9.2",
  "rcgen",

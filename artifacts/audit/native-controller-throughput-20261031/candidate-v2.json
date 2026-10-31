@@ -1,0 +1,19 @@
+{
+  "base": "5fd31d55d2ab6b3c3de532c9bea1bef82c797f98",
+  "branch": "dev/mldsa65-identity-closure",
+  "snapshot": "target/native-controller-throughput-20261031/candidate-v2",
+  "scope": "only original multi-recipient repair adaptation retained; input sorting experiment withdrawn; no Windows segmentation runtime change",
+  "source_files": {
+    "crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs": "60928805bcf9b029f88b69f88c034185c9d099ffb78a37e89f5e60f385d6ef07"
+  },
+  "artifacts_sha256": {
+    "novovm-node.exe": "a31a2729259ba207cf55cba449e8e8619a730d2e85a09c94742ae1acac583ad6",
+    "native-tests.exe": "8e062cf2e44d8777b25670b45944e61f5ce32b0d5321d2dc30c87fe9a97c6d1d",
+    "novovm-native-client.exe": "cfa17a7e21f890b7e87c4035b3877782bdc930b9a867adbeda4b1db669cbe237",
+    "baseline_node": "ad402c2ec020c8d4fad9ee5d86a836c089cdf77f91b1122db2adfe19a28fb83d",
+    "aoem_ffi.dll": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+  },
+  "environment": "Same as candidate-v1.json; node/test paths use candidate-v2. Formal measurement disables all diagnostics; each paired round explicitly selects its signature backend. No business backend or worker/limit changes.",
+  "hardware": "Intel Core Ultra 9 275HX, 24 logical CPUs; RTX 5090 Laptop GPU; driver 592.01",
+  "rustc": "1.94.0 x86_64-pc-windows-msvc"
+}

@@ -1,0 +1,80 @@
+{
+  "base": "5fd31d55d2ab6b3c3de532c9bea1bef82c797f98",
+  "scope": "uncommitted v4 source snapshot; original Windows private NovoRUDP owner batching plus shared missing-peer repair; no account/signature/APFL/limit change; no deployment or main change",
+  "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+  "environment": "candidate-v1.json; same original 24 workers/cpu_callbacks; CPU or GpuRequired signature only; formal diagnostics off; 1024 payer accounts, 65536 tx, 1024 rows/8 MiB, 8192 outstanding, four final receipts",
+  "files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "239fbbba3c7e5f740169cd92cb587063fa42414e4eb0b806e7a2848bfefc8d4e"
+    },
+    {
+      "path": "crates/novovm-network/Cargo.toml",
+      "sha256": "bbe6522f74a666039ebeaac0294d59b41fa6ed3eb54bd67d9f664304991779fa"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/carrier.rs",
+      "sha256": "ade6b8fd7e206dafadfce0b39ac3f0228ff4fc29fb6062a5b124b15072041401"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/datagram.rs",
+      "sha256": "662bb8a6df5b70b16760e5bddb5f04ef51a3001422c84f4478fd250df03fbe82"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/diagnostics.rs",
+      "sha256": "675eba0f6ba4a55580db6e39d1466899eeacd282463958e8e97d064107520deb"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/endpoint.rs",
+      "sha256": "98590060f386d9cc6d11f17fe1e243b9decdf839fbc0809dd9f23b18e479ce31"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/object_sender.rs",
+      "sha256": "65950ac2a4d2560a7a6f2a2d285bdefc26ad3970a62eaa2e1efb73c2659312c4"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/object_sender/tests.rs",
+      "sha256": "f80be244a4010fcb51bee23166b2bd9ce1ca0772ea4c326e0f6a11ee8a6ddc1b"
+    },
+    {
+      "path": "crates/novovm-network/src/transport/native_ingress.rs",
+      "sha256": "ceeb5d6143539a27cb985f5562494ed5a4d7d6e9f9ed9f9662fbf1f107979046"
+    },
+    {
+      "path": "crates/novovm-network/src/transport/native_ingress/tests.rs",
+      "sha256": "aa21465e4603e767292e62d53f2413fd8a541f3dba484e71c131f83cfe4b131d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "sha256": "5a22b0d5f4be4b995c6897f7f07541d2d97f4b814d724ddd9e1e650f8679f345"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs",
+      "sha256": "84a55b48038783cca20b5ee8a3277e3ea119b5cc69fdc357c84c458c5838cda2"
+    },
+    {
+      "path": "crates/novovm-udp-batch/src/lib.rs",
+      "sha256": "9e7f630b98d739bf1d77b7c4e08e5eedde41f7d1079d3c685893e6dedab33bb1"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/object_sender/tests/batch.rs",
+      "sha256": "00faac78e6006a66b4511a69aa7b34cfd23c61205180e9ac4bddccfc1d685934"
+    },
+    {
+      "path": "crates/novovm-udp-batch/src/segmented.rs",
+      "sha256": "ced4bd0fcc81e942776ebded776d771f2ee66471a35eded765e600d043add20d"
+    },
+    {
+      "path": "target/native-controller-throughput-20261031/candidate-v4/novovm-node.exe",
+      "sha256": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74"
+    },
+    {
+      "path": "target/native-controller-throughput-20261031/candidate-v4/native-tests.exe",
+      "sha256": "5b57efac4de87bb90582407b2f3fde4066e3bc43407973abc2255d8923e65d1b"
+    },
+    {
+      "path": "target/native-controller-throughput-20261031/candidate-v4/novovm-native-client.exe",
+      "sha256": "cfa17a7e21f890b7e87c4035b3877782bdc930b9a867adbeda4b1db669cbe237"
+    }
+  ]
+}

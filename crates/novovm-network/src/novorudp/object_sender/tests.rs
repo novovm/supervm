@@ -2,6 +2,7 @@ use super::*;
 use crate::product_overlay::*;
 use ed25519_dalek::SigningKey;
 
+mod batch;
 mod progress;
 mod tail;
 
