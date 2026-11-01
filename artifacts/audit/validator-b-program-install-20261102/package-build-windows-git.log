@@ -1,0 +1,67 @@
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 1.24s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.74s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.77s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.81s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.68s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.65s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.67s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.70s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.83s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.73s
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `release` profile [optimized] target(s) in 0.80s
+Unified Linux artifacts assembled, not installed or started: /mnt/d/WorksArea/SUPERVM/artifacts/product-overlay/validator-b-linux-14333419

@@ -1,0 +1,11 @@
+{
+  "base_commit": "4c57372ad0cc12123df5ca9e163a130039bfb599",
+  "source_overlay_sha256": "8ee88c113611cbdcfacce949ae06b49f9870bb8cdd570a8eddeb8343505ab4fb",
+  "core_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+  "compiler": "rustc 1.94.0",
+  "additional_lock_change": "libz-sys 1.1.23 -> 1.1.31",
+  "final_lock_sha256": "46625b6be8ad25c323fbba6e23263fe9f9f1b649805303ebdb89a7fe7f7abbec",
+  "features": "apfl-model-session,word256-gpu-forward-production,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "retained_sidecars_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+  "scope": "isolated Linux full-feature core update; sidecars retained, not rebuilt or newly qualified; not shipped or performance-qualified"
+}

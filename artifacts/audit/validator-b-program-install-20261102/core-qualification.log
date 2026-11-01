@@ -1,0 +1,58 @@
+QUALIFY_CORE_SHA256=d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33
+/home/aoem-a1/aoem-build-b-20261102/release/libaoem_ffi.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, BuildID[sha1]=da2f50ee74707aabda81f4dedd68236b2ef6dd6b, not stripped
+	linux-vdso.so.1 (0x00007ffdb6bec000)
+	libssl.so.3 => /lib/x86_64-linux-gnu/libssl.so.3 (0x00007f567553b000)
+	libcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007f566c200000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007f566be00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f567550d000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f5675424000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f566ba00000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f56755f3000)
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running unittests src/lib.rs (/home/aoem-a1/novovm-build-b-20261102/debug/deps/novovm_exec-c217d20e0fd3cbaf)
+
+running 1 test
+test pq_signature::semantic::tests::actual_semantic_mldsa_cpu_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 0.07s
+
+     Running tests/uca_spend_runtime.rs (/home/aoem-a1/novovm-build-b-20261102/debug/deps/uca_spend_runtime-bc8b0ceadb9982be)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running unittests src/lib.rs (/home/aoem-a1/novovm-build-b-20261102/debug/deps/aoem_bindings-b1ed1c9b7f4061c8)
+
+running 1 test
+test resident::storage::tests::real_storage_atomic_batch_order_multiget_fresh_read_and_cold_reopen ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.13s
+
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.33s
+     Running unittests src/lib.rs (/home/aoem-a1/novovm-build-b-20261102/debug/deps/aoem_bindings-b1ed1c9b7f4061c8)
+
+running 1 test
+test resident::storage::tests::real_storage_owner_threads_have_separate_databases_and_same_path_cannot_reopen ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.12s
+
+ISOLATED_CANDIDATE=/mnt/d/WorksArea/SUPERVM/target/aoem-linux-b-candidate-20261102
+4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309  aoem/linux/core/bin/libaoem_ffi.so
+QUALIFIED_AND_STAGED_CORE=d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33

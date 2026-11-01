@@ -1,0 +1,197 @@
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovmctl
+	linux-vdso.so.1 (0x00007fff22d9e000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000078f854e00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000078f8551d2000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000078f8550e9000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000078f854a00000)
+	/lib64/ld-linux-x86-64.so.2 (0x000078f856794000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-native-client
+	linux-vdso.so.1 (0x00007ffc431f7000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000710d7a000000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000710d7ab1b000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000710d7aa32000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000710d79c00000)
+	/lib64/ld-linux-x86-64.so.2 (0x0000710d7ab51000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-node
+	linux-vdso.so.1 (0x00007fffd6195000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000075c929600000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000075c92bf23000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000075c92be3a000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000075c929200000)
+	/lib64/ld-linux-x86-64.so.2 (0x000075c92bf59000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-product-evidence
+	linux-vdso.so.1 (0x00007ffd777f5000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007eddbee00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007eddbf861000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007eddbf778000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007eddbea00000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007eddbf897000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-product-nat
+	linux-vdso.so.1 (0x00007ffe747b5000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000071d501200000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000071d5015d2000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000071d5014e9000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000071d500e00000)
+	/lib64/ld-linux-x86-64.so.2 (0x000071d501b1a000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-product-node-overlay
+	linux-vdso.so.1 (0x00007ffcdb1bb000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007989aaa00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007989ab3ed000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007989aad17000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007989aa600000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007989ab423000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-product-peer
+	linux-vdso.so.1 (0x00007fff8d5f6000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000075cf68800000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000075cf696b8000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000075cf695cf000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000075cf68400000)
+	/lib64/ld-linux-x86-64.so.2 (0x000075cf696ee000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-product-relay
+	linux-vdso.so.1 (0x00007ffef2995000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000745389c00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000074538aa2d000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000745389f17000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000745389800000)
+	/lib64/ld-linux-x86-64.so.2 (0x000074538aa63000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-product-topology
+	linux-vdso.so.1 (0x00007ffdead7a000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007d642be00000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007d642c7b7000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007d642c117000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007d642ba00000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007d642c7ed000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/novovm-rendezvous-service
+	linux-vdso.so.1 (0x00007ffdd27cb000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007ad2d631d000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007ad2d6234000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007ad2d4a00000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007ad2d6353000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/bin/supervm-relay
+	linux-vdso.so.1 (0x00007ffdc36b7000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000749ad4d95000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000749ad3917000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000749ad3600000)
+	/lib64/ld-linux-x86-64.so.2 (0x0000749ad4dcb000)
+/opt/novovm/releases/novovm-14333419-linux-x86_64-20261102/aoem/linux/core/bin/libaoem_ffi.so
+	linux-vdso.so.1 (0x00007ffe12af8000)
+	libssl.so.3 => /lib/x86_64-linux-gnu/libssl.so.3 (0x000072938ed56000)
+	libcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x000072938e800000)
+	libstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000072938e400000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000072938ed28000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000072938e717000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000072938e000000)
+	/lib64/ld-linux-x86-64.so.2 (0x0000729397a10000)
+Usage: novovmctl lifecycle [OPTIONS]
+
+Options:
+      --deployment-manifest <DEPLOYMENT_MANIFEST>
+          Versioned native full-stack deployment; never uses legacy up/ops_wire wiring
+      --apply
+          Apply a selected native mutation; status/logs/health/adopt remain read-only
+      --action <ACTION>
+          [default: status]
+      --repo-root <REPO_ROOT>
+          
+      --version <VERSION>
+          
+      --target-version <TARGET_VERSION>
+          
+      --rollback-version <ROLLBACK_VERSION>
+          
+      --gateway-binary-from <GATEWAY_BINARY_FROM>
+          
+      --node-binary-from <NODE_BINARY_FROM>
+          
+      --set-current
+          
+      --release-root <RELEASE_ROOT>
+          
+      --runtime-state-file <RUNTIME_STATE_FILE>
+          
+      --audit-file <AUDIT_FILE>
+          
+      --runtime-pid-file <RUNTIME_PID_FILE>
+          
+      --runtime-log-dir <RUNTIME_LOG_DIR>
+          
+      --profile <PROFILE>
+          
+      --role-profile <ROLE_PROFILE>
+          
+      --overlay-route-mode <OVERLAY_ROUTE_MODE>
+          
+      --overlay-route-runtime-file <OVERLAY_ROUTE_RUNTIME_FILE>
+          
+      --overlay-route-runtime-profile <OVERLAY_ROUTE_RUNTIME_PROFILE>
+          
+      --overlay-route-relay-directory-file <OVERLAY_ROUTE_RELAY_DIRECTORY_FILE>
+          
+      --use-node-watch-mode
+          
+      --poll-ms <POLL_MS>
+          
+      --node-watch-batch-max-files <NODE_WATCH_BATCH_MAX_FILES>
+          
+      --idle-exit-seconds <IDLE_EXIT_SECONDS>
+          
+      --auto-profile-enabled
+          
+      --auto-profile-state-file <AUTO_PROFILE_STATE_FILE>
+          
+      --auto-profile-profiles <AUTO_PROFILE_PROFILES>
+          
+      --auto-profile-min-hold-seconds <AUTO_PROFILE_MIN_HOLD_SECONDS>
+          
+      --auto-profile-switch-margin <AUTO_PROFILE_SWITCH_MARGIN>
+          
+      --auto-profile-switchback-cooldown-seconds <AUTO_PROFILE_SWITCHBACK_COOLDOWN_SECONDS>
+          
+      --auto-profile-recheck-seconds <AUTO_PROFILE_RECHECK_SECONDS>
+          
+      --policy-cli-binary-file <POLICY_CLI_BINARY_FILE>
+          
+      --runtime-template-file <RUNTIME_TEMPLATE_FILE>
+          
+      --restart-after-set-runtime
+          
+      --start-grace-seconds <START_GRACE_SECONDS>
+          
+      --upgrade-health-seconds <UPGRADE_HEALTH_SECONDS>
+          
+      --node-group <NODE_GROUP>
+          
+      --upgrade-window <UPGRADE_WINDOW>
+          
+      --require-node-group <REQUIRE_NODE_GROUP>
+          
+      --print-effective-state
+          
+      --dry-run
+          
+      --force
+          
+  -h, --help
+          Print help
+
+running 1 test
+test pq_signature::semantic::tests::actual_semantic_mldsa_cpu_contract ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 1.31s
+
+PROGRAM_LOAD_AND_SEMANTIC_CPU_VERIFIED_NO_CHAIN_STARTED
+MainPID=944911
+Id=novonet-mailbox.service
+ActiveState=active
+
+MainPID=958
+Id=supervm-relay.service
+ActiveState=active
+
+MainPID=3967403
+Id=nginx.service
+ActiveState=active
+
+MainPID=1414
+Id=docker.service
+ActiveState=active
