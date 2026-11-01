@@ -1,6 +1,8 @@
 param(
   [string]$Target = "x86_64-unknown-linux-gnu",
   [string]$PackageDir = "artifacts\product-overlay\linux-x86_64",
+  [string]$AoemPackageRoot,
+  [string]$AoemCoreSha256,
   [switch]$Force
 )
 
@@ -134,6 +136,17 @@ try {
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
     throw "Unable to identify the package source commit."
   }
+  $aoemRoot = if ([string]::IsNullOrWhiteSpace($AoemPackageRoot)) {
+    if ($AoemCoreSha256) { throw 'AoemCoreSha256 requires AoemPackageRoot.' }
+    Join-Path $repo "aoem"
+  } else {
+    if ($AoemCoreSha256 -notmatch '^[a-fA-F0-9]{64}$') {
+      throw 'An isolated AoemPackageRoot requires an independently pinned AoemCoreSha256.'
+    }
+    $resolvedRoot = (Resolve-Path -LiteralPath $AoemPackageRoot -ErrorAction Stop).Path
+    Assert-PlainPackagePath $resolvedRoot -Tree
+    $resolvedRoot
+  }
 
   $installedTargets = @(rustup target list --installed)
   if ($LASTEXITCODE -ne 0) {
@@ -200,7 +213,6 @@ try {
     $contract | Add-Member -NotePropertyName sha256 -NotePropertyValue $executableHashes[$bin].ToLowerInvariant() -Force
   }
 
-  $aoemRoot = Join-Path $repo "aoem"
   $aoemLinux = Join-Path $aoemRoot "linux"
   $aoemCore = Join-Path $aoemLinux "core\bin\libaoem_ffi.so"
   $aoemManifest = Join-Path $aoemRoot "manifest\aoem-manifest.json"
@@ -221,6 +233,9 @@ try {
   $actualAoemSha = (Get-FileHash -LiteralPath $aoemCore -Algorithm SHA256).Hash.ToLowerInvariant()
   if ([string]::IsNullOrWhiteSpace($expectedAoemSha) -or $actualAoemSha -ne $expectedAoemSha.ToLowerInvariant()) {
     throw "Bundled AOEM FULLMAX Linux core checksum does not match the SDK manifest."
+  }
+  if ($AoemCoreSha256 -and $actualAoemSha -ne $AoemCoreSha256.ToLowerInvariant()) {
+    throw 'Isolated AOEM core does not match the independently pinned checksum.'
   }
   $metadataFiles = @(
     "aoem-sdk-manifest.json", "INSTALL-INFO.txt", "README.md",
@@ -796,6 +811,7 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
       path = "aoem/linux/core/bin/libaoem_ffi.so"
       sha256 = $actualAoemSha
       platform = "linux-x86_64"
+      isolated_package_input = ![string]::IsNullOrWhiteSpace($AoemPackageRoot)
       performance_qualified = $false
     }
     compatibility_tools = [PSCustomObject]@{

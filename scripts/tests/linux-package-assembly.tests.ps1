@@ -200,4 +200,26 @@ if (!$rejected -or (Test-Path (Join-Path $fixture 'artifacts/product-overlay/cha
 if ((Get-FileHash (Join-Path $output 'bin/novovm-node') -Algorithm SHA256).Hash.ToLowerInvariant() -ne $coreSha) {
   throw 'Package copy still aliases mutable Cargo source'
 }
+$fixtureState.tamper = $false
+foreach ($case in @(
+    @{root=(Join-Path $fixture 'aoem'); pin=''; message='*requires an independently pinned*'},
+    @{root=''; pin=$coreSha; message='*requires AoemPackageRoot*'},
+    @{root=(Join-Path $fixture 'aoem'); pin=('0' * 64); message='*does not match the independently pinned*'}
+)) {
+  $rejected = $false
+  try {
+    & $packager -PackageDir 'artifacts/product-overlay/rejected-runtime' -AoemPackageRoot $case.root -AoemCoreSha256 $case.pin
+  } catch {
+    if ($_.Exception.Message -notlike $case.message) { throw }
+    $rejected = $true
+  }
+  if (!$rejected -or (Test-Path (Join-Path $fixture 'artifacts/product-overlay/rejected-runtime'))) {
+    throw 'An isolated runtime must require a matching independent pin before publishing'
+  }
+}
+& $packager -PackageDir 'artifacts/product-overlay/isolated-runtime' -AoemPackageRoot (Join-Path $fixture 'aoem') -AoemCoreSha256 $coreSha
+$isolated = Get-Content -Raw -LiteralPath (Join-Path $fixture 'artifacts/product-overlay/isolated-runtime/release-manifest.json') | ConvertFrom-Json
+if (!$isolated.aoem_runtime.isolated_package_input -or $isolated.aoem_runtime.sha256 -ne $coreSha) {
+  throw 'The original assembly must bind and record its explicit isolated AOEM input'
+}
 Write-Output "PASS: original unified assembly (11 binary contracts), manifest, checksums, original resources, unconfigured management, explicit duplex default and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"
