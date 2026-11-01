@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 pub const NOVORUDP_TRANSPORT_FRAME_V0_MAGIC: &[u8; 8] = b"NOVRUDP0";
 pub const NOVORUDP_TRANSPORT_FRAME_V0_VERSION: u16 = 1;
-const HEADER_LEN_V0: usize = 8 + 2 + 1 + 1 + 16 + 8 + 8 + 8 + 8 + 4 + 32;
+pub(crate) const HEADER_LEN_V0: usize = 8 + 2 + 1 + 1 + 16 + 8 + 8 + 8 + 8 + 4 + 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NovoRudpTransportFrameKindV0 {
@@ -177,7 +177,7 @@ impl NovoRudpTransportFrameV0 {
         out
     }
 
-    fn encode_into(&self, payload_len: u32, out: &mut Vec<u8>) {
+    pub(crate) fn encode_into(&self, payload_len: u32, out: &mut Vec<u8>) {
         let checksum = novorudp_transport_frame_checksum_v0(
             self.kind,
             &self.session_id,

@@ -3,11 +3,14 @@
 param(
     [ValidateSet('same-bytes','continuous','recovery')][string]$Suite='same-bytes',
     [switch]$Baseline,
-    [switch]$Observe
+    [switch]$Observe,
+    [string]$CandidateManifest=(Join-Path $PSScriptRoot 'candidate.json')
 )
 $ErrorActionPreference='Stop'
 $taskRepo=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
-$taskManifest=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'candidate.json') -Raw | ConvertFrom-Json
+$taskManifestPath=(Resolve-Path -LiteralPath $CandidateManifest).Path
+$taskManifest=Get-Content -LiteralPath $taskManifestPath -Raw | ConvertFrom-Json
+$taskBatch=Split-Path -Leaf (Split-Path -Parent $taskManifestPath)
 foreach($entry in $taskManifest.files){
     if((Get-FileHash -LiteralPath $entry.path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256){throw "Artifact changed: $($entry.role)"}
 }
@@ -27,7 +30,7 @@ $taskTest=switch($Suite){
 }
 if($Suite -eq 'same-bytes' -and $Baseline){throw 'Same-byte comparison must retain different before/after paths.'}
 $taskLabel="$Suite-$(if($Baseline){'baseline'}else{'candidate'})-$(if($Observe){'observed'}else{'unobserved'})"
-$taskOut=Join-Path $taskRepo "target/native-aad-session-reuse-20261101/$(Get-Date -Format yyyyMMdd-HHmmss)-$PID-$taskLabel"
+$taskOut=Join-Path $taskRepo "target/$taskBatch/$(Get-Date -Format yyyyMMdd-HHmmss)-$PID-$taskLabel"
 New-Item -ItemType Directory -Path $taskOut | Out-Null
 $taskArgs=@($taskTest,'--exact','--ignored','--nocapture','--test-threads=1')
 $taskBegin=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()

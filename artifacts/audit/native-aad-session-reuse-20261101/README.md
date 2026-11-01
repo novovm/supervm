@@ -6,6 +6,10 @@
 不改账户、签名、共识、补片、候选、配额、超时、GPU或AOEM接口。
 main、正式随包库和部署保持不动。
 
+后续[原UDP最终wire缓冲复用](../native-send-buffer-20261101/README.md)以本轮
+`16cb4cec`冻结制品为基线，消除UDP封装中的独立密文及身份克隆，保留通用envelope API。
+该轮局部减少工作、16轮65K及恢复通过，但持续性能仍有负向；不改写本页AAD历史成绩。
+
 ## 改掉的工作
 
 原来每次seal/open均调用 `secure_frame_aad_v1`，从空Vec重复拼接域、版本、

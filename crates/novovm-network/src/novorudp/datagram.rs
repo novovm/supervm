@@ -98,12 +98,12 @@ impl NativeUdpSession {
             frame.payload.len() <= MAX_DATAGRAM_BYTES - 96 - 16,
             "native payload too large"
         );
-        let envelope = match &mut self.channel {
-            NativeChannel::Udp(channel) => channel.seal_novorudp_frame(frame)?,
+        match &mut self.channel {
+            NativeChannel::Udp(channel) => channel.seal_novorudp_wire(frame, MAX_DATAGRAM_BYTES),
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => {
                 let envelope = channel.seal_novorudp_frame(frame)?;
-                crate::product_overlay::SecureNovoRudpEnvelopeV1 {
+                let envelope = crate::product_overlay::SecureNovoRudpEnvelopeV1 {
                     version: envelope.version,
                     session_id: envelope.session_id,
                     sender_peer_id: envelope.sender_peer_id,
@@ -111,11 +111,12 @@ impl NativeUdpSession {
                     sequence: envelope.sequence,
                     nonce: envelope.nonce,
                     ciphertext: envelope.ciphertext,
-                }
+                };
+                let _cost =
+                    super::diagnostics::io_span(super::diagnostics::IoPhase::EnvelopeEncode);
+                binary::encode(&envelope, MAX_DATAGRAM_BYTES)
             }
-        };
-        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::EnvelopeEncode);
-        binary::encode(&envelope, MAX_DATAGRAM_BYTES)
+        }
     }
 
     pub fn open(&mut self, source: SocketAddr, wire: &[u8]) -> Result<NovoRudpTransportFrameV0> {

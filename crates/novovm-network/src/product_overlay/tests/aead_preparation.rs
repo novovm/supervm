@@ -3,7 +3,7 @@ use super::*;
 use std::{hint::black_box, time::Instant};
 
 // Local, unsent fixtures only: never clone a live session's sending state.
-fn copy_benchmark_fixture(source: &E2eSecureChannelV1) -> E2eSecureChannelV1 {
+pub(super) fn copy_benchmark_fixture(source: &E2eSecureChannelV1) -> E2eSecureChannelV1 {
     E2eSecureChannelV1 {
         session_id: source.session_id,
         local_peer_id: source.local_peer_id.clone(),

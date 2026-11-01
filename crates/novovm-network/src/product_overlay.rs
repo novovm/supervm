@@ -2,7 +2,7 @@ use crate::novorudp::diagnostics::{io_span, IoPhase};
 use crate::novorudp::{NovoRudpTransportFrameDecodeErrorV0, NovoRudpTransportFrameV0};
 pub mod binary;
 pub mod handshake_wire;
-use chacha20poly1305::{aead::AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce};
+use chacha20poly1305::{aead::AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce, Tag};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
 use k256::elliptic_curve::Generate;
@@ -510,38 +510,83 @@ impl E2eSecureChannelV1 {
         frame: &NovoRudpTransportFrameV0,
     ) -> Result<SecureNovoRudpEnvelopeV1, ProductOverlayErrorV1> {
         let _cost = io_span(IoPhase::SecureSeal);
-        let sequence = self.outbound_sequence;
-        self.outbound_sequence = self
-            .outbound_sequence
-            .checked_add(1)
-            .ok_or(ProductOverlayErrorV1::SecureFrameSequenceExhausted)?;
-        let nonce = secure_frame_nonce_v1(self.outbound_nonce_prefix, sequence);
-        let mut envelope = SecureNovoRudpEnvelopeV1 {
+        let (sequence, nonce) = self.begin_outbound_frame()?;
+        let mut ciphertext = {
+            let _cost = io_span(IoPhase::FrameEncode);
+            frame.encode_for_aead()
+        };
+        let tag = self.seal_frame_bytes(&nonce, &mut ciphertext)?;
+        ciphertext.extend_from_slice(&tag);
+        Ok(SecureNovoRudpEnvelopeV1 {
             version: PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
             session_id: self.session_id,
             sender_peer_id: self.local_peer_id.clone(),
             recipient_peer_id: self.remote_peer_id.clone(),
             sequence,
             nonce,
-            ciphertext: Vec::new(),
+            ciphertext,
+        })
+    }
+
+    pub(crate) fn seal_novorudp_wire(
+        &mut self,
+        frame: &NovoRudpTransportFrameV0,
+        limit: usize,
+    ) -> anyhow::Result<Vec<u8>> {
+        let _cost = io_span(IoPhase::SecureSeal);
+        let (sequence, nonce) = self.begin_outbound_frame()?;
+        let payload_len = u32::try_from(frame.payload.len())?;
+        let ciphertext_len = crate::novorudp::HEADER_LEN_V0
+            .checked_add(frame.payload.len())
+            .and_then(|n| n.checked_add(16))
+            .ok_or_else(|| anyhow::anyhow!("native encrypted frame length overflow"))?;
+        let mut wire = {
+            let _cost = io_span(IoPhase::EnvelopeEncode);
+            binary::encode_header(
+                binary::Header {
+                    version: PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+                    session_id: &self.session_id,
+                    sender: &self.local_peer_id,
+                    recipient: &self.remote_peer_id,
+                    sequence,
+                    nonce: &nonce,
+                },
+                ciphertext_len,
+                limit,
+            )?
         };
-        update_frame_aad_v1(&mut self.outbound_aad, sequence, &nonce);
-        let cipher = ChaCha20Poly1305::new((&self.outbound_key).into());
-        envelope.ciphertext = {
-            let _cost = io_span(IoPhase::FrameEncode);
-            frame.encode_for_aead()
-        };
+        let prefix = wire.len();
+        let allocation = wire.capacity();
         {
-            let _cost = io_span(IoPhase::SealAead);
-            cipher
-                .encrypt_in_place(
-                    Nonce::from_slice(&nonce),
-                    &self.outbound_aad,
-                    &mut envelope.ciphertext,
-                )
-                .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)?;
+            let _cost = io_span(IoPhase::FrameEncode);
+            frame.encode_into(payload_len, &mut wire);
         }
-        Ok(envelope)
+        let tag = self.seal_frame_bytes(&nonce, &mut wire[prefix..])?;
+        wire.extend_from_slice(&tag);
+        debug_assert_eq!(wire.len(), prefix + ciphertext_len);
+        debug_assert_eq!(wire.capacity(), allocation);
+        Ok(wire)
+    }
+
+    fn begin_outbound_frame(&mut self) -> Result<(u64, [u8; 12]), ProductOverlayErrorV1> {
+        let sequence = self.outbound_sequence;
+        self.outbound_sequence = sequence
+            .checked_add(1)
+            .ok_or(ProductOverlayErrorV1::SecureFrameSequenceExhausted)?;
+        let nonce = secure_frame_nonce_v1(self.outbound_nonce_prefix, sequence);
+        update_frame_aad_v1(&mut self.outbound_aad, sequence, &nonce);
+        Ok((sequence, nonce))
+    }
+
+    fn seal_frame_bytes(
+        &self,
+        nonce: &[u8; 12],
+        bytes: &mut [u8],
+    ) -> Result<Tag, ProductOverlayErrorV1> {
+        let _cost = io_span(IoPhase::SealAead);
+        ChaCha20Poly1305::new((&self.outbound_key).into())
+            .encrypt_in_place_detached(Nonce::from_slice(nonce), &self.outbound_aad, bytes)
+            .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)
     }
 
     pub fn open_novorudp_frame(
@@ -871,6 +916,7 @@ fn hex_lower_v1(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     mod aead_preparation;
+    mod send_wire;
 
     use super::*;
     use crate::novorudp::NovoRudpTransportFrameKindV0;

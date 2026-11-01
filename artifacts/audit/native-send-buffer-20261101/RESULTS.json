@@ -1,0 +1,516 @@
+{
+  "schema": "novovm-original-send-buffer-qualification/v1",
+  "base": "16cb4cec8e3833c56096c55b29ea48d5928d657a",
+  "scope": "Unchanged original NovoRUDP wire bytes and contracts; one-host four-node measurements, not physical-network acceptance; same-byte and rolling supply kept separate",
+  "runtime_change": "Seal existing canonical frame inside final wire allocation, removing two peer-id clones, separate ciphertext allocation and full ciphertext-to-wire copy; no change to checksum, nonce, AEAD, replay, repair or socket quotas",
+  "local_preparation": [
+    {
+      "batch": 1,
+      "old_us": 102953,
+      "new_us": 97499,
+      "reduction_percent": 5.297562965625091,
+      "old_p99_med_ns": 1600,
+      "new_p99_med_ns": 1500,
+      "old_p99_max_ns": 1600,
+      "new_p99_max_ns": 1500
+    },
+    {
+      "batch": 8,
+      "old_us": 131550,
+      "new_us": 127478,
+      "reduction_percent": 3.0954009882174116,
+      "old_p99_med_ns": 18200,
+      "new_p99_med_ns": 16600,
+      "old_p99_max_ns": 19300,
+      "new_p99_max_ns": 29600
+    },
+    {
+      "batch": 16,
+      "old_us": 133637,
+      "new_us": 128077,
+      "reduction_percent": 4.1605244056660995,
+      "old_p99_med_ns": 35500,
+      "new_p99_med_ns": 34100,
+      "old_p99_max_ns": 36100,
+      "new_p99_max_ns": 34400
+    },
+    {
+      "batch": 32,
+      "old_us": 134218,
+      "new_us": 128443,
+      "reduction_percent": 4.30270157504955,
+      "old_p99_med_ns": 69500,
+      "new_p99_med_ns": 66700,
+      "old_p99_max_ns": 70300,
+      "new_p99_max_ns": 67000
+    }
+  ],
+  "groups": {
+    "paired-observed": [
+      {
+        "label": "before_cpu",
+        "signature_backend": "cpu",
+        "tps": 2708.860228954408,
+        "p95_us": 3607541,
+        "p99_us": 4595817,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xbe83ae25368705fe2a7740ddf981c76e0a30a158b185b84f628bca7069dc844b",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 595.5696105957031,
+        "four_node_cpu_us_per_transaction": 2186.5367889404297,
+        "driver_cpu_us_per_transaction": 359.0583801269531
+      },
+      {
+        "label": "after_cpu",
+        "signature_backend": "cpu",
+        "tps": 2696.1548732312294,
+        "p95_us": 3628862,
+        "p99_us": 4019016,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xbe83ae25368705fe2a7740ddf981c76e0a30a158b185b84f628bca7069dc844b",
+        "node_sha256": "0xa524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 604.3910980224609,
+        "four_node_cpu_us_per_transaction": 2166.0327911376953,
+        "driver_cpu_us_per_transaction": 363.34991455078125
+      },
+      {
+        "label": "before_gpu",
+        "signature_backend": "gpu_required",
+        "tps": 2528.253627787026,
+        "p95_us": 3760432,
+        "p99_us": 4129861,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xbe83ae25368705fe2a7740ddf981c76e0a30a158b185b84f628bca7069dc844b",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 597.9537963867188,
+        "four_node_cpu_us_per_transaction": 2156.7344665527344,
+        "driver_cpu_us_per_transaction": 388.3838653564453
+      },
+      {
+        "label": "after_gpu",
+        "signature_backend": "gpu_required",
+        "tps": 2574.104685965591,
+        "p95_us": 4151464,
+        "p99_us": 4648878,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xbe83ae25368705fe2a7740ddf981c76e0a30a158b185b84f628bca7069dc844b",
+        "node_sha256": "0xa524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 582.4565887451172,
+        "four_node_cpu_us_per_transaction": 2092.3614501953125,
+        "driver_cpu_us_per_transaction": 377.655029296875
+      },
+      {
+        "label": "before_cpu_repeat",
+        "signature_backend": "cpu",
+        "tps": 2575.3205416629694,
+        "p95_us": 3725752,
+        "p99_us": 4431188,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xbe83ae25368705fe2a7740ddf981c76e0a30a158b185b84f628bca7069dc844b",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 650.1674652099609,
+        "four_node_cpu_us_per_transaction": 2251.863479614258,
+        "driver_cpu_us_per_transaction": 378.3702850341797
+      }
+    ],
+    "paired-unobserved": [
+      {
+        "label": "before_cpu",
+        "signature_backend": "cpu",
+        "tps": 2643.639913299131,
+        "p95_us": 3619589,
+        "p99_us": 3855926,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0x67da439b71f70eb552069dd715af87d5583bcb04c3550aae602e6eff0f59668d",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 520.7061767578125,
+        "four_node_cpu_us_per_transaction": 2235.889434814453,
+        "driver_cpu_us_per_transaction": 371.69456481933594
+      },
+      {
+        "label": "after_cpu",
+        "signature_backend": "cpu",
+        "tps": 2740.799631303565,
+        "p95_us": 3776250,
+        "p99_us": 3817942,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0x67da439b71f70eb552069dd715af87d5583bcb04c3550aae602e6eff0f59668d",
+        "node_sha256": "0xa524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 524.0440368652344,
+        "four_node_cpu_us_per_transaction": 2161.9796752929688,
+        "driver_cpu_us_per_transaction": 354.0515899658203
+      },
+      {
+        "label": "before_gpu",
+        "signature_backend": "gpu_required",
+        "tps": 2600.1186113678064,
+        "p95_us": 3722521,
+        "p99_us": 4203554,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0x67da439b71f70eb552069dd715af87d5583bcb04c3550aae602e6eff0f59668d",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 483.0360412597656,
+        "four_node_cpu_us_per_transaction": 2038.0020141601562,
+        "driver_cpu_us_per_transaction": 377.655029296875
+      },
+      {
+        "label": "after_gpu",
+        "signature_backend": "gpu_required",
+        "tps": 2917.246067364365,
+        "p95_us": 3667592,
+        "p99_us": 4131536,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0x67da439b71f70eb552069dd715af87d5583bcb04c3550aae602e6eff0f59668d",
+        "node_sha256": "0xa524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 448.46534729003906,
+        "four_node_cpu_us_per_transaction": 1864.6717071533203,
+        "driver_cpu_us_per_transaction": 335.93177795410156
+      },
+      {
+        "label": "before_cpu_repeat",
+        "signature_backend": "cpu",
+        "tps": 2689.44112021526,
+        "p95_us": 3617884,
+        "p99_us": 3959515,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0x67da439b71f70eb552069dd715af87d5583bcb04c3550aae602e6eff0f59668d",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 524.0440368652344,
+        "four_node_cpu_us_per_transaction": 2181.7684173583984,
+        "driver_cpu_us_per_transaction": 365.25726318359375
+      }
+    ],
+    "continuous-baseline": [
+      {
+        "label": null,
+        "signature_backend": "cpu",
+        "tps": 2775.3241767172085,
+        "p95_us": 3549177,
+        "p99_us": 3743208,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xcba5d54d042030eea4e03563acf6602b059995e53a02f14f6a3fc3dc575db6dc",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 616.7888641357422,
+        "four_node_cpu_us_per_transaction": 2178.9073944091797,
+        "driver_cpu_us_per_transaction": 491.3806915283203
+      },
+      {
+        "label": null,
+        "signature_backend": "gpu_required",
+        "tps": 2635.4744284262556,
+        "p95_us": 3642643,
+        "p99_us": 3760047,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xcba5d54d042030eea4e03563acf6602b059995e53a02f14f6a3fc3dc575db6dc",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 596.5232849121094,
+        "four_node_cpu_us_per_transaction": 2060.6517791748047,
+        "driver_cpu_us_per_transaction": 502.1095275878906
+      },
+      {
+        "label": null,
+        "signature_backend": "cpu",
+        "tps": 2687.852094638839,
+        "p95_us": 3887607,
+        "p99_us": 4236830,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xcba5d54d042030eea4e03563acf6602b059995e53a02f14f6a3fc3dc575db6dc",
+        "node_sha256": "0xdbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 592.2317504882812,
+        "four_node_cpu_us_per_transaction": 2135.2767944335938,
+        "driver_cpu_us_per_transaction": 503.5400390625
+      }
+    ],
+    "continuous-candidate": [
+      {
+        "label": null,
+        "signature_backend": "cpu",
+        "tps": 2606.189102609351,
+        "p95_us": 3971287,
+        "p99_us": 4257032,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xe5c775e16ec06dfb65572b75dbb16d59ae2f22e40ad2aad12baccec5acccf8df",
+        "node_sha256": "0xa524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 622.7493286132812,
+        "four_node_cpu_us_per_transaction": 2197.742462158203,
+        "driver_cpu_us_per_transaction": 507.354736328125
+      },
+      {
+        "label": null,
+        "signature_backend": "gpu_required",
+        "tps": 2610.288742082275,
+        "p95_us": 3649568,
+        "p99_us": 4001173,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xe5c775e16ec06dfb65572b75dbb16d59ae2f22e40ad2aad12baccec5acccf8df",
+        "node_sha256": "0xa524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 589.6091461181641,
+        "four_node_cpu_us_per_transaction": 2090.930938720703,
+        "driver_cpu_us_per_transaction": 514.0304565429688
+      },
+      {
+        "label": null,
+        "signature_backend": "cpu",
+        "tps": 2693.593504697821,
+        "p95_us": 3841347,
+        "p99_us": 4037496,
+        "successful_transactions": 65536,
+        "passed": true,
+        "cold_recovery_passed": true,
+        "full_fee_audit_passed": true,
+        "input_hash": "0xe5c775e16ec06dfb65572b75dbb16d59ae2f22e40ad2aad12baccec5acccf8df",
+        "node_sha256": "0xa524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "business_backend": "cpu_callbacks",
+        "account_heads": [
+          64,
+          64,
+          64,
+          64
+        ],
+        "ingress_cpu_us_per_transaction": 579.833984375,
+        "four_node_cpu_us_per_transaction": 2160.5491638183594,
+        "driver_cpu_us_per_transaction": 506.1626434326172
+      }
+    ]
+  },
+  "comparisons": {
+    "paired-observed": {
+      "cpu_tps_percent": -0.46902957883813157,
+      "gpu_tps_percent": 1.8135466186870897,
+      "cpu_p95_percent": 0.5910119940424785,
+      "gpu_p99_percent": 12.56742054998945
+    },
+    "paired-unobserved": {
+      "cpu_tps_percent": 3.675225113513414,
+      "gpu_tps_percent": 12.1966534376573,
+      "cpu_p95_percent": 4.328143333400569,
+      "gpu_p99_percent": -1.7132645375793953
+    },
+    "continuous": {
+      "scope": "Same workload parameters; independently generated rolling signatures and chain domains, NOT byte-identical cross-version replay or randomized order; descriptive comparison only",
+      "per_round": [
+        {
+          "backend": "cpu",
+          "tps_percent": -6.094245693053379,
+          "p99_percent": 13.72683537756918,
+          "four_node_cpu_percent": 0.8644271802166648
+        },
+        {
+          "backend": "gpu_required",
+          "tps_percent": -0.9556414614510289,
+          "p99_percent": 6.412845371347742,
+          "four_node_cpu_percent": 1.4693972000462852
+        },
+        {
+          "backend": "cpu",
+          "tps_percent": 0.21360587773537887,
+          "p99_percent": -4.704791082011783,
+          "four_node_cpu_percent": 1.1835640911121104
+        }
+      ],
+      "cpu_two_sample_mean_tps_percent": -2.99081808700854,
+      "gpu_tps_percent": -0.9556414614510289
+    }
+  },
+  "successful_rounds": 16,
+  "transactions_across_separate_rounds": 1048576,
+  "all_rounds_pass": true,
+  "fault_recovery": {
+    "source": "recovery.json",
+    "completed": true,
+    "elapsed_ms": 120817,
+    "cold_reopen_verified": true,
+    "original_recovery_heads": [
+      41,
+      41,
+      41,
+      41
+    ],
+    "runtime_opening_completed": true,
+    "opening_respend_final_heads": [
+      43,
+      43,
+      43,
+      43
+    ],
+    "opening_cold_verified": true
+  },
+  "stable_tps_improvement_qualified": false,
+  "ingress_cpu_improvement_qualified": false,
+  "tps_4000_reached": false,
+  "historical_12000_restored": false,
+  "unmeasured": [
+    "new ETW function shares",
+    "allocator event counts",
+    "physical wire bytes and packet loss",
+    "Linux and multi-host performance",
+    "default concurrent/WSS qualification",
+    "full final candidate CI"
+  ]
+}

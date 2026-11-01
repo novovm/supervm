@@ -1,0 +1,44 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Finished `release` profile [optimized] target(s) in 46.24s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_network-57d7f711b0dc108c.exe)
+
+running 31 tests
+test duplex::product_overlay::security_tests::authenticated_malformed_frame_is_rejected_and_cannot_be_replayed ... ok
+test duplex::product_overlay::security_tests::invalid_key_signature_length_and_wrong_responder_are_rejected ... ok
+test duplex::product_overlay::security_tests::outbound_sequence_exhaustion_never_wraps_or_reuses_a_nonce ... ok
+test duplex::product_overlay::security_tests::response_transcript_replay_signature_and_offer_expiry_are_checked ... ok
+test duplex::product_overlay::security_tests::unauthenticated_future_sequence_does_not_poison_the_replay_window ... ok
+test duplex::product_overlay::security_tests::weak_identity_forgery_is_rejected_on_offer_and_response ... ok
+test duplex::product_overlay::tests::challenge_response_derives_matching_secure_channels ... ok
+test duplex::product_overlay::tests::excessive_clock_skew_is_rejected_without_extending_expiration ... ok
+test duplex::product_overlay::tests::handshake_rejects_identity_and_signature_tamper ... ok
+test duplex::product_overlay::tests::handshake_replay_and_expiry_are_rejected ... ok
+test duplex::product_overlay::tests::independent_device_clocks_allow_bounded_skew_in_both_directions ... ok
+test duplex::product_overlay::tests::replay_window_accepts_reordering_once_within_window ... ok
+test duplex::product_overlay::tests::secure_frame_rejects_ciphertext_route_nonce_and_replay_tamper ... ok
+test product_overlay::binary::tests::preserves_existing_data_layout_and_rejects_bad_framing ... ok
+test product_overlay::handshake_wire::tests::fixed_native_carrier_preserves_original_transcript_and_rejects_noncanonical_shapes ... ok
+test product_overlay::tests::aead_preparation::benchmark_session_aad_reuse_seal_and_open ... ignored, isolated uncached reference vs real session seal/open; run release alone, diagnostics off
+test product_overlay::tests::aead_preparation::concurrent_channels_keep_directional_scratch_independent ... ok
+test product_overlay::tests::aead_preparation::rejected_dynamic_aad_and_other_sessions_do_not_poison_replay_or_preparation ... ok
+test product_overlay::tests::aead_preparation::session_aad_matches_uncached_bytes_in_both_directions_without_buffer_growth ... ok
+test product_overlay::tests::challenge_response_derives_matching_secure_channels ... ok
+test product_overlay::tests::excessive_clock_skew_is_rejected_without_extending_expiration ... ok
+test product_overlay::tests::handshake_rejects_identity_and_signature_tamper ... ok
+test product_overlay::tests::handshake_replay_and_expiry_are_rejected ... ok
+test product_overlay::tests::in_place_frames_match_allocating_aead_and_preserve_rejection_state ... ok
+test product_overlay::tests::independent_device_clocks_allow_bounded_skew_in_both_directions ... ok
+test product_overlay::tests::replay_window_accepts_reordering_once_within_window ... ok
+test product_overlay::tests::secp256k1_ecdh_sec1_fixed_wire_vector_survives_dependency_upgrade ... ok
+test product_overlay::tests::secure_frame_rejects_ciphertext_route_nonce_and_replay_tamper ... ok
+test product_overlay::tests::send_wire::benchmark_existing_envelope_and_direct_wire ... ignored, same-key final-wire allocation comparison; release only, diagnostics off, run alone
+test product_overlay::tests::send_wire::direct_wire_matches_existing_envelope_and_mutable_frame_encoding_in_both_directions ... ok
+test product_overlay::tests::send_wire::direct_wire_rejection_keeps_nonce_progression_and_sequence_exhaustion ... ok
+
+test result: ok. 29 passed; 0 failed; 2 ignored; 0 measured; 904 filtered out; finished in 0.02s
+

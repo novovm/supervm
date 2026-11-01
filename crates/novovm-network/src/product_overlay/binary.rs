@@ -11,16 +11,44 @@ const MAGIC: &[u8; 8] = b"NVRLY002";
 const DATA: u8 = 1;
 
 pub fn encode(envelope: &SecureNovoRudpEnvelopeV1, limit: usize) -> Result<Vec<u8>> {
+    let mut out = encode_header(
+        Header {
+            version: envelope.version,
+            session_id: &envelope.session_id,
+            sender: &envelope.sender_peer_id,
+            recipient: &envelope.recipient_peer_id,
+            sequence: envelope.sequence,
+            nonce: &envelope.nonce,
+        },
+        envelope.ciphertext.len(),
+        limit,
+    )?;
+    out.extend_from_slice(&envelope.ciphertext);
+    Ok(out)
+}
+
+pub(crate) struct Header<'a> {
+    pub version: u16,
+    pub session_id: &'a [u8; 16],
+    pub sender: &'a str,
+    pub recipient: &'a str,
+    pub sequence: u64,
+    pub nonce: &'a [u8; 12],
+}
+
+/// Preflight and reserve the complete original envelope, but leave its final
+/// ciphertext field empty so the session can seal directly in that allocation.
+pub(crate) fn encode_header(
+    header: Header<'_>,
+    ciphertext_len: usize,
+    limit: usize,
+) -> Result<Vec<u8>> {
     let mut size = 9usize + 2 + 16 + 8 + 12;
-    for bytes in [
-        envelope.sender_peer_id.as_bytes(),
-        envelope.recipient_peer_id.as_bytes(),
-        &envelope.ciphertext,
-    ] {
-        u32::try_from(bytes.len()).context("binary field exceeds u32")?;
+    for length in [header.sender.len(), header.recipient.len(), ciphertext_len] {
+        u32::try_from(length).context("binary field exceeds u32")?;
         size = size
             .checked_add(4)
-            .and_then(|s| s.checked_add(bytes.len()))
+            .and_then(|s| s.checked_add(length))
             .filter(|s| *s <= limit)
             .context("binary envelope exceeds carrier limit")?;
     }
@@ -28,14 +56,14 @@ pub fn encode(envelope: &SecureNovoRudpEnvelopeV1, limit: usize) -> Result<Vec<u
     out.try_reserve_exact(size)?;
     out.extend_from_slice(MAGIC);
     out.push(DATA);
-    out.extend_from_slice(&envelope.version.to_be_bytes());
-    out.extend_from_slice(&envelope.session_id);
-    put_variable(&mut out, envelope.sender_peer_id.as_bytes());
-    put_variable(&mut out, envelope.recipient_peer_id.as_bytes());
-    out.extend_from_slice(&envelope.sequence.to_be_bytes());
-    out.extend_from_slice(&envelope.nonce);
-    put_variable(&mut out, &envelope.ciphertext);
-    debug_assert_eq!(out.len(), size);
+    out.extend_from_slice(&header.version.to_be_bytes());
+    out.extend_from_slice(header.session_id);
+    put_variable(&mut out, header.sender.as_bytes());
+    put_variable(&mut out, header.recipient.as_bytes());
+    out.extend_from_slice(&header.sequence.to_be_bytes());
+    out.extend_from_slice(header.nonce);
+    out.extend_from_slice(&(ciphertext_len as u32).to_be_bytes());
+    debug_assert_eq!(out.len() + ciphertext_len, size);
     Ok(out)
 }
 
