@@ -1,8 +1,8 @@
 # NOVONET service economics: synchronized baseline
 
-## 2026-11-02 product clarification: UCA identity and NOV quick-wallet payment
+## 2026-11-02 latest decision: monthly subscription, daily provider settlement
 
-UCA authenticates the chat identity; the wallet associates actual NOV asset accounts. Communication charges use the user's selected NOV quick-payment account. Identity/chat keys do not gain asset authority. Default consumption remains pay-as-you-go: authorize communication spending, reserve funded work, settle verified service increments, and release unused reservations under the original rules. Bounded micro-usage may be settled together; no transaction per packet is required. There is no default fixed monthly subscription debit, silent savings debit, unlimited replenishment or month-end balance expiry. A monthly spending budget is not a subscription fee; optional packages require their own purchase terms. Existing metering, duplicate-charge prevention, service/device receipt distinctions, splits and pending numeric policies remain unchanged. This does not restore mandatory grants for ordinary accounts; automated spending still needs explicit purpose/funding authorization, with account control and settlement using the original ML-DSA-65 path. This clarification does not deliver or activate billing.
+The selected NOV quick wallet pays the monthly subscription once. Normally unused monthly entitlements expire without a refund; unspent wallet NOV does not expire. Included usage is not charged to the user's wallet again. The main treasury communication settlement pool records verified service liabilities promptly and settles qualified providers daily. This supersedes default pay-as-you-go and optional-only subscription wording. Existing resource measurement, duplicate-charge prevention and funded obligations remain. Price, resource entitlements, renewal, daily/monthly cutoffs and pool allocation remain pending; billing is not enabled. The [authoritative subscription and daily-settlement contract](NOV-COMMUNICATION-SUBSCRIPTION-DAILY-SETTLEMENT-2026-11-02.md) records the full boundaries.
 
 Date: 2026-10-24. **Design decisions updated; implementation not delivered.** Documentation only: no billing activation, supply/configuration changes, asset operations, deployment, or mainnet authorization.
 
@@ -12,9 +12,9 @@ The [Chinese baseline](../../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-
 
 | Previous rule | Current decision |
 | --- | --- |
-| Mandatory monthly package / monthly balance reset | Default NOV pay-as-you-go; funded balances and settled earnings do not expire at month end |
+| Former pay-as-you-go default | Monthly subscription debited once; unused entitlements are non-refundable; wallet NOV persists; the pool settles verified providers daily |
 | Minimum USD 5-equivalent founder share per paid month | Cancelled; no such minimum share or minimum monthly spend |
-| Fixed package resources | Still apply to awarded free trials and any future optional package; not the default payment model |
+| Subscription resources | Monthly subscriptions and awarded free trials honor the resources promised at activation; normally unused monthly subscription entitlements expire without refund |
 | Ambiguous inflation proposal | Moderate service-price adjustments only; no change to fixed native NOV supply |
 | Native NOV emission and fee burn | Target: all 100,000,000 NOV issued at genesis; subsequent transfers/unlocks only, no mint or burn |
 | 50% treasury or 80/10/10 | Comparison/candidate scenarios, not approved fee parameters |
@@ -31,10 +31,14 @@ These supersede conflicting current requirements in the October 13 contribution 
 - NOV is NOVOCHAT's payment and settlement asset. Resource entitlements are not a transferable second token. General NOVOVM multi-asset clearing does not authorize foreign-asset payment or automatic conversion in the App.
 - Meter effective bytes, byte-seconds and explicitly contracted compute, routing or capacity services. L1/L2 may earn for selected discovery, routing or relay work; traffic need not traverse every layer. No per-layer tax, paid retransmission loops or duplicate cost categories.
 - `GiB = 2^30 bytes`; `GiB-hour = 2^30 * 3600 byte-seconds`. Metering layer, padding, replica/fanout limits and rounding must be specified in the quote. Accumulate micro-usage before atomic-unit settlement; no per-packet upward rounding or per-message chain calls.
-- Topups and settled earnings persist. Pending income is not spendable; reservations cannot be spent again. Income never increases the authorized spending cap or automatically funds another UCA. Budget-cycle renewal does not release existing reservations/debts. Optional package rollover/refund terms require separate definition.
+- Topups and settled earnings persist. Pending income is not spendable; reservations cannot be spent again. Income never increases the authorized spending cap or automatically funds another UCA. Budget-cycle renewal does not release existing reservations/debts. Normally unused subscription resources expire without rollover or refund; error remedies and concrete entitlements still require definition.
 - Chat authority is not asset-spending authority. The asset owner may approve bounded automatic spending by UCA, purpose, amount, duration and service scope. Its concrete interface and hardware-wallet integration remain unimplemented.
 
 ## Service obligations and settlement
+
+For included subscription services, the communication settlement pool funds task reservations and provider payments below; the subscriber wallet is not debited again.
+
+The authoritative contract also records a **proposal awaiting user confirmation** for decentralized subscription enforcement: non-transferable resource entitlements, real NOV in the settlement pool, consensus-backed bounded allocations across providers, batched claims and separate used/reserved/remaining progress with synchronization status. It is not an approved interface, a second token, proof of anonymous usage, or delivered functionality. An entitlement certificate alone cannot prevent concurrent overspending without shared reservations and verified state. Provider evidence, reservation release, chain time and settlement-trigger rules still need specification and validation.
 
 Accepting a task atomically reserves its funded maximum cost and binds provider, payee account, quote and obligation. Verified performance earns the contracted increment. Purchased, verifiable capacity can be work even before it carries traffic; online status or self-reported capacity cannot.
 
