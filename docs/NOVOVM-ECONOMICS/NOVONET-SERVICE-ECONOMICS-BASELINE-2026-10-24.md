@@ -1,5 +1,9 @@
 # NOVONET service economics: synchronized baseline
 
+## 2026-11-02 product clarification: UCA identity and NOV quick-wallet payment
+
+UCA authenticates the chat identity; the wallet associates actual NOV asset accounts. Communication charges use the user's selected NOV quick-payment account. Identity/chat keys do not gain asset authority. Default consumption remains pay-as-you-go: authorize communication spending, reserve funded work, settle verified service increments, and release unused reservations under the original rules. Bounded micro-usage may be settled together; no transaction per packet is required. There is no default fixed monthly subscription debit, silent savings debit, unlimited replenishment or month-end balance expiry. A monthly spending budget is not a subscription fee; optional packages require their own purchase terms. Existing metering, duplicate-charge prevention, service/device receipt distinctions, splits and pending numeric policies remain unchanged. This does not restore mandatory grants for ordinary accounts; automated spending still needs explicit purpose/funding authorization, with account control and settlement using the original ML-DSA-65 path. This clarification does not deliver or activate billing.
+
 Date: 2026-10-24. **Design decisions updated; implementation not delivered.** Documentation only: no billing activation, supply/configuration changes, asset operations, deployment, or mainnet authorization.
 
 The [Chinese baseline](../../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) is the shared rule source. This is its English synchronization, not a separate economic system. See the [English index](README.md) and [Chinese index](../../docs_CN/NOVOVM-ECONOMICS/README.md). Product behavior is documented in [NOVOCHAT planning](../../../NOVOCHAT/docs/decisions/2026-10-23-uca-pq-account-planning.md).
