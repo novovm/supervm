@@ -8,6 +8,8 @@ Date: 2026-10-24. **Design decisions updated; implementation not delivered.** Do
 
 The [Chinese baseline](../../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) is the shared rule source. This is its English synchronization, not a separate economic system. See the [English index](README.md) and [Chinese index](../../docs_CN/NOVOVM-ECONOMICS/README.md). Product behavior is documented in [NOVOCHAT planning](../../../NOVOCHAT/docs/decisions/2026-10-23-uca-pq-account-planning.md).
 
+Founder personal proceeds derive from approved genesis holdings and actual market sales, not subscriptions. This does not establish completed genesis distribution or approve amounts/releases. NOV confers neither equity nor system-revenue dividends merely by holding it (English whitepaper section 10.4, page 46). The user recalled an 80/20 allocation: the verified candidate is 80% providers, 10% development treasury and 10% network assurance. Combining the latter two as 20% network purposes does not create personal income; the historical query does not freeze production ratios, calculation bases or the internal 10/10 split. See the authoritative subscription contract for the source and remaining terms.
+
 ## Confirmed rules and supersession
 
 | Previous rule | Current decision |
