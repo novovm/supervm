@@ -1,0 +1,2510 @@
+{
+  "schema": "novovm-authorized-network-return/v1",
+  "handoff_id": "C-NETWORK-PRIVATE-20261102",
+  "host_label": "validator-C",
+  "checked_at_utc": "2026-11-01T22:57:57.7769726Z",
+  "source_HEAD": "8443da93220e5462b7a2602b8da60280461339d6",
+  "read_handoff": "A-PHYSICAL-4HOST-PREP-20261102",
+  "adapters": [
+    {
+      "Name": "以太网",
+      "InterfaceDescription": "Realtek PCIe GbE Family Controller",
+      "ifIndex": 24,
+      "Status": "Disconnected",
+      "LinkSpeed": "0 bps",
+      "DriverVersion": "1168.14.613.2023",
+      "DriverDate": "2023-06-13"
+    },
+    {
+      "Name": "WLAN",
+      "InterfaceDescription": "Intel(R) Wi-Fi 6E AX211 160MHz",
+      "ifIndex": 20,
+      "Status": "Up",
+      "LinkSpeed": "144.4 Mbps",
+      "DriverVersion": "24.70.0.3",
+      "DriverDate": "2026-07-29"
+    },
+    {
+      "Name": "以太网 2",
+      "InterfaceDescription": "VirtualBox Host-Only Ethernet Adapter",
+      "ifIndex": 16,
+      "Status": "Up",
+      "LinkSpeed": "1 Gbps",
+      "DriverVersion": "7.0.26.18464",
+      "DriverDate": "2025-04-11"
+    },
+    {
+      "Name": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceDescription": "Hyper-V Virtual Ethernet Adapter",
+      "ifIndex": 62,
+      "Status": "Up",
+      "LinkSpeed": "10 Gbps",
+      "DriverVersion": null,
+      "DriverDate": null
+    },
+    {
+      "Name": "以太网 3",
+      "InterfaceDescription": "VirtualBox Host-Only Ethernet Adapter #2",
+      "ifIndex": 14,
+      "Status": "Up",
+      "LinkSpeed": "1 Gbps",
+      "DriverVersion": "7.0.26.18464",
+      "DriverDate": "2025-04-11"
+    },
+    {
+      "Name": "LetsTAP",
+      "InterfaceDescription": "TAP-Windows Adapter V9",
+      "ifIndex": 12,
+      "Status": "Disconnected",
+      "LinkSpeed": "1 Gbps",
+      "DriverVersion": "9.24.6.601",
+      "DriverDate": "2020-10-08"
+    }
+  ],
+  "ip_interfaces": [
+    {
+      "InterfaceIndex": 62,
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "AddressFamily": 23,
+      "InterfaceMetric": 5000,
+      "ConnectionState": 1,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 14,
+      "InterfaceAlias": "以太网 3",
+      "AddressFamily": 23,
+      "InterfaceMetric": 25,
+      "ConnectionState": 1,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 16,
+      "InterfaceAlias": "以太网 2",
+      "AddressFamily": 23,
+      "InterfaceMetric": 25,
+      "ConnectionState": 1,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 9,
+      "InterfaceAlias": "本地连接* 2",
+      "AddressFamily": 23,
+      "InterfaceMetric": 25,
+      "ConnectionState": 0,
+      "Dhcp": 0,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 23,
+      "InterfaceAlias": "本地连接* 1",
+      "AddressFamily": 23,
+      "InterfaceMetric": 25,
+      "ConnectionState": 0,
+      "Dhcp": 0,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 24,
+      "InterfaceAlias": "以太网",
+      "AddressFamily": 23,
+      "InterfaceMetric": 75,
+      "ConnectionState": 0,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 12,
+      "InterfaceAlias": "LetsTAP",
+      "AddressFamily": 23,
+      "InterfaceMetric": 1,
+      "ConnectionState": 0,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 1,
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "AddressFamily": 23,
+      "InterfaceMetric": 75,
+      "ConnectionState": 1,
+      "Dhcp": 0,
+      "NlMtu": 4294967295,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 62,
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "AddressFamily": 2,
+      "InterfaceMetric": 5000,
+      "ConnectionState": 1,
+      "Dhcp": 0,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 14,
+      "InterfaceAlias": "以太网 3",
+      "AddressFamily": 2,
+      "InterfaceMetric": 25,
+      "ConnectionState": 1,
+      "Dhcp": 0,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 16,
+      "InterfaceAlias": "以太网 2",
+      "AddressFamily": 2,
+      "InterfaceMetric": 25,
+      "ConnectionState": 1,
+      "Dhcp": 0,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 9,
+      "InterfaceAlias": "本地连接* 2",
+      "AddressFamily": 2,
+      "InterfaceMetric": 25,
+      "ConnectionState": 0,
+      "Dhcp": 0,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 23,
+      "InterfaceAlias": "本地连接* 1",
+      "AddressFamily": 2,
+      "InterfaceMetric": 25,
+      "ConnectionState": 0,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 24,
+      "InterfaceAlias": "以太网",
+      "AddressFamily": 2,
+      "InterfaceMetric": 75,
+      "ConnectionState": 0,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 20,
+      "InterfaceAlias": "WLAN",
+      "AddressFamily": 2,
+      "InterfaceMetric": 50,
+      "ConnectionState": 1,
+      "Dhcp": 1,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 12,
+      "InterfaceAlias": "LetsTAP",
+      "AddressFamily": 2,
+      "InterfaceMetric": 1,
+      "ConnectionState": 0,
+      "Dhcp": 0,
+      "NlMtu": 1500,
+      "Forwarding": 0
+    },
+    {
+      "InterfaceIndex": 1,
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "AddressFamily": 2,
+      "InterfaceMetric": 75,
+      "ConnectionState": 1,
+      "Dhcp": 0,
+      "NlMtu": 4294967295,
+      "Forwarding": 0
+    }
+  ],
+  "addresses": [
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 23,
+      "IPAddress": "fe80::cedc:f2b9:c70d:203f%62",
+      "PrefixLength": 64,
+      "AddressState": 4,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 23,
+      "IPAddress": "fe80::11b1:eb06:6814:d8a%14",
+      "PrefixLength": 64,
+      "AddressState": 4,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 23,
+      "IPAddress": "fe80::365e:c266:93ba:9d8d%16",
+      "PrefixLength": 64,
+      "AddressState": 4,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "本地连接* 2",
+      "InterfaceIndex": 9,
+      "AddressFamily": 23,
+      "IPAddress": "fe80::93a2:8138:8963:a161%9",
+      "PrefixLength": 64,
+      "AddressState": 3,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "本地连接* 1",
+      "InterfaceIndex": 23,
+      "AddressFamily": 23,
+      "IPAddress": "fe80::a1b5:a70c:8108:cb99%23",
+      "PrefixLength": 64,
+      "AddressState": 3,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "AddressFamily": 23,
+      "IPAddress": "fe80::4949:4915:9635:8888%24",
+      "PrefixLength": 64,
+      "AddressState": 3,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 23,
+      "IPAddress": "fe80::ad9f:cf04:6d8a:6a4e%12",
+      "PrefixLength": 64,
+      "AddressState": 3,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 23,
+      "IPAddress": "::1",
+      "PrefixLength": 128,
+      "AddressState": 4,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 2
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 2,
+      "IPAddress": "172.24.208.1",
+      "PrefixLength": 20,
+      "AddressState": 4,
+      "PrefixOrigin": 1,
+      "SuffixOrigin": 1
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 2,
+      "IPAddress": "192.168.56.2",
+      "PrefixLength": 24,
+      "AddressState": 4,
+      "PrefixOrigin": 1,
+      "SuffixOrigin": 1
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 2,
+      "IPAddress": "192.168.56.1",
+      "PrefixLength": 24,
+      "AddressState": 4,
+      "PrefixOrigin": 1,
+      "SuffixOrigin": 1
+    },
+    {
+      "InterfaceAlias": "本地连接* 2",
+      "InterfaceIndex": 9,
+      "AddressFamily": 2,
+      "IPAddress": "169.254.93.100",
+      "PrefixLength": 16,
+      "AddressState": 1,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "本地连接* 1",
+      "InterfaceIndex": 23,
+      "AddressFamily": 2,
+      "IPAddress": "169.254.248.93",
+      "PrefixLength": 16,
+      "AddressState": 1,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "AddressFamily": 2,
+      "IPAddress": "169.254.147.245",
+      "PrefixLength": 16,
+      "AddressState": 1,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "AddressFamily": 2,
+      "IPAddress": "192.168.71.102",
+      "PrefixLength": 24,
+      "AddressState": 4,
+      "PrefixOrigin": 3,
+      "SuffixOrigin": 3
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 2,
+      "IPAddress": "169.254.11.159",
+      "PrefixLength": 16,
+      "AddressState": 1,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 4
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 2,
+      "IPAddress": "26.26.26.1",
+      "PrefixLength": 29,
+      "AddressState": 1,
+      "PrefixOrigin": 1,
+      "SuffixOrigin": 1
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 2,
+      "IPAddress": "127.0.0.1",
+      "PrefixLength": 8,
+      "AddressState": 4,
+      "PrefixOrigin": 2,
+      "SuffixOrigin": 2
+    }
+  ],
+  "ip_configuration": [
+    {
+      "interface_alias": "以太网 3",
+      "interface_index": 14,
+      "ipv4_addresses": [
+        "192.168.56.2"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        null
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    },
+    {
+      "interface_alias": "以太网 2",
+      "interface_index": 16,
+      "ipv4_addresses": [
+        "192.168.56.1"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        null
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    },
+    {
+      "interface_alias": "vEthernet (WSL (Hyper-V firewall))",
+      "interface_index": 62,
+      "ipv4_addresses": [
+        "172.24.208.1"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        null
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    },
+    {
+      "interface_alias": "WLAN",
+      "interface_index": 20,
+      "ipv4_addresses": [
+        "192.168.71.102"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        "192.168.71.1"
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "116.228.111.118",
+        "180.168.255.18"
+      ]
+    },
+    {
+      "interface_alias": "以太网",
+      "interface_index": 24,
+      "ipv4_addresses": [
+        "169.254.147.245"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        null
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "192.168.1.1"
+      ]
+    },
+    {
+      "interface_alias": "LetsTAP",
+      "interface_index": 12,
+      "ipv4_addresses": [
+        "169.254.11.159",
+        "26.26.26.1"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        null
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    },
+    {
+      "interface_alias": "本地连接* 2",
+      "interface_index": 9,
+      "ipv4_addresses": [
+        "169.254.93.100"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        null
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "192.168.49.1"
+      ]
+    },
+    {
+      "interface_alias": "本地连接* 1",
+      "interface_index": 23,
+      "ipv4_addresses": [
+        "169.254.248.93"
+      ],
+      "ipv6_addresses": [
+        null
+      ],
+      "ipv4_gateway": [
+        null
+      ],
+      "ipv6_gateway": [
+        null
+      ],
+      "dns_servers": [
+        "fec0:0:0:ffff::1",
+        "fec0:0:0:ffff::2",
+        "fec0:0:0:ffff::3"
+      ]
+    }
+  ],
+  "routes_active": [
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 2",
+      "InterfaceIndex": 9,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 1",
+      "InterfaceIndex": 23,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 2,
+      "DestinationPrefix": "255.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 2",
+      "InterfaceIndex": 9,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 1",
+      "InterfaceIndex": 23,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 2,
+      "DestinationPrefix": "224.0.0.0/4",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.71.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.71.102/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.71.0/24",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.56.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.56.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.56.2/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.56.1/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.56.0/24",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 2,
+      "DestinationPrefix": "192.168.56.0/24",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 2,
+      "DestinationPrefix": "172.24.223.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 2,
+      "DestinationPrefix": "172.24.208.1/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 2,
+      "DestinationPrefix": "172.24.208.0/20",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 2,
+      "DestinationPrefix": "127.255.255.255/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 2,
+      "DestinationPrefix": "127.0.0.1/32",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 2,
+      "DestinationPrefix": "127.0.0.0/8",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "AddressFamily": 2,
+      "DestinationPrefix": "0.0.0.0/0",
+      "NextHop": "192.168.71.1",
+      "RouteMetric": 0,
+      "Protocol": 3,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 2",
+      "InterfaceIndex": 9,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 1",
+      "InterfaceIndex": 23,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 23,
+      "DestinationPrefix": "ff00::/8",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::cedc:f2b9:c70d:203f/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::ad9f:cf04:6d8a:6a4e/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 1",
+      "InterfaceIndex": 23,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::a1b5:a70c:8108:cb99/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 2",
+      "InterfaceIndex": 9,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::93a2:8138:8963:a161/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::4949:4915:9635:8888/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::365e:c266:93ba:9d8d/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::11b1:eb06:6814:d8a/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "vEthernet (WSL (Hyper-V firewall))",
+      "InterfaceIndex": 62,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 2",
+      "InterfaceIndex": 9,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "本地连接* 1",
+      "InterfaceIndex": 23,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "LetsTAP",
+      "InterfaceIndex": 12,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 3",
+      "InterfaceIndex": 14,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "以太网 2",
+      "InterfaceIndex": 16,
+      "AddressFamily": 23,
+      "DestinationPrefix": "fe80::/64",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    },
+    {
+      "InterfaceAlias": "Loopback Pseudo-Interface 1",
+      "InterfaceIndex": 1,
+      "AddressFamily": 23,
+      "DestinationPrefix": "::1/128",
+      "NextHop": "::",
+      "RouteMetric": 256,
+      "Protocol": 2,
+      "State": 0
+    }
+  ],
+  "connection_profiles": [
+    {
+      "InterfaceAlias": "WLAN",
+      "InterfaceIndex": 20,
+      "NetworkCategory": 0,
+      "IPv4Connectivity": 4,
+      "IPv6Connectivity": 1
+    }
+  ],
+  "firewall_profiles": [
+    {
+      "Name": "Domain",
+      "Enabled": 1,
+      "DefaultInboundAction": 4,
+      "DefaultOutboundAction": 2,
+      "AllowInboundRules": 1,
+      "AllowLocalFirewallRules": 1
+    },
+    {
+      "Name": "Private",
+      "Enabled": 1,
+      "DefaultInboundAction": 4,
+      "DefaultOutboundAction": 2,
+      "AllowInboundRules": 1,
+      "AllowLocalFirewallRules": 1
+    },
+    {
+      "Name": "Public",
+      "Enabled": 1,
+      "DefaultInboundAction": 4,
+      "DefaultOutboundAction": 2,
+      "AllowInboundRules": 1,
+      "AllowLocalFirewallRules": 1
+    }
+  ],
+  "local_nat": [],
+  "local_nat_static_mappings": [],
+  "tcp_listeners": [
+    {
+      "local_address": "::",
+      "local_port": 50052,
+      "pid": 5940,
+      "process": "LicenseService"
+    },
+    {
+      "local_address": "::",
+      "local_port": 49724,
+      "pid": 2156,
+      "process": "services"
+    },
+    {
+      "local_address": "::1",
+      "local_port": 49672,
+      "pid": 5716,
+      "process": "jhi_service"
+    },
+    {
+      "local_address": "::",
+      "local_port": 49670,
+      "pid": 5204,
+      "process": "spoolsv"
+    },
+    {
+      "local_address": "::",
+      "local_port": 49669,
+      "pid": 4328,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 49668,
+      "pid": 2588,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 49665,
+      "pid": 2076,
+      "process": "wininit"
+    },
+    {
+      "local_address": "::",
+      "local_port": 49664,
+      "pid": 2184,
+      "process": "lsass"
+    },
+    {
+      "local_address": "::1",
+      "local_port": 9100,
+      "pid": 11556,
+      "process": "dart"
+    },
+    {
+      "local_address": "::",
+      "local_port": 8000,
+      "pid": 6952,
+      "process": "Manager"
+    },
+    {
+      "local_address": "::",
+      "local_port": 7897,
+      "pid": 10200,
+      "process": "com.vortex.helper"
+    },
+    {
+      "local_address": "::",
+      "local_port": 7680,
+      "pid": 30428,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 445,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "::",
+      "local_port": 135,
+      "pid": 2448,
+      "process": "svchost"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 64714,
+      "pid": 25820,
+      "process": "Code"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 63985,
+      "pid": 22628,
+      "process": "dart"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 63333,
+      "pid": 25820,
+      "process": "Code"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 61626,
+      "pid": 25820,
+      "process": "Code"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 56801,
+      "pid": 28248,
+      "process": "Code"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 54848,
+      "pid": 11524,
+      "process": "java"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 54835,
+      "pid": 38372,
+      "process": "java"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 54344,
+      "pid": 4144,
+      "process": "java"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 51406,
+      "pid": 5612,
+      "process": "AdskLicensingService"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 51393,
+      "pid": 15532,
+      "process": "AdskIdentityManager"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 51392,
+      "pid": 15532,
+      "process": "AdskIdentityManager"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 50071,
+      "pid": 6952,
+      "process": "Manager"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 50051,
+      "pid": 5872,
+      "process": "endpointService"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 49724,
+      "pid": 2156,
+      "process": "services"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 49681,
+      "pid": 5596,
+      "process": "cer_service"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 49670,
+      "pid": 5204,
+      "process": "spoolsv"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 49669,
+      "pid": 4328,
+      "process": "svchost"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 49668,
+      "pid": 2588,
+      "process": "svchost"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 49665,
+      "pid": 2076,
+      "process": "wininit"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 49664,
+      "pid": 2184,
+      "process": "lsass"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 39798,
+      "pid": 10200,
+      "process": "com.vortex.helper"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 31105,
+      "pid": 7104,
+      "process": "BuildService"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 31104,
+      "pid": 5812,
+      "process": "CoordinatorService"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 31100,
+      "pid": 5812,
+      "process": "CoordinatorService"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 30015,
+      "pid": 23028,
+      "process": "Weixin"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 30014,
+      "pid": 23028,
+      "process": "Weixin"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 9100,
+      "pid": 11556,
+      "process": "dart"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 8281,
+      "pid": 13704,
+      "process": "bcsSignServer"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 6281,
+      "pid": 13704,
+      "process": "bcsSignServer"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 6081,
+      "pid": 9084,
+      "process": "bcsPassGuardXInput"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 5040,
+      "pid": 12420,
+      "process": "svchost"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 5037,
+      "pid": 20940,
+      "process": "adb"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 443,
+      "pid": 15180,
+      "process": "novovm-rendezvous-service"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 139,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 139,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 139,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 139,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 135,
+      "pid": 2448,
+      "process": "svchost"
+    }
+  ],
+  "udp_endpoints": [
+    {
+      "local_address": "::",
+      "local_port": 64525,
+      "pid": 23904,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 64319,
+      "pid": 7588,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 63810,
+      "pid": 7588,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 62563,
+      "pid": 4908,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 62160,
+      "pid": 15180,
+      "process": "novovm-rendezvous-service"
+    },
+    {
+      "local_address": "fe80::cedc:f2b9:c70d:203f%62",
+      "local_port": 61976,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::1",
+      "local_port": 61975,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "fe80::11b1:eb06:6814:d8a%14",
+      "local_port": 61974,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "fe80::365e:c266:93ba:9d8d%16",
+      "local_port": 61973,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 60981,
+      "pid": 4144,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 54419,
+      "pid": 23904,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 52521,
+      "pid": 3792,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 52011,
+      "pid": 11524,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 52010,
+      "pid": 38372,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 51919,
+      "pid": 7588,
+      "process": "java"
+    },
+    {
+      "local_address": "::",
+      "local_port": 51734,
+      "pid": 3792,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 50964,
+      "pid": 3792,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 7897,
+      "pid": 10200,
+      "process": "com.vortex.helper"
+    },
+    {
+      "local_address": "::",
+      "local_port": 5355,
+      "pid": 3792,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::",
+      "local_port": 5353,
+      "pid": 15820,
+      "process": "ChatGPT"
+    },
+    {
+      "local_address": "::",
+      "local_port": 5353,
+      "pid": 15820,
+      "process": "ChatGPT"
+    },
+    {
+      "local_address": "fe80::cedc:f2b9:c70d:203f%62",
+      "local_port": 2177,
+      "pid": 28180,
+      "process": "svchost"
+    },
+    {
+      "local_address": "fe80::365e:c266:93ba:9d8d%16",
+      "local_port": 2177,
+      "pid": 28180,
+      "process": "svchost"
+    },
+    {
+      "local_address": "fe80::11b1:eb06:6814:d8a%14",
+      "local_port": 2177,
+      "pid": 28180,
+      "process": "svchost"
+    },
+    {
+      "local_address": "fe80::cedc:f2b9:c70d:203f%62",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "fe80::365e:c266:93ba:9d8d%16",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "fe80::11b1:eb06:6814:d8a%14",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "::1",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 62562,
+      "pid": 4908,
+      "process": "svchost"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 62561,
+      "pid": 4908,
+      "process": "svchost"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 62158,
+      "pid": 15180,
+      "process": "novovm-rendezvous-service"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 61981,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 61980,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 61979,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 61978,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 61977,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 61394,
+      "pid": 4868,
+      "process": "msedge"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 61393,
+      "pid": 4868,
+      "process": "msedge"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 61392,
+      "pid": 4868,
+      "process": "msedge"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 61391,
+      "pid": 4868,
+      "process": "msedge"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 61023,
+      "pid": 26748,
+      "process": "ChatGPT"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 61022,
+      "pid": 26748,
+      "process": "ChatGPT"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 61021,
+      "pid": 26748,
+      "process": "ChatGPT"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 61020,
+      "pid": 26748,
+      "process": "ChatGPT"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 60306,
+      "pid": 8668,
+      "process": "nvcontainer"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 56838,
+      "pid": 5804,
+      "process": "svchost"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 43170,
+      "pid": 15180,
+      "process": "novovm-rendezvous-service"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 10010,
+      "pid": 16124,
+      "process": "NVIDIA Overlay"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 5355,
+      "pid": 3792,
+      "process": "svchost"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 5353,
+      "pid": 26740,
+      "process": "msedge"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 5353,
+      "pid": 15820,
+      "process": "ChatGPT"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 5050,
+      "pid": 12420,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 2177,
+      "pid": 28180,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 2177,
+      "pid": 28180,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 2177,
+      "pid": 28180,
+      "process": "svchost"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 2177,
+      "pid": 28180,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "127.0.0.1",
+      "local_port": 1900,
+      "pid": 9696,
+      "process": "svchost"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 138,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 138,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 138,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 138,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "192.168.71.102",
+      "local_port": 137,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "192.168.56.2",
+      "local_port": 137,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "192.168.56.1",
+      "local_port": 137,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "172.24.208.1",
+      "local_port": 137,
+      "pid": 4,
+      "process": "System"
+    },
+    {
+      "local_address": "0.0.0.0",
+      "local_port": 53,
+      "pid": 4908,
+      "process": "svchost"
+    }
+  ],
+  "native_udp_candidate": {
+    "port": 41050,
+    "bind": "0.0.0.0:41050",
+    "status": "candidate only, not reserved or approved",
+    "listener_count": 0,
+    "lan_candidate": "192.168.71.102:41050; local LAN address only, no peer reachability proof",
+    "advertised_endpoint": "unknown pending approved topology and confirmed reachability"
+  },
+  "public_address": "unknown: no external IP discovery or current router WAN inspection",
+  "router_nat": "unknown: Windows NAT output does not establish router/cloud NAT mappings",
+  "cloud_security_group": "unknown: not read or changed",
+  "connectivity": {
+    "remote_probe_executed": false,
+    "peer_udp_roundtrip": "NOT TESTED",
+    "external_ip_discovery_executed": false,
+    "route_lookup_not_remote_delivery": true
+  },
+  "changes": {
+    "firewall_changed": false,
+    "routes_changed": false,
+    "clock_changed": false,
+    "services_changed": false,
+    "phones_touched": false,
+    "keys_generated_or_read": false
+  },
+  "query_failures": [
+    {
+      "query": "firewall port filters",
+      "error": "拒绝访问。 "
+    },
+    {
+      "query": "firewall address filters",
+      "error": "拒绝访问。 "
+    }
+  ],
+  "route_selection_to_B": [
+    {
+      "object_type": "MSFT_NetIPAddress",
+      "interface_index": 20,
+      "interface_alias": "WLAN",
+      "selected_source_address": "192.168.71.102",
+      "next_hop": null,
+      "destination_prefix": null,
+      "route_metric": null
+    },
+    {
+      "object_type": "MSFT_NetRoute",
+      "interface_index": 20,
+      "interface_alias": "WLAN",
+      "selected_source_address": null,
+      "next_hop": "192.168.71.1",
+      "destination_prefix": "0.0.0.0/0",
+      "route_metric": 0
+    }
+  ],
+  "local_route_lookup_executed": true,
+  "publication_authority": {
+    "source": "user explicitly allowed uploading address, port and routing information to GitHub in this chat on 2026-11-02 Asia/Shanghai",
+    "overrides": "the private-only network-metadata restriction for this return",
+    "excludes": [
+      "private keys",
+      "passwords",
+      "tokens",
+      "complete runtime configs",
+      "databases",
+      "contact or chat data"
+    ]
+  },
+  "clock": {
+    "checked_at_utc": "2026-11-01T22:58:10.0137647Z",
+    "service": {
+      "Name": "W32Time",
+      "Status": 1
+    },
+    "query_status": [
+      "�������д���: ������δ������ (0x80070426)"
+    ],
+    "query_exit_code": -2147023834,
+    "modified": false
+  },
+  "relevant_enabled_inbound_firewall_rules": [
+    {
+      "name": "{ABA170F5-E19B-4055-AD69-31A02F5F5611}",
+      "display_name": "Lenovo Lsf",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "UDP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "C:\\Program Files (x86)\\Lenovo\\Lsf\\Lsf.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "{FCE0F1C2-B549-40CD-965C-64B0A0CAD4F0}",
+      "display_name": "Lenovo Lsf",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "TCP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "C:\\Program Files (x86)\\Lenovo\\Lsf\\Lsf.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "TCP Query User{29FA1109-6C55-4652-B25E-B97CB79053F9}D:\\web3_ai\\novochat\\target\\debug\\novochat-relay-check.exe",
+      "display_name": "novochat-relay-check",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "TCP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "D:\\web3_ai\\novochat\\target\\debug\\novochat-relay-check.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "UDP Query User{5218597D-CB87-4670-A985-96B9D96192FF}D:\\web3_ai\\novochat\\target\\debug\\novochat-relay-check.exe",
+      "display_name": "novochat-relay-check",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "UDP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "D:\\web3_ai\\novochat\\target\\debug\\novochat-relay-check.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "TCP Query User{A65B0428-4A37-4253-B80E-90918C74C919}D:\\web3_ai\\novochat\\artifacts\\laptop-application-node-1fb3e7bd90bb49afa4c1cd9e9a4fd4c5\\novochat-relay-check.exe",
+      "display_name": "novochat-relay-check",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "TCP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "D:\\web3_ai\\novochat\\artifacts\\laptop-application-node-1fb3e7bd90bb49afa4c1cd9e9a4fd4c5\\novochat-relay-check.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "UDP Query User{E9749F86-32F3-420B-8C83-3A83AC597815}D:\\web3_ai\\novochat\\artifacts\\laptop-application-node-1fb3e7bd90bb49afa4c1cd9e9a4fd4c5\\novochat-relay-check.exe",
+      "display_name": "novochat-relay-check",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "UDP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "D:\\web3_ai\\novochat\\artifacts\\laptop-application-node-1fb3e7bd90bb49afa4c1cd9e9a4fd4c5\\novochat-relay-check.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "TCP Query User{1046C8CA-CD75-4F40-B75C-28A3D470A76C}D:\\web3_ai\\novochat\\artifacts\\laptop-phone-node-3d209131032441119f84be0e6bf5925e\\novochat-relay-check.exe",
+      "display_name": "novochat-relay-check",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "TCP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "D:\\web3_ai\\novochat\\artifacts\\laptop-phone-node-3d209131032441119f84be0e6bf5925e\\novochat-relay-check.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "UDP Query User{788ABF70-6CFF-4C75-8B6C-81A701C819A8}D:\\web3_ai\\novochat\\artifacts\\laptop-phone-node-3d209131032441119f84be0e6bf5925e\\novochat-relay-check.exe",
+      "display_name": "novochat-relay-check",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "UDP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "D:\\web3_ai\\novochat\\artifacts\\laptop-phone-node-3d209131032441119f84be0e6bf5925e\\novochat-relay-check.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "NOVOVM-Relay-WSS-TCP-443-v1",
+      "display_name": "NOVOVM relay WSS (TCP 443)",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Any",
+      "ports": [
+        {
+          "protocol": "TCP",
+          "local_port": [
+            "443"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "C:\\Program Files\\NOVOVM\\Relay\\supervm-relay.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "TCP Query User{4B445012-6D5B-40CE-8917-9D7FCF9C959B}C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+      "display_name": "novovm-rendezvous-service.exe",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "TCP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "UDP Query User{FDFE9E5A-9063-414C-AC28-B7EC0C0FF067}C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+      "display_name": "novovm-rendezvous-service.exe",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Public",
+      "ports": [
+        {
+          "protocol": "UDP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "TCP Query User{398A580F-7EEC-4C33-8158-5C29E2FEF10D}C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+      "display_name": "novovm-rendezvous-service.exe",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Private",
+      "ports": [
+        {
+          "protocol": "TCP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+          "package": null
+        }
+      ]
+    },
+    {
+      "name": "UDP Query User{5A4EE9E7-9FE6-4AC3-A791-873849AB185C}C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+      "display_name": "novovm-rendezvous-service.exe",
+      "enabled": "True",
+      "action": "Allow",
+      "direction": "Inbound",
+      "profile": "Private",
+      "ports": [
+        {
+          "protocol": "UDP",
+          "local_port": [
+            "Any"
+          ],
+          "remote_port": [
+            "Any"
+          ]
+        }
+      ],
+      "addresses": [
+        {
+          "local": [
+            "Any"
+          ],
+          "remote": [
+            "Any"
+          ]
+        }
+      ],
+      "application": [
+        {
+          "program": "C:\\users\\leadb\\appdata\\local\\novovm\\rendezvous\\novovm-rendezvous-service.exe",
+          "package": null
+        }
+      ]
+    }
+  ],
+  "firewall_evidence_note": "Bulk PowerShell port/address enumeration returned access denied; per-rule associated filters succeeded for the listed NOVOVM/SUPERVM/Rendezvous rules. Full unrelated application rules retained locally, not exported. Rule coverage and reachability are not PASS.",
+  "clock_evidence_note": "Query is raw local output; service stopped, no synchronization/source/offset proof. No system clock changes.",
+  "B_existing_access_metadata": {
+    "host_label": "validator-B",
+    "public_ipv4": "47.103.59.206",
+    "ssh_tcp_port": 22,
+    "user": "ecs-user",
+    "hostname": "iZuf69ojo1hbc14c3cvgyqZ",
+    "private_ipv4": "172.16.0.48",
+    "host_ed25519_fingerprint": "SHA256:AKvetVMytykp2K/gMFFkANmTDk82R1iRNiXG+N0lXQE",
+    "source": "docs/VALIDATOR_B_ALIYUN_ACCESS_HANDOFF_2026-10-25.md",
+    "source_date": "2026-10-25",
+    "fresh_remote_connection_by_C": false,
+    "native_udp_port": 41050,
+    "native_udp_state": "historical candidate only; current listener/cloud firewall/public routing unknown",
+    "newer_deployment_reference": "docs/VALIDATOR_A_B_DEPLOYMENT_RECEIPT_2026-11-02.md; installed program only, chain not active"
+  },
+  "A_and_D_current_endpoints": "unknown to C; validator-A must merge their fresh self-reported addresses/ports; do not substitute old labels, Meta TUN or example endpoints",
+  "native_4host_connectivity": "NOT TESTED; no remote connections or probes in this task",
+  "required_inputs": [
+    "A/D fresh peer endpoints",
+    "all hosts approved unused UDP ports and executable paths",
+    "router NAT and cloud security-group evidence",
+    "required peer-direction UDP roundtrips after configuration authorization",
+    "shared acceptance SHA, artifacts and approved common domain/configuration"
+  ],
+  "local_host": {
+    "hostname": "KING-LENOVO",
+    "os": "Microsoft Windows 11 家庭版 中文版 10.0.26200",
+    "process_64_bit": true,
+    "logical_processors": 32,
+    "memory_bytes": 34070192128
+  },
+  "checked_at_Asia_Shanghai": "2026-11-02T06:57:57.776972+08:00",
+  "portproxy_readonly_output": "",
+  "native_readonly_query_results": {
+    "checked_at_utc": "2026-11-01T22:59:19.5552420Z",
+    "firewall_netsh_exit_code": 0,
+    "firewall_netsh_line_count": 16070,
+    "portproxy_exit_code": 0,
+    "ipconfig_exit_code": 0,
+    "scope": "Read-only local evidence. No remote probes, changed rules, or port reservations."
+  },
+  "evidence_assembled_at_utc": "2026-11-01T23:02:47.205831+00:00"
+}
