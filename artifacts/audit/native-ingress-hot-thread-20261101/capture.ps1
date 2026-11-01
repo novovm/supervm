@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([switch]$ValidateOnly)
+param([switch]$ValidateOnly, [string]$CandidateManifest)
 
 $ErrorActionPreference = 'Stop'
 $taskRepo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../..')).Path
@@ -12,6 +12,17 @@ $taskFiles = @(
     @{ role='driver_symbols'; path=(Join-Path $taskRepo 'target/runtime-rebuild/release/deps/novovm_node-9c742166f7d138ac.pdb'); sha='c38757c548dad6179f4c431ef4bc279087716d0081b8d496000c5196417186a8' },
     @{ role='aoem_symbols'; path='D:/WorksArea/AOEM/cargo-target-ci-local/release/aoem_ffi.pdb'; sha='cd59bc926dfa27632d22e948f46155582277f1a3579549f078bdeaeb36e05d78' }
 )
+$taskBatch = 'native-ingress-hot-thread-20261101'
+if ($CandidateManifest) {
+    $taskManifestPath = (Resolve-Path -LiteralPath $CandidateManifest).Path
+    $taskManifest = Get-Content -LiteralPath $taskManifestPath -Raw | ConvertFrom-Json
+    $taskFiles = @(foreach ($role in @('node','driver','aoem','node_symbols','driver_symbols','aoem_symbols')) {
+        $entry = @($taskManifest.files | Where-Object role -eq $role)
+        if ($entry.Count -ne 1) { throw "Capture manifest needs exactly one $role." }
+        @{ role=$role; path=$entry[0].path; sha=$entry[0].sha256 }
+    })
+    $taskBatch = Split-Path -Leaf (Split-Path -Parent $taskManifestPath)
+}
 foreach ($file in $taskFiles) {
     $actual = (Get-FileHash -LiteralPath $file.path -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $file.sha) { throw "Frozen artifact changed: $($file.role)" }
@@ -117,7 +128,7 @@ $taskDrive = (Get-Item -LiteralPath $taskRepo).PSDrive.Name
 if ((Get-PSDrive -Name $taskDrive).Free -lt 25GB) { throw 'At least 25 GiB free is required; nothing is cleaned automatically.' }
 
 $taskStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$taskDirectory = Join-Path $taskRepo "target/native-ingress-hot-thread-20261101/$taskStamp-$PID"
+$taskDirectory = Join-Path $taskRepo "target/$taskBatch/$taskStamp-$PID"
 New-Item -ItemType Directory -Path $taskDirectory | Out-Null
 foreach ($file in $taskFiles | Where-Object { $_.role -like '*_symbols' }) {
     $symbolDirectory = Join-Path $taskDirectory $file.role
