@@ -5,6 +5,9 @@
 先测冻结制品，再只补现有`FramePrepare`漏计的bulk构造边界。
 这不是新的网络、计时框架、零复制实现或TPS优化签收。
 
+后续[Windows批发五段联合计量](../native-windows-batch-cost-20261101/README.md)已完成，
+用单独诊断制品分开拼接与send_to；只形成同机调用成本结论，不改写本页基线或签收性能。
+
 ## 1. 已测冻结基线：实际是三轮65K，不是16K
 
 [当前原记录](frozen-a524-cost.json) / [完整原报告](frozen-a524-cost.raw.zip)。

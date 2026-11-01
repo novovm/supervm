@@ -3,6 +3,8 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{collections::VecDeque, sync::Mutex, time::Instant};
+#[cfg(windows)]
+pub(crate) mod windows_batch;
 
 // Same poll owner's cumulative costs; no per-packet log, tag, lock or allocation.
 // Sampling at a prime interval avoids locking onto the 32/64 packet quanta.
@@ -262,12 +264,17 @@ fn io_sampling_is_bounded_nested_and_thread_local() {
 }
 pub fn native_io_cost_snapshot() -> Option<serde_json::Value> {
     io_cost_enabled().then(|| IO_COSTS.with(|costs| {
+        #[cfg(windows)]
+        let windows_batch = windows_batch::snapshot();
+        #[cfg(not(windows))]
+        let windows_batch = serde_json::Value::Null;
         let costs = costs.borrow();
         let phases: std::collections::BTreeMap<_, _> = IO_NAMES.iter().zip(costs.iter()).collect();
         serde_json::json!({
             "scope": "current poll thread; lifetime inclusive sampled wall time; nested phases are not additive; not CPU time",
             "sample_every_calls": 61, "phases": phases,
-            "traffic": IO_TRAFFIC.with(|t| t.borrow().snapshot())
+            "traffic": IO_TRAFFIC.with(|t| t.borrow().snapshot()),
+            "windows_batch_submit": windows_batch
         })
     }))
 }

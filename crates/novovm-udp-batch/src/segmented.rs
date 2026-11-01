@@ -1,8 +1,27 @@
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
+#[cfg(windows)]
+use std::time::Instant;
 
 pub const MAX_UDP_SEGMENTED_DATAGRAMS: usize = 64;
 pub const MAX_UDP_SEGMENTED_BATCH_BYTES: usize = 65_507;
+
+/// Caller-owned evidence for this synchronous call only. Missing durations mean
+/// unsampled or unreached, not zero cost. Allocation counts are Vec requests,
+/// not allocator/physical-memory events.
+#[derive(Debug, Default)]
+pub struct SegmentedBatchObservation {
+    pub measure_time: bool,
+    pub validated_bytes: Option<usize>,
+    pub allocation_requests: usize,
+    pub capacity_before_copy: usize,
+    pub capacity_after_copy: usize,
+    pub copied_bytes: usize,
+    pub send_called: bool,
+    pub written_bytes: Option<usize>,
+    // Allocation, concatenation, send_to, result checking; never overlapping.
+    pub phase_ns: [Option<u64>; 4],
+}
 
 /// Sets Windows' UDP_SEND_MSG_SIZE; zero restores ordinary datagram sends.
 ///
@@ -34,11 +53,40 @@ pub fn send_udp_segmented_batch(
     datagrams: &[&[u8]],
     segment_size: usize,
 ) -> io::Result<usize> {
+    send_batch(socket, target, datagrams, segment_size, None)
+}
+
+/// Observe the SAME implementation without changing submission or error rules.
+pub fn send_udp_segmented_batch_observed(
+    socket: &UdpSocket,
+    target: SocketAddr,
+    datagrams: &[&[u8]],
+    segment_size: usize,
+    observation: &mut SegmentedBatchObservation,
+) -> io::Result<usize> {
+    let measure_time = observation.measure_time;
+    *observation = SegmentedBatchObservation {
+        measure_time,
+        ..Default::default()
+    };
+    send_batch(socket, target, datagrams, segment_size, Some(observation))
+}
+
+fn send_batch(
+    socket: &UdpSocket,
+    target: SocketAddr,
+    datagrams: &[&[u8]],
+    segment_size: usize,
+    mut observation: Option<&mut SegmentedBatchObservation>,
+) -> io::Result<usize> {
     if datagrams.is_empty() {
         return Ok(0);
     }
     let total = validate_batch(datagrams, segment_size)?;
-    send_segmented_platform(socket, target, datagrams, total)
+    if let Some(cost) = observation.as_mut() {
+        cost.validated_bytes = Some(total);
+    }
+    send_segmented_platform(socket, target, datagrams, total, observation)
 }
 
 fn validate_batch(datagrams: &[&[u8]], segment_size: usize) -> io::Result<usize> {
@@ -125,19 +173,61 @@ fn send_segmented_platform(
     target: SocketAddr,
     datagrams: &[&[u8]],
     total: usize,
+    mut observation: Option<&mut SegmentedBatchObservation>,
 ) -> io::Result<usize> {
+    let measure = observation.as_ref().is_some_and(|o| o.measure_time);
+    let start = measure.then(Instant::now);
     let mut payload = Vec::with_capacity(total);
+    if let Some(cost) = observation.as_mut() {
+        cost.phase_ns[0] = elapsed_ns(start);
+        cost.allocation_requests = 1;
+        cost.capacity_before_copy = payload.capacity();
+    }
+    let start = measure.then(Instant::now);
     for datagram in datagrams {
         payload.extend_from_slice(datagram);
     }
-    let written = socket.send_to(&payload, target)?;
-    if written != total {
-        return Err(io::Error::new(
+    if let Some(cost) = observation.as_mut() {
+        cost.phase_ns[1] = elapsed_ns(start);
+        cost.copied_bytes = payload.len();
+        cost.capacity_after_copy = payload.capacity();
+        cost.send_called = true;
+    }
+    let start = measure.then(Instant::now);
+    let written = socket.send_to(&payload, target);
+    if let Some(cost) = observation.as_mut() {
+        cost.phase_ns[2] = elapsed_ns(start);
+    }
+    let start = measure.then(Instant::now);
+    if let (Some(cost), Ok(bytes)) = (observation.as_mut(), &written) {
+        cost.written_bytes = Some(*bytes);
+    }
+    let result = checked_write_result(written, total, datagrams.len());
+    if let Some(cost) = observation.as_mut() {
+        cost.phase_ns[3] = elapsed_ns(start);
+    }
+    result
+}
+
+#[cfg(any(windows, test))]
+fn checked_write_result(
+    written: io::Result<usize>,
+    total: usize,
+    count: usize,
+) -> io::Result<usize> {
+    match written {
+        Ok(bytes) if bytes == total => Ok(count),
+        Ok(_) => Err(io::Error::new(
             io::ErrorKind::WriteZero,
             "segmented UDP send did not accept the complete batch",
-        ));
+        )),
+        Err(error) => Err(error),
     }
-    Ok(datagrams.len())
+}
+
+#[cfg(windows)]
+fn elapsed_ns(start: Option<Instant>) -> Option<u64> {
+    start.map(|s| s.elapsed().as_nanos().min(u64::MAX as u128) as u64)
 }
 
 #[cfg(not(windows))]
@@ -146,6 +236,7 @@ fn send_segmented_platform(
     _target: SocketAddr,
     _datagrams: &[&[u8]],
     _total: usize,
+    _observation: Option<&mut SegmentedBatchObservation>,
 ) -> io::Result<usize> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -156,6 +247,43 @@ fn send_segmented_platform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_empty_and_invalid_batches_do_not_allocate_copy_or_send() -> io::Result<()> {
+        let socket = UdpSocket::bind("127.0.0.1:0")?;
+        let target = socket.local_addr()?;
+        let mut observation = SegmentedBatchObservation {
+            measure_time: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            send_udp_segmented_batch_observed(&socket, target, &[], 768, &mut observation)?,
+            0
+        );
+        assert!(
+            send_udp_segmented_batch_observed(&socket, target, &[&[1]], 0, &mut observation)
+                .is_err()
+        );
+        assert_eq!(observation.validated_bytes, None);
+        assert_eq!(observation.allocation_requests, 0);
+        assert_eq!(observation.copied_bytes, 0);
+        assert!(!observation.send_called);
+        assert_eq!(observation.phase_ns, [None; 4]);
+        Ok(())
+    }
+
+    #[test]
+    fn original_write_result_rejects_partial_bytes_and_preserves_os_error() {
+        assert_eq!(checked_write_result(Ok(100), 100, 3).unwrap(), 3);
+        assert_eq!(
+            checked_write_result(Ok(99), 100, 3).unwrap_err().kind(),
+            io::ErrorKind::WriteZero
+        );
+        let failure = io::Error::new(io::ErrorKind::WouldBlock, "original socket failure");
+        let error = checked_write_result(Err(failure), 100, 3).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(error.to_string(), "original socket failure");
+    }
 
     #[test]
     fn segmented_batch_accepts_equal_segments_and_only_a_short_final_segment() {
@@ -231,6 +359,49 @@ mod tests {
             let (length, source) = receiver.recv_from(&mut received)?;
             assert_eq!(source, sender.local_addr()?);
             assert_eq!(&received[..length], expected);
+        }
+        for measure_time in [true, false] {
+            let started = std::time::Instant::now();
+            let mut cost = SegmentedBatchObservation {
+                measure_time,
+                ..Default::default()
+            };
+            assert_eq!(
+                send_udp_segmented_batch_observed(
+                    &sender,
+                    target,
+                    &[&first, &second, &tail],
+                    768,
+                    &mut cost
+                )?,
+                3
+            );
+            let elapsed = started.elapsed().as_nanos();
+            assert_eq!(cost.validated_bytes, Some(1659));
+            assert_eq!(cost.allocation_requests, 1);
+            assert!(cost.capacity_before_copy >= 1659);
+            assert_eq!(cost.capacity_before_copy, cost.capacity_after_copy);
+            assert_eq!(cost.copied_bytes, 1659);
+            assert!(cost.send_called);
+            assert_eq!(cost.written_bytes, Some(1659));
+            if measure_time {
+                assert!(cost.phase_ns.iter().all(Option::is_some));
+                assert!(
+                    cost.phase_ns
+                        .iter()
+                        .flatten()
+                        .map(|n| *n as u128)
+                        .sum::<u128>()
+                        <= elapsed
+                );
+            } else {
+                assert_eq!(cost.phase_ns, [None; 4]);
+            }
+            for expected in [&first[..], &second[..], &tail[..]] {
+                let (length, source) = receiver.recv_from(&mut received)?;
+                assert_eq!(source, sender.local_addr()?);
+                assert_eq!(&received[..length], expected);
+            }
         }
 
         set_udp_send_segment_size(&sender, 0)?;

@@ -147,15 +147,34 @@ impl NativeDatagramIo for SegmentedUdpIo {
         let Some(first) = datagrams.first() else {
             return Ok(0);
         };
-        let mut size = self
-            .segment_size
-            .lock()
-            .map_err(|_| io::Error::other("UDP send owner poisoned"))?;
-        if *size != first.len() {
-            novovm_udp_batch::set_udp_send_segment_size(&self.socket, first.len())?;
-            *size = first.len();
-        }
-        novovm_udp_batch::send_udp_segmented_batch(&self.socket, address, datagrams, *size)
+        let mut observation = super::diagnostics::windows_batch::begin(datagrams);
+        let result = (|| {
+            let mut size = self
+                .segment_size
+                .lock()
+                .map_err(|_| io::Error::other("UDP send owner poisoned"))?;
+            if *size != first.len() {
+                if let Some(cost) = &mut observation {
+                    cost.option_change_attempted = true;
+                }
+                novovm_udp_batch::set_udp_send_segment_size(&self.socket, first.len())?;
+                *size = first.len();
+            }
+            if let Some(cost) = &mut observation {
+                cost.setup_done();
+                novovm_udp_batch::send_udp_segmented_batch_observed(
+                    &self.socket,
+                    address,
+                    datagrams,
+                    *size,
+                    &mut cost.platform,
+                )
+            } else {
+                novovm_udp_batch::send_udp_segmented_batch(&self.socket, address, datagrams, *size)
+            }
+        })();
+        super::diagnostics::windows_batch::finish(observation, &result);
+        result
     }
     fn local_udp_addr(&self) -> io::Result<SocketAddr> {
         self.socket.local_addr()
