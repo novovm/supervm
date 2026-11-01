@@ -1,0 +1,1333 @@
+{
+  "status": "QUALIFIED_CURRENT_IMAGE_BOUNDED_CPU_AND_SCHEDULING_WINDOWS",
+  "source_capture": "target/native-windows-sync-send-20261102/20261102-030653-15912",
+  "scope": "Offline diagnosis only; no production changes, new captures, remote operations or performance improvement acceptance.",
+  "source_report_sha256": "1a04000aa9d0aa0c6caff8310b215e5e5177d65f8f0462742de268d5e7253407",
+  "files": [
+    {
+      "sha": "24de0d1e0b1f508741b4fdabd9d089609c9924bdb2cfdbce2e766cefeb6f2078",
+      "path": "D:/WorksArea/SUPERVM/target/native-windows-batch-cost-20261101/candidate/novovm-node.exe",
+      "role": "node"
+    },
+    {
+      "sha": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb",
+      "path": "D:/WorksArea/SUPERVM/target/native-controller-throughput-20261031/stability-observer/native-tests.exe",
+      "role": "driver"
+    },
+    {
+      "sha": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+      "role": "aoem"
+    },
+    {
+      "sha": "4bbc8f6e386b15a308db1ed4e7fe72f1b0c28817baf6505306c28972b716ab77",
+      "path": "D:/WorksArea/SUPERVM/target/native-windows-batch-cost-20261101/candidate/novovm_node.pdb",
+      "role": "node_symbols"
+    },
+    {
+      "sha": "c38757c548dad6179f4c431ef4bc279087716d0081b8d496000c5196417186a8",
+      "path": "D:/WorksArea/SUPERVM/target/native-windows-sync-send-20261102/symbols/novovm_node-9c742166f7d138ac.pdb",
+      "role": "driver_symbols"
+    },
+    {
+      "sha": "cd59bc926dfa27632d22e948f46155582277f1a3579549f078bdeaeb36e05d78",
+      "path": "D:/WorksArea/SUPERVM/target/native-windows-sync-send-20261102/symbols/aoem_ffi.pdb",
+      "role": "aoem_symbols"
+    }
+  ],
+  "headers": [
+    {
+      "tag": "preflight-cpu",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_sha256": "2b3e806f2aaa06869dd16b1bb81a3b24791de6779eb79f8fd482c379e45c499d"
+    },
+    {
+      "tag": "preflight-schedule",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_sha256": "c49ab90828fcf27ccb036cf03bbaa29b85b4feaa71039b7fb90d88948d29087e"
+    },
+    {
+      "tag": "round-0",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_sha256": "a83b82615ec29dd201a922cc6b5ee0af08f38e7a3c82bc1ba5efeb372e2dc80f"
+    },
+    {
+      "tag": "round-1",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_sha256": "156b78fe0e3523d82f2d8f947757ce2eb49269c1256de03443d0ae55ad67b18b"
+    },
+    {
+      "tag": "round-2",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_sha256": "575b804f27967981a9418f6dfa379a0325c70e35585a6e1ab515a37e7825a3dd"
+    },
+    {
+      "tag": "round-3",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_sha256": "a5fef3cbc49abec0781056d5e51af5bd5acaa1d48c7796aaa38c11c831a2e701"
+    },
+    {
+      "tag": "round-4",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_sha256": "507d43dc05ef1de537333e3176ac369aaa83eec7bfd6988d1124d48b5c4ae338"
+    }
+  ],
+  "input_identity": {
+    "signed_workload_sha256": "0x002ba0b2c0ea79b83e618cc9545a2eba892d92d747bd7c7e9bb66e956a48aec1",
+    "genesis_commitment": "0x7eab980d752d980e62a1aef5847b9498e906cc147bf6efbcc1a968d5aa3305f8",
+    "initial_root": "0x8a14df5e2e98726842aeebde02f07031941f0c7a70c7bfae21b951ef55ff4a15"
+  },
+  "same_signed_corpus_and_initial_state": true,
+  "windows": [
+    {
+      "round": 0,
+      "backend": "cpu",
+      "profile": "NativeCpuStacks",
+      "trace_start_unix_ms": 1793560049887,
+      "trace_end_unix_ms": 1793560058375,
+      "drive_start_unix_ms": 1793560043446,
+      "drive_end_unix_ms": 1793560068720,
+      "trace_seconds": 8.488,
+      "node_pids": [
+        35580,
+        33080,
+        13780,
+        20692
+      ],
+      "etl_sha256": "621c6aa98dd370f5ee145ec8db02ccd77b8efa3b47b050cfb90282e6b2b18756",
+      "successful_transactions": 65536,
+      "diagnostic_tps": 2593.1700894987134,
+      "p95_us": 3950589,
+      "p99_us": 4120758,
+      "four_node_cpu_us_per_transaction": 2226.114273071289,
+      "entry_process_cpu_us_per_transaction": 613.9278411865234,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 1,
+      "backend": "gpu_required",
+      "profile": "NativeCpuStacks",
+      "trace_start_unix_ms": 1793560093396,
+      "trace_end_unix_ms": 1793560102271,
+      "drive_start_unix_ms": 1793560090329,
+      "drive_end_unix_ms": 1793560114968,
+      "trace_seconds": 8.875,
+      "node_pids": [
+        21056,
+        33256,
+        26244,
+        36544
+      ],
+      "etl_sha256": "33a8f9220a96e201015ad8a7b68da5e3c86594138483f625426841de2c60de95",
+      "successful_transactions": 65536,
+      "diagnostic_tps": 2660.0096073039863,
+      "p95_us": 3721638,
+      "p99_us": 4423180,
+      "four_node_cpu_us_per_transaction": 2003.6697387695312,
+      "entry_process_cpu_us_per_transaction": 572.20458984375,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 2,
+      "backend": "cpu",
+      "profile": "NativeSchedule",
+      "trace_start_unix_ms": 1793560140883,
+      "trace_end_unix_ms": 1793560146399,
+      "drive_start_unix_ms": 1793560134388,
+      "drive_end_unix_ms": 1793560159232,
+      "trace_seconds": 5.516,
+      "node_pids": [
+        31004,
+        29104,
+        26816,
+        14376
+      ],
+      "etl_sha256": "bf2c526b466211e9877f299c9840c9a1a03a5414d0a52a7e0c8a88a0b2f416ad",
+      "successful_transactions": 65536,
+      "diagnostic_tps": 2638.0166635900005,
+      "p95_us": 3595290,
+      "p99_us": 4235132,
+      "four_node_cpu_us_per_transaction": 2275.705337524414,
+      "entry_process_cpu_us_per_transaction": 627.9945373535156,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 3,
+      "backend": "gpu_required",
+      "profile": "NativeSchedule",
+      "trace_start_unix_ms": 1793560184331,
+      "trace_end_unix_ms": 1793560189822,
+      "drive_start_unix_ms": 1793560181089,
+      "drive_end_unix_ms": 1793560204786,
+      "trace_seconds": 5.491,
+      "node_pids": [
+        24928,
+        13092,
+        19584,
+        28060
+      ],
+      "etl_sha256": "dcbd8510c12faf29f3c20a25d0c213ec707eab4cd2ef95c90e971ac22586410e",
+      "successful_transactions": 65536,
+      "diagnostic_tps": 2765.674808870247,
+      "p95_us": 3704239,
+      "p99_us": 4399999,
+      "four_node_cpu_us_per_transaction": 1983.8809967041016,
+      "entry_process_cpu_us_per_transaction": 559.8068237304688,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 4,
+      "backend": "cpu",
+      "profile": "NativeCpuStacks",
+      "trace_start_unix_ms": 1793560231878,
+      "trace_end_unix_ms": 1793560240368,
+      "drive_start_unix_ms": 1793560225360,
+      "drive_end_unix_ms": 1793560249647,
+      "trace_seconds": 8.49,
+      "node_pids": [
+        33808,
+        28068,
+        35516,
+        32508
+      ],
+      "etl_sha256": "5e14e8523ea04800921ecf46995e8a2acc470450a23664f3b9b612cbbd2fdd9f",
+      "successful_transactions": 65536,
+      "diagnostic_tps": 2698.5345412503634,
+      "p95_us": 3708133,
+      "p99_us": 4111884,
+      "four_node_cpu_us_per_transaction": 2188.6825561523438,
+      "entry_process_cpu_us_per_transaction": 611.0668182373047,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    }
+  ],
+  "cpu": [
+    {
+      "round": 0,
+      "backend": "cpu",
+      "pid": 35580,
+      "tid": 31996,
+      "thread_name": "novovm-native-tick",
+      "sample_period_us": 1000,
+      "raw_sample_count": 8348,
+      "xperf_stack_hits": 8164,
+      "samples_not_represented_in_stack_report": 184,
+      "stack_report_coverage_percent": 97.79587925251558,
+      "unresolved_leaf_hits": 3,
+      "metrics": {
+        "native_io": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle7poll_io17h943eb9fc4aea01cdE",
+          "hits": 5209,
+          "percent_of_all_target_samples": 62.3981792045999
+        },
+        "system_send": {
+          "symbol": "novovm-node.exe!std::sys::net::connection::socket::UdpSocket::send_to",
+          "hits": 2021,
+          "percent_of_all_target_samples": 24.20939147101102
+        },
+        "winsock_send": {
+          "symbol": "ws2_32.dll!sendto",
+          "hits": 2020,
+          "percent_of_all_target_samples": 24.197412553905124
+        },
+        "winsock_provider": {
+          "symbol": "mswsock.dll!WSPSendTo",
+          "hits": 2014,
+          "percent_of_all_target_samples": 24.125539051269765
+        },
+        "afd_datagram": {
+          "symbol": "afd.sys!AfdFastDatagramSend",
+          "hits": 1948,
+          "percent_of_all_target_samples": 23.334930522280786
+        },
+        "udp_send": {
+          "symbol": "tcpip.sys!UdpSendMessages",
+          "hits": 1877,
+          "percent_of_all_target_samples": 22.48442740776234
+        },
+        "udp_send_path": {
+          "symbol": "tcpip.sys!UdpSendMessagesOnPath",
+          "hits": 1843,
+          "percent_of_all_target_samples": 22.077144226161955
+        },
+        "loopback": {
+          "symbol": "tcpip.sys!IppLoopbackEnqueue",
+          "hits": 1418,
+          "percent_of_all_target_samples": 16.986104456157165
+        },
+        "receive_indication": {
+          "symbol": "tcpip.sys!WfpProcessInTransportStackIndication",
+          "hits": 743,
+          "percent_of_all_target_samples": 8.900335409678965
+        }
+      },
+      "send_filtered": {
+        "total": 2021,
+        "loopback_intersection": 1417,
+        "loopback_percent_of_send_samples": 70.11380504700642,
+        "loopback_hits_without_send_frame": 1,
+        "exclusive_leaf_modules": {
+          "tcpip.sys": 574,
+          "ntkrnlmp.exe": 830,
+          "winnat.sys": 109,
+          "netio.sys": 253,
+          "NDIS.SYS": 119,
+          "afd.sys": 93,
+          "WppRecorder.sys": 14,
+          "mswsock.dll": 10,
+          "ws2_32.dll": 10,
+          "ntdll.dll": 4,
+          "***unknown***": 2,
+          "novovm-node.exe": 1,
+          "ndu.sys": 1,
+          "fwpkclnt.sys": 1
+        },
+        "known_kernel_leaf_hits": 1994,
+        "known_kernel_leaf_percent_of_send_samples": 98.66402770905492,
+        "immediate_callers": [
+          {
+            "symbol": "novovm-node.exe!_ZN121_$LT$novovm_network..novorudp..carrier..SegmentedUdpIo$u20$as$u20$novovm_network..novorudp..carrier..NativeDatagramIo$GT$8try_send17h53e41f2c50544357E",
+            "hits": 1020
+          },
+          {
+            "symbol": "novovm-node.exe!_ZN16novovm_udp_batch10poll_timer15NativePollTimer3new17h7d1ec00b59eb1f75E",
+            "hits": 1001
+          }
+        ]
+      },
+      "loopback_filtered": {
+        "total": 1418,
+        "receive_chain": {
+          "UdpDeliverDatagrams": {
+            "symbol": "tcpip.sys!UdpDeliverDatagrams",
+            "hits": 1007,
+            "percent_of_all_target_samples": 12.062769525634883
+          },
+          "InetInspectReceiveDatagram": {
+            "symbol": "tcpip.sys!InetInspectReceiveDatagram",
+            "hits": 795,
+            "percent_of_all_target_samples": 9.523239099185433
+          },
+          "WfpProcessInTransportStackIndication": {
+            "symbol": "tcpip.sys!WfpProcessInTransportStackIndication",
+            "hits": 743,
+            "percent_of_all_target_samples": 8.900335409678965
+          },
+          "AfdTLDgramReceiveEventHandler": {
+            "symbol": "afd.sys!AfdTLDgramReceiveEventHandler",
+            "hits": 168,
+            "percent_of_all_target_samples": 2.0124580737901296
+          },
+          "AfdReceiveDatagramEventCommonHandler": {
+            "symbol": "afd.sys!AfdReceiveDatagramEventCommonHandler",
+            "hits": 155,
+            "percent_of_all_target_samples": 1.856732151413512
+          }
+        }
+      },
+      "private_export_sha256": {
+        "tick-fullsymbols.html": "3f9e6f59c745c12784647f06799b5416b7a1d0f4e9728ddbdbaf2fb7573a5416",
+        "profile-events.csv": "a768b87c70d2249f0d1cb4597e812c67a834217b4ced4cb75458247e2478f1e8",
+        "thread-events.csv": "eef83842ab3afcda30957bba5e43e6709d4622f74a2b2f685af759ef8e29d01f",
+        "send-only.html": "f9bc1aad36ed46ef22503fcf044d4ae22fa5c1eb1d64fa1ffbe7e41b26b7f8d5",
+        "loopback-only.html": "940893fa76f6dcb14d4297d9f0df68083113e9c2e3cdf76d2b1a750dbdf94a9a",
+        "frequency.txt": "1ddb0509c2bf9d0c639550a3f22c75c4f9f6a11df95caa870f4716717d2bac6d"
+      }
+    },
+    {
+      "round": 1,
+      "backend": "gpu_required",
+      "pid": 21056,
+      "tid": 24184,
+      "thread_name": "novovm-native-tick",
+      "sample_period_us": 1000,
+      "raw_sample_count": 8319,
+      "xperf_stack_hits": 8139,
+      "samples_not_represented_in_stack_report": 180,
+      "stack_report_coverage_percent": 97.836278398846,
+      "unresolved_leaf_hits": 2,
+      "metrics": {
+        "native_io": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle7poll_io17h943eb9fc4aea01cdE",
+          "hits": 5166,
+          "percent_of_all_target_samples": 62.09880995311936
+        },
+        "system_send": {
+          "symbol": "novovm-node.exe!std::sys::net::connection::socket::UdpSocket::send_to",
+          "hits": 1971,
+          "percent_of_all_target_samples": 23.692751532636134
+        },
+        "winsock_send": {
+          "symbol": "ws2_32.dll!sendto",
+          "hits": 1971,
+          "percent_of_all_target_samples": 23.692751532636134
+        },
+        "winsock_provider": {
+          "symbol": "mswsock.dll!WSPSendTo",
+          "hits": 1959,
+          "percent_of_all_target_samples": 23.548503425892537
+        },
+        "afd_datagram": {
+          "symbol": "afd.sys!AfdFastDatagramSend",
+          "hits": 1870,
+          "percent_of_all_target_samples": 22.47866330087751
+        },
+        "udp_send": {
+          "symbol": "tcpip.sys!UdpSendMessages",
+          "hits": 1794,
+          "percent_of_all_target_samples": 21.565091958168047
+        },
+        "udp_send_path": {
+          "symbol": "tcpip.sys!UdpSendMessagesOnPath",
+          "hits": 1747,
+          "percent_of_all_target_samples": 21.00012020675562
+        },
+        "loopback": {
+          "symbol": "tcpip.sys!IppLoopbackEnqueue",
+          "hits": 1311,
+          "percent_of_all_target_samples": 15.75910566173819
+        },
+        "receive_indication": {
+          "symbol": "tcpip.sys!WfpProcessInTransportStackIndication",
+          "hits": 689,
+          "percent_of_all_target_samples": 8.282245462194975
+        }
+      },
+      "send_filtered": {
+        "total": 1971,
+        "loopback_intersection": 1309,
+        "loopback_percent_of_send_samples": 66.41298833079655,
+        "loopback_hits_without_send_frame": 2,
+        "exclusive_leaf_modules": {
+          "tcpip.sys": 575,
+          "ntkrnlmp.exe": 774,
+          "winnat.sys": 115,
+          "NDIS.SYS": 111,
+          "netio.sys": 253,
+          "afd.sys": 92,
+          "ws2_32.dll": 18,
+          "mswsock.dll": 12,
+          "WppRecorder.sys": 13,
+          "ntdll.dll": 4,
+          "fwpkclnt.sys": 3,
+          "ndu.sys": 1
+        },
+        "known_kernel_leaf_hits": 1937,
+        "known_kernel_leaf_percent_of_send_samples": 98.27498731608321,
+        "immediate_callers": [
+          {
+            "symbol": "novovm-node.exe!_ZN121_$LT$novovm_network..novorudp..carrier..SegmentedUdpIo$u20$as$u20$novovm_network..novorudp..carrier..NativeDatagramIo$GT$8try_send17h53e41f2c50544357E",
+            "hits": 1069
+          },
+          {
+            "symbol": "novovm-node.exe!_ZN16novovm_udp_batch10poll_timer15NativePollTimer3new17h7d1ec00b59eb1f75E",
+            "hits": 902
+          }
+        ]
+      },
+      "loopback_filtered": {
+        "total": 1311,
+        "receive_chain": {
+          "UdpDeliverDatagrams": {
+            "symbol": "tcpip.sys!UdpDeliverDatagrams",
+            "hits": 916,
+            "percent_of_all_target_samples": 11.01093881476139
+          },
+          "InetInspectReceiveDatagram": {
+            "symbol": "tcpip.sys!InetInspectReceiveDatagram",
+            "hits": 740,
+            "percent_of_all_target_samples": 8.895299915855272
+          },
+          "WfpProcessInTransportStackIndication": {
+            "symbol": "tcpip.sys!WfpProcessInTransportStackIndication",
+            "hits": 689,
+            "percent_of_all_target_samples": 8.282245462194975
+          },
+          "AfdTLDgramReceiveEventHandler": {
+            "symbol": "afd.sys!AfdTLDgramReceiveEventHandler",
+            "hits": 140,
+            "percent_of_all_target_samples": 1.6828945786753216
+          },
+          "AfdReceiveDatagramEventCommonHandler": {
+            "symbol": "afd.sys!AfdReceiveDatagramEventCommonHandler",
+            "hits": 128,
+            "percent_of_all_target_samples": 1.5386464719317225
+          }
+        }
+      },
+      "private_export_sha256": {
+        "tick-fullsymbols.html": "43e2cc309838df218de6a0fcad17ebcf2e63e3489b4a519f0b594b223e8b240d",
+        "profile-events.csv": "bb6265b0ea0839ffd0d9a5fa015823836bed3093753329b59c03bc792aad1363",
+        "thread-events.csv": "b03cf03f8a3d00eb4cfe4376171a8c97a05ad090a750c5e9a8b43a5d7dce455e",
+        "send-only.html": "4851928a1aca5414bd560ae029c6756258c79f6c8cc79425128571bf08c38ffa",
+        "loopback-only.html": "820cf5462459f4d9dbd2550980bcb20c265ff99023acdf8b709361a703ce3690",
+        "frequency.txt": "a624baeef65ea523fdefc26bc845b90ca84f38781651c11e69307cba676bff9a"
+      }
+    },
+    {
+      "round": 4,
+      "backend": "cpu",
+      "pid": 33808,
+      "tid": 33880,
+      "thread_name": "novovm-native-tick",
+      "sample_period_us": 1000,
+      "raw_sample_count": 8354,
+      "xperf_stack_hits": 8163,
+      "samples_not_represented_in_stack_report": 191,
+      "stack_report_coverage_percent": 97.71367009815657,
+      "unresolved_leaf_hits": 6,
+      "metrics": {
+        "native_io": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle7poll_io17h943eb9fc4aea01cdE",
+          "hits": 5233,
+          "percent_of_all_target_samples": 62.640651185061046
+        },
+        "system_send": {
+          "symbol": "novovm-node.exe!std::sys::net::connection::socket::UdpSocket::send_to",
+          "hits": 2025,
+          "percent_of_all_target_samples": 24.239885084989226
+        },
+        "winsock_send": {
+          "symbol": "ws2_32.dll!sendto",
+          "hits": 2025,
+          "percent_of_all_target_samples": 24.239885084989226
+        },
+        "winsock_provider": {
+          "symbol": "mswsock.dll!WSPSendTo",
+          "hits": 2014,
+          "percent_of_all_target_samples": 24.10821163514484
+        },
+        "afd_datagram": {
+          "symbol": "afd.sys!AfdFastDatagramSend",
+          "hits": 1955,
+          "percent_of_all_target_samples": 23.401963131434044
+        },
+        "udp_send": {
+          "symbol": "tcpip.sys!UdpSendMessages",
+          "hits": 1881,
+          "percent_of_all_target_samples": 22.516159923389992
+        },
+        "udp_send_path": {
+          "symbol": "tcpip.sys!UdpSendMessagesOnPath",
+          "hits": 1844,
+          "percent_of_all_target_samples": 22.073258319367966
+        },
+        "loopback": {
+          "symbol": "tcpip.sys!IppLoopbackEnqueue",
+          "hits": 1438,
+          "percent_of_all_target_samples": 17.213310988747903
+        },
+        "receive_indication": {
+          "symbol": "tcpip.sys!WfpProcessInTransportStackIndication",
+          "hits": 756,
+          "percent_of_all_target_samples": 9.04955709839598
+        }
+      },
+      "send_filtered": {
+        "total": 2025,
+        "loopback_intersection": 1437,
+        "loopback_percent_of_send_samples": 70.96296296296296,
+        "loopback_hits_without_send_frame": 1,
+        "exclusive_leaf_modules": {
+          "tcpip.sys": 621,
+          "ntkrnlmp.exe": 784,
+          "winnat.sys": 116,
+          "NDIS.SYS": 113,
+          "netio.sys": 247,
+          "afd.sys": 103,
+          "ws2_32.dll": 15,
+          "mswsock.dll": 8,
+          "ntdll.dll": 7,
+          "WppRecorder.sys": 6,
+          "***unknown***": 3,
+          "fwpkclnt.sys": 2
+        },
+        "known_kernel_leaf_hits": 1992,
+        "known_kernel_leaf_percent_of_send_samples": 98.37037037037038,
+        "immediate_callers": [
+          {
+            "symbol": "novovm-node.exe!_ZN121_$LT$novovm_network..novorudp..carrier..SegmentedUdpIo$u20$as$u20$novovm_network..novorudp..carrier..NativeDatagramIo$GT$8try_send17h53e41f2c50544357E",
+            "hits": 1027
+          },
+          {
+            "symbol": "novovm-node.exe!_ZN16novovm_udp_batch10poll_timer15NativePollTimer3new17h7d1ec00b59eb1f75E",
+            "hits": 998
+          }
+        ]
+      },
+      "loopback_filtered": {
+        "total": 1438,
+        "receive_chain": {
+          "UdpDeliverDatagrams": {
+            "symbol": "tcpip.sys!UdpDeliverDatagrams",
+            "hits": 1049,
+            "percent_of_all_target_samples": 12.55685898970553
+          },
+          "InetInspectReceiveDatagram": {
+            "symbol": "tcpip.sys!InetInspectReceiveDatagram",
+            "hits": 820,
+            "percent_of_all_target_samples": 9.81565717021786
+          },
+          "WfpProcessInTransportStackIndication": {
+            "symbol": "tcpip.sys!WfpProcessInTransportStackIndication",
+            "hits": 756,
+            "percent_of_all_target_samples": 9.04955709839598
+          },
+          "AfdTLDgramReceiveEventHandler": {
+            "symbol": "afd.sys!AfdTLDgramReceiveEventHandler",
+            "hits": 170,
+            "percent_of_all_target_samples": 2.0349533157768733
+          },
+          "AfdReceiveDatagramEventCommonHandler": {
+            "symbol": "afd.sys!AfdReceiveDatagramEventCommonHandler",
+            "hits": 157,
+            "percent_of_all_target_samples": 1.8793392386880536
+          }
+        }
+      },
+      "private_export_sha256": {
+        "tick-fullsymbols.html": "5794fd27b9d30eb22e1c940b75de943f34c45609800b4cb1e823d194dd5a12d2",
+        "profile-events.csv": "3f63dec6e326a2673e79a804fd2df2fa242e6b2d5023105f2f485c013886bbb2",
+        "thread-events.csv": "d90d361276680cb686430ddd01d5eda62bed312b5310d88030a3bee306a02d12",
+        "send-only.html": "031d4afe74d4182466887b1547a0f04cacddd4099e89a2c290f05856a655dfce",
+        "loopback-only.html": "f594b55fb2a0c72d9717814598de946b79bdb52aacc14ae3a2e8132a3b8e8996",
+        "frequency.txt": "32025e18da6f1dc724d055a18a1ac5006166cf7ed7366395edfeed6930fa9ccf"
+      }
+    }
+  ],
+  "scheduling": [
+    {
+      "round": 2,
+      "backend": "cpu",
+      "pid": 31004,
+      "tid": 19464,
+      "thread_name": "novovm-native-tick",
+      "range_us": [
+        300000,
+        5200000
+      ],
+      "duration_us": 4900000,
+      "first_reliable_cswitch_us": 39595,
+      "last_cswitch_us": 5306185,
+      "state_us": {
+        "Running": 4825833,
+        "Ready": 70651,
+        "Waiting": 3481,
+        "Unknown": 35
+      },
+      "state_percent": {
+        "Running": 98.48638775510204,
+        "Ready": 1.4418571428571427,
+        "Waiting": 0.07104081632653061,
+        "Unknown": 0.0007142857142857143
+      },
+      "waiting_reason_us": {
+        "WrAlertByThreadId": 3481
+      },
+      "intervals": {
+        "Running": {
+          "count": 1368,
+          "p50_us": 789,
+          "p95_us": 16505,
+          "p99_us": 35294,
+          "max_us": 155256
+        },
+        "Ready": {
+          "count": 1243,
+          "p50_us": 7,
+          "p95_us": 335,
+          "p99_us": 853,
+          "max_us": 2763
+        },
+        "Waiting": {
+          "count": 23,
+          "p50_us": 13,
+          "p95_us": 412,
+          "p99_us": 2562,
+          "max_us": 2562
+        }
+      },
+      "switchesIn": 1456,
+      "switchesOut": 1455,
+      "readyCount": 45,
+      "anomalies": [
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 402136
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 942395
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 1666377
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 1919454
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 2470259
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 2634052
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 2650816
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 3587913
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 3704040
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4495171
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4514077
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4514098
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4522074
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4632441
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4720575
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4849234
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4849495
+        }
+      ],
+      "longest_waiting": [
+        {
+          "us": 2562,
+          "begin": 582128,
+          "end": 584690,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 412,
+          "begin": 641986,
+          "end": 642398,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 139,
+          "begin": 4809073,
+          "end": 4809212,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 98,
+          "begin": 738471,
+          "end": 738569,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 63,
+          "begin": 1416640,
+          "end": 1416703,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 33,
+          "begin": 1474266,
+          "end": 1474299,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 29,
+          "begin": 2979103,
+          "end": 2979132,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 24,
+          "begin": 5104602,
+          "end": 5104626,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 19,
+          "begin": 1457307,
+          "end": 1457326,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 14,
+          "begin": 606431,
+          "end": 606445,
+          "reason": "WrAlertByThreadId"
+        }
+      ],
+      "longest_ready": [
+        {
+          "us": 2763,
+          "begin": 2680184,
+          "end": 2682947,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 2103,
+          "begin": 541302,
+          "end": 543405,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 2039,
+          "begin": 2130953,
+          "end": 2132992,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 2013,
+          "begin": 5080949,
+          "end": 5082962,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 1993,
+          "begin": 981829,
+          "end": 983822,
+          "reason": "WrPreempted"
+        },
+        {
+          "us": 1614,
+          "begin": 566988,
+          "end": 568602,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 1593,
+          "begin": 3236620,
+          "end": 3238213,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 1151,
+          "begin": 4083292,
+          "end": 4084443,
+          "reason": "WrQuantumEnd"
+        },
+        {
+          "us": 981,
+          "begin": 2136988,
+          "end": 2137969,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 859,
+          "begin": 5076153,
+          "end": 5077012,
+          "reason": "WrDispatchInt"
+        }
+      ],
+      "independent_xperf_running_us": 4825836,
+      "entry_thread_cpu_util_top": [
+        {
+          "tid": 19464,
+          "thread_name": "novovm-native-tick",
+          "running_us": 4825836
+        },
+        {
+          "tid": 13440,
+          "thread_name": "novovm-candidate-io",
+          "running_us": 1181218
+        },
+        {
+          "tid": 30624,
+          "thread_name": "novovm-compute-owner",
+          "running_us": 659644
+        },
+        {
+          "tid": 29288,
+          "thread_name": "novovm-candidate-pipeline",
+          "running_us": 341965
+        },
+        {
+          "tid": 22076,
+          "thread_name": "\"Unknown\"",
+          "running_us": 215295
+        },
+        {
+          "tid": 2496,
+          "thread_name": "\"Unknown\"",
+          "running_us": 180249
+        },
+        {
+          "tid": 21104,
+          "thread_name": "\"Unknown\"",
+          "running_us": 93637
+        },
+        {
+          "tid": 24872,
+          "thread_name": "aoem-semantic-graph-v2-17",
+          "running_us": 39378
+        },
+        {
+          "tid": 4788,
+          "thread_name": "\"Unknown\"",
+          "running_us": 33231
+        },
+        {
+          "tid": 34076,
+          "thread_name": "\"Unknown\"",
+          "running_us": 31865
+        }
+      ],
+      "named_receiver_threads": [],
+      "scope": "4.9s interior slice after both FirstReliableCSwitch timestamps; context-switch wall intervals, not CPU useful work. Missing-pair interval left Unknown; ReadyThread racing before switchout does not imply on-CPU waiting. Waiting reason is scheduler classification, not wait callsite. DPC/ISR not excluded; no corresponding events captured. Leading/trailing clip makes interval maxima bounded, not full lifetimes."
+    },
+    {
+      "round": 3,
+      "backend": "gpu_required",
+      "pid": 24928,
+      "tid": 3800,
+      "thread_name": "novovm-native-tick",
+      "range_us": [
+        300000,
+        5200000
+      ],
+      "duration_us": 4900000,
+      "first_reliable_cswitch_us": 149791,
+      "last_cswitch_us": 5301485,
+      "state_us": {
+        "Running": 4826751,
+        "Ready": 64813,
+        "Waiting": 7083,
+        "Unknown": 1353
+      },
+      "state_percent": {
+        "Running": 98.50512244897959,
+        "Ready": 1.3227142857142857,
+        "Waiting": 0.14455102040816326,
+        "Unknown": 0.027612244897959184
+      },
+      "waiting_reason_us": {
+        "WrAlertByThreadId": 7083
+      },
+      "intervals": {
+        "Running": {
+          "count": 1407,
+          "p50_us": 488,
+          "p95_us": 15579,
+          "p99_us": 40293,
+          "max_us": 105539
+        },
+        "Ready": {
+          "count": 1318,
+          "p50_us": 10,
+          "p95_us": 234,
+          "p99_us": 588,
+          "max_us": 922
+        },
+        "Waiting": {
+          "count": 27,
+          "p50_us": 10,
+          "p95_us": 1038,
+          "p99_us": 2466,
+          "max_us": 2466
+        }
+      },
+      "switchesIn": 1509,
+      "switchesOut": 1507,
+      "readyCount": 32,
+      "anomalies": [
+        {
+          "kind": "out_nonrunning_interval_unclassified",
+          "time": 139931,
+          "state": "Ready",
+          "since": 137995
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 491695
+        },
+        {
+          "kind": "out_nonrunning_interval_unclassified",
+          "time": 522907,
+          "state": "Ready",
+          "since": 522873
+        },
+        {
+          "kind": "out_nonrunning_interval_unclassified",
+          "time": 970403,
+          "state": "Ready",
+          "since": 969176
+        },
+        {
+          "kind": "ready_before_switchout_ignored_until_out",
+          "time": 4548904
+        },
+        {
+          "kind": "out_nonrunning_interval_unclassified",
+          "time": 4970262,
+          "state": "Ready",
+          "since": 4970195
+        }
+      ],
+      "longest_waiting": [
+        {
+          "us": 2466,
+          "begin": 3383412,
+          "end": 3385878,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 1038,
+          "begin": 2379510,
+          "end": 2380548,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 888,
+          "begin": 595841,
+          "end": 596729,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 666,
+          "begin": 1832310,
+          "end": 1832976,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 638,
+          "begin": 765338,
+          "end": 765976,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 606,
+          "begin": 612833,
+          "end": 613439,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 351,
+          "begin": 2044313,
+          "end": 2044664,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 114,
+          "begin": 1204649,
+          "end": 1204763,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 105,
+          "begin": 1774530,
+          "end": 1774635,
+          "reason": "WrAlertByThreadId"
+        },
+        {
+          "us": 85,
+          "begin": 1749634,
+          "end": 1749719,
+          "reason": "WrAlertByThreadId"
+        }
+      ],
+      "longest_ready": [
+        {
+          "us": 922,
+          "begin": 4512906,
+          "end": 4513828,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 918,
+          "begin": 4300865,
+          "end": 4301783,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 903,
+          "begin": 2132596,
+          "end": 2133499,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 901,
+          "begin": 4148715,
+          "end": 4149616,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 870,
+          "begin": 1811813,
+          "end": 1812683,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 869,
+          "begin": 663772,
+          "end": 664641,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 785,
+          "begin": 689479,
+          "end": 690264,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 779,
+          "begin": 505385,
+          "end": 506164,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 716,
+          "begin": 4327779,
+          "end": 4328495,
+          "reason": "WrDispatchInt"
+        },
+        {
+          "us": 652,
+          "begin": 4345037,
+          "end": 4345689,
+          "reason": "WrDispatchInt"
+        }
+      ],
+      "independent_xperf_running_us": 4827829,
+      "entry_thread_cpu_util_top": [
+        {
+          "tid": 3800,
+          "thread_name": "novovm-native-tick",
+          "running_us": 4827829
+        },
+        {
+          "tid": 36800,
+          "thread_name": "novovm-candidate-io",
+          "running_us": 1049870
+        },
+        {
+          "tid": 30492,
+          "thread_name": "novovm-compute-owner",
+          "running_us": 768752
+        },
+        {
+          "tid": 18164,
+          "thread_name": "novovm-candidate-pipeline",
+          "running_us": 377765
+        },
+        {
+          "tid": 20552,
+          "thread_name": "\"Unknown\"",
+          "running_us": 165101
+        },
+        {
+          "tid": 6860,
+          "thread_name": "\"Unknown\"",
+          "running_us": 94972
+        },
+        {
+          "tid": 30780,
+          "thread_name": "\"Unknown\"",
+          "running_us": 86222
+        },
+        {
+          "tid": 25760,
+          "thread_name": "aoem-semantic-graph-v2-0",
+          "running_us": 31725
+        },
+        {
+          "tid": 12792,
+          "thread_name": "aoem-semantic-graph-v2-9",
+          "running_us": 30859
+        },
+        {
+          "tid": 6676,
+          "thread_name": "aoem-semantic-graph-v2-21",
+          "running_us": 30027
+        }
+      ],
+      "named_receiver_threads": [],
+      "scope": "4.9s interior slice after both FirstReliableCSwitch timestamps; context-switch wall intervals, not CPU useful work. Missing-pair interval left Unknown; ReadyThread racing before switchout does not imply on-CPU waiting. Waiting reason is scheduler classification, not wait callsite. DPC/ISR not excluded; no corresponding events captured. Leading/trailing clip makes interval maxima bounded, not full lifetimes."
+    }
+  ],
+  "exact_address_symbol_review": {
+    "schema": "novovm-windows-send-symbol-caveat/v1",
+    "scope": "Read-only matching frozen node/PDB evidence; no product changes or new recordings. Round0 raw-PC closure now independently verified in send-symbol-raw-closure.json.",
+    "node_sha256": "24de0d1e0b1f508741b4fdabd9d089609c9924bdb2cfdbce2e766cefeb6f2078",
+    "pdb_sha256": "4bbc8f6e386b15a308db1ed4e7fe72f1b0c28817baf6505306c28972b716ab77",
+    "pe_image_base": "0x140000000",
+    "text_section_rva": "0x1000",
+    "misleading_public": {
+      "name": "novovm_udp_batch::poll_timer::NativePollTimer::new",
+      "public_rva": "0x17a38a0",
+      "primary_unwind": [
+        "0x17a38a0",
+        "0x17a3971"
+      ],
+      "cleanup_unwind": [
+        "0x17a3980",
+        "0x17a39b7"
+      ],
+      "direct_import_call": {
+        "instruction_rva": "0x17a38bf",
+        "bytes": "ff 15 6b 13 8e 00",
+        "iat_rva": "0x2084c30",
+        "import": "winmm.dll!timeBeginPeriod",
+        "argument": 1
+      },
+      "conclusion": "Actual timer initialization is a distinct machine function. Its nearest-public name cannot describe subsequent private batch-send addresses."
+    },
+    "private_batch_machine_function": {
+      "unwind": [
+        "0x17a39c0",
+        "0x17a3e9f"
+      ],
+      "observable_operations": [
+        "empty row return",
+        "segment_size nonzero <=65507",
+        "rows <=64",
+        "nonempty equal-sized segments except optional short tail",
+        "sum <=65507",
+        "Option diagnostic evidence",
+        "Vec allocation and concat",
+        "std UdpSocket::send_to",
+        "checked complete write"
+      ],
+      "mapping": "Code/source correspondence matches send_batch with validate_batch and Windows send_segmented_platform inlined; exact original private/inline names are unavailable from this stripped PDB.",
+      "direct_call": {
+        "instruction_rva": "0x17a3d0a",
+        "bytes": "e8 51 b0 2e 00",
+        "target_rva": "0x1a8ed60",
+        "return_rva": "0x17a3d0f",
+        "callee": "std::sys::net::connection::socket::UdpSocket::send_to"
+      },
+      "callee_import_call": {
+        "instruction_rva": "0x1a8edf0",
+        "bytes": "ff 15 6a 5e 5f 00",
+        "iat_rva": "0x2084c60",
+        "import": "ws2_32.dll!sendto"
+      }
+    },
+    "carrier_calls": [
+      {
+        "caller": "SegmentedUdpIo::try_send_batch",
+        "instruction_rva": "0x15a1e80",
+        "bytes": "e8 0b 21 20 00",
+        "wrapper_target_rva": "0x17a3f90",
+        "wrapper_instruction_rva": "0x17a3fa7",
+        "wrapper_bytes": "e8 14 fa ff ff",
+        "batch_target_rva": "0x17a39c0",
+        "type": "unobserved wrapper (None evidence)"
+      },
+      {
+        "caller": "SegmentedUdpIo::try_send_batch",
+        "instruction_rva": "0x15a1f27",
+        "bytes": "e8 04 21 20 00",
+        "wrapper_target_rva": "0x17a4030",
+        "wrapper_instruction_rva": "0x17a4076",
+        "wrapper_bytes": "e9 45 f9 ff ff",
+        "batch_target_rva": "0x17a39c0",
+        "type": "observed wrapper resetting caller evidence, tail-jump"
+      }
+    ],
+    "source_correspondence": [
+      "crates/novovm-udp-batch/src/poll_timer.rs:17-28: timeBeginPeriod(1), no packet send",
+      "crates/novovm-udp-batch/src/segmented.rs:50-83: original observed/unobserved wrappers share send_batch",
+      "crates/novovm-udp-batch/src/segmented.rs:85-131: validate and shared platform call",
+      "crates/novovm-udp-batch/src/segmented.rs:171-207: original Vec concat, socket.send_to, checked result",
+      "crates/novovm-network/src/novorudp/carrier.rs:143-175: original SegmentedUdpIo::try_send_batch selects wrappers"
+    ],
+    "pdb_limit": "llvm-pdbutil dump --symbols --modi=1: Module stream not present. Public labels and xperf range endpoints are not a complete private-function/inline map.",
+    "report_rule": "Do not call 1001/902/998 send-filtered caller hits timer cost. Round0 raw-PC verification closes all1001 times to the private original batch-send return; see send-symbol-raw-closure.json. Other-round counts remain symbol grouping only unless separately raw-verified. Use original Windows batch-send path / nearest-public alias caveat rather than exact private/inline Rust-name claims."
+  },
+  "raw_address_closure": {
+    "raw_csv": "round-0-raw-stacks.csv",
+    "raw_export_log": "round-0-raw-stacks.log",
+    "raw_export_bytes": 216221128,
+    "raw_export_exit_code": 0,
+    "dumper_warnings": 24,
+    "warning_scope": "Invalid Event ClassicEventGuid b3e675d7-2554-4f18-830b-2762732560de Type0x25 from system activity; retained privately, no claim of perfect whole-export decoding. Target sampled profile and stack closure verified separately.",
+    "original_pid": 35580,
+    "original_tid": 31996,
+    "original_thread_name": "novovm-native-tick",
+    "image_rundown_base": "0x00007ff63b170000",
+    "image_rundown_size": "0x0287e000",
+    "sampledprofile_tick_records": 8345,
+    "exact_batch_return_rva": "0x17a3d0f",
+    "exact_batch_return_address": "0x00007ff63c913d0f",
+    "stack_rows_at_exact_return": 1001,
+    "unique_stack_sample_times": 1001,
+    "times_matching_original_pid_tid_sampledprofile": 1001,
+    "actual_timer_body_or_cleanup_stack_sample_times": 0,
+    "example_sample_timestamp_us": 29217,
+    "example_stack_addresses": [
+      "0x00007ffc32520a62",
+      "0x00007ff63cbfedf6",
+      "0x00007ff63c913d0f",
+      "0x00007ff63c913fac",
+      "0x00007ff63c711e85"
+    ],
+    "example_node_rvas": [
+      "0x1a8edf6",
+      "0x17a3d0f",
+      "0x17a3fac",
+      "0x15a1e85"
+    ],
+    "conclusion": "All 1001 round0 send-filtered NativePollTimer-new-labeled caller samples close to exact private batch-send return RVA17a3d0f, not the actual NativePollTimer body. It is the unobserved original batch-wrapper branch; no sampled stack enters the actual timer body/cleanup."
+  },
+  "private_evidence_sha256": {
+    "capture.json": "ee452fb2bd99354f7eb1b31f10cacfc54dc6dee0d6dbb83d8044b4143d57be5e",
+    "schedule-attribution.json": "e68a3018c6052509239d0ad4038d933c711f385e28d3a9d4a9ab863d0235516b",
+    "analyze-schedule.cjs": "7310a39539c692b2eeba9604ff44dde05b99ac80f717d5b641143e7ef0a94cef",
+    "send-symbol-caveat.json": "33f9e67b0ae1b5fde485ca4e50b865708bd755dffc21b65ff86d1c2644b55928",
+    "send-symbol-raw-closure.json": "daa0560083c6c584bdec77b23d6ac625132b1a29cae7a56e8b4a8363dabfbc3d",
+    "round-0-raw-stacks.csv": "0b4259063a893a182bddb6e58cc5fced1af3cabd055bc0974ad2312f8d052b55",
+    "round-0-raw-stacks.log": "2d1da8e90db4b22b1ea30902a2fa6addd08da0417d2648672f8bc002118251dc"
+  },
+  "limits": [
+    "CPU percentages use ALL raw PID/TID samples, including missing stack reports; inclusive parents/children overlap and must not be added.",
+    "Send-selected exclusive module leaves partition sampled on-CPU work, not API wall latency or a complete cycles breakdown. Interrupt/DPC work is not separately subtracted.",
+    "Loopback/send intersection is counted from send-filtered stacks; 1/2/1 loopback hits lack a send frame and remain separate.",
+    "CPU and schedule windows are different rounds. Running residency can include polling/spin and DPC/ISR; no wait callsite stacks were captured.",
+    "Optimized public Rust names can be misleading. Round0 exact raw-PC closure verifies the private batch-send return, not NativePollTimer cost. Other rounds were not independently raw-PC closed.",
+    "The separate raw dumper has 24 retained InvalidEvent warnings and 8345 target SampledProfile rows versus 8348 in the profile-specific export; only the exact 1001-row address intersection is closed by it.",
+    "No controlled segmented-vs-single batch experiment or physical-NIC comparison; a sparse UdpSegmentMessage symbol is not total segmentation cost.",
+    "WFP/WinNAT/NDIS presence does not establish faulty or removable security work. No firewall, driver or network configuration was changed.",
+    "Single Windows host, four processes, pre-generated same-byte corpus. No continuous-supply performance acceptance or full historical 12K loss attribution."
+  ]
+}

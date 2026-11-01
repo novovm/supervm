@@ -2,13 +2,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const base = path.resolve(process.argv[2]);
-const out = path.join(__dirname, 'QUALIFIED-TRACE-RESULTS.json');
-const readJson = name => JSON.parse(fs.readFileSync(path.join(base, name), 'utf8'));
-const sha = name => crypto.createHash('sha256').update(fs.readFileSync(path.join(base, name))).digest('hex');
-const manifest = readJson('capture.json');
-const report = JSON.parse(fs.readFileSync(path.resolve(base, '../../native-product-load/paired-20140-1793491596690.json'), 'utf8'));
-if (manifest.driver_pid !== 20140 || manifest.failure || manifest.load_exit !== 0) throw Error('Unexpected capture');
 const decode = s => s.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').trim();
 const cells = s => [...s.matchAll(/<td[^>]*>(.*?)<\/td>/gs)].map(m => decode(m[1]));
 function parseStack(html) {
@@ -25,6 +18,15 @@ function parseStack(html) {
   });
   return {total, inclusive:table('TblSI'), exclusive:table('TblSE'), functions};
 }
+module.exports = { parseStack };
+if (require.main === module) {
+const base = path.resolve(process.argv[2]);
+const out = path.join(__dirname, 'QUALIFIED-TRACE-RESULTS.json');
+const readJson = name => JSON.parse(fs.readFileSync(path.join(base, name), 'utf8'));
+const sha = name => crypto.createHash('sha256').update(fs.readFileSync(path.join(base, name))).digest('hex');
+const manifest = readJson('capture.json');
+const report = JSON.parse(fs.readFileSync(path.resolve(base, '../../native-product-load/paired-20140-1793491596690.json'), 'utf8'));
+if (manifest.driver_pid !== 20140 || manifest.failure || manifest.load_exit !== 0) throw Error('Unexpected capture');
 const patterns = {
   native_network:'NativeLifecycle7poll_io',
   object_send:'NativeObjectSender17poll_send_limited',
@@ -103,3 +105,4 @@ const result = {
 };
 fs.writeFileSync(out, JSON.stringify(result,null,2)+'\n');
 console.log(JSON.stringify({output:out,windows:windows.length,raw_samples:cpu.map(c => c.raw_sample_count),stack_coverage:cpu.map(c => c.stack_report_coverage_percent)}));
+}
