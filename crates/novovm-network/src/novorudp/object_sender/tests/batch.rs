@@ -170,7 +170,16 @@ fn initial_batch_preserves_copy_cursor_short_tail_poll_quantum_and_pause() -> Re
     sender.config.batch_size = 4;
     sender.pacing.batch_size = 4;
     sender.config.batch_pause_ms = 5;
+    let costs_before = diagnostics::native_io_cost_snapshot();
     assert_eq!(sender.poll_send_limited(&io, &mut a, now, 7, None)?, 4);
+    if let Some(before) = costs_before {
+        let after = diagnostics::native_io_cost_snapshot().unwrap();
+        assert_eq!(
+            after["phases"]["frame_prepare"]["calls"].as_u64().unwrap()
+                - before["phases"]["frame_prepare"]["calls"].as_u64().unwrap(),
+            4
+        );
+    }
     for sequence in [0, 0, 0, 1] {
         assert_eq!(receive(&right, &mut b)?.sequence, sequence);
     }

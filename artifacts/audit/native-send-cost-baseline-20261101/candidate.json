@@ -1,0 +1,63 @@
+{
+  "source_base": "2896036297c2eefb133709bffc5df542a4d92d45",
+  "scope": "Cost diagnosis only; new source adds existing FramePrepare around original bulk construction and a count assertion; no sender/encoding/cryptographic/repair behavior change. Diagnostic node is not a524 and has no new sustained performance qualification.",
+  "files": [
+    {
+      "role": "baseline_node",
+      "path": "D:/WorksArea/SUPERVM/target/native-send-buffer-20261101/candidate/novovm-node.exe",
+      "sha256": "a524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd"
+    },
+    {
+      "role": "diagnostic_node",
+      "path": "D:/WorksArea/SUPERVM/target/native-send-cost-baseline-20261101/diagnostic/novovm-node.exe",
+      "sha256": "a82c966334e6935a0e0ac5b7f8d72a04d077509a87e90d6827986951fa46ae7d"
+    },
+    {
+      "role": "diagnostic_node_pdb",
+      "path": "D:/WorksArea/SUPERVM/target/native-send-cost-baseline-20261101/diagnostic/novovm_node.pdb",
+      "sha256": "7a6b1b381803ad42ade1d2b50ff11ea42a326bde09bafeb561c5c1946d36b5c5"
+    },
+    {
+      "role": "diagnostic_client",
+      "path": "D:/WorksArea/SUPERVM/target/native-send-cost-baseline-20261101/diagnostic/novovm-native-client.exe",
+      "sha256": "f7f97c0e2856dd6f8557bd247674d6bb01e7d256d1871d92dbd136dac03748c3"
+    },
+    {
+      "role": "diagnostic_client_pdb",
+      "path": "D:/WorksArea/SUPERVM/target/native-send-cost-baseline-20261101/diagnostic/novovm_native_client.pdb",
+      "sha256": "3b2a1191dd1b6385697365d11f44c1f10bde4f38c48deed4c544d23aa3bf1495"
+    },
+    {
+      "role": "tester",
+      "path": "D:/WorksArea/SUPERVM/target/native-controller-throughput-20261031/stability-observer/native-tests.exe",
+      "sha256": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb"
+    },
+    {
+      "role": "aoem",
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+      "sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+    },
+    {
+      "role": "environment_template",
+      "path": "D:/WorksArea/SUPERVM/artifacts/audit/native-controller-throughput-20261031/candidate-v1.json",
+      "sha256": "29bf7422ba92442254189ee21b387698a55e59d105643d79b57bc8615244cee7"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "crates/novovm-network/src/novorudp/object_sender.rs",
+      "sha256": "ac7156aaf6cb4241e10f67e66cb721f33ebdff7d4f0f715b16ab1905273b869b"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/object_sender/tests/batch.rs",
+      "sha256": "904169604338dd424b7f4324eb4578e1ac4579edf995e393b76eb6b91eb09f19"
+    }
+  ],
+  "commands": [
+    "cargo test --locked --release -p novovm-network initial_batch_preserves_copy_cursor_short_tail_poll_quantum_and_pause -- --test-threads=1 [NOVOVM_PROFILE_NATIVE_IO=1]",
+    "cargo test --locked --release -p novovm-network --lib -- --test-threads=1 [NOVOVM_PROFILE_NATIVE_IO=0]",
+    "cargo clippy --locked --release -p novovm-network -p novovm-node --lib -- -D warnings",
+    "cargo clippy --locked --release -p novovm-network --tests -- -D warnings",
+    "cargo build --locked --release -p novovm-node --bin novovm-node --bin novovm-native-client"
+  ]
+}

@@ -5,6 +5,10 @@
 沿原 `NativeObjectSender → NativeUdpSession::encode → E2eSecureChannelV1` 改造，
 不改协议、nonce/tag/AAD、完整性、重放、补片、配额、线程、账户、AOEM、GPU或共识。
 
+后续[当前发送成本基线](../native-send-cost-baseline-20261101/README.md)直接测本页冻结
+a524制品，并用单独哈希的诊断node补齐bulk构造计时漏点；不改写本页关闭诊断的
+性能结果，不把新的诊断负载当作持续性能提升。
+
 ## 1. 原调用链的工作量审计
 
 | 原步骤 | 本轮处理 | 边界 |

@@ -432,15 +432,19 @@ impl NativeObjectSender {
                 if index == self.body.frame_count() {
                     break;
                 }
-                let frame = NovoRudpTransportFrameV0::new(
-                    NovoRudpTransportFrameKindV0::Data,
-                    self.session,
-                    self.stream,
-                    u64::from_be_bytes(self.body.id()[..8].try_into()?),
-                    index as u64,
-                    self.state.latest_ack_epoch,
-                    self.body.frame(index)?,
-                );
+                let frame = {
+                    let _cost =
+                        super::diagnostics::io_span(super::diagnostics::IoPhase::FramePrepare);
+                    NovoRudpTransportFrameV0::new(
+                        NovoRudpTransportFrameKindV0::Data,
+                        self.session,
+                        self.stream,
+                        u64::from_be_bytes(self.body.id()[..8].try_into()?),
+                        index as u64,
+                        self.state.latest_ack_epoch,
+                        self.body.frame(index)?,
+                    )
+                };
                 packets.push(frame);
                 copy += 1;
                 if copy == copies {
