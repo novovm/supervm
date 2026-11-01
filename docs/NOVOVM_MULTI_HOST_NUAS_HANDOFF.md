@@ -5,6 +5,143 @@
 禁止重用清空的签票日志或旧域，通信数据与审计报告保留。禁止把现有公测余额带入未来
 正式创世。当前阶段先清点、同步、构建，不自动启用服务。
 
+## 2026-11-02 当前交接：四机物理网络测试只读准备
+
+交接编号：`A-PHYSICAL-4HOST-PREP-20261102`。用户将安排各机Codex更新GitHub源码、
+阅读本节并向A汇报；明确既有公网也有局域网。**本阶段不连接/探测A–D业务或管理端口，
+不部署、不构建、不启动节点、不改防火墙/安全组/时间服务，不创建密钥、创世或数据库。**
+允许各机从GitHub取本次指定源码，这不等于授权A远程登录各机。
+只运行本机只读清点并生成本地报告；同步前保护本机已有工作。本节优先于下文历史
+“从main构建/准备配置”等操作指引；并未授权执行它们。
+
+单机证据检查点为`6898b4964d1a7d3c531bbf14253004e3de13e990`，见
+[同步发送/回环有效结果](../artifacts/audit/native-windows-sync-send-20261102/QUALIFIED-RESULTS.md)。
+当前固定node对应源码基线`486967c7`；本轮准备文档提交不是新的产品制品或发布候选。
+所有机器按A在交接消息公布的**完整文档提交SHA**同步并回传实际HEAD，不追移动main，
+不把“已推送/已发通知”记作另一台已阅读。
+
+### 机器身份以本地回执为准
+
+| 机器 | 历史定位，仅供找到正确设备 | 当前回执 |
+| --- | --- | --- |
+| A | 当前Windows共享实现/集成主机 | 2026-11-02本机只读清点完成，见下表 |
+| B | 历史阿里云Ubuntu主机；保留邮箱、Relay、Web | 待本机确认，不能改写为已经核实的Windows |
+| C | 历史Windows手机调试笔记本；保护NOVOCHAT/ADB/手机 | 待本机确认，不能改写为已经核实的Linux |
+| D | 历史Ubuntu / Ryzen AI MAX+395，保护AI任务 | 待本机确认 |
+
+用户最新讨论列出A/B Windows、C Linux、D Ubuntu，与历史B/C记录不同；用户要求通过
+各机回报确定，不在A猜测或交换机器标签。若实际设备与历史标签不同，报告差异，由A汇总。
+有云虚拟机就明确标为云VM，不把“四个独立主机”写成“四台裸金属服务器”。
+
+A的本次实测（不是四机完成）：
+
+| 项目 | 2026-11-02本机结果 |
+| --- | --- |
+| OS / CPU / RAM | Windows 11家庭版build26200；Ultra 9 275HX，24核/24逻辑CPU；约64GB |
+| 物理接口 | I226-V有线未连接；BE200 Wi-Fi已连接，报告780Mbps；不是实测吞吐 |
+| 时钟 | W32Time停止；`w32tm /query /status`返回0x80070426（服务未启动）；未修改设置，不据此宣称时钟偏差很大 |
+| 磁盘 | D盘可用约32GiB，瞬时清点值，不是四机多轮空间资格 |
+| 现有AOEM | 原清点器检查的随包库匹配SDK manifest；不等于已匹配本轮候选库/能力 |
+| 报告 | `target/native-windows-sync-send-20261102/four-host-A-inventory-20261102.json`，留本机，不公开地址/完整配置 |
+
+### 发给B/C/D各机Codex的同一段提示
+
+把`HOST_LABEL`替换为B、C或D，连同A公布的完整提交SHA交给该机Codex：
+
+> 本机标签是HOST_LABEL，交接编号A-PHYSICAL-4HOST-PREP-20261102。
+> 请在本机既有SUPERVM仓库执行四机测试的只读准备，不另建网络、节点或部署系统。
+> 先报告仓库路径、分支、HEAD、远端和未提交修改；保留所有本机工作、数据与证据。
+> fetch GitHub的dev/mldsa65-identity-closure，核对A给出的完整提交已取得。
+> 只有工作区干净且能安全快进时才同步该分支；有分叉、冲突、未提交工作就保留并向A报告，
+> 不reset、不强推、不自动stash，不把main推进到开发分支，也不自行提交共享协议修改。
+> 阅读AGENTS.md、docs/NOVOVM_MULTI_HOST_NUAS_HANDOFF.md最上方2026-11-02节、
+> docs/NOVOVM_DELIVERY_ALIGNMENT.md与当前第一发布签名合同。确认已阅读的提交SHA。
+> 复用scripts/novovm-production-machine-inventory.ps1做本地清点（本机已有pwsh时），
+> 报告写到本机target的新路径；没有pwsh就手动读同样字段，不为清点安装工具链。
+> 补充CPU/内存、网卡/驱动/链路、物理机或云VM、可用磁盘、时钟源与同步状态、
+> 本机现有服务和占用端口，以及公网/局域网/NAT/云安全组的已知配置。
+> 区分本机bind地址、拟公布的reachable端点、已知出口与真实可达证据；不知道就写unknown。
+> 不调用外部IP发现服务，不从本机连接/扫描其他主机，不能把历史IP/overlay PASS当本次可达。
+> 只核对已有node/client/AOEM文件、SHA256、平台和已有能力证明；不加载未知库、不构建或换库。
+> 不读取/回传私钥、口令、完整配置或数据库。不要启动/重启节点、开端口、改路由、
+> 防火墙、时间服务、B邮箱/Relay/Web、C手机/ADB或D的AI服务，不创建密钥/创世/账户。
+> 按下方模板向A回传本机清单和首个阻断。完整IP、主机名、规则与原始报告仅点对点交给A，
+> 不直接推公共GitHub；可以回传脱敏状态，但不得把未测项填为PASS。
+
+### 回传模板
+
+```text
+handoff_id: A-PHYSICAL-4HOST-PREP-20261102
+host_label / actual_device_role / historical_label_difference:
+read_doc_commit / current_source_HEAD / branch / clean_or_dirty:
+repo_root / fetch_and_sync_result / first_blocker:
+os_version / kernel / arch / physical_or_cloud_VM:
+cpu_model / cores / logical_cpus / ram / available_ram:
+data_disk / free_space / existing_workload:
+nic / driver / link_type / negotiated_link_rate:
+lan_address / public_endpoint / NAT_mapping / route_interface: (private handoff)
+candidate_bind_UDP / advertised_UDP / existing_reserved_ports:
+host_firewall / cloud_security_group / known_allowed_sources: (not modified)
+clock_service / source / sync_status / last_sync / known_offset_or_unknown:
+existing_node_and_client: path / platform / SHA256 / source_or_unknown
+existing_AOEM: path / platform / SHA256 / manifest / capability_evidence_or_unknown
+existing_node_config_and_DB_and_journal: paths/status only, no contents
+local_inventory_path / checked_at_UTC:
+remote_connectivity_tested: false
+deployed_or_started_or_changed_services: false
+```
+
+原清点器的可用本地命令（在正确SUPERVM仓库根执行，替换HOST_LABEL；路径必须未存在）：
+
+```powershell
+pwsh -NoProfile -File scripts/novovm-production-machine-inventory.ps1 -MachineLabel HOST_LABEL -ReportPath target/four-host-prep-20261102-HOST_LABEL.json
+```
+
+它只清点地址/磁盘/随包库及Git，不检验候选ML-DSA能力、网卡或时钟；这些须在回执补充。
+Windows可只读查询`Get-Service W32Time`、`w32tm /query /status`；Linux可读取
+`timedatectl status`，已有chrony时补`chronyc tracking`。不可用就报告，不安装或启动服务。
+时钟用于对齐日志；未来TPS仍取驱动单调时钟，不能直接相减各机UTC推算微秒阶段耗时。
+
+### A收齐回执后的设置顺序（现在不执行）
+
+1. 形成唯一主机/角色和实际LAN/公网拓扑表，列明虚拟化、Wi-Fi、NAT、云链路等条件。
+   用户明确有公网和局域网，不将其写作同一有线LAN实验；能够安排时将LAN与公网分别列组。
+2. 根据各机实际占用选择原NovoRUDP端口、bind和advertised地址。历史41050仅候选，
+   不是已批准/已空闲/已放行；不填127.0.0.1、0.0.0.0或link-local作远端可达端点。
+   列精确来源、目的UDP端口及现有防火墙/云安全组差额，再提示用户逐机设置。
+3. 设置完成且进入获准连接阶段后，沿原认证路径核验全部必要方向的UDP往返，
+   保留发送端与接收端记录。ping/TCP成功不代替UDP；WSS/Relay/隧道另标拓扑，
+   不静默作为“物理直连”后备。当前所有跨机方向均为NOT TESTED。
+4. 冻结同一产品源码/协议、依赖/构建参数及AOEM能力合同，再由原Windows/Linux构建owner
+   准备隔离制品。不要求DLL、SO或跨平台node有相同SHA256；每个平台分别固定哈希、
+   manifest和实际加载身份。旧D的SO/包只算历史，不因存在就当合格候选。
+5. 准备共同获准测试域/创世/初始根/验证者集合及费用状态；每机独立用途密钥、数据库和
+   签票journal，不能复制同一节点的密钥或运行库状态。尚无批准参数时不填默认值，
+   不清旧库、不重用清空签票日志的旧域，普通账户仍用自身控制钥，不恢复强制grant预算。
+6. 沿原SDK和负载器接外部节点，固定公开已签语料及原经济核对，不另写执行器。
+   当前`service/client/operator.rs`的submit返回transport_delivery_only/finalized=false；
+   `consensus/native_product_load/uca.rs`仍依赖本地ProductNodes/内存PairedCorpus和本地库，
+   **不是换四个IP就具备四机65K最终验收能力**。远程四方回执与每机冷恢复汇总适配仍未交付。
+
+原`novovm-network/src/novorudp/carrier.rs::owned_udp_io`的Windows私有socket批发上限32，
+非Windows目前沿默认单包owner（上限1）。先保持各平台现状并显式记录，不在环境准备时
+顺便改发送策略。硬件/OS/批发路径不同，四机与单机差额不能全部归因于移除了Loopback。
+先用全组CPU验签/相同业务后端；GPU-required只能另列每机能力已证的组，不能静默回退。
+
+### 后续验收口径，不是当前已经执行
+
+先通过原节点小批功能和恢复，再测65,536笔真实交易；不是65,536个节点。
+保留1,024付款账户×64笔、声明的收款分布、1,024行/8MiB、8,192持续在途和ML-DSA-65。
+同字节与持续供给分别报告，以四节点全部最终回执为终点，核对余额、费用、nonce、
+账户控制权和四库冷恢复；采样轮与关闭额外诊断的成绩分开。
+同时计每笔/每字节/每数据报CPU、实际线上字节/包、初发/补发和P95/P99，不只比较函数占比。
+启动/签名准备独立记录；节点内部耐久发布与客户端观察延迟分开。12K是恢复目标，不预报四机会提高多少。
+
+用户引用的[Oracle OCFS2集群准备](https://docs.oracle.com/en/operating-systems/oracle-linux/6/admin/ol_prepare_ocfs2.html)
+讨论共享文件系统及其心跳，不能直接套用为NOVOVM的共享盘/集群栈要求；本轮不安装OCFS2，
+各验证者仍使用自己的数据库。当前完成的是清单和本地只读回执，**远端回执、设置、连通、
+平台制品、共同配置、四机负载器、四机交易及性能均未通过**。
+
 ## 2026-10-26 最新签名迁移：旧包不得混跑
 
 本次共同实现已将原共识签票与其 journal/wire 迁到 ML-DSA-65；传输仍是独立

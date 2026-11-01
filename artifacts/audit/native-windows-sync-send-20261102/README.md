@@ -73,6 +73,12 @@ pwsh -NoProfile -File D:\WorksArea\SUPERVM\artifacts\audit\native-ingress-hot-th
 用户2026-11-02确认目标是既有A/B/C/D，并再次明确：**现在仍是单机，进入真实四机
 必须先提示设置。** 未连接、部署或启动远端；B邮箱/Relay/Web、C手机开发和D既有服务不动。
 
+最新用户将安排各机Codex同步GitHub后回报，公网和局域网均存在。
+统一使用[原多机交接顶部2026-11-02只读提示及模板](../../../docs/NOVOVM_MULTI_HOST_NUAS_HANDOFF.md#2026-11-02-当前交接四机物理网络测试只读准备)，
+不另建清点/网络框架。A已用原inventory脚本完成本机只读清点；有线未连接、
+W32Time未运行，未改设置。B/C实际系统与拓扑待各机回执，不套用下方旧快照。
+各机只从GitHub取固定文档提交，不构建/部署/启动，也不互相探测；收到回执后再给精确设置步骤。
+
 已保存的2026-10-25主机记录（不是本轮实测）为：
 A Windows开发机；B Ubuntu、2vCPU/约3.5GiB；C Windows11/i9-14900HX；
 D Ubuntu/Ryzen AI MAX+395。来源见
