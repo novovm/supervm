@@ -82,9 +82,35 @@ AOEM使用`4c57372a`已提交基线加既有ML-DSA候选源码快照（overlay S
 默认调用不变。原安全28断言、构建失败检查和完整11程序装配夹具通过，新增独立pin缺失/
 不配对/不匹配拒绝及显式包根成功反例均通过。夹具不是实际ELF资格。
 Linux原novovm-exec单元回归83通过/29显式忽略；真实旧SO反例不在这些通过项内。
+Linux aoem-bindings单元回归33通过/8显式忽略；原打包安全、失败和整包装配夹具
+在Linux再次通过（安全29断言），不是只在Windows模拟路径。
+
+原11程序的Linux x86_64 release已全部构建：node/client、6个原product工具、
+原rendezvous/supervm-relay（显式iroh-transport,tls-transport）及novovmctl。
+实际node SHA256 `56989b83c13d4eb77065cecd6537f30e1db0f2183fbe33036e5f65e7c3686f70`，
+client `5fade645df62278d08e530580d9fef78089733ecd516bca28ea23f26fec25d61`；
+尚未完成整包和目标机验收，不能据此登记部署完成。
+
+AOEM第一次使用WSL默认stable（Rust1.94.1）编译时发生编译器内部崩溃，
+位置为aoem-gpu-kernels的unused/deathness分析（不是测试失败）。已停止该失败构建，
+保留源快照/输出，改用SUPERVM固定的Rust1.94.0及相同完整特性重试；
+没有关闭告警、改算法或减少特性。快照内也用Cargo升级libz-sys到1.1.31，
+最终库须绑定额外锁文件哈希，不能只引用原overlay哈希代表最终源码。
 
 后续按原owner继续：合格Linux AOEM → 原打包器及安全/功能检查 → 恢复可信B连接
 → 核对已有路径/服务及包哈希 → 隔离安装、原lifecycle plan。
 共同域、获准初始状态、用途身份及路由未齐时，部署授权不能替代这些具体输入；
 不能从`.example`生成资金/身份，也不能用`START=create`绕过原库恢复检查。
 只有实际完成安装/启动/原生查询/账务和恢复，才登记对应完成层级。
+
+## 最新人工确认：只安装程序，不启动链
+
+用户确认尚无此次四机共同配置，先安装程序。本轮只允许合格程序包的隔离安装与
+目标机装载/帮助检查；不启用或启动验证者，不生成共同创世、链域、用途密钥或分配NOV，
+不从示例配置自动建库。B现有邮箱、Relay、Web、身份和数据库保持原样。
+
+Rust1.94.0也重现相同内部崩溃；完整回溯定位到`annotate_snippets`告警渲染，
+不是MSM执行。原终端宽度异常，诊断代码片段被过度裁剪。
+同一源码、特性和编译器改用`--message-format=short`后，GPU kernels检查退出0，
+19项原告警仍正常输出，未关闭lint、减少特性或改MSM数学逻辑。
+完整FULLMAX构建继续复验；仅模块检查通过不能登记新SO已合格。
