@@ -8,7 +8,7 @@ Date: 2026-10-24. **Design decisions updated; implementation not delivered.** Do
 
 The [Chinese baseline](../../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) is the shared rule source. This is its English synchronization, not a separate economic system. See the [English index](README.md) and [Chinese index](../../docs_CN/NOVOVM-ECONOMICS/README.md). Product behavior is documented in [NOVOCHAT planning](../../../NOVOCHAT/docs/decisions/2026-10-23-uca-pq-account-planning.md).
 
-Founder personal proceeds derive from approved genesis holdings and actual market sales, not subscriptions. This does not establish completed genesis distribution or approve amounts/releases. NOV confers neither equity nor system-revenue dividends merely by holding it (English whitepaper section 10.4, page 46). The user recalled an 80/20 allocation: the verified candidate is 80% providers, 10% development treasury and 10% network assurance. Combining the latter two as 20% network purposes does not create personal income; the historical query does not freeze production ratios, calculation bases or the internal 10/10 split. See the authoritative subscription contract for the source and remaining terms.
+Founder personal proceeds derive from approved genesis holdings and actual market sales, not subscriptions. This does not establish completed genesis distribution or approve amounts/releases. NOV confers neither equity nor system-revenue dividends merely by holding it (English whitepaper section 10.4, page 46). The user now confirms the overall subscription allocation principle: 80% node-service budget, 20% network purposes, 0% founder personal share. This supersedes the prior historical-query-only status. The internal 10% development treasury + 10% network assurance remains a candidate; fee responsibility, unused-budget carryover, receiving accounts, calculation/rounding and final settlement terms still need finalization. Production charging remains disabled. See the authoritative subscription contract for the source and remaining terms.
 
 ## Confirmed rules and supersession
 
@@ -19,7 +19,8 @@ Founder personal proceeds derive from approved genesis holdings and actual marke
 | Subscription resources | Monthly subscriptions and awarded free trials honor the resources promised at activation; normally unused monthly subscription entitlements expire without refund |
 | Ambiguous inflation proposal | Moderate service-price adjustments only; no change to fixed native NOV supply |
 | Native NOV emission and fee burn | Target: all 100,000,000 NOV issued at genesis; subsequent transfers/unlocks only, no mint or burn |
-| 50% treasury or 80/10/10 | Comparison/candidate scenarios, not approved fee parameters |
+| Overall subscription allocation | Confirmed design principle: 80% node-service budget, 20% network purposes, 0% founder personal share; not activated |
+| Internal split of the 20% network portion | Candidate 10% development treasury + 10% network assurance; still awaiting final terms; old 50% is not the current rule |
 | UTC storage implies UTC calendar month | Separate timestamp storage and billing calendar; fixed billing timezone is recommended, not finalized |
 | Online nodes automatically earn | Only verified contracted service, including purchased verifiable reserved capacity, earns compensation |
 
